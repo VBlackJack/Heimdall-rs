@@ -1,0 +1,17 @@
+# Rust build output
+/target/
+
+# Frontend dependencies and build output
+node_modules/
+dist/
+
+# Private working notes, never published
+/local/
+
+# Editors and OS
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

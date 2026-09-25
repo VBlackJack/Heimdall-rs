@@ -1,0 +1,7 @@
+# Cross-platform repository: text is stored and checked out with LF everywhere,
+# so Windows and Linux builds see identical bytes.
+* text=auto eol=lf
+
+*.png binary
+*.ico binary
+*.icns binary
