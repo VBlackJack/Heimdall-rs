@@ -1,0 +1,31 @@
+diff --git a/crates/ironrdp/examples/screenshot.rs b/crates/ironrdp/examples/screenshot.rs
+index 7073cc6..b1d8bad 100644
+--- a/crates/ironrdp/examples/screenshot.rs
++++ b/crates/ironrdp/examples/screenshot.rs
+@@ -222,7 +222,7 @@ fn build_config(
+     Ok(connector::Config {
+         credentials: Credentials::UsernamePassword { username, password },
+         domain,
+-        enable_tls: false, // This example does not expose any frontend.
++        enable_tls: std::env::var_os("SPIKE_TLS").is_some(),
+         enable_credssp: true,
+         enable_standard_rdp_security: false,
+         keyboard_type: KeyboardType::IBM_ENHANCED,
+@@ -263,7 +263,7 @@ fn build_config(
+ 
+         enable_server_pointer: false, // Disable custom pointers (there is no user interaction anyway).
+         request_data: None,
+-        autologon: false,
++        autologon: std::env::var_os("SPIKE_AUTOLOGON").is_some(),
+         enable_audio_playback: false,
+         enable_audio_capture: false,
+         compression_type,
+@@ -308,7 +308,7 @@ fn connect(
+     // Sets the read timeout for the TCP stream so we can break out of the
+     // infinite loop during the active stage once there is no more activity.
+     tcp_stream
+-        .set_read_timeout(Some(Duration::from_secs(3)))
++        .set_read_timeout(Some(Duration::from_secs(12)))
+         .expect("set_read_timeout call failed");
+ 
+     let client_addr = tcp_stream.local_addr().context("get socket local address")?;
