@@ -18,13 +18,19 @@
 //!
 //! A click selects an entry and a second click on a selected folder opens it; the buttons
 //! between the panes send the selection, a file or a folder, to the other side.
+//!
+//! The keyboard acts on the pane with the focus, drawn with a stronger border: arrows, Home
+//! and End select, Enter opens or sends, Backspace goes up, Tab or Left and Right change
+//! pane, F2 renames, Delete deletes and F5 lists again.
 
 use heimdall_app::files::{
-    Direction, EntryKind, FilesError, FilesPane, Side, Transfer, TransferState,
+    Direction, EntryKind, FilesError, FilesKey, FilesPane, Side, Transfer, TransferState,
 };
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
+use iced::keyboard::{self, Modifiers, key::Named};
+use iced::widget::Id;
 use iced::widget::{Column, button, column, container, row, scrollable, text};
-use iced::{Alignment, Element, Length};
+use iced::{Alignment, Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -48,11 +54,49 @@ const SIZE_WIDTH: f32 = 90.0;
 /// Tallest the transfer list grows before it scrolls, in logical pixels.
 const TRANSFERS_HEIGHT: f32 = 160.0;
 
+/// Width of the border of the pane with the focus, in logical pixels.
+const FOCUS_BORDER_WIDTH: f32 = 2.0;
+
 /// Marks a folder after its name: language-neutral, like a path.
 const FOLDER_MARK: &str = "/";
 
 /// Marks a link after its name.
 const LINK_MARK: &str = " ->";
+
+/// Widget identifier of a pane's list, to scroll the selection into view.
+#[must_use]
+pub fn list_id(side: Side) -> Id {
+    Id::new(match side {
+        Side::Local => "files-local",
+        Side::Remote => "files-remote",
+    })
+}
+
+/// What `key` does in a Files tab. Keys with Ctrl, Alt or the logo key are left to the
+/// window; Enter reaches the tab through the dialog keys, as it answers a dialog first.
+#[must_use]
+pub fn files_key(key: &keyboard::Key, modifiers: Modifiers) -> Option<FilesKey> {
+    if modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return None;
+    }
+    let keyboard::Key::Named(named) = key else {
+        return None;
+    };
+    Some(match named {
+        Named::ArrowUp => FilesKey::Previous,
+        Named::ArrowDown => FilesKey::Next,
+        Named::Home => FilesKey::First,
+        Named::End => FilesKey::Last,
+        Named::Backspace => FilesKey::Parent,
+        Named::Tab => FilesKey::SwitchPane,
+        Named::ArrowLeft => FilesKey::Focus(Side::Local),
+        Named::ArrowRight => FilesKey::Focus(Side::Remote),
+        Named::F2 => FilesKey::Rename,
+        Named::Delete => FilesKey::Delete,
+        Named::F5 => FilesKey::Refresh,
+        _ => return None,
+    })
+}
 
 fn files(message: FilesMessage) -> Message {
     Message::App(AppMessage::Files(message))
@@ -108,6 +152,7 @@ fn pane<'a>(
     selected: Option<usize>,
     loading: bool,
     error: Option<&FilesError>,
+    focused: bool,
 ) -> Element<'a, Message> {
     let tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
@@ -146,11 +191,18 @@ fn pane<'a>(
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
     }
-    container(content.push(scrollable(list).height(Length::Fill)))
+    container(content.push(scrollable(list).id(list_id(side)).height(Length::Fill)))
         .padding(PADDING)
         .width(Length::FillPortion(1))
         .height(Length::Fill)
-        .style(container::bordered_box)
+        .style(move |theme: &Theme| {
+            let mut style = container::bordered_box(theme);
+            if focused {
+                style.border.color = theme.extended_palette().primary.base.color;
+                style.border.width = FOCUS_BORDER_WIDTH;
+            }
+            style
+        })
         .into()
 }
 
@@ -233,6 +285,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         files_pane.local.selected,
         files_pane.local.loading,
         files_pane.local.error.as_ref(),
+        files_pane.focus == Side::Local,
     );
     let remote = pane(
         tab,
@@ -243,6 +296,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         files_pane.remote.selected,
         files_pane.remote.loading,
         files_pane.remote.error.as_ref(),
+        files_pane.focus == Side::Remote,
     );
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();
@@ -279,4 +333,41 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
             .push(container(scrollable(list)).max_height(TRANSFERS_HEIGHT));
     }
     content.into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn named(key: Named) -> keyboard::Key {
+        keyboard::Key::Named(key)
+    }
+
+    #[test]
+    fn plain_keys_act_and_modified_ones_are_left_to_the_window() {
+        assert_eq!(
+            files_key(&named(Named::Delete), Modifiers::empty()),
+            Some(FilesKey::Delete)
+        );
+        assert_eq!(
+            files_key(&named(Named::Tab), Modifiers::SHIFT),
+            Some(FilesKey::SwitchPane)
+        );
+        for modifiers in [Modifiers::CTRL, Modifiers::ALT, Modifiers::LOGO] {
+            assert_eq!(
+                files_key(&named(Named::Tab), modifiers),
+                None,
+                "{modifiers:?}"
+            );
+        }
+        assert_eq!(
+            files_key(&named(Named::Enter), Modifiers::empty()),
+            None,
+            "Enter answers a dialog first"
+        );
+        assert_eq!(
+            files_key(&keyboard::Key::Character("a".into()), Modifiers::empty()),
+            None
+        );
+    }
 }

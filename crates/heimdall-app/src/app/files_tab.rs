@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{App, Dialog, Effect, NameAction};
 use crate::files::{
-    Direction, EntryKind, FileOperation, FilesError, FilesPane, Side, Transfer, TransferEvent,
-    TransferId, TransferRequest, TransferState, download_name, typed_name,
+    Direction, EntryKind, FileOperation, FilesError, FilesKey, FilesPane, Side, Transfer,
+    TransferEvent, TransferId, TransferRequest, TransferState, download_name, typed_name,
 };
 use crate::ids::TabId;
 
@@ -123,6 +123,13 @@ pub enum FilesMessage {
     },
     /// The name typed in the question changed.
     NameEdited(String),
+    /// A key pressed while the tab is shown.
+    Key {
+        /// Tab.
+        tab: TabId,
+        /// What it does.
+        key: FilesKey,
+    },
     /// A file operation finished.
     OperationDone {
         /// Tab.
@@ -169,6 +176,7 @@ impl std::fmt::Debug for FilesMessage {
                 )
             }
             Self::Cancel { tab, id } => write!(f, "Cancel({}, {})", tab.value(), id.value()),
+            Self::Key { tab, key } => write!(f, "Key({}, {key:?})", tab.value()),
             Self::AskNewFolder { tab, side } => {
                 write!(f, "AskNewFolder({}, {side:?})", tab.value())
             }
@@ -343,6 +351,7 @@ impl App {
                 self.list(tab, side)
             }
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
+            FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
             FilesMessage::Cancel { tab, id } => {
@@ -360,6 +369,7 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
+        files.focus = side;
         // A second click on a selected folder opens it.
         let (selected, is_folder) = match side {
             Side::Remote => (
@@ -390,6 +400,48 @@ impl App {
             }
             None => Vec::new(),
         }
+    }
+
+    fn files_key(&mut self, tab: TabId, key: FilesKey) -> Vec<Effect> {
+        // A question on screen takes the keys; its own field answers them.
+        if self.dialog.is_some() {
+            return Vec::new();
+        }
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let side = files.focus;
+        let (selected, count) = files.focused();
+        let last = count.checked_sub(1);
+        let target = match key {
+            FilesKey::Previous => selected.map_or(last, |index| Some(index.saturating_sub(1))),
+            FilesKey::Next => match selected {
+                Some(index) => last.map(|last| (index + 1).min(last)),
+                None => last.map(|_| 0),
+            },
+            FilesKey::First => last.map(|_| 0),
+            FilesKey::Last => last,
+            FilesKey::SwitchPane => {
+                files.focus = side.other();
+                return Vec::new();
+            }
+            FilesKey::Focus(chosen) => {
+                files.focus = chosen;
+                return Vec::new();
+            }
+            FilesKey::Open => {
+                return selected.map_or_else(Vec::new, |index| self.open_entry(tab, side, index));
+            }
+            FilesKey::Parent => return self.files(FilesMessage::Up { tab, side }),
+            FilesKey::Rename => return self.ask(tab, side, NameAction::Rename),
+            FilesKey::Delete => return self.ask_delete(tab, side),
+            FilesKey::Refresh => return self.list(tab, side),
+        };
+        match side {
+            Side::Remote => files.remote.selected = target,
+            Side::Local => files.local.selected = target,
+        }
+        Vec::new()
     }
 
     fn open_entry(&mut self, tab: TabId, side: Side, index: usize) -> Vec<Effect> {

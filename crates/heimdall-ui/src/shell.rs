@@ -24,7 +24,9 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use heimdall_app::files::{Direction, file_operation, list_local, list_remote, transfer_events};
+use heimdall_app::files::{
+    Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
+};
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, FilesMessage, Message as AppMessage,
     NameAction, Phase, Prompt, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events,
@@ -37,6 +39,7 @@ use heimdall_term::GridSize;
 use iced::futures::{StreamExt as _, stream};
 use iced::keyboard::key::Named;
 use iced::task::Handle;
+use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
     Column, button, center, column, container, opaque, operation, row, scrollable, stack, text,
     text_input,
@@ -44,6 +47,7 @@ use iced::widget::{
 use iced::{Color, Element, Length, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
 
+use crate::files_view;
 use crate::i18n::fl;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
@@ -111,9 +115,10 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             repeat,
             ..
         }) if status == event::Status::Ignored => {
-            match window_shortcut(&key, physical_key, modifiers)? {
-                WindowShortcut::CloseTab if repeat => None,
-                shortcut => Some(Message::Shortcut(shortcut)),
+            match window_shortcut(&key, physical_key, modifiers) {
+                Some(WindowShortcut::CloseTab) if repeat => None,
+                Some(shortcut) => Some(Message::Shortcut(shortcut)),
+                None => files_view::files_key(&key, modifiers).map(Message::FilesKey),
             }
         }
         _ => None,
@@ -152,6 +157,8 @@ pub enum Message {
         /// Enter rather than Escape.
         confirm: bool,
     },
+    /// A key for the Files tab shown, uncaptured by any widget.
+    FilesKey(FilesKey),
 }
 
 impl fmt::Debug for Message {
@@ -169,6 +176,7 @@ impl fmt::Debug for Message {
             Self::Decline(tab) => write!(f, "Decline({})", tab.value()),
             Self::Shortcut(shortcut) => write!(f, "Shortcut({shortcut:?})"),
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
+            Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
         }
     }
 }
@@ -317,6 +325,7 @@ impl Shell {
 
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        let reveal = matches!(message, Message::FilesKey(_) | Message::DialogKey { .. });
         let effects = match message {
             Message::App(message) => self.app.update(message),
             Message::Field {
@@ -334,12 +343,16 @@ impl Shell {
             Message::Decline(tab) => self.reply(tab, false),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
+            Message::FilesKey(key) => self.files_key(key),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
         tasks.push(self.focus_name());
+        if reveal {
+            tasks.push(self.reveal_selection());
+        }
         Task::batch(tasks)
     }
 
@@ -399,14 +412,53 @@ impl Shell {
         self.app.update(message)
     }
 
-    /// Enter confirms the open dialog, Escape dismisses it; without a dialog the core
-    /// ignores both.
+    /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
+    /// the selection of a Files tab, and the core ignores the rest.
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
+        if confirm && self.app.dialog.is_none() {
+            return self.files_key(FilesKey::Open);
+        }
         self.app.update(if confirm {
             AppMessage::ConfirmDialog
         } else {
             AppMessage::DismissDialog
         })
+    }
+
+    /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
+    fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
+        let Some(tab) = self.app.active else {
+            return Vec::new();
+        };
+        self.app
+            .update(AppMessage::Files(FilesMessage::Key { tab, key }))
+    }
+
+    /// Scrolls the focused list of the Files tab shown so its selection is in view. The
+    /// list is snapped to the selection's share of its length, which keeps a row of equal
+    /// height inside the viewport wherever it is.
+    fn reveal_selection(&self) -> Task<Message> {
+        let Some(files) = self.app.active_tab().and_then(|tab| tab.files.as_deref()) else {
+            return Task::none();
+        };
+        let (Some(index), count) = files.focused() else {
+            return Task::none();
+        };
+        let Some(last) = count.checked_sub(1).filter(|last| *last > 0) else {
+            return Task::none();
+        };
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a share of a listing, far below the 2^24 entries where f32 loses units"
+        )]
+        let share = index as f32 / last as f32;
+        operation::snap_to(
+            files_view::list_id(files.focus),
+            RelativeOffset {
+                x: None,
+                y: Some(share),
+            },
+        )
     }
 
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
@@ -1032,5 +1084,54 @@ fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
         ]
         .spacing(SPACING)
         .into(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use iced::keyboard::key::{NativeCode, Physical};
+    use iced::keyboard::{Key, Location, Modifiers};
+
+    use super::*;
+
+    fn pressed(key: Named, modifiers: Modifiers) -> iced::Event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Named(key),
+            modified_key: Key::Named(key),
+            physical_key: Physical::Unidentified(NativeCode::Unidentified),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
+        window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn a_free_key_goes_to_the_files_tab_and_a_shortcut_stays_a_shortcut() {
+        assert!(matches!(
+            message(Named::ArrowDown, Modifiers::empty(), event::Status::Ignored),
+            Some(Message::FilesKey(FilesKey::Next))
+        ));
+        assert!(matches!(
+            message(Named::Tab, Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::Shortcut(WindowShortcut::NextTab))
+        ));
+        assert!(
+            message(
+                Named::ArrowDown,
+                Modifiers::empty(),
+                event::Status::Captured
+            )
+            .is_none(),
+            "a key a widget took is not taken twice"
+        );
+        assert!(matches!(
+            message(Named::Enter, Modifiers::empty(), event::Status::Ignored),
+            Some(Message::DialogKey { confirm: true })
+        ));
     }
 }
