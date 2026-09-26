@@ -109,6 +109,7 @@ ui-dialog-detail = Détail : { $detail }
 
 ui-import-skip-not-ssh = pas un profil SSH ({ $kind })
 ui-import-skip-jump-host = passe par une passerelle SSH, pas encore pris en charge
+ui-import-skip-rd-gateway = passe par une passerelle Bureau à distance, pas encore pris en charge
 ui-import-skip-missing-host = n'a pas d'hôte
 ui-import-skip-missing-id = n'a pas d'identifiant
 ui-import-skip-invalid-port = port invalide { $port }

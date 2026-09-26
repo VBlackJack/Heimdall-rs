@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, TerminalSize,
@@ -651,6 +651,12 @@ impl App {
         self.store.ssh_profiles()
     }
 
+    /// Saved RDP profiles.
+    #[must_use]
+    pub fn rdp_profiles(&self) -> &[RdpProfile] {
+        self.store.rdp_profiles()
+    }
+
     /// Whether the C# Heimdall's data can be imported.
     #[must_use]
     pub fn can_import(&self) -> bool {
@@ -1198,7 +1204,15 @@ impl App {
             }
         };
         // Saved before it is kept: a failed save leaves the list as its file is.
-        let merged = match self.store.apply(|store| store.merge(report.profiles)) {
+        let merged = match self.store.apply(|store| {
+            let ssh = store.merge(report.profiles);
+            let rdp = store.merge_rdp(report.rdp);
+            MergeReport {
+                added: ssh.added + rdp.added,
+                updated: ssh.updated + rdp.updated,
+                unchanged: ssh.unchanged + rdp.unchanged,
+            }
+        }) {
             Ok(merged) => merged,
             Err(error) => {
                 self.dialog = Some(Dialog::StoreError {

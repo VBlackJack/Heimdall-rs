@@ -23,10 +23,16 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::profile::{ProfileId, SshProfile};
+use crate::profile::{ProfileId, RdpProfile, SshProfile};
 
 /// Format version written into the profile file.
-pub const PROFILE_FILE_VERSION: u32 = 1;
+///
+/// 2 added RDP profiles. A build that knows only version 1 refuses a version 2 file rather
+/// than reading it, dropping the RDP profiles it does not know, and saving it back.
+pub const PROFILE_FILE_VERSION: u32 = 2;
+
+/// Oldest format version still read; its files hold SSH profiles only.
+const OLDEST_READ_VERSION: u32 = 1;
 
 /// On-disk shape of the profile file.
 #[derive(Debug, Serialize, Deserialize)]
@@ -34,6 +40,8 @@ struct ProfileFile {
     version: u32,
     #[serde(default)]
     ssh: Vec<SshProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    rdp: Vec<RdpProfile>,
 }
 
 /// Why the profile file could not be read or written.
@@ -88,6 +96,7 @@ pub struct MergeReport {
 pub struct ProfileStore {
     path: PathBuf,
     ssh: Vec<SshProfile>,
+    rdp: Vec<RdpProfile>,
 }
 
 impl ProfileStore {
@@ -99,6 +108,7 @@ impl ProfileStore {
         Self {
             path: path.into(),
             ssh: Vec::new(),
+            rdp: Vec::new(),
         }
     }
 
@@ -116,6 +126,7 @@ impl ProfileStore {
                 return Ok(Self {
                     path,
                     ssh: Vec::new(),
+                    rdp: Vec::new(),
                 });
             }
             Err(source) => return Err(StoreError::Io { path, source }),
@@ -124,7 +135,7 @@ impl ProfileStore {
             Ok(file) => file,
             Err(source) => return Err(StoreError::Parse { path, source }),
         };
-        if file.version != PROFILE_FILE_VERSION {
+        if !(OLDEST_READ_VERSION..=PROFILE_FILE_VERSION).contains(&file.version) {
             return Err(StoreError::UnsupportedVersion {
                 path,
                 found: file.version,
@@ -134,6 +145,7 @@ impl ProfileStore {
         Ok(Self {
             path,
             ssh: file.ssh,
+            rdp: file.rdp,
         })
     }
 
@@ -149,34 +161,28 @@ impl ProfileStore {
         &self.ssh
     }
 
-    /// Adds or replaces profiles by identifier; the order of existing profiles is kept.
-    pub fn merge(&mut self, incoming: impl IntoIterator<Item = SshProfile>) -> MergeReport {
-        let mut report = MergeReport::default();
-        for profile in incoming {
-            match self
-                .ssh
-                .iter_mut()
-                .find(|existing| existing.id == profile.id)
-            {
-                Some(existing) if *existing == profile => report.unchanged += 1,
-                Some(existing) => {
-                    *existing = profile;
-                    report.updated += 1;
-                }
-                None => {
-                    self.ssh.push(profile);
-                    report.added += 1;
-                }
-            }
-        }
-        report
+    /// RDP profiles, in file order.
+    #[must_use]
+    pub fn rdp_profiles(&self) -> &[RdpProfile] {
+        &self.rdp
     }
 
-    /// Removes the profile `id`; whether it was there.
+    /// Adds or replaces SSH profiles by identifier; the order of existing profiles is kept.
+    pub fn merge(&mut self, incoming: impl IntoIterator<Item = SshProfile>) -> MergeReport {
+        merge_into(&mut self.ssh, incoming, |profile| &profile.id)
+    }
+
+    /// Adds or replaces RDP profiles by identifier; the order of existing profiles is kept.
+    pub fn merge_rdp(&mut self, incoming: impl IntoIterator<Item = RdpProfile>) -> MergeReport {
+        merge_into(&mut self.rdp, incoming, |profile| &profile.id)
+    }
+
+    /// Removes the profile `id`, of any protocol; whether it was there.
     pub fn remove(&mut self, id: &ProfileId) -> bool {
-        let before = self.ssh.len();
+        let before = self.ssh.len() + self.rdp.len();
         self.ssh.retain(|profile| profile.id != *id);
-        self.ssh.len() != before
+        self.rdp.retain(|profile| profile.id != *id);
+        self.ssh.len() + self.rdp.len() != before
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -205,6 +211,7 @@ impl ProfileStore {
         let text = toml::to_string_pretty(&ProfileFile {
             version: PROFILE_FILE_VERSION,
             ssh: self.ssh.clone(),
+            rdp: self.rdp.clone(),
         })?;
         let dir = self
             .path
@@ -224,4 +231,30 @@ impl ProfileStore {
             .map_err(|error| io_error(&self.path)(error.error))?;
         Ok(())
     }
+}
+
+/// Adds or replaces `incoming` in `list` by identifier, keeping the order of `list`.
+fn merge_into<T: PartialEq>(
+    list: &mut Vec<T>,
+    incoming: impl IntoIterator<Item = T>,
+    id: impl Fn(&T) -> &ProfileId,
+) -> MergeReport {
+    let mut report = MergeReport::default();
+    for profile in incoming {
+        match list
+            .iter_mut()
+            .find(|existing| id(existing) == id(&profile))
+        {
+            Some(existing) if *existing == profile => report.unchanged += 1,
+            Some(existing) => {
+                *existing = profile;
+                report.updated += 1;
+            }
+            None => {
+                list.push(profile);
+                report.added += 1;
+            }
+        }
+    }
+    report
 }

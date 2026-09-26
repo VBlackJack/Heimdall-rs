@@ -111,6 +111,7 @@ pub fn skip_reason(reason: &SkipReason) -> String {
     match reason {
         SkipReason::NotSsh(kind) => fl!("ui-import-skip-not-ssh", kind = server_text(kind)),
         SkipReason::NeedsJumpHost => fl!("ui-import-skip-jump-host"),
+        SkipReason::NeedsRdGateway => fl!("ui-import-skip-rd-gateway"),
         SkipReason::MissingHost => fl!("ui-import-skip-missing-host"),
         SkipReason::MissingId => fl!("ui-import-skip-missing-id"),
         SkipReason::InvalidPort(port) => {

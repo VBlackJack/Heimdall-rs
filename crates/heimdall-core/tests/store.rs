@@ -18,7 +18,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use heimdall_core::paths::PROFILES_FILE_NAME;
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::{MergeReport, PROFILE_FILE_VERSION, ProfileStore, StoreError};
 
 fn profile(id: &str, host: &str) -> SshProfile {
@@ -125,4 +125,55 @@ fn a_corrupt_file_is_an_error_not_an_empty_store() {
         ProfileStore::open(&path),
         Err(StoreError::Parse { .. })
     ));
+}
+
+fn rdp(id: &str) -> RdpProfile {
+    RdpProfile {
+        id: ProfileId::new(id),
+        name: id.to_uppercase(),
+        group: Some("Windows".to_owned()),
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: Some("admin".to_owned()),
+        domain: Some("LAB".to_owned()),
+    }
+}
+
+#[test]
+fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 1\n\n[[ssh]]\nid = \"a\"\nname = \"A\"\nhost = \"h\"\nport = 22\n",
+    )
+    .expect("writes");
+    let mut store = ProfileStore::open(&path).expect("a version 1 file opens");
+    assert_eq!(store.ssh_profiles().len(), 1);
+    assert!(store.rdp_profiles().is_empty());
+    store.merge_rdp([rdp("r")]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(
+        text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
+        "{text}"
+    );
+    assert_eq!(PROFILE_FILE_VERSION, 2);
+}
+
+#[test]
+fn rdp_profiles_read_back_and_are_removed_like_the_others() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([profile("s", "h")]);
+    let report = store.merge_rdp([rdp("r")]);
+    assert_eq!(report.added, 1);
+    store.save().expect("saves");
+    let mut reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.rdp_profiles(), store.rdp_profiles());
+    assert!(reopened.remove(&ProfileId::new("r")));
+    assert!(reopened.rdp_profiles().is_empty());
+    assert_eq!(reopened.ssh_profiles().len(), 1, "the SSH profile stays");
+    assert!(!reopened.remove(&ProfileId::new("r")), "already gone");
 }
