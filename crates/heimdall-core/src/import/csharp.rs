@@ -35,8 +35,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, ProfileId, RdpProfile, SshProfile,
-    TelnetProfile,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, ProfileId,
+    RdpProfile, SshProfile, TelnetProfile, VncProfile,
 };
 
 /// `connectionType` of an SSH profile.
@@ -47,6 +47,9 @@ const RDP_CONNECTION_TYPE: &str = "RDP";
 
 /// `connectionType` of a Telnet profile, compared without case as the C# catalog does.
 const TELNET_CONNECTION_TYPE: &str = "Telnet";
+
+/// `connectionType` of a VNC profile, compared without case as the C# catalog does.
+const VNC_CONNECTION_TYPE: &str = "VNC";
 
 /// `connectionType` the C# Heimdall assumes when the field is absent.
 const DEFAULT_CONNECTION_TYPE: &str = "RDP";
@@ -91,6 +94,8 @@ pub struct ImportReport {
     pub rdp: Vec<RdpProfile>,
     /// Telnet profiles ready to be merged into the store.
     pub telnet: Vec<TelnetProfile>,
+    /// VNC profiles ready to be merged into the store.
+    pub vnc: Vec<VncProfile>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
 }
@@ -139,6 +144,12 @@ struct LegacyServer {
     rdp_nla: Option<bool>,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
+    /// Zero or less means the default port, as `VncHandler` reads it.
+    vnc_port: Option<i64>,
+    /// Encrypted by the C# Heimdall; only whether it is set is read.
+    vnc_password: Option<String>,
+    #[serde(default)]
+    vnc_view_only: bool,
 }
 
 fn default_connection_type() -> String {
@@ -191,6 +202,11 @@ pub fn import(
             .eq_ignore_ascii_case(TELNET_CONNECTION_TYPE)
         {
             convert_telnet(&server).map(|profile| report.telnet.push(profile))
+        } else if server
+            .connection_type
+            .eq_ignore_ascii_case(VNC_CONNECTION_TYPE)
+        {
+            convert_vnc(&server).map(|profile| report.vnc.push(profile))
         } else {
             convert(&server).map(|profile| report.profiles.push(profile))
         };
@@ -380,5 +396,35 @@ fn convert_telnet(server: &LegacyServer) -> Result<TelnetProfile, SkipReason> {
         group: non_empty(server.group.as_ref()),
         host: server.remote_server.trim().to_owned(),
         port,
+    })
+}
+
+/// A VNC profile as `VncHandler` connects it: directly. The C# stored password is not
+/// carried over; a profile that had none reached its server without one, and keeps doing so.
+fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    if server.remote_server.trim().is_empty() {
+        return Err(SkipReason::MissingHost);
+    }
+    let port = match server.vnc_port {
+        Some(value) if value > 0 => {
+            u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?
+        }
+        _ => DEFAULT_VNC_PORT,
+    };
+    Ok(VncProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.is_empty() {
+            server.remote_server.clone()
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        host: server.remote_server.trim().to_owned(),
+        port,
+        view_only: server.vnc_view_only,
+        allow_no_password: is_null_or_empty(server.vnc_password.as_ref()),
     })
 }

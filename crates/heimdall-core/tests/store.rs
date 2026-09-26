@@ -18,7 +18,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use heimdall_core::paths::PROFILES_FILE_NAME;
-use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile};
 use heimdall_core::store::{MergeReport, PROFILE_FILE_VERSION, ProfileStore, StoreError};
 
 fn profile(id: &str, host: &str) -> SshProfile {
@@ -159,7 +159,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 3);
+    assert_eq!(PROFILE_FILE_VERSION, 4);
 }
 
 #[test]
@@ -223,4 +223,41 @@ fn telnet_profiles_read_back_and_are_removed_like_the_others() {
     assert_eq!(reopened.ssh_profiles().len(), 1, "the SSH profile stays");
     assert_eq!(reopened.rdp_profiles().len(), 1, "the RDP profile stays");
     assert!(!reopened.remove(&ProfileId::new("t")), "already gone");
+}
+
+#[test]
+fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_telnet([telnet("t")]);
+    let watch = VncProfile {
+        id: ProfileId::new("v"),
+        name: "Kiosk".to_owned(),
+        group: None,
+        host: "kiosk.lab".to_owned(),
+        port: 5901,
+        view_only: true,
+        allow_no_password: false,
+    };
+    assert_eq!(store.merge_vnc([watch.clone()]).added, 1);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(
+        text.contains("[[vnc]]") && text.contains("view_only = true"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("allow_no_password"),
+        "a false option is left out: {text}"
+    );
+    let mut reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.vnc_profiles(), [watch]);
+    assert!(reopened.remove(&ProfileId::new("v")));
+    assert!(reopened.vnc_profiles().is_empty());
+    assert_eq!(
+        reopened.telnet_profiles().len(),
+        1,
+        "the Telnet profile stays"
+    );
 }

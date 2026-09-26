@@ -23,14 +23,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile};
+use crate::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile};
 
 /// Format version written into the profile file.
 ///
-/// 2 added RDP profiles, 3 Telnet profiles. A build that knows an older version refuses a
-/// newer file rather than reading it, dropping the profiles it does not know, and saving it
-/// back.
-pub const PROFILE_FILE_VERSION: u32 = 3;
+/// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles. A build that knows an older
+/// version refuses a newer file rather than reading it, dropping the profiles it does not
+/// know, and saving it back.
+pub const PROFILE_FILE_VERSION: u32 = 4;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -45,6 +45,8 @@ struct ProfileFile {
     rdp: Vec<RdpProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     telnet: Vec<TelnetProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    vnc: Vec<VncProfile>,
 }
 
 /// Why the profile file could not be read or written.
@@ -101,6 +103,7 @@ pub struct ProfileStore {
     ssh: Vec<SshProfile>,
     rdp: Vec<RdpProfile>,
     telnet: Vec<TelnetProfile>,
+    vnc: Vec<VncProfile>,
 }
 
 impl ProfileStore {
@@ -114,6 +117,7 @@ impl ProfileStore {
             ssh: Vec::new(),
             rdp: Vec::new(),
             telnet: Vec::new(),
+            vnc: Vec::new(),
         }
     }
 
@@ -148,6 +152,7 @@ impl ProfileStore {
             ssh: file.ssh,
             rdp: file.rdp,
             telnet: file.telnet,
+            vnc: file.vnc,
         })
     }
 
@@ -175,6 +180,12 @@ impl ProfileStore {
         &self.telnet
     }
 
+    /// VNC profiles, in file order.
+    #[must_use]
+    pub fn vnc_profiles(&self) -> &[VncProfile] {
+        &self.vnc
+    }
+
     /// Adds or replaces SSH profiles by identifier; the order of existing profiles is kept.
     pub fn merge(&mut self, incoming: impl IntoIterator<Item = SshProfile>) -> MergeReport {
         merge_into(&mut self.ssh, incoming, |profile| &profile.id)
@@ -194,18 +205,24 @@ impl ProfileStore {
         merge_into(&mut self.telnet, incoming, |profile| &profile.id)
     }
 
+    /// Adds or replaces VNC profiles by identifier; the order of existing profiles is kept.
+    pub fn merge_vnc(&mut self, incoming: impl IntoIterator<Item = VncProfile>) -> MergeReport {
+        merge_into(&mut self.vnc, incoming, |profile| &profile.id)
+    }
+
     /// Removes the profile `id`, of any protocol; whether it was there.
     pub fn remove(&mut self, id: &ProfileId) -> bool {
         let before = self.len();
         self.ssh.retain(|profile| profile.id != *id);
         self.rdp.retain(|profile| profile.id != *id);
         self.telnet.retain(|profile| profile.id != *id);
+        self.vnc.retain(|profile| profile.id != *id);
         self.len() != before
     }
 
     /// Number of profiles, all protocols together.
     fn len(&self) -> usize {
-        self.ssh.len() + self.rdp.len() + self.telnet.len()
+        self.ssh.len() + self.rdp.len() + self.telnet.len() + self.vnc.len()
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -236,6 +253,7 @@ impl ProfileStore {
             ssh: self.ssh.clone(),
             rdp: self.rdp.clone(),
             telnet: self.telnet.clone(),
+            vnc: self.vnc.clone(),
         })?;
         let dir = self
             .path
