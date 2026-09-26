@@ -91,6 +91,9 @@ pub struct Spec {
     pub exit_status: u32,
     /// Host key algorithms the server offers; also the signature algorithms it accepts.
     pub key_algorithms: Option<Vec<Algorithm>>,
+    /// Closes a connection idle this long, authenticated or not, as OpenSSH's
+    /// `LoginGraceTime` does before authentication.
+    pub inactivity_timeout: Option<Duration>,
 }
 
 impl Default for Spec {
@@ -108,6 +111,7 @@ impl Default for Spec {
             max_auth_attempts: 10,
             exit_status: 0,
             key_algorithms: None,
+            inactivity_timeout: None,
         }
     }
 }
@@ -149,6 +153,7 @@ pub async fn start(spec: Spec) -> TestServer {
         auth_rejection_time: AUTH_REJECTION_TIME,
         auth_rejection_time_initial: Some(Duration::ZERO),
         max_auth_attempts: spec.max_auth_attempts,
+        inactivity_timeout: spec.inactivity_timeout,
         preferred,
         ..server::Config::default()
     });
@@ -368,6 +373,8 @@ pub struct ScriptedPrompter {
     pub asked: Mutex<Vec<&'static str>>,
     /// Never answer, to test deadlines and cancellation.
     pub hang: bool,
+    /// Wait this long before each answer, as a user slow to type.
+    pub delay: Duration,
 }
 
 impl ScriptedPrompter {
@@ -394,6 +401,7 @@ impl ScriptedPrompter {
         if self.hang {
             std::future::pending::<()>().await;
         }
+        tokio::time::sleep(self.delay).await;
         next
     }
 }

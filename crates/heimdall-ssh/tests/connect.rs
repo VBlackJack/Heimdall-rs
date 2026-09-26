@@ -326,6 +326,33 @@ async fn too_many_failures_reads_as_the_servers_disconnect_not_as_a_refusal() {
     assert!(!message.is_empty());
 }
 
+#[tokio::test]
+async fn a_server_that_gave_up_waiting_for_an_answer_reads_as_a_disconnect() {
+    // OpenSSH closes a connection whose authentication takes longer than its
+    // LoginGraceTime; the answer then goes nowhere. Measured by hand on 2026-09-26: this
+    // surfaced as "Channel send error", a protocol error.
+    let server = start(Spec {
+        methods: vec![MethodKind::Password],
+        inactivity_timeout: Some(Duration::from_millis(300)),
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter {
+        delay: Duration::from_millis(1500),
+        ..ScriptedPrompter::passwords(&[PASSWORD])
+    });
+
+    let error = run(server.port, None, &options, prompter)
+        .await
+        .expect_err("the server left");
+    assert!(
+        matches!(error, ConnectError::Disconnected { .. }),
+        "got {error:?}"
+    );
+}
+
 // ---- keyboard-interactive --------------------------------------------------------------
 
 fn two_prompts_then_zero() -> Vec<KbdRound> {
