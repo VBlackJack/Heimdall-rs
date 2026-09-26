@@ -105,6 +105,18 @@ impl Screen {
         self.pixels[at..at + PIXEL_BYTES].copy_from_slice(&[rgb[0], rgb[1], rgb[2], OPAQUE]);
     }
 
+    /// Copies `rect` of `source`, a screen of the same size; nothing outside either.
+    pub(crate) fn copy_from(&mut self, source: &Screen, rect: Rect) {
+        if !source.contains(rect) || !self.contains(rect) || source.width != self.width {
+            return;
+        }
+        let row = usize::from(rect.width) * PIXEL_BYTES;
+        for y in rect.y..rect.y + rect.height {
+            let at = self.offset(rect.x, y);
+            self.pixels[at..at + row].copy_from_slice(&source.pixels[at..at + row]);
+        }
+    }
+
     /// Fills `rect` with `rgb`. The caller checked the bounds.
     pub(crate) fn fill(&mut self, rect: Rect, rgb: [u8; 3]) {
         for y in rect.y..rect.y + rect.height {
