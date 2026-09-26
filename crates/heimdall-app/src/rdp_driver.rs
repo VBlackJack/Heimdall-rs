@@ -133,7 +133,7 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
     }
     while let Some(event) = session.events.recv().await {
         let event = match event {
-            RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::RdpFrame,
+            RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
             RdpEvent::Closed(CloseReason::Failed(detail)) => {
                 log::warn!("RDP session to {target} failed: {detail:?}");
                 ConnectionEvent::Failed(UiError::RdpProtocol { detail })

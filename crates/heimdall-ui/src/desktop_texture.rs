@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The remote desktop on the GPU renderer: one texture per tab, rewritten in place.
+//! A remote desktop on the GPU renderer: one texture per tab, rewritten in place.
 //!
 //! An iced image is immutable, so a desktop drawn as an image needs a new one at every
 //! server update, and the GPU renderer then draws nothing for some frames: measured on
@@ -25,8 +25,8 @@
 use std::collections::HashMap;
 use std::fmt;
 
+use heimdall_app::DesktopFramebuffer;
 use heimdall_app::TabId;
-use heimdall_rdp::Framebuffer;
 use iced::Rectangle;
 use iced::wgpu;
 use iced::widget::shader::{self, Viewport};
@@ -65,7 +65,7 @@ pub struct Desktop {
     /// The tab, which keys its texture.
     pub tab: TabId,
     /// The pixels.
-    pub framebuffer: Framebuffer,
+    pub framebuffer: DesktopFramebuffer,
     /// Bumped by every update of the pixels.
     pub generation: u64,
 }

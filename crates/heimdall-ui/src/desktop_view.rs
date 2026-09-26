@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-//! The remote desktop of an RDP tab: drawn at its own size from the top-left corner, and
-//! taking the keyboard and the mouse while it is shown.
+//! The remote desktop of a tab, whatever protocol draws it: drawn at its own size from the
+//! top-left corner, and taking the keyboard and the mouse while it is shown.
 
 use std::cell::RefCell;
 
-use heimdall_app::{Message as AppMessage, RdpPane, TabId};
-use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+use heimdall_app::{DesktopInput, DesktopPane, Message as AppMessage, PointerButton, TabId};
+use heimdall_rdp::Scancode;
 use iced::advanced::Renderer as _;
 use iced::advanced::image::{self, FilterMethod, Renderer as _};
 use iced::advanced::layout::{self, Layout};
@@ -32,7 +32,7 @@ use iced::{Element, Event, Length, Radians, Rectangle, Size, Theme, keyboard, mo
 use iced_renderer::fallback;
 use iced_renderer::wgpu::primitive::Renderer as _;
 
-use crate::rdp_texture::Desktop;
+use crate::desktop_texture::Desktop;
 
 pub use scancodes::scancode;
 
@@ -47,18 +47,18 @@ struct State {
     picture: RefCell<Option<(u64, image::Handle)>>,
 }
 
-/// The desktop of one RDP tab.
-pub struct RdpView<'a, M> {
-    pane: &'a RdpPane,
+/// The desktop of one tab.
+pub struct DesktopView<'a, M> {
+    pane: &'a DesktopPane,
     tab: TabId,
     wrap: fn(AppMessage) -> M,
     interactive: bool,
 }
 
-impl<'a, M> RdpView<'a, M> {
+impl<'a, M> DesktopView<'a, M> {
     /// Shows `pane`, the desktop of `tab`; messages are wrapped with `wrap`.
     #[must_use]
-    pub fn new(pane: &'a RdpPane, tab: TabId, wrap: fn(AppMessage) -> M) -> Self {
+    pub fn new(pane: &'a DesktopPane, tab: TabId, wrap: fn(AppMessage) -> M) -> Self {
         Self {
             pane,
             tab,
@@ -74,15 +74,49 @@ impl<'a, M> RdpView<'a, M> {
         self
     }
 
-    fn send(&self, shell: &mut Shell<'_, M>, operations: Vec<Operation>) {
-        shell.publish((self.wrap)(AppMessage::RdpInput {
+    fn send(&self, shell: &mut Shell<'_, M>, inputs: Vec<DesktopInput>) {
+        shell.publish((self.wrap)(AppMessage::DesktopInput {
             tab: self.tab,
-            operations,
+            inputs,
         }));
     }
 
+    fn wheel(&self, shell: &mut Shell<'_, M>, delta: mouse::ScrollDelta) {
+        let (lines, vertical) = match delta {
+            mouse::ScrollDelta::Lines { x, y } if y.abs() >= x.abs() => (y, true),
+            mouse::ScrollDelta::Lines { x, .. } => (x, false),
+            // A pixel delta, from a touchpad: about one notch per ten pixels.
+            mouse::ScrollDelta::Pixels { x, y } if y.abs() >= x.abs() => (y / 10.0, true),
+            mouse::ScrollDelta::Pixels { x, .. } => (x / 10.0, false),
+        };
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "clamped to the i16 range first"
+        )]
+        let units = (lines * WHEEL_NOTCH)
+            .round()
+            .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
+        if units != 0 {
+            self.send(shell, vec![DesktopInput::Wheel { vertical, units }]);
+        }
+    }
+
+    fn key(&self, shell: &mut Shell<'_, M>, physical_key: Physical, pressed: bool) {
+        if let Some(code) = scancode(physical_key) {
+            self.send(
+                shell,
+                vec![DesktopInput::Key {
+                    scancode: Some(code),
+                    keysym: None,
+                    pressed,
+                }],
+            );
+            shell.capture_event();
+        }
+    }
+
     /// Where `position`, in window coordinates, falls on the desktop.
-    fn desktop_point(&self, bounds: Rectangle, position: iced::Point) -> MousePosition {
+    fn desktop_point(&self, bounds: Rectangle, position: iced::Point) -> (u16, u16) {
         let (width, height) = self
             .pane
             .framebuffer
@@ -97,25 +131,25 @@ impl<'a, M> RdpView<'a, M> {
             let pixel = offset.clamp(0.0, f32::from(size.saturating_sub(1))) as u16;
             pixel
         };
-        MousePosition {
-            x: clamp(position.x - bounds.x, width),
-            y: clamp(position.y - bounds.y, height),
-        }
+        (
+            clamp(position.x - bounds.x, width),
+            clamp(position.y - bounds.y, height),
+        )
     }
 }
 
-fn mouse_button(button: mouse::Button) -> Option<MouseButton> {
+fn mouse_button(button: mouse::Button) -> Option<PointerButton> {
     Some(match button {
-        mouse::Button::Left => MouseButton::Left,
-        mouse::Button::Middle => MouseButton::Middle,
-        mouse::Button::Right => MouseButton::Right,
-        mouse::Button::Back => MouseButton::X1,
-        mouse::Button::Forward => MouseButton::X2,
+        mouse::Button::Left => PointerButton::Left,
+        mouse::Button::Middle => PointerButton::Middle,
+        mouse::Button::Right => PointerButton::Right,
+        mouse::Button::Back => PointerButton::Back,
+        mouse::Button::Forward => PointerButton::Forward,
         mouse::Button::Other(_) => return None,
     })
 }
 
-impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
+impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fill)
     }
@@ -162,8 +196,8 @@ impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position_over(bounds) {
-                    let at = self.desktop_point(bounds, position);
-                    self.send(shell, vec![Operation::MouseMove(at)]);
+                    let (x, y) = self.desktop_point(bounds, position);
+                    self.send(shell, vec![DesktopInput::Move { x, y }]);
                 }
             }
             Event::Mouse(mouse::Event::ButtonPressed(button)) => {
@@ -172,62 +206,46 @@ impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
                 else {
                     return;
                 };
-                let at = self.desktop_point(bounds, position);
+                let (x, y) = self.desktop_point(bounds, position);
                 self.send(
                     shell,
-                    vec![
-                        Operation::MouseMove(at),
-                        Operation::MouseButtonPressed(button),
-                    ],
+                    vec![DesktopInput::Button {
+                        button,
+                        pressed: true,
+                        x,
+                        y,
+                    }],
                 );
                 shell.capture_event();
             }
             Event::Mouse(mouse::Event::ButtonReleased(button)) => {
                 if let Some(button) = mouse_button(*button) {
-                    self.send(shell, vec![Operation::MouseButtonReleased(button)]);
+                    // Released where the pointer is, even off the desktop: clamped to it.
+                    let (x, y) = cursor
+                        .position()
+                        .map_or((0, 0), |position| self.desktop_point(bounds, position));
+                    self.send(
+                        shell,
+                        vec![DesktopInput::Button {
+                            button,
+                            pressed: false,
+                            x,
+                            y,
+                        }],
+                    );
                 }
             }
             Event::Mouse(mouse::Event::WheelScrolled { delta }) => {
-                if cursor.position_over(bounds).is_none() {
-                    return;
+                if cursor.position_over(bounds).is_some() {
+                    self.wheel(shell, *delta);
+                    shell.capture_event();
                 }
-                let (lines, vertical) = match delta {
-                    mouse::ScrollDelta::Lines { x, y } if y.abs() >= x.abs() => (*y, true),
-                    mouse::ScrollDelta::Lines { x, .. } => (*x, false),
-                    // A pixel delta, from a touchpad: about one notch per ten pixels.
-                    mouse::ScrollDelta::Pixels { x, y } if y.abs() >= x.abs() => (*y / 10.0, true),
-                    mouse::ScrollDelta::Pixels { x, .. } => (*x / 10.0, false),
-                };
-                #[allow(
-                    clippy::cast_possible_truncation,
-                    reason = "clamped to the i16 range first"
-                )]
-                let units = (lines * WHEEL_NOTCH)
-                    .round()
-                    .clamp(f32::from(i16::MIN), f32::from(i16::MAX))
-                    as i16;
-                if units != 0 {
-                    self.send(
-                        shell,
-                        vec![Operation::WheelRotations(WheelRotations {
-                            is_vertical: vertical,
-                            rotation_units: units,
-                        })],
-                    );
-                }
-                shell.capture_event();
             }
             Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. }) => {
-                if let Some(code) = scancode(*physical_key) {
-                    self.send(shell, vec![Operation::KeyPressed(code)]);
-                    shell.capture_event();
-                }
+                self.key(shell, *physical_key, true);
             }
             Event::Keyboard(keyboard::Event::KeyReleased { physical_key, .. }) => {
-                if let Some(code) = scancode(*physical_key) {
-                    self.send(shell, vec![Operation::KeyReleased(code)]);
-                    shell.capture_event();
-                }
+                self.key(shell, *physical_key, false);
             }
             _ => {}
         }
@@ -252,7 +270,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
             bounds.position(),
             Size::new(f32::from(width), f32::from(height)),
         );
-        // The GPU renderer keeps the desktop in a texture it rewrites; see `rdp_texture`.
+        // The GPU renderer keeps the desktop in a texture it rewrites; see `desktop_texture`.
         if matches!(renderer, fallback::Renderer::Primary(_)) {
             let desktop = Desktop {
                 tab: self.tab,
@@ -301,8 +319,8 @@ impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
     }
 }
 
-impl<'a, M: 'a> From<RdpView<'a, M>> for Element<'a, M, Theme, iced::Renderer> {
-    fn from(view: RdpView<'a, M>) -> Self {
+impl<'a, M: 'a> From<DesktopView<'a, M>> for Element<'a, M, Theme, iced::Renderer> {
+    fn from(view: DesktopView<'a, M>) -> Self {
         Element::new(view)
     }
 }

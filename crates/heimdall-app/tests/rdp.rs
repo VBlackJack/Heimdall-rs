@@ -19,8 +19,8 @@
 use std::path::Path;
 
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Phase, Purpose, TabId, TabProfile,
-    UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, DesktopInput, Effect, Message, Phase, Purpose,
+    TabId, TabProfile, UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
@@ -167,9 +167,13 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
     let mut app = app(dir.path());
     let (tab, attempt) = open(&mut app);
     let (input, mut received) = mpsc::unbounded_channel();
-    let press = || Message::RdpInput {
+    let press = || Message::DesktopInput {
         tab,
-        operations: vec![Operation::KeyPressed(Scancode::from_u8(false, 0x1E))],
+        inputs: vec![DesktopInput::Key {
+            scancode: Some(Scancode::from_u8(false, 0x1E)),
+            keysym: Some(u32::from(b'a')),
+            pressed: true,
+        }],
     };
     // Not connected yet: dropped.
     app.update(press());
@@ -185,7 +189,12 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
     assert_eq!(app.tabs[0].phase, Phase::Connected);
     assert!(received.try_recv().is_err(), "nothing before the session");
     app.update(press());
-    assert_eq!(received.try_recv().expect("sent").len(), 1);
+    // The key goes to RDP by its position.
+    let sent = received.try_recv().expect("sent");
+    assert!(
+        matches!(sent.as_slice(), [Operation::KeyPressed(code)] if *code == Scancode::from_u8(false, 0x1E)),
+        "{sent:?}"
+    );
 
     // A dialog owns the input.
     app.update(Message::WindowCloseRequested);
@@ -194,10 +203,10 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
     assert!(received.try_recv().is_err(), "nothing behind a dialog");
     app.update(Message::DismissDialog);
 
-    let before = app.tabs[0].rdp.as_ref().expect("pane").generation;
-    event(&mut app, tab, attempt, ConnectionEvent::RdpFrame);
+    let before = app.tabs[0].desktop.as_ref().expect("pane").generation;
+    event(&mut app, tab, attempt, ConnectionEvent::DesktopFrame);
     assert_eq!(
-        app.tabs[0].rdp.as_ref().expect("pane").generation,
+        app.tabs[0].desktop.as_ref().expect("pane").generation,
         before + 1
     );
 
@@ -208,7 +217,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
         ConnectionEvent::Closed { exit_status: None },
     );
     assert!(
-        app.tabs[0].rdp.is_none(),
+        app.tabs[0].desktop.is_none(),
         "the desktop goes with the session"
     );
     app.update(press());

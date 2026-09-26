@@ -19,11 +19,11 @@
 use std::path::PathBuf;
 
 use heimdall_core::profile::{ProfileId, RdpProfile};
-use heimdall_rdp::{Fingerprint, Framebuffer, KnownRdpHosts, Operation};
-use tokio::sync::mpsc;
+use heimdall_rdp::{Fingerprint, KnownRdpHosts};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
+use crate::desktop::{DesktopInput, DesktopPane};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::event::ConnectionEvent;
@@ -32,28 +32,6 @@ use crate::rdp_driver::{DEFAULT_DESKTOP, RdpRequest};
 
 /// File of trusted RDP servers, beside the SSH `known_hosts`.
 const KNOWN_RDP_HOSTS_FILE_NAME: &str = "known_rdp_hosts";
-
-/// The desktop of an RDP tab.
-pub struct RdpPane {
-    /// The decoded desktop.
-    pub framebuffer: Framebuffer,
-    /// Grows each time the desktop changes: tells the view to draw it again.
-    pub generation: u64,
-    input: mpsc::UnboundedSender<Vec<Operation>>,
-}
-
-impl RdpPane {
-    pub(super) fn new(
-        framebuffer: Framebuffer,
-        input: mpsc::UnboundedSender<Vec<Operation>>,
-    ) -> Self {
-        Self {
-            framebuffer,
-            generation: 0,
-            input,
-        }
-    }
-}
 
 /// Applies an event only an RDP attempt sends.
 pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
@@ -73,10 +51,10 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         }
         ConnectionEvent::RdpReady { framebuffer, input } => {
             tab.phase = Phase::Connected;
-            tab.rdp = Some(Box::new(RdpPane::new(framebuffer, input)));
+            tab.desktop = Some(Box::new(DesktopPane::rdp(framebuffer, input)));
         }
-        ConnectionEvent::RdpFrame => {
-            if let Some(pane) = tab.rdp.as_mut() {
+        ConnectionEvent::DesktopFrame => {
+            if let Some(pane) = tab.desktop.as_mut() {
                 pane.generation = pane.generation.wrapping_add(1);
             }
         }
@@ -146,7 +124,7 @@ impl App {
         tab.attempt = attempt;
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
-        tab.rdp = None;
+        tab.desktop = None;
         let request = self.rdp_request(&profile, accepted, cancel);
         vec![Effect::ConnectRdp {
             tab: tab_id,
@@ -193,16 +171,15 @@ impl App {
         self.reconnect_rdp(tab_id, None)
     }
 
-    /// Keyboard or mouse input for the desktop of an RDP tab.
-    pub(super) fn rdp_input(&mut self, tab_id: TabId, operations: Vec<Operation>) {
+    /// Keyboard or mouse input for the remote desktop of a tab.
+    pub(super) fn desktop_input(&mut self, tab_id: TabId, inputs: &[DesktopInput]) {
         // A dialog owns the input: what is meant for it must not reach the server.
         if self.dialog.is_some() {
             return;
         }
         // The desktop exists only while the session is connected.
-        if let Some(pane) = self.tab(tab_id).and_then(|tab| tab.rdp.as_ref()) {
-            // A closed session drops its receiver: the input goes nowhere, as it should.
-            let _ = pane.input.send(operations);
+        if let Some(pane) = self.tab(tab_id).and_then(|tab| tab.desktop.as_ref()) {
+            pane.send(inputs);
         }
     }
 }

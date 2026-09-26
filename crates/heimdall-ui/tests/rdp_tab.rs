@@ -20,11 +20,12 @@
 use std::path::Path;
 
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message as AppMessage, TabId, UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, DesktopInput, Effect, Message as AppMessage,
+    PointerButton, TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::{Framebuffer, MouseButton, Operation};
+use heimdall_rdp::Framebuffer;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
@@ -161,29 +162,28 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
         }),
         iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
     ]);
-    let batches: Vec<Vec<Operation>> = ui
+    let inputs: Vec<DesktopInput> = ui
         .into_messages()
         .filter_map(|message| match message {
-            Message::App(AppMessage::RdpInput { operations, .. }) => Some(operations),
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
             _ => None,
         })
+        .flatten()
         .collect();
-    let pressed = batches
+    let pressed = inputs
         .iter()
-        .flatten()
-        .any(|operation| matches!(operation, Operation::MouseButtonPressed(MouseButton::Left)));
-    assert!(pressed, "{batches:?}");
-    let moved = batches
-        .iter()
-        .flatten()
-        .filter_map(|operation| match operation {
-            Operation::MouseMove(at) => Some(*at),
+        .find_map(|input| match *input {
+            DesktopInput::Button {
+                button: PointerButton::Left,
+                pressed: true,
+                x,
+                y,
+            } => Some((x, y)),
             _ => None,
         })
-        .next_back()
-        .expect("a move");
+        .expect("a press");
     // Desktop coordinates, not window ones: the view starts right of the sidebar.
-    assert!(moved.x < 700 && moved.y < 400, "{moved:?}");
+    assert!(pressed.0 < 700 && pressed.1 < 400, "{pressed:?}");
 }
 
 /// The RGBA pixel at logical `(x, y)` of a snapshot of `shell`, and the renderer that drew it.
