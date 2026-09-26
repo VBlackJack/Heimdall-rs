@@ -79,6 +79,10 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sessions are still open and will be disconnected.
 }
 ui-dialog-exit-confirm = Quit
+ui-dialog-overwrite-title = Replace the file?
+ui-dialog-overwrite-local-body = { $name } already exists in the local folder. The download replaces it.
+ui-dialog-overwrite-remote-body = { $name } already exists on the server. The upload replaces it.
+ui-dialog-overwrite-confirm = Replace
 ui-dialog-paste-title = Paste several lines?
 ui-dialog-paste-body = { $count ->
     [one] The text holds one line. The shell may run it as a command as soon as it arrives.

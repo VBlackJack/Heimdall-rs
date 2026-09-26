@@ -24,9 +24,10 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
+use heimdall_app::files::{Direction, list_local, list_remote, transfer_events};
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, Message as AppMessage, Phase, Prompt,
-    QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
+    Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, FilesMessage, Message as AppMessage,
+    Phase, Prompt, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{SshProfile, display_address};
@@ -231,6 +232,7 @@ fn config() -> AppConfig {
         legacy_dir: paths::legacy_data_dir(),
         agent: AgentSource::Auto,
         initial_grid: INITIAL_GRID,
+        files_start: paths::home_dir().unwrap_or_else(|| PathBuf::from(".")),
     }
 }
 
@@ -455,6 +457,28 @@ impl Shell {
                     log::debug!("question {} was no longer waiting", question.value());
                 }
                 Task::none()
+            }
+            Effect::ListRemote { tab, client, path } => {
+                Task::perform(list_remote(client, path), move |result| {
+                    Message::App(AppMessage::Files(FilesMessage::RemoteListed {
+                        tab,
+                        result,
+                    }))
+                })
+            }
+            Effect::ListLocal { tab, path } => Task::perform(list_local(path), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::LocalListed { tab, result }))
+            }),
+            Effect::Transfer { tab, id, request } => {
+                // Started inside the task, like a connection: spawning needs the runtime.
+                let events = stream::once(async move { transfer_events(*request) }).flatten();
+                Task::stream(events).map(move |event| {
+                    Message::App(AppMessage::Files(FilesMessage::TransferEvent {
+                        tab,
+                        id,
+                        event,
+                    }))
+                })
             }
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
@@ -811,6 +835,42 @@ fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .into()
 }
 
+/// The report of an import: counts, and the profiles left out with their reason.
+fn import_report<'a>(
+    summary: &'a heimdall_app::ImportSummary,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let mut content = column![
+        text(fl!("ui-dialog-import-title")).size(HEADING_SIZE),
+        text(fl!(
+            "ui-dialog-import-counts",
+            added = summary.merged.added,
+            updated = summary.merged.updated,
+            unchanged = summary.merged.unchanged
+        )),
+    ]
+    .spacing(SPACING);
+    if !summary.skipped.is_empty() {
+        let skipped = summary.skipped.iter().fold(
+            Column::new().spacing(SPACING / 2.0),
+            |list, (name, reason)| {
+                list.push(
+                    text(fl!(
+                        "ui-dialog-import-skipped-item",
+                        name = server_text(name),
+                        reason = texts::skip_reason(reason)
+                    ))
+                    .size(SMALL_SIZE),
+                )
+            },
+        );
+        content = content
+            .push(text(fl!("ui-dialog-import-skipped")))
+            .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
+    }
+    content.push(ok).into()
+}
+
 fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
     let confirm = |label: String| {
         button(text(label))
@@ -848,43 +908,26 @@ fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-exit-confirm"),
         )
         .into(),
+        Dialog::ConfirmOverwrite {
+            direction, name, ..
+        } => question(
+            fl!("ui-dialog-overwrite-title"),
+            match direction {
+                Direction::Download => {
+                    fl!("ui-dialog-overwrite-local-body", name = name.as_str())
+                }
+                Direction::Upload => fl!("ui-dialog-overwrite-remote-body", name = name.as_str()),
+            },
+            fl!("ui-dialog-overwrite-confirm"),
+        )
+        .into(),
         Dialog::ConfirmPaste { lines, .. } => question(
             fl!("ui-dialog-paste-title"),
             fl!("ui-dialog-paste-body", count = (*lines)),
             fl!("ui-dialog-paste-confirm"),
         )
         .into(),
-        Dialog::ImportDone(summary) => {
-            let mut content = column![
-                heading(fl!("ui-dialog-import-title")),
-                text(fl!(
-                    "ui-dialog-import-counts",
-                    added = summary.merged.added,
-                    updated = summary.merged.updated,
-                    unchanged = summary.merged.unchanged
-                )),
-            ]
-            .spacing(SPACING);
-            if !summary.skipped.is_empty() {
-                let skipped = summary.skipped.iter().fold(
-                    Column::new().spacing(SPACING / 2.0),
-                    |list, (name, reason)| {
-                        list.push(
-                            text(fl!(
-                                "ui-dialog-import-skipped-item",
-                                name = server_text(name),
-                                reason = texts::skip_reason(reason)
-                            ))
-                            .size(SMALL_SIZE),
-                        )
-                    },
-                );
-                content = content
-                    .push(text(fl!("ui-dialog-import-skipped")))
-                    .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
-            }
-            content.push(ok()).into()
-        }
+        Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::ImportFailed { detail: technical } => column![
             heading(fl!("ui-dialog-import-failed-title")),
             detail(technical),

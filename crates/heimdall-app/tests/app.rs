@@ -101,6 +101,7 @@ fn config(dir: &Path) -> AppConfig {
         legacy_dir: None,
         agent: AgentSource::Disabled,
         initial_grid: GRID,
+        files_start: dir.to_owned(),
     }
 }
 

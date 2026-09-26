@@ -1824,6 +1824,7 @@ name = "heimdall-app"
 version = "0.1.0"
 dependencies = [
  "heimdall-core",
+ "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
  "log",

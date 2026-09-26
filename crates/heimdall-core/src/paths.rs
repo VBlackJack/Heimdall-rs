@@ -73,6 +73,12 @@ pub fn log_dir() -> Option<PathBuf> {
         .map(|dirs| dirs.data_local_dir().join(LOG_DIR_NAME))
 }
 
+/// The user's home folder, where a Files tab starts; `None` when the platform reports none.
+#[must_use]
+pub fn home_dir() -> Option<PathBuf> {
+    BaseDirs::new().map(|dirs| dirs.home_dir().to_owned())
+}
+
 /// Data directory of the C# Heimdall on this machine, when the platform has one.
 ///
 /// Only meaningful on Windows, where the C# Heimdall runs; the path is returned whether or

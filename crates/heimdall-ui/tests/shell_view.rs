@@ -88,6 +88,7 @@ fn app(dir: &Path) -> App {
         legacy_dir: None,
         agent: AgentSource::Disabled,
         initial_grid: GRID,
+        files_start: dir.to_owned(),
     })
 }
 

@@ -79,6 +79,10 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sesiones siguen abiertas y se desconectarán.
 }
 ui-dialog-exit-confirm = Salir
+ui-dialog-overwrite-title = ¿Reemplazar el archivo?
+ui-dialog-overwrite-local-body = { $name } ya existe en la carpeta local. La descarga lo reemplaza.
+ui-dialog-overwrite-remote-body = { $name } ya existe en el servidor. El envío lo reemplaza.
+ui-dialog-overwrite-confirm = Reemplazar
 ui-dialog-paste-title = ¿Pegar varias líneas?
 ui-dialog-paste-body = { $count ->
     [one] El texto contiene una línea. El shell puede ejecutarla como un comando en cuanto llega.
