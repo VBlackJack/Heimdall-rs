@@ -150,9 +150,14 @@ async fn closing_the_shell_leaves_a_subsystem_on_the_same_connection_working() {
         "the last use gone, the connection ends"
     );
     // An SSH disconnect, not a dropped socket: russh on the server reports `early eof`
-    // for the latter (measured on 2026-09-26).
-    assert_eq!(
-        server.observed.lock().expect("observed").endings,
-        vec!["Ok(())".to_owned()]
-    );
+    // for the latter (measured on 2026-09-26). On Windows the server may instead see the
+    // connection aborted: a socket closed with unread data (the channel close replies) is
+    // reset, and the reset discards the disconnect already received (Windows CI,
+    // 2026-09-26). The discriminating check runs where the platform allows it.
+    let endings = server.observed.lock().expect("observed").endings.clone();
+    if cfg!(windows) {
+        assert_eq!(endings.len(), 1, "{endings:?}");
+    } else {
+        assert_eq!(endings, vec!["Ok(())".to_owned()]);
+    }
 }
