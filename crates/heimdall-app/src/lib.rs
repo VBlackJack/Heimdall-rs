@@ -28,12 +28,13 @@ mod event;
 pub mod files;
 mod ids;
 pub mod profile_draft;
+pub mod rdp_driver;
 mod sink;
 mod text;
 
 pub use app::{
     App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, Message, NameAction,
-    Phase, PointerInput, Prompt, Tab, WHEEL_LINES,
+    Phase, PointerInput, Prompt, RdpPane, Tab, TabProfile, WHEEL_LINES,
 };
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, UiError};

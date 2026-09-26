@@ -28,3 +28,30 @@ this directory and the `[patch.crates-io]` entry, and run the gates.
 
 Checked: `git diff --no-index` against the published package shows only the three lines
 above; builds for `x86_64-unknown-linux-gnu` and `x86_64-pc-windows-gnu`.
+
+## ironrdp-session 0.11.0
+
+Source: `https://static.crates.io/crates/ironrdp-session/ironrdp-session-0.11.0.crate`,
+MIT or Apache-2.0 (its `LICENSE-MIT` and `LICENSE-APACHE` are kept here). `Cargo.lock` of
+the package removed; nothing else added.
+
+Changed, in `src/fast_path.rs`, `process_bitmap_update` only:
+
+- A new function at the end of the file, `visible_rows`, crops the rows of a decoded bitmap
+  to the width of the rectangle it paints.
+- The RDP 6.0 (32 bpp) and RLE branches pass their decoded rows through it.
+- The uncompressed branch, which already stripped row padding, now also strips the columns
+  beyond the rectangle.
+
+Why: a bitmap update is sent wider than the rectangle it paints (its width is padded), and
+the decoders produce rows of that width, while the `DecodedImage::apply_*` functions cut
+rows at the rectangle's width. Every row then starts a few pixels further than it should,
+and the picture shears. Measured on 2026-09-26 against the xrdp login screen: sheared with
+the published code, exact with the patch. The live test
+`crates/heimdall-rdp/tests/live_xrdp.rs` checks it: on every middle row of the login
+window, the first white pixel must sit in the same column (11 different columns with the
+published code, 1 with the patch).
+
+Remove when: a published `ironrdp-session` crops the decoded rows to the rectangle (or
+decodes to the rectangle's width). Then delete this directory and its `[patch.crates-io]`
+entry, and run the live test against the xrdp container.

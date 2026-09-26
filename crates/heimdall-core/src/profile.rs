@@ -24,6 +24,9 @@ use serde::{Deserialize, Serialize};
 /// Port an SSH server listens on unless a profile says otherwise.
 pub const DEFAULT_SSH_PORT: u16 = 22;
 
+/// Port an RDP server listens on unless a profile says otherwise.
+pub const DEFAULT_RDP_PORT: u16 = 3389;
+
 /// Stable identifier of a profile.
 ///
 /// A profile imported from the C# Heimdall keeps the identifier it had there, so a second
@@ -74,6 +77,34 @@ pub struct SshProfile {
     /// Private key file, OpenSSH or `PuTTY` format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_path: Option<PathBuf>,
+}
+
+/// A saved RDP destination, reached directly.
+///
+/// Holds no secret: the password is asked for when connecting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RdpProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Login name; asked for when connecting if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Windows domain of the account, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub domain: Option<String>,
+    /// Also accept a server without Network Level Authentication (xrdp): the password then
+    /// travels in the logon packet, inside TLS, once the server's key is trusted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_tls_only: bool,
 }
 
 /// `host:port` as people write it: an IPv6 address in brackets, so the port stays

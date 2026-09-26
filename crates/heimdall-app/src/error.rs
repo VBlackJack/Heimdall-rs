@@ -48,6 +48,17 @@ pub enum UiError {
     },
     /// Connection plus key exchange took too long.
     Timeout,
+    /// An RDP session or connection failed in the protocol.
+    RdpProtocol {
+        /// What failed, in the library's words.
+        detail: String,
+    },
+    /// The server refused the security the client requires (an RDP server without Network
+    /// Level Authentication).
+    SecurityRefused {
+        /// What the server selected, in the library's words.
+        detail: String,
+    },
     /// The server's key is not the recorded one: possible interception.
     HostKeyChanged {
         /// SHA-256 fingerprint on record.

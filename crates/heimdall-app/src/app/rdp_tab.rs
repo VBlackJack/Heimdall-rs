@@ -1,0 +1,208 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! RDP tabs: opening one, the certificate decision, forgetting a server, and input.
+
+use std::path::PathBuf;
+
+use heimdall_core::profile::{ProfileId, RdpProfile};
+use heimdall_rdp::{Fingerprint, Framebuffer, KnownRdpHosts, Operation};
+use tokio::sync::mpsc;
+use tokio_util::sync::CancellationToken;
+
+use super::{App, Effect, Phase, Tab, TabProfile};
+use crate::driver::Purpose;
+use crate::error::UiError;
+use crate::event::ConnectionEvent;
+use crate::ids::{AttemptId, TabId};
+use crate::rdp_driver::{DEFAULT_DESKTOP, RdpRequest};
+
+/// File of trusted RDP servers, beside the SSH `known_hosts`.
+const KNOWN_RDP_HOSTS_FILE_NAME: &str = "known_rdp_hosts";
+
+/// The desktop of an RDP tab.
+pub struct RdpPane {
+    /// The decoded desktop.
+    pub framebuffer: Framebuffer,
+    /// Grows each time the desktop changes: tells the view to draw it again.
+    pub generation: u64,
+    input: mpsc::UnboundedSender<Vec<Operation>>,
+}
+
+impl RdpPane {
+    pub(super) fn new(
+        framebuffer: Framebuffer,
+        input: mpsc::UnboundedSender<Vec<Operation>>,
+    ) -> Self {
+        Self {
+            framebuffer,
+            generation: 0,
+            input,
+        }
+    }
+}
+
+/// Applies an event only an RDP attempt sends.
+pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
+    match event {
+        ConnectionEvent::UnknownRdpCertificate {
+            host,
+            port,
+            fingerprint,
+        } => {
+            tab.prompts.clear();
+            tab.pending_rdp_key = Some(fingerprint);
+            tab.phase = Phase::HostKey {
+                host,
+                port,
+                fingerprint: fingerprint.to_string(),
+            };
+        }
+        ConnectionEvent::RdpReady { framebuffer, input } => {
+            tab.phase = Phase::Connected;
+            tab.rdp = Some(Box::new(RdpPane::new(framebuffer, input)));
+        }
+        ConnectionEvent::RdpFrame => {
+            if let Some(pane) = tab.rdp.as_mut() {
+                pane.generation = pane.generation.wrapping_add(1);
+            }
+        }
+        _ => {}
+    }
+}
+
+impl App {
+    fn known_rdp_hosts(&self) -> PathBuf {
+        self.config
+            .known_hosts
+            .with_file_name(KNOWN_RDP_HOSTS_FILE_NAME)
+    }
+
+    fn rdp_request(
+        &self,
+        profile: &RdpProfile,
+        accepted: Option<Fingerprint>,
+        cancel: CancellationToken,
+    ) -> RdpRequest {
+        RdpRequest {
+            profile: profile.clone(),
+            known_hosts: self.known_rdp_hosts(),
+            accepted,
+            desktop: DEFAULT_DESKTOP,
+            cancel,
+        }
+    }
+
+    /// Opens an RDP tab for a saved profile.
+    pub(super) fn open_rdp(&mut self, id: &ProfileId) -> Vec<Effect> {
+        let Some(profile) = self.rdp_profiles().iter().find(|p| &p.id == id).cloned() else {
+            return Vec::new();
+        };
+        let tab_id = TabId::fresh();
+        let attempt = AttemptId::fresh();
+        let cancel = CancellationToken::new();
+        let request = self.rdp_request(&profile, None, cancel.clone());
+        let mut tab = Tab::new(
+            tab_id,
+            TabProfile::Rdp(profile),
+            Purpose::Rdp,
+            self.viewport,
+            attempt,
+            cancel,
+        );
+        tab.files = None;
+        self.tabs.push(tab);
+        self.active = Some(tab_id);
+        vec![Effect::ConnectRdp {
+            tab: tab_id,
+            attempt,
+            request: Box::new(request),
+        }]
+    }
+
+    /// Connects `tab` again, with `accepted` as the key the user just agreed to.
+    fn reconnect_rdp(&mut self, tab_id: TabId, accepted: Option<Fingerprint>) -> Vec<Effect> {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        let TabProfile::Rdp(profile) = tab.profile.clone() else {
+            return Vec::new();
+        };
+        let attempt = AttemptId::fresh();
+        let cancel = CancellationToken::new();
+        tab.attempt = attempt;
+        tab.cancel = cancel.clone();
+        tab.phase = Phase::Connecting;
+        tab.rdp = None;
+        let request = self.rdp_request(&profile, accepted, cancel);
+        vec![Effect::ConnectRdp {
+            tab: tab_id,
+            attempt,
+            request: Box::new(request),
+        }]
+    }
+
+    /// The user's answer to the certificate question of an RDP tab.
+    pub(super) fn rdp_certificate_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        let (Phase::HostKey { .. }, Some(fingerprint)) = (&tab.phase, tab.pending_rdp_key.take())
+        else {
+            return Vec::new();
+        };
+        if !accept {
+            tab.phase = Phase::Failed(UiError::Cancelled);
+            return Vec::new();
+        }
+        // Recorded by the next attempt, and only if the server presents exactly this key.
+        self.reconnect_rdp(tab_id, Some(fingerprint))
+    }
+
+    /// Forgets the key recorded for the server of an RDP tab whose key changed, then
+    /// connects again: the certificate question comes back.
+    pub(super) fn forget_server(&mut self, tab_id: TabId) -> Vec<Effect> {
+        let path = self.known_rdp_hosts();
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        let (Phase::Failed(UiError::HostKeyChanged { .. }), TabProfile::Rdp(profile)) =
+            (&tab.phase, &tab.profile)
+        else {
+            return Vec::new();
+        };
+        if let Err(error) = KnownRdpHosts::new(path).forget(&profile.host, profile.port) {
+            tab.phase = Phase::Failed(UiError::KnownHosts {
+                detail: error.to_string(),
+            });
+            return Vec::new();
+        }
+        self.reconnect_rdp(tab_id, None)
+    }
+
+    /// Keyboard or mouse input for the desktop of an RDP tab.
+    pub(super) fn rdp_input(&mut self, tab_id: TabId, operations: Vec<Operation>) {
+        // A dialog owns the input: what is meant for it must not reach the server.
+        if self.dialog.is_some() {
+            return;
+        }
+        // The desktop exists only while the session is connected.
+        if let Some(pane) = self.tab(tab_id).and_then(|tab| tab.rdp.as_ref()) {
+            // A closed session drops its receiver: the input goes nowhere, as it should.
+            let _ = pane.input.send(operations);
+        }
+    }
+}

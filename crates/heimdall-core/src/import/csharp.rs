@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Import of the SSH profiles of the C# Heimdall.
+//! Import of the SSH and RDP profiles of the C# Heimdall.
 //!
 //! Reads `servers.json` and, for the group defaults, `settings.json`. Group defaults are
 //! resolved exactly as `GroupDefaultsDto.Resolve` and `GroupDefaultsDto.ApplyTo` do in the
@@ -34,10 +34,13 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::profile::{DEFAULT_SSH_PORT, ProfileId, SshProfile};
+use crate::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, ProfileId, RdpProfile, SshProfile};
 
 /// `connectionType` of an SSH profile.
 const SSH_CONNECTION_TYPE: &str = "SSH";
+
+/// `connectionType` of an RDP profile.
+const RDP_CONNECTION_TYPE: &str = "RDP";
 
 /// `connectionType` the C# Heimdall assumes when the field is absent.
 const DEFAULT_CONNECTION_TYPE: &str = "RDP";
@@ -48,10 +51,12 @@ const GROUP_SEPARATOR: char = '/';
 /// Why a profile of the C# file was not imported.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SkipReason {
-    /// Not an SSH profile; carries its `connectionType`.
+    /// A protocol not supported yet; carries its `connectionType`.
     NotSsh(String),
     /// Reaches its server through an SSH gateway, not supported yet.
     NeedsJumpHost,
+    /// Reaches its server through a Remote Desktop Gateway, not supported yet.
+    NeedsRdGateway,
     /// Has no host.
     MissingHost,
     /// Has no identifier, so a later import could not update it.
@@ -74,8 +79,10 @@ pub struct Skipped {
 /// Result of an import.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ImportReport {
-    /// Profiles ready to be merged into the store.
+    /// SSH profiles ready to be merged into the store.
     pub profiles: Vec<SshProfile>,
+    /// RDP profiles ready to be merged into the store.
+    pub rdp: Vec<RdpProfile>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
 }
@@ -114,6 +121,14 @@ struct LegacyServer {
     ssh_username: Option<String>,
     ssh_port: Option<i64>,
     ssh_key_path: Option<String>,
+    remote_port: Option<i64>,
+    rdp_username: Option<String>,
+    rdp_domain: Option<String>,
+    rdp_gateway: Option<String>,
+    #[serde(default)]
+    use_direct_connection: bool,
+    /// Absent means the C# default: Network Level Authentication required.
+    rdp_nla: Option<bool>,
 }
 
 fn default_connection_type() -> String {
@@ -159,8 +174,13 @@ pub fn import(
     for mut server in servers.servers {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
             .apply_to(&mut server);
-        match convert(&server) {
-            Ok(profile) => report.profiles.push(profile),
+        let converted = if server.connection_type == RDP_CONNECTION_TYPE {
+            convert_rdp(&server).map(|profile| report.rdp.push(profile))
+        } else {
+            convert(&server).map(|profile| report.profiles.push(profile))
+        };
+        match converted {
+            Ok(()) => {}
             Err(reason) => report.skipped.push(Skipped {
                 id: server.id,
                 name: server.display_name,
@@ -276,5 +296,47 @@ fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
         port,
         username: non_empty(server.ssh_username.as_ref()),
         key_path: non_empty(server.ssh_key_path.as_ref()).map(PathBuf::from),
+    })
+}
+
+fn convert_rdp(server: &LegacyServer) -> Result<RdpProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    if server.remote_server.trim().is_empty() {
+        return Err(SkipReason::MissingHost);
+    }
+    // As `ConnectionService` decides: through the SSH gateway unless the profile asks for a
+    // direct connection or names no gateway.
+    if !server.use_direct_connection && !is_null_or_empty(server.ssh_gateway_id.as_ref()) {
+        return Err(SkipReason::NeedsJumpHost);
+    }
+    if server
+        .rdp_gateway
+        .as_ref()
+        .is_some_and(|gateway| !gateway.trim().is_empty())
+    {
+        return Err(SkipReason::NeedsRdGateway);
+    }
+    let port = match server.remote_port {
+        None => DEFAULT_RDP_PORT,
+        Some(value) => match u16::try_from(value) {
+            Ok(port) if port != 0 => port,
+            _ => return Err(SkipReason::InvalidPort(value)),
+        },
+    };
+    Ok(RdpProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.is_empty() {
+            server.remote_server.clone()
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        host: server.remote_server.trim().to_owned(),
+        port,
+        username: non_empty(server.rdp_username.as_ref()),
+        domain: non_empty(server.rdp_domain.as_ref()),
+        allow_tls_only: server.rdp_nla == Some(false),
     })
 }

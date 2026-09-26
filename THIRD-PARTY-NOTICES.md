@@ -35,5 +35,15 @@ A copy of the crate, patched, is built into the binaries in place of the publish
 - The changes, three lines, and the reason for them are stated in
   [`vendor/PATCHES.md`](vendor/PATCHES.md).
 
+## ironrdp-session 0.11.0, modified
+
+A copy of the crate, patched, is built into the binaries in place of the published one:
+[`vendor/ironrdp-session`](vendor/ironrdp-session).
+
+- Copyright Devolutions Inc. and the IronRDP contributors.
+- Licensed under the MIT license or the Apache License, Version 2.0, at your option; both
+  texts are in that directory.
+- The change and its reason are stated in [`vendor/PATCHES.md`](vendor/PATCHES.md).
+
 Rust crates linked into the binaries are listed with their licences by
 `cargo deny list`; `deny.toml` holds the licences the project accepts.

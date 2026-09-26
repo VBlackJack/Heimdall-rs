@@ -97,6 +97,34 @@ impl KnownRdpHosts {
         Ok(recorded.map_or(Verdict::Unknown, |recorded| Verdict::Changed { recorded }))
     }
 
+    /// Forgets every key recorded for `host:port`, keeping the other lines as they are.
+    /// Whether one was there. The next connection asks about the server again.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read or written.
+    pub fn forget(&self, host: &str, port: u16) -> io::Result<bool> {
+        let text = match fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(error),
+        };
+        let wanted = address(host, port);
+        let kept: Vec<&str> = text
+            .lines()
+            .filter(|line| line.split_whitespace().next() != Some(wanted.as_str()))
+            .collect();
+        if kept.len() == text.lines().count() {
+            return Ok(false);
+        }
+        let mut rewritten = kept.join("\n");
+        if !rewritten.is_empty() {
+            rewritten.push('\n');
+        }
+        fs::write(&self.path, rewritten)?;
+        Ok(true)
+    }
+
     /// Records `host:port` with `key`, creating the file and its folder if needed.
     ///
     /// # Errors

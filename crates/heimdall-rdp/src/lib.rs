@@ -28,7 +28,10 @@ pub mod session;
 mod tls;
 
 pub use certificate::{Fingerprint, ServerCertificate};
-pub use connect::{RdpConfig, RdpConnection, RdpError, Security, Timeouts, connect, connect_over};
+pub use connect::{
+    AskCredentials, Credentials, RdpConfig, RdpConnection, RdpError, Security, Timeouts, connect,
+    connect_over, given,
+};
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use known_hosts::{KnownRdpHosts, Verdict};
 pub use session::{CloseReason, Framebuffer, RdpEvent, RdpSession};

@@ -109,6 +109,7 @@ ui-dialog-detail = Detail: { $detail }
 
 ui-import-skip-not-ssh = not an SSH profile ({ $kind })
 ui-import-skip-jump-host = goes through an SSH gateway, not supported yet
+ui-import-skip-rd-gateway = goes through a Remote Desktop Gateway, not supported yet
 ui-import-skip-missing-host = has no host
 ui-import-skip-missing-id = has no identifier
 ui-import-skip-invalid-port = invalid port { $port }
@@ -190,3 +191,8 @@ ui-profile-error-control = A field holds a control character.
 ui-dialog-delete-profile-title = Delete the profile?
 ui-dialog-delete-profile-body = The profile { $name } will be deleted. Open sessions stay open. This cannot be undone.
 ui-dialog-delete-profile-confirm = Delete
+
+ui-sidebar-rdp-target = RDP { $target }
+ui-session-forget-server-button = Forget this server
+ui-error-security-refused = The server refused the security Heimdall requires (Network Level Authentication): { $detail }
+ui-error-rdp-protocol = RDP error: { $detail }

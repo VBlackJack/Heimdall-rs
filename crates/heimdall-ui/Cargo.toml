@@ -23,6 +23,7 @@ path = "src/lib.rs"
 [dependencies]
 heimdall-app.workspace = true
 heimdall-core.workspace = true
+heimdall-rdp.workspace = true
 heimdall-sftp.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
@@ -30,7 +31,8 @@ i18n-embed.workspace = true
 i18n-embed-fl.workspace = true
 # advanced: custom widgets; tokio: one runtime shared with the SSH client; fira-sans: the
 # window's text font embedded, so it does not depend on the fonts of the machine.
-iced = { workspace = true, features = ["advanced", "tokio", "fira-sans"] }
+# image-without-codecs: the RDP desktop is drawn from raw pixels, nothing is decoded.
+iced = { workspace = true, features = ["advanced", "tokio", "fira-sans", "image-without-codecs"] }
 log.workspace = true
 rust-embed.workspace = true
 tokio.workspace = true

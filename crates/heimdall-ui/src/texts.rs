@@ -42,6 +42,12 @@ pub fn error(error: &UiError) -> String {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::Network { detail } => fl!("ui-error-network", detail = server_text(detail)),
         UiError::Timeout => fl!("ui-error-timeout"),
+        UiError::RdpProtocol { detail } => {
+            fl!("ui-error-rdp-protocol", detail = server_text(detail))
+        }
+        UiError::SecurityRefused { detail } => {
+            fl!("ui-error-security-refused", detail = server_text(detail))
+        }
         UiError::HostKeyChanged { recorded, offered } => fl!(
             "ui-error-hostkey-changed",
             recorded = recorded.as_str(),
@@ -111,6 +117,7 @@ pub fn skip_reason(reason: &SkipReason) -> String {
     match reason {
         SkipReason::NotSsh(kind) => fl!("ui-import-skip-not-ssh", kind = server_text(kind)),
         SkipReason::NeedsJumpHost => fl!("ui-import-skip-jump-host"),
+        SkipReason::NeedsRdGateway => fl!("ui-import-skip-rd-gateway"),
         SkipReason::MissingHost => fl!("ui-import-skip-missing-host"),
         SkipReason::MissingId => fl!("ui-import-skip-missing-id"),
         SkipReason::InvalidPort(port) => {

@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
-use heimdall_core::profile::{DEFAULT_SSH_PORT, SshProfile};
+use heimdall_core::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, SshProfile};
 
 /// Environment variable naming a directory that holds a real C# `servers.json`, and
 /// optionally `settings.json`, for [`a_real_legacy_file_imports_without_error`].
@@ -71,16 +71,61 @@ fn a_profile_without_a_name_is_named_after_its_host() {
 fn a_profile_without_connection_type_is_rdp_as_in_the_csharp() {
     let json = servers(r#"{"id": "a", "remoteServer": "h"}"#);
     let report = import(&json, None).expect("valid JSON");
+    assert!(report.profiles.is_empty());
+    assert_eq!(report.rdp.len(), 1);
+    assert_eq!(report.rdp[0].port, DEFAULT_RDP_PORT);
+}
+
+#[test]
+fn an_rdp_profile_keeps_its_port_user_and_domain() {
+    let json = servers(
+        r#"{"id": "r", "displayName": "DC", "remoteServer": " dc.lab ", "connectionType": "RDP",
+            "remotePort": 3390, "rdpUsername": "admin", "rdpDomain": "LAB", "group": "Win"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let profile = &report.rdp[0];
+    assert_eq!(profile.id.as_str(), "r");
+    assert_eq!(profile.name, "DC");
+    assert_eq!(profile.host, "dc.lab");
+    assert_eq!(profile.port, 3390);
+    assert_eq!(profile.username.as_deref(), Some("admin"));
+    assert_eq!(profile.domain.as_deref(), Some("LAB"));
+    assert_eq!(profile.group.as_deref(), Some("Win"));
+}
+
+#[test]
+fn an_rdp_profile_through_a_gateway_is_left_out_unless_direct() {
+    let json = servers(
+        r#"{"id": "tunnel", "remoteServer": "h", "connectionType": "RDP", "sshGatewayId": "g"},
+           {"id": "direct", "remoteServer": "h", "connectionType": "RDP", "sshGatewayId": "g",
+            "useDirectConnection": true},
+           {"id": "rdg", "remoteServer": "h", "connectionType": "RDP", "rdpGateway": "rdg.lab"},
+           {"id": "rdg-blank", "remoteServer": "h", "connectionType": "RDP", "rdpGateway": " "},
+           {"id": "port", "remoteServer": "h", "connectionType": "RDP", "remotePort": 0}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let kept: Vec<&str> = report.rdp.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(kept, ["direct", "rdg-blank"]);
+    let reasons: Vec<(String, SkipReason)> = report
+        .skipped
+        .into_iter()
+        .map(|skipped| (skipped.id, skipped.reason))
+        .collect();
     assert_eq!(
-        report.skipped[0].reason,
-        SkipReason::NotSsh("RDP".to_owned())
+        reasons,
+        vec![
+            ("tunnel".to_owned(), SkipReason::NeedsJumpHost),
+            ("rdg".to_owned(), SkipReason::NeedsRdGateway),
+            ("port".to_owned(), SkipReason::InvalidPort(0)),
+        ]
     );
 }
 
 #[test]
 fn every_skip_reason_is_reported() {
     let json = servers(
-        r#"{"id": "rdp", "remoteServer": "h", "connectionType": "RDP"},
+        r#"{"id": "vnc", "remoteServer": "h", "connectionType": "VNC"},
            {"id": "gw", "remoteServer": "h", "connectionType": "SSH", "sshGatewayId": "g1"},
            {"id": "nohost", "remoteServer": "  ", "connectionType": "SSH"},
            {"id": "", "remoteServer": "h", "connectionType": "SSH"},
@@ -97,7 +142,7 @@ fn every_skip_reason_is_reported() {
     assert_eq!(
         reasons,
         vec![
-            ("rdp".to_owned(), SkipReason::NotSsh("RDP".to_owned())),
+            ("vnc".to_owned(), SkipReason::NotSsh("VNC".to_owned())),
             ("gw".to_owned(), SkipReason::NeedsJumpHost),
             ("nohost".to_owned(), SkipReason::MissingHost),
             (String::new(), SkipReason::MissingId),
@@ -182,7 +227,8 @@ fn a_group_default_connection_type_applies_only_to_an_empty_one() {
     let report = import(&json, Some(&defaults)).expect("valid JSON");
     assert_eq!(report.profiles.len(), 1);
     assert_eq!(report.profiles[0].id.as_str(), "empty");
-    assert_eq!(report.skipped[0].id, "rdp");
+    assert_eq!(report.rdp.len(), 1, "an explicit RDP stays RDP");
+    assert_eq!(report.rdp[0].id.as_str(), "rdp");
 }
 
 #[test]
@@ -225,5 +271,24 @@ fn a_real_legacy_file_imports_without_error() {
             .iter()
             .map(|skipped| &skipped.reason)
             .collect::<Vec<_>>()
+    );
+}
+
+#[test]
+fn an_rdp_profile_without_nla_allows_plain_tls_and_the_default_does_not() {
+    let json = servers(
+        r#"{"id": "nla", "remoteServer": "h", "connectionType": "RDP"},
+           {"id": "tls", "remoteServer": "h", "connectionType": "RDP", "rdpNla": false},
+           {"id": "explicit", "remoteServer": "h", "connectionType": "RDP", "rdpNla": true}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let allowed: Vec<(&str, bool)> = report
+        .rdp
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.allow_tls_only))
+        .collect();
+    assert_eq!(
+        allowed,
+        [("nla", false), ("tls", true), ("explicit", false)]
     );
 }
