@@ -54,6 +54,9 @@ const MIN_DEADLINE_TICK: Duration = Duration::from_millis(10);
 /// Extension renaming over an existing target.
 const POSIX_RENAME: &[u8] = b"posix-rename@openssh.com";
 
+/// Extension flushing an open file to stable storage.
+const FSYNC: &[u8] = b"fsync@openssh.com";
+
 /// Extension reporting the server's size limits.
 const LIMITS: &[u8] = b"limits@openssh.com";
 
@@ -831,6 +834,38 @@ impl SftpClient {
         }
         let (from, to) = (from.clone(), to.clone());
         self.expect_ok(|id| Request::Rename { id, from, to }).await
+    }
+
+    /// Flushes an open file to the server's storage, when the server offers
+    /// `fsync@openssh.com`; returns whether it did.
+    ///
+    /// # Errors
+    ///
+    /// [`SftpError`].
+    pub async fn fsync(&self, handle: &Handle) -> Result<bool, SftpError> {
+        if !self.has_extension(FSYNC) {
+            return Ok(false);
+        }
+        let mut data = Writer::new();
+        data.string(&handle.0);
+        let data = data.into_bytes();
+        match self
+            .request(Expect::Extended, |id| Request::Extended {
+                id,
+                name: FSYNC.to_vec(),
+                data,
+            })
+            .await?
+        {
+            Response::Status {
+                code: StatusCode::Ok,
+                ..
+            } => Ok(true),
+            Response::Status { code, message, .. } => Err(status_error(code, message)),
+            _ => Err(SftpError::Closed(Closed::Protocol(
+                "fsync answered with data".to_owned(),
+            ))),
+        }
     }
 
     /// The target of symbolic link `path`.
