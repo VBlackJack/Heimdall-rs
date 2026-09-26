@@ -20,6 +20,7 @@ mod desktop_texture;
 pub mod desktop_view;
 mod files_view;
 mod i18n;
+pub mod keysym;
 mod logging;
 pub mod shell;
 pub mod terminal_view;

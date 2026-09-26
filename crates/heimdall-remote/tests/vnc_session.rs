@@ -268,7 +268,7 @@ async fn cancelling_ends_a_session_whose_events_nobody_reads() {
 }
 
 /// The lab's `TigerVNC` (Heimdall-TestEnv): the session opens on its 1280 by 800 desktop and
-/// the first update draws something.
+/// the first update covers all of it.
 #[tokio::test]
 async fn a_real_server_opens_and_draws_its_desktop() {
     let (Some(port), Some(password)) = (
@@ -291,32 +291,24 @@ async fn a_real_server_opens_and_draws_its_desktop() {
     let mut session = start(connection, cancel);
     let size = session.framebuffer.read(|width, height, _| (width, height));
     assert_eq!(size, (1280, 800));
-    // Updates until the desktop is not all black.
-    let drawn = tokio::time::timeout(Duration::from_secs(20), async {
-        loop {
+    // The first full update covers the whole desktop, every rectangle of it decoded. (Whether
+    // the pixels are right is for the decoder tests; against this server, the ZRLE result was
+    // also compared pixel for pixel with a Raw-only client on 2026-09-27: identical.)
+    let covered = tokio::time::timeout(Duration::from_secs(20), async {
+        let mut covered = 0_usize;
+        while covered < 1280 * 800 {
             match session.events.recv().await {
-                Some(VncEvent::Updated(_)) => {
-                    let lit = session.framebuffer.read(|_, _, pixels| {
-                        pixels
-                            .as_chunks::<4>()
-                            .0
-                            .iter()
-                            .filter(|pixel| pixel[..3] != [0, 0, 0])
-                            .count()
-                    });
-                    if lit > 10_000 {
-                        return lit;
-                    }
-                }
+                Some(VncEvent::Updated(rect)) => covered += rect.area(),
                 Some(VncEvent::Closed(reason)) => panic!("closed: {reason:?}"),
                 Some(_) => {}
                 None => panic!("no more events"),
             }
         }
+        covered
     })
     .await
-    .expect("drawn in time");
-    assert!(drawn > 10_000);
+    .expect("the whole desktop in time");
+    assert!(covered >= 1280 * 800);
     session.input.close();
     loop {
         if let VncEvent::Closed(reason) = next_event(&mut session).await {

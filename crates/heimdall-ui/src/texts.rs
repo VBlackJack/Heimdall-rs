@@ -45,6 +45,9 @@ pub fn error(error: &UiError) -> String {
         UiError::RdpProtocol { detail } => {
             fl!("ui-error-rdp-protocol", detail = server_text(detail))
         }
+        UiError::VncProtocol { detail } => {
+            fl!("ui-error-vnc-protocol", detail = server_text(detail))
+        }
         UiError::SecurityRefused { detail } => {
             fl!("ui-error-security-refused", detail = server_text(detail))
         }

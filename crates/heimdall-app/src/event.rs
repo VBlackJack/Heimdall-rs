@@ -25,6 +25,7 @@ use heimdall_ssh::{
 };
 
 use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
+use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use heimdall_sftp::SftpClient;
 use tokio::sync::mpsc;
 
@@ -43,6 +44,17 @@ pub enum QuestionKind {
     Passphrase(PassphraseQuestion),
     /// A keyboard-interactive round; its texts come from the server.
     KeyboardInteractive(KeyboardInteractiveQuestion),
+    /// The password of a server with no account, as VNC has.
+    ServerPassword(ServerPasswordQuestion),
+}
+
+/// The password of a server with no account.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerPasswordQuestion {
+    /// Host.
+    pub host: String,
+    /// Port.
+    pub port: u16,
 }
 
 /// The user's answer to a question.
@@ -103,6 +115,13 @@ pub enum ConnectionEvent {
         /// Where keyboard and mouse input goes.
         input: mpsc::UnboundedSender<Vec<Operation>>,
     },
+    /// The VNC session is open.
+    VncReady {
+        /// The desktop, drawn by the UI.
+        framebuffer: VncFramebuffer,
+        /// Where keyboard and mouse input goes.
+        input: VncInput,
+    },
     /// The RDP desktop changed: redraw it.
     DesktopFrame,
     /// The shell is open.
@@ -156,6 +175,7 @@ impl fmt::Debug for ConnectionEvent {
                 .field("fingerprint", &fingerprint.to_string())
                 .finish(),
             Self::RdpReady { .. } => f.write_str("RdpReady"),
+            Self::VncReady { .. } => f.write_str("VncReady"),
             Self::DesktopFrame => f.write_str("DesktopFrame"),
             Self::Connected { .. } => f.write_str("Connected"),
             Self::FilesReady { .. } => f.write_str("FilesReady"),

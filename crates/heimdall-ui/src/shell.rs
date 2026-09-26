@@ -30,13 +30,14 @@ use heimdall_app::files::{
 use heimdall_app::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileDraft, ProfileField};
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
+use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect,
-    FilesMessage, Message as AppMessage, NameAction, Phase, Prompt, Purpose, QuestionId,
+    Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
+    Effect, FilesMessage, Message as AppMessage, NameAction, Phase, Prompt, Purpose, QuestionId,
     QuestionKind, Tab, TabId, UiError, connection_events, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::{RdpProfile, SshProfile, TelnetProfile, display_address};
+use heimdall_core::profile::{RdpProfile, SshProfile, TelnetProfile, VncProfile, display_address};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -210,7 +211,10 @@ impl fmt::Debug for Message {
 fn field_count(kind: &QuestionKind) -> usize {
     match kind {
         QuestionKind::KeyboardInteractive(question) => question.prompts.len(),
-        QuestionKind::Username(_) | QuestionKind::Password(_) | QuestionKind::Passphrase(_) => 1,
+        QuestionKind::Username(_)
+        | QuestionKind::Password(_)
+        | QuestionKind::Passphrase(_)
+        | QuestionKind::ServerPassword(_) => 1,
     }
 }
 
@@ -220,9 +224,9 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
     let secret = |text: &mut Zeroizing<String>| Secret::new(std::mem::take(&mut **text));
     match kind {
         QuestionKind::Username(_) => Answer::Text(std::mem::take(&mut *typed[0])),
-        QuestionKind::Password(_) | QuestionKind::Passphrase(_) => {
-            Answer::Secret(secret(&mut typed[0]))
-        }
+        QuestionKind::Password(_)
+        | QuestionKind::Passphrase(_)
+        | QuestionKind::ServerPassword(_) => Answer::Secret(secret(&mut typed[0])),
         QuestionKind::KeyboardInteractive(_) => {
             Answer::Secrets(typed.iter_mut().map(secret).collect())
         }
@@ -235,6 +239,7 @@ enum Listed<'a> {
     Ssh(&'a SshProfile),
     Rdp(&'a RdpProfile),
     Telnet(&'a TelnetProfile),
+    Vnc(&'a VncProfile),
 }
 
 impl<'a> Listed<'a> {
@@ -243,6 +248,7 @@ impl<'a> Listed<'a> {
             Self::Ssh(profile) => profile.group.as_deref(),
             Self::Rdp(profile) => profile.group.as_deref(),
             Self::Telnet(profile) => profile.group.as_deref(),
+            Self::Vnc(profile) => profile.group.as_deref(),
         }
     }
 
@@ -251,6 +257,7 @@ impl<'a> Listed<'a> {
             Self::Ssh(profile) => &profile.name,
             Self::Rdp(profile) => &profile.name,
             Self::Telnet(profile) => &profile.name,
+            Self::Vnc(profile) => &profile.name,
         }
     }
 }
@@ -284,6 +291,14 @@ fn profile_row(profile: Listed<'_>) -> Element<'_, Message> {
             AppMessage::OpenTelnet(profile.id.clone()),
             fl!(
                 "ui-sidebar-telnet-target",
+                target = target(&profile.host, profile.port, None)
+            ),
+            row![],
+        ),
+        Listed::Vnc(profile) => (
+            AppMessage::OpenVnc(profile.id.clone()),
+            fl!(
+                "ui-sidebar-vnc-target",
                 target = target(&profile.host, profile.port, None)
             ),
             row![],
@@ -718,6 +733,15 @@ impl Shell {
                 let events = stream::once(async move { telnet_events(*request) }).flatten();
                 self.connection_task(tab, attempt, events)
             }
+            Effect::ConnectVnc {
+                tab,
+                attempt,
+                request,
+            } => {
+                let registry = self.registry.clone();
+                let events = stream::once(async move { vnc_events(*request, registry) }).flatten();
+                self.connection_task(tab, attempt, events)
+            }
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
                     log::debug!("question {} was no longer waiting", question.value());
@@ -828,6 +852,7 @@ impl Shell {
             .map(Listed::Ssh)
             .chain(self.app.rdp_profiles().iter().map(Listed::Rdp))
             .chain(self.app.telnet_profiles().iter().map(Listed::Telnet))
+            .chain(self.app.vnc_profiles().iter().map(Listed::Vnc))
             .collect();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
@@ -932,15 +957,13 @@ impl Shell {
             } => host_key_card(tab.id, host, *port, fingerprint),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
-                (_, Some(pane)) => DesktopView::new(pane, tab.id, Message::App)
-                    .interactive(self.app.dialog.is_none())
-                    .into(),
+                (_, Some(pane)) => self.desktop(tab, pane),
                 _ => terminal(tab, self.app.dialog.is_none()),
             },
             // A remote desktop that ended leaves nothing to look at.
-            Phase::Closed { .. } if tab.purpose == Purpose::Rdp => center(card(
-                column![text(fl!("ui-session-closed")), close()].spacing(SPACING),
-            ))
+            Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => center(
+                card(column![text(fl!("ui-session-closed")), close()].spacing(SPACING)),
+            )
             .into(),
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
@@ -1016,6 +1039,24 @@ impl Shell {
             .into()
     }
 
+    /// The remote desktop of a connected tab.
+    fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
+        let view =
+            DesktopView::new(pane, tab.id, Message::App).interactive(self.app.dialog.is_none());
+        if tab.purpose != Purpose::Vnc {
+            return view.into();
+        }
+        // Always in sight: nothing on a VNC connection is encrypted.
+        column![
+            text(fl!("ui-session-vnc-unencrypted"))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            view,
+        ]
+        .spacing(SPACING / 2.0)
+        .into()
+    }
+
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
         let id = prompt.question;
         let profile = &tab.profile;
@@ -1039,6 +1080,14 @@ impl Shell {
                     form = form.push(text(fl!("ui-prompt-password-retry")));
                 }
                 form = form.push(self.field(tab.id, id, 0, true, true));
+            }
+            QuestionKind::ServerPassword(asked) => {
+                form = form
+                    .push(text(fl!(
+                        "ui-prompt-server-password-title",
+                        target = target(&asked.host, asked.port, None)
+                    )))
+                    .push(self.field(tab.id, id, 0, true, true));
             }
             QuestionKind::Passphrase(asked) => {
                 form = form.push(text(fl!(

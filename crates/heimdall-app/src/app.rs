@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile};
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, TerminalSize,
@@ -53,11 +53,13 @@ use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
 use crate::telnet_driver::TelnetRequest;
 use crate::text::server_text;
+use crate::vnc_driver::VncRequest;
 
 mod files_tab;
 mod profiles;
 mod rdp_tab;
 mod telnet_tab;
+mod vnc_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
@@ -131,6 +133,8 @@ pub enum Message {
     OpenRdp(ProfileId),
     /// Open a Telnet tab for a saved Telnet profile.
     OpenTelnet(ProfileId),
+    /// Open a VNC tab for a saved VNC profile.
+    OpenVnc(ProfileId),
     /// Keyboard or mouse input for the remote desktop of a tab.
     DesktopInput {
         /// Tab.
@@ -253,6 +257,7 @@ impl fmt::Debug for Message {
             Self::OpenFiles(id) => write!(f, "OpenFiles({id})"),
             Self::OpenRdp(id) => write!(f, "OpenRdp({id})"),
             Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
+            Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             // What was typed is never shown, as for a terminal.
             Self::DesktopInput { tab, inputs } => {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
@@ -333,6 +338,15 @@ pub enum Effect {
         /// What to connect to.
         request: Box<TelnetRequest>,
     },
+    /// Start a VNC attempt and feed its events back as [`Message::Connection`].
+    ConnectVnc {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to connect to.
+        request: Box<VncRequest>,
+    },
     /// Deliver an answer through the registry.
     Answer {
         /// Question.
@@ -406,6 +420,9 @@ impl fmt::Debug for Effect {
             }
             Self::ConnectTelnet { tab, attempt, .. } => {
                 write!(f, "ConnectTelnet({}, {})", tab.value(), attempt.value())
+            }
+            Self::ConnectVnc { tab, attempt, .. } => {
+                write!(f, "ConnectVnc({}, {})", tab.value(), attempt.value())
             }
             Self::Answer { question, answer } => {
                 write!(f, "Answer({}, {answer:?})", question.value())
@@ -591,6 +608,8 @@ pub enum TabProfile {
     Rdp(RdpProfile),
     /// A Telnet terminal tab.
     Telnet(TelnetProfile),
+    /// A VNC remote desktop tab.
+    Vnc(VncProfile),
 }
 
 impl TabProfile {
@@ -601,6 +620,7 @@ impl TabProfile {
             Self::Ssh(profile) => &profile.name,
             Self::Rdp(profile) => &profile.name,
             Self::Telnet(profile) => &profile.name,
+            Self::Vnc(profile) => &profile.name,
         }
     }
 
@@ -611,6 +631,7 @@ impl TabProfile {
             Self::Ssh(profile) => &profile.host,
             Self::Rdp(profile) => &profile.host,
             Self::Telnet(profile) => &profile.host,
+            Self::Vnc(profile) => &profile.host,
         }
     }
 
@@ -621,6 +642,7 @@ impl TabProfile {
             Self::Ssh(profile) => profile.port,
             Self::Rdp(profile) => profile.port,
             Self::Telnet(profile) => profile.port,
+            Self::Vnc(profile) => profile.port,
         }
     }
 
@@ -630,8 +652,8 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => profile.username.as_deref(),
             Self::Rdp(profile) => profile.username.as_deref(),
-            // Telnet asks for its account in the session.
-            Self::Telnet(_) => None,
+            // Telnet asks for its account in the session; VNC has none.
+            Self::Telnet(_) | Self::Vnc(_) => None,
         }
     }
 }
@@ -802,6 +824,12 @@ impl App {
         self.store.telnet_profiles()
     }
 
+    /// Saved VNC profiles.
+    #[must_use]
+    pub fn vnc_profiles(&self) -> &[VncProfile] {
+        self.store.vnc_profiles()
+    }
+
     /// Whether the C# Heimdall's data can be imported.
     #[must_use]
     pub fn can_import(&self) -> bool {
@@ -834,6 +862,7 @@ impl App {
             Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
             Message::OpenRdp(id) => self.open_rdp(&id),
             Message::OpenTelnet(id) => self.open_telnet(&id),
+            Message::OpenVnc(id) => self.open_vnc(&id),
             Message::DesktopInput { tab, inputs } => {
                 self.desktop_input(tab, &inputs);
                 Vec::new()
@@ -1021,6 +1050,10 @@ impl App {
             | ConnectionEvent::RdpReady { .. }
             | ConnectionEvent::DesktopFrame) => {
                 rdp_tab::apply(tab, event);
+                Vec::new()
+            }
+            event @ ConnectionEvent::VncReady { .. } => {
+                vnc_tab::apply(tab, event);
                 Vec::new()
             }
             ConnectionEvent::Connected { input } => {

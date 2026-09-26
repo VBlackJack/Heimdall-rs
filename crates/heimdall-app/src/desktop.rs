@@ -18,8 +18,10 @@
 //! does on it, translated for the protocol behind it.
 
 use std::fmt;
+use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+use heimdall_remote::vnc::VncInput;
 use tokio::sync::mpsc;
 
 /// The pixels of a desktop.
@@ -27,6 +29,8 @@ use tokio::sync::mpsc;
 pub enum DesktopFramebuffer {
     /// Decoded by an RDP session.
     Rdp(heimdall_rdp::Framebuffer),
+    /// Decoded by a VNC session.
+    Vnc(heimdall_remote::vnc::Framebuffer),
 }
 
 impl fmt::Debug for DesktopFramebuffer {
@@ -41,6 +45,7 @@ impl DesktopFramebuffer {
     pub fn read<T>(&self, read: impl FnOnce(u16, u16, &[u8]) -> T) -> T {
         match self {
             Self::Rdp(framebuffer) => framebuffer.read(read),
+            Self::Vnc(framebuffer) => framebuffer.read(read),
         }
     }
 }
@@ -103,6 +108,18 @@ pub enum DesktopInput {
 /// Where the input of a desktop goes.
 enum DesktopSink {
     Rdp(mpsc::UnboundedSender<Vec<Operation>>),
+    Vnc(VncSink),
+}
+
+/// A VNC session's input, and the pointer state VNC reports whole with every event.
+struct VncSink {
+    input: VncInput,
+    /// Buttons held, as the RFB mask.
+    buttons: AtomicU8,
+    /// Last pointer position, column in the high half.
+    position: AtomicU32,
+    /// Watch only: nothing is sent.
+    view_only: bool,
 }
 
 /// The desktop of a tab, once its session is open.
@@ -136,6 +153,24 @@ impl DesktopPane {
         }
     }
 
+    /// The desktop of a VNC session; `view_only` sends it nothing.
+    pub(crate) fn vnc(
+        framebuffer: heimdall_remote::vnc::Framebuffer,
+        input: VncInput,
+        view_only: bool,
+    ) -> Self {
+        Self {
+            framebuffer: DesktopFramebuffer::Vnc(framebuffer),
+            generation: 0,
+            sink: DesktopSink::Vnc(VncSink {
+                input,
+                buttons: AtomicU8::new(0),
+                position: AtomicU32::new(0),
+                view_only,
+            }),
+        }
+    }
+
     /// Sends `inputs` to the session, in the protocol's terms. A closed session drops its
     /// receiver: the input then goes nowhere, as it should.
     pub(crate) fn send(&self, inputs: &[DesktopInput]) {
@@ -146,6 +181,100 @@ impl DesktopPane {
                     let _ = sender.send(operations);
                 }
             }
+            DesktopSink::Vnc(sink) => sink.send(inputs),
+        }
+    }
+}
+
+/// Wheel units of one notch.
+const WHEEL_NOTCH: i32 = 120;
+
+/// RFB button bits: buttons 1 to 8 as bits 0 to 7.
+const VNC_LEFT: u8 = 1;
+const VNC_MIDDLE: u8 = 1 << 1;
+const VNC_RIGHT: u8 = 1 << 2;
+const VNC_WHEEL_UP: u8 = 1 << 3;
+const VNC_WHEEL_DOWN: u8 = 1 << 4;
+const VNC_WHEEL_LEFT: u8 = 1 << 5;
+const VNC_WHEEL_RIGHT: u8 = 1 << 6;
+const VNC_BACK: u8 = 1 << 7;
+
+/// A button's RFB bit. Forward is button 9, past the 8 the mask holds: it has none.
+fn vnc_button(button: PointerButton) -> Option<u8> {
+    match button {
+        PointerButton::Left => Some(VNC_LEFT),
+        PointerButton::Middle => Some(VNC_MIDDLE),
+        PointerButton::Right => Some(VNC_RIGHT),
+        PointerButton::Back => Some(VNC_BACK),
+        PointerButton::Forward => None,
+    }
+}
+
+impl VncSink {
+    /// Sends `inputs`. VNC reports the pointer whole each time: position and every button
+    /// held. A wheel notch is a press and a release of buttons 4 to 7; a key goes by keysym,
+    /// and one the view could not name is dropped.
+    fn send(&self, inputs: &[DesktopInput]) {
+        if self.view_only {
+            return;
+        }
+        for input in inputs {
+            match *input {
+                DesktopInput::Move { x, y } => self.pointer(x, y),
+                DesktopInput::Button {
+                    button,
+                    pressed,
+                    x,
+                    y,
+                } => {
+                    if let Some(bit) = vnc_button(button) {
+                        if pressed {
+                            self.buttons.fetch_or(bit, Ordering::Relaxed);
+                        } else {
+                            self.buttons.fetch_and(!bit, Ordering::Relaxed);
+                        }
+                    }
+                    self.pointer(x, y);
+                }
+                DesktopInput::Wheel { vertical, units } => self.wheel(vertical, units),
+                DesktopInput::Key {
+                    keysym: Some(keysym),
+                    pressed,
+                    ..
+                } => {
+                    let _ = self.input.key(keysym, pressed);
+                }
+                DesktopInput::Key { keysym: None, .. } => {}
+            }
+        }
+    }
+
+    fn pointer(&self, x: u16, y: u16) {
+        self.position
+            .store((u32::from(x) << 16) | u32::from(y), Ordering::Relaxed);
+        let _ = self
+            .input
+            .pointer(self.buttons.load(Ordering::Relaxed), x, y);
+    }
+
+    fn wheel(&self, vertical: bool, units: i16) {
+        let bit = match (vertical, units > 0) {
+            (true, true) => VNC_WHEEL_UP,
+            (true, false) => VNC_WHEEL_DOWN,
+            (false, true) => VNC_WHEEL_RIGHT,
+            (false, false) => VNC_WHEEL_LEFT,
+        };
+        // Whole notches, and at least one for any turn.
+        let notches = ((i32::from(units).abs() + WHEEL_NOTCH / 2) / WHEEL_NOTCH).max(1);
+        let position = self.position.load(Ordering::Relaxed);
+        let (x, y) = (
+            u16::try_from(position >> 16).unwrap_or(0),
+            u16::try_from(position & 0xffff).unwrap_or(0),
+        );
+        let held = self.buttons.load(Ordering::Relaxed);
+        for _ in 0..notches {
+            let _ = self.input.pointer(held | bit, x, y);
+            let _ = self.input.pointer(held, x, y);
         }
     }
 }
