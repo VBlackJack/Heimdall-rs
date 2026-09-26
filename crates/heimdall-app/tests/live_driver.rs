@@ -40,6 +40,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
     let mut options = ConnectOptions::new(known_hosts);
     options.agent = AgentSource::Disabled;
     ConnectRequest {
+        purpose: heimdall_app::Purpose::Shell,
         profile: SshProfile {
             id: ProfileId::new("live"),
             name: "live".to_owned(),
@@ -121,4 +122,69 @@ async fn the_driver_connects_answers_and_runs_a_command() {
         "no probe output in time; screen: {screen:?}"
     );
     assert_eq!(registry.pending(), 0, "no question left behind");
+}
+
+#[tokio::test]
+async fn the_driver_opens_an_sftp_session_that_lists_the_home_folder() {
+    let Some(port) = std::env::var(LIVE_PORT_VARIABLE)
+        .ok()
+        .and_then(|value| value.parse::<u16>().ok())
+    else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("temp dir");
+    let known_hosts = dir.path().join("known_hosts");
+    let registry = AnswerRegistry::default();
+    let mut first = connection_events(request(port, known_hosts.clone()), registry.clone());
+    let Some(ConnectionEvent::UnknownHostKey {
+        host,
+        port: key_port,
+        key,
+        ..
+    }) = tokio::time::timeout(STEP_TIMEOUT, first.next())
+        .await
+        .expect("in time")
+    else {
+        panic!("expected a first contact");
+    };
+    KnownHosts::new(&known_hosts)
+        .learn(&host, key_port, &key)
+        .expect("learn");
+
+    let mut files_request = request(port, known_hosts);
+    files_request.purpose = heimdall_app::Purpose::Files;
+    let mut events = connection_events(files_request, registry.clone());
+    let client = tokio::time::timeout(STEP_TIMEOUT, async {
+        while let Some(event) = events.next().await {
+            match event {
+                ConnectionEvent::Question { question, kind } => {
+                    let secret = Secret::new(LIVE_PASSWORD.to_owned());
+                    let answer = match kind {
+                        heimdall_app::QuestionKind::KeyboardInteractive(round) => {
+                            Answer::Secrets(vec![secret; round.prompts.len()])
+                        }
+                        _ => Answer::Secret(secret),
+                    };
+                    assert!(registry.answer(question, Some(answer)), "someone waits");
+                }
+                ConnectionEvent::FilesReady { client } => return client,
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        panic!("the stream ended first");
+    })
+    .await
+    .expect("in time");
+    let (home, _entries) = tokio::time::timeout(
+        STEP_TIMEOUT,
+        heimdall_app::files::list_remote(client, heimdall_sftp::RemotePath::from(".")),
+    )
+    .await
+    .expect("in time")
+    .expect("listed");
+    assert_eq!(
+        home.as_bytes(),
+        b"/home/pwuser",
+        "the session starts in the home folder"
+    );
 }

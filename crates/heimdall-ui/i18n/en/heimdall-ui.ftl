@@ -79,6 +79,10 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sessions are still open and will be disconnected.
 }
 ui-dialog-exit-confirm = Quit
+ui-dialog-overwrite-title = Replace the file?
+ui-dialog-overwrite-local-body = { $name } already exists in the local folder. The download replaces it.
+ui-dialog-overwrite-remote-body = { $name } already exists on the server. The upload replaces it.
+ui-dialog-overwrite-confirm = Replace
 ui-dialog-paste-title = Paste several lines?
 ui-dialog-paste-body = { $count ->
     [one] The text holds one line. The shell may run it as a command as soon as it arrives.
@@ -99,3 +103,45 @@ ui-import-skip-jump-host = goes through an SSH gateway, not supported yet
 ui-import-skip-missing-host = has no host
 ui-import-skip-missing-id = has no identifier
 ui-import-skip-invalid-port = invalid port { $port }
+
+ui-sidebar-files-button = Files
+ui-tab-files-title = { $name } (files)
+
+ui-files-local-title = This computer
+ui-files-remote-title = Server
+ui-files-up-button = Up
+ui-files-refresh-button = Refresh
+ui-files-download-button = Download
+ui-files-upload-button = Upload
+ui-files-loading = Loading...
+ui-files-empty = Empty folder
+ui-files-cancel-button = Cancel
+ui-files-transfers-title = Transfers
+ui-files-transfer-download = Download of { $name }
+ui-files-transfer-upload = Upload of { $name }
+ui-files-state-running = { $done } of { $total }
+ui-files-state-running-unknown = { $done }
+ui-files-state-done = Done
+ui-files-state-cancelled = Cancelled; start it again to resume
+ui-files-state-failed = Failed: { $reason }
+ui-files-size-bytes = { $value } B
+ui-files-size-kib = { $value } KiB
+ui-files-size-mib = { $value } MiB
+ui-files-size-gib = { $value } GiB
+
+ui-files-error-server = The server refused: { $message }
+ui-files-error-no-such-file = the file does not exist
+ui-files-error-permission-denied = permission denied
+ui-files-error-unsupported = the server does not support this operation
+ui-files-error-failure = the operation failed
+ui-files-error-session = The SFTP session ended.
+ui-files-error-local = This computer refused: { $detail }
+ui-files-error-unsafe-name = The server's name "{ $name }" cannot be used here: { $reason }.
+ui-files-error-not-a-file = Only files can be transferred for now, not folders or special files.
+ui-files-name-not-a-name = it is not a file name
+ui-files-name-separator = it contains a folder separator
+ui-files-name-control = it contains a control character
+ui-files-name-forbidden = it contains "{ $character }"
+ui-files-name-reserved = it is a name Windows reserves
+ui-files-name-trailing = it ends with a dot or a space
+ui-files-name-too-long = it is too long

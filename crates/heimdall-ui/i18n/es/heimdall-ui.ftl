@@ -79,6 +79,10 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sesiones siguen abiertas y se desconectarán.
 }
 ui-dialog-exit-confirm = Salir
+ui-dialog-overwrite-title = ¿Reemplazar el archivo?
+ui-dialog-overwrite-local-body = { $name } ya existe en la carpeta local. La descarga lo reemplaza.
+ui-dialog-overwrite-remote-body = { $name } ya existe en el servidor. El envío lo reemplaza.
+ui-dialog-overwrite-confirm = Reemplazar
 ui-dialog-paste-title = ¿Pegar varias líneas?
 ui-dialog-paste-body = { $count ->
     [one] El texto contiene una línea. El shell puede ejecutarla como un comando en cuanto llega.
@@ -99,3 +103,45 @@ ui-import-skip-jump-host = pasa por una pasarela SSH, aún no soportado
 ui-import-skip-missing-host = no tiene host
 ui-import-skip-missing-id = no tiene identificador
 ui-import-skip-invalid-port = puerto no válido { $port }
+
+ui-sidebar-files-button = Archivos
+ui-tab-files-title = { $name } (archivos)
+
+ui-files-local-title = Este equipo
+ui-files-remote-title = Servidor
+ui-files-up-button = Subir
+ui-files-refresh-button = Actualizar
+ui-files-download-button = Descargar
+ui-files-upload-button = Enviar
+ui-files-loading = Cargando...
+ui-files-empty = Carpeta vacía
+ui-files-cancel-button = Cancelar
+ui-files-transfers-title = Transferencias
+ui-files-transfer-download = Descarga de { $name }
+ui-files-transfer-upload = Envío de { $name }
+ui-files-state-running = { $done } de { $total }
+ui-files-state-running-unknown = { $done }
+ui-files-state-done = Terminado
+ui-files-state-cancelled = Cancelado; vuelva a iniciarlo para reanudar
+ui-files-state-failed = Error: { $reason }
+ui-files-size-bytes = { $value } B
+ui-files-size-kib = { $value } KiB
+ui-files-size-mib = { $value } MiB
+ui-files-size-gib = { $value } GiB
+
+ui-files-error-server = El servidor lo rechazó: { $message }
+ui-files-error-no-such-file = el archivo no existe
+ui-files-error-permission-denied = permiso denegado
+ui-files-error-unsupported = el servidor no admite esta operación
+ui-files-error-failure = la operación falló
+ui-files-error-session = La sesión SFTP terminó.
+ui-files-error-local = Este equipo lo rechazó: { $detail }
+ui-files-error-unsafe-name = El nombre del servidor "{ $name }" no se puede usar aquí: { $reason }.
+ui-files-error-not-a-file = Por ahora solo se pueden transferir archivos, no carpetas ni archivos especiales.
+ui-files-name-not-a-name = no es un nombre de archivo
+ui-files-name-separator = contiene un separador de carpetas
+ui-files-name-control = contiene un carácter de control
+ui-files-name-forbidden = contiene "{ $character }"
+ui-files-name-reserved = es un nombre reservado por Windows
+ui-files-name-trailing = termina con un punto o un espacio
+ui-files-name-too-long = es demasiado largo

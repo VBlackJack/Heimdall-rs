@@ -19,11 +19,17 @@
 //! Every user-facing sentence comes from a Fluent key; the `Display` text of an error is
 //! never shown on its own, only as the technical detail inside a localised sentence.
 
+use heimdall_app::files::FilesError;
 use heimdall_app::{KeyProblem, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
+use heimdall_sftp::local_name::LocalNameError;
+use heimdall_sftp::protocol::StatusCode;
 use heimdall_ssh::AuthMethod;
 
 use crate::i18n::fl;
+
+/// Bytes in a kibibyte.
+const KIB: f64 = 1024.0;
 
 /// Separator between the items of an inline list.
 const LIST_SEPARATOR: &str = ", ";
@@ -112,6 +118,80 @@ pub fn skip_reason(reason: &SkipReason) -> String {
     }
 }
 
+/// The sentence explaining a Files error.
+#[must_use]
+pub fn files_error(error: &FilesError) -> String {
+    match error {
+        FilesError::Server { code, message } => {
+            let message = if message.is_empty() {
+                status_text(*code)
+            } else {
+                message.clone()
+            };
+            fl!("ui-files-error-server", message = message)
+        }
+        FilesError::SessionClosed => fl!("ui-files-error-session"),
+        FilesError::Local { detail } => fl!("ui-files-error-local", detail = detail.as_str()),
+        FilesError::UnsafeName { name, reason } => fl!(
+            "ui-files-error-unsafe-name",
+            name = name.as_str(),
+            reason = name_reason(reason)
+        ),
+        FilesError::NotAFile => fl!("ui-files-error-not-a-file"),
+    }
+}
+
+fn status_text(code: StatusCode) -> String {
+    match code {
+        StatusCode::NoSuchFile => fl!("ui-files-error-no-such-file"),
+        StatusCode::PermissionDenied => fl!("ui-files-error-permission-denied"),
+        StatusCode::OpUnsupported => fl!("ui-files-error-unsupported"),
+        _ => fl!("ui-files-error-failure"),
+    }
+}
+
+/// Why a server name cannot be a local file name.
+#[must_use]
+pub fn name_reason(reason: &LocalNameError) -> String {
+    match reason {
+        LocalNameError::NotAName => fl!("ui-files-name-not-a-name"),
+        LocalNameError::Separator => fl!("ui-files-name-separator"),
+        LocalNameError::Control => fl!("ui-files-name-control"),
+        LocalNameError::Forbidden(character) => {
+            fl!("ui-files-name-forbidden", character = character.to_string())
+        }
+        LocalNameError::Reserved => fl!("ui-files-name-reserved"),
+        LocalNameError::TrailingDotOrSpace => fl!("ui-files-name-trailing"),
+        LocalNameError::TooLong => fl!("ui-files-name-too-long"),
+    }
+}
+
+/// A size in the largest binary unit that keeps it at or above 1, one decimal past bytes.
+#[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "a displayed size needs three significant digits, not all of them"
+)]
+pub fn size(bytes: u64) -> String {
+    let value = bytes as f64;
+    if value < KIB {
+        return fl!("ui-files-size-bytes", value = bytes.to_string());
+    }
+    let (value, unit) = if value < KIB * KIB {
+        (value / KIB, 1)
+    } else if value < KIB * KIB * KIB {
+        (value / (KIB * KIB), 2)
+    } else {
+        (value / (KIB * KIB * KIB), 3)
+    };
+    let shown = format!("{value:.1}");
+    match unit {
+        1 => fl!("ui-files-size-kib", value = shown),
+        2 => fl!("ui-files-size-mib", value = shown),
+        _ => fl!("ui-files-size-gib", value = shown),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use heimdall_app::{KeyProblem, UiError};
@@ -187,5 +267,22 @@ mod tests {
             name: "sftp".to_owned(),
         });
         assert!(text.contains("sftp"), "{text}");
+    }
+
+    #[test]
+    fn sizes_use_binary_units() {
+        assert_eq!(super::size(999), "999 B");
+        assert_eq!(super::size(1536), "1.5 KiB");
+        assert_eq!(super::size(5 * 1024 * 1024 + 99), "5.0 MiB");
+        assert_eq!(super::size(3 * 1024 * 1024 * 1024), "3.0 GiB");
+    }
+
+    #[test]
+    fn a_refused_name_is_explained() {
+        let text = super::files_error(&heimdall_app::files::FilesError::UnsafeName {
+            name: "C:x".to_owned(),
+            reason: heimdall_sftp::local_name::LocalNameError::Forbidden(':'),
+        });
+        assert!(text.contains("C:x") && text.contains("\":\""), "{text}");
     }
 }

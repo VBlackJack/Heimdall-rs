@@ -25,15 +25,16 @@ mod app;
 mod driver;
 mod error;
 mod event;
+pub mod files;
 mod ids;
 mod sink;
 mod text;
 
 pub use app::{
-    App, AppConfig, Dialog, Effect, ImportSummary, KeyInput, Message, Phase, PointerInput, Prompt,
-    Tab, WHEEL_LINES,
+    App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, Message, Phase,
+    PointerInput, Prompt, Tab, WHEEL_LINES,
 };
-pub use driver::{AnswerRegistry, ConnectRequest, connection_events};
+pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, UiError};
 pub use event::{Answer, ConnectionEvent, QuestionKind};
 pub use ids::{AttemptId, QuestionId, TabId};

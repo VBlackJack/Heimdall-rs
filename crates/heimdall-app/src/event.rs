@@ -24,6 +24,8 @@ use heimdall_ssh::{
     UsernameQuestion,
 };
 
+use heimdall_sftp::SftpClient;
+
 use crate::error::UiError;
 use crate::ids::QuestionId;
 use crate::sink::InputSink;
@@ -88,6 +90,11 @@ pub enum ConnectionEvent {
         /// Where input goes.
         input: Arc<dyn InputSink>,
     },
+    /// The SFTP session is open (a Files attempt).
+    FilesReady {
+        /// The session.
+        client: SftpClient,
+    },
     /// Output from the shell.
     Output(Vec<u8>),
     /// The shell ended. Last event of the attempt.
@@ -119,6 +126,7 @@ impl fmt::Debug for ConnectionEvent {
                 .field("fingerprint", fingerprint)
                 .finish(),
             Self::Connected { .. } => f.write_str("Connected"),
+            Self::FilesReady { .. } => f.write_str("FilesReady"),
             Self::Output(bytes) => write!(f, "Output({} bytes)", bytes.len()),
             Self::Closed { exit_status } => f
                 .debug_struct("Closed")

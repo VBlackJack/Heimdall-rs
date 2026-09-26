@@ -42,12 +42,18 @@ use heimdall_term::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::driver::ConnectRequest;
+use crate::driver::{ConnectRequest, Purpose};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
+use crate::files::{Direction, FilesPane, TransferId, TransferRequest};
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::sink::InputSink;
 use crate::text::server_text;
+
+mod files_tab;
+
+pub use files_tab::FilesMessage;
+use files_tab::PendingTransfer;
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -68,6 +74,8 @@ pub struct AppConfig {
     pub agent: AgentSource,
     /// Grid size before the first layout is known.
     pub initial_grid: GridSize,
+    /// Local folder a Files tab starts in.
+    pub files_start: PathBuf,
 }
 
 /// A key press, owned, as the UI toolkit reported it.
@@ -108,8 +116,12 @@ pub struct PointerInput {
 /// Every event the application reacts to.
 #[derive(Clone)]
 pub enum Message {
-    /// Open a tab for a saved profile.
+    /// Open a terminal tab for a saved profile.
     OpenProfile(ProfileId),
+    /// Open a Files tab for a saved profile.
+    OpenFiles(ProfileId),
+    /// Something in a Files tab.
+    Files(FilesMessage),
     /// Show a tab.
     SelectTab(TabId),
     /// Close a tab, asking first when its session is live.
@@ -205,6 +217,8 @@ impl fmt::Debug for Message {
         // user typed or read, passwords included.
         match self {
             Self::OpenProfile(id) => write!(f, "OpenProfile({id})"),
+            Self::OpenFiles(id) => write!(f, "OpenFiles({id})"),
+            Self::Files(message) => write!(f, "Files({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
             Self::Connection {
@@ -280,6 +294,31 @@ pub enum Effect {
         /// When.
         deadline: Instant,
     },
+    /// List a remote folder, then send [`FilesMessage::RemoteListed`].
+    ListRemote {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_sftp::SftpClient,
+        /// Folder.
+        path: heimdall_sftp::RemotePath,
+    },
+    /// List a local folder, then send [`FilesMessage::LocalListed`].
+    ListLocal {
+        /// Tab.
+        tab: TabId,
+        /// Folder.
+        path: PathBuf,
+    },
+    /// Run a transfer and send its events as [`FilesMessage::TransferEvent`].
+    Transfer {
+        /// Tab.
+        tab: TabId,
+        /// Transfer.
+        id: TransferId,
+        /// What to transfer.
+        request: Box<TransferRequest>,
+    },
     /// Quit the application.
     Exit,
 }
@@ -299,6 +338,17 @@ impl fmt::Debug for Effect {
             Self::WakeAt {
                 tab, generation, ..
             } => write!(f, "WakeAt({}, {generation})", tab.value()),
+            Self::ListRemote { tab, path, .. } => {
+                write!(f, "ListRemote({}, {path:?})", tab.value())
+            }
+            Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
+            Self::Transfer { tab, id, request } => write!(
+                f,
+                "Transfer({}, {}, {:?})",
+                tab.value(),
+                id.value(),
+                request.direction
+            ),
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -363,6 +413,10 @@ pub struct Tab {
     pub prompts: VecDeque<Prompt>,
     /// The bell rang since the tab was last shown.
     pub bell: bool,
+    /// Shell or files.
+    pub purpose: Purpose,
+    /// The Files view, for a Files tab.
+    pub files: Option<Box<FilesPane>>,
     attempt: AttemptId,
     sink: Option<Arc<dyn InputSink>>,
     cancel: CancellationToken,
@@ -403,6 +457,9 @@ impl Tab {
 
     fn stop(&mut self) {
         self.cancel.cancel();
+        if let Some(files) = self.files.as_mut() {
+            files.stop();
+        }
         if let Some(sink) = self.sink.take() {
             sink.close();
         }
@@ -435,6 +492,15 @@ pub enum Dialog {
         /// Number of lines.
         lines: usize,
     },
+    /// Replace an existing file with a transfer.
+    ConfirmOverwrite {
+        /// Tab.
+        tab: TabId,
+        /// Direction.
+        direction: Direction,
+        /// The file's name, made safe.
+        name: String,
+    },
     /// Result of an import.
     ImportDone(ImportSummary),
     /// An import could not run.
@@ -461,6 +527,7 @@ pub struct App {
     pub dialog: Option<Dialog>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
+    pending_transfer: Option<PendingTransfer>,
 }
 
 impl fmt::Debug for App {
@@ -496,6 +563,7 @@ impl App {
             active: None,
             dialog,
             pending_paste: None,
+            pending_transfer: None,
         }
     }
 
@@ -533,7 +601,9 @@ impl App {
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         match message {
-            Message::OpenProfile(id) => self.open_profile(&id),
+            Message::OpenProfile(id) => self.open_profile(&id, Purpose::Shell),
+            Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
+            Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => {
                 if let Some(found) = self.tab_mut(tab) {
                     found.bell = false;
@@ -593,6 +663,7 @@ impl App {
             Message::DismissDialog => {
                 self.dialog = None;
                 self.pending_paste = None;
+                self.pending_transfer = None;
                 Vec::new()
             }
         }
@@ -603,18 +674,20 @@ impl App {
         profile: &SshProfile,
         grid: GridSize,
         cancel: CancellationToken,
+        purpose: Purpose,
     ) -> ConnectRequest {
         let mut options = ConnectOptions::new(self.config.known_hosts.clone());
         options.agent = self.config.agent.clone();
         options.initial_size = terminal_size(grid, None);
         ConnectRequest {
             profile: profile.clone(),
+            purpose,
             options,
             cancel,
         }
     }
 
-    fn open_profile(&mut self, id: &ProfileId) -> Vec<Effect> {
+    fn open_profile(&mut self, id: &ProfileId, purpose: Purpose) -> Vec<Effect> {
         let Some(profile) = self.profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
@@ -622,7 +695,9 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.connect_request(&profile, grid, cancel.clone());
+        let request = self.connect_request(&profile, grid, cancel.clone(), purpose);
+        let files = (purpose == Purpose::Files)
+            .then(|| Box::new(FilesPane::new(self.config.files_start.clone())));
         self.tabs.push(Tab {
             id: tab_id,
             title: profile.name.clone(),
@@ -631,6 +706,8 @@ impl App {
             terminal: Terminal::new(grid, TerminalConfig::default()),
             prompts: VecDeque::new(),
             bell: false,
+            purpose,
+            files,
             attempt,
             sink: None,
             cancel,
@@ -667,6 +744,7 @@ impl App {
                     question,
                     answer: None,
                 }],
+                // An SFTP session dropped here closes with its connection.
                 _ => Vec::new(),
             };
         }
@@ -705,6 +783,13 @@ impl App {
                 }
                 tab.sink = Some(input);
                 Vec::new()
+            }
+            ConnectionEvent::FilesReady { client } => {
+                tab.phase = Phase::Connected;
+                if let Some(files) = tab.files.as_mut() {
+                    files.client = Some(client);
+                }
+                self.files_ready(tab_id)
             }
             ConnectionEvent::Output(bytes) => {
                 let output = tab.terminal.feed(&bytes);
@@ -768,7 +853,8 @@ impl App {
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
         tab.connect_grid = grid;
-        let request = self.connect_request(&profile, grid, cancel);
+        let purpose = tab.purpose;
+        let request = self.connect_request(&profile, grid, cancel, purpose);
         vec![Effect::Connect {
             tab: tab_id,
             attempt,
@@ -975,6 +1061,7 @@ impl App {
                 }
                 Vec::new()
             }
+            Some(Dialog::ConfirmOverwrite { .. }) => self.confirm_overwrite(),
             Some(
                 Dialog::ImportDone(_) | Dialog::ImportFailed { .. } | Dialog::StoreError { .. },
             )

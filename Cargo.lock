@@ -1824,6 +1824,7 @@ name = "heimdall-app"
 version = "0.1.0"
 dependencies = [
  "heimdall-core",
+ "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
  "log",
@@ -1903,6 +1904,7 @@ dependencies = [
  "heimdall-app",
  "heimdall-core",
  "heimdall-i18n",
+ "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
  "i18n-embed",
