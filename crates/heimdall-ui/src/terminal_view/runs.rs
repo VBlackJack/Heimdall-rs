@@ -165,7 +165,7 @@ pub fn lines(row: &[ScreenCell]) -> Vec<LineRun> {
 mod tests {
     use heimdall_term::{GridSize, Rgb, Terminal, TerminalConfig};
 
-    use super::{backgrounds, texts};
+    use super::{backgrounds, lines, texts};
 
     fn row(bytes: &[u8]) -> Vec<heimdall_term::ScreenCell> {
         let mut terminal = Terminal::new(GridSize { cols: 20, rows: 1 }, TerminalConfig::default());
@@ -214,5 +214,29 @@ mod tests {
         let runs = backgrounds(&cells, heimdall_term::Palette::dracula().background, screen);
         assert_eq!(runs.len(), 1);
         assert_eq!((runs[0].col, runs[0].cells, runs[0].color), (0, 2, red));
+    }
+
+    #[test]
+    fn selected_cells_take_the_selection_colour() {
+        let screen = heimdall_term::Palette::dracula().background;
+        let selection = Rgb { r: 1, g: 2, b: 3 };
+        let mut cells = row(b"abc");
+        cells[1].selected = true;
+        let runs = backgrounds(&cells, screen, selection);
+        assert_eq!(runs.len(), 1);
+        assert_eq!(
+            (runs[0].col, runs[0].cells, runs[0].color),
+            (1, 1, selection)
+        );
+    }
+
+    #[test]
+    fn underlines_and_strike_lines_merge_by_kind() {
+        let runs = lines(&row(b"\x1b[4mab\x1b[0m \x1b[9mcd"));
+        let shown: Vec<(usize, usize, bool)> = runs
+            .iter()
+            .map(|run| (run.col, run.cells, run.underline))
+            .collect();
+        assert_eq!(shown, vec![(0, 2, true), (3, 2, false)]);
     }
 }

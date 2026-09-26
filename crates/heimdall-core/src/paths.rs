@@ -29,6 +29,13 @@ const ORGANIZATION: &str = "";
 /// Application name the platform directories are derived from.
 const APPLICATION: &str = "Heimdall-rs";
 
+/// Name of the `known_hosts` file inside the configuration directory; Heimdall-rs keeps
+/// its own, so a host accepted here never changes what `ssh` trusts.
+pub const KNOWN_HOSTS_FILE_NAME: &str = "known_hosts";
+
+/// Name of the log directory inside the local data directory.
+const LOG_DIR_NAME: &str = "logs";
+
 /// Name of the C# Heimdall's folder under the local application data directory.
 const LEGACY_APPLICATION_DIR: &str = "Heimdall";
 
@@ -51,6 +58,19 @@ pub fn config_dir() -> Option<PathBuf> {
 #[must_use]
 pub fn profiles_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join(PROFILES_FILE_NAME))
+}
+
+/// Path of the `known_hosts` file.
+#[must_use]
+pub fn known_hosts_file() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join(KNOWN_HOSTS_FILE_NAME))
+}
+
+/// Directory of the log file and crash reports: local to the machine, never roamed.
+#[must_use]
+pub fn log_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_local_dir().join(LOG_DIR_NAME))
 }
 
 /// Data directory of the C# Heimdall on this machine, when the platform has one.

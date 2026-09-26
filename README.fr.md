@@ -9,9 +9,17 @@ gestionnaire de connexions distantes multi-protocoles, pour Windows et Linux.
 
 Développement en cours, vers un premier jalon : un onglet de terminal SSH ouvert depuis un
 profil enregistré. Fait : les profils et leur import depuis Heimdall en C#, le client SSH
-(clés d'hôte, agent, fichiers de clé, keyboard-interactive, mot de passe), et l'émulation
-de terminal avec l'encodage du clavier, de la souris et du collage. Pas encore :
-l'interface de bureau autour. La cible est la parité fonctionnelle avec Heimdall en C# : SSH,
+(clés d'hôte, agent, fichiers de clé, keyboard-interactive, mot de passe), l'émulation
+de terminal avec l'encodage du clavier, de la souris et du collage, et la fenêtre de bureau
+autour (liste des profils, onglets, questions de clé d'hôte et d'identifiants,
+confirmations). La fenêtre est testée sans affichage et démarre sous Linux ; elle n'a pas
+encore été parcourue à la main contre un serveur réel.
+
+Limites connues du jalon : les caractères absents de la police embarquée Source Code Pro
+(CJK, Braille) sont dessinés avec ce que fournit le système ; pas de prise en charge des
+lecteurs d'écran, iced n'en a pas encore.
+
+La cible est la parité fonctionnelle avec Heimdall en C# : SSH,
 SFTP, FTP/FTPS, RDP, VNC, Telnet, série, shell local, coffre d'identifiants,
 bibliothèque de commandes, éditeur de diagrammes, mise à jour, et localisation
 en anglais, français et espagnol.

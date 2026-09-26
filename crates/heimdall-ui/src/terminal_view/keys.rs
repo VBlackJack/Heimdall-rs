@@ -37,23 +37,77 @@ pub enum Shortcut {
     PageDown,
 }
 
+/// The Latin letter a shortcut reads from a key: the character when it is one, else the
+/// letter printed at that place on a US keyboard, so Ctrl+Shift+C still copies on a
+/// Cyrillic or Greek layout.
+fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
+    if let keyboard::Key::Character(c) = key
+        && let Some(first) = c.chars().next()
+        && first.is_ascii_alphabetic()
+    {
+        return Some(first.to_ascii_lowercase());
+    }
+    match physical {
+        Physical::Code(Code::KeyC) => Some('c'),
+        Physical::Code(Code::KeyV) => Some('v'),
+        Physical::Code(Code::KeyW) => Some('w'),
+        _ => None,
+    }
+}
+
 /// The shortcut `key` with `modifiers` stands for, if any. Key repeat is the caller's
 /// concern: copy and paste should not repeat, scrolling may.
 #[must_use]
-pub fn shortcut(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<Shortcut> {
+pub fn shortcut(
+    key: &keyboard::Key,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<Shortcut> {
     let (ctrl, shift, alt) = (modifiers.control(), modifiers.shift(), modifiers.alt());
     match key {
-        keyboard::Key::Character(c) if ctrl && shift && !alt => {
-            match c.as_str().to_ascii_lowercase().as_str() {
-                "c" => Some(Shortcut::Copy),
-                "v" => Some(Shortcut::Paste),
-                _ => None,
-            }
-        }
+        keyboard::Key::Character(_) if ctrl && shift && !alt => match letter(key, physical) {
+            Some('c') => Some(Shortcut::Copy),
+            Some('v') => Some(Shortcut::Paste),
+            _ => None,
+        },
         keyboard::Key::Named(Named::Insert) if ctrl && !shift && !alt => Some(Shortcut::Copy),
         keyboard::Key::Named(Named::Insert) if shift && !ctrl && !alt => Some(Shortcut::Paste),
         keyboard::Key::Named(Named::PageUp) if shift && !ctrl && !alt => Some(Shortcut::PageUp),
         keyboard::Key::Named(Named::PageDown) if shift && !ctrl && !alt => Some(Shortcut::PageDown),
+        _ => None,
+    }
+}
+
+/// A shortcut of the window, left uncaptured by the terminal so the window sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowShortcut {
+    /// Show the next tab: Ctrl+Tab, Ctrl+Page Down.
+    NextTab,
+    /// Show the previous tab: Ctrl+Shift+Tab, Ctrl+Page Up.
+    PreviousTab,
+    /// Close the tab shown: Ctrl+Shift+W.
+    CloseTab,
+}
+
+/// The window shortcut `key` with `modifiers` stands for, if any.
+#[must_use]
+pub fn window_shortcut(
+    key: &keyboard::Key,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<WindowShortcut> {
+    let (ctrl, shift, alt) = (modifiers.control(), modifiers.shift(), modifiers.alt());
+    if !ctrl || alt {
+        return None;
+    }
+    match key {
+        keyboard::Key::Named(Named::Tab) if shift => Some(WindowShortcut::PreviousTab),
+        keyboard::Key::Named(Named::Tab) => Some(WindowShortcut::NextTab),
+        keyboard::Key::Named(Named::PageUp) if !shift => Some(WindowShortcut::PreviousTab),
+        keyboard::Key::Named(Named::PageDown) if !shift => Some(WindowShortcut::NextTab),
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('w') => {
+            Some(WindowShortcut::CloseTab)
+        }
         _ => None,
     }
 }
@@ -164,7 +218,10 @@ mod tests {
     use iced::keyboard::key::{Code, Named, Physical};
     use iced::keyboard::{self, Location, Modifiers};
 
-    use super::{Shortcut, key_input, shortcut};
+    /// A physical key no shortcut reads.
+    const ANY_PLACE: Physical = Physical::Code(Code::F24);
+
+    use super::{Shortcut, WindowShortcut, key_input, shortcut, window_shortcut};
 
     fn character(c: &str) -> keyboard::Key {
         keyboard::Key::Character(c.into())
@@ -248,24 +305,155 @@ mod tests {
     #[test]
     fn application_shortcuts() {
         let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
-        assert_eq!(shortcut(&character("C"), ctrl_shift), Some(Shortcut::Copy));
-        assert_eq!(shortcut(&character("v"), ctrl_shift), Some(Shortcut::Paste));
         assert_eq!(
-            shortcut(&character("c"), Modifiers::CTRL),
+            shortcut(&character("C"), ANY_PLACE, ctrl_shift),
+            Some(Shortcut::Copy)
+        );
+        assert_eq!(
+            shortcut(&character("v"), ANY_PLACE, ctrl_shift),
+            Some(Shortcut::Paste)
+        );
+        assert_eq!(
+            shortcut(&character("c"), ANY_PLACE, Modifiers::CTRL),
             None,
             "Ctrl+C is SIGINT"
         );
         assert_eq!(
-            shortcut(&keyboard::Key::Named(Named::Insert), Modifiers::SHIFT),
+            shortcut(
+                &keyboard::Key::Named(Named::Insert),
+                ANY_PLACE,
+                Modifiers::SHIFT
+            ),
             Some(Shortcut::Paste)
         );
         assert_eq!(
-            shortcut(&keyboard::Key::Named(Named::PageUp), Modifiers::SHIFT),
+            shortcut(
+                &keyboard::Key::Named(Named::PageUp),
+                ANY_PLACE,
+                Modifiers::SHIFT
+            ),
             Some(Shortcut::PageUp)
         );
         assert_eq!(
-            shortcut(&keyboard::Key::Named(Named::PageUp), Modifiers::empty()),
+            shortcut(
+                &keyboard::Key::Named(Named::PageUp),
+                ANY_PLACE,
+                Modifiers::empty()
+            ),
             None
         );
+    }
+
+    #[test]
+    fn window_shortcuts_need_ctrl_and_leave_plain_keys_to_the_terminal() {
+        let tab = keyboard::Key::Named(Named::Tab);
+        assert_eq!(
+            window_shortcut(&tab, ANY_PLACE, Modifiers::CTRL),
+            Some(WindowShortcut::NextTab)
+        );
+        assert_eq!(
+            window_shortcut(&tab, ANY_PLACE, Modifiers::CTRL | Modifiers::SHIFT),
+            Some(WindowShortcut::PreviousTab)
+        );
+        assert_eq!(
+            window_shortcut(&tab, ANY_PLACE, Modifiers::empty()),
+            None,
+            "Tab completes"
+        );
+        assert_eq!(
+            window_shortcut(
+                &keyboard::Key::Named(Named::PageUp),
+                ANY_PLACE,
+                Modifiers::CTRL
+            ),
+            Some(WindowShortcut::PreviousTab)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("W"),
+                ANY_PLACE,
+                Modifiers::CTRL | Modifiers::SHIFT
+            ),
+            Some(WindowShortcut::CloseTab)
+        );
+        assert_eq!(
+            window_shortcut(&character("w"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+W deletes a word in the shell"
+        );
+        assert_eq!(
+            window_shortcut(&tab, ANY_PLACE, Modifiers::CTRL | Modifiers::ALT),
+            None,
+            "AltGr is Ctrl+Alt on Windows"
+        );
+    }
+
+    #[test]
+    fn shortcuts_read_the_key_place_on_a_non_latin_layout() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        // Russian layout: the C key types 's' (Cyrillic es), V 'm', W 'ts'.
+        let russian = |c: &str| keyboard::Key::Character(c.into());
+        assert_eq!(
+            shortcut(&russian("\u{0441}"), Physical::Code(Code::KeyC), ctrl_shift),
+            Some(Shortcut::Copy)
+        );
+        assert_eq!(
+            shortcut(&russian("\u{043c}"), Physical::Code(Code::KeyV), ctrl_shift),
+            Some(Shortcut::Paste)
+        );
+        assert_eq!(
+            window_shortcut(&russian("\u{0446}"), Physical::Code(Code::KeyW), ctrl_shift),
+            Some(WindowShortcut::CloseTab)
+        );
+        // A Latin letter wins over its place: AZERTY moves letters, and the shortcut
+        // follows the letter typed, not where its key sits.
+        assert_eq!(
+            shortcut(&character("q"), Physical::Code(Code::KeyC), ctrl_shift),
+            None
+        );
+    }
+
+    #[test]
+    fn the_other_shortcut_keys() {
+        assert_eq!(
+            shortcut(
+                &keyboard::Key::Named(Named::Insert),
+                ANY_PLACE,
+                Modifiers::CTRL
+            ),
+            Some(Shortcut::Copy)
+        );
+        assert_eq!(
+            shortcut(
+                &keyboard::Key::Named(Named::PageDown),
+                ANY_PLACE,
+                Modifiers::SHIFT
+            ),
+            Some(Shortcut::PageDown)
+        );
+        assert_eq!(
+            window_shortcut(
+                &keyboard::Key::Named(Named::PageDown),
+                ANY_PLACE,
+                Modifiers::CTRL
+            ),
+            Some(WindowShortcut::NextTab)
+        );
+        assert_eq!(
+            shortcut(
+                &character("c"),
+                ANY_PLACE,
+                Modifiers::CTRL | Modifiers::SHIFT | Modifiers::ALT
+            ),
+            None,
+            "AltGr+Shift types a character"
+        );
+    }
+
+    #[test]
+    fn committed_text_types_the_whole_composition() {
+        let input = super::committed_text("\u{3053}\u{3093}").expect("types");
+        assert_eq!(input.text.as_deref(), Some("\u{3053}\u{3093}"));
+        assert!(super::committed_text("").is_none());
     }
 }

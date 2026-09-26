@@ -14,6 +14,51 @@
  * limitations under the License.
  */
 
-//! Widgets and views of the Heimdall desktop application.
+//! The Heimdall desktop application: the window, its views and the terminal widget.
 
+mod i18n;
+mod logging;
+pub mod shell;
 pub mod terminal_view;
+mod texts;
+
+use heimdall_core::paths;
+use iced::{Font, Size, window};
+
+use crate::shell::Shell;
+use crate::terminal_view::FONTS;
+
+/// Font of the window's text, embedded by iced's `fira-sans` feature.
+const UI_FONT_FAMILY: &str = "Fira Sans";
+
+/// Window size at first start, in logical pixels.
+const WINDOW_SIZE: Size = Size::new(1280.0, 800.0);
+
+/// Smallest window size, in logical pixels.
+const MIN_WINDOW_SIZE: Size = Size::new(640.0, 400.0);
+
+/// Runs the application until its window closes.
+///
+/// # Errors
+///
+/// When the window or the graphics backend cannot start.
+pub fn run() -> iced::Result {
+    logging::init(paths::log_dir());
+    i18n::init();
+    let application = iced::application(Shell::new, Shell::update, Shell::view)
+        .title(Shell::title)
+        .theme(Shell::theme)
+        .subscription(Shell::subscription)
+        .default_font(Font::with_name(UI_FONT_FAMILY))
+        .window(window::Settings {
+            size: WINDOW_SIZE,
+            min_size: Some(MIN_WINDOW_SIZE),
+            // Quitting with live sessions asks first; their sessions are then cancelled.
+            exit_on_close_request: false,
+            ..window::Settings::default()
+        });
+    FONTS
+        .iter()
+        .fold(application, |application, face| application.font(*face))
+        .run()
+}

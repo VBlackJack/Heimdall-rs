@@ -32,6 +32,8 @@ fluent-syntax = "0.12.0"
 i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.10.1"
 iced = "0.14.0"
+iced_test = "0.14.0"
+log = { version = "0.4.34", features = ["std"] }
 russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2"] }
 rust-embed = "8.12.0"
 serde = { version = "1.0.229", features = ["derive"] }

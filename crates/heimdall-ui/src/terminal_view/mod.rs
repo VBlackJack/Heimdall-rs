@@ -47,11 +47,19 @@ use iced::{
     alignment,
 };
 
-use crate::terminal_view::keys::{Shortcut, committed_text, key_input, shortcut};
+use crate::terminal_view::keys::{Shortcut, committed_text, key_input, shortcut, window_shortcut};
 use crate::terminal_view::metrics::{CellMetrics, as_f32};
 
 /// Family name of the embedded terminal font.
 pub const FONT_FAMILY: &str = "Source Code Pro";
+
+/// The four embedded faces of [`FONT_FAMILY`], to load when the application starts.
+pub const FONTS: [&[u8]; 4] = [
+    include_bytes!("../../assets/fonts/SourceCodePro-Regular.otf"),
+    include_bytes!("../../assets/fonts/SourceCodePro-Bold.otf"),
+    include_bytes!("../../assets/fonts/SourceCodePro-It.otf"),
+    include_bytes!("../../assets/fonts/SourceCodePro-BoldIt.otf"),
+];
 
 /// Longest gap between presses counted as a double or triple click.
 const MULTI_CLICK: Duration = Duration::from_millis(400);
@@ -101,6 +109,7 @@ pub struct TerminalView<'a, M> {
     tab: TabId,
     metrics: CellMetrics,
     wrap: fn(AppMessage) -> M,
+    interactive: bool,
 }
 
 impl<'a, M> TerminalView<'a, M> {
@@ -112,7 +121,16 @@ impl<'a, M> TerminalView<'a, M> {
             tab,
             metrics: CellMetrics::default(),
             wrap,
+            interactive: true,
         }
+    }
+
+    /// Whether the terminal takes keyboard and mouse input. A dialog over it turns it
+    /// off, so the keys meant for the dialog stay uncaptured and reach the window.
+    #[must_use]
+    pub fn interactive(mut self, interactive: bool) -> Self {
+        self.interactive = interactive;
+        self
     }
 
     fn pointer(&self, state: &State, at: CellPoint, action: MouseAction) -> M {
@@ -194,16 +212,20 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 cell: self.metrics.pixels(),
             }));
         }
+        if !self.interactive {
+            state.held = None;
+            return;
+        }
         match event {
             Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
                 state.modifiers = *modifiers;
             }
             Event::Mouse(mouse::Event::ButtonPressed(button)) => {
+                // A click elsewhere (a tab button, the sidebar) leaves the focus here:
+                // nothing else in the window takes typing while the terminal is shown.
                 let Some(position) = cursor.position_over(bounds) else {
-                    state.focused = false;
                     return;
                 };
-                state.focused = true;
                 let Some(button) = mouse_button(*button) else {
                     return;
                 };
@@ -229,15 +251,28 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                     return;
                 };
                 state.held = None;
-                let position = cursor.position().unwrap_or(bounds.position());
-                let at = self.metrics.cell_at(bounds, grid, position);
+                // Without a cursor position, released where the pointer was last seen.
+                let at = if let Some(position) = cursor.position() {
+                    self.metrics.cell_at(bounds, grid, position)
+                } else {
+                    let (row, col) = state.last_motion.unwrap_or_default();
+                    CellPoint {
+                        row,
+                        col,
+                        right_half: false,
+                    }
+                };
                 shell.publish(self.pointer(state, at, MouseAction::Release(button)));
             }
-            Event::Mouse(mouse::Event::CursorMoved { position }) => {
-                if state.held.is_none() && !bounds.contains(*position) {
+            Event::Mouse(mouse::Event::CursorMoved { .. }) => {
+                // The cursor, not the raw event: a layer above hands this one no position.
+                let Some(position) = cursor.position() else {
+                    return;
+                };
+                if state.held.is_none() && !bounds.contains(position) {
                     return;
                 }
-                let at = self.metrics.cell_at(bounds, grid, *position);
+                let at = self.metrics.cell_at(bounds, grid, position);
                 if state.last_motion == Some((at.row, at.col)) {
                     return;
                 }
@@ -276,7 +311,15 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 repeat,
                 ..
             }) if state.focused => {
-                if let Some(action) = shortcut(key, *modifiers) {
+                if window_shortcut(key, *physical_key, *modifiers).is_some() {
+                    // Left uncaptured: the window acts on it.
+                    return;
+                }
+                if state.preedit.is_some() {
+                    // The input method is composing: the key is its, not the shell's.
+                    return;
+                }
+                if let Some(action) = shortcut(key, *physical_key, *modifiers) {
                     let page = i32::try_from(grid.rows).unwrap_or(i32::MAX);
                     let message = match action {
                         Shortcut::Copy | Shortcut::Paste if *repeat => None,
