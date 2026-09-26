@@ -47,10 +47,12 @@ use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ids::{AttemptId, QuestionId, TabId};
+use crate::profile_draft::{DraftError, ProfileDraft, ProfileField};
 use crate::sink::InputSink;
 use crate::text::server_text;
 
 mod files_tab;
+mod profiles;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
@@ -205,6 +207,19 @@ pub enum Message {
     WindowCloseRequested,
     /// Import the profiles of the C# Heimdall.
     ImportLegacy,
+    /// Open an empty profile form.
+    NewProfile,
+    /// Open the form of a saved profile.
+    EditProfile(ProfileId),
+    /// A field of the profile form changed.
+    ProfileField {
+        /// Field.
+        field: ProfileField,
+        /// New text.
+        value: String,
+    },
+    /// From the form of a saved profile, ask to delete it.
+    DeleteProfile,
     /// Confirm the open dialog.
     ConfirmDialog,
     /// Dismiss the open dialog.
@@ -254,6 +269,10 @@ impl fmt::Debug for Message {
             Self::WindowFocus(focused) => write!(f, "WindowFocus({focused})"),
             Self::WindowCloseRequested => f.write_str("WindowCloseRequested"),
             Self::ImportLegacy => f.write_str("ImportLegacy"),
+            Self::NewProfile => f.write_str("NewProfile"),
+            Self::EditProfile(id) => write!(f, "EditProfile({id})"),
+            Self::ProfileField { field, .. } => write!(f, "ProfileField({field:?}, ..)"),
+            Self::DeleteProfile => f.write_str("DeleteProfile"),
             Self::ConfirmDialog => f.write_str("ConfirmDialog"),
             Self::DismissDialog => f.write_str("DismissDialog"),
         }
@@ -535,6 +554,20 @@ pub enum Dialog {
         /// The file's name, made safe.
         name: String,
     },
+    /// A profile form: a new profile, or a saved one being edited.
+    EditProfile {
+        /// What is typed.
+        draft: Box<ProfileDraft>,
+        /// Why the last save was refused, until the user changes a field.
+        error: Option<DraftError>,
+    },
+    /// Delete a saved profile.
+    ConfirmDeleteProfile {
+        /// Profile.
+        id: ProfileId,
+        /// Its name, made safe.
+        name: String,
+    },
     /// Result of an import.
     ImportDone(ImportSummary),
     /// An import could not run.
@@ -702,6 +735,22 @@ impl App {
             Message::WindowCloseRequested => self.close_window(),
             Message::ImportLegacy => {
                 self.import_legacy();
+                Vec::new()
+            }
+            Message::NewProfile => {
+                self.new_profile();
+                Vec::new()
+            }
+            Message::EditProfile(id) => {
+                self.edit_profile(&id);
+                Vec::new()
+            }
+            Message::ProfileField { field, value } => {
+                self.profile_field(field, value);
+                Vec::new()
+            }
+            Message::DeleteProfile => {
+                self.ask_delete_profile();
                 Vec::new()
             }
             Message::ConfirmDialog => self.confirm_dialog(),
@@ -1110,6 +1159,14 @@ impl App {
             Some(Dialog::ConfirmOverwrite { .. }) => self.confirm_overwrite(),
             Some(Dialog::AskName { value, .. }) => self.confirm_operation(Some(&value)),
             Some(Dialog::ConfirmDelete { .. }) => self.confirm_operation(None),
+            Some(Dialog::EditProfile { draft, .. }) => {
+                self.save_profile(draft);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteProfile { id, .. }) => {
+                self.delete_profile(&id);
+                Vec::new()
+            }
             Some(
                 Dialog::ImportDone(_) | Dialog::ImportFailed { .. } | Dialog::StoreError { .. },
             )
@@ -1140,13 +1197,16 @@ impl App {
                 return;
             }
         };
-        let merged = self.store.merge(report.profiles);
-        if let Err(error) = self.store.save() {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
-            return;
-        }
+        // Saved before it is kept: a failed save leaves the list as its file is.
+        let merged = match self.store.apply(|store| store.merge(report.profiles)) {
+            Ok(merged) => merged,
+            Err(error) => {
+                self.dialog = Some(Dialog::StoreError {
+                    detail: error.to_string(),
+                });
+                return;
+            }
+        };
         self.dialog = Some(Dialog::ImportDone(ImportSummary {
             merged,
             skipped: report

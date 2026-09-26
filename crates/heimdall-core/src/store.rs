@@ -23,7 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::profile::SshProfile;
+use crate::profile::{ProfileId, SshProfile};
 
 /// Format version written into the profile file.
 pub const PROFILE_FILE_VERSION: u32 = 1;
@@ -84,7 +84,7 @@ pub struct MergeReport {
 }
 
 /// Profiles held in one file.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ProfileStore {
     path: PathBuf,
     ssh: Vec<SshProfile>,
@@ -170,6 +170,27 @@ impl ProfileStore {
             }
         }
         report
+    }
+
+    /// Removes the profile `id`; whether it was there.
+    pub fn remove(&mut self, id: &ProfileId) -> bool {
+        let before = self.ssh.len();
+        self.ssh.retain(|profile| profile.id != *id);
+        self.ssh.len() != before
+    }
+
+    /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
+    /// leaves the store as it was, the same as its file.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StoreError`] when the save fails; the store is then unchanged.
+    pub fn apply<T>(&mut self, change: impl FnOnce(&mut Self) -> T) -> Result<T, StoreError> {
+        let mut next = self.clone();
+        let result = change(&mut next);
+        next.save()?;
+        *self = next;
+        Ok(result)
     }
 
     /// Writes the store to its file, creating the directory if needed.

@@ -21,7 +21,8 @@
 //!
 //! The keyboard acts on the pane with the focus, drawn with a stronger border: arrows, Home
 //! and End select, Enter opens or sends, Backspace goes up, Tab or Left and Right change
-//! pane, F2 renames, Delete deletes and F5 lists again.
+//! pane, F2 renames, Delete deletes and F5 lists again. Tab and Enter reach the tab through
+//! the window, as they act on a dialog first.
 
 use heimdall_app::files::{
     Direction, EntryKind, FilesError, FilesKey, FilesPane, Side, Transfer, TransferState,
@@ -73,7 +74,7 @@ pub fn list_id(side: Side) -> Id {
 }
 
 /// What `key` does in a Files tab. Keys with Ctrl, Alt or the logo key are left to the
-/// window; Enter reaches the tab through the dialog keys, as it answers a dialog first.
+/// window; Enter and Tab reach the tab through the window, as they act on a dialog first.
 #[must_use]
 pub fn files_key(key: &keyboard::Key, modifiers: Modifiers) -> Option<FilesKey> {
     if modifiers.control() || modifiers.alt() || modifiers.logo() {
@@ -88,7 +89,6 @@ pub fn files_key(key: &keyboard::Key, modifiers: Modifiers) -> Option<FilesKey> 
         Named::Home => FilesKey::First,
         Named::End => FilesKey::Last,
         Named::Backspace => FilesKey::Parent,
-        Named::Tab => FilesKey::SwitchPane,
         Named::ArrowLeft => FilesKey::Focus(Side::Local),
         Named::ArrowRight => FilesKey::Focus(Side::Remote),
         Named::F2 => FilesKey::Rename,
@@ -349,13 +349,9 @@ mod tests {
             files_key(&named(Named::Delete), Modifiers::empty()),
             Some(FilesKey::Delete)
         );
-        assert_eq!(
-            files_key(&named(Named::Tab), Modifiers::SHIFT),
-            Some(FilesKey::SwitchPane)
-        );
         for modifiers in [Modifiers::CTRL, Modifiers::ALT, Modifiers::LOGO] {
             assert_eq!(
-                files_key(&named(Named::Tab), modifiers),
+                files_key(&named(Named::Delete), modifiers),
                 None,
                 "{modifiers:?}"
             );
