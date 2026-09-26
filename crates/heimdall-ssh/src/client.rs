@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Connection: key exchange, host key check, then authentication and the shell.
+//! Connection: key exchange, host key check, then authentication; the shell on top.
 
 use std::borrow::Cow;
 use std::future::Future;
@@ -28,13 +28,14 @@ use russh::keys::{Algorithm, PublicKey, PublicKeyOrCertificate};
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::{self, AuthContext};
+use crate::connection::Connection;
 use crate::error::ConnectError;
 use crate::known_hosts::{
     KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
 use crate::options::ConnectOptions;
 use crate::prompter::{Prompter, UsernameQuestion};
-use crate::session::{self, ShellSession};
+use crate::session::ShellSession;
 
 /// Message the server sent with its disconnect, shared between the russh session task and
 /// the code waiting on authentication.
@@ -215,9 +216,11 @@ impl From<KnownHostsError> for ConnectError {
     }
 }
 
-/// Opens an interactive shell to `profile`.
+/// Opens an interactive shell to `profile` on a connection of its own.
 ///
-/// `cancel` ends the attempt at any point, and once the session is open, the session too.
+/// `cancel` ends the attempt at any point, and once the session is open, the session too;
+/// the connection goes with it unless the caller kept no other use of it, which here it
+/// cannot.
 ///
 /// # Errors
 ///
@@ -229,6 +232,22 @@ pub async fn connect<P: Prompter>(
     prompter: Arc<P>,
     cancel: CancellationToken,
 ) -> Result<ShellSession, ConnectError> {
+    let connection = establish(profile, options, prompter, cancel.clone()).await?;
+    connection.open_shell(options, cancel).await
+}
+
+/// Connects to `profile` and authenticates: host key checked, then the user proven. The
+/// [`Connection`] then carries shells and subsystems.
+///
+/// # Errors
+///
+/// See [`ConnectError`]; as for [`connect`], an unknown host key ends the attempt.
+pub async fn establish<P: Prompter>(
+    profile: &SshProfile,
+    options: &ConnectOptions,
+    prompter: Arc<P>,
+    cancel: CancellationToken,
+) -> Result<Connection, ConnectError> {
     let host = validate_host(&profile.host)?;
     let port = profile.port;
     let recorded = KnownHosts::new(&options.known_hosts).recorded(&host, port)?;
@@ -283,7 +302,7 @@ pub async fn connect<P: Prompter>(
     })
     .await?;
 
-    session::open(handle, options, cancel).await
+    Ok(Connection::new(handle))
 }
 
 #[cfg(test)]

@@ -25,6 +25,7 @@
 mod agent;
 mod auth;
 mod client;
+mod connection;
 mod error;
 mod key_file;
 mod known_hosts;
@@ -33,7 +34,8 @@ mod prompter;
 mod secret;
 mod session;
 
-pub use client::connect;
+pub use client::{connect, establish};
+pub use connection::{Connection, SubsystemStream};
 pub use error::{AuthMethod, ConnectError};
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
 pub use known_hosts::{KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict};
