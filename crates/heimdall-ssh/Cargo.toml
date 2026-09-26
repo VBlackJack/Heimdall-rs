@@ -12,5 +12,20 @@ authors.workspace = true
 repository.workspace = true
 publish.workspace = true
 
+[dependencies]
+data-encoding.workspace = true
+heimdall-core.workspace = true
+russh.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[target.'cfg(unix)'.dev-dependencies]
+tokio-stream = { workspace = true, features = ["net"] }
+
 [lints]
 workspace = true
