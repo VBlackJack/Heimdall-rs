@@ -28,7 +28,7 @@ use std::time::Instant;
 
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile};
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, TerminalSize,
@@ -50,11 +50,13 @@ use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::profile_draft::{DraftError, ProfileDraft, ProfileField};
 use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
+use crate::telnet_driver::TelnetRequest;
 use crate::text::server_text;
 
 mod files_tab;
 mod profiles;
 mod rdp_tab;
+mod telnet_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
@@ -127,6 +129,8 @@ pub enum Message {
     OpenFiles(ProfileId),
     /// Open an RDP tab for a saved RDP profile.
     OpenRdp(ProfileId),
+    /// Open a Telnet tab for a saved Telnet profile.
+    OpenTelnet(ProfileId),
     /// Keyboard or mouse input for the desktop of an RDP tab.
     RdpInput {
         /// Tab.
@@ -248,6 +252,7 @@ impl fmt::Debug for Message {
             Self::OpenProfile(id) => write!(f, "OpenProfile({id})"),
             Self::OpenFiles(id) => write!(f, "OpenFiles({id})"),
             Self::OpenRdp(id) => write!(f, "OpenRdp({id})"),
+            Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
             // What was typed is never shown, as for a terminal.
             Self::RdpInput { tab, operations } => {
                 write!(
@@ -324,6 +329,15 @@ pub enum Effect {
         /// What to connect to.
         request: Box<RdpRequest>,
     },
+    /// Start a Telnet attempt and feed its events back as [`Message::Connection`].
+    ConnectTelnet {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to connect to.
+        request: Box<TelnetRequest>,
+    },
     /// Deliver an answer through the registry.
     Answer {
         /// Question.
@@ -394,6 +408,9 @@ impl fmt::Debug for Effect {
             }
             Self::ConnectRdp { tab, attempt, .. } => {
                 write!(f, "ConnectRdp({}, {})", tab.value(), attempt.value())
+            }
+            Self::ConnectTelnet { tab, attempt, .. } => {
+                write!(f, "ConnectTelnet({}, {})", tab.value(), attempt.value())
             }
             Self::Answer { question, answer } => {
                 write!(f, "Answer({}, {answer:?})", question.value())
@@ -577,6 +594,8 @@ pub enum TabProfile {
     Ssh(SshProfile),
     /// A remote desktop tab.
     Rdp(RdpProfile),
+    /// A Telnet terminal tab.
+    Telnet(TelnetProfile),
 }
 
 impl TabProfile {
@@ -586,6 +605,7 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => &profile.name,
             Self::Rdp(profile) => &profile.name,
+            Self::Telnet(profile) => &profile.name,
         }
     }
 
@@ -595,6 +615,7 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => &profile.host,
             Self::Rdp(profile) => &profile.host,
+            Self::Telnet(profile) => &profile.host,
         }
     }
 
@@ -604,6 +625,7 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => profile.port,
             Self::Rdp(profile) => profile.port,
+            Self::Telnet(profile) => profile.port,
         }
     }
 
@@ -613,6 +635,8 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => profile.username.as_deref(),
             Self::Rdp(profile) => profile.username.as_deref(),
+            // Telnet asks for its account in the session.
+            Self::Telnet(_) => None,
         }
     }
 }
@@ -777,6 +801,12 @@ impl App {
         self.store.rdp_profiles()
     }
 
+    /// Saved Telnet profiles.
+    #[must_use]
+    pub fn telnet_profiles(&self) -> &[TelnetProfile] {
+        self.store.telnet_profiles()
+    }
+
     /// Whether the C# Heimdall's data can be imported.
     #[must_use]
     pub fn can_import(&self) -> bool {
@@ -808,6 +838,7 @@ impl App {
             Message::OpenProfile(id) => self.open_profile(&id, Purpose::Shell),
             Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
             Message::OpenRdp(id) => self.open_rdp(&id),
+            Message::OpenTelnet(id) => self.open_telnet(&id),
             Message::RdpInput { tab, operations } => {
                 self.rdp_input(tab, operations);
                 Vec::new()
@@ -1338,10 +1369,11 @@ impl App {
         let merged = match self.store.apply(|store| {
             let ssh = store.merge(report.profiles);
             let rdp = store.merge_rdp(report.rdp);
+            let telnet = store.merge_telnet(report.telnet);
             MergeReport {
-                added: ssh.added + rdp.added,
-                updated: ssh.updated + rdp.updated,
-                unchanged: ssh.unchanged + rdp.unchanged,
+                added: ssh.added + rdp.added + telnet.added,
+                updated: ssh.updated + rdp.updated + telnet.updated,
+                unchanged: ssh.unchanged + rdp.unchanged + telnet.unchanged,
             }
         }) {
             Ok(merged) => merged,

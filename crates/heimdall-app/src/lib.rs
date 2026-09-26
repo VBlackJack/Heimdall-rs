@@ -30,6 +30,7 @@ mod ids;
 pub mod profile_draft;
 pub mod rdp_driver;
 mod sink;
+pub mod telnet_driver;
 mod text;
 
 pub use app::{
