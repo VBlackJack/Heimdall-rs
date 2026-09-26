@@ -19,7 +19,7 @@
 //! Runs only when `HEIMDALL_LIVE_SSH_PORT` names a local port served by the Heimdall-TestEnv
 //! `ssh-base` image with three users: `rsauser` and `eduser` authorised with the
 //! `rsa-openssh.pub` and `ed25519-openssh.pub` fixtures, and `pwuser` with the password in
-//! [`LIVE_PASSWORD`]. The in-process server does not check signature algorithms; OpenSSH
+//! `HEIMDALL_LIVE_SSH_PASSWORD`. The in-process server does not check signature algorithms; OpenSSH
 //! refuses SHA-1 RSA signatures, which is what these tests add.
 
 mod common;
@@ -33,8 +33,14 @@ use tokio_util::sync::CancellationToken;
 /// Environment variable naming the port of the live server.
 const LIVE_PORT_VARIABLE: &str = "HEIMDALL_LIVE_SSH_PORT";
 
-/// Password of `pwuser` in the throwaway test container.
-const LIVE_PASSWORD: &str = "LiveP@ss123";
+/// Environment variable holding the password of `pwuser` in the test container.
+const LIVE_PASSWORD_VARIABLE: &str = "HEIMDALL_LIVE_SSH_PASSWORD";
+
+/// The password of `pwuser`; required once the live port is set.
+fn live_password() -> String {
+    std::env::var(LIVE_PASSWORD_VARIABLE)
+        .unwrap_or_else(|_| panic!("{LIVE_PASSWORD_VARIABLE} must be set with the live port"))
+}
 
 /// Command whose output proves the shell runs: the server computes 42.
 const PROBE_COMMAND: &[u8] = b"echo heimdall-live-$((6*7))\n";
@@ -123,11 +129,11 @@ async fn a_password_account_logs_in_to_openssh() {
     let Some(port) = live_port() else { return };
     // OpenSSH may ask through keyboard-interactive or password; answer both.
     let prompter = ScriptedPrompter {
-        kbd: vec![Some(vec![LIVE_PASSWORD.to_owned()])]
+        kbd: vec![Some(vec![live_password()])]
             .into_iter()
             .collect::<std::collections::VecDeque<_>>()
             .into(),
-        ..ScriptedPrompter::passwords(&[LIVE_PASSWORD])
+        ..ScriptedPrompter::passwords(&[live_password().as_str()])
     };
     let session = connect_as(port, "pwuser", None, prompter).await;
     assert_shell_runs(session.expect("session")).await;
