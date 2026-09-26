@@ -3,7 +3,7 @@
 
 [package]
 name = "heimdall-rdp"
-description = "RDP sessions on top of IronRDP, including the clipboard backend."
+description = "RDP sessions on top of IronRDP, with servers trusted by the key of their certificate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -11,6 +11,25 @@ license.workspace = true
 authors.workspace = true
 repository.workspace = true
 publish.workspace = true
+
+[dependencies]
+data-encoding.workspace = true
+heimdall-core.workspace = true
+ironrdp.workspace = true
+ironrdp-core.workspace = true
+ironrdp-tokio.workspace = true
+ring.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+tokio-util.workspace = true
+x509-cert.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+# rt-multi-thread, macros: async tests.
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [lints]
 workspace = true
