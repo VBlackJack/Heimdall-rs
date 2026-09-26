@@ -20,8 +20,10 @@
 //! that calls it, and uses that crate's package name as the Fluent domain. Every crate
 //! with user-facing text therefore owns its files, at
 //! `i18n/<language>/<package-name>.ftl`. This crate holds what they share: the supported
-//! languages, the fallback, and [`find_gaps`], which each of them runs in a test so that
-//! no language ships with a key missing or left over.
+//! languages, the fallback, and [`find_gaps`], which each of them runs in a test. New text
+//! is written in the fallback language first and translated later, so a key missing from
+//! another language is allowed (shown in the fallback meanwhile); a key the fallback lacks
+//! is refused.
 
 use std::collections::BTreeSet;
 use std::fmt;

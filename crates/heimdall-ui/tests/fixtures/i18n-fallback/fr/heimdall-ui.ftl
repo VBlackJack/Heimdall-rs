@@ -1,0 +1,1 @@
+fixture-both = en français
