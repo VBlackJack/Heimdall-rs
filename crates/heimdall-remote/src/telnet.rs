@@ -45,6 +45,9 @@ const READ_BUFFER: usize = 16 * 1024;
 /// server faster than it is shown.
 const EVENT_QUEUE: usize = 64;
 
+/// Bound on sending to the server: past it, the server has stopped reading.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Where to connect.
 #[derive(Debug, Clone)]
 pub struct TelnetConfig {
@@ -104,6 +107,9 @@ enum Command {
 }
 
 /// The input side of a session. Calls only queue: none waits on the network.
+///
+/// The queue has no bound, on purpose: a bounded one would have to drop keystrokes or make
+/// the caller wait, and what is queued is what the user typed or pasted, already in memory.
 #[derive(Debug, Clone)]
 pub struct TelnetInput {
     commands: mpsc::UnboundedSender<Command>,
@@ -222,11 +228,11 @@ async fn run<S>(
                     Err(error) => break CloseReason::Failed(error.to_string()),
                 };
                 let received = telnet.receive(&buffer[..read]);
-                if let Err(reason) = send(&mut writer, &received.reply).await {
+                if let Err(reason) = send(&mut writer, &received.reply, &cancel).await {
                     break reason;
                 }
                 if !received.data.is_empty()
-                    && events.send(TelnetEvent::Output(received.data)).await.is_err()
+                    && !emit(&events, TelnetEvent::Output(received.data), &cancel).await
                 {
                     break CloseReason::Local;
                 }
@@ -237,26 +243,54 @@ async fn run<S>(
                     Some(Command::Resize(size)) => telnet.resize(size),
                     Some(Command::Close) | None => break CloseReason::Local,
                 };
-                if let Err(reason) = send(&mut writer, &bytes).await {
+                if let Err(reason) = send(&mut writer, &bytes, &cancel).await {
                     break reason;
                 }
             }
         }
     };
-    let _ = writer.shutdown().await;
-    let _ = events.send(TelnetEvent::Closed(reason)).await;
+    let _ = tokio::time::timeout(WRITE_TIMEOUT, writer.shutdown()).await;
+    let closed = TelnetEvent::Closed(reason);
+    if cancel.is_cancelled() {
+        // Whoever cancelled knows; a receiver that stopped reading is not waited for.
+        let _ = events.try_send(closed);
+    } else {
+        let _ = emit(&events, closed, &cancel).await;
+    }
 }
 
-async fn send<W: AsyncWrite + Unpin>(writer: &mut W, bytes: &[u8]) -> Result<(), CloseReason> {
+/// Queues `event`, unless the session is cancelled while the queue is full. Whether it was
+/// queued.
+async fn emit(
+    events: &mpsc::Sender<TelnetEvent>,
+    event: TelnetEvent,
+    cancel: &CancellationToken,
+) -> bool {
+    tokio::select! {
+        () = cancel.cancelled() => false,
+        sent = events.send(event) => sent.is_ok(),
+    }
+}
+
+/// Sends `bytes`, unless the session is cancelled or the server stops reading.
+async fn send<W: AsyncWrite + Unpin>(
+    writer: &mut W,
+    bytes: &[u8],
+    cancel: &CancellationToken,
+) -> Result<(), CloseReason> {
     if bytes.is_empty() {
         return Ok(());
     }
-    writer
-        .write_all(bytes)
-        .await
-        .map_err(|error| CloseReason::Failed(error.to_string()))?;
-    writer
-        .flush()
-        .await
-        .map_err(|error| CloseReason::Failed(error.to_string()))
+    let write = async {
+        writer.write_all(bytes).await?;
+        writer.flush().await
+    };
+    tokio::select! {
+        () = cancel.cancelled() => Err(CloseReason::Local),
+        written = tokio::time::timeout(WRITE_TIMEOUT, write) => match written {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(CloseReason::Failed(error.to_string())),
+            Err(_) => Err(CloseReason::Failed("the server stopped reading".to_owned())),
+        },
+    }
 }

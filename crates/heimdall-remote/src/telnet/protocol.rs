@@ -17,8 +17,9 @@
 //! The Telnet protocol without input or output: bytes from the server in, terminal data and
 //! replies out; terminal input in, bytes for the server out.
 //!
-//! Options follow RFC 1143 without ever initiating a negotiation: the client only answers,
-//! and answers a request only when it changes the option's state, so two peers cannot loop.
+//! Options follow RFC 1143 without ever initiating a negotiation: the client only answers.
+//! It accepts a request only when it changes the option's state, and refuses an option once
+//! per connection, so a server that keeps asking cannot draw it into a loop.
 
 /// Interpret As Command.
 const IAC: u8 = 255;
@@ -100,6 +101,10 @@ pub struct Telnet {
     ours: [bool; 256],
     /// Options the server performs, agreed with the client.
     theirs: [bool; 256],
+    /// Options the client refused to perform, answered once.
+    refused_ours: [bool; 256],
+    /// Options the client refused to let the server perform, answered once.
+    refused_theirs: [bool; 256],
     size: WindowSize,
     sub: Vec<u8>,
 }
@@ -113,6 +118,8 @@ impl Telnet {
             after_cr: false,
             ours: [false; 256],
             theirs: [false; 256],
+            refused_ours: [false; 256],
+            refused_theirs: [false; 256],
             size,
             sub: Vec::new(),
         }
@@ -174,6 +181,10 @@ impl Telnet {
     }
 
     /// Bytes for the server carrying `input` typed at the terminal.
+    ///
+    /// A CR ending `input` goes out as CR NUL at once, even if the next input starts with
+    /// LF: holding it back would leave a server that waits for the byte after a CR, as
+    /// `telnetd` does, without the end of the line until the next key.
     #[must_use]
     pub fn encode_input(&self, input: &[u8]) -> Vec<u8> {
         let binary = self.ours[usize::from(BINARY)];
@@ -218,23 +229,31 @@ impl Telnet {
         let index = usize::from(option);
         match verb {
             WILL if !self.theirs[index] => {
-                let accepted = matches!(option, BINARY | ECHO | SUPPRESS_GO_AHEAD);
-                self.theirs[index] = accepted;
-                reply.extend_from_slice(&[IAC, if accepted { DO } else { DONT }, option]);
+                if matches!(option, BINARY | ECHO | SUPPRESS_GO_AHEAD) {
+                    self.theirs[index] = true;
+                    reply.extend_from_slice(&[IAC, DO, option]);
+                } else if !self.refused_theirs[index] {
+                    self.refused_theirs[index] = true;
+                    reply.extend_from_slice(&[IAC, DONT, option]);
+                }
             }
             WONT if self.theirs[index] => {
                 self.theirs[index] = false;
                 reply.extend_from_slice(&[IAC, DONT, option]);
             }
             DO if !self.ours[index] => {
-                let accepted = matches!(
+                if matches!(
                     option,
                     BINARY | SUPPRESS_GO_AHEAD | TERMINAL_TYPE | WINDOW_SIZE
-                );
-                self.ours[index] = accepted;
-                reply.extend_from_slice(&[IAC, if accepted { WILL } else { WONT }, option]);
-                if accepted && option == WINDOW_SIZE {
-                    self.window_size(reply);
+                ) {
+                    self.ours[index] = true;
+                    reply.extend_from_slice(&[IAC, WILL, option]);
+                    if option == WINDOW_SIZE {
+                        self.window_size(reply);
+                    }
+                } else if !self.refused_ours[index] {
+                    self.refused_ours[index] = true;
+                    reply.extend_from_slice(&[IAC, WONT, option]);
                 }
             }
             DONT if self.ours[index] => {
@@ -315,6 +334,14 @@ mod tests {
         // NEW-ENVIRON (39), which would send the user's environment.
         assert_eq!(telnet.receive(&[IAC, DO, 39]).reply, [IAC, WONT, 39]);
         assert_eq!(telnet.receive(&[IAC, WILL, 39]).reply, [IAC, DONT, 39]);
+        // Asked again, it stays refused without a word: a server that re-asks on every
+        // refusal cannot make the two loop.
+        assert!(
+            telnet
+                .receive(&[IAC, DO, 39, IAC, WILL, 39])
+                .reply
+                .is_empty()
+        );
     }
 
     #[test]

@@ -196,3 +196,32 @@ async fn a_closed_port_is_a_network_error() {
         "{outcome:?}"
     );
 }
+
+#[tokio::test]
+async fn cancelling_ends_a_session_whose_output_nobody_reads() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        // Output without end, until the client goes away.
+        let chunk = vec![b'x'; 4096];
+        loop {
+            if stream.write_all(&chunk).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    let cancel = CancellationToken::new();
+    // Nothing reads the events: the queue fills and the session waits on it.
+    let _session = connect(&config(port), cancel.clone())
+        .await
+        .expect("connected");
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    cancel.cancel();
+    // The session lets go of the connection, so the server's writes fail and it returns.
+    tokio::time::timeout(WAIT, server)
+        .await
+        .expect("the session ended although its queue was full")
+        .expect("server");
+}
