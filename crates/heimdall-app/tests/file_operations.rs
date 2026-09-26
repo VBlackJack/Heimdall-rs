@@ -680,3 +680,28 @@ async fn backspace_refresh_rename_and_delete_act_on_the_focused_pane() {
         Some(Dialog::ConfirmDelete { side: Side::Local, name, .. }) if name == "b.txt"
     ));
 }
+
+#[tokio::test]
+async fn a_pane_button_gives_its_pane_the_focus() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    files(
+        &mut app,
+        FilesMessage::Refresh {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    key(&mut app, tab, FilesKey::Next);
+    assert_eq!(selected(&app, tab, Side::Remote), Some(0));
+    files(
+        &mut app,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Local,
+        },
+    );
+    app.update(Message::DismissDialog);
+    key(&mut app, tab, FilesKey::Next);
+    assert_eq!(selected(&app, tab, Side::Local), Some(0));
+}
