@@ -27,17 +27,18 @@
 )]
 
 use std::path::Path;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use heimdall_rdp::{
-    Fingerprint, KnownRdpHosts, RdpConfig, RdpError, Security, ServerCertificate, Timeouts,
-    connect_over,
+    AskCredentials, Fingerprint, KnownRdpHosts, RdpConfig, RdpError, Security, ServerCertificate,
+    Timeouts, connect, connect_over,
 };
 use ironrdp::pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
 use ironrdp::pdu::x224::X224;
-use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _, DuplexStream};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::net::TcpListener;
 use tokio_rustls::TlsAcceptor;
 use tokio_rustls::rustls::crypto::ring::default_provider;
 use tokio_rustls::rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
@@ -108,7 +109,11 @@ struct Seen {
     after_handshake: usize,
 }
 
-async fn serve(mut stream: DuplexStream, key: &'static [u8], tls12_only: bool) -> Seen {
+async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
+    mut stream: S,
+    key: &'static [u8],
+    tls12_only: bool,
+) -> Seen {
     let mut header = [0; 4];
     stream.read_exact(&mut header).await.expect("TPKT header");
     let length = usize::from(u16::from_be_bytes([header[2], header[3]]));
@@ -377,4 +382,100 @@ fn connecting_can_be_spawned(config: RdpConfig, password: Zeroizing<String>) {
         heimdall_rdp::given(USERNAME.to_owned(), password),
         CancellationToken::new(),
     )));
+}
+
+/// Connects through [`connect`], over TCP to a fake server on this machine, with the key
+/// recorded for it first when `recorded`. The outcome, and when the credentials were asked:
+/// `Some(true)` once the server had accepted the connection, `Some(false)` before, `None`
+/// never.
+async fn attempt_over_tcp(
+    known: &Path,
+    accepted: Option<Fingerprint>,
+    recorded: bool,
+) -> (Result<(), RdpError>, Option<bool>) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    if recorded {
+        std::fs::write(known, format!("127.0.0.1:{port} {}\n", expected_pin())).expect("known");
+    }
+    let connected = Arc::new(AtomicBool::new(false));
+    let server_side = Arc::clone(&connected);
+    let server = tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accepted");
+        server_side.store(true, Ordering::SeqCst);
+        serve(stream, KEY, false).await
+    });
+    let asked = Arc::new(Mutex::new(None));
+    let record = Arc::clone(&asked);
+    let credentials: AskCredentials = Box::new(move || {
+        *record.lock().expect("lock") = Some(connected.load(Ordering::SeqCst));
+        Box::pin(std::future::ready(Some((
+            USERNAME.to_owned(),
+            Zeroizing::new("hunter2-password".to_owned()),
+        ))))
+    });
+    let mut config = config(known, accepted, port);
+    "127.0.0.1".clone_into(&mut config.host);
+    let outcome = tokio::time::timeout(
+        WAIT * 3,
+        connect(config, credentials, CancellationToken::new()),
+    )
+    .await
+    .expect("in time")
+    .map(|_| ());
+    server.abort();
+    let asked = *asked.lock().expect("lock");
+    (outcome, asked)
+}
+
+#[tokio::test]
+async fn a_recorded_server_gets_the_credentials_before_the_connection_opens() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (outcome, asked) = attempt_over_tcp(&dir.path().join("known"), None, true).await;
+    assert!(
+        !matches!(
+            outcome,
+            Err(RdpError::UnknownCertificate(_) | RdpError::CertificateChanged { .. })
+        ),
+        "{outcome:?}"
+    );
+    // A server waits for them only so long; a person typing may take longer.
+    assert_eq!(
+        asked,
+        Some(false),
+        "asked before the server accepted anything"
+    );
+}
+
+#[tokio::test]
+async fn a_just_accepted_server_gets_the_credentials_before_the_connection_opens() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (outcome, asked) =
+        attempt_over_tcp(&dir.path().join("known"), Some(expected_pin()), false).await;
+    assert!(
+        !matches!(
+            outcome,
+            Err(RdpError::UnknownCertificate(_) | RdpError::CertificateChanged { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        asked,
+        Some(false),
+        "asked before the server accepted anything"
+    );
+}
+
+#[tokio::test]
+async fn an_unknown_server_over_tcp_is_asked_about_and_asks_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (outcome, asked) = attempt_over_tcp(&dir.path().join("known"), None, false).await;
+    assert!(
+        matches!(outcome, Err(RdpError::UnknownCertificate(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        asked, None,
+        "no credentials for a server whose identity is open"
+    );
 }
