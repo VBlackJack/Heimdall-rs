@@ -14,7 +14,20 @@
  * limitations under the License.
  */
 
-//! VNC, Telnet and serial sessions.
+//! VNC (RFB) sessions.
+//!
+//! Neither of the security types spoken here encrypts: the desktop and what is typed cross
+//! the network in clear, and VNC Authentication does not prove who the server is. Reach a
+//! VNC server over a network through an SSH tunnel.
 
-pub mod telnet;
-pub mod vnc;
+mod auth;
+mod protocol;
+mod screen;
+mod zrle;
+
+pub use auth::PASSWORD_BYTES;
+pub use protocol::{MAX_CUT_TEXT, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
+pub use screen::{MAX_SIDE, Rect, Screen};
+
+/// Port of display 0; display N listens on this plus N.
+pub const DEFAULT_VNC_PORT: u16 = 5900;
