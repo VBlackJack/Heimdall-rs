@@ -13,7 +13,8 @@ repository.workspace = true
 publish.workspace = true
 
 [[bin]]
-name = "heimdall"
+# Not "heimdall": the C# Heimdall ships heimdall.exe, and both run side by side.
+name = "heimdall-rs"
 path = "src/main.rs"
 
 [lib]
