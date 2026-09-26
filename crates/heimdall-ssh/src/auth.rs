@@ -101,12 +101,28 @@ pub(crate) fn rsa_hash(
     }
 }
 
+/// Takes the message the server sent with its disconnect, if any.
+fn take_server_message(slot: &ServerMessage) -> Option<String> {
+    slot.lock().ok().and_then(|mut message| message.take())
+}
+
+/// A request the server can no longer receive is its disconnect, not a protocol error:
+/// OpenSSH closes an authentication left waiting longer than its `LoginGraceTime`.
+fn request_failed<P: Prompter>(ctx: &AuthContext<'_, P>, error: russh::Error) -> ConnectError {
+    if ctx.handle.is_closed() {
+        return ConnectError::Disconnected {
+            server_message: take_server_message(ctx.server_message),
+        };
+    }
+    ConnectError::Protocol(error)
+}
+
 pub(crate) async fn authenticate<P: Prompter>(ctx: AuthContext<'_, P>) -> Result<(), ConnectError> {
     let first = ctx
         .handle
         .authenticate_none(ctx.username)
         .await
-        .map_err(ConnectError::Protocol)?;
+        .map_err(|error| request_failed(&ctx, error))?;
     let methods = match first {
         russh::client::AuthResult::Success => return Ok(()),
         russh::client::AuthResult::Failure {
@@ -164,11 +180,7 @@ impl<P: Prompter> Attempts<'_, P> {
     }
 
     fn server_message(&self) -> Option<String> {
-        self.ctx
-            .server_message
-            .lock()
-            .ok()
-            .and_then(|mut slot| slot.take())
+        take_server_message(self.ctx.server_message)
     }
 
     /// Fails when the server has gone, so an empty method list is not taken for a refusal.
@@ -243,7 +255,7 @@ impl<P: Prompter> Attempts<'_, P> {
                 PrivateKeyWithHashAlg::new(Arc::new(key), hash),
             )
             .await
-            .map_err(ConnectError::Protocol)?;
+            .map_err(|error| request_failed(&self.ctx, error))?;
         self.settle(result)
     }
 
@@ -310,7 +322,7 @@ impl<P: Prompter> Attempts<'_, P> {
             .handle
             .authenticate_keyboard_interactive_start(self.ctx.username, None::<String>)
             .await
-            .map_err(ConnectError::Protocol)?;
+            .map_err(|error| request_failed(&self.ctx, error))?;
         loop {
             match response {
                 KeyboardInteractiveAuthResponse::Success => return Ok(true),
@@ -366,7 +378,7 @@ impl<P: Prompter> Attempts<'_, P> {
                         .handle
                         .authenticate_keyboard_interactive_respond(answers)
                         .await
-                        .map_err(ConnectError::Protocol)?;
+                        .map_err(|error| request_failed(&self.ctx, error))?;
                 }
             }
         }
@@ -395,7 +407,7 @@ impl<P: Prompter> Attempts<'_, P> {
                 .handle
                 .authenticate_password(self.ctx.username, password.expose())
                 .await
-                .map_err(ConnectError::Protocol)?;
+                .map_err(|error| request_failed(&self.ctx, error))?;
             if self.settle(result)? {
                 return Ok(true);
             }
