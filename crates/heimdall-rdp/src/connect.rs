@@ -106,8 +106,11 @@ pub enum Security {
 /// An account and its password.
 pub type Credentials = (String, Zeroizing<String>);
 
-/// Asks for the credentials once the server is trusted, and only then: a password is never
-/// typed for a server whose identity is not settled. `None` cancels the connection.
+/// Asks for the credentials, only for a server whose identity is settled: one trusted before,
+/// or whose key the user just accepted. Such a server is asked for them before the connection
+/// opens, as it would not wait for a person typing; they still leave only once its key is
+/// checked. A server never seen stops at its certificate and asks nothing. `None` cancels the
+/// connection.
 pub type AskCredentials =
     Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Option<Credentials>> + Send>> + Send>;
 
@@ -227,6 +230,23 @@ async fn connect_in_place(
     credentials: AskCredentials,
     cancel: &CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
+    // A server waits for the credentials only so long: Windows Server 2022 dropped a
+    // connection between 60 and 90 s (measured on 2026-09-26). So a server whose identity is
+    // settled gets them before the connection opens.
+    let settled = config.accepted.is_some()
+        || config
+            .known_hosts
+            .knows(&config.host, config.port)
+            .map_err(RdpError::KnownHosts)?;
+    let credentials = if settled {
+        let (username, password) = tokio::select! {
+            () = cancel.cancelled() => return Err(RdpError::Cancelled),
+            answer = credentials() => answer.ok_or(RdpError::Cancelled)?,
+        };
+        given(username, password)
+    } else {
+        credentials
+    };
     let tcp = phase(
         config.timeouts.connect,
         cancel,

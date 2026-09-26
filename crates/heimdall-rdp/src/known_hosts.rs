@@ -71,30 +71,47 @@ impl KnownRdpHosts {
     ///
     /// The file exists and cannot be read.
     pub fn verdict(&self, host: &str, port: u16, presented: &Fingerprint) -> io::Result<Verdict> {
+        let keys = self.keys(host, port)?;
+        if keys.contains(presented) {
+            return Ok(Verdict::Known);
+        }
+        Ok(keys
+            .first()
+            .map_or(Verdict::Unknown, |recorded| Verdict::Changed {
+                recorded: *recorded,
+            }))
+    }
+
+    /// Whether a key is recorded for `host:port`: the server was trusted before.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read.
+    pub fn knows(&self, host: &str, port: u16) -> io::Result<bool> {
+        Ok(!self.keys(host, port)?.is_empty())
+    }
+
+    /// The keys recorded for `host:port`, in the order of the file.
+    fn keys(&self, host: &str, port: u16) -> io::Result<Vec<Fingerprint>> {
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Verdict::Unknown),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
             Err(error) => return Err(error),
         };
         let wanted = address(host, port);
-        let mut recorded = None;
-        for line in text.lines() {
-            let mut fields = line.split_whitespace();
-            let (Some(line_address), Some(key)) = (fields.next(), fields.next()) else {
-                continue;
-            };
-            if line_address != wanted {
-                continue;
-            }
-            let Ok(key) = key.parse::<Fingerprint>() else {
-                continue;
-            };
-            if key == *presented {
-                return Ok(Verdict::Known);
-            }
-            recorded.get_or_insert(key);
-        }
-        Ok(recorded.map_or(Verdict::Unknown, |recorded| Verdict::Changed { recorded }))
+        Ok(text
+            .lines()
+            .filter_map(|line| {
+                let mut fields = line.split_whitespace();
+                let (Some(line_address), Some(key)) = (fields.next(), fields.next()) else {
+                    return None;
+                };
+                if line_address != wanted {
+                    return None;
+                }
+                key.parse::<Fingerprint>().ok()
+            })
+            .collect())
     }
 
     /// Forgets every key recorded for `host:port`, keeping the other lines as they are.
