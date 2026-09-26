@@ -844,8 +844,10 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
     let Some(Dialog::ImportDone(summary)) = &app.dialog else {
         panic!("expected ImportDone, got {:?}", app.dialog);
     };
-    assert_eq!(summary.merged.added, 1);
-    assert_eq!(summary.skipped.len(), 1);
+    assert_eq!(summary.merged.added, 2, "the SSH and the RDP profile");
+    assert!(summary.skipped.is_empty(), "{:?}", summary.skipped);
+    assert_eq!(app.rdp_profiles().len(), 1);
+    assert_eq!(app.rdp_profiles()[0].host, "r.lab");
     assert_eq!(app.profiles().len(), 3);
     let reopened = ProfileStore::open(&config.profiles_file).expect("saved");
     assert_eq!(reopened.ssh_profiles().len(), 3);
