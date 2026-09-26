@@ -17,11 +17,13 @@
 //! A running RDP session: the server's graphics decoded into a framebuffer, input sent back.
 
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Duration;
 
 use ironrdp::connector::connection_activation::{
     ConnectionActivationFactory, ConnectionActivationState,
 };
 use ironrdp::connector::{ConnectionResult, Sequence as _};
+use ironrdp::displaycontrol::pdu::MonitorLayoutEntry;
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::{Database, Operation};
 use ironrdp::pdu::Action;
@@ -32,7 +34,8 @@ use ironrdp::session::{
 };
 use ironrdp_core::WriteBuf;
 use tokio::io::{AsyncWriteExt as _, ReadHalf, WriteHalf};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
+use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use crate::connect::{MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
@@ -108,7 +111,16 @@ pub struct RdpSession {
     /// Keyboard and mouse input. Unbounded, so a key is never dropped while the session
     /// is busy drawing.
     pub input: mpsc::UnboundedSender<Vec<Operation>>,
+    /// The desktop size wanted: the session asks the server for it once it has not changed
+    /// for [`RESIZE_SETTLE`], so dragging a window edge sends one request, not hundreds.
+    pub size: watch::Sender<Option<(u16, u16)>>,
 }
+
+/// How long a wanted size must hold before the server is asked for it.
+pub const RESIZE_SETTLE: Duration = Duration::from_millis(300);
+
+/// How soon a size is asked again when the server's display channel was not open yet.
+const RESIZE_RETRY: Duration = Duration::from_millis(500);
 
 /// Starts the session of `connection`; `cancel` ends it.
 #[must_use]
@@ -117,12 +129,17 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
     let framebuffer = Framebuffer::new(result.desktop_size.width, result.desktop_size.height);
     let (events, event_receiver) = mpsc::channel(EVENT_QUEUE);
     let (input, input_receiver) = mpsc::unbounded_channel();
+    let (size, size_receiver) = watch::channel(None);
     let (stream, leftover) = framed.into_inner();
     let (read_half, write_half) = tokio::io::split(stream);
     let running = Running {
         framebuffer: framebuffer.clone(),
         events,
         input: input_receiver,
+        size: size_receiver,
+        wanted: None,
+        asked: None,
+        settle: None,
         reader: FrameReader::new(read_half, leftover),
         writer: write_half,
     };
@@ -131,6 +148,14 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         framebuffer,
         events: event_receiver,
         input,
+        size,
+    }
+}
+
+/// Waits until `deadline`; the caller polls it only when there is one.
+async fn sleep_until_settled(deadline: Option<Instant>) {
+    if let Some(deadline) = deadline {
+        tokio::time::sleep_until(deadline).await;
     }
 }
 
@@ -164,6 +189,13 @@ struct Running {
     framebuffer: Framebuffer,
     events: mpsc::Sender<RdpEvent>,
     input: mpsc::UnboundedReceiver<Vec<Operation>>,
+    size: watch::Receiver<Option<(u16, u16)>>,
+    /// A size to ask the server for, once [`Running::settle`] passes.
+    wanted: Option<(u32, u32)>,
+    /// The last size asked for, kept: a reactivation (the logon after a login screen, a
+    /// reconnection) brings the server's own size back, and it is asked again then.
+    asked: Option<(u32, u32)>,
+    settle: Option<Instant>,
     reader: FrameReader<ReadHalf<Upgraded>>,
     writer: WriteHalf<Upgraded>,
 }
@@ -212,6 +244,23 @@ impl Running {
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
                     stage.process(&mut image, action, &frame).map_err(|error| described(&error))?
                 }
+                changed = self.size.changed() => {
+                    if changed.is_ok() {
+                        if let Some((width, height)) = *self.size.borrow_and_update() {
+                            self.wanted = Some((u32::from(width), u32::from(height)));
+                            self.settle = Some(Instant::now() + RESIZE_SETTLE);
+                        }
+                    } else {
+                        // Nobody sets a size any more: stop listening for one.
+                        self.size = watch::channel(None).1;
+                    }
+                    Vec::new()
+                }
+                () = sleep_until_settled(self.settle), if self.settle.is_some() => {
+                    self.settle = None;
+                    self.ask_for_size(&mut stage).await?;
+                    Vec::new()
+                }
                 Some(operations) = self.input.recv() => {
                     let events = keys.apply(operations);
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
@@ -243,9 +292,39 @@ impl Running {
                     }
                     ActiveStageOutput::DeactivateAll => {
                         self.reactivate(&activation, &mut stage).await?;
+                        if self.wanted.is_none() && self.asked.is_some() {
+                            self.wanted = self.asked;
+                            self.settle = Some(Instant::now() + RESIZE_SETTLE);
+                        }
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+
+    /// Asks the server for the wanted size, unless the desktop has it already; when the
+    /// display channel is not open yet, asks again a little later.
+    async fn ask_for_size(&mut self, stage: &mut ActiveStage) -> Result<(), String> {
+        let Some((width, height)) = self.wanted.take() else {
+            return Ok(());
+        };
+        let (width, height) = MonitorLayoutEntry::adjust_display_size(width, height);
+        self.asked = Some((width, height));
+        let current = self.framebuffer.read(|current_width, current_height, _| {
+            (u32::from(current_width), u32::from(current_height))
+        });
+        if (width, height) == current {
+            return Ok(());
+        }
+        match stage.encode_resize(width, height, None, None) {
+            Some(Ok(frame)) => self.send(&frame).await,
+            // Not encodable: the size stays as it is.
+            Some(Err(_)) => Ok(()),
+            None => {
+                self.wanted = Some((width, height));
+                self.settle = Some(Instant::now() + RESIZE_RETRY);
+                Ok(())
             }
         }
     }

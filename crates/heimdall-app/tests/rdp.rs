@@ -184,6 +184,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
         ConnectionEvent::RdpReady {
             framebuffer: Framebuffer::new(64, 48),
             input,
+            size: tokio::sync::watch::channel(None).0,
         },
     );
     assert_eq!(app.tabs[0].phase, Phase::Connected);
@@ -272,4 +273,29 @@ fn a_changed_key_can_be_forgotten_and_the_question_comes_back() {
         heimdall_rdp::Verdict::Known,
         "the other servers stay"
     );
+}
+
+#[test]
+fn the_size_the_tab_shows_its_desktop_at_reaches_the_session() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (input, _received) = mpsc::unbounded_channel();
+    let (size, wanted) = tokio::sync::watch::channel(None);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(64, 48),
+            input,
+            size,
+        },
+    );
+    app.update(Message::DesktopResize {
+        tab,
+        width: 1600,
+        height: 900,
+    });
+    assert_eq!(*wanted.borrow(), Some((1600, 900)));
 }

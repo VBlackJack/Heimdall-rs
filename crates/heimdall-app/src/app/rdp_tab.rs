@@ -49,9 +49,13 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
                 fingerprint: fingerprint.to_string(),
             };
         }
-        ConnectionEvent::RdpReady { framebuffer, input } => {
+        ConnectionEvent::RdpReady {
+            framebuffer,
+            input,
+            size,
+        } => {
             tab.phase = Phase::Connected;
-            tab.desktop = Some(Box::new(DesktopPane::rdp(framebuffer, input)));
+            tab.desktop = Some(Box::new(DesktopPane::rdp(framebuffer, input, size)));
         }
         ConnectionEvent::DesktopFrame => {
             if let Some(pane) = tab.desktop.as_mut() {

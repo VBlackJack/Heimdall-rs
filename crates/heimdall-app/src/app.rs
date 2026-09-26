@@ -135,6 +135,15 @@ pub enum Message {
     OpenTelnet(ProfileId),
     /// Open a VNC tab for a saved VNC profile.
     OpenVnc(ProfileId),
+    /// The size a tab shows its remote desktop at, in pixels.
+    DesktopResize {
+        /// Tab.
+        tab: TabId,
+        /// Width.
+        width: u16,
+        /// Height.
+        height: u16,
+    },
     /// Keyboard or mouse input for the remote desktop of a tab.
     DesktopInput {
         /// Tab.
@@ -259,6 +268,9 @@ impl fmt::Debug for Message {
             Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             // What was typed is never shown, as for a terminal.
+            Self::DesktopResize { tab, width, height } => {
+                write!(f, "DesktopResize({}, {width}x{height})", tab.value())
+            }
             Self::DesktopInput { tab, inputs } => {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
@@ -863,6 +875,12 @@ impl App {
             Message::OpenRdp(id) => self.open_rdp(&id),
             Message::OpenTelnet(id) => self.open_telnet(&id),
             Message::OpenVnc(id) => self.open_vnc(&id),
+            Message::DesktopResize { tab, width, height } => {
+                if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
+                    pane.resize(width, height);
+                }
+                Vec::new()
+            }
             Message::DesktopInput { tab, inputs } => {
                 self.desktop_input(tab, &inputs);
                 Vec::new()

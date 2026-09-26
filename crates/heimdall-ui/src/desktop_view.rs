@@ -46,6 +46,8 @@ struct State {
     tab: Option<TabId>,
     /// The picture last built, and the generation it shows.
     picture: RefCell<Option<(u64, image::Handle)>>,
+    /// The size last reported for the desktop, so a change is reported once.
+    reported: Option<(u16, u16)>,
     /// Keys held, with the keysym sent when each went down: a release sends the same one,
     /// or Shift released first would turn a held `!` into a `1` and leave `!` stuck.
     held: Vec<(Physical, u32)>,
@@ -102,6 +104,28 @@ impl<'a, M> DesktopView<'a, M> {
             .clamp(f32::from(i16::MIN), f32::from(i16::MAX)) as i16;
         if units != 0 {
             self.send(shell, vec![DesktopInput::Wheel { vertical, units }]);
+        }
+    }
+
+    /// Reports the size the desktop is shown at, in whole pixels, when it changed: the server
+    /// is asked to match it.
+    fn report_size(&self, state: &mut State, shell: &mut Shell<'_, M>, bounds: Rectangle) {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to the u16 range first"
+        )]
+        let size = (
+            bounds.width.clamp(0.0, f32::from(u16::MAX)) as u16,
+            bounds.height.clamp(0.0, f32::from(u16::MAX)) as u16,
+        );
+        if state.reported != Some(size) && size.0 > 0 && size.1 > 0 {
+            state.reported = Some(size);
+            shell.publish((self.wrap)(AppMessage::DesktopResize {
+                tab: self.tab,
+                width: size.0,
+                height: size.1,
+            }));
         }
     }
 
@@ -218,10 +242,11 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                 ..State::default()
             };
         }
+        let bounds = layout.bounds();
+        self.report_size(state, shell, bounds);
         if !self.interactive {
             return;
         }
-        let bounds = layout.bounds();
         match event {
             Event::Mouse(mouse::Event::CursorMoved { .. }) => {
                 if let Some(position) = cursor.position_over(bounds) {
