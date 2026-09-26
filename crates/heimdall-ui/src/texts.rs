@@ -70,6 +70,9 @@ pub fn error(error: &UiError) -> String {
         UiError::PromptTimedOut => fl!("ui-error-prompt-timeout"),
         UiError::PtyRefused => fl!("ui-error-pty-refused"),
         UiError::ShellRefused => fl!("ui-error-shell-refused"),
+        UiError::SubsystemRefused { name } => {
+            fl!("ui-error-subsystem-refused", name = server_text(name))
+        }
         UiError::Protocol { detail } => fl!("ui-error-protocol", detail = server_text(detail)),
     }
 }
@@ -176,5 +179,13 @@ mod tests {
             !text.contains('\u{1b}') && !text.contains('\u{7}'),
             "{text:?}"
         );
+    }
+
+    #[test]
+    fn a_refused_subsystem_is_named() {
+        let text = error(&UiError::SubsystemRefused {
+            name: "sftp".to_owned(),
+        });
+        assert!(text.contains("sftp"), "{text}");
     }
 }

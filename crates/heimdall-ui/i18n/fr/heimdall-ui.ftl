@@ -60,6 +60,7 @@ ui-error-cancelled = Annulé.
 ui-error-prompt-timeout = Une question est restée trop longtemps sans réponse.
 ui-error-pty-refused = Le serveur a refusé d'ouvrir un terminal.
 ui-error-shell-refused = Le serveur a refusé de lancer un shell.
+ui-error-subsystem-refused = Le serveur a refusé de lancer { $name }.
 ui-error-protocol = Erreur du protocole SSH : { $detail }
 
 ui-auth-method-agent = agent SSH
