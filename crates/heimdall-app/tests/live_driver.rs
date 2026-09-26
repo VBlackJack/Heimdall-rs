@@ -31,7 +31,14 @@ use tokio_util::sync::CancellationToken;
 
 const LIVE_PORT_VARIABLE: &str = "HEIMDALL_LIVE_SSH_PORT";
 const LIVE_USER: &str = "pwuser";
-const LIVE_PASSWORD: &str = "LiveP@ss123";
+/// Environment variable holding the password of `pwuser` in the test container.
+const LIVE_PASSWORD_VARIABLE: &str = "HEIMDALL_LIVE_SSH_PASSWORD";
+
+/// The password of `pwuser`; required once the live port is set.
+fn live_password() -> String {
+    std::env::var(LIVE_PASSWORD_VARIABLE)
+        .unwrap_or_else(|_| panic!("{LIVE_PASSWORD_VARIABLE} must be set with the live port"))
+}
 const PROBE_COMMAND: &[u8] = b"echo heimdall-app-$((6*7))\n";
 const PROBE_OUTPUT: &str = "heimdall-app-42";
 const STEP_TIMEOUT: Duration = Duration::from_secs(30);
@@ -93,7 +100,7 @@ async fn the_driver_connects_answers_and_runs_a_command() {
         while let Some(event) = events.next().await {
             match event {
                 ConnectionEvent::Question { question, kind } => {
-                    let secret = Secret::new(LIVE_PASSWORD.to_owned());
+                    let secret = Secret::new(live_password());
                     let answer = match kind {
                         heimdall_app::QuestionKind::KeyboardInteractive(round) => {
                             Answer::Secrets(vec![secret; round.prompts.len()])
@@ -158,7 +165,7 @@ async fn the_driver_opens_an_sftp_session_that_lists_the_home_folder() {
         while let Some(event) = events.next().await {
             match event {
                 ConnectionEvent::Question { question, kind } => {
-                    let secret = Secret::new(LIVE_PASSWORD.to_owned());
+                    let secret = Secret::new(live_password());
                     let answer = match kind {
                         heimdall_app::QuestionKind::KeyboardInteractive(round) => {
                             Answer::Secrets(vec![secret; round.prompts.len()])

@@ -7,6 +7,10 @@ remote connection manager, in Rust, for Windows and Linux.
 
 ## Status
 
+> **Not usable yet.** This is a rewrite in progress, published so its work can be
+> followed. It does not yet do what the C# Heimdall does, its formats may change without
+> notice, and it is not released. Use [Heimdall](https://github.com/VBlackJack/Heimdall).
+
 Early development. The first milestone is done: an SSH terminal tab opened from a saved
 profile, with profiles imported from the C# Heimdall, host key checks, password, key file
 (OpenSSH and PuTTY), agent and keyboard-interactive authentication, and a terminal with
