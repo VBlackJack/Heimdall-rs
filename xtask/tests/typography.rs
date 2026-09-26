@@ -86,3 +86,27 @@ fn french_and_spanish_accents_are_allowed() {
     let text = "réécriture, à, ç, ê, ï, ù, ñ, ¿qué?, ¡olé!";
     assert!(check_text(Path::new("probe.md"), text).is_empty());
 }
+
+#[test]
+fn vendored_crates_are_left_as_published_but_their_notes_are_read() {
+    let root = workspace_root();
+    let result = scan(&root).expect("the workspace is readable");
+    let notes = root.join("vendor").join("PATCHES.md");
+    assert!(
+        result.scanned.contains(&notes),
+        "{} not read",
+        notes.display()
+    );
+    let vendored = root.join("vendor").join("ironrdp-connector");
+    assert!(
+        vendored.is_dir(),
+        "the positive control needs a vendored crate"
+    );
+    assert!(
+        !result
+            .scanned
+            .iter()
+            .any(|path| path.starts_with(&vendored)),
+        "a vendored crate was read"
+    );
+}

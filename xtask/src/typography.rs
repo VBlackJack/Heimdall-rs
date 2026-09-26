@@ -56,6 +56,11 @@ pub const SCANNED_EXTENSIONS: [&str; 7] = ["md", "rs", "toml", "ftl", "yml", "ya
 /// Directory names the guard never enters.
 pub const SKIPPED_DIRECTORIES: [&str; 3] = [".git", "target", "node_modules"];
 
+/// Directory holding third-party crates copied verbatim but for a documented patch: their
+/// text is not ours to rewrite, and rewriting it would hide the patch. Its own files, such as
+/// `PATCHES.md`, are still read; the crates below it are not.
+pub const THIRD_PARTY_PARENT: &str = "vendor";
+
 /// One refused character found in a file.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Finding {
@@ -118,6 +123,11 @@ fn walk(dir: &Path, result: &mut Scan) -> io::Result<()> {
                 .file_name()
                 .and_then(|name| name.to_str())
                 .is_some_and(|name| SKIPPED_DIRECTORIES.contains(&name));
+            let third_party = path
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|parent| parent == THIRD_PARTY_PARENT);
+            let skipped = skipped || third_party;
             if !skipped {
                 walk(&path, result)?;
             }
