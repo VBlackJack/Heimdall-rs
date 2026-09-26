@@ -29,16 +29,17 @@ use heimdall_app::files::{
 };
 use heimdall_app::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileDraft, ProfileField};
 use heimdall_app::rdp_driver::rdp_events;
+use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, FilesMessage, Message as AppMessage,
-    NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, Tab, TabId, UiError,
-    connection_events, server_text,
+    Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect,
+    FilesMessage, Message as AppMessage, NameAction, Phase, Prompt, Purpose, QuestionId,
+    QuestionKind, Tab, TabId, UiError, connection_events, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::{RdpProfile, SshProfile, display_address};
+use heimdall_core::profile::{RdpProfile, SshProfile, TelnetProfile, display_address};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
-use iced::futures::{StreamExt as _, stream};
+use iced::futures::{Stream, StreamExt as _, stream};
 use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
@@ -233,6 +234,7 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
 enum Listed<'a> {
     Ssh(&'a SshProfile),
     Rdp(&'a RdpProfile),
+    Telnet(&'a TelnetProfile),
 }
 
 impl<'a> Listed<'a> {
@@ -240,6 +242,7 @@ impl<'a> Listed<'a> {
         match self {
             Self::Ssh(profile) => profile.group.as_deref(),
             Self::Rdp(profile) => profile.group.as_deref(),
+            Self::Telnet(profile) => profile.group.as_deref(),
         }
     }
 
@@ -247,6 +250,7 @@ impl<'a> Listed<'a> {
         match self {
             Self::Ssh(profile) => &profile.name,
             Self::Rdp(profile) => &profile.name,
+            Self::Telnet(profile) => &profile.name,
         }
     }
 }
@@ -273,6 +277,14 @@ fn profile_row(profile: Listed<'_>) -> Element<'_, Message> {
             fl!(
                 "ui-sidebar-rdp-target",
                 target = target(&profile.host, profile.port, profile.username.as_deref())
+            ),
+            row![],
+        ),
+        Listed::Telnet(profile) => (
+            AppMessage::OpenTelnet(profile.id.clone()),
+            fl!(
+                "ui-sidebar-telnet-target",
+                target = target(&profile.host, profile.port, None)
             ),
             row![],
         ),
@@ -654,6 +666,27 @@ impl Shell {
         operation::focus(field.clone()).chain(operation::select_all(field))
     }
 
+    /// Feeds the events of a connection attempt back as messages, until the tab closes: the
+    /// task is aborted with its tab.
+    fn connection_task(
+        &mut self,
+        tab: TabId,
+        attempt: AttemptId,
+        events: impl Stream<Item = ConnectionEvent> + Send + 'static,
+    ) -> Task<Message> {
+        let (task, handle) = Task::stream(events)
+            .map(move |event| {
+                Message::App(AppMessage::Connection {
+                    tab,
+                    attempt,
+                    event,
+                })
+            })
+            .abortable();
+        self.connections.insert(tab, handle.abort_on_drop());
+        task
+    }
+
     /// Turns an effect into a task.
     fn run(&mut self, effect: Effect) -> Task<Message> {
         match effect {
@@ -666,17 +699,7 @@ impl Shell {
                 // Started inside the task: spawning needs the runtime, which `update` is not in.
                 let events =
                     stream::once(async move { connection_events(*request, registry) }).flatten();
-                let (task, handle) = Task::stream(events)
-                    .map(move |event| {
-                        Message::App(AppMessage::Connection {
-                            tab,
-                            attempt,
-                            event,
-                        })
-                    })
-                    .abortable();
-                self.connections.insert(tab, handle.abort_on_drop());
-                task
+                self.connection_task(tab, attempt, events)
             }
             Effect::ConnectRdp {
                 tab,
@@ -684,19 +707,16 @@ impl Shell {
                 request,
             } => {
                 let registry = self.registry.clone();
-                // Started inside the task, like an SSH attempt: spawning needs the runtime.
                 let events = stream::once(async move { rdp_events(*request, registry) }).flatten();
-                let (task, handle) = Task::stream(events)
-                    .map(move |event| {
-                        Message::App(AppMessage::Connection {
-                            tab,
-                            attempt,
-                            event,
-                        })
-                    })
-                    .abortable();
-                self.connections.insert(tab, handle.abort_on_drop());
-                task
+                self.connection_task(tab, attempt, events)
+            }
+            Effect::ConnectTelnet {
+                tab,
+                attempt,
+                request,
+            } => {
+                let events = stream::once(async move { telnet_events(*request) }).flatten();
+                self.connection_task(tab, attempt, events)
             }
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
@@ -807,6 +827,7 @@ impl Shell {
             .iter()
             .map(Listed::Ssh)
             .chain(self.app.rdp_profiles().iter().map(Listed::Rdp))
+            .chain(self.app.telnet_profiles().iter().map(Listed::Telnet))
             .collect();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));

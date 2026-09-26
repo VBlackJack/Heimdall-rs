@@ -27,6 +27,9 @@ pub const DEFAULT_SSH_PORT: u16 = 22;
 /// Port an RDP server listens on unless a profile says otherwise.
 pub const DEFAULT_RDP_PORT: u16 = 3389;
 
+/// Port a Telnet server listens on unless a profile says otherwise.
+pub const DEFAULT_TELNET_PORT: u16 = 23;
+
 /// Stable identifier of a profile.
 ///
 /// A profile imported from the C# Heimdall keeps the identifier it had there, so a second
@@ -105,6 +108,24 @@ pub struct RdpProfile {
     /// travels in the logon packet, inside TLS, once the server's key is trusted.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_tls_only: bool,
+}
+
+/// A saved Telnet destination, reached directly.
+///
+/// Holds no account: a Telnet server asks for one in the session itself, as text.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TelnetProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
 }
 
 /// `host:port` as people write it: an IPv6 address in brackets, so the port stays

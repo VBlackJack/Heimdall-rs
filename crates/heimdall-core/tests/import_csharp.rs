@@ -17,7 +17,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
-use heimdall_core::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, SshProfile};
+use heimdall_core::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, SshProfile};
 
 /// Environment variable naming a directory that holds a real C# `servers.json`, and
 /// optionally `settings.json`, for [`a_real_legacy_file_imports_without_error`].
@@ -291,4 +291,51 @@ fn an_rdp_profile_without_nla_allows_plain_tls_and_the_default_does_not() {
         allowed,
         [("nla", false), ("tls", true), ("explicit", false)]
     );
+}
+
+#[test]
+fn a_telnet_profile_is_imported_whatever_the_case_of_its_type() {
+    let json = servers(
+        r#"{"id": "t", "displayName": "Switch", "remoteServer": " sw1.lab ",
+            "connectionType": "Telnet", "telnetPort": 2323, "group": "Network",
+            "telnetUsername": "admin", "telnetPasswordEncrypted": "AQAAAN..."},
+           {"id": "u", "remoteServer": "sw2.lab", "connectionType": "TELNET"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert!(report.profiles.is_empty() && report.rdp.is_empty());
+    let [first, second] = report.telnet.as_slice() else {
+        panic!("{:?}", report.telnet);
+    };
+    assert_eq!(first.id.as_str(), "t");
+    assert_eq!(first.name, "Switch");
+    assert_eq!(first.host, "sw1.lab");
+    assert_eq!(first.port, 2323);
+    assert_eq!(first.group.as_deref(), Some("Network"));
+    assert_eq!(second.name, "sw2.lab", "named after its host");
+    assert_eq!(second.port, DEFAULT_TELNET_PORT);
+}
+
+#[test]
+fn a_telnet_port_of_zero_or_less_is_the_default_and_too_high_is_left_out() {
+    let json = servers(
+        r#"{"id": "z", "remoteServer": "h", "connectionType": "Telnet", "telnetPort": 0},
+           {"id": "n", "remoteServer": "h", "connectionType": "Telnet", "telnetPort": -5},
+           {"id": "x", "remoteServer": "h", "connectionType": "Telnet", "telnetPort": 70000}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let ports: Vec<u16> = report.telnet.iter().map(|profile| profile.port).collect();
+    assert_eq!(ports, [DEFAULT_TELNET_PORT, DEFAULT_TELNET_PORT]);
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].id, "x");
+    assert_eq!(report.skipped[0].reason, SkipReason::InvalidPort(70000));
+}
+
+#[test]
+fn a_telnet_profile_ignores_the_ssh_gateway_as_the_csharp_does() {
+    let json = servers(
+        r#"{"id": "t", "remoteServer": "h", "connectionType": "Telnet", "sshGatewayId": "gw"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert_eq!(report.telnet.len(), 1, "{:?}", report.skipped);
 }

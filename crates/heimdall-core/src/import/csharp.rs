@@ -34,13 +34,19 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use thiserror::Error;
 
-use crate::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, ProfileId, RdpProfile, SshProfile};
+use crate::profile::{
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, ProfileId, RdpProfile, SshProfile,
+    TelnetProfile,
+};
 
 /// `connectionType` of an SSH profile.
 const SSH_CONNECTION_TYPE: &str = "SSH";
 
 /// `connectionType` of an RDP profile.
 const RDP_CONNECTION_TYPE: &str = "RDP";
+
+/// `connectionType` of a Telnet profile, compared without case as the C# catalog does.
+const TELNET_CONNECTION_TYPE: &str = "Telnet";
 
 /// `connectionType` the C# Heimdall assumes when the field is absent.
 const DEFAULT_CONNECTION_TYPE: &str = "RDP";
@@ -83,6 +89,8 @@ pub struct ImportReport {
     pub profiles: Vec<SshProfile>,
     /// RDP profiles ready to be merged into the store.
     pub rdp: Vec<RdpProfile>,
+    /// Telnet profiles ready to be merged into the store.
+    pub telnet: Vec<TelnetProfile>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
 }
@@ -129,6 +137,8 @@ struct LegacyServer {
     use_direct_connection: bool,
     /// Absent means the C# default: Network Level Authentication required.
     rdp_nla: Option<bool>,
+    /// Zero or less means the default port, as `TelnetHandler` reads it.
+    telnet_port: Option<i64>,
 }
 
 fn default_connection_type() -> String {
@@ -176,6 +186,11 @@ pub fn import(
             .apply_to(&mut server);
         let converted = if server.connection_type == RDP_CONNECTION_TYPE {
             convert_rdp(&server).map(|profile| report.rdp.push(profile))
+        } else if server
+            .connection_type
+            .eq_ignore_ascii_case(TELNET_CONNECTION_TYPE)
+        {
+            convert_telnet(&server).map(|profile| report.telnet.push(profile))
         } else {
             convert(&server).map(|profile| report.profiles.push(profile))
         };
@@ -338,5 +353,32 @@ fn convert_rdp(server: &LegacyServer) -> Result<RdpProfile, SkipReason> {
         username: non_empty(server.rdp_username.as_ref()),
         domain: non_empty(server.rdp_domain.as_ref()),
         allow_tls_only: server.rdp_nla == Some(false),
+    })
+}
+
+/// A Telnet profile as `TelnetHandler` connects it: directly, never through a gateway.
+fn convert_telnet(server: &LegacyServer) -> Result<TelnetProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    if server.remote_server.trim().is_empty() {
+        return Err(SkipReason::MissingHost);
+    }
+    let port = match server.telnet_port {
+        Some(value) if value > 0 => {
+            u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?
+        }
+        _ => DEFAULT_TELNET_PORT,
+    };
+    Ok(TelnetProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.is_empty() {
+            server.remote_server.clone()
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        host: server.remote_server.trim().to_owned(),
+        port,
     })
 }
