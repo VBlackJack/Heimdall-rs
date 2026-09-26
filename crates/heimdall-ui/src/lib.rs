@@ -23,10 +23,13 @@ pub mod terminal_view;
 mod texts;
 
 use heimdall_core::paths;
-use iced::{Size, window};
+use iced::{Font, Size, window};
 
 use crate::shell::Shell;
 use crate::terminal_view::FONTS;
+
+/// Font of the window's text, embedded by iced's `fira-sans` feature.
+const UI_FONT_FAMILY: &str = "Fira Sans";
 
 /// Window size at first start, in logical pixels.
 const WINDOW_SIZE: Size = Size::new(1280.0, 800.0);
@@ -46,6 +49,7 @@ pub fn run() -> iced::Result {
         .title(Shell::title)
         .theme(Shell::theme)
         .subscription(Shell::subscription)
+        .default_font(Font::with_name(UI_FONT_FAMILY))
         .window(window::Settings {
             size: WINDOW_SIZE,
             min_size: Some(MIN_WINDOW_SIZE),
