@@ -21,15 +21,22 @@ path = "src/lib.rs"
 
 [dependencies]
 heimdall-app.workspace = true
+heimdall-core.workspace = true
+heimdall-ssh.workspace = true
 heimdall-term.workspace = true
 i18n-embed.workspace = true
 i18n-embed-fl.workspace = true
 # advanced: custom widgets; tokio: one runtime shared with the SSH client.
 iced = { workspace = true, features = ["advanced", "tokio"] }
+log.workspace = true
 rust-embed.workspace = true
+tokio.workspace = true
+zeroize.workspace = true
 
 [dev-dependencies]
 heimdall-i18n.workspace = true
+iced_test.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

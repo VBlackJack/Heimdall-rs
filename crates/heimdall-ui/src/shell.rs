@@ -1,0 +1,851 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! The window: profiles, tabs, questions and dialogs, and the runtime that turns the
+//! application core's effects into iced tasks.
+//!
+//! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
+//! what the user is typing into a question, and runs effects.
+
+use std::collections::HashMap;
+use std::fmt;
+use std::path::PathBuf;
+
+use heimdall_app::{
+    Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, Message as AppMessage, Phase, Prompt,
+    QuestionId, QuestionKind, Tab, TabId, connection_events, server_text,
+};
+use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
+use heimdall_core::profile::SshProfile;
+use heimdall_ssh::{AgentSource, Secret};
+use heimdall_term::GridSize;
+use iced::futures::{StreamExt as _, stream};
+use iced::task::Handle;
+use iced::widget::{
+    Column, button, center, column, container, opaque, operation, row, scrollable, stack, text,
+    text_input,
+};
+use iced::{Color, Element, Length, Subscription, Task, Theme, event, keyboard, window};
+use zeroize::Zeroizing;
+
+use crate::i18n::fl;
+use crate::terminal_view::TerminalView;
+use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
+use crate::texts;
+
+/// Grid of a tab before its first layout.
+const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
+
+/// Width of the profile list, in logical pixels.
+const SIDEBAR_WIDTH: f32 = 260.0;
+
+/// Gap between stacked elements, in logical pixels.
+const SPACING: f32 = 8.0;
+
+/// Padding inside panels, in logical pixels.
+const PADDING: f32 = 12.0;
+
+/// Space between the terminal and the panels around it, in logical pixels.
+const TERMINAL_MARGIN: f32 = 6.0;
+
+/// Width of a question or dialog card, in logical pixels.
+const CARD_WIDTH: f32 = 520.0;
+
+/// Size of headings, in logical pixels.
+const HEADING_SIZE: f32 = 20.0;
+
+/// Size of secondary text, in logical pixels.
+const SMALL_SIZE: f32 = 12.0;
+
+/// Tallest the list of skipped profiles grows before it scrolls, in logical pixels.
+const SKIPPED_LIST_HEIGHT: f32 = 200.0;
+
+/// Opacity of the veil behind a dialog.
+const VEIL_ALPHA: f32 = 0.6;
+
+/// Window events and the window's shortcuts.
+fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
+    match event {
+        iced::Event::Window(window::Event::CloseRequested) => {
+            Some(Message::App(AppMessage::WindowCloseRequested))
+        }
+        iced::Event::Window(window::Event::Focused) => {
+            Some(Message::App(AppMessage::WindowFocus(true)))
+        }
+        iced::Event::Window(window::Event::Unfocused) => {
+            Some(Message::App(AppMessage::WindowFocus(false)))
+        }
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            modifiers,
+            repeat,
+            ..
+        }) if status == event::Status::Ignored => match window_shortcut(&key, modifiers)? {
+            WindowShortcut::CloseTab if repeat => None,
+            shortcut => Some(Message::Shortcut(shortcut)),
+        },
+        _ => None,
+    }
+}
+
+/// What the window reacts to.
+#[derive(Clone)]
+pub enum Message {
+    /// A message for the application core.
+    App(AppMessage),
+    /// The user edited field `index` of a question.
+    Field {
+        /// Question.
+        question: QuestionId,
+        /// Field.
+        index: usize,
+        /// New content.
+        value: String,
+    },
+    /// Move to field `index` of a question.
+    FocusField {
+        /// Question.
+        question: QuestionId,
+        /// Field.
+        index: usize,
+    },
+    /// Answer the question shown in `tab`.
+    Submit(TabId),
+    /// Decline the question shown in `tab`.
+    Decline(TabId),
+    /// A window shortcut.
+    Shortcut(WindowShortcut),
+}
+
+impl fmt::Debug for Message {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // A field holds what the user types into a question: a password, a passphrase.
+        match self {
+            Self::App(message) => write!(f, "App({message:?})"),
+            Self::Field {
+                question, index, ..
+            } => write!(f, "Field({}, {index}, ..)", question.value()),
+            Self::FocusField { question, index } => {
+                write!(f, "FocusField({}, {index})", question.value())
+            }
+            Self::Submit(tab) => write!(f, "Submit({})", tab.value()),
+            Self::Decline(tab) => write!(f, "Decline({})", tab.value()),
+            Self::Shortcut(shortcut) => write!(f, "Shortcut({shortcut:?})"),
+        }
+    }
+}
+
+/// Number of fields a question shows.
+fn field_count(kind: &QuestionKind) -> usize {
+    match kind {
+        QuestionKind::KeyboardInteractive(question) => question.prompts.len(),
+        QuestionKind::Username(_) | QuestionKind::Password(_) | QuestionKind::Passphrase(_) => 1,
+    }
+}
+
+/// The answer to `kind` made of what was typed; a missing field is empty.
+fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
+    typed.resize_with(field_count(kind), Zeroizing::default);
+    let secret = |text: &mut Zeroizing<String>| Secret::new(std::mem::take(&mut **text));
+    match kind {
+        QuestionKind::Username(_) => Answer::Text(std::mem::take(&mut *typed[0])),
+        QuestionKind::Password(_) | QuestionKind::Passphrase(_) => {
+            Answer::Secret(secret(&mut typed[0]))
+        }
+        QuestionKind::KeyboardInteractive(_) => {
+            Answer::Secrets(typed.iter_mut().map(secret).collect())
+        }
+    }
+}
+
+/// Widget identifier of a question field.
+fn field_id(question: QuestionId, index: usize) -> iced::widget::Id {
+    iced::widget::Id::from(format!("question-{}-{index}", question.value()))
+}
+
+/// `user@host:port`, or `host:port` without a user.
+fn target(host: &str, port: u16, user: Option<&str>) -> String {
+    match user {
+        Some(user) if !user.is_empty() => format!("{user}@{host}:{port}"),
+        _ => format!("{host}:{port}"),
+    }
+}
+
+/// Where the application keeps its files; the working directory when the platform has
+/// no home.
+fn config() -> AppConfig {
+    AppConfig {
+        profiles_file: paths::profiles_file().unwrap_or_else(|| PathBuf::from(PROFILES_FILE_NAME)),
+        known_hosts: paths::known_hosts_file()
+            .unwrap_or_else(|| PathBuf::from(KNOWN_HOSTS_FILE_NAME)),
+        legacy_dir: paths::legacy_data_dir(),
+        agent: AgentSource::Auto,
+        initial_grid: INITIAL_GRID,
+    }
+}
+
+/// The window's state.
+pub struct Shell {
+    app: App,
+    registry: AnswerRegistry,
+    /// Running connection attempts; dropping a handle aborts its task.
+    connections: HashMap<TabId, Handle>,
+    /// What is typed into each open question, wiped on drop.
+    drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
+    /// The question whose first field was last given focus.
+    focused: Option<QuestionId>,
+}
+
+impl Shell {
+    /// The window, with the profiles on disk.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::with_config(config())
+    }
+
+    /// The window over `config`.
+    #[must_use]
+    pub fn with_config(config: AppConfig) -> Self {
+        Self::with_app(App::new(config))
+    }
+
+    /// The window over an application core already in some state.
+    #[must_use]
+    pub fn with_app(app: App) -> Self {
+        Self {
+            app,
+            registry: AnswerRegistry::default(),
+            connections: HashMap::new(),
+            drafts: HashMap::new(),
+            focused: None,
+        }
+    }
+
+    /// The application core.
+    #[must_use]
+    pub fn app(&self) -> &App {
+        &self.app
+    }
+
+    /// Whether something typed into `question` is held.
+    #[must_use]
+    pub fn holds_draft(&self, question: QuestionId) -> bool {
+        self.drafts.contains_key(&question)
+    }
+
+    /// Window title.
+    #[must_use]
+    pub fn title(&self) -> String {
+        match self.app.active_tab() {
+            Some(tab) => fl!("ui-window-title-tab", tab = tab.title.as_str()),
+            None => fl!("ui-window-title"),
+        }
+    }
+
+    /// Theme: the terminal palette is Dracula, so is the window.
+    #[must_use]
+    pub fn theme(&self) -> Theme {
+        Theme::Dracula
+    }
+
+    /// Window events and shortcuts.
+    pub fn subscription(&self) -> Subscription<Message> {
+        event::listen_with(window_event)
+    }
+
+    /// Applies a message.
+    pub fn update(&mut self, message: Message) -> Task<Message> {
+        let effects = match message {
+            Message::App(message) => self.app.update(message),
+            Message::Field {
+                question,
+                index,
+                value,
+            } => {
+                self.edit(question, index, value);
+                return Task::none();
+            }
+            Message::FocusField { question, index } => {
+                return operation::focus(field_id(question, index));
+            }
+            Message::Submit(tab) => self.reply(tab, true),
+            Message::Decline(tab) => self.reply(tab, false),
+            Message::Shortcut(shortcut) => self.shortcut(shortcut),
+        };
+        let mut tasks: Vec<Task<Message>> =
+            effects.into_iter().map(|effect| self.run(effect)).collect();
+        self.forget_finished();
+        tasks.push(self.focus_question());
+        Task::batch(tasks)
+    }
+
+    fn prompt(&self, question: QuestionId) -> Option<&Prompt> {
+        self.app
+            .tabs
+            .iter()
+            .flat_map(|tab| tab.prompts.iter())
+            .find(|prompt| prompt.question == question)
+    }
+
+    fn edit(&mut self, question: QuestionId, index: usize, value: String) {
+        let Some(count) = self
+            .prompt(question)
+            .map(|prompt| field_count(&prompt.kind))
+        else {
+            return;
+        };
+        if index >= count {
+            return;
+        }
+        let fields = self.drafts.entry(question).or_default();
+        fields.resize_with(count, Zeroizing::default);
+        fields[index] = Zeroizing::new(value);
+    }
+
+    fn reply(&mut self, tab: TabId, accept: bool) -> Vec<Effect> {
+        let Some(prompt) = self.app.tab(tab).and_then(|found| found.prompts.front()) else {
+            return Vec::new();
+        };
+        let question = prompt.question;
+        let typed = self.drafts.remove(&question).unwrap_or_default();
+        let answer = accept.then(|| answer(&prompt.kind, typed));
+        self.app.update(AppMessage::Answer {
+            tab,
+            question,
+            answer,
+        })
+    }
+
+    fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
+        let Some(active) = self.app.active else {
+            return Vec::new();
+        };
+        let count = self.app.tabs.len();
+        let index = self.app.tabs.iter().position(|tab| tab.id == active);
+        let message = match (shortcut, index) {
+            (WindowShortcut::CloseTab, _) => AppMessage::RequestCloseTab(active),
+            (WindowShortcut::NextTab, Some(index)) => {
+                AppMessage::SelectTab(self.app.tabs[(index + 1) % count].id)
+            }
+            (WindowShortcut::PreviousTab, Some(index)) => {
+                AppMessage::SelectTab(self.app.tabs[(index + count - 1) % count].id)
+            }
+            (_, None) => return Vec::new(),
+        };
+        self.app.update(message)
+    }
+
+    /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
+    fn forget_finished(&mut self) {
+        let app = &self.app;
+        self.connections.retain(|tab, _| app.tab(*tab).is_some());
+        self.drafts.retain(|question, _| {
+            app.tabs.iter().any(|tab| {
+                tab.prompts
+                    .iter()
+                    .any(|prompt| prompt.question == *question)
+            })
+        });
+    }
+
+    /// Gives focus to the first field of the question shown, once per question.
+    fn focus_question(&mut self) -> Task<Message> {
+        let shown = self
+            .app
+            .active_tab()
+            .and_then(|tab| tab.prompts.front())
+            .map(|prompt| prompt.question);
+        if shown == self.focused {
+            return Task::none();
+        }
+        self.focused = shown;
+        shown.map_or_else(Task::none, |question| {
+            operation::focus(field_id(question, 0))
+        })
+    }
+
+    /// Turns an effect into a task.
+    fn run(&mut self, effect: Effect) -> Task<Message> {
+        match effect {
+            Effect::Connect {
+                tab,
+                attempt,
+                request,
+            } => {
+                let registry = self.registry.clone();
+                // Started inside the task: spawning needs the runtime, which `update` is not in.
+                let events =
+                    stream::once(async move { connection_events(*request, registry) }).flatten();
+                let (task, handle) = Task::stream(events)
+                    .map(move |event| {
+                        Message::App(AppMessage::Connection {
+                            tab,
+                            attempt,
+                            event,
+                        })
+                    })
+                    .abortable();
+                self.connections.insert(tab, handle.abort_on_drop());
+                task
+            }
+            Effect::Answer { question, answer } => {
+                if !self.registry.answer(question, answer) {
+                    log::debug!("question {} was no longer waiting", question.value());
+                }
+                Task::none()
+            }
+            Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            Effect::ReadClipboard { tab } => iced::clipboard::read()
+                .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
+            Effect::WakeAt {
+                tab,
+                generation,
+                deadline,
+            } => Task::perform(
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)),
+                move |()| Message::App(AppMessage::SyncDeadline { tab, generation }),
+            ),
+            Effect::Exit => iced::exit(),
+        }
+    }
+
+    /// Draws the window.
+    #[must_use]
+    pub fn view(&self) -> Element<'_, Message> {
+        let body = row![
+            self.sidebar(),
+            column![self.tab_bar(), self.content()]
+                .width(Length::Fill)
+                .height(Length::Fill)
+        ];
+        match &self.app.dialog {
+            Some(dialog) => stack![
+                body,
+                opaque(center(card(dialog_view(dialog))).style(|_theme: &Theme| {
+                    container::Style {
+                        background: Some(
+                            Color {
+                                a: VEIL_ALPHA,
+                                ..Color::BLACK
+                            }
+                            .into(),
+                        ),
+                        ..container::Style::default()
+                    }
+                }))
+            ]
+            .into(),
+            None => body.into(),
+        }
+    }
+
+    fn sidebar(&self) -> Element<'_, Message> {
+        let mut list = Column::new()
+            .spacing(SPACING)
+            .padding(PADDING)
+            .push(text(fl!("ui-sidebar-title")).size(HEADING_SIZE));
+        if self.app.can_import() {
+            list = list.push(
+                button(text(fl!("ui-sidebar-import-button")))
+                    .on_press(Message::App(AppMessage::ImportLegacy))
+                    .style(button::secondary),
+            );
+        }
+        let mut profiles: Vec<&SshProfile> = self.app.profiles().iter().collect();
+        if profiles.is_empty() {
+            list = list.push(text(fl!("ui-sidebar-empty")));
+        }
+        // Named groups first, alphabetically; profiles without a group last.
+        profiles.sort_by(|a, b| {
+            (a.group.is_none(), a.group.as_deref(), &a.name).cmp(&(
+                b.group.is_none(),
+                b.group.as_deref(),
+                &b.name,
+            ))
+        });
+        let mut group: Option<Option<&str>> = None;
+        for profile in profiles {
+            let current = profile.group.as_deref();
+            if group != Some(current) {
+                group = Some(current);
+                let label = current.map_or_else(|| fl!("ui-sidebar-group-none"), str::to_owned);
+                list = list.push(text(label).size(SMALL_SIZE));
+            }
+            list = list.push(
+                button(column![
+                    text(profile.name.as_str()),
+                    text(target(
+                        &profile.host,
+                        profile.port,
+                        profile.username.as_deref()
+                    ))
+                    .size(SMALL_SIZE)
+                ])
+                .width(Length::Fill)
+                .style(button::text)
+                .on_press(Message::App(AppMessage::OpenProfile(profile.id.clone()))),
+            );
+        }
+        container(scrollable(list))
+            .width(SIDEBAR_WIDTH)
+            .height(Length::Fill)
+            .style(container::rounded_box)
+            .into()
+    }
+
+    fn tab_bar(&self) -> Element<'_, Message> {
+        let mut tabs = row![].spacing(SPACING).padding(PADDING);
+        for tab in &self.app.tabs {
+            let active = self.app.active == Some(tab.id);
+            let mut label = row![text(tab.title.as_str())].spacing(SPACING);
+            if tab.bell && !active {
+                label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+            }
+            tabs = tabs.push(
+                row![
+                    button(label)
+                        .style(if active {
+                            button::primary
+                        } else {
+                            button::secondary
+                        })
+                        .on_press(Message::App(AppMessage::SelectTab(tab.id))),
+                    button(text(fl!("ui-tab-close-button")).size(SMALL_SIZE))
+                        .style(button::text)
+                        .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                ]
+                .align_y(iced::Alignment::Center),
+            );
+        }
+        tabs.wrap().into()
+    }
+
+    fn content(&self) -> Element<'_, Message> {
+        let Some(tab) = self.app.active_tab() else {
+            return center(
+                column![
+                    text(fl!("ui-home-welcome")).size(HEADING_SIZE),
+                    text(fl!("ui-home-hint")),
+                ]
+                .spacing(SPACING),
+            )
+            .into();
+        };
+        if let Some(prompt) = tab.prompts.front() {
+            return center(card(self.question(tab, prompt))).into();
+        }
+        let close = || {
+            button(text(fl!("ui-session-close-button")))
+                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id)))
+        };
+        match &tab.phase {
+            Phase::Connecting => center(card(
+                column![
+                    text(fl!(
+                        "ui-connect-progress",
+                        target = target(
+                            &tab.profile.host,
+                            tab.profile.port,
+                            tab.profile.username.as_deref()
+                        )
+                    )),
+                    button(text(fl!("ui-connect-cancel-button")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+                ]
+                .spacing(SPACING),
+            ))
+            .into(),
+            Phase::HostKey {
+                host,
+                port,
+                fingerprint,
+            } => center(card(
+                column![
+                    text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
+                    text(fl!(
+                        "ui-hostkey-body",
+                        host = host.as_str(),
+                        port = port.to_string()
+                    )),
+                    text(fl!(
+                        "ui-hostkey-fingerprint",
+                        fingerprint = fingerprint.as_str()
+                    ))
+                    .font(iced::Font::MONOSPACE),
+                    row![
+                        button(text(fl!("ui-hostkey-reject-button")))
+                            .style(button::secondary)
+                            .on_press(Message::App(AppMessage::HostKeyDecision {
+                                tab: tab.id,
+                                accept: false,
+                            })),
+                        button(text(fl!("ui-hostkey-accept-button"))).on_press(Message::App(
+                            AppMessage::HostKeyDecision {
+                                tab: tab.id,
+                                accept: true,
+                            }
+                        )),
+                    ]
+                    .spacing(SPACING),
+                ]
+                .spacing(SPACING),
+            ))
+            .into(),
+            Phase::Connected => terminal(tab),
+            Phase::Closed { exit_status } => {
+                let status = exit_status.map_or_else(
+                    || fl!("ui-session-closed"),
+                    |status| fl!("ui-session-closed-status", status = status.to_string()),
+                );
+                column![
+                    terminal(tab),
+                    row![text(status), close()]
+                        .spacing(SPACING)
+                        .padding(PADDING)
+                        .align_y(iced::Alignment::Center),
+                ]
+                .into()
+            }
+            Phase::Failed(error) => center(card(
+                column![
+                    text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
+                    text(texts::error(error)),
+                    close(),
+                ]
+                .spacing(SPACING),
+            ))
+            .into(),
+        }
+    }
+
+    fn field(
+        &self,
+        tab: TabId,
+        question: QuestionId,
+        index: usize,
+        last: bool,
+        secure: bool,
+    ) -> Element<'_, Message> {
+        let value = self
+            .drafts
+            .get(&question)
+            .and_then(|fields| fields.get(index))
+            .map_or("", |typed| typed.as_str());
+        text_input("", value)
+            .id(field_id(question, index))
+            .secure(secure)
+            .on_input(move |value| Message::Field {
+                question,
+                index,
+                value,
+            })
+            .on_submit(if last {
+                Message::Submit(tab)
+            } else {
+                Message::FocusField {
+                    question,
+                    index: index + 1,
+                }
+            })
+            .into()
+    }
+
+    fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
+        let id = prompt.question;
+        let profile = &tab.profile;
+        let mut form = Column::new().spacing(SPACING);
+        match &prompt.kind {
+            QuestionKind::Username(asked) => {
+                form = form
+                    .push(text(fl!(
+                        "ui-prompt-username-title",
+                        target = target(&asked.host, asked.port, None)
+                    )))
+                    .push(self.field(tab.id, id, 0, true, false));
+            }
+            QuestionKind::Password(asked) => {
+                form = form.push(text(fl!(
+                    "ui-prompt-password-title",
+                    user = asked.username.as_str(),
+                    target = target(&asked.host, asked.port, None)
+                )));
+                if asked.attempt > 1 {
+                    form = form.push(text(fl!("ui-prompt-password-retry")));
+                }
+                form = form.push(self.field(tab.id, id, 0, true, true));
+            }
+            QuestionKind::Passphrase(asked) => {
+                form = form.push(text(fl!(
+                    "ui-prompt-passphrase-title",
+                    path = asked.key_path.display().to_string()
+                )));
+                if asked.attempt > 1 {
+                    form = form.push(text(fl!("ui-prompt-passphrase-retry")));
+                }
+                form = form.push(self.field(tab.id, id, 0, true, true));
+            }
+            QuestionKind::KeyboardInteractive(asked) => {
+                form = form.push(text(fl!(
+                    "ui-prompt-interactive-title",
+                    user = asked.username.as_str(),
+                    host = profile.host.as_str()
+                )));
+                // Server words are labelled as such, so they cannot pass for Heimdall's.
+                for said in [&asked.name, &asked.instructions] {
+                    if !said.is_empty() {
+                        form = form.push(
+                            text(fl!("ui-prompt-server-text", text = said.as_str()))
+                                .size(SMALL_SIZE),
+                        );
+                    }
+                }
+                let count = asked.prompts.len();
+                for (index, line) in asked.prompts.iter().enumerate() {
+                    form = form.push(text(line.text.as_str())).push(self.field(
+                        tab.id,
+                        id,
+                        index,
+                        index + 1 == count,
+                        !line.echo,
+                    ));
+                }
+            }
+        }
+        form.push(
+            row![
+                button(text(fl!("ui-prompt-cancel-button")))
+                    .style(button::secondary)
+                    .on_press(Message::Decline(tab.id)),
+                button(text(fl!("ui-prompt-submit-button"))).on_press(Message::Submit(tab.id)),
+            ]
+            .spacing(SPACING),
+        )
+        .into()
+    }
+}
+
+impl Default for Shell {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn terminal(tab: &Tab) -> Element<'_, Message> {
+    container(TerminalView::new(&tab.terminal, tab.id, Message::App))
+        .padding(TERMINAL_MARGIN)
+        .into()
+}
+
+fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(PADDING)
+        .max_width(CARD_WIDTH)
+        .style(container::bordered_box)
+        .into()
+}
+
+fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
+    let confirm = |label: String| {
+        button(text(label))
+            .style(button::danger)
+            .on_press(Message::App(AppMessage::ConfirmDialog))
+    };
+    let dismiss = |label: String| {
+        button(text(label))
+            .style(button::secondary)
+            .on_press(Message::App(AppMessage::DismissDialog))
+    };
+    let ok = || {
+        button(text(fl!("ui-dialog-ok-button"))).on_press(Message::App(AppMessage::DismissDialog))
+    };
+    let heading = |label: String| text(label).size(HEADING_SIZE);
+    let question = |title: String, body: String, action: String| {
+        column![
+            heading(title),
+            text(body),
+            row![dismiss(fl!("ui-dialog-cancel-button")), confirm(action)].spacing(SPACING),
+        ]
+        .spacing(SPACING)
+    };
+    let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
+    match dialog {
+        Dialog::ConfirmCloseTab(_) => question(
+            fl!("ui-dialog-close-tab-title"),
+            fl!("ui-dialog-close-tab-body"),
+            fl!("ui-dialog-close-tab-confirm"),
+        )
+        .into(),
+        Dialog::ConfirmExit { live } => question(
+            fl!("ui-dialog-exit-title"),
+            fl!("ui-dialog-exit-body", count = (*live)),
+            fl!("ui-dialog-exit-confirm"),
+        )
+        .into(),
+        Dialog::ConfirmPaste { lines, .. } => question(
+            fl!("ui-dialog-paste-title"),
+            fl!("ui-dialog-paste-body", count = (*lines)),
+            fl!("ui-dialog-paste-confirm"),
+        )
+        .into(),
+        Dialog::ImportDone(summary) => {
+            let mut content = column![
+                heading(fl!("ui-dialog-import-title")),
+                text(fl!(
+                    "ui-dialog-import-counts",
+                    added = summary.merged.added,
+                    updated = summary.merged.updated,
+                    unchanged = summary.merged.unchanged
+                )),
+            ]
+            .spacing(SPACING);
+            if !summary.skipped.is_empty() {
+                let skipped = summary.skipped.iter().fold(
+                    Column::new().spacing(SPACING / 2.0),
+                    |list, (name, reason)| {
+                        list.push(
+                            text(fl!(
+                                "ui-dialog-import-skipped-item",
+                                name = server_text(name),
+                                reason = texts::skip_reason(reason)
+                            ))
+                            .size(SMALL_SIZE),
+                        )
+                    },
+                );
+                content = content
+                    .push(text(fl!("ui-dialog-import-skipped")))
+                    .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
+            }
+            content.push(ok()).into()
+        }
+        Dialog::ImportFailed { detail: technical } => column![
+            heading(fl!("ui-dialog-import-failed-title")),
+            detail(technical),
+            ok(),
+        ]
+        .spacing(SPACING)
+        .into(),
+        Dialog::StoreError { detail: technical } => column![
+            heading(fl!("ui-dialog-store-title")),
+            text(fl!("ui-dialog-store-body")),
+            detail(technical),
+            ok(),
+        ]
+        .spacing(SPACING)
+        .into(),
+    }
+}

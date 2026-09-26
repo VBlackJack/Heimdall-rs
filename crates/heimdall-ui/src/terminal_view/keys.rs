@@ -58,6 +58,39 @@ pub fn shortcut(key: &keyboard::Key, modifiers: keyboard::Modifiers) -> Option<S
     }
 }
 
+/// A shortcut of the window, left uncaptured by the terminal so the window sees it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WindowShortcut {
+    /// Show the next tab: Ctrl+Tab, Ctrl+Page Down.
+    NextTab,
+    /// Show the previous tab: Ctrl+Shift+Tab, Ctrl+Page Up.
+    PreviousTab,
+    /// Close the tab shown: Ctrl+Shift+W.
+    CloseTab,
+}
+
+/// The window shortcut `key` with `modifiers` stands for, if any.
+#[must_use]
+pub fn window_shortcut(
+    key: &keyboard::Key,
+    modifiers: keyboard::Modifiers,
+) -> Option<WindowShortcut> {
+    let (ctrl, shift, alt) = (modifiers.control(), modifiers.shift(), modifiers.alt());
+    if !ctrl || alt {
+        return None;
+    }
+    match key {
+        keyboard::Key::Named(Named::Tab) if shift => Some(WindowShortcut::PreviousTab),
+        keyboard::Key::Named(Named::Tab) => Some(WindowShortcut::NextTab),
+        keyboard::Key::Named(Named::PageUp) if !shift => Some(WindowShortcut::PreviousTab),
+        keyboard::Key::Named(Named::PageDown) if !shift => Some(WindowShortcut::NextTab),
+        keyboard::Key::Character(c) if shift && c.as_str().eq_ignore_ascii_case("w") => {
+            Some(WindowShortcut::CloseTab)
+        }
+        _ => None,
+    }
+}
+
 fn named(key: Named) -> Option<NamedKey> {
     Some(match key {
         Named::Enter => NamedKey::Enter,
@@ -164,7 +197,7 @@ mod tests {
     use iced::keyboard::key::{Code, Named, Physical};
     use iced::keyboard::{self, Location, Modifiers};
 
-    use super::{Shortcut, key_input, shortcut};
+    use super::{Shortcut, WindowShortcut, key_input, shortcut, window_shortcut};
 
     fn character(c: &str) -> keyboard::Key {
         keyboard::Key::Character(c.into())
@@ -266,6 +299,42 @@ mod tests {
         assert_eq!(
             shortcut(&keyboard::Key::Named(Named::PageUp), Modifiers::empty()),
             None
+        );
+    }
+
+    #[test]
+    fn window_shortcuts_need_ctrl_and_leave_plain_keys_to_the_terminal() {
+        let tab = keyboard::Key::Named(Named::Tab);
+        assert_eq!(
+            window_shortcut(&tab, Modifiers::CTRL),
+            Some(WindowShortcut::NextTab)
+        );
+        assert_eq!(
+            window_shortcut(&tab, Modifiers::CTRL | Modifiers::SHIFT),
+            Some(WindowShortcut::PreviousTab)
+        );
+        assert_eq!(
+            window_shortcut(&tab, Modifiers::empty()),
+            None,
+            "Tab completes"
+        );
+        assert_eq!(
+            window_shortcut(&keyboard::Key::Named(Named::PageUp), Modifiers::CTRL),
+            Some(WindowShortcut::PreviousTab)
+        );
+        assert_eq!(
+            window_shortcut(&character("W"), Modifiers::CTRL | Modifiers::SHIFT),
+            Some(WindowShortcut::CloseTab)
+        );
+        assert_eq!(
+            window_shortcut(&character("w"), Modifiers::CTRL),
+            None,
+            "Ctrl+W deletes a word in the shell"
+        );
+        assert_eq!(
+            window_shortcut(&tab, Modifiers::CTRL | Modifiers::ALT),
+            None,
+            "AltGr is Ctrl+Alt on Windows"
         );
     }
 }

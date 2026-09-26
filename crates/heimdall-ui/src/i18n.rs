@@ -32,13 +32,15 @@ pub static LOADER: LazyLock<FluentLanguageLoader> = LazyLock::new(|| {
     loader
         .load_fallback_language(&Localizations)
         .expect("the fallback language is embedded at build time");
+    // Values are plain text in a plain-text widget: bidi isolation marks would show as boxes.
+    loader.set_use_isolating(false);
     loader
 });
 
 /// Looks a key up in [`LOADER`]; an unknown key fails the build.
 macro_rules! fl {
     ($id:literal) => {{ i18n_embed_fl::fl!($crate::i18n::LOADER, $id) }};
-    ($id:literal, $($args:expr),*) => {{ i18n_embed_fl::fl!($crate::i18n::LOADER, $id, $($args),*) }};
+    ($id:literal, $($args:tt)*) => {{ i18n_embed_fl::fl!($crate::i18n::LOADER, $id, $($args)*) }};
 }
 
 pub(crate) use fl;

@@ -47,11 +47,19 @@ use iced::{
     alignment,
 };
 
-use crate::terminal_view::keys::{Shortcut, committed_text, key_input, shortcut};
+use crate::terminal_view::keys::{Shortcut, committed_text, key_input, shortcut, window_shortcut};
 use crate::terminal_view::metrics::{CellMetrics, as_f32};
 
 /// Family name of the embedded terminal font.
 pub const FONT_FAMILY: &str = "Source Code Pro";
+
+/// The four embedded faces of [`FONT_FAMILY`], to load when the application starts.
+pub const FONTS: [&[u8]; 4] = [
+    include_bytes!("../../assets/fonts/SourceCodePro-Regular.otf"),
+    include_bytes!("../../assets/fonts/SourceCodePro-Bold.otf"),
+    include_bytes!("../../assets/fonts/SourceCodePro-It.otf"),
+    include_bytes!("../../assets/fonts/SourceCodePro-BoldIt.otf"),
+];
 
 /// Longest gap between presses counted as a double or triple click.
 const MULTI_CLICK: Duration = Duration::from_millis(400);
@@ -276,6 +284,10 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 repeat,
                 ..
             }) if state.focused => {
+                if window_shortcut(key, *modifiers).is_some() {
+                    // Left uncaptured: the window acts on it.
+                    return;
+                }
                 if let Some(action) = shortcut(key, *modifiers) {
                     let page = i32::try_from(grid.rows).unwrap_or(i32::MAX);
                     let message = match action {
