@@ -16,10 +16,23 @@
 
 use std::path::Path;
 
+use heimdall_i18n::GapKind;
+
+/// New text is written in English first and translated later, in batches: a key missing
+/// from another language is a translation still to do, shown in English meanwhile. A key
+/// English does not have is refused: it is dead, or a typo that would never be shown.
 #[test]
-fn every_supported_language_declares_the_same_keys() {
+fn no_language_holds_a_key_english_lacks() {
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let gaps = heimdall_i18n::find_gaps(crate_root, env!("CARGO_PKG_NAME"))
         .expect("every language file exists and parses");
-    assert!(gaps.is_empty(), "keys differ between languages: {gaps:#?}");
+    let extra: Vec<_> = gaps
+        .iter()
+        .filter(|gap| gap.kind == GapKind::Extra)
+        .collect();
+    assert!(extra.is_empty(), "keys English does not have: {extra:#?}");
+    let missing = gaps.len() - extra.len();
+    if missing > 0 {
+        eprintln!("translations still to do: {missing}");
+    }
 }

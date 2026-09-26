@@ -65,6 +65,28 @@ mod tests {
 
     use super::*;
 
+    /// Files where French lacks a key English has: a translation still to do.
+    #[derive(RustEmbed)]
+    #[folder = "tests/fixtures/i18n-fallback/"]
+    struct Incomplete;
+
+    #[test]
+    fn a_key_not_yet_translated_shows_in_english() {
+        // New text is written in English first; other languages follow later. Until then
+        // the user must read English, never the key.
+        let loader: FluentLanguageLoader = fluent_language_loader!();
+        loader
+            .load_fallback_language(&Incomplete)
+            .expect("fallback");
+        let _ = i18n_embed::select(&loader, &Incomplete, &["fr".parse().expect("language tag")]);
+        assert_eq!(
+            loader.get("fixture-both"),
+            "en français",
+            "French is selected"
+        );
+        assert_eq!(loader.get("fixture-english-only"), "only in English");
+    }
+
     #[test]
     fn a_selected_language_carries_no_isolation_marks() {
         // A loader of its own: the shared one would change language under other tests.
