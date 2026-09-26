@@ -247,7 +247,6 @@ impl fmt::Debug for Message {
 }
 
 /// Work for the UI layer.
-#[derive(Debug)]
 pub enum Effect {
     /// Start a connection attempt and feed its events back as [`Message::Connection`].
     Connect {
@@ -283,6 +282,35 @@ pub enum Effect {
     },
     /// Quit the application.
     Exit,
+}
+
+impl fmt::Debug for Effect {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Clipboard text is what the user selected: never shown.
+        match self {
+            Self::Connect { tab, attempt, .. } => {
+                write!(f, "Connect({}, {})", tab.value(), attempt.value())
+            }
+            Self::Answer { question, answer } => {
+                write!(f, "Answer({}, {answer:?})", question.value())
+            }
+            Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
+            Self::WakeAt {
+                tab, generation, ..
+            } => write!(f, "WakeAt({}, {generation})", tab.value()),
+            Self::Exit => f.write_str("Exit"),
+        }
+    }
+}
+
+/// Lines a shell would run from pasted text: CR, LF and CR LF all end a line, and empty
+/// lines run nothing.
+fn command_lines(text: &str) -> usize {
+    text.split("\r\n")
+        .flat_map(|part| part.split(['\r', '\n']))
+        .filter(|line| !line.is_empty())
+        .count()
 }
 
 /// Where a tab's connection stands.
@@ -357,10 +385,11 @@ impl fmt::Debug for Tab {
 }
 
 impl Tab {
-    /// Whether a live session would be lost by closing the tab.
+    /// Whether a live session would be lost by closing the tab. An attempt still
+    /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
     pub fn is_live(&self) -> bool {
-        matches!(self.phase, Phase::Connected | Phase::Connecting)
+        self.phase == Phase::Connected
     }
 
     fn write(&self, bytes: Vec<u8>) {
@@ -748,6 +777,10 @@ impl App {
     }
 
     fn key(&mut self, tab_id: TabId, input: &KeyInput) -> Vec<Effect> {
+        // A dialog owns the keyboard: Enter meant for it must not run a command.
+        if self.dialog.is_some() {
+            return Vec::new();
+        }
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -769,6 +802,9 @@ impl App {
     }
 
     fn pointer(&mut self, tab_id: TabId, input: PointerInput) -> Vec<Effect> {
+        if self.dialog.is_some() {
+            return Vec::new();
+        }
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -844,7 +880,7 @@ impl App {
             return Vec::new();
         }
         let mode = tab.terminal.input_mode();
-        let lines = text.lines().filter(|line| !line.is_empty()).count();
+        let lines = command_lines(&text);
         let runs_lines = !mode.bracketed_paste && text.trim_end().contains(['\n', '\r']);
         if runs_lines {
             self.dialog = Some(Dialog::ConfirmPaste { tab: tab_id, lines });

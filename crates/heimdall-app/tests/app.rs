@@ -621,6 +621,70 @@ fn a_multi_line_paste_into_a_shell_without_bracketed_paste_asks_first() {
 }
 
 #[test]
+fn a_paste_counts_every_line_the_shell_would_run() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, _, _) = connected(&mut app, "a");
+    for (text, expected) in [("a\rb\rc", 3), ("\nrm -rf x", 1), ("a\r\nb\r\n", 2)] {
+        app.update(Message::ClipboardText {
+            tab,
+            text: Some(text.to_owned()),
+        });
+        assert!(
+            matches!(app.dialog, Some(Dialog::ConfirmPaste { lines, .. }) if lines == expected),
+            "{text:?}: {:?}",
+            app.dialog
+        );
+        app.update(Message::DismissDialog);
+    }
+}
+
+#[test]
+fn while_a_dialog_is_open_keys_and_pointer_never_reach_the_session() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"\x1b[?1000h\x1b[?1006h");
+    app.update(Message::WindowCloseRequested);
+    assert!(app.dialog.is_some());
+    app.update(Message::Key {
+        tab,
+        input: key("y"),
+    });
+    app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Press(MouseButton::Left), 1, 1),
+    });
+    assert!(sink.written().is_empty(), "{:?}", sink.written());
+    app.update(Message::DismissDialog);
+    app.update(Message::Key {
+        tab,
+        input: key("x"),
+    });
+    assert_eq!(sink.written(), b"x");
+}
+
+#[test]
+fn closing_a_tab_still_connecting_does_not_ask() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, _) = open(&mut app, "a");
+    app.update(Message::RequestCloseTab(tab));
+    assert!(app.dialog.is_none());
+    assert!(app.tab(tab).is_none());
+    assert!(matches!(
+        app.update(Message::WindowCloseRequested).as_slice(),
+        [Effect::Exit]
+    ));
+}
+
+#[test]
+fn effects_never_show_clipboard_text() {
+    let effect = Effect::WriteClipboard("hunter2".to_owned());
+    assert!(!format!("{effect:?}").contains("hunter2"));
+}
+
+#[test]
 fn copy_puts_the_selection_on_the_clipboard() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));
