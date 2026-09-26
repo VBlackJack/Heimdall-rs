@@ -7,22 +7,21 @@ gestionnaire de connexions distantes multi-protocoles, pour Windows et Linux.
 
 ## État
 
-Développement en cours, vers un premier jalon : un onglet de terminal SSH ouvert depuis un
-profil enregistré. Fait : les profils et leur import depuis Heimdall en C#, le client SSH
-(clés d'hôte, agent, fichiers de clé, keyboard-interactive, mot de passe), l'émulation
-de terminal avec l'encodage du clavier, de la souris et du collage, et la fenêtre de bureau
-autour (liste des profils, onglets, questions de clé d'hôte et d'identifiants,
-confirmations). La fenêtre est testée sans affichage et démarre sous Linux ; elle n'a pas
-encore été parcourue à la main contre un serveur réel.
+Développement en cours. Le premier jalon est atteint : un onglet de terminal SSH ouvert
+depuis un profil enregistré, avec les profils importés depuis Heimdall en C#, la
+vérification des clés d'hôte, l'authentification par mot de passe, fichier de clé (OpenSSH
+et PuTTY), agent et keyboard-interactive, et un terminal avec historique, sélection,
+copier-coller et remontée de la souris. Il est testé automatiquement sous Linux et Windows,
+et a été parcouru à la main sur les deux le 2026-09-26. En cours : SFTP.
 
-Limites connues du jalon : les caractères absents de la police embarquée Source Code Pro
-(CJK, Braille) sont dessinés avec ce que fournit le système ; pas de prise en charge des
-lecteurs d'écran, iced n'en a pas encore.
+Limites connues : les caractères absents de la police embarquée Source Code Pro (CJK,
+Braille) sont dessinés avec ce que fournit le système ; pas de prise en charge des lecteurs
+d'écran, iced n'en a pas encore ; les profils sont importés ou écrits dans le fichier des
+profils, pas encore modifiables dans la fenêtre.
 
-La cible est la parité fonctionnelle avec Heimdall en C# : SSH,
-SFTP, FTP/FTPS, RDP, VNC, Telnet, série, shell local, coffre d'identifiants,
-bibliothèque de commandes, éditeur de diagrammes, mise à jour, et localisation
-en anglais, français et espagnol.
+La cible est la parité fonctionnelle avec Heimdall en C# : SSH, SFTP, FTP/FTPS, RDP, VNC,
+Telnet, Citrix, WinRM, shell local, coffre d'identifiants, bibliothèque de commandes,
+éditeur de diagrammes, mise à jour, et localisation en anglais, français et espagnol.
 
 L'interface est native, construite avec [iced](https://iced.rs), sans moteur web
 embarqué.
