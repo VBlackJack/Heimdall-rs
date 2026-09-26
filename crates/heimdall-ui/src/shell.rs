@@ -558,18 +558,25 @@ impl Shell {
                 list = list.push(text(label).size(SMALL_SIZE));
             }
             list = list.push(
-                button(column![
-                    text(profile.name.as_str()),
-                    text(target(
-                        &profile.host,
-                        profile.port,
-                        profile.username.as_deref()
-                    ))
-                    .size(SMALL_SIZE)
-                ])
-                .width(Length::Fill)
-                .style(button::text)
-                .on_press(Message::App(AppMessage::OpenProfile(profile.id.clone()))),
+                row![
+                    button(column![
+                        text(profile.name.as_str()),
+                        text(target(
+                            &profile.host,
+                            profile.port,
+                            profile.username.as_deref()
+                        ))
+                        .size(SMALL_SIZE)
+                    ])
+                    .width(Length::Fill)
+                    .style(button::text)
+                    .on_press(Message::App(AppMessage::OpenProfile(profile.id.clone()))),
+                    button(text(fl!("ui-sidebar-files-button")).size(SMALL_SIZE))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::OpenFiles(profile.id.clone()))),
+                ]
+                .spacing(SPACING / 2.0)
+                .align_y(iced::Alignment::Center),
             );
         }
         container(scrollable(list))
@@ -583,7 +590,12 @@ impl Shell {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         for tab in &self.app.tabs {
             let active = self.app.active == Some(tab.id);
-            let mut label = row![text(tab_label(&tab.title))].spacing(SPACING);
+            let title = if tab.files.is_some() {
+                fl!("ui-tab-files-title", name = tab_label(&tab.title))
+            } else {
+                tab_label(&tab.title)
+            };
+            let mut label = row![text(title)].spacing(SPACING);
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
             }
@@ -646,39 +658,11 @@ impl Shell {
                 host,
                 port,
                 fingerprint,
-            } => center(card(
-                column![
-                    text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
-                    text(fl!(
-                        "ui-hostkey-body",
-                        host = host.as_str(),
-                        port = port.to_string()
-                    )),
-                    text(fl!(
-                        "ui-hostkey-fingerprint",
-                        fingerprint = fingerprint.as_str()
-                    ))
-                    .font(iced::Font::MONOSPACE),
-                    row![
-                        button(text(fl!("ui-hostkey-reject-button")))
-                            .style(button::secondary)
-                            .on_press(Message::App(AppMessage::HostKeyDecision {
-                                tab: tab.id,
-                                accept: false,
-                            })),
-                        button(text(fl!("ui-hostkey-accept-button"))).on_press(Message::App(
-                            AppMessage::HostKeyDecision {
-                                tab: tab.id,
-                                accept: true,
-                            }
-                        )),
-                    ]
-                    .spacing(SPACING),
-                ]
-                .spacing(SPACING),
-            ))
-            .into(),
-            Phase::Connected => terminal(tab, self.app.dialog.is_none()),
+            } => host_key_card(tab.id, host, *port, fingerprint),
+            Phase::Connected => match tab.files.as_deref() {
+                Some(pane) => crate::files_view::view(tab.id, pane),
+                None => terminal(tab, self.app.dialog.is_none()),
+            },
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
                     || fl!("ui-session-closed"),
@@ -825,6 +809,37 @@ fn terminal(tab: &Tab, interactive: bool) -> Element<'_, Message> {
     container(TerminalView::new(&tab.terminal, tab.id, Message::App).interactive(interactive))
         .padding(TERMINAL_MARGIN)
         .into()
+}
+
+/// The question about an unknown server key.
+fn host_key_card<'a>(
+    tab: TabId,
+    host: &'a str,
+    port: u16,
+    fingerprint: &'a str,
+) -> Element<'a, Message> {
+    center(card(
+        column![
+            text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
+            text(fl!("ui-hostkey-body", host = host, port = port.to_string())),
+            text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint))
+                .font(iced::Font::MONOSPACE),
+            row![
+                button(text(fl!("ui-hostkey-reject-button")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::HostKeyDecision {
+                        tab,
+                        accept: false
+                    })),
+                button(text(fl!("ui-hostkey-accept-button"))).on_press(Message::App(
+                    AppMessage::HostKeyDecision { tab, accept: true }
+                )),
+            ]
+            .spacing(SPACING),
+        ]
+        .spacing(SPACING),
+    ))
+    .into()
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

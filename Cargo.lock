@@ -1904,6 +1904,7 @@ dependencies = [
  "heimdall-app",
  "heimdall-core",
  "heimdall-i18n",
+ "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
  "i18n-embed",

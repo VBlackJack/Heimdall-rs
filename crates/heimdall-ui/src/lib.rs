@@ -16,6 +16,7 @@
 
 //! The Heimdall desktop application: the window, its views and the terminal widget.
 
+mod files_view;
 mod i18n;
 mod logging;
 pub mod shell;
