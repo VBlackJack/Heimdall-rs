@@ -1,0 +1,77 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Server profiles.
+
+use std::fmt;
+use std::path::PathBuf;
+
+use serde::{Deserialize, Serialize};
+
+/// Port an SSH server listens on unless a profile says otherwise.
+pub const DEFAULT_SSH_PORT: u16 = 22;
+
+/// Stable identifier of a profile.
+///
+/// A profile imported from the C# Heimdall keeps the identifier it had there, so a second
+/// import updates it instead of adding a copy.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct ProfileId(String);
+
+impl ProfileId {
+    /// Wraps an identifier.
+    #[must_use]
+    pub fn new(id: impl Into<String>) -> Self {
+        Self(id.into())
+    }
+
+    /// The identifier as text.
+    #[must_use]
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Display for ProfileId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+/// A saved SSH destination.
+///
+/// Holds no secret. A password or a key passphrase is asked for when connecting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Login name; asked for when connecting if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Private key file, OpenSSH or `PuTTY` format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<PathBuf>,
+}

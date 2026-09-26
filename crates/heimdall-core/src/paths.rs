@@ -1,0 +1,63 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Where Heimdall-rs keeps its files, and where the C# Heimdall keeps its own.
+
+use std::path::PathBuf;
+
+use directories::{BaseDirs, ProjectDirs};
+
+/// Reverse-domain qualifier of the application directories; empty, as for a personal project.
+const QUALIFIER: &str = "";
+
+/// Organisation part of the application directories; empty, as for a personal project.
+const ORGANIZATION: &str = "";
+
+/// Application name the platform directories are derived from.
+const APPLICATION: &str = "Heimdall-rs";
+
+/// Name of the C# Heimdall's folder under the local application data directory.
+const LEGACY_APPLICATION_DIR: &str = "Heimdall";
+
+/// Name of the profile file inside the configuration directory.
+pub const PROFILES_FILE_NAME: &str = "profiles.toml";
+
+/// Name of the file holding the C# Heimdall's server profiles.
+pub const LEGACY_SERVERS_FILE_NAME: &str = "servers.json";
+
+/// Name of the file holding the C# Heimdall's settings, group defaults included.
+pub const LEGACY_SETTINGS_FILE_NAME: &str = "settings.json";
+
+/// Configuration directory of Heimdall-rs; `None` when the platform reports no home.
+#[must_use]
+pub fn config_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION).map(|dirs| dirs.config_dir().to_owned())
+}
+
+/// Path of the profile file.
+#[must_use]
+pub fn profiles_file() -> Option<PathBuf> {
+    config_dir().map(|dir| dir.join(PROFILES_FILE_NAME))
+}
+
+/// Data directory of the C# Heimdall on this machine, when the platform has one.
+///
+/// Only meaningful on Windows, where the C# Heimdall runs; the path is returned whether or
+/// not it exists.
+#[must_use]
+pub fn legacy_data_dir() -> Option<PathBuf> {
+    BaseDirs::new().map(|dirs| dirs.data_local_dir().join(LEGACY_APPLICATION_DIR))
+}
