@@ -21,6 +21,7 @@
 //! for the server, following the modes the application set ([`Terminal::input_mode`]).
 
 pub mod keys;
+pub mod local;
 pub mod mode;
 pub mod mouse;
 pub mod palette;
