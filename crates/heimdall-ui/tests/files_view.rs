@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! The Files tab drawn headless: both panes, what a click does, and the transfer list.
+//! The Files tab drawn headless: both panes, what a click does, the transfer list, and the\r
+//! name and delete questions.
 //! Setting `HEIMDALL_SNAPSHOT_DIR` writes a PNG of the tab, for a visual pass.
 
 use std::path::{Path, PathBuf};
@@ -187,7 +188,7 @@ async fn the_sidebar_opens_a_files_tab() {
 }
 
 #[tokio::test]
-async fn both_panes_show_their_folders_and_a_folder_click_opens_it() {
+async fn both_panes_show_their_folders_and_a_folder_click_selects_it() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let shell = Shell::with_app(core);
@@ -203,7 +204,7 @@ async fn both_panes_show_their_folders_and_a_folder_click_opens_it() {
     assert!(
         matches!(
             messages.as_slice(),
-            [FilesMessage::Open { tab: t, side: Side::Remote, index: 0 }] if *t == tab
+            [FilesMessage::Select { tab: t, side: Side::Remote, index: 0 }] if *t == tab
         ),
         "{messages:?}"
     );
@@ -275,4 +276,58 @@ async fn a_running_transfer_shows_its_progress_and_can_be_cancelled() {
         files_messages(ui).as_slice(),
         [FilesMessage::Cancel { id: cancelled, .. }] if *cancelled == id
     ));
+}
+
+#[tokio::test]
+async fn the_name_question_takes_typing_and_enter_confirms() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Remote,
+        },
+    )));
+    snapshot(&shell, "files-new-folder.png");
+    let mut ui = simulator(&shell);
+    ui.find("New folder").expect("title");
+    ui.click("Name").expect("name field");
+    ui.typewrite("fresh");
+    ui.tap_key(iced::keyboard::key::Named::Enter);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Files(FilesMessage::NameEdited(value))) if value == "f"
+        )),
+        "{messages:?}"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog))),
+        "{messages:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_folder_delete_says_everything_in_it_goes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    core.update(AppMessage::Files(FilesMessage::Select {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    }));
+    core.update(AppMessage::Files(FilesMessage::AskDelete {
+        tab,
+        side: Side::Remote,
+    }));
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "files-delete.png");
+    let mut ui = simulator(&shell);
+    ui.find("The folder logs and everything in it will be deleted. Links inside are removed, never what they point to. This cannot be undone.")
+        .expect("body");
+    ui.find("Delete?").expect("title");
 }

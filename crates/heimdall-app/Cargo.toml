@@ -24,8 +24,8 @@ tokio-util.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true
-# macros, rt: async tests.
-tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# macros, rt: async tests; process: the reference sftp-server.
+tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread"] }
 
 [lints]
 workspace = true

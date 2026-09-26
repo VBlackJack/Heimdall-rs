@@ -31,8 +31,8 @@ mod sink;
 mod text;
 
 pub use app::{
-    App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, Message, Phase,
-    PointerInput, Prompt, Tab, WHEEL_LINES,
+    App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, Message, NameAction,
+    Phase, PointerInput, Prompt, Tab, WHEEL_LINES,
 };
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, UiError};

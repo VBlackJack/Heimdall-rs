@@ -24,10 +24,11 @@ use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
-use heimdall_app::files::{Direction, list_local, list_remote, transfer_events};
+use heimdall_app::files::{Direction, file_operation, list_local, list_remote, transfer_events};
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, FilesMessage, Message as AppMessage,
-    Phase, Prompt, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
+    NameAction, Phase, Prompt, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events,
+    server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{SshProfile, display_address};
@@ -195,6 +196,11 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
     }
 }
 
+/// Widget identifier of the name field of a dialog.
+fn name_field_id() -> iced::widget::Id {
+    iced::widget::Id::new("dialog-name")
+}
+
 /// Widget identifier of a question field.
 fn field_id(question: QuestionId, index: usize) -> iced::widget::Id {
     iced::widget::Id::from(format!("question-{}-{index}", question.value()))
@@ -247,6 +253,8 @@ pub struct Shell {
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
     /// The question whose first field was last given focus.
     focused: Option<QuestionId>,
+    /// Whether the name field of the open dialog was given focus.
+    name_focused: bool,
 }
 
 impl Shell {
@@ -271,6 +279,7 @@ impl Shell {
             connections: HashMap::new(),
             drafts: HashMap::new(),
             focused: None,
+            name_focused: false,
         }
     }
 
@@ -330,6 +339,7 @@ impl Shell {
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
+        tasks.push(self.focus_name());
         Task::batch(tasks)
     }
 
@@ -428,6 +438,18 @@ impl Shell {
         })
     }
 
+    /// Gives focus to the name field when a dialog asking for a name opens.
+    fn focus_name(&mut self) -> Task<Message> {
+        let asking = matches!(self.app.dialog, Some(Dialog::AskName { .. }));
+        let opened = asking && !self.name_focused;
+        self.name_focused = asking;
+        if opened {
+            operation::focus(name_field_id())
+        } else {
+            Task::none()
+        }
+    }
+
     /// Turns an effect into a task.
     fn run(&mut self, effect: Effect) -> Task<Message> {
         match effect {
@@ -480,6 +502,17 @@ impl Shell {
                     }))
                 })
             }
+            Effect::FileOperation {
+                tab,
+                side,
+                operation,
+            } => Task::perform(file_operation(*operation), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::OperationDone {
+                    tab,
+                    side,
+                    result,
+                }))
+            }),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
@@ -886,6 +919,36 @@ fn import_report<'a>(
     content.push(ok).into()
 }
 
+/// Asks for a name: Enter in the field confirms, like the button.
+fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
+    let (title, confirm) = match action {
+        NameAction::NewFolder => (
+            fl!("ui-dialog-new-folder-title"),
+            fl!("ui-dialog-new-folder-confirm"),
+        ),
+        NameAction::Rename => (
+            fl!("ui-dialog-rename-title"),
+            fl!("ui-dialog-rename-confirm"),
+        ),
+    };
+    column![
+        text(title).size(HEADING_SIZE),
+        text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .id(name_field_id())
+            .on_input(|value| Message::App(AppMessage::Files(FilesMessage::NameEdited(value))))
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(confirm)).on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
 fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
     let confirm = |label: String| {
         button(text(label))
@@ -934,6 +997,17 @@ fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
                 Direction::Upload => fl!("ui-dialog-overwrite-remote-body", name = name.as_str()),
             },
             fl!("ui-dialog-overwrite-confirm"),
+        )
+        .into(),
+        Dialog::AskName { action, value, .. } => name_dialog(*action, value),
+        Dialog::ConfirmDelete { name, folder, .. } => question(
+            fl!("ui-dialog-delete-title"),
+            if *folder {
+                fl!("ui-dialog-delete-folder-body", name = name.as_str())
+            } else {
+                fl!("ui-dialog-delete-file-body", name = name.as_str())
+            },
+            fl!("ui-dialog-delete-confirm"),
         )
         .into(),
         Dialog::ConfirmPaste { lines, .. } => question(

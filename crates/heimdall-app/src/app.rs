@@ -45,7 +45,7 @@ use tokio_util::sync::CancellationToken;
 use crate::driver::{ConnectRequest, Purpose};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
-use crate::files::{Direction, FilesPane, TransferId, TransferRequest};
+use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::sink::InputSink;
 use crate::text::server_text;
@@ -53,7 +53,7 @@ use crate::text::server_text;
 mod files_tab;
 
 pub use files_tab::FilesMessage;
-use files_tab::PendingTransfer;
+use files_tab::{PendingOperation, PendingTransfer};
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -310,6 +310,15 @@ pub enum Effect {
         /// Folder.
         path: PathBuf,
     },
+    /// Carry out a file operation, then send [`FilesMessage::OperationDone`].
+    FileOperation {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// What to do.
+        operation: Box<FileOperation>,
+    },
     /// Run a transfer and send its events as [`FilesMessage::TransferEvent`].
     Transfer {
         /// Tab.
@@ -342,6 +351,9 @@ impl fmt::Debug for Effect {
                 write!(f, "ListRemote({}, {path:?})", tab.value())
             }
             Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
+            Self::FileOperation { tab, side, .. } => {
+                write!(f, "FileOperation({}, {side:?})", tab.value())
+            }
             Self::Transfer { tab, id, request } => write!(
                 f,
                 "Transfer({}, {}, {:?})",
@@ -492,6 +504,28 @@ pub enum Dialog {
         /// Number of lines.
         lines: usize,
     },
+    /// A name for a new folder or a renamed entry.
+    AskName {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// What the name is for.
+        action: NameAction,
+        /// The name typed so far.
+        value: String,
+    },
+    /// Delete an entry, a folder with everything in it.
+    ConfirmDelete {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// The entry's name, made safe.
+        name: String,
+        /// A folder.
+        folder: bool,
+    },
     /// Replace an existing file with a transfer.
     ConfirmOverwrite {
         /// Tab.
@@ -515,6 +549,15 @@ pub enum Dialog {
     },
 }
 
+/// What a typed name is for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NameAction {
+    /// A new folder.
+    NewFolder,
+    /// A new name for the selected entry.
+    Rename,
+}
+
 /// The application.
 pub struct App {
     config: AppConfig,
@@ -528,6 +571,7 @@ pub struct App {
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
     pending_transfer: Option<PendingTransfer>,
+    pending_operation: Option<PendingOperation>,
 }
 
 impl fmt::Debug for App {
@@ -564,6 +608,7 @@ impl App {
             dialog,
             pending_paste: None,
             pending_transfer: None,
+            pending_operation: None,
         }
     }
 
@@ -664,6 +709,7 @@ impl App {
                 self.dialog = None;
                 self.pending_paste = None;
                 self.pending_transfer = None;
+                self.pending_operation = None;
                 Vec::new()
             }
         }
@@ -1062,6 +1108,8 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmOverwrite { .. }) => self.confirm_overwrite(),
+            Some(Dialog::AskName { value, .. }) => self.confirm_operation(Some(&value)),
+            Some(Dialog::ConfirmDelete { .. }) => self.confirm_operation(None),
             Some(
                 Dialog::ImportDone(_) | Dialog::ImportFailed { .. } | Dialog::StoreError { .. },
             )

@@ -29,6 +29,7 @@ use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 use heimdall_sftp::path::display_bytes;
 use heimdall_sftp::protocol::{Attributes, StatusCode};
 use heimdall_sftp::transfer::{TransferConfig, TransferError, download, upload};
+use heimdall_sftp::tree::{TreeError, download_tree, remove_tree, upload_tree};
 use heimdall_sftp::{DirEntry, RemotePath, SftpClient, SftpError};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -192,6 +193,11 @@ pub enum TransferState {
     Running,
     /// Complete.
     Done,
+    /// A folder transfer finished with entries left out (links, unusable names, failures).
+    Incomplete {
+        /// Entries left out.
+        skipped: usize,
+    },
     /// Stopped by the user; a download can be resumed by starting it again.
     Cancelled,
     /// Failed.
@@ -240,8 +246,14 @@ pub enum FilesError {
         /// Why.
         reason: LocalNameError,
     },
-    /// Not a regular file: folders are not transferred yet.
+    /// Not a regular file or a folder: a link, a device.
     NotAFile,
+    /// A folder holds more entries than a transfer or a delete walks.
+    TooLarge,
+    /// The name typed cannot be used.
+    InvalidName,
+    /// An entry of that name exists already.
+    Exists,
 }
 
 impl From<&SftpError> for FilesError {
@@ -439,6 +451,8 @@ pub struct TransferRequest {
     /// Replace an existing target (uploads; a download always replaces its target, the
     /// user having confirmed).
     pub replace: bool,
+    /// A folder with everything in it, rather than one file.
+    pub folder: bool,
     /// Stops it.
     pub cancel: CancellationToken,
 }
@@ -457,6 +471,11 @@ pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent
             }
         };
         let config = TransferConfig::default();
+        if request.folder {
+            let state = run_folder(&request, &config, progress).await;
+            let _ = events.send(TransferEvent::Finished(state)).await;
+            return;
+        }
         let result = match request.direction {
             Direction::Download => download(
                 &request.client,
@@ -492,6 +511,191 @@ pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent
         let _ = events.send(TransferEvent::Finished(state)).await;
     });
     ReceiverStream::new(receiver)
+}
+
+/// Runs a folder transfer; returns how it ended.
+async fn run_folder(
+    request: &TransferRequest,
+    config: &TransferConfig,
+    progress: impl FnMut(u64) + Send,
+) -> TransferState {
+    let result = match request.direction {
+        Direction::Download => {
+            download_tree(
+                &request.client,
+                &request.remote,
+                &request.local,
+                config,
+                &request.cancel,
+                progress,
+            )
+            .await
+        }
+        Direction::Upload => {
+            upload_tree(
+                &request.client,
+                &request.local,
+                &request.remote,
+                config,
+                &request.cancel,
+                progress,
+            )
+            .await
+        }
+    };
+    match result {
+        Ok(report) if report.skipped.is_empty() => TransferState::Done,
+        Ok(report) => TransferState::Incomplete {
+            skipped: report.skipped.len(),
+        },
+        Err(TreeError::TooLarge) => TransferState::Failed(FilesError::TooLarge),
+        Err(TreeError::Transfer(TransferError::Cancelled { .. })) => TransferState::Cancelled,
+        Err(TreeError::Transfer(error)) => TransferState::Failed(FilesError::from(&error)),
+    }
+}
+
+/// A change to a folder's entries.
+#[derive(Debug, Clone)]
+pub enum FileOperation {
+    /// Create a folder on the server.
+    RemoteMakeFolder {
+        /// Session.
+        client: SftpClient,
+        /// Folder to create.
+        path: RemotePath,
+    },
+    /// Rename on the server; an existing target makes it fail.
+    RemoteRename {
+        /// Session.
+        client: SftpClient,
+        /// Current path.
+        from: RemotePath,
+        /// New path.
+        to: RemotePath,
+    },
+    /// Delete on the server, a folder with everything in it, never following a link.
+    RemoteRemove {
+        /// Session.
+        client: SftpClient,
+        /// What to delete.
+        path: RemotePath,
+    },
+    /// Create a folder on this computer.
+    LocalMakeFolder {
+        /// Folder to create.
+        path: PathBuf,
+    },
+    /// Rename on this computer; an existing target makes it fail.
+    LocalRename {
+        /// Current path.
+        from: PathBuf,
+        /// New path.
+        to: PathBuf,
+    },
+    /// Delete on this computer, a folder with everything in it, never following a link.
+    LocalRemove {
+        /// What to delete.
+        path: PathBuf,
+    },
+}
+
+fn local_failure(error: &std::io::Error) -> FilesError {
+    if error.kind() == std::io::ErrorKind::AlreadyExists {
+        FilesError::Exists
+    } else {
+        FilesError::Local {
+            detail: error.to_string(),
+        }
+    }
+}
+
+fn local_operation(operation: &FileOperation) -> Result<(), FilesError> {
+    match operation {
+        FileOperation::LocalMakeFolder { path } => {
+            std::fs::create_dir(path).map_err(|e| local_failure(&e))
+        }
+        FileOperation::LocalRename { from, to } => {
+            // Renaming never replaces: the check and the rename are two steps, the window
+            // between them is the user's own.
+            if to.symlink_metadata().is_ok() {
+                return Err(FilesError::Exists);
+            }
+            std::fs::rename(from, to).map_err(|e| local_failure(&e))
+        }
+        FileOperation::LocalRemove { path } => {
+            let metadata = path.symlink_metadata().map_err(|e| local_failure(&e))?;
+            // remove_dir_all does not follow links (Rust 1.58 and later); a link itself is
+            // removed as a file.
+            if metadata.is_dir() {
+                std::fs::remove_dir_all(path).map_err(|e| local_failure(&e))
+            } else {
+                std::fs::remove_file(path).map_err(|e| local_failure(&e))
+            }
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Carries out a file operation.
+///
+/// # Errors
+///
+/// [`FilesError`] from the server or this computer.
+pub async fn file_operation(operation: FileOperation) -> Result<(), FilesError> {
+    match operation {
+        FileOperation::RemoteMakeFolder { client, path } => client
+            .mkdir(&path, Attributes::default())
+            .await
+            .map_err(|e| FilesError::from(&e)),
+        FileOperation::RemoteRename { client, from, to } => client
+            .rename(&from, &to, false)
+            .await
+            .map_err(|e| FilesError::from(&e)),
+        FileOperation::RemoteRemove { client, path } => {
+            remove_tree(&client, &path, &CancellationToken::new())
+                .await
+                .map(|_| ())
+                .map_err(|error| match error {
+                    TreeError::TooLarge => FilesError::TooLarge,
+                    TreeError::Transfer(error) => FilesError::from(&error),
+                })
+        }
+        local => tokio::task::spawn_blocking(move || local_operation(&local))
+            .await
+            .unwrap_or_else(|error| {
+                Err(FilesError::Local {
+                    detail: error.to_string(),
+                })
+            }),
+    }
+}
+
+/// A name typed for a new or renamed entry, checked for `side`.
+///
+/// # Errors
+///
+/// [`FilesError::InvalidName`] for an empty name, `.`, `..`, a separator or a control
+/// character, and on this computer anything [`LocalName`] refuses.
+pub fn typed_name(side: Side, typed: &str) -> Result<LocalName, FilesError> {
+    let typed = typed.trim_matches(|c: char| c == '\n' || c == '\r');
+    // Refused on both sides: a Unix file system takes a tab or an escape in a name, and a
+    // name typed by hand never needs one.
+    if typed.is_empty()
+        || typed == "."
+        || typed == ".."
+        || typed.contains('/')
+        || typed.chars().any(char::is_control)
+    {
+        return Err(FilesError::InvalidName);
+    }
+    match side {
+        Side::Local => LocalName::from_remote(typed.as_bytes(), Rules::native())
+            .map_err(|_| FilesError::InvalidName),
+        Side::Remote => Ok(LocalName {
+            name: OsString::from(typed),
+            escaped: false,
+        }),
+    }
 }
 
 #[cfg(test)]

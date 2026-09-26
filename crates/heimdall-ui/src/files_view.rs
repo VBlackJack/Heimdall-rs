@@ -16,8 +16,8 @@
 
 //! The Files tab: this computer on the left, the server on the right, transfers below.
 //!
-//! A folder opens when clicked; a file is selected, and the buttons between the panes send
-//! the selection to the other side.
+//! A click selects an entry and a second click on a selected folder opens it; the buttons
+//! between the panes send the selection, a file or a folder, to the other side.
 
 use heimdall_app::files::{
     Direction, EntryKind, FilesError, FilesPane, Side, Transfer, TransferState,
@@ -109,6 +109,18 @@ fn pane<'a>(
     loading: bool,
     error: Option<&FilesError>,
 ) -> Element<'a, Message> {
+    let tools = row![
+        button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(FilesMessage::AskNewFolder { tab, side })),
+        button(text(fl!("ui-files-rename-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press_maybe(selected.map(|_| files(FilesMessage::AskRename { tab, side }))),
+        button(text(fl!("ui-files-delete-button")).size(SMALL_SIZE))
+            .style(button::danger)
+            .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
+    ]
+    .spacing(SPACING);
     let header = row![
         button(text(fl!("ui-files-up-button")).size(SMALL_SIZE))
             .style(button::secondary)
@@ -127,14 +139,10 @@ fn pane<'a>(
         list = list.push(text(fl!("ui-files-empty")).size(SMALL_SIZE));
     }
     for (index, entry) in rows.iter().enumerate() {
-        let on_press = if entry.kind == EntryKind::Directory {
-            files(FilesMessage::Open { tab, side, index })
-        } else {
-            files(FilesMessage::Select { tab, side, index })
-        };
+        let on_press = files(FilesMessage::Select { tab, side, index });
         list = list.push(entry_row(entry, selected == Some(index), on_press));
     }
-    let mut content = column![text(title).size(TITLE_SIZE), header].spacing(SPACING);
+    let mut content = column![text(title).size(TITLE_SIZE), header, tools].spacing(SPACING);
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
     }
@@ -166,6 +174,9 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
             ),
         },
         TransferState::Done => fl!("ui-files-state-done"),
+        TransferState::Incomplete { skipped } => {
+            fl!("ui-files-state-incomplete", count = (*skipped))
+        }
         TransferState::Cancelled => fl!("ui-files-state-cancelled"),
         TransferState::Failed(error) => {
             fl!("ui-files-state-failed", reason = texts::files_error(error))
