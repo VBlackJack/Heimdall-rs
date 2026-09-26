@@ -28,6 +28,7 @@
 
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use heimdall_rdp::{
@@ -97,6 +98,8 @@ fn acceptor(key: &[u8], tls12_only: bool) -> TlsAcceptor {
 
 /// What the fake server saw.
 struct Seen {
+    /// Whether the client asked for the credentials.
+    asked: bool,
     /// The X.224 Connection Request, as sent.
     request: Vec<u8>,
     /// Whether the TLS handshake completed.
@@ -123,6 +126,7 @@ async fn serve(mut stream: DuplexStream, key: &'static [u8], tls12_only: bool) -
     stream.write_all(&confirm).await.expect("confirm");
     let Ok(mut tls) = acceptor(key, tls12_only).accept(stream).await else {
         return Seen {
+            asked: false,
             request,
             handshake: false,
             after_handshake: 0,
@@ -135,6 +139,7 @@ async fn serve(mut stream: DuplexStream, key: &'static [u8], tls12_only: bool) -
         _ => 0,
     };
     Seen {
+        asked: false,
         request,
         handshake: true,
         after_handshake,
@@ -145,7 +150,6 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
     RdpConfig {
         host: HOST.to_owned(),
         port,
-        username: USERNAME.to_owned(),
         domain: None,
         desktop: (1024, 768),
         keyboard_layout: 0,
@@ -172,21 +176,30 @@ async fn attempt_with(
 ) -> (Result<(), RdpError>, Seen) {
     let (client, server) = tokio::io::duplex(1 << 16);
     let server = tokio::spawn(serve(server, key, tls12_only));
-    let password = Zeroizing::new("hunter2-password".to_owned());
+    let asked = Arc::new(AtomicBool::new(false));
+    let flag = Arc::clone(&asked);
+    let credentials: heimdall_rdp::AskCredentials = Box::new(move || {
+        flag.store(true, Ordering::SeqCst);
+        Box::pin(std::future::ready(Some((
+            USERNAME.to_owned(),
+            Zeroizing::new("hunter2-password".to_owned()),
+        ))))
+    });
     let outcome = tokio::time::timeout(
         WAIT * 3,
         connect_over(
             Box::new(client),
             "127.0.0.1:50000".parse().expect("address"),
             config,
-            &password,
+            credentials,
             &CancellationToken::new(),
         ),
     )
     .await
     .expect("in time")
     .map(|_| ());
-    let seen = server.await.expect("server");
+    let mut seen = server.await.expect("server");
+    seen.asked = asked.load(Ordering::SeqCst);
     (outcome, seen)
 }
 
@@ -222,6 +235,10 @@ async fn an_unknown_server_is_asked_about_and_gets_nothing() {
     // nothing past the handshake reached it.
     assert_eq!(seen.after_handshake, 0, "nothing sent past the handshake");
     assert!(
+        !seen.asked,
+        "no password typed for a server not yet trusted"
+    );
+    assert!(
         lines(&known).is_empty(),
         "nothing recorded without a decision"
     );
@@ -251,6 +268,10 @@ async fn an_accepted_key_is_recorded_once_and_then_known() {
         "{outcome:?}"
     );
     assert!(seen.after_handshake > 0, "CredSSP started");
+    assert!(
+        seen.asked,
+        "the credentials come once the server is trusted"
+    );
     assert_eq!(lines(&known), [format!("{HOST}:{PORT} {}", expected_pin())]);
 
     // Known now: no decision needed, and nothing is recorded twice.
@@ -283,6 +304,7 @@ async fn a_changed_key_is_refused_without_a_question() {
     assert_eq!(recorded, other);
     assert_eq!(presented.fingerprint, expected_pin());
     assert_eq!(seen.after_handshake, 0);
+    assert!(!seen.asked);
     assert_eq!(lines(&known).len(), 1, "the recorded key stays");
 }
 
@@ -345,4 +367,14 @@ async fn tls_1_2_with_the_real_key_passes() {
     let (outcome, seen) = attempt_with(&config(&known, None, PORT), KEY, true).await;
     assert!(!matches!(outcome, Err(RdpError::Tls(_))), "{outcome:?}");
     assert!(seen.after_handshake > 0, "CredSSP started over TLS 1.2");
+}
+
+/// Compiles only if a connection can run in a spawned task, as the application runs it.
+#[allow(dead_code, reason = "a compile-time check, never called")]
+fn connecting_can_be_spawned(config: RdpConfig, password: Zeroizing<String>) {
+    drop(tokio::spawn(heimdall_rdp::connect(
+        config,
+        heimdall_rdp::given(USERNAME.to_owned(), password),
+        CancellationToken::new(),
+    )));
 }

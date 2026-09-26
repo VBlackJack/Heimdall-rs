@@ -136,6 +136,7 @@ fn rdp(id: &str) -> RdpProfile {
         port: 3389,
         username: Some("admin".to_owned()),
         domain: Some("LAB".to_owned()),
+        allow_tls_only: false,
     }
 }
 

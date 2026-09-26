@@ -48,14 +48,17 @@ use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::profile_draft::{DraftError, ProfileDraft, ProfileField};
+use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
 use crate::text::server_text;
 
 mod files_tab;
 mod profiles;
+mod rdp_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
+pub use rdp_tab::RdpPane;
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -122,6 +125,17 @@ pub enum Message {
     OpenProfile(ProfileId),
     /// Open a Files tab for a saved profile.
     OpenFiles(ProfileId),
+    /// Open an RDP tab for a saved RDP profile.
+    OpenRdp(ProfileId),
+    /// Keyboard or mouse input for the desktop of an RDP tab.
+    RdpInput {
+        /// Tab.
+        tab: TabId,
+        /// What happened, in order.
+        operations: Vec<heimdall_rdp::Operation>,
+    },
+    /// Forget the recorded key of the server of a tab whose key changed, and connect again.
+    ForgetServer(TabId),
     /// Something in a Files tab.
     Files(FilesMessage),
     /// Show a tab.
@@ -233,6 +247,17 @@ impl fmt::Debug for Message {
         match self {
             Self::OpenProfile(id) => write!(f, "OpenProfile({id})"),
             Self::OpenFiles(id) => write!(f, "OpenFiles({id})"),
+            Self::OpenRdp(id) => write!(f, "OpenRdp({id})"),
+            // What was typed is never shown, as for a terminal.
+            Self::RdpInput { tab, operations } => {
+                write!(
+                    f,
+                    "RdpInput({}, {} operations)",
+                    tab.value(),
+                    operations.len()
+                )
+            }
+            Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
@@ -289,6 +314,15 @@ pub enum Effect {
         attempt: AttemptId,
         /// What to connect to.
         request: Box<ConnectRequest>,
+    },
+    /// Start an RDP attempt and feed its events back as [`Message::Connection`].
+    ConnectRdp {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to connect to.
+        request: Box<RdpRequest>,
     },
     /// Deliver an answer through the registry.
     Answer {
@@ -357,6 +391,9 @@ impl fmt::Debug for Effect {
         match self {
             Self::Connect { tab, attempt, .. } => {
                 write!(f, "Connect({}, {})", tab.value(), attempt.value())
+            }
+            Self::ConnectRdp { tab, attempt, .. } => {
+                write!(f, "ConnectRdp({}, {})", tab.value(), attempt.value())
             }
             Self::Answer { question, answer } => {
                 write!(f, "Answer({}, {answer:?})", question.value())
@@ -433,7 +470,7 @@ pub struct Tab {
     /// Identifier.
     pub id: TabId,
     /// Profile it connects to.
-    pub profile: SshProfile,
+    pub profile: TabProfile,
     /// Title: the profile name, or the one the server set, made safe.
     pub title: String,
     /// Connection state.
@@ -448,6 +485,9 @@ pub struct Tab {
     pub purpose: Purpose,
     /// The Files view, for a Files tab.
     pub files: Option<Box<FilesPane>>,
+    /// The desktop, for an RDP tab once connected.
+    pub rdp: Option<Box<RdpPane>>,
+    pending_rdp_key: Option<heimdall_rdp::Fingerprint>,
     attempt: AttemptId,
     sink: Option<Arc<dyn InputSink>>,
     cancel: CancellationToken,
@@ -486,13 +526,93 @@ impl Tab {
         }
     }
 
+    fn new(
+        id: TabId,
+        profile: TabProfile,
+        purpose: Purpose,
+        grid: GridSize,
+        attempt: AttemptId,
+        cancel: CancellationToken,
+    ) -> Self {
+        Self {
+            id,
+            title: profile.name().to_owned(),
+            profile,
+            phase: Phase::Connecting,
+            terminal: Terminal::new(grid, TerminalConfig::default()),
+            prompts: VecDeque::new(),
+            bell: false,
+            purpose,
+            files: None,
+            rdp: None,
+            pending_rdp_key: None,
+            attempt,
+            sink: None,
+            cancel,
+            pending_host_key: None,
+            connect_grid: grid,
+            cell: None,
+            motion: MotionFilter::default(),
+            selecting: false,
+            sync_generation: 0,
+        }
+    }
+
     fn stop(&mut self) {
         self.cancel.cancel();
+        self.rdp = None;
         if let Some(files) = self.files.as_mut() {
             files.stop();
         }
         if let Some(sink) = self.sink.take() {
             sink.close();
+        }
+    }
+}
+
+/// The profile a tab connects to.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TabProfile {
+    /// A shell or Files tab.
+    Ssh(SshProfile),
+    /// A remote desktop tab.
+    Rdp(RdpProfile),
+}
+
+impl TabProfile {
+    /// Name shown to the user.
+    #[must_use]
+    pub fn name(&self) -> &str {
+        match self {
+            Self::Ssh(profile) => &profile.name,
+            Self::Rdp(profile) => &profile.name,
+        }
+    }
+
+    /// Host.
+    #[must_use]
+    pub fn host(&self) -> &str {
+        match self {
+            Self::Ssh(profile) => &profile.host,
+            Self::Rdp(profile) => &profile.host,
+        }
+    }
+
+    /// Port.
+    #[must_use]
+    pub fn port(&self) -> u16 {
+        match self {
+            Self::Ssh(profile) => profile.port,
+            Self::Rdp(profile) => profile.port,
+        }
+    }
+
+    /// Account, when the profile names one.
+    #[must_use]
+    pub fn username(&self) -> Option<&str> {
+        match self {
+            Self::Ssh(profile) => profile.username.as_deref(),
+            Self::Rdp(profile) => profile.username.as_deref(),
         }
     }
 }
@@ -687,6 +807,12 @@ impl App {
         match message {
             Message::OpenProfile(id) => self.open_profile(&id, Purpose::Shell),
             Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
+            Message::OpenRdp(id) => self.open_rdp(&id),
+            Message::RdpInput { tab, operations } => {
+                self.rdp_input(tab, operations);
+                Vec::new()
+            }
+            Message::ForgetServer(tab) => self.forget_server(tab),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => {
                 if let Some(found) = self.tab_mut(tab) {
@@ -797,28 +923,17 @@ impl App {
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
         let request = self.connect_request(&profile, grid, cancel.clone(), purpose);
-        let files = (purpose == Purpose::Files)
-            .then(|| Box::new(FilesPane::new(self.config.files_start.clone())));
-        self.tabs.push(Tab {
-            id: tab_id,
-            title: profile.name.clone(),
-            profile,
-            phase: Phase::Connecting,
-            terminal: Terminal::new(grid, TerminalConfig::default()),
-            prompts: VecDeque::new(),
-            bell: false,
+        let mut tab = Tab::new(
+            tab_id,
+            TabProfile::Ssh(profile),
             purpose,
-            files,
+            grid,
             attempt,
-            sink: None,
             cancel,
-            pending_host_key: None,
-            connect_grid: grid,
-            cell: None,
-            motion: MotionFilter::default(),
-            selecting: false,
-            sync_generation: 0,
-        });
+        );
+        tab.files = (purpose == Purpose::Files)
+            .then(|| Box::new(FilesPane::new(self.config.files_start.clone())));
+        self.tabs.push(tab);
         self.active = Some(tab_id);
         vec![Effect::Connect {
             tab: tab_id,
@@ -876,6 +991,12 @@ impl App {
                 };
                 Vec::new()
             }
+            event @ (ConnectionEvent::UnknownRdpCertificate { .. }
+            | ConnectionEvent::RdpReady { .. }
+            | ConnectionEvent::RdpFrame) => {
+                rdp_tab::apply(tab, event);
+                Vec::new()
+            }
             ConnectionEvent::Connected { input } => {
                 tab.phase = Phase::Connected;
                 let grid = tab.terminal.size();
@@ -899,12 +1020,14 @@ impl App {
             ConnectionEvent::Closed { exit_status } => {
                 tab.phase = Phase::Closed { exit_status };
                 tab.sink = None;
+                tab.rdp = None;
                 tab.prompts.clear();
                 Vec::new()
             }
             ConnectionEvent::Failed(error) => {
                 tab.phase = Phase::Failed(error);
                 tab.sink = None;
+                tab.rdp = None;
                 tab.prompts.clear();
                 Vec::new()
             }
@@ -912,6 +1035,12 @@ impl App {
     }
 
     fn host_key_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+        if self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.purpose == Purpose::Rdp)
+        {
+            return self.rdp_certificate_decision(tab_id, accept);
+        }
         let known_hosts = KnownHosts::new(&self.config.known_hosts);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
@@ -946,7 +1075,9 @@ impl App {
             tab.phase = Phase::Failed(error);
             return Vec::new();
         }
-        let profile = tab.profile.clone();
+        let TabProfile::Ssh(profile) = tab.profile.clone() else {
+            return Vec::new();
+        };
         let grid = tab.terminal.size();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
@@ -1256,12 +1387,12 @@ fn handle_feed(tab: &mut Tab, output: FeedOutput, active: bool) -> Vec<Effect> {
         Some(TitleChange::Set(title)) => {
             let title = server_text(&title);
             tab.title = if title.is_empty() {
-                tab.profile.name.clone()
+                tab.profile.name().to_owned()
             } else {
                 title
             };
         }
-        Some(TitleChange::Reset) => tab.title = tab.profile.name.clone(),
+        Some(TitleChange::Reset) => tab.title = tab.profile.name().to_owned(),
         None => {}
     }
     if output.bell && !active {

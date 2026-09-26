@@ -102,23 +102,32 @@ struct ChannelPrompter {
 
 impl ChannelPrompter {
     async fn ask(&self, kind: QuestionKind) -> Option<Answer> {
-        let question = QuestionId::fresh();
-        let (sender, receiver) = oneshot::channel();
-        self.registry.insert(question, sender);
-        let _pending = Pending {
-            registry: self.registry.clone(),
-            question,
-        };
-        if self
-            .events
-            .send(ConnectionEvent::Question { question, kind })
-            .await
-            .is_err()
-        {
-            return None;
-        }
-        receiver.await.ok().flatten()
+        ask(&self.registry, &self.events, kind).await
     }
+}
+
+/// Asks the user through `events` and waits for the answer; `None` when cancelled or when
+/// nobody listens any more.
+pub(crate) async fn ask(
+    registry: &AnswerRegistry,
+    events: &mpsc::Sender<ConnectionEvent>,
+    kind: QuestionKind,
+) -> Option<Answer> {
+    let question = QuestionId::fresh();
+    let (sender, receiver) = oneshot::channel();
+    registry.insert(question, sender);
+    let _pending = Pending {
+        registry: registry.clone(),
+        question,
+    };
+    if events
+        .send(ConnectionEvent::Question { question, kind })
+        .await
+        .is_err()
+    {
+        return None;
+    }
+    receiver.await.ok().flatten()
 }
 
 impl Prompter for ChannelPrompter {
@@ -164,6 +173,8 @@ pub enum Purpose {
     Shell,
     /// An SFTP session.
     Files,
+    /// A remote desktop.
+    Rdp,
 }
 
 /// What an attempt needs.

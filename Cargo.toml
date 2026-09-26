@@ -5,7 +5,7 @@
 resolver = "3"
 members = ["crates/*", "xtask"]
 # Patched third-party crates, see vendor/PATCHES.md: not ours to lint or format.
-exclude = ["vendor/ironrdp-connector"]
+exclude = ["vendor/ironrdp-connector", "vendor/ironrdp-session"]
 
 [workspace.package]
 version = "0.1.0"
@@ -74,3 +74,4 @@ strip = true
 # See vendor/PATCHES.md for what each patch changes and when it goes.
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
+ironrdp-session = { path = "vendor/ironrdp-session" }

@@ -273,3 +273,22 @@ fn a_real_legacy_file_imports_without_error() {
             .collect::<Vec<_>>()
     );
 }
+
+#[test]
+fn an_rdp_profile_without_nla_allows_plain_tls_and_the_default_does_not() {
+    let json = servers(
+        r#"{"id": "nla", "remoteServer": "h", "connectionType": "RDP"},
+           {"id": "tls", "remoteServer": "h", "connectionType": "RDP", "rdpNla": false},
+           {"id": "explicit", "remoteServer": "h", "connectionType": "RDP", "rdpNla": true}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let allowed: Vec<(&str, bool)> = report
+        .rdp
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.allow_tls_only))
+        .collect();
+    assert_eq!(
+        allowed,
+        [("nla", false), ("tls", true), ("explicit", false)]
+    );
+}

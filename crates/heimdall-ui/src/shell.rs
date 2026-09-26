@@ -28,13 +28,14 @@ use heimdall_app::files::{
     Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
 };
 use heimdall_app::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileDraft, ProfileField};
+use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, FilesMessage, Message as AppMessage,
-    NameAction, Phase, Prompt, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events,
-    server_text,
+    NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, Tab, TabId, UiError,
+    connection_events, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::{SshProfile, display_address};
+use heimdall_core::profile::{RdpProfile, SshProfile, display_address};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use iced::futures::{StreamExt as _, stream};
@@ -50,6 +51,7 @@ use zeroize::Zeroizing;
 
 use crate::files_view;
 use crate::i18n::fl;
+use crate::rdp_view::RdpView;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
 use crate::texts;
@@ -224,6 +226,74 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
             Answer::Secrets(typed.iter_mut().map(secret).collect())
         }
     }
+}
+
+/// A saved profile in the sidebar, whatever its protocol.
+#[derive(Clone, Copy)]
+enum Listed<'a> {
+    Ssh(&'a SshProfile),
+    Rdp(&'a RdpProfile),
+}
+
+impl<'a> Listed<'a> {
+    fn group(self) -> Option<&'a str> {
+        match self {
+            Self::Ssh(profile) => profile.group.as_deref(),
+            Self::Rdp(profile) => profile.group.as_deref(),
+        }
+    }
+
+    fn name(self) -> &'a str {
+        match self {
+            Self::Ssh(profile) => &profile.name,
+            Self::Rdp(profile) => &profile.name,
+        }
+    }
+}
+
+/// One profile in the sidebar: its name and address, which open it, then its buttons. The
+/// address has its own line and the buttons sit under it: an address has no place to wrap,
+/// and a label beside it would cover it.
+fn profile_row(profile: Listed<'_>) -> Element<'_, Message> {
+    let (open, address, mut buttons) = match profile {
+        Listed::Ssh(profile) => (
+            AppMessage::OpenProfile(profile.id.clone()),
+            target(&profile.host, profile.port, profile.username.as_deref()),
+            row![
+                button(text(fl!("ui-sidebar-files-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::OpenFiles(profile.id.clone()))),
+                button(text(fl!("ui-sidebar-edit-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::EditProfile(profile.id.clone()))),
+            ],
+        ),
+        Listed::Rdp(profile) => (
+            AppMessage::OpenRdp(profile.id.clone()),
+            fl!(
+                "ui-sidebar-rdp-target",
+                target = target(&profile.host, profile.port, profile.username.as_deref())
+            ),
+            row![],
+        ),
+    };
+    buttons = buttons
+        .spacing(SPACING / 2.0)
+        .padding(iced::Padding::ZERO.left(PADDING));
+    column![
+        button(column![
+            text(profile.name()),
+            text(address)
+                .size(SMALL_SIZE)
+                .wrapping(text::Wrapping::Glyph)
+        ])
+        .width(Length::Fill)
+        .style(button::text)
+        .on_press(Message::App(open)),
+        buttons,
+    ]
+    .spacing(SPACING / 2.0)
+    .into()
 }
 
 /// Widget identifier of the name field of a dialog.
@@ -608,6 +678,26 @@ impl Shell {
                 self.connections.insert(tab, handle.abort_on_drop());
                 task
             }
+            Effect::ConnectRdp {
+                tab,
+                attempt,
+                request,
+            } => {
+                let registry = self.registry.clone();
+                // Started inside the task, like an SSH attempt: spawning needs the runtime.
+                let events = stream::once(async move { rdp_events(*request, registry) }).flatten();
+                let (task, handle) = Task::stream(events)
+                    .map(move |event| {
+                        Message::App(AppMessage::Connection {
+                            tab,
+                            attempt,
+                            event,
+                        })
+                    })
+                    .abortable();
+                self.connections.insert(tab, handle.abort_on_drop());
+                task
+            }
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
                     log::debug!("question {} was no longer waiting", question.value());
@@ -711,56 +801,33 @@ impl Shell {
             );
         }
         list = list.push(actions.wrap());
-        let mut profiles: Vec<&SshProfile> = self.app.profiles().iter().collect();
+        let mut profiles: Vec<Listed<'_>> = self
+            .app
+            .profiles()
+            .iter()
+            .map(Listed::Ssh)
+            .chain(self.app.rdp_profiles().iter().map(Listed::Rdp))
+            .collect();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
         // Named groups first, alphabetically; profiles without a group last.
         profiles.sort_by(|a, b| {
-            (a.group.is_none(), a.group.as_deref(), &a.name).cmp(&(
-                b.group.is_none(),
-                b.group.as_deref(),
-                &b.name,
+            (a.group().is_none(), a.group(), a.name()).cmp(&(
+                b.group().is_none(),
+                b.group(),
+                b.name(),
             ))
         });
         let mut group: Option<Option<&str>> = None;
         for profile in profiles {
-            let current = profile.group.as_deref();
+            let current = profile.group();
             if group != Some(current) {
                 group = Some(current);
                 let label = current.map_or_else(|| fl!("ui-sidebar-group-none"), str::to_owned);
                 list = list.push(text(label).size(SMALL_SIZE));
             }
-            // The address on its own line and the buttons under it: an address has no
-            // place to wrap, and a label beside it would cover it.
-            list = list.push(
-                column![
-                    button(column![
-                        text(profile.name.as_str()),
-                        text(target(
-                            &profile.host,
-                            profile.port,
-                            profile.username.as_deref()
-                        ))
-                        .size(SMALL_SIZE)
-                        .wrapping(text::Wrapping::Glyph)
-                    ])
-                    .width(Length::Fill)
-                    .style(button::text)
-                    .on_press(Message::App(AppMessage::OpenProfile(profile.id.clone()))),
-                    row![
-                        button(text(fl!("ui-sidebar-files-button")).size(SMALL_SIZE))
-                            .style(button::secondary)
-                            .on_press(Message::App(AppMessage::OpenFiles(profile.id.clone()))),
-                        button(text(fl!("ui-sidebar-edit-button")).size(SMALL_SIZE))
-                            .style(button::secondary)
-                            .on_press(Message::App(AppMessage::EditProfile(profile.id.clone()))),
-                    ]
-                    .spacing(SPACING / 2.0)
-                    .padding(iced::Padding::ZERO.left(PADDING)),
-                ]
-                .spacing(SPACING / 2.0),
-            );
+            list = list.push(profile_row(profile));
         }
         container(scrollable(list))
             .width(SIDEBAR_WIDTH)
@@ -825,9 +892,9 @@ impl Shell {
                     text(fl!(
                         "ui-connect-progress",
                         target = target(
-                            &tab.profile.host,
-                            tab.profile.port,
-                            tab.profile.username.as_deref()
+                            tab.profile.host(),
+                            tab.profile.port(),
+                            tab.profile.username()
                         )
                     )),
                     button(text(fl!("ui-connect-cancel-button")))
@@ -842,10 +909,18 @@ impl Shell {
                 port,
                 fingerprint,
             } => host_key_card(tab.id, host, *port, fingerprint),
-            Phase::Connected => match tab.files.as_deref() {
-                Some(pane) => crate::files_view::view(tab.id, pane),
-                None => terminal(tab, self.app.dialog.is_none()),
+            Phase::Connected => match (tab.files.as_deref(), tab.rdp.as_deref()) {
+                (Some(pane), _) => crate::files_view::view(tab.id, pane),
+                (_, Some(pane)) => RdpView::new(pane, tab.id, Message::App)
+                    .interactive(self.app.dialog.is_none())
+                    .into(),
+                _ => terminal(tab, self.app.dialog.is_none()),
             },
+            // A remote desktop that ended leaves nothing to look at.
+            Phase::Closed { .. } if tab.purpose == Purpose::Rdp => center(card(
+                column![text(fl!("ui-session-closed")), close()].spacing(SPACING),
+            ))
+            .into(),
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
                     || fl!("ui-session-closed"),
@@ -864,15 +939,27 @@ impl Shell {
                 column![text(fl!("ui-session-cancelled")), close()].spacing(SPACING),
             ))
             .into(),
-            Phase::Failed(error) => center(card(
-                column![
-                    text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
-                    text(texts::error(error)),
-                    close(),
-                ]
-                .spacing(SPACING),
-            ))
-            .into(),
+            Phase::Failed(error) => {
+                let mut actions = row![close()].spacing(SPACING);
+                // A changed RDP certificate is routine (Windows renews its own every six
+                // months): the way out is deliberate, never part of the connection.
+                if tab.purpose == Purpose::Rdp && matches!(error, UiError::HostKeyChanged { .. }) {
+                    actions = actions.push(
+                        button(text(fl!("ui-session-forget-server-button")))
+                            .style(button::danger)
+                            .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
+                    );
+                }
+                center(card(
+                    column![
+                        text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
+                        text(texts::error(error)),
+                        actions,
+                    ]
+                    .spacing(SPACING),
+                ))
+                .into()
+            }
         }
     }
 
@@ -946,7 +1033,7 @@ impl Shell {
                 form = form.push(text(fl!(
                     "ui-prompt-interactive-title",
                     user = asked.username.as_str(),
-                    host = profile.host.as_str()
+                    host = profile.host()
                 )));
                 // Server words are labelled as such, so they cannot pass for Heimdall's.
                 for said in [&asked.name, &asked.instructions] {

@@ -42,6 +42,12 @@ pub fn error(error: &UiError) -> String {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::Network { detail } => fl!("ui-error-network", detail = server_text(detail)),
         UiError::Timeout => fl!("ui-error-timeout"),
+        UiError::RdpProtocol { detail } => {
+            fl!("ui-error-rdp-protocol", detail = server_text(detail))
+        }
+        UiError::SecurityRefused { detail } => {
+            fl!("ui-error-security-refused", detail = server_text(detail))
+        }
         UiError::HostKeyChanged { recorded, offered } => fl!(
             "ui-error-hostkey-changed",
             recorded = recorded.as_str(),

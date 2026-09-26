@@ -101,6 +101,10 @@ pub struct RdpProfile {
     /// Windows domain of the account, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub domain: Option<String>,
+    /// Also accept a server without Network Level Authentication (xrdp): the password then
+    /// travels in the logon packet, inside TLS, once the server's key is trusted.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_tls_only: bool,
 }
 
 /// `host:port` as people write it: an IPv6 address in brackets, so the port stays

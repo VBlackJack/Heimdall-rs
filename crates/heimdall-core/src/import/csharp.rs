@@ -127,6 +127,8 @@ struct LegacyServer {
     rdp_gateway: Option<String>,
     #[serde(default)]
     use_direct_connection: bool,
+    /// Absent means the C# default: Network Level Authentication required.
+    rdp_nla: Option<bool>,
 }
 
 fn default_connection_type() -> String {
@@ -335,5 +337,6 @@ fn convert_rdp(server: &LegacyServer) -> Result<RdpProfile, SkipReason> {
         port,
         username: non_empty(server.rdp_username.as_ref()),
         domain: non_empty(server.rdp_domain.as_ref()),
+        allow_tls_only: server.rdp_nla == Some(false),
     })
 }

@@ -191,3 +191,8 @@ ui-profile-error-control = A field holds a control character.
 ui-dialog-delete-profile-title = Delete the profile?
 ui-dialog-delete-profile-body = The profile { $name } will be deleted. Open sessions stay open. This cannot be undone.
 ui-dialog-delete-profile-confirm = Delete
+
+ui-sidebar-rdp-target = RDP { $target }
+ui-session-forget-server-button = Forget this server
+ui-error-security-refused = The server refused the security Heimdall requires (Network Level Authentication): { $detail }
+ui-error-rdp-protocol = RDP error: { $detail }

@@ -27,8 +27,11 @@
 
 use std::time::Duration;
 
-use heimdall_rdp::session::{self, RdpEvent};
-use heimdall_rdp::{KnownRdpHosts, RdpConfig, RdpError, Security, Timeouts, connect};
+use heimdall_rdp::session::{self, CloseReason, RdpEvent};
+use heimdall_rdp::{
+    KnownRdpHosts, MouseButton, MousePosition, Operation, RdpConfig, RdpError, Security, Timeouts,
+    connect, given,
+};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -45,7 +48,6 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
     RdpConfig {
         host: "127.0.0.1".to_owned(),
         port,
-        username: "nobody".to_owned(),
         domain: None,
         desktop: (1024, 768),
         keyboard_layout: 0,
@@ -64,9 +66,9 @@ async fn a_server_without_nla_is_refused_when_nla_is_required() {
     };
     let dir = tempfile::tempdir().expect("dir");
     let outcome = connect(
-        &config(port, &dir.path().join("known"), Security::Nla),
-        &Zeroizing::new(String::new()),
-        &CancellationToken::new(),
+        config(port, &dir.path().join("known"), Security::Nla),
+        given("nobody".to_owned(), Zeroizing::new(String::new())),
+        CancellationToken::new(),
     )
     .await;
     assert!(
@@ -86,13 +88,18 @@ async fn a_trusted_server_draws_its_login_screen() {
     let mut config = config(port, &dir.path().join("known"), Security::NlaOrTls);
     let password = Zeroizing::new(String::new());
     let cancel = CancellationToken::new();
-    let outcome = connect(&config, &password, &cancel).await;
+    let outcome = connect(
+        config.clone(),
+        given("nobody".to_owned(), password.clone()),
+        cancel.clone(),
+    )
+    .await;
     let Err(RdpError::UnknownCertificate(certificate)) = outcome else {
         panic!("{:?}", outcome.map(|_| ()));
     };
     // What the user does on the question: accept, and connect again.
     config.accepted = Some(certificate.fingerprint);
-    let connection = connect(&config, &password, &cancel)
+    let connection = connect(config, given("nobody".to_owned(), password), cancel.clone())
         .await
         .expect("connected");
     let mut session = session::start(connection, cancel.clone());
@@ -120,5 +127,90 @@ async fn a_trusted_server_draws_its_login_screen() {
     .await
     .expect("a picture in time");
     assert!(drawn, "more than one colour on screen");
+    // Inside the login window, the white areas (the logo, the fields) have straight left
+    // edges: on every row of the middle band, the first white pixel sits in the same column.
+    // Bitmap rows read with the wrong width shift, and that column wanders (measured: 11
+    // columns with the published IronRDP 0.11, 1 with the vendored fix).
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let starts: Vec<Option<usize>> = session.framebuffer.read(|width, height, pixels| {
+        let (width, height) = (usize::from(width), usize::from(height));
+        (height / 3..2 * height / 3)
+            .map(|y| {
+                pixels[y * width * 4..(y + 1) * width * 4]
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .position(|pixel| *pixel == [255, 255, 255, 255])
+            })
+            .collect()
+    });
+    let mut columns: Vec<usize> = starts.iter().flatten().copied().collect();
+    columns.sort_unstable();
+    columns.dedup();
+    assert_eq!(
+        columns.len(),
+        1,
+        "white areas with a ragged left edge: {columns:?}"
+    );
+    // For a visual pass: the raw desktop, width and height first (little-endian u16).
+    if let Some(dir) = std::env::var_os("HEIMDALL_SNAPSHOT_DIR") {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        session.framebuffer.read(|width, height, pixels| {
+            let mut raw = Vec::with_capacity(4 + pixels.len());
+            raw.extend_from_slice(&width.to_le_bytes());
+            raw.extend_from_slice(&height.to_le_bytes());
+            raw.extend_from_slice(pixels);
+            std::fs::write(std::path::Path::new(&dir).join("xrdp.rgba"), raw).expect("written");
+        });
+    }
     cancel.cancel();
+}
+
+#[tokio::test]
+async fn cancelling_the_login_screen_is_a_close_not_a_failure() {
+    let Some(port) = live_port() else {
+        eprintln!("{PORT_VARIABLE} is not set; skipped");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut config = config(port, &dir.path().join("known"), Security::NlaOrTls);
+    let password = Zeroizing::new(String::new());
+    let cancel = CancellationToken::new();
+    let Err(RdpError::UnknownCertificate(certificate)) = connect(
+        config.clone(),
+        given("nobody".to_owned(), password.clone()),
+        cancel.clone(),
+    )
+    .await
+    else {
+        panic!("expected the certificate question");
+    };
+    config.accepted = Some(certificate.fingerprint);
+    let connection = connect(config, given("nobody".to_owned(), password), cancel.clone())
+        .await
+        .expect("connected");
+    let mut session = session::start(connection, cancel.clone());
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    // The Cancel button of xrdp's login window on a 1024x768 desktop. xrdp then sends its
+    // short Disconnect Provider Ultimatum, which IronRDP 0.11 does not decode.
+    let cancel_button = MousePosition { x: 616, y: 554 };
+    session
+        .input
+        .send(vec![
+            Operation::MouseMove(cancel_button),
+            Operation::MouseButtonPressed(MouseButton::Left),
+            Operation::MouseButtonReleased(MouseButton::Left),
+        ])
+        .expect("sent");
+    let ended = tokio::time::timeout(FIRST_PICTURE, async {
+        while let Some(event) = session.events.recv().await {
+            if let RdpEvent::Closed(reason) = event {
+                return Some(reason);
+            }
+        }
+        None
+    })
+    .await
+    .expect("closed in time");
+    assert_eq!(ended, Some(CloseReason::Server));
 }

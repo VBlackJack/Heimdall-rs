@@ -23,12 +23,13 @@
 use std::future::Future;
 use std::io;
 use std::net::SocketAddr;
+use std::pin::Pin;
 use std::time::Duration;
 
 use ironrdp::connector::sspi::generator::NetworkRequest;
 use ironrdp::connector::{
     self, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind, ConnectorResult,
-    Credentials, DesktopSize,
+    DesktopSize,
 };
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
@@ -102,15 +103,27 @@ pub enum Security {
     NlaOrTls,
 }
 
-/// Where and as whom to connect.
+/// An account and its password.
+pub type Credentials = (String, Zeroizing<String>);
+
+/// Asks for the credentials once the server is trusted, and only then: a password is never
+/// typed for a server whose identity is not settled. `None` cancels the connection.
+pub type AskCredentials =
+    Box<dyn FnOnce() -> Pin<Box<dyn Future<Output = Option<Credentials>> + Send>> + Send>;
+
+/// Credentials already known, for callers that have them.
+#[must_use]
+pub fn given(username: String, password: Zeroizing<String>) -> AskCredentials {
+    Box::new(move || Box::pin(std::future::ready(Some((username, password)))))
+}
+
+/// Where to connect.
 #[derive(Debug, Clone)]
 pub struct RdpConfig {
     /// Server.
     pub host: String,
     /// Port.
     pub port: u16,
-    /// Account.
-    pub username: String,
     /// Windows domain of the account.
     pub domain: Option<String>,
     /// Desktop size asked for.
@@ -188,14 +201,30 @@ pub struct RdpConnection {
     pub result: ConnectionResult,
 }
 
-/// Opens a connection to `config.host`.
+/// Opens a connection to `config.host`. The future can be spawned: the connection sequence
+/// runs on a blocking thread of the current runtime, as `IronRDP`'s connector futures cannot
+/// be shown to be `Send`.
 ///
 /// # Errors
 ///
 /// [`RdpError`]; [`RdpError::UnknownCertificate`] asks the caller to decide about the server.
 pub async fn connect(
+    config: RdpConfig,
+    credentials: AskCredentials,
+    cancel: CancellationToken,
+) -> Result<RdpConnection, RdpError> {
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        runtime.block_on(connect_in_place(&config, credentials, &cancel))
+    })
+    .await
+    .map_err(|error| RdpError::Protocol(error.to_string()))?
+}
+
+/// [`connect`], on the calling task: its future is not `Send`.
+async fn connect_in_place(
     config: &RdpConfig,
-    password: &Zeroizing<String>,
+    credentials: AskCredentials,
     cancel: &CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
     let tcp = phase(
@@ -210,7 +239,7 @@ pub async fn connect(
         Box::new(tcp),
         client_addr,
         config,
-        password,
+        credentials,
         cancel,
     ))
     .await
@@ -225,10 +254,10 @@ pub async fn connect_over(
     stream: Box<dyn Transport>,
     client_addr: SocketAddr,
     config: &RdpConfig,
-    password: &Zeroizing<String>,
+    credentials: AskCredentials,
     cancel: &CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
-    let mut connector = ClientConnector::new(connector_config(config, password), client_addr);
+    let mut connector = ClientConnector::new(connector_config(config), client_addr);
     // Movable: its futures are `Send`, so a connection can run in a spawned task.
     let mut framed = MovableTokioFramed::new(stream);
     let should_upgrade = phase(
@@ -268,6 +297,19 @@ pub async fn connect_over(
     // The pin and the key CredSSP binds to come from this one certificate.
     let certificate = ServerCertificate::from_der(der).map_err(|_| RdpError::Certificate)?;
     trust(config, certificate.clone())?;
+
+    // The server is trusted: now, and only now, the credentials. No timeout: a person is
+    // typing; the server may give up meanwhile, which then reads as a network failure.
+    let (username, password) = tokio::select! {
+        () = cancel.cancelled() => return Err(RdpError::Cancelled),
+        answer = credentials() => answer.ok_or(RdpError::Cancelled)?,
+    };
+    // IronRDP and sspi hold the password as a plain String from here on.
+    connector.config.credentials = connector::Credentials::UsernamePassword {
+        username,
+        password: password.to_string(),
+    };
+    drop(password);
 
     let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
     let mut framed = MovableTokioFramed::new(tls);
@@ -319,13 +361,13 @@ fn trust(config: &RdpConfig, certificate: ServerCertificate) -> Result<(), RdpEr
     }
 }
 
-fn connector_config(config: &RdpConfig, password: &Zeroizing<String>) -> connector::Config {
+fn connector_config(config: &RdpConfig) -> connector::Config {
     let (width, height) = config.desktop;
     connector::Config {
-        // IronRDP and sspi hold the password as a plain String from here on.
-        credentials: Credentials::UsernamePassword {
-            username: config.username.clone(),
-            password: password.to_string(),
+        // Replaced once the server is trusted; nothing reads it before.
+        credentials: connector::Credentials::UsernamePassword {
+            username: String::new(),
+            password: String::new(),
         },
         domain: config.domain.clone(),
         // Network Level Authentication unless the profile allows plain TLS: offering TLS lets a

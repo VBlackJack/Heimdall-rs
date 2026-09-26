@@ -24,7 +24,9 @@ use heimdall_ssh::{
     UsernameQuestion,
 };
 
+use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
 use heimdall_sftp::SftpClient;
+use tokio::sync::mpsc;
 
 use crate::error::UiError;
 use crate::ids::QuestionId;
@@ -85,6 +87,24 @@ pub enum ConnectionEvent {
         /// The key, to record if the user accepts it.
         key: Arc<PublicKey>,
     },
+    /// The RDP server's certificate is not recorded: the attempt stopped, the user decides.
+    UnknownRdpCertificate {
+        /// Host.
+        host: String,
+        /// Port.
+        port: u16,
+        /// SHA-256 of the certificate's public key.
+        fingerprint: Fingerprint,
+    },
+    /// The RDP session is open.
+    RdpReady {
+        /// The desktop, drawn by the UI.
+        framebuffer: Framebuffer,
+        /// Where keyboard and mouse input goes.
+        input: mpsc::UnboundedSender<Vec<Operation>>,
+    },
+    /// The RDP desktop changed: redraw it.
+    RdpFrame,
     /// The shell is open.
     Connected {
         /// Where input goes.
@@ -125,6 +145,18 @@ impl fmt::Debug for ConnectionEvent {
                 .field("port", port)
                 .field("fingerprint", fingerprint)
                 .finish(),
+            Self::UnknownRdpCertificate {
+                host,
+                port,
+                fingerprint,
+            } => f
+                .debug_struct("UnknownRdpCertificate")
+                .field("host", host)
+                .field("port", port)
+                .field("fingerprint", &fingerprint.to_string())
+                .finish(),
+            Self::RdpReady { .. } => f.write_str("RdpReady"),
+            Self::RdpFrame => f.write_str("RdpFrame"),
             Self::Connected { .. } => f.write_str("Connected"),
             Self::FilesReady { .. } => f.write_str("FilesReady"),
             Self::Output(bytes) => write!(f, "Output({} bytes)", bytes.len()),

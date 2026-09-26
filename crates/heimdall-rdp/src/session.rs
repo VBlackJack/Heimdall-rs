@@ -24,6 +24,7 @@ use ironrdp::connector::connection_activation::{
 use ironrdp::connector::{ConnectionResult, Sequence as _};
 use ironrdp::graphics::image_processing::PixelFormat;
 use ironrdp::input::{Database, Operation};
+use ironrdp::pdu::Action;
 use ironrdp::session::fast_path::ProcessorBuilder;
 use ironrdp::session::image::DecodedImage;
 use ironrdp::session::{
@@ -40,15 +41,14 @@ use crate::frames::FrameReader;
 /// Events queued before the session waits for the receiver.
 const EVENT_QUEUE: usize = 64;
 
-/// Input batches queued before a sender waits.
-const INPUT_QUEUE: usize = 64;
-
 /// The decoded desktop, shared between the session and whoever draws it.
 #[derive(Clone)]
 pub struct Framebuffer(Arc<Mutex<DecodedImage>>);
 
 impl Framebuffer {
-    fn new(width: u16, height: u16) -> Self {
+    /// A black desktop of `width` by `height` pixels.
+    #[must_use]
+    pub fn new(width: u16, height: u16) -> Self {
         Self(Arc::new(Mutex::new(DecodedImage::new(
             PixelFormat::RgbA32,
             width,
@@ -105,8 +105,9 @@ pub struct RdpSession {
     pub framebuffer: Framebuffer,
     /// What the session reports; closes after [`RdpEvent::Closed`].
     pub events: mpsc::Receiver<RdpEvent>,
-    /// Keyboard and mouse input.
-    pub input: mpsc::Sender<Vec<Operation>>,
+    /// Keyboard and mouse input. Unbounded, so a key is never dropped while the session
+    /// is busy drawing.
+    pub input: mpsc::UnboundedSender<Vec<Operation>>,
 }
 
 /// Starts the session of `connection`; `cancel` ends it.
@@ -115,7 +116,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
     let RdpConnection { framed, result } = connection;
     let framebuffer = Framebuffer::new(result.desktop_size.width, result.desktop_size.height);
     let (events, event_receiver) = mpsc::channel(EVENT_QUEUE);
-    let (input, input_receiver) = mpsc::channel(INPUT_QUEUE);
+    let (input, input_receiver) = mpsc::unbounded_channel();
     let (stream, leftover) = framed.into_inner();
     let (read_half, write_half) = tokio::io::split(stream);
     let running = Running {
@@ -133,10 +134,36 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
     }
 }
 
+/// X.224 length indicator of a Data TPDU.
+const X224_DATA_LENGTH: u8 = 2;
+
+/// X.224 Data TPDU code.
+const X224_DATA: u8 = 0xF0;
+
+/// Index of `disconnectProviderUltimatum` among the T.125 `DomainMCSPDU` choices.
+const MCS_DISCONNECT_PROVIDER_ULTIMATUM: u8 = 8;
+
+/// Whether `frame` is the server's MCS Disconnect Provider Ultimatum: it closes the
+/// session. `IronRDP` 0.11 does not decode the short form xrdp sends
+/// (`03 00 00 09 02 f0 80 21 80`), so it is recognised here, by its header alone.
+fn is_disconnect_ultimatum(action: Action, frame: &[u8]) -> bool {
+    // TPKT (4 bytes), X.224 Data (length indicator, code, end of TSDU), then the MCS PDU,
+    // whose choice index takes the top six bits of its first byte.
+    action == Action::X224
+        && frame.get(4) == Some(&X224_DATA_LENGTH)
+        && frame.get(5) == Some(&X224_DATA)
+        && frame.get(7).map(|byte| byte >> 2) == Some(MCS_DISCONNECT_PROVIDER_ULTIMATUM)
+}
+
+/// A session error in plain words: its kind, without the source location `IronRDP` adds.
+fn described(error: &ironrdp::session::SessionError) -> String {
+    error.kind().to_string()
+}
+
 struct Running {
     framebuffer: Framebuffer,
     events: mpsc::Sender<RdpEvent>,
-    input: mpsc::Receiver<Vec<Operation>>,
+    input: mpsc::UnboundedReceiver<Vec<Operation>>,
     reader: FrameReader<ReadHalf<Upgraded>>,
     writer: WriteHalf<Upgraded>,
 }
@@ -179,15 +206,18 @@ impl Running {
                 }
                 frame = self.reader.read() => {
                     let (action, frame) = frame.map_err(|error| error.to_string())?;
+                    if is_disconnect_ultimatum(action, &frame) {
+                        return Ok(CloseReason::Server);
+                    }
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
-                    stage.process(&mut image, action, &frame).map_err(|error| error.to_string())?
+                    stage.process(&mut image, action, &frame).map_err(|error| described(&error))?
                 }
                 Some(operations) = self.input.recv() => {
                     let events = keys.apply(operations);
                     let mut image = self.framebuffer.0.lock().unwrap_or_else(PoisonError::into_inner);
                     stage
                         .process_fastpath_input(&mut image, &events)
-                        .map_err(|error| error.to_string())?
+                        .map_err(|error| described(&error))?
                 }
             };
             for output in outputs {
@@ -309,5 +339,24 @@ impl Running {
             })
             .await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_server_s_disconnect_ultimatum_is_a_close_and_data_is_not() {
+        // As xrdp sends it when its login window is cancelled.
+        let ultimatum = [0x03, 0x00, 0x00, 0x09, 0x02, 0xF0, 0x80, 0x21, 0x80];
+        assert!(is_disconnect_ultimatum(Action::X224, &ultimatum));
+        // An MCS Send Data Indication (choice 26): ordinary traffic.
+        let data = [
+            0x03, 0x00, 0x00, 0x0C, 0x02, 0xF0, 0x80, 0x68, 0x00, 0x01, 0x03, 0xEB,
+        ];
+        assert!(!is_disconnect_ultimatum(Action::X224, &data));
+        assert!(!is_disconnect_ultimatum(Action::FastPath, &ultimatum));
+        assert!(!is_disconnect_ultimatum(Action::X224, &ultimatum[..7]));
     }
 }
