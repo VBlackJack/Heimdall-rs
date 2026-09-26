@@ -7,6 +7,9 @@ dist/
 
 # Private working notes, never published
 /local/
+# A source module named `local` is code: an unanchored `local/` in a global ignore file
+# must not drop it.
+!/crates/*/src/local/
 
 # Editors and OS
 .vs/
