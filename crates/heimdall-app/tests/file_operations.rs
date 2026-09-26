@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 use heimdall_app::files::{
-    Direction, EntryKind, FileOperation, FilesError, LocalEntry, RemoteEntry, Side, file_operation,
-    typed_name,
+    Direction, EntryKind, FileOperation, FilesError, FilesKey, LocalEntry, RemoteEntry, Side,
+    file_operation, typed_name,
 };
 use heimdall_app::{
     App, AppConfig, ConnectionEvent, Dialog, Effect, FilesMessage, Message, NameAction, TabId,
@@ -560,4 +560,123 @@ async fn remote_operations_against_openssh() {
     .await
     .expect("removed");
     assert!(!moved.exists());
+}
+
+fn key(app: &mut App, tab: TabId, key: FilesKey) -> Vec<Effect> {
+    files(app, FilesMessage::Key { tab, key })
+}
+
+fn selected(app: &App, tab: TabId, side: Side) -> Option<usize> {
+    let files = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+    match side {
+        Side::Remote => files.remote.selected,
+        Side::Local => files.local.selected,
+    }
+}
+
+#[tokio::test]
+async fn arrows_walk_the_focused_pane_and_stop_at_its_ends() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // The local pane has the focus first; nothing is selected.
+    key(&mut app, tab, FilesKey::Next);
+    assert_eq!(selected(&app, tab, Side::Local), Some(0));
+    key(&mut app, tab, FilesKey::Next);
+    key(&mut app, tab, FilesKey::Next);
+    assert_eq!(
+        selected(&app, tab, Side::Local),
+        Some(1),
+        "stops at the last"
+    );
+    key(&mut app, tab, FilesKey::Previous);
+    key(&mut app, tab, FilesKey::Previous);
+    assert_eq!(
+        selected(&app, tab, Side::Local),
+        Some(0),
+        "stops at the first"
+    );
+    key(&mut app, tab, FilesKey::Last);
+    assert_eq!(selected(&app, tab, Side::Local), Some(1));
+    key(&mut app, tab, FilesKey::First);
+    assert_eq!(selected(&app, tab, Side::Local), Some(0));
+    assert_eq!(
+        selected(&app, tab, Side::Remote),
+        None,
+        "the other pane is untouched"
+    );
+
+    // Up with nothing selected starts from the bottom.
+    key(&mut app, tab, FilesKey::SwitchPane);
+    key(&mut app, tab, FilesKey::Previous);
+    assert_eq!(selected(&app, tab, Side::Remote), Some(1));
+    key(&mut app, tab, FilesKey::Focus(Side::Local));
+    key(&mut app, tab, FilesKey::Next);
+    assert_eq!(selected(&app, tab, Side::Local), Some(1));
+}
+
+#[tokio::test]
+async fn a_click_gives_its_pane_the_focus() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    select(&mut app, tab, Side::Remote, 1);
+    key(&mut app, tab, FilesKey::Previous);
+    assert_eq!(selected(&app, tab, Side::Remote), Some(0));
+    assert_eq!(selected(&app, tab, Side::Local), None);
+}
+
+#[tokio::test]
+async fn enter_opens_a_folder_and_sends_a_file() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    assert!(
+        key(&mut app, tab, FilesKey::Open).is_empty(),
+        "nothing selected"
+    );
+    key(&mut app, tab, FilesKey::Focus(Side::Remote));
+    key(&mut app, tab, FilesKey::Next);
+    let opened = key(&mut app, tab, FilesKey::Open);
+    assert!(
+        matches!(opened.as_slice(), [Effect::ListRemote { path, .. }]
+            if path.as_bytes() == b"/srv/logs"),
+        "{opened:?}"
+    );
+    key(&mut app, tab, FilesKey::Focus(Side::Local));
+    key(&mut app, tab, FilesKey::Last);
+    let sent = key(&mut app, tab, FilesKey::Open);
+    assert!(
+        matches!(sent.as_slice(), [Effect::Transfer { request, .. }]
+            if request.direction == Direction::Upload),
+        "{sent:?}"
+    );
+}
+
+#[tokio::test]
+async fn backspace_refresh_rename_and_delete_act_on_the_focused_pane() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    key(&mut app, tab, FilesKey::Focus(Side::Remote));
+    let up = key(&mut app, tab, FilesKey::Parent);
+    assert!(
+        matches!(up.as_slice(), [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/"),
+        "{up:?}"
+    );
+    let refreshed = key(&mut app, tab, FilesKey::Refresh);
+    assert!(matches!(refreshed.as_slice(), [Effect::ListRemote { .. }]));
+
+    key(&mut app, tab, FilesKey::Focus(Side::Local));
+    key(&mut app, tab, FilesKey::Last);
+    key(&mut app, tab, FilesKey::Rename);
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::AskName { side: Side::Local, value, .. }) if value == "b.txt"
+    ));
+    // Keys never act behind a question.
+    assert!(key(&mut app, tab, FilesKey::Delete).is_empty());
+    assert!(matches!(&app.dialog, Some(Dialog::AskName { .. })));
+    app.update(Message::DismissDialog);
+    key(&mut app, tab, FilesKey::Delete);
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete { side: Side::Local, name, .. }) if name == "b.txt"
+    ));
 }

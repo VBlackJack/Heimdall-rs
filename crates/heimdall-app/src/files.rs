@@ -71,6 +71,44 @@ pub enum Side {
     Remote,
 }
 
+impl Side {
+    /// The other pane.
+    #[must_use]
+    pub fn other(self) -> Self {
+        match self {
+            Self::Local => Self::Remote,
+            Self::Remote => Self::Local,
+        }
+    }
+}
+
+/// What a key does in a Files tab; the pane it acts on is the one with the focus.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FilesKey {
+    /// Select the entry above.
+    Previous,
+    /// Select the entry below.
+    Next,
+    /// Select the first entry.
+    First,
+    /// Select the last entry.
+    Last,
+    /// Open the selected folder, or send the selected file to the other side.
+    Open,
+    /// Show the parent folder.
+    Parent,
+    /// Give the focus to the other pane.
+    SwitchPane,
+    /// Give the focus to a pane.
+    Focus(Side),
+    /// Ask for a new name for the selected entry.
+    Rename,
+    /// Ask to delete the selected entry.
+    Delete,
+    /// List the folder again.
+    Refresh,
+}
+
 /// What an entry is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum EntryKind {
@@ -293,6 +331,8 @@ pub struct FilesPane {
     pub local: LocalPane,
     /// Transfers, oldest first.
     pub transfers: Vec<Transfer>,
+    /// The pane keys act on: the last one clicked or chosen.
+    pub focus: Side,
 }
 
 impl FilesPane {
@@ -304,6 +344,16 @@ impl FilesPane {
             remote: Pane::new(RemotePath::from(".")),
             local: Pane::new(local),
             transfers: Vec::new(),
+            focus: Side::Local,
+        }
+    }
+
+    /// The selected entry of the focused pane, and how many entries it holds.
+    #[must_use]
+    pub fn focused(&self) -> (Option<usize>, usize) {
+        match self.focus {
+            Side::Remote => (self.remote.selected, self.remote.entries.len()),
+            Side::Local => (self.local.selected, self.local.entries.len()),
         }
     }
 

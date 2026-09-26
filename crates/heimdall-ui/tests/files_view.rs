@@ -331,3 +331,51 @@ async fn a_folder_delete_says_everything_in_it_goes() {
         .expect("body");
     ui.find("Delete?").expect("title");
 }
+
+#[tokio::test]
+async fn keys_reach_the_files_tab_and_enter_opens_the_selection() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::FilesKey(heimdall_app::files::FilesKey::Focus(
+        Side::Remote,
+    )));
+    let _ = shell.update(Message::FilesKey(heimdall_app::files::FilesKey::Next));
+    let files = shell
+        .app()
+        .tab(tab)
+        .and_then(|t| t.files.as_ref())
+        .expect("files");
+    assert_eq!(files.remote.selected, Some(0));
+    snapshot(&shell, "files-keyboard.png");
+    // Enter with no dialog open: the selected folder opens.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let files = shell
+        .app()
+        .tab(tab)
+        .and_then(|t| t.files.as_ref())
+        .expect("files");
+    assert_eq!(files.remote.path.as_bytes(), b"/home/admin/logs");
+    assert!(files.remote.loading, "the folder is being listed");
+}
+
+#[tokio::test]
+async fn no_widget_of_the_files_tab_takes_its_keys() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, _tab) = files_tab(dir.path()).await;
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    for key in [
+        iced::keyboard::key::Named::ArrowDown,
+        iced::keyboard::key::Named::Tab,
+        iced::keyboard::key::Named::F2,
+        iced::keyboard::key::Named::Delete,
+        iced::keyboard::key::Named::Enter,
+    ] {
+        assert_eq!(
+            ui.tap_key(key),
+            iced::event::Status::Ignored,
+            "{key:?} reaches the window"
+        );
+    }
+}
