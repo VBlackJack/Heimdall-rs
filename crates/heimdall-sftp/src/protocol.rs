@@ -230,6 +230,45 @@ impl Attributes {
     }
 }
 
+/// File type bits of POSIX permissions.
+const TYPE_MASK: u32 = 0o170_000;
+
+/// Type bits of a regular file.
+const TYPE_REGULAR: u32 = 0o100_000;
+
+/// Type bits of a directory.
+const TYPE_DIRECTORY: u32 = 0o040_000;
+
+/// Type bits of a symbolic link.
+const TYPE_SYMLINK: u32 = 0o120_000;
+
+/// Permission bits a transfer may carry: read, write, execute for owner, group, others.
+/// Set-user-id, set-group-id and sticky are never copied, in either direction.
+pub const PLAIN_PERMISSIONS: u32 = 0o777;
+
+impl Attributes {
+    /// Whether the attributes describe a regular file.
+    #[must_use]
+    pub fn is_regular_file(&self) -> bool {
+        self.permissions
+            .is_some_and(|mode| mode & TYPE_MASK == TYPE_REGULAR)
+    }
+
+    /// Whether the attributes describe a directory.
+    #[must_use]
+    pub fn is_directory(&self) -> bool {
+        self.permissions
+            .is_some_and(|mode| mode & TYPE_MASK == TYPE_DIRECTORY)
+    }
+
+    /// Whether the attributes describe a symbolic link (as `LSTAT` reports it).
+    #[must_use]
+    pub fn is_symlink(&self) -> bool {
+        self.permissions
+            .is_some_and(|mode| mode & TYPE_MASK == TYPE_SYMLINK)
+    }
+}
+
 /// One entry of a directory listing or of a name reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct NameEntry {
