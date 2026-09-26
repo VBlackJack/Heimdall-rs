@@ -7,6 +7,11 @@ gestionnaire de connexions distantes multi-protocoles, pour Windows et Linux.
 
 ## État
 
+> **Pas encore utilisable.** C'est une réécriture en cours, publiée pour que son travail
+> puisse être suivi. Elle ne fait pas encore ce que fait Heimdall en C#, ses formats peuvent
+> changer sans préavis, et elle n'est pas publiée en version. Utilisez
+> [Heimdall](https://github.com/VBlackJack/Heimdall).
+
 Développement en cours. Le premier jalon est atteint : un onglet de terminal SSH ouvert
 depuis un profil enregistré, avec les profils importés depuis Heimdall en C#, la
 vérification des clés d'hôte, l'authentification par mot de passe, fichier de clé (OpenSSH
