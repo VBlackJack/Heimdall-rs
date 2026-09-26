@@ -53,7 +53,7 @@ pub fn run() -> iced::Result {
         .window(window::Settings {
             size: WINDOW_SIZE,
             min_size: Some(MIN_WINDOW_SIZE),
-            // Live sessions are confirmed and closed in order before the window goes.
+            // Quitting with live sessions asks first; their sessions are then cancelled.
             exit_on_close_request: false,
             ..window::Settings::default()
         });

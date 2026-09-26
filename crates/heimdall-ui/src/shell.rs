@@ -29,10 +29,11 @@ use heimdall_app::{
     QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::SshProfile;
+use heimdall_core::profile::{SshProfile, display_address};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use iced::futures::{StreamExt as _, stream};
+use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::{
     Column, button, center, column, container, opaque, operation, row, scrollable, stack, text,
@@ -73,6 +74,12 @@ const SMALL_SIZE: f32 = 12.0;
 /// Tallest the list of skipped profiles grows before it scrolls, in logical pixels.
 const SKIPPED_LIST_HEIGHT: f32 = 200.0;
 
+/// Longest tab title shown, in characters.
+const MAX_TAB_TITLE_CHARS: usize = 32;
+
+/// Marks a cut title; three ASCII dots, as everywhere in the project.
+const ELLIPSIS: &str = "...";
+
 /// Opacity of the veil behind a dialog.
 const VEIL_ALPHA: f32 = 0.6;
 
@@ -89,14 +96,24 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             Some(Message::App(AppMessage::WindowFocus(false)))
         }
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(named @ (Named::Enter | Named::Escape)),
+            repeat: false,
+            ..
+        }) if status == event::Status::Ignored => Some(Message::DialogKey {
+            confirm: named == Named::Enter,
+        }),
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
+            physical_key,
             modifiers,
             repeat,
             ..
-        }) if status == event::Status::Ignored => match window_shortcut(&key, modifiers)? {
-            WindowShortcut::CloseTab if repeat => None,
-            shortcut => Some(Message::Shortcut(shortcut)),
-        },
+        }) if status == event::Status::Ignored => {
+            match window_shortcut(&key, physical_key, modifiers)? {
+                WindowShortcut::CloseTab if repeat => None,
+                shortcut => Some(Message::Shortcut(shortcut)),
+            }
+        }
         _ => None,
     }
 }
@@ -128,6 +145,11 @@ pub enum Message {
     Decline(TabId),
     /// A window shortcut.
     Shortcut(WindowShortcut),
+    /// Enter (`confirm`) or Escape, uncaptured by any widget: answers the open dialog.
+    DialogKey {
+        /// Enter rather than Escape.
+        confirm: bool,
+    },
 }
 
 impl fmt::Debug for Message {
@@ -144,6 +166,7 @@ impl fmt::Debug for Message {
             Self::Submit(tab) => write!(f, "Submit({})", tab.value()),
             Self::Decline(tab) => write!(f, "Decline({})", tab.value()),
             Self::Shortcut(shortcut) => write!(f, "Shortcut({shortcut:?})"),
+            Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
         }
     }
 }
@@ -178,10 +201,24 @@ fn field_id(question: QuestionId, index: usize) -> iced::widget::Id {
 
 /// `user@host:port`, or `host:port` without a user.
 fn target(host: &str, port: u16, user: Option<&str>) -> String {
+    let address = display_address(host, port);
     match user {
-        Some(user) if !user.is_empty() => format!("{user}@{host}:{port}"),
-        _ => format!("{host}:{port}"),
+        Some(user) if !user.is_empty() => format!("{user}@{address}"),
+        _ => address,
     }
+}
+
+/// A tab title cut to [`MAX_TAB_TITLE_CHARS`], so one long server title cannot take the
+/// whole tab bar.
+fn tab_label(title: &str) -> String {
+    if title.chars().count() <= MAX_TAB_TITLE_CHARS {
+        return title.to_owned();
+    }
+    let kept: String = title
+        .chars()
+        .take(MAX_TAB_TITLE_CHARS - ELLIPSIS.len())
+        .collect();
+    format!("{kept}{ELLIPSIS}")
 }
 
 /// Where the application keeps its files; the working directory when the platform has
@@ -203,7 +240,8 @@ pub struct Shell {
     registry: AnswerRegistry,
     /// Running connection attempts; dropping a handle aborts its task.
     connections: HashMap<TabId, Handle>,
-    /// What is typed into each open question, wiped on drop.
+    /// What is typed into each open question, zeroed when dropped. iced keeps its own
+    /// transient copies of a field's text, which this cannot reach.
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
     /// The question whose first field was last given focus.
     focused: Option<QuestionId>,
@@ -284,6 +322,7 @@ impl Shell {
             Message::Submit(tab) => self.reply(tab, true),
             Message::Decline(tab) => self.reply(tab, false),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
+            Message::DialogKey { confirm } => self.dialog_key(confirm),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -346,6 +385,16 @@ impl Shell {
             (_, None) => return Vec::new(),
         };
         self.app.update(message)
+    }
+
+    /// Enter confirms the open dialog, Escape dismisses it; without a dialog the core
+    /// ignores both.
+    fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
+        self.app.update(if confirm {
+            AppMessage::ConfirmDialog
+        } else {
+            AppMessage::DismissDialog
+        })
     }
 
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
@@ -510,7 +559,7 @@ impl Shell {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         for tab in &self.app.tabs {
             let active = self.app.active == Some(tab.id);
-            let mut label = row![text(tab.title.as_str())].spacing(SPACING);
+            let mut label = row![text(tab_label(&tab.title))].spacing(SPACING);
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
             }
@@ -605,14 +654,14 @@ impl Shell {
                 .spacing(SPACING),
             ))
             .into(),
-            Phase::Connected => terminal(tab),
+            Phase::Connected => terminal(tab, self.app.dialog.is_none()),
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
                     || fl!("ui-session-closed"),
                     |status| fl!("ui-session-closed-status", status = status.to_string()),
                 );
                 column![
-                    terminal(tab),
+                    terminal(tab, self.app.dialog.is_none()),
                     row![text(status), close()]
                         .spacing(SPACING)
                         .padding(PADDING)
@@ -748,8 +797,8 @@ impl Default for Shell {
     }
 }
 
-fn terminal(tab: &Tab) -> Element<'_, Message> {
-    container(TerminalView::new(&tab.terminal, tab.id, Message::App))
+fn terminal(tab: &Tab, interactive: bool) -> Element<'_, Message> {
+    container(TerminalView::new(&tab.terminal, tab.id, Message::App).interactive(interactive))
         .padding(TERMINAL_MARGIN)
         .into()
 }

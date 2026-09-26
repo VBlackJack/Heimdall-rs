@@ -79,7 +79,10 @@ ui-dialog-exit-body = { $count ->
 }
 ui-dialog-exit-confirm = Quitter
 ui-dialog-paste-title = Coller plusieurs lignes ?
-ui-dialog-paste-body = Le texte contient { $count } lignes. Le shell peut exécuter chacune comme une commande dès son arrivée.
+ui-dialog-paste-body = { $count ->
+    [one] Le texte contient une ligne. Le shell peut l'exécuter comme une commande dès son arrivée.
+   *[other] Le texte contient { $count } lignes. Le shell peut exécuter chacune comme une commande dès son arrivée.
+}
 ui-dialog-paste-confirm = Coller
 ui-dialog-import-title = Import terminé
 ui-dialog-import-counts = Ajoutés : { $added }. Mis à jour : { $updated }. Inchangés : { $unchanged }.

@@ -75,3 +75,25 @@ pub struct SshProfile {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_path: Option<PathBuf>,
 }
+
+/// `host:port` as people write it: an IPv6 address in brackets, so the port stays
+/// apart from it (`[fe80::1]:22`).
+#[must_use]
+pub fn display_address(host: &str, port: u16) -> String {
+    if host.contains(':') {
+        format!("[{host}]:{port}")
+    } else {
+        format!("{host}:{port}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::display_address;
+
+    #[test]
+    fn an_ipv6_address_is_bracketed_so_its_port_stays_apart() {
+        assert_eq!(display_address("fe80::1", 22), "[fe80::1]:22");
+        assert_eq!(display_address("srv.lab", 2222), "srv.lab:2222");
+    }
+}

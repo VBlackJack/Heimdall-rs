@@ -22,7 +22,7 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use heimdall_core::profile::SshProfile;
+use heimdall_core::profile::{SshProfile, display_address};
 use heimdall_ssh::{
     ConnectError, ConnectOptions, KeyboardInteractiveQuestion, PassphraseQuestion,
     PasswordQuestion, Prompter, Secret, SessionEvent, ShellSession, UsernameQuestion, connect,
@@ -186,7 +186,7 @@ async fn run(
 ) {
     // Destinations come from the user's own profiles; errors are logged in their `Debug`
     // form, which escapes any control character a server message may carry.
-    let target = format!("{}:{}", request.profile.host, request.profile.port);
+    let target = display_address(&request.profile.host, request.profile.port);
     log::info!("connecting to {target}");
     let prompter = Arc::new(ChannelPrompter {
         events: events.clone(),

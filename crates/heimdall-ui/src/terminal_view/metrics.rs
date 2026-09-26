@@ -168,4 +168,17 @@ mod tests {
         let beyond = metrics.cell_at(bounds, grid, Point::new(5000.0, 5000.0));
         assert_eq!((beyond.row, beyond.col), (grid.rows - 1, grid.cols - 1));
     }
+
+    #[test]
+    fn the_middle_of_a_cell_belongs_to_its_right_half() {
+        let metrics = CellMetrics::default();
+        let bounds = Rectangle::new(Point::ORIGIN, Size::new(900.0, 600.0));
+        let grid = metrics.grid(bounds.size());
+        let middle = metrics.cell_at(bounds, grid, Point::new(9.0 * 2.0 + 4.5, 0.0));
+        assert_eq!((middle.col, middle.right_half), (2, true));
+        let before = metrics.cell_at(bounds, grid, Point::new(9.0 * 2.0 + 4.4, 0.0));
+        assert!(!before.right_half);
+        assert_eq!(metrics.pixels().width, 9);
+        assert_eq!(metrics.origin(bounds, 2, 3), Point::new(27.0, 38.0));
+    }
 }

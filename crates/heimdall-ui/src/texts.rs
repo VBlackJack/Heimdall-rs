@@ -33,7 +33,7 @@ const LIST_SEPARATOR: &str = ", ";
 pub fn error(error: &UiError) -> String {
     match error {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
-        UiError::Network { detail } => fl!("ui-error-network", detail = detail.as_str()),
+        UiError::Network { detail } => fl!("ui-error-network", detail = server_text(detail)),
         UiError::Timeout => fl!("ui-error-timeout"),
         UiError::HostKeyChanged { recorded, offered } => fl!(
             "ui-error-hostkey-changed",
@@ -45,7 +45,7 @@ pub fn error(error: &UiError) -> String {
             recorded = recorded.join(LIST_SEPARATOR)
         ),
         UiError::HostCertificateRefused => fl!("ui-error-host-certificate"),
-        UiError::KnownHosts { detail } => fl!("ui-error-known-hosts", detail = detail.as_str()),
+        UiError::KnownHosts { detail } => fl!("ui-error-known-hosts", detail = server_text(detail)),
         UiError::KeyFile { problem, path } => key_problem(problem, path),
         UiError::AuthenticationFailed { tried } if tried.is_empty() => {
             fl!("ui-error-auth-failed-none")
@@ -70,7 +70,7 @@ pub fn error(error: &UiError) -> String {
         UiError::PromptTimedOut => fl!("ui-error-prompt-timeout"),
         UiError::PtyRefused => fl!("ui-error-pty-refused"),
         UiError::ShellRefused => fl!("ui-error-shell-refused"),
-        UiError::Protocol { detail } => fl!("ui-error-protocol", detail = detail.as_str()),
+        UiError::Protocol { detail } => fl!("ui-error-protocol", detail = server_text(detail)),
     }
 }
 
@@ -165,5 +165,16 @@ mod tests {
     fn skip_reasons_carry_their_value() {
         assert!(skip_reason(&SkipReason::InvalidPort(70000)).contains("70000"));
         assert!(skip_reason(&SkipReason::NotSsh("RDP".to_owned())).contains("RDP"));
+    }
+
+    #[test]
+    fn technical_details_are_made_safe_too() {
+        let text = error(&UiError::Protocol {
+            detail: "bad\u{1b}]52;c;AAAA\u{7}name".to_owned(),
+        });
+        assert!(
+            !text.contains('\u{1b}') && !text.contains('\u{7}'),
+            "{text:?}"
+        );
     }
 }

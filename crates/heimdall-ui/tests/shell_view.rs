@@ -34,7 +34,8 @@ use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::WindowShortcut;
-use iced::{Settings, Size};
+use iced::keyboard::key::Named;
+use iced::{Settings, Size, event};
 use iced_test::simulator::Simulator;
 
 const GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -276,7 +277,7 @@ fn a_field_beyond_the_question_is_ignored() {
     let mut shell = Shell::with_app(core);
     let _ = shell.update(Message::Field {
         question,
-        index: 5,
+        index: 1,
         value: "x".to_owned(),
     });
     let unknown = QuestionId::fresh();
@@ -355,4 +356,100 @@ fn tab_shortcuts_cycle_through_the_tabs() {
     assert_eq!(shell.app().active, Some(third), "wraps to the last");
     let _ = shell.update(Message::Shortcut(WindowShortcut::PreviousTab));
     assert_eq!(shell.app().active, Some(second));
+}
+
+fn connected_shell(dir: &Path) -> (Shell, TabId, AttemptId) {
+    let mut core = app(dir);
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    });
+    (Shell::with_app(core), tab, attempt)
+}
+
+#[test]
+fn the_terminal_reports_its_size_and_takes_typing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _) = connected_shell(dir.path());
+    let mut ui = simulator(&shell);
+    ui.typewrite("ls");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Resize { tab: t, grid, .. }) if *t == tab && grid.cols > 80
+        )),
+        "the grid of the window, not the initial 80 columns"
+    );
+    let keys = messages
+        .iter()
+        .filter(
+            |message| matches!(message, Message::App(AppMessage::Key { tab: t, .. }) if *t == tab),
+        )
+        .count();
+    assert_eq!(keys, 2);
+}
+
+#[test]
+fn under_a_dialog_the_terminal_takes_nothing_and_leaves_enter_to_the_window() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let mut shell = shell;
+    let _ = shell.update(Message::App(AppMessage::WindowCloseRequested));
+    assert!(shell.app().dialog.is_some());
+    {
+        let mut ui = simulator(&shell);
+        ui.typewrite("y");
+        let status = ui.tap_key(keyboard_named(Named::Enter));
+        assert_eq!(status, event::Status::Ignored, "Enter reaches the window");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+            "no key reached the terminal"
+        );
+    }
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(shell.app().dialog.is_none(), "Escape dismisses");
+}
+
+fn keyboard_named(named: Named) -> iced::keyboard::Key {
+    iced::keyboard::Key::Named(named)
+}
+
+#[test]
+fn a_long_server_title_is_cut_in_its_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, attempt) = connected_shell(dir.path());
+    let mut core_title = format!("\x1b]2;{}\x07", "w".repeat(100));
+    let mut shell = shell;
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(std::mem::take(&mut core_title).into_bytes()),
+    }));
+    let mut ui = simulator(&shell);
+    let shown = format!("{}...", "w".repeat(29));
+    ui.find(shown.as_str()).expect("cut to 32 characters");
+}
+
+#[test]
+fn enter_confirms_the_dialog_and_escape_cancels_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(shell.app().dialog.is_none());
+    assert!(shell.app().tab(tab).is_some(), "Escape keeps the session");
+    let _ = shell.update(Message::App(AppMessage::RequestCloseTab(tab)));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert!(shell.app().tab(tab).is_none(), "Enter closes it");
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert!(
+        shell.app().dialog.is_none(),
+        "without a dialog, Enter does nothing"
+    );
 }

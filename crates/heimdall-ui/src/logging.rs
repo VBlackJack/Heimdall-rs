@@ -50,6 +50,10 @@ const LEVEL_VARIABLE: &str = "HEIMDALL_LOG";
 /// Prefix of the crates of this workspace.
 const OWN_TARGET_PREFIX: &str = "heimdall";
 
+/// Owner read and write only, for the log and crash files on Unix.
+#[cfg(unix)]
+const PRIVATE_FILE_MODE: u32 = 0o600;
+
 /// Longest panic message kept in a crash report, in characters.
 const MAX_PANIC_MESSAGE_CHARS: usize = 1024;
 
@@ -113,13 +117,28 @@ fn levels(requested: Option<&str>) -> (LevelFilter, LevelFilter) {
     }
 }
 
+/// Options creating a file only its owner can read: host names, user names and paths
+/// are in the log.
+fn private_file() -> OpenOptions {
+    let mut options = OpenOptions::new();
+    options.create(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+        options.mode(PRIVATE_FILE_MODE);
+    }
+    options
+}
+
 fn open_log(dir: &Path) -> std::io::Result<File> {
     fs::create_dir_all(dir)?;
     let path = dir.join(LOG_FILE_NAME);
     if fs::metadata(&path).is_ok_and(|meta| meta.len() > MAX_LOG_BYTES) {
-        fs::rename(&path, dir.join(PREVIOUS_LOG_FILE_NAME))?;
+        // Another instance may hold the file open (Windows): keep appending rather than
+        // run without a log.
+        let _ = fs::rename(&path, dir.join(PREVIOUS_LOG_FILE_NAME));
     }
-    OpenOptions::new().create(true).append(true).open(path)
+    private_file().append(true).open(path)
 }
 
 /// Starts logging to `dir` and writes crash reports there. Without a directory, or when
@@ -154,7 +173,9 @@ fn install_panic_hook(dir: PathBuf) {
         let report = crash_report(info);
         log::error!("panic: {}", first_line(&report));
         let path = dir.join(format!("crash-{}.txt", timestamp().replace('.', "-")));
-        let _ = fs::write(path, &report);
+        if let Ok(mut file) = private_file().write(true).truncate(true).open(path) {
+            let _ = file.write_all(report.as_bytes());
+        }
         previous(info);
     }));
 }
@@ -171,6 +192,11 @@ fn panic_message(info: &PanicHookInfo<'_>) -> String {
         .copied()
         .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
         .unwrap_or_default();
+    printable(raw)
+}
+
+/// `raw` without control characters other than line feeds, bounded.
+fn printable(raw: &str) -> String {
     raw.chars()
         .filter(|c| !c.is_control() || *c == '\n')
         .take(MAX_PANIC_MESSAGE_CHARS)
@@ -210,7 +236,7 @@ fn written(requested: Option<&str>, target: &str, level: Level) -> bool {
 mod tests {
     use log::Level;
 
-    use super::{first_line, written};
+    use super::{MAX_PANIC_MESSAGE_CHARS, first_line, open_log, printable, written};
 
     #[test]
     fn by_default_other_crates_log_only_warnings() {
@@ -231,5 +257,25 @@ mod tests {
     fn the_log_line_of_a_crash_is_its_first_line() {
         assert_eq!(first_line("a\nb"), "a");
         assert_eq!(first_line(""), "");
+    }
+
+    #[test]
+    fn a_panic_message_is_printable_and_bounded() {
+        assert_eq!(printable("bad\x1b[2Jline\r\nnext"), "bad[2Jline\nnext");
+        let long = "x".repeat(MAX_PANIC_MESSAGE_CHARS + 10);
+        assert_eq!(printable(&long).chars().count(), MAX_PANIC_MESSAGE_CHARS);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_the_owner_reads_the_log() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().expect("dir");
+        drop(open_log(dir.path()).expect("opened"));
+        let mode = std::fs::metadata(dir.path().join(super::LOG_FILE_NAME))
+            .expect("exists")
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }
