@@ -43,6 +43,12 @@ pub const FIXTURE_PASSPHRASE: &str = "fixture-passphrase";
 pub const LOOPBACK: &str = "127.0.0.1";
 /// Sent by a test to make the server end the shell with its configured exit status.
 pub const EXIT_COMMAND: &[u8] = b"exit\n";
+
+/// Subsystem the test server accepts.
+pub const SUBSYSTEM_ACCEPTED: &str = "sftp";
+
+/// Subsystem the test server never answers.
+pub const SUBSYSTEM_SILENT: &str = "silent";
 /// Upper bound for any single test step; generous, it only catches hangs.
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 /// Server-side delay after a refused attempt; small so tests stay fast.
@@ -128,6 +134,10 @@ pub struct Observed {
     pub pty: Option<(String, u32, u32)>,
     pub resizes: Vec<(u32, u32)>,
     pub bytes_received: usize,
+    /// Connections whose session ended, by disconnect or by the socket closing.
+    pub connections_ended: usize,
+    /// How each ended connection's session finished, as russh reported it.
+    pub endings: Vec<String>,
 }
 
 pub struct TestServer {
@@ -171,9 +181,14 @@ pub async fn start(spec: Spec) -> TestServer {
             };
             let config = config.clone();
             tokio::spawn(async move {
-                if let Ok(session) = server::run_stream(config, stream, handler).await {
-                    let _ = session.await;
-                }
+                let ended = handler.observed.clone();
+                let outcome = match server::run_stream(config, stream, handler).await {
+                    Ok(session) => format!("{:?}", session.await),
+                    Err(error) => format!("setup: {error:?}"),
+                };
+                let mut observed = ended.lock().expect("observed");
+                observed.connections_ended += 1;
+                observed.endings.push(outcome);
             });
         }
     });
@@ -331,6 +346,21 @@ impl server::Handler for Connection {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         session.channel_success(channel)
+    }
+
+    /// `sftp` is accepted and echoes like the shell; `silent` gets no answer at all; any
+    /// other name is refused.
+    async fn subsystem_request(
+        &mut self,
+        channel: ChannelId,
+        name: &str,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        match name {
+            SUBSYSTEM_ACCEPTED => session.channel_success(channel),
+            SUBSYSTEM_SILENT => Ok(()),
+            _ => session.channel_failure(channel),
+        }
     }
 
     async fn window_change_request(

@@ -31,28 +31,23 @@
 //! - the writer sends input, waiting for the server's window when it must;
 //! - the resizer applies the latest requested size; sizes requested meanwhile collapse into
 //!   the last one;
-//! - the keeper owns the connection and disconnects when the session is cancelled.
+//! - the keeper holds a use of the connection; once the session is cancelled it closes
+//!   this channel and lets the connection go, which disconnects when nothing else uses it.
 
 use std::sync::Arc;
 
-use russh::client::{Handle, Msg};
-use russh::{Channel, ChannelMsg, ChannelReadHalf, ChannelWriteHalf, Disconnect};
+use russh::client::Msg;
+use russh::{Channel, ChannelMsg, ChannelReadHalf, ChannelWriteHalf};
 use thiserror::Error;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 
-use crate::client::ClientHandler;
+use crate::connection::Connection;
 use crate::error::ConnectError;
 use crate::options::{ConnectOptions, TerminalSize};
 
 /// Output messages buffered before the reader waits for the UI.
 const OUTPUT_QUEUE_LENGTH: usize = 256;
-
-/// Description sent when the session is closed by Heimdall-rs.
-const DISCONNECT_DESCRIPTION: &str = "";
-
-/// Language tag sent when the session is closed by Heimdall-rs.
-const DISCONNECT_LANGUAGE: &str = "";
 
 /// Something that happened on the session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -225,24 +220,25 @@ async fn apply_resizes(
     }
 }
 
-/// Owns the connection for the life of the session and disconnects once it is cancelled.
-async fn keep_connection(handle: Handle<ClientHandler>, cancel: CancellationToken) {
+/// Holds the connection for the life of the session; once it is cancelled, closes this
+/// channel and releases the connection.
+async fn keep_connection(
+    connection: Connection,
+    writer: Arc<ChannelWriteHalf<Msg>>,
+    cancel: CancellationToken,
+) {
     cancel.cancelled().await;
-    let _ = handle
-        .disconnect(
-            Disconnect::ByApplication,
-            DISCONNECT_DESCRIPTION,
-            DISCONNECT_LANGUAGE,
-        )
-        .await;
+    let _ = writer.close().await;
+    drop(connection);
 }
 
 pub(crate) async fn open(
-    handle: Handle<ClientHandler>,
+    connection: Connection,
     options: &ConnectOptions,
     cancel: CancellationToken,
 ) -> Result<ShellSession, ConnectError> {
-    let mut channel = handle
+    let mut channel = connection
+        .handle()
         .channel_open_session()
         .await
         .map_err(ConnectError::Protocol)?;
@@ -275,8 +271,8 @@ pub(crate) async fn open(
 
     tokio::spawn(read_output(reader, events_tx, cancel.clone()));
     tokio::spawn(write_input(writer.clone(), data_rx, cancel.clone()));
-    tokio::spawn(apply_resizes(writer, size_rx, cancel.clone()));
-    tokio::spawn(keep_connection(handle, cancel.clone()));
+    tokio::spawn(apply_resizes(writer.clone(), size_rx, cancel.clone()));
+    tokio::spawn(keep_connection(connection, writer, cancel.clone()));
 
     Ok(ShellSession {
         input: SessionInput {

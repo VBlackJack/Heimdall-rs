@@ -92,6 +92,11 @@ pub enum UiError {
     PtyRefused,
     /// No shell started.
     ShellRefused,
+    /// The server refused a subsystem, such as SFTP.
+    SubsystemRefused {
+        /// Subsystem asked for.
+        name: String,
+    },
     /// Anything else in the SSH protocol.
     Protocol {
         /// Technical description.
@@ -153,6 +158,7 @@ impl From<ConnectError> for UiError {
             ConnectError::PromptTimedOut => Self::PromptTimedOut,
             ConnectError::PtyRefused => Self::PtyRefused,
             ConnectError::ShellRefused => Self::ShellRefused,
+            ConnectError::SubsystemRefused { name } => Self::SubsystemRefused { name },
             ConnectError::Protocol(source) => Self::Protocol {
                 detail: source.to_string(),
             },

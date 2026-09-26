@@ -117,6 +117,12 @@ pub enum ConnectError {
     /// The server refused to start a shell.
     #[error("shell refused")]
     ShellRefused,
+    /// The server refused to start a subsystem, such as `sftp`.
+    #[error("subsystem {name} refused")]
+    SubsystemRefused {
+        /// Subsystem asked for.
+        name: String,
+    },
     /// Any other SSH protocol error.
     #[error("ssh: {0}")]
     Protocol(#[source] russh::Error),
