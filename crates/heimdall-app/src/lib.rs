@@ -22,6 +22,7 @@
 //! calling `update`.
 
 mod app;
+mod desktop;
 mod driver;
 mod error;
 mod event;
@@ -35,8 +36,9 @@ mod text;
 
 pub use app::{
     App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, Message, NameAction,
-    Phase, PointerInput, Prompt, RdpPane, Tab, TabProfile, WHEEL_LINES,
+    Phase, PointerInput, Prompt, Tab, TabProfile, WHEEL_LINES,
 };
+pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, UiError};
 pub use event::{Answer, ConnectionEvent, QuestionKind};

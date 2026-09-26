@@ -42,6 +42,7 @@ use heimdall_term::{
 };
 use tokio_util::sync::CancellationToken;
 
+use crate::desktop::{DesktopInput, DesktopPane};
 use crate::driver::{ConnectRequest, Purpose};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
@@ -60,7 +61,6 @@ mod telnet_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
-pub use rdp_tab::RdpPane;
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -131,12 +131,12 @@ pub enum Message {
     OpenRdp(ProfileId),
     /// Open a Telnet tab for a saved Telnet profile.
     OpenTelnet(ProfileId),
-    /// Keyboard or mouse input for the desktop of an RDP tab.
-    RdpInput {
+    /// Keyboard or mouse input for the remote desktop of a tab.
+    DesktopInput {
         /// Tab.
         tab: TabId,
         /// What happened, in order.
-        operations: Vec<heimdall_rdp::Operation>,
+        inputs: Vec<DesktopInput>,
     },
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
@@ -254,13 +254,8 @@ impl fmt::Debug for Message {
             Self::OpenRdp(id) => write!(f, "OpenRdp({id})"),
             Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
             // What was typed is never shown, as for a terminal.
-            Self::RdpInput { tab, operations } => {
-                write!(
-                    f,
-                    "RdpInput({}, {} operations)",
-                    tab.value(),
-                    operations.len()
-                )
+            Self::DesktopInput { tab, inputs } => {
+                write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
@@ -503,7 +498,7 @@ pub struct Tab {
     /// The Files view, for a Files tab.
     pub files: Option<Box<FilesPane>>,
     /// The desktop, for an RDP tab once connected.
-    pub rdp: Option<Box<RdpPane>>,
+    pub desktop: Option<Box<DesktopPane>>,
     pending_rdp_key: Option<heimdall_rdp::Fingerprint>,
     attempt: AttemptId,
     sink: Option<Arc<dyn InputSink>>,
@@ -561,7 +556,7 @@ impl Tab {
             bell: false,
             purpose,
             files: None,
-            rdp: None,
+            desktop: None,
             pending_rdp_key: None,
             attempt,
             sink: None,
@@ -577,7 +572,7 @@ impl Tab {
 
     fn stop(&mut self) {
         self.cancel.cancel();
-        self.rdp = None;
+        self.desktop = None;
         if let Some(files) = self.files.as_mut() {
             files.stop();
         }
@@ -839,8 +834,8 @@ impl App {
             Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
             Message::OpenRdp(id) => self.open_rdp(&id),
             Message::OpenTelnet(id) => self.open_telnet(&id),
-            Message::RdpInput { tab, operations } => {
-                self.rdp_input(tab, operations);
+            Message::DesktopInput { tab, inputs } => {
+                self.desktop_input(tab, &inputs);
                 Vec::new()
             }
             Message::ForgetServer(tab) => self.forget_server(tab),
@@ -1024,7 +1019,7 @@ impl App {
             }
             event @ (ConnectionEvent::UnknownRdpCertificate { .. }
             | ConnectionEvent::RdpReady { .. }
-            | ConnectionEvent::RdpFrame) => {
+            | ConnectionEvent::DesktopFrame) => {
                 rdp_tab::apply(tab, event);
                 Vec::new()
             }
@@ -1051,14 +1046,14 @@ impl App {
             ConnectionEvent::Closed { exit_status } => {
                 tab.phase = Phase::Closed { exit_status };
                 tab.sink = None;
-                tab.rdp = None;
+                tab.desktop = None;
                 tab.prompts.clear();
                 Vec::new()
             }
             ConnectionEvent::Failed(error) => {
                 tab.phase = Phase::Failed(error);
                 tab.sink = None;
-                tab.rdp = None;
+                tab.desktop = None;
                 tab.prompts.clear();
                 Vec::new()
             }

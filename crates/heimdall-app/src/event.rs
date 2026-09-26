@@ -104,7 +104,7 @@ pub enum ConnectionEvent {
         input: mpsc::UnboundedSender<Vec<Operation>>,
     },
     /// The RDP desktop changed: redraw it.
-    RdpFrame,
+    DesktopFrame,
     /// The shell is open.
     Connected {
         /// Where input goes.
@@ -156,7 +156,7 @@ impl fmt::Debug for ConnectionEvent {
                 .field("fingerprint", &fingerprint.to_string())
                 .finish(),
             Self::RdpReady { .. } => f.write_str("RdpReady"),
-            Self::RdpFrame => f.write_str("RdpFrame"),
+            Self::DesktopFrame => f.write_str("DesktopFrame"),
             Self::Connected { .. } => f.write_str("Connected"),
             Self::FilesReady { .. } => f.write_str("FilesReady"),
             Self::Output(bytes) => write!(f, "Output({} bytes)", bytes.len()),

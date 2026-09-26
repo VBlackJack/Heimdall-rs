@@ -16,11 +16,11 @@
 
 //! The Heimdall desktop application: the window, its views and the terminal widget.
 
+mod desktop_texture;
+pub mod desktop_view;
 mod files_view;
 mod i18n;
 mod logging;
-mod rdp_texture;
-pub mod rdp_view;
 pub mod shell;
 pub mod terminal_view;
 mod texts;

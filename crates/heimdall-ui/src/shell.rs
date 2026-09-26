@@ -50,9 +50,9 @@ use iced::widget::{
 use iced::{Color, Element, Length, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
 
+use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
-use crate::rdp_view::RdpView;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
 use crate::texts;
@@ -930,9 +930,9 @@ impl Shell {
                 port,
                 fingerprint,
             } => host_key_card(tab.id, host, *port, fingerprint),
-            Phase::Connected => match (tab.files.as_deref(), tab.rdp.as_deref()) {
+            Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
-                (_, Some(pane)) => RdpView::new(pane, tab.id, Message::App)
+                (_, Some(pane)) => DesktopView::new(pane, tab.id, Message::App)
                     .interactive(self.app.dialog.is_none())
                     .into(),
                 _ => terminal(tab, self.app.dialog.is_none()),
