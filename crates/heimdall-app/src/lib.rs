@@ -27,6 +27,7 @@ mod error;
 mod event;
 pub mod files;
 mod ids;
+pub mod profile_draft;
 mod sink;
 mod text;
 

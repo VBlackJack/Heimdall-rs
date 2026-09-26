@@ -18,8 +18,7 @@ scrollback, selection, copy and paste, and mouse reporting. It is tested automat
 Linux and Windows and was walked through by hand on both on 2026-09-26. Under way: SFTP.
 
 Known limitations: characters the embedded Source Code Pro font lacks (CJK, Braille) are
-drawn with whatever the system provides; no screen reader support, as iced has none yet;
-profiles are imported or written in the profile file, not yet edited in the window.
+drawn with whatever the system provides; no screen reader support, as iced has none yet.
 
 The target is feature parity with the C# Heimdall: SSH, SFTP, FTP/FTPS, RDP, VNC, Telnet,
 Citrix, WinRM, local shell, credential vault, command library, diagram editor, updater,

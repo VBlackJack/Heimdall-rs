@@ -159,7 +159,18 @@ fn snapshot(shell: &Shell, name: &str) {
         return;
     };
     let path = Path::new(&dir).join(name);
-    let _ = std::fs::remove_file(&path);
+    // iced names the picture after its renderer (`name-wgpu.png`): clear every variant, or
+    // an old picture is only compared against and never replaced.
+    let stem = name.trim_end_matches(".png");
+    if let Ok(entries) = std::fs::read_dir(Path::new(&dir)) {
+        for entry in entries.flatten() {
+            let file = entry.file_name();
+            let file = file.to_string_lossy();
+            if file == name || file.starts_with(&format!("{stem}-")) {
+                let _ = std::fs::remove_file(entry.path());
+            }
+        }
+    }
     simulator(shell)
         .snapshot(&shell.theme())
         .expect("drawn")

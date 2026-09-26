@@ -21,8 +21,7 @@ et a été parcouru à la main sur les deux le 2026-09-26. En cours : SFTP.
 
 Limites connues : les caractères absents de la police embarquée Source Code Pro (CJK,
 Braille) sont dessinés avec ce que fournit le système ; pas de prise en charge des lecteurs
-d'écran, iced n'en a pas encore ; les profils sont importés ou écrits dans le fichier des
-profils, pas encore modifiables dans la fenêtre.
+d'écran, iced n'en a pas encore.
 
 La cible est la parité fonctionnelle avec Heimdall en C# : SSH, SFTP, FTP/FTPS, RDP, VNC,
 Telnet, Citrix, WinRM, shell local, coffre d'identifiants, bibliothèque de commandes,

@@ -27,6 +27,7 @@ use std::path::PathBuf;
 use heimdall_app::files::{
     Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
 };
+use heimdall_app::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileDraft, ProfileField};
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, FilesMessage, Message as AppMessage,
     NameAction, Phase, Prompt, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events,
@@ -106,6 +107,16 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             repeat: false,
             ..
         }) if status == event::Status::Ignored => Some(Message::DialogKey { confirm: true }),
+        // Tab whether or not a field took it: under a dialog it moves between fields.
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(Named::Tab),
+            modifiers,
+            ..
+        }) if !(modifiers.control() || modifiers.alt() || modifiers.logo()) => {
+            Some(Message::TabKey {
+                backward: modifiers.shift(),
+            })
+        }
         // Escape even when a widget took it: a field in a dialog takes the first Escape to
         // lose its focus, and the dialog would need a second one.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
@@ -164,6 +175,11 @@ pub enum Message {
     },
     /// A key for the Files tab shown, uncaptured by any widget.
     FilesKey(FilesKey),
+    /// Tab: the next field of a dialog, or the other pane of a Files tab.
+    TabKey {
+        /// With Shift: the previous field.
+        backward: bool,
+    },
 }
 
 impl fmt::Debug for Message {
@@ -182,6 +198,7 @@ impl fmt::Debug for Message {
             Self::Shortcut(shortcut) => write!(f, "Shortcut({shortcut:?})"),
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
+            Self::TabKey { backward } => write!(f, "TabKey({backward})"),
         }
     }
 }
@@ -212,6 +229,11 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
 /// Widget identifier of the name field of a dialog.
 fn name_field_id() -> iced::widget::Id {
     iced::widget::Id::new("dialog-name")
+}
+
+/// Widget identifier of a field of the profile form.
+fn profile_field_id(field: ProfileField) -> iced::widget::Id {
+    iced::widget::Id::from(format!("profile-{field:?}"))
 }
 
 /// Widget identifier of a question field.
@@ -266,8 +288,19 @@ pub struct Shell {
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
     /// The question whose first field was last given focus.
     focused: Option<QuestionId>,
-    /// Whether the name field of the open dialog was given focus.
-    name_focused: bool,
+    /// Which field of the open dialog was last given focus, so it is given once.
+    dialog_focus: Option<DialogFocus>,
+}
+
+/// A field given focus in a dialog.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DialogFocus {
+    /// The name of a new folder or renamed entry.
+    Name,
+    /// A profile form, opened or being typed into.
+    Profile,
+    /// A profile form refused for this reason: the field to fix.
+    ProfileError(DraftError),
 }
 
 impl Shell {
@@ -292,7 +325,7 @@ impl Shell {
             connections: HashMap::new(),
             drafts: HashMap::new(),
             focused: None,
-            name_focused: false,
+            dialog_focus: None,
         }
     }
 
@@ -330,7 +363,10 @@ impl Shell {
 
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Task<Message> {
-        let reveal = matches!(message, Message::FilesKey(_) | Message::DialogKey { .. });
+        let reveal = matches!(
+            message,
+            Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
+        );
         let effects = match message {
             Message::App(message) => self.app.update(message),
             Message::Field {
@@ -349,12 +385,22 @@ impl Shell {
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
             Message::FilesKey(key) => self.files_key(key),
+            Message::TabKey { backward } => {
+                if self.app.dialog.is_some() {
+                    return if backward {
+                        operation::focus_previous()
+                    } else {
+                        operation::focus_next()
+                    };
+                }
+                self.files_key(FilesKey::SwitchPane)
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
-        tasks.push(self.focus_name());
+        tasks.push(self.focus_dialog());
         if reveal {
             tasks.push(self.reveal_selection());
         }
@@ -500,17 +546,42 @@ impl Shell {
         })
     }
 
-    /// Gives focus to the name field when a dialog asking for a name opens.
-    fn focus_name(&mut self) -> Task<Message> {
-        let asking = matches!(self.app.dialog, Some(Dialog::AskName { .. }));
-        let opened = asking && !self.name_focused;
-        self.name_focused = asking;
-        if opened {
-            // Selected, so typing replaces a renamed entry's current name.
-            operation::focus(name_field_id()).chain(operation::select_all(name_field_id()))
-        } else {
-            Task::none()
+    /// Gives focus to a dialog's field when the dialog opens, and to the field to fix when
+    /// a form is refused; never again while the user types.
+    fn focus_dialog(&mut self) -> Task<Message> {
+        let (next, field) = match &self.app.dialog {
+            Some(Dialog::AskName { .. }) => (Some(DialogFocus::Name), name_field_id()),
+            Some(Dialog::EditProfile {
+                error: Some(error), ..
+            }) => (
+                Some(DialogFocus::ProfileError(*error)),
+                profile_field_id(error.field()),
+            ),
+            Some(Dialog::EditProfile { error: None, .. }) => {
+                if matches!(
+                    self.dialog_focus,
+                    Some(DialogFocus::Profile | DialogFocus::ProfileError(_))
+                ) {
+                    // Typing cleared the error: the focus stays where the user put it.
+                    self.dialog_focus = Some(DialogFocus::Profile);
+                    return Task::none();
+                }
+                (
+                    Some(DialogFocus::Profile),
+                    profile_field_id(ProfileField::Name),
+                )
+            }
+            _ => (None, name_field_id()),
+        };
+        if next == self.dialog_focus {
+            return Task::none();
         }
+        self.dialog_focus = next;
+        if next.is_none() {
+            return Task::none();
+        }
+        // Selected, so typing replaces what is there: a renamed entry's name, a wrong value.
+        operation::focus(field.clone()).chain(operation::select_all(field))
     }
 
     /// Turns an effect into a task.
@@ -627,13 +698,19 @@ impl Shell {
             .spacing(SPACING)
             .padding(PADDING)
             .push(text(fl!("ui-sidebar-title")).size(HEADING_SIZE));
+        let mut actions = row![
+            button(text(fl!("ui-sidebar-new-profile-button")))
+                .on_press(Message::App(AppMessage::NewProfile))
+        ]
+        .spacing(SPACING / 2.0);
         if self.app.can_import() {
-            list = list.push(
+            actions = actions.push(
                 button(text(fl!("ui-sidebar-import-button")))
                     .on_press(Message::App(AppMessage::ImportLegacy))
                     .style(button::secondary),
             );
         }
+        list = list.push(actions.wrap());
         let mut profiles: Vec<&SshProfile> = self.app.profiles().iter().collect();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
@@ -654,8 +731,10 @@ impl Shell {
                 let label = current.map_or_else(|| fl!("ui-sidebar-group-none"), str::to_owned);
                 list = list.push(text(label).size(SMALL_SIZE));
             }
+            // The address on its own line and the buttons under it: an address has no
+            // place to wrap, and a label beside it would cover it.
             list = list.push(
-                row![
+                column![
                     button(column![
                         text(profile.name.as_str()),
                         text(target(
@@ -664,16 +743,23 @@ impl Shell {
                             profile.username.as_deref()
                         ))
                         .size(SMALL_SIZE)
+                        .wrapping(text::Wrapping::Glyph)
                     ])
                     .width(Length::Fill)
                     .style(button::text)
                     .on_press(Message::App(AppMessage::OpenProfile(profile.id.clone()))),
-                    button(text(fl!("ui-sidebar-files-button")).size(SMALL_SIZE))
-                        .style(button::secondary)
-                        .on_press(Message::App(AppMessage::OpenFiles(profile.id.clone()))),
+                    row![
+                        button(text(fl!("ui-sidebar-files-button")).size(SMALL_SIZE))
+                            .style(button::secondary)
+                            .on_press(Message::App(AppMessage::OpenFiles(profile.id.clone()))),
+                        button(text(fl!("ui-sidebar-edit-button")).size(SMALL_SIZE))
+                            .style(button::secondary)
+                            .on_press(Message::App(AppMessage::EditProfile(profile.id.clone()))),
+                    ]
+                    .spacing(SPACING / 2.0)
+                    .padding(iced::Padding::ZERO.left(PADDING)),
                 ]
-                .spacing(SPACING / 2.0)
-                .align_y(iced::Alignment::Center),
+                .spacing(SPACING / 2.0),
             );
         }
         container(scrollable(list))
@@ -983,6 +1069,60 @@ fn import_report<'a>(
     content.push(ok).into()
 }
 
+/// The profile form: Enter in any field saves, Tab moves between fields.
+fn profile_form(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'_, Message> {
+    let title = if draft.editing.is_some() {
+        fl!("ui-profile-edit-title")
+    } else {
+        fl!("ui-profile-new-title")
+    };
+    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    for field in ProfileField::ALL {
+        let (label, placeholder) = match field {
+            ProfileField::Name => (fl!("ui-profile-field-name"), String::new()),
+            ProfileField::Group => (fl!("ui-profile-field-group"), fl!("ui-profile-optional")),
+            ProfileField::Host => (
+                fl!("ui-profile-field-host"),
+                fl!("ui-profile-host-placeholder"),
+            ),
+            ProfileField::Port => (fl!("ui-profile-field-port"), DEFAULT_SSH_PORT.to_string()),
+            ProfileField::Username => {
+                (fl!("ui-profile-field-username"), fl!("ui-profile-optional"))
+            }
+            ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
+        };
+        form = form.push(
+            column![
+                text(label).size(SMALL_SIZE),
+                text_input(&placeholder, draft.value(field))
+                    .id(profile_field_id(field))
+                    .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
+                    .on_submit(Message::App(AppMessage::ConfirmDialog)),
+            ]
+            .spacing(SPACING / 2.0),
+        );
+    }
+    if let Some(error) = error {
+        form = form.push(text(texts::draft_error(error)).style(text::danger));
+    }
+    let mut buttons = row![
+        button(text(fl!("ui-dialog-cancel-button")))
+            .style(button::secondary)
+            .on_press(Message::App(AppMessage::DismissDialog)),
+        button(text(fl!("ui-profile-save-button")))
+            .on_press(Message::App(AppMessage::ConfirmDialog)),
+    ]
+    .spacing(SPACING);
+    if draft.editing.is_some() {
+        buttons = buttons.push(
+            button(text(fl!("ui-profile-delete-button")))
+                .style(button::danger)
+                .on_press(Message::App(AppMessage::DeleteProfile)),
+        );
+    }
+    form.push(buttons).into()
+}
+
 /// Asks for a name: Enter in the field confirms, like the button.
 fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     let (title, confirm) = match action {
@@ -1064,6 +1204,13 @@ fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
         )
         .into(),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
+        Dialog::EditProfile { draft, error } => profile_form(draft, *error),
+        Dialog::ConfirmDeleteProfile { name, .. } => question(
+            fl!("ui-dialog-delete-profile-title"),
+            fl!("ui-dialog-delete-profile-body", name = name.as_str()),
+            fl!("ui-dialog-delete-profile-confirm"),
+        )
+        .into(),
         Dialog::ConfirmDelete { name, folder, .. } => question(
             fl!("ui-dialog-delete-title"),
             if *folder {
@@ -1131,6 +1278,14 @@ mod tests {
         assert!(matches!(
             message(Named::Tab, Modifiers::CTRL, event::Status::Ignored),
             Some(Message::Shortcut(WindowShortcut::NextTab))
+        ));
+        assert!(matches!(
+            message(Named::Tab, Modifiers::empty(), event::Status::Captured),
+            Some(Message::TabKey { backward: false })
+        ));
+        assert!(matches!(
+            message(Named::Tab, Modifiers::SHIFT, event::Status::Ignored),
+            Some(Message::TabKey { backward: true })
         ));
         assert!(
             message(

@@ -20,6 +20,7 @@
 //! never shown on its own, only as the technical detail inside a localised sentence.
 
 use heimdall_app::files::FilesError;
+use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
 use heimdall_sftp::local_name::LocalNameError;
@@ -120,6 +121,20 @@ pub fn skip_reason(reason: &SkipReason) -> String {
 
 /// The sentence explaining a Files error.
 #[must_use]
+pub fn draft_error(error: DraftError) -> String {
+    match error {
+        DraftError::NameMissing => fl!("ui-profile-error-name-missing"),
+        DraftError::HostMissing => fl!("ui-profile-error-host-missing"),
+        DraftError::HostInvalid => fl!("ui-profile-error-host-invalid"),
+        DraftError::HostHasUser => fl!("ui-profile-error-host-has-user"),
+        DraftError::HostHasPort => fl!("ui-profile-error-host-has-port"),
+        DraftError::PortInvalid => fl!("ui-profile-error-port-invalid"),
+        DraftError::UsernameInvalid => fl!("ui-profile-error-username-invalid"),
+        DraftError::ControlCharacter => fl!("ui-profile-error-control"),
+    }
+}
+
+/// Why a Files operation failed, in the user's language.
 pub fn files_error(error: &FilesError) -> String {
     match error {
         FilesError::Server { code, message } => {
