@@ -55,10 +55,10 @@ jobs:
       - name: Upload the application
         uses: actions/upload-artifact@v4
         with:
-          name: heimdall-${{ runner.os }}
+          name: heimdall-rs-${{ runner.os }}
           path: |
-            target/release/heimdall
-            target/release/heimdall.exe
+            target/release/heimdall-rs
+            target/release/heimdall-rs.exe
           if-no-files-found: error
           retention-days: 14
 
