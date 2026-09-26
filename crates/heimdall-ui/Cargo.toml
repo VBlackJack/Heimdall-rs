@@ -16,10 +16,16 @@ publish.workspace = true
 name = "heimdall"
 path = "src/main.rs"
 
+[lib]
+path = "src/lib.rs"
+
 [dependencies]
+heimdall-app.workspace = true
+heimdall-term.workspace = true
 i18n-embed.workspace = true
 i18n-embed-fl.workspace = true
-iced.workspace = true
+# advanced: custom widgets; tokio: one runtime shared with the SSH client.
+iced = { workspace = true, features = ["advanced", "tokio"] }
 rust-embed.workspace = true
 
 [dev-dependencies]
