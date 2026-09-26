@@ -2156,9 +2156,12 @@ dependencies = [
 name = "heimdall-remote"
 version = "0.1.0"
 dependencies = [
+ "des",
+ "flate2",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
+ "zeroize",
 ]
 
 [[package]]
