@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::client::{Handle, SftpClient, SftpError};
 use crate::path::RemotePath;
-use crate::protocol::{Attributes, open_flags};
+use crate::protocol::{Attributes, PLAIN_PERMISSIONS, open_flags};
 
 /// Suffix of a file being downloaded.
 pub const PART_SUFFIX: &str = ".heimdall-part";
@@ -49,6 +49,13 @@ pub const RESUME_SUFFIX: &str = ".heimdall-part.resume";
 
 /// First line of a resume record, with its format version.
 const RESUME_HEADER: &str = "heimdall-resume 1";
+
+/// Mode of an upload's temporary file until it is complete: owner only.
+const UPLOAD_TEMP_MODE: u32 = 0o600;
+
+/// Mode given to an upload when the local system has no POSIX mode (Windows).
+#[cfg(not(unix))]
+const DEFAULT_UPLOAD_MODE: u32 = 0o644;
 
 /// Bytes re-read before the mark to check the remote file is unchanged.
 const TAIL_CHECK: u64 = 64 * 1024;
@@ -467,6 +474,226 @@ type ReadOutcome = (u64, u32, Result<Option<Vec<u8>>, SftpError>);
 /// The request size: the configured chunk, lowered to what the server announced.
 fn chunk_size(client: &SftpClient, config: &TransferConfig) -> u32 {
     let limit = client.limits().max_read;
+    if limit == 0 {
+        config.chunk.max(1)
+    } else {
+        config
+            .chunk
+            .min(u32::try_from(limit).unwrap_or(u32::MAX))
+            .max(1)
+    }
+}
+
+/// How an upload went.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct UploadReport {
+    /// Bytes sent.
+    pub bytes: u64,
+    /// Whether the server confirmed the data reached its storage (`fsync@openssh.com`).
+    pub flushed: bool,
+}
+
+/// A temporary name beside `target`, hidden and unique enough not to meet another upload.
+fn upload_temp(target: &RemotePath) -> RemotePath {
+    let stamp = SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut name = b".".to_vec();
+    name.extend_from_slice(target.file_name().unwrap_or(b"upload"));
+    name.extend_from_slice(format!(".heimdall-upload-{}-{stamp}", std::process::id()).as_bytes());
+    target.parent().join(&name)
+}
+
+/// The mode an uploaded file gets: the local permission bits, never set-user-id,
+/// set-group-id or sticky.
+fn upload_mode(metadata: &std::fs::Metadata) -> u32 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        metadata.permissions().mode() & PLAIN_PERMISSIONS
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = metadata;
+        DEFAULT_UPLOAD_MODE & PLAIN_PERMISSIONS
+    }
+}
+
+/// Uploads `source` to `target`. The data goes to a hidden temporary file beside the
+/// target, readable by its owner only, then gets its mode and date, and replaces the
+/// target in one rename: nobody ever sees a partial file under the real name. An upload
+/// does not resume: a new attempt starts over.
+///
+/// With `replace`, an existing target is replaced (atomically when the server offers
+/// `posix-rename@openssh.com`); without it, an existing target makes the upload fail and
+/// stay untouched.
+///
+/// # Errors
+///
+/// [`TransferError`]; the temporary file is removed whatever stopped the upload.
+pub async fn upload(
+    client: &SftpClient,
+    source: &Path,
+    target: &RemotePath,
+    replace: bool,
+    config: &TransferConfig,
+    cancel: &CancellationToken,
+    mut progress: impl FnMut(u64) + Send,
+) -> Result<UploadReport, TransferError> {
+    // A link is not followed: a folder upload must not leave its folder through one.
+    let metadata = tokio::fs::symlink_metadata(source)
+        .await
+        .map_err(local(source))?;
+    if !metadata.file_type().is_file() {
+        return Err(TransferError::NotARegularFile);
+    }
+    let file = File::open(source).await.map_err(local(source))?;
+    let temp = upload_temp(target);
+    let handle = client
+        .open(
+            &temp,
+            open_flags::WRITE | open_flags::CREATE | open_flags::EXCLUSIVE,
+            Attributes {
+                permissions: Some(UPLOAD_TEMP_MODE),
+                ..Attributes::default()
+            },
+        )
+        .await?;
+    let sent = send(client, &handle, file, source, config, cancel, &mut progress).await;
+    let finished = match sent {
+        Ok(bytes) => finish(client, &handle, &temp, target, &metadata, replace, config)
+            .await
+            .map(|flushed| UploadReport { bytes, flushed }),
+        Err(error) => {
+            let _ = client.close(&handle).await;
+            Err(error)
+        }
+    };
+    if finished.is_err() {
+        let _ = client.remove(&temp).await;
+    }
+    finished
+}
+
+/// Sends the file's bytes with writes in flight; returns the size sent.
+async fn send(
+    client: &SftpClient,
+    handle: &Handle,
+    mut file: File,
+    source: &Path,
+    config: &TransferConfig,
+    cancel: &CancellationToken,
+    progress: &mut (impl FnMut(u64) + Send),
+) -> Result<u64, TransferError> {
+    let chunk = write_chunk(client, config) as usize;
+    let mut writes: JoinSet<(u64, Result<(), SftpError>)> = JoinSet::new();
+    let mut offset = 0u64;
+    let mut acknowledged = 0u64;
+    let mut at_end = false;
+    progress(0);
+    loop {
+        while !at_end && writes.len() < config.in_flight.max(1) {
+            let mut data = vec![0; chunk];
+            let mut filled = 0;
+            while filled < chunk {
+                let read = file
+                    .read(&mut data[filled..])
+                    .await
+                    .map_err(local(source))?;
+                if read == 0 {
+                    at_end = true;
+                    break;
+                }
+                filled += read;
+            }
+            if filled == 0 {
+                break;
+            }
+            data.truncate(filled);
+            let (client, handle, at) = (client.clone(), handle.clone(), offset);
+            offset += filled as u64;
+            writes.spawn(async move {
+                let length = data.len() as u64;
+                (length, client.write(&handle, at, data).await)
+            });
+        }
+        let joined = tokio::select! {
+            () = cancel.cancelled() => {
+                writes.abort_all();
+                return Err(TransferError::Cancelled { kept: 0 });
+            }
+            joined = writes.join_next() => joined,
+        };
+        let Some(joined) = joined else { break };
+        let Ok((length, result)) = joined else {
+            writes.abort_all();
+            return Err(local(source)(io::Error::other("a write task failed")));
+        };
+        if let Err(error) = result {
+            writes.abort_all();
+            return Err(error.into());
+        }
+        acknowledged += length;
+        progress(acknowledged);
+    }
+    Ok(offset)
+}
+
+/// Flushes and closes the temporary file, gives it its mode and date, and renames it over
+/// the target. Returns whether the server flushed to storage.
+async fn finish(
+    client: &SftpClient,
+    handle: &Handle,
+    temp: &RemotePath,
+    target: &RemotePath,
+    metadata: &std::fs::Metadata,
+    replace: bool,
+    config: &TransferConfig,
+) -> Result<bool, TransferError> {
+    let flushed = match client.fsync(handle).await {
+        Ok(flushed) => flushed,
+        Err(error) => {
+            let _ = client.close(handle).await;
+            return Err(error.into());
+        }
+    };
+    // A server may report a failed write (quota, NFS) only when the file is closed.
+    client.close(handle).await?;
+    let times = if config.preserve_times {
+        metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .and_then(|since| u32::try_from(since.as_secs()).ok())
+            .map(|seconds| (seconds, seconds))
+    } else {
+        None
+    };
+    client
+        .setstat(
+            temp,
+            Attributes {
+                permissions: Some(upload_mode(metadata)),
+                times,
+                ..Attributes::default()
+            },
+        )
+        .await?;
+    if replace && client.rename(temp, target, true).await.is_ok() {
+        return Ok(flushed);
+    }
+    if replace {
+        // No atomic replace on this server: remove, then rename.
+        let _ = client.remove(target).await;
+    }
+    client.rename(temp, target, false).await?;
+    Ok(flushed)
+}
+
+/// The write size: the configured chunk, lowered to what the server announced.
+fn write_chunk(client: &SftpClient, config: &TransferConfig) -> u32 {
+    let limit = client.limits().max_write;
     if limit == 0 {
         config.chunk.max(1)
     } else {
