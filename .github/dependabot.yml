@@ -1,0 +1,13 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

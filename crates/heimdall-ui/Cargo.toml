@@ -1,0 +1,29 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+[package]
+name = "heimdall-ui"
+description = "The Heimdall desktop application, built with iced."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "heimdall"
+path = "src/main.rs"
+
+[dependencies]
+i18n-embed.workspace = true
+i18n-embed-fl.workspace = true
+iced.workspace = true
+rust-embed.workspace = true
+
+[dev-dependencies]
+heimdall-i18n.workspace = true
+
+[lints]
+workspace = true

@@ -7,9 +7,50 @@ remote connection manager, in Rust, for Windows and Linux.
 
 ## Status
 
-Nothing is built yet. The target is feature parity with Heimdall `v2026.092001`:
-SSH, SFTP, FTP/FTPS, RDP, VNC, Telnet, serial, local shell, credential vault,
-command library, draw.io, updater, and English/French localisation.
+Workspace skeleton only: the crates exist, and the desktop application starts. The target is feature parity with the C# Heimdall: SSH, SFTP, FTP/FTPS,
+RDP, VNC, Telnet, serial, local shell, credential vault, command library,
+diagram editor, updater, and English, French and Spanish localisation.
+
+The user interface is native, built with [iced](https://iced.rs), with no
+embedded web engine.
+
+## Layout
+
+| Crate | Role |
+|---|---|
+| `heimdall-core` | Server profiles, settings, paths, credential vault |
+| `heimdall-i18n` | Supported languages and the check that keeps them complete |
+| `heimdall-ssh` | SSH sessions, tunnels, jump hosts |
+| `heimdall-sftp` | SFTP, FTP and FTPS |
+| `heimdall-term` | Terminal emulation and local pseudo-terminals |
+| `heimdall-rdp` | RDP sessions |
+| `heimdall-twinshell` | Command library |
+| `heimdall-remote` | VNC, Telnet, serial |
+| `heimdall-ui` | The desktop application |
+| `xtask` | Developer tooling |
+
+Only `heimdall-ui` depends on iced. Protocol crates depend on `heimdall-core` only.
+
+## Build
+
+On Linux, the build needs the development packages of xkbcommon, Wayland, X11
+and fontconfig. Running it also needs `libxkbcommon-x11` and a Vulkan or OpenGL
+driver, such as Mesa. On Windows, the build needs the MSVC build tools.
+
+```bash
+cargo run --package heimdall-ui
+```
+
+```bash
+cargo test --workspace
+```
+
+## Localisation
+
+Each crate that shows text owns its Fluent files, in
+`i18n/<language>/<crate>.ftl`. Keys use hyphens:
+`module-component-element-action`. An unknown key fails the build, and a test
+fails when a language misses a key the others have.
 
 ## License
 

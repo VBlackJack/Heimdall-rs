@@ -7,10 +7,54 @@ gestionnaire de connexions distantes multi-protocoles, pour Windows et Linux.
 
 ## État
 
-Rien n'est encore construit. La cible est la parité fonctionnelle avec Heimdall
-`v2026.092001` : SSH, SFTP, FTP/FTPS, RDP, VNC, Telnet, série, shell local, coffre
-d'identifiants, bibliothèque de commandes, draw.io, mise à jour, et localisation
-anglais/français.
+Squelette du workspace seulement : les crates existent, et l'application démarre. La cible est la parité fonctionnelle avec Heimdall en C# : SSH,
+SFTP, FTP/FTPS, RDP, VNC, Telnet, série, shell local, coffre d'identifiants,
+bibliothèque de commandes, éditeur de diagrammes, mise à jour, et localisation
+en anglais, français et espagnol.
+
+L'interface est native, construite avec [iced](https://iced.rs), sans moteur web
+embarqué.
+
+## Organisation
+
+| Crate | Rôle |
+|---|---|
+| `heimdall-core` | Profils de serveurs, réglages, chemins, coffre d'identifiants |
+| `heimdall-i18n` | Langues prises en charge et contrôle de leur complétude |
+| `heimdall-ssh` | Sessions SSH, tunnels, rebonds |
+| `heimdall-sftp` | SFTP, FTP et FTPS |
+| `heimdall-term` | Émulation de terminal et pseudo-terminaux locaux |
+| `heimdall-rdp` | Sessions RDP |
+| `heimdall-twinshell` | Bibliothèque de commandes |
+| `heimdall-remote` | VNC, Telnet, série |
+| `heimdall-ui` | L'application de bureau |
+| `xtask` | Outillage de développement |
+
+Seul `heimdall-ui` dépend d'iced. Les crates de protocole ne dépendent que de
+`heimdall-core`.
+
+## Compilation
+
+Sous Linux, la compilation demande les paquets de développement de xkbcommon,
+Wayland, X11 et fontconfig. L'exécution demande aussi `libxkbcommon-x11` et un
+pilote Vulkan ou OpenGL, par exemple Mesa. Sous Windows, la compilation demande
+les outils MSVC.
+
+```bash
+cargo run --package heimdall-ui
+```
+
+```bash
+cargo test --workspace
+```
+
+## Localisation
+
+Chaque crate qui affiche du texte possède ses fichiers Fluent, dans
+`i18n/<langue>/<crate>.ftl`. Les clés utilisent des tirets :
+`module-composant-element-action`. Une clé inconnue fait échouer la
+compilation, et un test échoue quand une langue n'a pas une clé que les autres
+ont.
 
 ## Licence
 
