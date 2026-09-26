@@ -1,0 +1,6 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+[toolchain]
+channel = "1.98.1"
+components = ["rustfmt", "clippy"]

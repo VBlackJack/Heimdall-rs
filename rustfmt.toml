@@ -1,0 +1,5 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+edition = "2024"
+max_width = 100
