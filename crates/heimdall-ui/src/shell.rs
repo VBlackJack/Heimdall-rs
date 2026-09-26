@@ -26,7 +26,7 @@ use std::path::PathBuf;
 
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, Dialog, Effect, Message as AppMessage, Phase, Prompt,
-    QuestionId, QuestionKind, Tab, TabId, connection_events, server_text,
+    QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::SshProfile;
@@ -620,6 +620,10 @@ impl Shell {
                 ]
                 .into()
             }
+            Phase::Failed(UiError::Cancelled) => center(card(
+                column![text(fl!("ui-session-cancelled")), close()].spacing(SPACING),
+            ))
+            .into(),
             Phase::Failed(error) => center(card(
                 column![
                     text(fl!("ui-session-failed-title")).size(HEADING_SIZE),

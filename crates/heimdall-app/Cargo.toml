@@ -16,6 +16,7 @@ publish.workspace = true
 heimdall-core.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
+log.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tokio-util.workspace = true

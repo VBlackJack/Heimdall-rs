@@ -184,6 +184,10 @@ async fn run(
     registry: AnswerRegistry,
     events: mpsc::Sender<ConnectionEvent>,
 ) {
+    // Destinations come from the user's own profiles; errors are logged in their `Debug`
+    // form, which escapes any control character a server message may carry.
+    let target = format!("{}:{}", request.profile.host, request.profile.port);
+    log::info!("connecting to {target}");
     let prompter = Arc::new(ChannelPrompter {
         events: events.clone(),
         registry,
@@ -199,6 +203,7 @@ async fn run(
         Ok(session) => session,
         Err(ConnectError::UnknownHostKey { host, port, key }) => {
             let fingerprint = fingerprint(&key);
+            log::info!("{target} presented an unknown host key {fingerprint}");
             let _ = events
                 .send(ConnectionEvent::UnknownHostKey {
                     host,
@@ -210,9 +215,13 @@ async fn run(
             return;
         }
         Err(error) => {
-            let _ = events
-                .send(ConnectionEvent::Failed(UiError::from(error)))
-                .await;
+            let error = UiError::from(error);
+            if error == UiError::Cancelled {
+                log::info!("connection to {target} cancelled");
+            } else {
+                log::warn!("connection to {target} failed: {error:?}");
+            }
+            let _ = events.send(ConnectionEvent::Failed(error)).await;
             return;
         }
     };
@@ -221,6 +230,7 @@ async fn run(
         events: mut session_events,
     } = session;
     let sink: Arc<dyn InputSink> = Arc::new(input);
+    log::info!("session open to {target}");
     if events
         .send(ConnectionEvent::Connected {
             input: sink.clone(),
@@ -234,7 +244,10 @@ async fn run(
     while let Some(event) = session_events.recv().await {
         let event = match event {
             SessionEvent::Output(bytes) => ConnectionEvent::Output(bytes),
-            SessionEvent::Closed { exit_status } => ConnectionEvent::Closed { exit_status },
+            SessionEvent::Closed { exit_status } => {
+                log::info!("session to {target} ended, exit status {exit_status:?}");
+                ConnectionEvent::Closed { exit_status }
+            }
         };
         let last = matches!(event, ConnectionEvent::Closed { .. });
         if events.send(event).await.is_err() {

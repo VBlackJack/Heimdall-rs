@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Message as AppMessage, QuestionId, QuestionKind,
-    TabId,
+    TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -225,6 +225,23 @@ fn closing_a_tab_drops_what_was_typed_into_its_question() {
         !shell.holds_draft(question),
         "its unanswered password is dropped"
     );
+}
+
+#[test]
+fn a_cancelled_attempt_is_not_shown_as_a_failure() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::Cancelled),
+    });
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("The connection was cancelled.")
+        .expect("said plainly");
+    assert!(ui.find("The connection failed").is_err());
 }
 
 #[test]

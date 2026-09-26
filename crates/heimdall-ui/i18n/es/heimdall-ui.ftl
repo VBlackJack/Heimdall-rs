@@ -36,6 +36,7 @@ ui-prompt-server-text = El servidor indica: { $text }
 
 ui-session-closed = La sesión ha terminado.
 ui-session-closed-status = La sesión ha terminado (código de salida { $status }).
+ui-session-cancelled = La conexión se ha cancelado.
 ui-session-failed-title = La conexión ha fallado
 ui-session-close-button = Cerrar la pestaña
 
