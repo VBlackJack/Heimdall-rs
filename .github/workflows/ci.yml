@@ -45,6 +45,21 @@ jobs:
       - name: Tests
         run: cargo test --workspace --locked
 
+      # The executable of each change, so it can be run by hand on a machine without a
+      # Rust toolchain; release profile, as shipped.
+      - name: Build the application
+        run: cargo build --release --locked -p heimdall-ui
+
+      - name: Upload the application
+        uses: actions/upload-artifact@v4
+        with:
+          name: heimdall-${{ runner.os }}
+          path: |
+            target/release/heimdall
+            target/release/heimdall.exe
+          if-no-files-found: error
+          retention-days: 14
+
   deny:
     name: Dependencies (cargo-deny)
     runs-on: ubuntu-latest
