@@ -5,10 +5,15 @@
 version = 2
 yanked = "deny"
 # Each ignore names one advisory, the path that brings it in, and why it cannot be
-# removed from here. Re-check them when iced is upgraded.
+# removed from here. Re-check them when iced, russh or rsa is upgraded.
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled by metal, the macOS backend of wgpu, through iced; not built for Linux or Windows" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled by fontdb and owned_ttf_parser through iced" },
+    # Decided by Julien Bombled on 2026-09-26. No fixed rsa release exists. Heimdall-rs only
+    # signs with an RSA user key, locally, once per login; the only party observing that
+    # timing is the server being logged into. Removing RSA would lock out servers that
+    # accept only RSA keys.
+    { id = "RUSTSEC-2023-0071", reason = "rsa Marvin timing attack, no fix released; client-side signing once per login, observed only by the server logged into; accepted 2026-09-26" },
 ]
 
 [licenses]
