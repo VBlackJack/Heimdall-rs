@@ -23,11 +23,17 @@
 mod auth;
 mod protocol;
 mod screen;
+mod session;
 mod zrle;
 
 pub use auth::PASSWORD_BYTES;
 pub use protocol::{MAX_CUT_TEXT, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
 pub use screen::{MAX_SIDE, Rect, Screen};
+pub use session::{
+    AskPassword, CloseReason, DEFAULT_CONNECT_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT, Framebuffer,
+    SessionEnded, Transport, VncConfig, VncConnection, VncError, VncEvent, VncInput, VncSession,
+    connect, given_password, handshake, start,
+};
 
 /// Port of display 0; display N listens on this plus N.
 pub const DEFAULT_VNC_PORT: u16 = 5900;
