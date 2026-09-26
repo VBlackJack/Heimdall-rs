@@ -19,8 +19,10 @@
 //! SFTP is spoken by an in-house version 3 client: paths stay the server's bytes, so a file
 //! whose name is not UTF-8 can still be opened, renamed and deleted.
 
+pub mod client;
 pub mod path;
 pub mod protocol;
 pub mod wire;
 
+pub use client::{ClientConfig, Closed, DirEntry, Handle, Limits, SftpClient, SftpError};
 pub use path::RemotePath;
