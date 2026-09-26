@@ -20,6 +20,7 @@
 //! whose name is not UTF-8 can still be opened, renamed and deleted.
 
 pub mod client;
+pub mod local_name;
 pub mod path;
 pub mod protocol;
 pub mod wire;
