@@ -91,6 +91,17 @@ pub struct ProfileStore {
 }
 
 impl ProfileStore {
+    /// An empty store that will save to `path`, without reading it. For when the existing
+    /// file is unreadable: saving then writes to `path`, never over the unreadable file,
+    /// provided the caller passes another path.
+    #[must_use]
+    pub fn empty(path: impl Into<PathBuf>) -> Self {
+        Self {
+            path: path.into(),
+            ssh: Vec::new(),
+        }
+    }
+
     /// Opens the store at `path`; a missing file is an empty store.
     ///
     /// # Errors

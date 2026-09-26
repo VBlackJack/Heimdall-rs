@@ -259,7 +259,7 @@ impl<P: Prompter> Attempts<'_, P> {
         self.settle(result)
     }
 
-    async fn decrypt(&self, file: &KeyFile) -> Result<russh::keys::PrivateKey, ConnectError> {
+    async fn decrypt(&mut self, file: &KeyFile) -> Result<russh::keys::PrivateKey, ConnectError> {
         if !file.is_encrypted() {
             return Ok(file.decrypt(None)?);
         }
@@ -303,7 +303,7 @@ impl<P: Prompter> Attempts<'_, P> {
         Ok(false)
     }
 
-    async fn disconnect(&self) {
+    async fn disconnect(&mut self) {
         let _ = self
             .ctx
             .handle

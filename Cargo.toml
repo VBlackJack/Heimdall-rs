@@ -15,6 +15,7 @@ repository = "https://github.com/VBlackJack/Heimdall-rs"
 publish = false
 
 [workspace.dependencies]
+heimdall-app = { path = "crates/heimdall-app" }
 heimdall-core = { path = "crates/heimdall-core" }
 heimdall-i18n = { path = "crates/heimdall-i18n" }
 heimdall-ssh = { path = "crates/heimdall-ssh" }
