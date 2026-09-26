@@ -24,6 +24,7 @@ heimdall-rdp = { path = "crates/heimdall-rdp" }
 heimdall-twinshell = { path = "crates/heimdall-twinshell" }
 heimdall-remote = { path = "crates/heimdall-remote" }
 
+alacritty_terminal = { version = "0.26.0", default-features = false }
 data-encoding = "2.11.1"
 directories = "6.0.0"
 fluent-syntax = "0.12.0"

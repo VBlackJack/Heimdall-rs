@@ -7,7 +7,10 @@ remote connection manager, in Rust, for Windows and Linux.
 
 ## Status
 
-Workspace skeleton only: the crates exist, and the desktop application starts. The target is feature parity with the C# Heimdall: SSH, SFTP, FTP/FTPS,
+Early development, working towards a first milestone: an SSH terminal tab opened from a
+saved profile. Done: profiles and their import from the C# Heimdall, the SSH client
+(host keys, agent, key files, keyboard-interactive, password), and terminal emulation with
+keyboard, mouse and paste encoding. Not yet: the desktop interface around them. The target is feature parity with the C# Heimdall: SSH, SFTP, FTP/FTPS,
 RDP, VNC, Telnet, serial, local shell, credential vault, command library,
 diagram editor, updater, and English, French and Spanish localisation.
 

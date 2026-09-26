@@ -7,7 +7,11 @@ gestionnaire de connexions distantes multi-protocoles, pour Windows et Linux.
 
 ## État
 
-Squelette du workspace seulement : les crates existent, et l'application démarre. La cible est la parité fonctionnelle avec Heimdall en C# : SSH,
+Développement en cours, vers un premier jalon : un onglet de terminal SSH ouvert depuis un
+profil enregistré. Fait : les profils et leur import depuis Heimdall en C#, le client SSH
+(clés d'hôte, agent, fichiers de clé, keyboard-interactive, mot de passe), et l'émulation
+de terminal avec l'encodage du clavier, de la souris et du collage. Pas encore :
+l'interface de bureau autour. La cible est la parité fonctionnelle avec Heimdall en C# : SSH,
 SFTP, FTP/FTPS, RDP, VNC, Telnet, série, shell local, coffre d'identifiants,
 bibliothèque de commandes, éditeur de diagrammes, mise à jour, et localisation
 en anglais, français et espagnol.

@@ -15,3 +15,27 @@
  */
 
 //! Terminal emulation and local pseudo-terminals, independent of any UI toolkit.
+//!
+//! [`Terminal`] turns the server's output into a [`Screen`] to draw and replies to send
+//! back. [`encode_key`], [`encode_mouse`] and [`encode_paste`] turn user input into bytes
+//! for the server, following the modes the application set ([`Terminal::input_mode`]).
+
+pub mod keys;
+pub mod mode;
+pub mod mouse;
+pub mod palette;
+pub mod paste;
+pub mod terminal;
+
+pub use keys::{Key, KeyLocation, KeyPress, Modifiers, NamedKey, encode_key};
+pub use mode::{InputMode, MouseEncoding, MouseTracking};
+pub use mouse::{
+    MotionFilter, MouseAction, MouseButton, MouseEvent, encode_focus, encode_mouse, is_reported,
+    wheel_as_arrows,
+};
+pub use palette::{Palette, Rgb};
+pub use paste::encode_paste;
+pub use terminal::{
+    CellPixels, CellPoint, CellWidth, ClipboardPolicy, CursorStyle, FeedOutput, GridSize, Screen,
+    ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig, TitleChange, Underline,
+};
