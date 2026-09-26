@@ -30,6 +30,9 @@ pub const DEFAULT_RDP_PORT: u16 = 3389;
 /// Port a Telnet server listens on unless a profile says otherwise.
 pub const DEFAULT_TELNET_PORT: u16 = 23;
 
+/// Port a VNC server listens on unless a profile says otherwise: display 0.
+pub const DEFAULT_VNC_PORT: u16 = 5900;
+
 /// Stable identifier of a profile.
 ///
 /// A profile imported from the C# Heimdall keeps the identifier it had there, so a second
@@ -126,6 +129,31 @@ pub struct TelnetProfile {
     pub host: String,
     /// TCP port.
     pub port: u16,
+}
+
+/// A saved VNC destination, reached directly.
+///
+/// Holds no password: it is asked for when connecting.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct VncProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Watch only: no keyboard or pointer goes to the server.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub view_only: bool,
+    /// Whether a server asking for no password is accepted. Off by default: for a profile
+    /// that expects a password, an impostor offering none would otherwise be let in.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub allow_no_password: bool,
 }
 
 /// `host:port` as people write it: an IPv6 address in brackets, so the port stays

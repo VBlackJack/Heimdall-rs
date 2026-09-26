@@ -17,7 +17,9 @@
 use std::path::PathBuf;
 
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
-use heimdall_core::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, SshProfile};
+use heimdall_core::profile::{
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, SshProfile,
+};
 
 /// Environment variable naming a directory that holds a real C# `servers.json`, and
 /// optionally `settings.json`, for [`a_real_legacy_file_imports_without_error`].
@@ -125,7 +127,7 @@ fn an_rdp_profile_through_a_gateway_is_left_out_unless_direct() {
 #[test]
 fn every_skip_reason_is_reported() {
     let json = servers(
-        r#"{"id": "vnc", "remoteServer": "h", "connectionType": "VNC"},
+        r#"{"id": "citrix", "remoteServer": "h", "connectionType": "Citrix"},
            {"id": "gw", "remoteServer": "h", "connectionType": "SSH", "sshGatewayId": "g1"},
            {"id": "nohost", "remoteServer": "  ", "connectionType": "SSH"},
            {"id": "", "remoteServer": "h", "connectionType": "SSH"},
@@ -142,7 +144,7 @@ fn every_skip_reason_is_reported() {
     assert_eq!(
         reasons,
         vec![
-            ("vnc".to_owned(), SkipReason::NotSsh("VNC".to_owned())),
+            ("citrix".to_owned(), SkipReason::NotSsh("Citrix".to_owned())),
             ("gw".to_owned(), SkipReason::NeedsJumpHost),
             ("nohost".to_owned(), SkipReason::MissingHost),
             (String::new(), SkipReason::MissingId),
@@ -338,4 +340,29 @@ fn a_telnet_profile_ignores_the_ssh_gateway_as_the_csharp_does() {
     );
     let report = import(&json, None).expect("valid JSON");
     assert_eq!(report.telnet.len(), 1, "{:?}", report.skipped);
+}
+
+#[test]
+fn a_vnc_profile_keeps_its_port_and_view_only_and_never_its_password() {
+    let json = servers(
+        r#"{"id": "v", "displayName": "Kiosk", "remoteServer": " kiosk.lab ",
+            "connectionType": "VNC", "vncPort": 5901, "vncViewOnly": true,
+            "vncPassword": "AQAAANCMnd8BFdERjHoAwE", "group": "Floor"},
+           {"id": "w", "remoteServer": "open.lab", "connectionType": "vnc", "vncPort": 0}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let [kiosk, open] = report.vnc.as_slice() else {
+        panic!("{:?}", report.vnc);
+    };
+    assert_eq!(
+        (kiosk.name.as_str(), kiosk.host.as_str(), kiosk.port),
+        ("Kiosk", "kiosk.lab", 5901)
+    );
+    assert!(kiosk.view_only);
+    assert!(!kiosk.allow_no_password, "it had a password");
+    assert_eq!(kiosk.group.as_deref(), Some("Floor"));
+    assert_eq!(open.port, DEFAULT_VNC_PORT, "zero is the default port");
+    assert!(!open.view_only);
+    assert!(open.allow_no_password, "no password in the C# profile");
 }

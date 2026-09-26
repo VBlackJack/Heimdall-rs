@@ -1365,10 +1365,11 @@ impl App {
             let ssh = store.merge(report.profiles);
             let rdp = store.merge_rdp(report.rdp);
             let telnet = store.merge_telnet(report.telnet);
+            let vnc = store.merge_vnc(report.vnc);
             MergeReport {
-                added: ssh.added + rdp.added + telnet.added,
-                updated: ssh.updated + rdp.updated + telnet.updated,
-                unchanged: ssh.unchanged + rdp.unchanged + telnet.unchanged,
+                added: ssh.added + rdp.added + telnet.added + vnc.added,
+                updated: ssh.updated + rdp.updated + telnet.updated + vnc.updated,
+                unchanged: ssh.unchanged + rdp.unchanged + telnet.unchanged + vnc.unchanged,
             }
         }) {
             Ok(merged) => merged,
