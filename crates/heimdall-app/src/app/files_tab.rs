@@ -141,6 +141,22 @@ pub enum FilesMessage {
     },
 }
 
+impl FilesMessage {
+    /// The pane a user gesture acts on: the one that takes the focus.
+    fn gesture(&self) -> Option<(TabId, Side)> {
+        match *self {
+            Self::Select { tab, side, .. }
+            | Self::Open { tab, side, .. }
+            | Self::Up { tab, side }
+            | Self::Refresh { tab, side }
+            | Self::AskNewFolder { tab, side }
+            | Self::AskRename { tab, side }
+            | Self::AskDelete { tab, side } => Some((tab, side)),
+            _ => None,
+        }
+    }
+}
+
 impl std::fmt::Debug for FilesMessage {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -283,6 +299,11 @@ impl App {
     }
 
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
+        if let Some((tab, side)) = message.gesture()
+            && let Some(files) = self.files_mut(tab)
+        {
+            files.focus = side;
+        }
         match message {
             FilesMessage::RemoteListed { tab, result } => {
                 if let Some(files) = self.files_mut(tab) {
@@ -369,7 +390,6 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        files.focus = side;
         // A second click on a selected folder opens it.
         let (selected, is_folder) = match side {
             Side::Remote => (

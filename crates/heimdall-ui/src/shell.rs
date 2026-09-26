@@ -102,12 +102,17 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             Some(Message::App(AppMessage::WindowFocus(false)))
         }
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
-            key: keyboard::Key::Named(named @ (Named::Enter | Named::Escape)),
+            key: keyboard::Key::Named(Named::Enter),
             repeat: false,
             ..
-        }) if status == event::Status::Ignored => Some(Message::DialogKey {
-            confirm: named == Named::Enter,
-        }),
+        }) if status == event::Status::Ignored => Some(Message::DialogKey { confirm: true }),
+        // Escape even when a widget took it: a field in a dialog takes the first Escape to
+        // lose its focus, and the dialog would need a second one.
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Named(Named::Escape),
+            repeat: false,
+            ..
+        }) => Some(Message::DialogKey { confirm: false }),
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -415,8 +420,13 @@ impl Shell {
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
     /// the selection of a Files tab, and the core ignores the rest.
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
-        if confirm && self.app.dialog.is_none() {
-            return self.files_key(FilesKey::Open);
+        if self.app.dialog.is_none() {
+            // Escape reaches here even when a terminal sent it to its session.
+            return if confirm {
+                self.files_key(FilesKey::Open)
+            } else {
+                Vec::new()
+            };
         }
         self.app.update(if confirm {
             AppMessage::ConfirmDialog
@@ -496,7 +506,8 @@ impl Shell {
         let opened = asking && !self.name_focused;
         self.name_focused = asking;
         if opened {
-            operation::focus(name_field_id())
+            // Selected, so typing replaces a renamed entry's current name.
+            operation::focus(name_field_id()).chain(operation::select_all(name_field_id()))
         } else {
             Task::none()
         }
@@ -589,10 +600,12 @@ impl Shell {
                 .width(Length::Fill)
                 .height(Length::Fill)
         ];
-        match &self.app.dialog {
-            Some(dialog) => stack![
-                body,
-                opaque(center(card(dialog_view(dialog))).style(|_theme: &Theme| {
+        // Always a stack with the window first: a tree of one shape keeps the state of the
+        // widgets under a dialog, such as how far a list is scrolled.
+        let mut layers = stack![body];
+        if let Some(dialog) = &self.app.dialog {
+            layers = layers.push(opaque(center(card(dialog_view(dialog))).style(
+                |_theme: &Theme| {
                     container::Style {
                         background: Some(
                             Color {
@@ -603,11 +616,10 @@ impl Shell {
                         ),
                         ..container::Style::default()
                     }
-                }))
-            ]
-            .into(),
-            None => body.into(),
+                },
+            )));
         }
+        layers.into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -1133,5 +1145,16 @@ mod tests {
             message(Named::Enter, Modifiers::empty(), event::Status::Ignored),
             Some(Message::DialogKey { confirm: true })
         ));
+        assert!(
+            message(Named::Enter, Modifiers::empty(), event::Status::Captured).is_none(),
+            "a field's Enter submits the field"
+        );
+        assert!(
+            matches!(
+                message(Named::Escape, Modifiers::empty(), event::Status::Captured),
+                Some(Message::DialogKey { confirm: false })
+            ),
+            "a field taking Escape does not keep its dialog open"
+        );
     }
 }
