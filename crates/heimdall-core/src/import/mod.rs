@@ -14,10 +14,6 @@
  * limitations under the License.
  */
 
-//! Domain model shared by every Heimdall crate: server profiles, settings, paths and the
-//! credential vault.
+//! Importers from other tools.
 
-pub mod import;
-pub mod paths;
-pub mod profile;
-pub mod store;
+pub mod csharp;
