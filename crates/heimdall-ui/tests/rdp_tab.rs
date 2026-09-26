@@ -29,10 +29,13 @@ use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
-use iced::{Point, Settings, Size, mouse};
+use iced::{Point, Settings, Size, Theme, mouse};
 use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
+
+/// Physical pixels per logical pixel in a simulator snapshot.
+const SNAPSHOT_SCALE: u32 = 2;
 
 fn app(dir: &Path) -> App {
     let profiles_file = dir.join("profiles.toml");
@@ -181,4 +184,62 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
         .expect("a move");
     // Desktop coordinates, not window ones: the view starts right of the sidebar.
     assert!(moved.x < 700 && moved.y < 400, "{moved:?}");
+}
+
+/// The RGBA pixel at logical `(x, y)` of a snapshot of `shell`, and the renderer that drew it.
+fn pixel_at(shell: &Shell, x: u32, y: u32) -> ([u8; 4], String) {
+    let dir = tempfile::tempdir().expect("dir");
+    simulator(shell)
+        .snapshot(&Theme::Dark)
+        .expect("drawn")
+        .matches_image(dir.path().join("frame.png"))
+        .expect("written");
+    // iced names the file after its renderer: `frame-wgpu.png`, `frame-tiny-skia.png`.
+    let entry = std::fs::read_dir(dir.path())
+        .expect("listed")
+        .flatten()
+        .next()
+        .expect("one snapshot");
+    let name = entry.file_name().to_string_lossy().into_owned();
+    let renderer = name
+        .trim_start_matches("frame-")
+        .trim_end_matches(".png")
+        .to_owned();
+    let decoder = png::Decoder::new(std::io::BufReader::new(
+        std::fs::File::open(entry.path()).expect("opened"),
+    ));
+    let mut reader = decoder.read_info().expect("header");
+    let mut bytes = vec![0; reader.output_buffer_size().expect("size")];
+    let info = reader.next_frame(&mut bytes).expect("frame");
+    let at = usize::try_from((y * SNAPSHOT_SCALE) * info.width * 4 + (x * SNAPSHOT_SCALE) * 4)
+        .expect("index");
+    let pixel = [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]];
+    (pixel, renderer)
+}
+
+#[test]
+fn a_connected_desktop_is_drawn_from_its_first_frame() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+        },
+    );
+    let (pixel, renderer) = pixel_at(&shell, 700, 400);
+    // The GPU renderer keeps the desktop in a texture, drawn in the frame that shows it.
+    // As an image, it would be uploaded in the background and missing from that frame,
+    // which is what made the desktop flicker. The software renderer has no such delay and
+    // draws the image instead; the check is about the GPU path.
+    if renderer != "wgpu" {
+        eprintln!("drawn by {renderer}, not the GPU renderer; skipped");
+        return;
+    }
+    // A new desktop is black, and opaque whatever alpha the decoder left.
+    assert_eq!(pixel, [0, 0, 0, 255], "drawn by {renderer}");
 }

@@ -21,6 +21,7 @@ use std::cell::RefCell;
 
 use heimdall_app::{Message as AppMessage, RdpPane, TabId};
 use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+use iced::advanced::Renderer as _;
 use iced::advanced::image::{self, FilterMethod, Renderer as _};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::renderer;
@@ -28,6 +29,10 @@ use iced::advanced::widget::{Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget};
 use iced::keyboard::key::{Code, Physical};
 use iced::{Element, Event, Length, Radians, Rectangle, Size, Theme, keyboard, mouse};
+use iced_renderer::fallback;
+use iced_renderer::wgpu::primitive::Renderer as _;
+
+use crate::rdp_texture::Desktop;
 
 pub use scancodes::scancode;
 
@@ -239,6 +244,24 @@ impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
+        let (width, height) = self
+            .pane
+            .framebuffer
+            .read(|width, height, _| (width, height));
+        let area = Rectangle::new(
+            bounds.position(),
+            Size::new(f32::from(width), f32::from(height)),
+        );
+        // The GPU renderer keeps the desktop in a texture it rewrites; see `rdp_texture`.
+        if matches!(renderer, fallback::Renderer::Primary(_)) {
+            let desktop = Desktop {
+                tab: self.tab,
+                framebuffer: self.pane.framebuffer.clone(),
+                generation: self.pane.generation,
+            };
+            renderer.with_layer(bounds, |renderer| renderer.draw_primitive(area, desktop));
+            return;
+        }
         let state = tree.state.downcast_ref::<State>();
         let mut picture = state.picture.borrow_mut();
         let current = picture
@@ -252,14 +275,6 @@ impl<M> Widget<M, Theme, iced::Renderer> for RdpView<'_, M> {
             *picture = Some((self.pane.generation, handle.clone()));
             handle
         });
-        let (width, height) = self
-            .pane
-            .framebuffer
-            .read(|width, height, _| (width, height));
-        let area = Rectangle::new(
-            bounds.position(),
-            Size::new(f32::from(width), f32::from(height)),
-        );
         renderer.draw_image(
             image::Image {
                 handle,
