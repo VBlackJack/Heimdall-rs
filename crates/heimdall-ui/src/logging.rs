@@ -236,7 +236,7 @@ fn written(requested: Option<&str>, target: &str, level: Level) -> bool {
 mod tests {
     use log::Level;
 
-    use super::{MAX_PANIC_MESSAGE_CHARS, first_line, open_log, printable, written};
+    use super::{MAX_PANIC_MESSAGE_CHARS, first_line, printable, written};
 
     #[test]
     fn by_default_other_crates_log_only_warnings() {
@@ -270,6 +270,8 @@ mod tests {
     #[test]
     fn only_the_owner_reads_the_log() {
         use std::os::unix::fs::PermissionsExt as _;
+
+        use super::open_log;
         let dir = tempfile::tempdir().expect("dir");
         drop(open_log(dir.path()).expect("opened"));
         let mode = std::fs::metadata(dir.path().join(super::LOG_FILE_NAME))
