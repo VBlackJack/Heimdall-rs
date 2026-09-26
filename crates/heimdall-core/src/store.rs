@@ -23,13 +23,14 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::profile::{ProfileId, RdpProfile, SshProfile};
+use crate::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile};
 
 /// Format version written into the profile file.
 ///
-/// 2 added RDP profiles. A build that knows only version 1 refuses a version 2 file rather
-/// than reading it, dropping the RDP profiles it does not know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 2;
+/// 2 added RDP profiles, 3 Telnet profiles. A build that knows an older version refuses a
+/// newer file rather than reading it, dropping the profiles it does not know, and saving it
+/// back.
+pub const PROFILE_FILE_VERSION: u32 = 3;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -42,6 +43,8 @@ struct ProfileFile {
     ssh: Vec<SshProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     rdp: Vec<RdpProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    telnet: Vec<TelnetProfile>,
 }
 
 /// Why the profile file could not be read or written.
@@ -97,6 +100,7 @@ pub struct ProfileStore {
     path: PathBuf,
     ssh: Vec<SshProfile>,
     rdp: Vec<RdpProfile>,
+    telnet: Vec<TelnetProfile>,
 }
 
 impl ProfileStore {
@@ -109,6 +113,7 @@ impl ProfileStore {
             path: path.into(),
             ssh: Vec::new(),
             rdp: Vec::new(),
+            telnet: Vec::new(),
         }
     }
 
@@ -123,11 +128,7 @@ impl ProfileStore {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self {
-                    path,
-                    ssh: Vec::new(),
-                    rdp: Vec::new(),
-                });
+                return Ok(Self::empty(path));
             }
             Err(source) => return Err(StoreError::Io { path, source }),
         };
@@ -146,6 +147,7 @@ impl ProfileStore {
             path,
             ssh: file.ssh,
             rdp: file.rdp,
+            telnet: file.telnet,
         })
     }
 
@@ -167,6 +169,12 @@ impl ProfileStore {
         &self.rdp
     }
 
+    /// Telnet profiles, in file order.
+    #[must_use]
+    pub fn telnet_profiles(&self) -> &[TelnetProfile] {
+        &self.telnet
+    }
+
     /// Adds or replaces SSH profiles by identifier; the order of existing profiles is kept.
     pub fn merge(&mut self, incoming: impl IntoIterator<Item = SshProfile>) -> MergeReport {
         merge_into(&mut self.ssh, incoming, |profile| &profile.id)
@@ -177,12 +185,27 @@ impl ProfileStore {
         merge_into(&mut self.rdp, incoming, |profile| &profile.id)
     }
 
+    /// Adds or replaces Telnet profiles by identifier; the order of existing profiles is
+    /// kept.
+    pub fn merge_telnet(
+        &mut self,
+        incoming: impl IntoIterator<Item = TelnetProfile>,
+    ) -> MergeReport {
+        merge_into(&mut self.telnet, incoming, |profile| &profile.id)
+    }
+
     /// Removes the profile `id`, of any protocol; whether it was there.
     pub fn remove(&mut self, id: &ProfileId) -> bool {
-        let before = self.ssh.len() + self.rdp.len();
+        let before = self.len();
         self.ssh.retain(|profile| profile.id != *id);
         self.rdp.retain(|profile| profile.id != *id);
-        self.ssh.len() + self.rdp.len() != before
+        self.telnet.retain(|profile| profile.id != *id);
+        self.len() != before
+    }
+
+    /// Number of profiles, all protocols together.
+    fn len(&self) -> usize {
+        self.ssh.len() + self.rdp.len() + self.telnet.len()
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -212,6 +235,7 @@ impl ProfileStore {
             version: PROFILE_FILE_VERSION,
             ssh: self.ssh.clone(),
             rdp: self.rdp.clone(),
+            telnet: self.telnet.clone(),
         })?;
         let dir = self
             .path
