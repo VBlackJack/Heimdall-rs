@@ -1,0 +1,563 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Folders in a Files tab: selecting and opening them, sending them whole, and the new
+//! folder, rename and delete operations, from the question asked to what is done on disk.
+
+use std::path::{Path, PathBuf};
+
+use heimdall_app::files::{
+    Direction, EntryKind, FileOperation, FilesError, LocalEntry, RemoteEntry, Side, file_operation,
+    typed_name,
+};
+use heimdall_app::{
+    App, AppConfig, ConnectionEvent, Dialog, Effect, FilesMessage, Message, NameAction, TabId,
+};
+use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::store::ProfileStore;
+use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
+use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
+use heimdall_ssh::AgentSource;
+use heimdall_term::GridSize;
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+async fn idle_client() -> SftpClient {
+    let (client_end, mut server) = tokio::io::duplex(4096);
+    tokio::spawn(async move {
+        let mut length = [0; 4];
+        server.read_exact(&mut length).await.expect("init length");
+        let mut body = vec![0; u32::from_be_bytes(length) as usize];
+        server.read_exact(&mut body).await.expect("init");
+        assert!(matches!(Request::decode(&body), Ok(Request::Init { .. })));
+        let version = Response::Version {
+            version: SFTP_VERSION,
+            extensions: Vec::new(),
+        };
+        server.write_all(&version.encode()).await.expect("version");
+        std::future::pending::<()>().await;
+    });
+    SftpClient::start(client_end, ClientConfig::default())
+        .await
+        .expect("started")
+}
+
+/// A Files tab with `/srv` listed on the server and `dir` on this computer.
+async fn tab(dir: &Path) -> (App, TabId) {
+    let profiles_file = dir.join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([SshProfile {
+        id: ProfileId::new("a"),
+        name: "server a".to_owned(),
+        group: None,
+        host: "a.lab".to_owned(),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+    }]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+    });
+    let (tab, attempt) = match app
+        .update(Message::OpenFiles(ProfileId::new("a")))
+        .as_slice()
+    {
+        [Effect::Connect { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::FilesReady {
+            client: idle_client().await,
+        },
+    });
+    let remote = |name: &str, kind| RemoteEntry {
+        name: name.as_bytes().to_vec(),
+        label: name.to_owned(),
+        kind,
+        size: Some(4096),
+        modified: None,
+        permissions: None,
+    };
+    let local = |name: &str, kind| LocalEntry {
+        name: name.into(),
+        label: name.to_owned(),
+        kind,
+        size: Some(4096),
+        modified: None,
+    };
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![
+                    remote("logs", EntryKind::Directory),
+                    remote("a.txt", EntryKind::File),
+                ],
+            )),
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::LocalListed {
+            tab,
+            result: Ok((
+                dir.to_owned(),
+                vec![
+                    local("docs", EntryKind::Directory),
+                    local("b.txt", EntryKind::File),
+                ],
+            )),
+        },
+    );
+    (app, tab)
+}
+
+fn files(app: &mut App, message: FilesMessage) -> Vec<Effect> {
+    app.update(Message::Files(message))
+}
+
+fn select(app: &mut App, tab: TabId, side: Side, index: usize) -> Vec<Effect> {
+    files(app, FilesMessage::Select { tab, side, index })
+}
+
+fn operation(effects: &[Effect]) -> FileOperation {
+    match effects {
+        [Effect::FileOperation { operation, .. }] => (**operation).clone(),
+        other => panic!("expected an operation, got {other:?}"),
+    }
+}
+
+fn pane_error(app: &App, tab: TabId, side: Side) -> Option<FilesError> {
+    let files = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+    match side {
+        Side::Remote => files.remote.error.clone(),
+        Side::Local => files.local.error.clone(),
+    }
+}
+
+#[tokio::test]
+async fn one_click_selects_a_folder_and_a_second_opens_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    assert!(select(&mut app, tab, Side::Remote, 0).is_empty());
+    let files_pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+    assert_eq!(files_pane.remote.selected, Some(0));
+    // A file between the two clicks: the second click on the folder selects it again.
+    select(&mut app, tab, Side::Remote, 1);
+    assert!(select(&mut app, tab, Side::Remote, 0).is_empty());
+    let opened = select(&mut app, tab, Side::Remote, 0);
+    assert!(
+        matches!(opened.as_slice(), [Effect::ListRemote { path, .. }]
+            if path.as_bytes() == b"/srv/logs"),
+        "{opened:?}"
+    );
+    // A second click on a selected file does not start a transfer.
+    select(&mut app, tab, Side::Local, 1);
+    assert!(select(&mut app, tab, Side::Local, 1).is_empty());
+    let local = select(&mut app, tab, Side::Local, 0);
+    assert!(local.is_empty());
+    let opened = select(&mut app, tab, Side::Local, 0);
+    assert!(
+        matches!(opened.as_slice(), [Effect::ListLocal { path, .. }]
+            if *path == dir.path().join("docs")),
+        "{opened:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_selected_folder_is_sent_whole_in_both_directions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    select(&mut app, tab, Side::Remote, 0);
+    let down = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    );
+    let [Effect::Transfer { request, .. }] = down.as_slice() else {
+        panic!("{down:?}")
+    };
+    assert!(request.folder);
+    assert_eq!(request.remote.as_bytes(), b"/srv/logs");
+    assert_eq!(request.local, dir.path().join("logs"));
+    select(&mut app, tab, Side::Local, 0);
+    let up = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    let [Effect::Transfer { request, .. }] = up.as_slice() else {
+        panic!("{up:?}")
+    };
+    assert!(request.folder);
+    assert_eq!(request.remote.as_bytes(), b"/srv/docs");
+    let files_pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+    assert!(
+        files_pane.transfers.iter().all(|t| t.total.is_none()),
+        "a folder's own size is not what its transfer moves"
+    );
+    // A file stays a file.
+    select(&mut app, tab, Side::Remote, 1);
+    let file = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    );
+    assert!(matches!(file.as_slice(), [Effect::Transfer { request, .. }] if !request.folder));
+}
+
+#[tokio::test]
+async fn a_new_folder_takes_the_typed_name_in_the_pane_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    files(
+        &mut app,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::AskName { action: NameAction::NewFolder, value, .. }) if value.is_empty()
+    ));
+    files(&mut app, FilesMessage::NameEdited("fresh".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteMakeFolder { path, .. } => assert_eq!(path.as_bytes(), b"/srv/fresh"),
+        other => panic!("{other:?}"),
+    }
+    assert!(app.dialog.is_none());
+
+    files(
+        &mut app,
+        FilesMessage::AskNewFolder {
+            tab,
+            side: Side::Local,
+        },
+    );
+    files(&mut app, FilesMessage::NameEdited("mine".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::LocalMakeFolder { path } => assert_eq!(path, dir.path().join("mine")),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_rename_starts_from_the_current_name_and_stays_in_its_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    select(&mut app, tab, Side::Remote, 1);
+    files(
+        &mut app,
+        FilesMessage::AskRename {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::AskName { action: NameAction::Rename, value, .. }) if value == "a.txt"
+    ));
+    files(&mut app, FilesMessage::NameEdited("c.txt".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteRename { from, to, .. } => {
+            assert_eq!(from.as_bytes(), b"/srv/a.txt");
+            assert_eq!(to.as_bytes(), b"/srv/c.txt");
+        }
+        other => panic!("{other:?}"),
+    }
+    select(&mut app, tab, Side::Local, 1);
+    files(
+        &mut app,
+        FilesMessage::AskRename {
+            tab,
+            side: Side::Local,
+        },
+    );
+    files(&mut app, FilesMessage::NameEdited("d.txt".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::LocalRename { from, to } => {
+            assert_eq!(from, dir.path().join("b.txt"));
+            assert_eq!(to, dir.path().join("d.txt"));
+        }
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn nothing_to_rename_or_delete_without_a_selection() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    for side in [Side::Remote, Side::Local] {
+        files(&mut app, FilesMessage::AskRename { tab, side });
+        files(&mut app, FilesMessage::AskDelete { tab, side });
+        assert!(app.dialog.is_none());
+        assert!(app.update(Message::ConfirmDialog).is_empty());
+    }
+}
+
+#[tokio::test]
+async fn a_delete_names_what_it_deletes_and_a_dismissed_one_does_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    select(&mut app, tab, Side::Remote, 0);
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete { name, folder: true, .. }) if name == "logs"
+    ));
+    app.update(Message::DismissDialog);
+    assert!(
+        app.update(Message::ConfirmDialog).is_empty(),
+        "a dismissed delete deletes nothing"
+    );
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteRemove { path, .. } => assert_eq!(path.as_bytes(), b"/srv/logs"),
+        other => panic!("{other:?}"),
+    }
+    select(&mut app, tab, Side::Local, 1);
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Local,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete { folder: false, .. })
+    ));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::LocalRemove { path } => assert_eq!(path, dir.path().join("b.txt")),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn an_unusable_typed_name_is_refused_in_the_pane() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    for (side, typed) in [(Side::Remote, "a/b"), (Side::Local, "..")] {
+        files(&mut app, FilesMessage::AskNewFolder { tab, side });
+        files(&mut app, FilesMessage::NameEdited(typed.to_owned()));
+        assert!(app.update(Message::ConfirmDialog).is_empty(), "{typed}");
+        assert_eq!(pane_error(&app, tab, side), Some(FilesError::InvalidName));
+    }
+}
+
+#[tokio::test]
+async fn a_finished_operation_refreshes_its_pane_and_shows_a_failure() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let done = files(
+        &mut app,
+        FilesMessage::OperationDone {
+            tab,
+            side: Side::Local,
+            result: Ok(()),
+        },
+    );
+    assert!(matches!(done.as_slice(), [Effect::ListLocal { .. }]));
+    let failed = files(
+        &mut app,
+        FilesMessage::OperationDone {
+            tab,
+            side: Side::Remote,
+            result: Err(FilesError::Exists),
+        },
+    );
+    assert!(matches!(failed.as_slice(), [Effect::ListRemote { .. }]));
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::Exists),
+        "the refresh keeps the failure until it lands"
+    );
+}
+
+#[test]
+fn typed_names_are_checked_for_their_side() {
+    for bad in ["", ".", "..", "a/b", "tab\there"] {
+        assert_eq!(
+            typed_name(Side::Remote, bad).err(),
+            Some(FilesError::InvalidName),
+            "{bad:?}"
+        );
+        assert_eq!(
+            typed_name(Side::Local, bad).err(),
+            Some(FilesError::InvalidName),
+            "{bad:?}"
+        );
+    }
+    let name = typed_name(Side::Remote, "report 2026.txt").expect("usable");
+    assert_eq!(name.name, "report 2026.txt");
+    // A trailing line break from a paste is dropped, not refused.
+    assert_eq!(
+        typed_name(Side::Local, "notes\n").expect("usable").name,
+        "notes"
+    );
+}
+
+#[tokio::test]
+async fn local_operations_create_rename_without_replacing_and_delete() {
+    let dir = tempfile::tempdir().expect("dir");
+    let folder: PathBuf = dir.path().join("made");
+    file_operation(FileOperation::LocalMakeFolder {
+        path: folder.clone(),
+    })
+    .await
+    .expect("made");
+    assert!(folder.is_dir());
+    std::fs::write(folder.join("x"), b"x").expect("file");
+    std::fs::write(dir.path().join("taken"), b"keep").expect("taken");
+    assert_eq!(
+        file_operation(FileOperation::LocalRename {
+            from: folder.join("x"),
+            to: dir.path().join("taken"),
+        })
+        .await,
+        Err(FilesError::Exists),
+        "a rename never replaces"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("taken")).expect("kept"),
+        b"keep"
+    );
+    let moved = dir.path().join("moved");
+    file_operation(FileOperation::LocalRename {
+        from: folder,
+        to: moved.clone(),
+    })
+    .await
+    .expect("renamed");
+    file_operation(FileOperation::LocalRemove {
+        path: moved.clone(),
+    })
+    .await
+    .expect("removed");
+    assert!(!moved.exists());
+    assert_eq!(
+        file_operation(FileOperation::LocalMakeFolder {
+            path: dir.path().join("taken"),
+        })
+        .await,
+        Err(FilesError::Exists)
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_local_delete_removes_links_never_their_targets() {
+    let dir = tempfile::tempdir().expect("dir");
+    let outside = dir.path().join("outside");
+    std::fs::create_dir(&outside).expect("outside");
+    std::fs::write(outside.join("precious"), b"keep").expect("precious");
+    let doomed = dir.path().join("doomed");
+    std::fs::create_dir(&doomed).expect("doomed");
+    std::os::unix::fs::symlink(&outside, doomed.join("away")).expect("link inside");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&outside, &link).expect("link");
+    for path in [doomed.clone(), link.clone()] {
+        file_operation(FileOperation::LocalRemove { path })
+            .await
+            .expect("removed");
+    }
+    assert!(doomed.symlink_metadata().is_err());
+    assert!(link.symlink_metadata().is_err());
+    assert_eq!(
+        std::fs::read(outside.join("precious")).expect("kept"),
+        b"keep"
+    );
+}
+
+#[cfg(unix)]
+#[path = "../../heimdall-sftp/tests/common/mod.rs"]
+mod common;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn remote_operations_against_openssh() {
+    let Some((_server, client)) = common::start().await else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let made = dir.path().join("made");
+    common::step(file_operation(FileOperation::RemoteMakeFolder {
+        client: client.clone(),
+        path: common::remote(&made),
+    }))
+    .await
+    .expect("made");
+    assert!(made.is_dir());
+    std::fs::write(made.join("x"), b"x").expect("file");
+    std::fs::write(dir.path().join("taken"), b"keep").expect("taken");
+    assert!(
+        common::step(file_operation(FileOperation::RemoteRename {
+            client: client.clone(),
+            from: common::remote(&made.join("x")),
+            to: common::remote(&dir.path().join("taken")),
+        }))
+        .await
+        .is_err(),
+        "a rename never replaces"
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("taken")).expect("kept"),
+        b"keep"
+    );
+    let moved = dir.path().join("moved");
+    common::step(file_operation(FileOperation::RemoteRename {
+        client: client.clone(),
+        from: common::remote(&made),
+        to: common::remote(&moved),
+    }))
+    .await
+    .expect("renamed");
+    common::step(file_operation(FileOperation::RemoteRemove {
+        client,
+        path: common::remote(&moved),
+    }))
+    .await
+    .expect("removed");
+    assert!(!moved.exists());
+}

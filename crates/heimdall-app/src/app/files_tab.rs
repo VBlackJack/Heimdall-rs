@@ -18,13 +18,13 @@
 
 use std::path::PathBuf;
 
-use heimdall_sftp::RemotePath;
+use heimdall_sftp::{RemotePath, SftpClient};
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Dialog, Effect};
+use super::{App, Dialog, Effect, NameAction};
 use crate::files::{
-    Direction, EntryKind, FilesError, FilesPane, Side, Transfer, TransferEvent, TransferId,
-    TransferRequest, TransferState, download_name,
+    Direction, EntryKind, FileOperation, FilesError, FilesPane, Side, Transfer, TransferEvent,
+    TransferId, TransferRequest, TransferState, download_name, typed_name,
 };
 use crate::ids::TabId;
 
@@ -100,6 +100,38 @@ pub enum FilesMessage {
         /// Transfer.
         id: TransferId,
     },
+    /// Ask for the name of a new folder in a pane.
+    AskNewFolder {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// Ask for a new name for the selected entry.
+    AskRename {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// Ask to confirm deleting the selected entry.
+    AskDelete {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// The name typed in the question changed.
+    NameEdited(String),
+    /// A file operation finished.
+    OperationDone {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// How it went.
+        result: Result<(), FilesError>,
+    },
 }
 
 impl std::fmt::Debug for FilesMessage {
@@ -137,8 +169,38 @@ impl std::fmt::Debug for FilesMessage {
                 )
             }
             Self::Cancel { tab, id } => write!(f, "Cancel({}, {})", tab.value(), id.value()),
+            Self::AskNewFolder { tab, side } => {
+                write!(f, "AskNewFolder({}, {side:?})", tab.value())
+            }
+            Self::AskRename { tab, side } => write!(f, "AskRename({}, {side:?})", tab.value()),
+            Self::AskDelete { tab, side } => write!(f, "AskDelete({}, {side:?})", tab.value()),
+            Self::NameEdited(_) => f.write_str("NameEdited(..)"),
+            Self::OperationDone { tab, side, result } => write!(
+                f,
+                "OperationDone({}, {side:?}, {})",
+                tab.value(),
+                result.is_ok()
+            ),
         }
     }
+}
+
+/// An operation waiting for the user's name or confirmation.
+#[derive(Debug, Clone)]
+pub(super) struct PendingOperation {
+    tab: TabId,
+    side: Side,
+    kind: PendingKind,
+}
+
+#[derive(Debug, Clone)]
+enum PendingKind {
+    /// A folder to create in the pane's folder.
+    NewFolder,
+    /// The entry at this path to rename in the same folder.
+    Rename { remote: RemotePath, local: PathBuf },
+    /// The entry at this path to delete.
+    Delete { remote: RemotePath, local: PathBuf },
 }
 
 /// A transfer waiting for the user to confirm it replaces an existing file.
@@ -246,19 +308,24 @@ impl App {
                 }
                 Vec::new()
             }
-            FilesMessage::Select { tab, side, index } => {
-                if let Some(files) = self.files_mut(tab) {
-                    match side {
-                        Side::Remote if index < files.remote.entries.len() => {
-                            files.remote.selected = Some(index);
-                        }
-                        Side::Local if index < files.local.entries.len() => {
-                            files.local.selected = Some(index);
-                        }
-                        _ => {}
-                    }
+            FilesMessage::Select { tab, side, index } => self.select(tab, side, index),
+            FilesMessage::AskNewFolder { tab, side } => self.ask(tab, side, NameAction::NewFolder),
+            FilesMessage::AskRename { tab, side } => self.ask(tab, side, NameAction::Rename),
+            FilesMessage::AskDelete { tab, side } => self.ask_delete(tab, side),
+            FilesMessage::NameEdited(value) => {
+                if let Some(Dialog::AskName { value: typed, .. }) = self.dialog.as_mut() {
+                    *typed = value;
                 }
                 Vec::new()
+            }
+            FilesMessage::OperationDone { tab, side, result } => {
+                if let (Some(files), Err(error)) = (self.files_mut(tab), &result) {
+                    match side {
+                        Side::Remote => files.remote.error = Some(error.clone()),
+                        Side::Local => files.local.error = Some(error.clone()),
+                    }
+                }
+                self.list(tab, side)
             }
             FilesMessage::Open { tab, side, index } => self.open_entry(tab, side, index),
             FilesMessage::Up { tab, side } => {
@@ -286,6 +353,42 @@ impl App {
                 }
                 Vec::new()
             }
+        }
+    }
+
+    fn select(&mut self, tab: TabId, side: Side, index: usize) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        // A second click on a selected folder opens it.
+        let (selected, is_folder) = match side {
+            Side::Remote => (
+                files.remote.selected,
+                files
+                    .remote
+                    .entries
+                    .get(index)
+                    .map(|entry| entry.kind == EntryKind::Directory),
+            ),
+            Side::Local => (
+                files.local.selected,
+                files
+                    .local
+                    .entries
+                    .get(index)
+                    .map(|entry| entry.kind == EntryKind::Directory),
+            ),
+        };
+        match is_folder {
+            Some(true) if selected == Some(index) => self.open_entry(tab, side, index),
+            Some(_) => {
+                match side {
+                    Side::Remote => files.remote.selected = Some(index),
+                    Side::Local => files.local.selected = Some(index),
+                }
+                Vec::new()
+            }
+            None => Vec::new(),
         }
     }
 
@@ -326,81 +429,8 @@ impl App {
         let Some(client) = files.client.clone() else {
             return Vec::new();
         };
-        let (request, label, total, exists) = match direction {
-            Direction::Download => {
-                let Some(entry) = files
-                    .remote
-                    .selected
-                    .and_then(|i| files.remote.entries.get(i))
-                else {
-                    return Vec::new();
-                };
-                let label = entry.label.clone();
-                if !matches!(entry.kind, EntryKind::File | EntryKind::Link) {
-                    files
-                        .transfers
-                        .push(failed(direction, label, FilesError::NotAFile));
-                    return Vec::new();
-                }
-                let name = match download_name(&entry.name) {
-                    Ok(name) => name,
-                    Err(error) => {
-                        files.transfers.push(failed(direction, label, error));
-                        return Vec::new();
-                    }
-                };
-                let local = files.local.path.join(&name.name);
-                let exists = local.symlink_metadata().is_ok();
-                let remote = files.remote.path.join(&entry.name);
-                (
-                    TransferRequest {
-                        client,
-                        direction,
-                        remote,
-                        local,
-                        replace: true,
-                        cancel: CancellationToken::new(),
-                    },
-                    label,
-                    entry.size,
-                    exists,
-                )
-            }
-            Direction::Upload => {
-                let Some(entry) = files
-                    .local
-                    .selected
-                    .and_then(|i| files.local.entries.get(i))
-                else {
-                    return Vec::new();
-                };
-                let label = entry.label.clone();
-                if entry.kind != EntryKind::File {
-                    files
-                        .transfers
-                        .push(failed(direction, label, FilesError::NotAFile));
-                    return Vec::new();
-                }
-                let name = name_bytes(&entry.name);
-                let exists = files
-                    .remote
-                    .entries
-                    .iter()
-                    .any(|remote| remote.name == name);
-                (
-                    TransferRequest {
-                        client,
-                        direction,
-                        remote: files.remote.path.join(&name),
-                        local: files.local.path.join(&entry.name),
-                        replace: exists,
-                        cancel: CancellationToken::new(),
-                    },
-                    label,
-                    entry.size,
-                    exists,
-                )
-            }
+        let Some((request, label, total, exists)) = prepare(files, client, direction) else {
+            return Vec::new();
         };
         if exists {
             self.dialog = Some(Dialog::ConfirmOverwrite {
@@ -486,6 +516,224 @@ impl App {
             }
         }
     }
+}
+
+impl App {
+    /// The selected entry of a pane: its label, both path forms, and whether it is a folder.
+    fn selected(&mut self, tab: TabId, side: Side) -> Option<(String, RemotePath, PathBuf, bool)> {
+        let files = self.files_mut(tab)?;
+        match side {
+            Side::Remote => {
+                let entry = files.remote.entries.get(files.remote.selected?)?;
+                Some((
+                    entry.label.clone(),
+                    files.remote.path.join(&entry.name),
+                    PathBuf::new(),
+                    entry.kind == EntryKind::Directory,
+                ))
+            }
+            Side::Local => {
+                let entry = files.local.entries.get(files.local.selected?)?;
+                Some((
+                    entry.label.clone(),
+                    RemotePath::default(),
+                    files.local.path.join(&entry.name),
+                    entry.kind == EntryKind::Directory,
+                ))
+            }
+        }
+    }
+
+    fn ask(&mut self, tab: TabId, side: Side, action: NameAction) -> Vec<Effect> {
+        let (kind, value) = match action {
+            NameAction::NewFolder => (PendingKind::NewFolder, String::new()),
+            NameAction::Rename => {
+                let Some((label, remote, local, _)) = self.selected(tab, side) else {
+                    return Vec::new();
+                };
+                (PendingKind::Rename { remote, local }, label)
+            }
+        };
+        self.pending_operation = Some(PendingOperation { tab, side, kind });
+        self.dialog = Some(Dialog::AskName {
+            tab,
+            side,
+            action,
+            value,
+        });
+        Vec::new()
+    }
+
+    fn ask_delete(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+        let Some((label, remote, local, folder)) = self.selected(tab, side) else {
+            return Vec::new();
+        };
+        self.pending_operation = Some(PendingOperation {
+            tab,
+            side,
+            kind: PendingKind::Delete { remote, local },
+        });
+        self.dialog = Some(Dialog::ConfirmDelete {
+            tab,
+            side,
+            name: label,
+            folder,
+        });
+        Vec::new()
+    }
+
+    /// The user confirmed a name or a delete.
+    pub(super) fn confirm_operation(&mut self, typed: Option<&str>) -> Vec<Effect> {
+        let Some(pending) = self.pending_operation.take() else {
+            return Vec::new();
+        };
+        let (tab, side) = (pending.tab, pending.side);
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let client = files.client.clone();
+        let name = match typed {
+            Some(typed) => match typed_name(side, typed) {
+                Ok(name) => Some(name),
+                Err(error) => {
+                    match side {
+                        Side::Remote => files.remote.error = Some(error),
+                        Side::Local => files.local.error = Some(error),
+                    }
+                    return Vec::new();
+                }
+            },
+            None => None,
+        };
+        let remote_folder = files.remote.path.clone();
+        let local_folder = files.local.path.clone();
+        let operation = (|| {
+            Some(match (side, pending.kind, name) {
+                (Side::Remote, PendingKind::NewFolder, Some(name)) => {
+                    FileOperation::RemoteMakeFolder {
+                        client: client?,
+                        path: remote_folder.join(name.name.to_string_lossy().as_bytes()),
+                    }
+                }
+                (Side::Remote, PendingKind::Rename { remote, .. }, Some(name)) => {
+                    FileOperation::RemoteRename {
+                        client: client?,
+                        to: remote.parent().join(name.name.to_string_lossy().as_bytes()),
+                        from: remote,
+                    }
+                }
+                (Side::Remote, PendingKind::Delete { remote, .. }, None) => {
+                    FileOperation::RemoteRemove {
+                        client: client?,
+                        path: remote,
+                    }
+                }
+                (Side::Local, PendingKind::NewFolder, Some(name)) => {
+                    FileOperation::LocalMakeFolder {
+                        path: local_folder.join(&name.name),
+                    }
+                }
+                (Side::Local, PendingKind::Rename { local, .. }, Some(name)) => {
+                    FileOperation::LocalRename {
+                        to: local.with_file_name(&name.name),
+                        from: local,
+                    }
+                }
+                (Side::Local, PendingKind::Delete { local, .. }, None) => {
+                    FileOperation::LocalRemove { path: local }
+                }
+                _ => return None,
+            })
+        })();
+        let Some(operation) = operation else {
+            return Vec::new();
+        };
+        vec![Effect::FileOperation {
+            tab,
+            side,
+            operation: Box::new(operation),
+        }]
+    }
+}
+
+/// A transfer request for the selected entry: the request, its label, its size when known,
+/// and whether the target exists. A refusal is recorded as a failed transfer.
+fn prepare(
+    files: &mut FilesPane,
+    client: SftpClient,
+    direction: Direction,
+) -> Option<(TransferRequest, String, Option<u64>, bool)> {
+    Some(match direction {
+        Direction::Download => {
+            let entry = files.remote.entries.get(files.remote.selected?)?;
+            let label = entry.label.clone();
+            if !matches!(
+                entry.kind,
+                EntryKind::File | EntryKind::Link | EntryKind::Directory
+            ) {
+                files
+                    .transfers
+                    .push(failed(direction, label, FilesError::NotAFile));
+                return None;
+            }
+            let name = match download_name(&entry.name) {
+                Ok(name) => name,
+                Err(error) => {
+                    files.transfers.push(failed(direction, label, error));
+                    return None;
+                }
+            };
+            let local = files.local.path.join(&name.name);
+            let exists = local.symlink_metadata().is_ok();
+            let remote = files.remote.path.join(&entry.name);
+            (
+                TransferRequest {
+                    client,
+                    direction,
+                    remote,
+                    local,
+                    replace: true,
+                    folder: entry.kind == EntryKind::Directory,
+                    cancel: CancellationToken::new(),
+                },
+                label,
+                // A folder's own size is not what its transfer moves.
+                entry.size.filter(|_| entry.kind != EntryKind::Directory),
+                exists,
+            )
+        }
+        Direction::Upload => {
+            let entry = files.local.entries.get(files.local.selected?)?;
+            let label = entry.label.clone();
+            if !matches!(entry.kind, EntryKind::File | EntryKind::Directory) {
+                files
+                    .transfers
+                    .push(failed(direction, label, FilesError::NotAFile));
+                return None;
+            }
+            let name = name_bytes(&entry.name);
+            let exists = files
+                .remote
+                .entries
+                .iter()
+                .any(|remote| remote.name == name);
+            (
+                TransferRequest {
+                    client,
+                    direction,
+                    remote: files.remote.path.join(&name),
+                    local: files.local.path.join(&entry.name),
+                    replace: exists,
+                    folder: entry.kind == EntryKind::Directory,
+                    cancel: CancellationToken::new(),
+                },
+                label,
+                // A folder's own size is not what its transfer moves.
+                entry.size.filter(|_| entry.kind != EntryKind::Directory),
+                exists,
+            )
+        }
+    })
 }
 
 fn failed(direction: Direction, label: String, error: FilesError) -> Transfer {
