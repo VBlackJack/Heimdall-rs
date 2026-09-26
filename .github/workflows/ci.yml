@@ -29,7 +29,9 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libfontconfig-dev
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libx11-dev libfontconfig-dev openssh-sftp-server
+          # The SFTP tests against OpenSSH's server must run here, not skip.
+          echo "HEIMDALL_REQUIRE_SFTP_SERVER=1" >> "$GITHUB_ENV"
 
       - name: Install the pinned toolchain
         run: rustup toolchain install
