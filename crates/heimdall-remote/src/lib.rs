@@ -15,3 +15,5 @@
  */
 
 //! VNC, Telnet and serial sessions.
+
+pub mod telnet;
