@@ -31,6 +31,7 @@ ui-prompt-password-title = Password for { $user } on { $target }
 ui-prompt-password-retry = The password was refused. Try again.
 ui-prompt-passphrase-title = Passphrase of the key { $path }
 ui-prompt-passphrase-retry = The passphrase did not unlock the key. Try again.
+ui-prompt-server-password-title = Password of the VNC server { $target }
 ui-prompt-interactive-title = { $user } on { $host }: the server asks
 ui-prompt-server-text = Server says: { $text }
 
@@ -194,6 +195,9 @@ ui-dialog-delete-profile-confirm = Delete
 
 ui-sidebar-rdp-target = RDP { $target }
 ui-sidebar-telnet-target = Telnet { $target }
+ui-sidebar-vnc-target = VNC { $target }
 ui-session-forget-server-button = Forget this server
 ui-error-security-refused = The server refused the security Heimdall requires (Network Level Authentication): { $detail }
 ui-error-rdp-protocol = RDP error: { $detail }
+ui-error-vnc-protocol = VNC error: { $detail }
+ui-session-vnc-unencrypted = Not encrypted: this desktop and what you type cross the network in clear.

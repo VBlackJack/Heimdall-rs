@@ -243,3 +243,66 @@ fn a_connected_desktop_is_drawn_from_its_first_frame() {
     // A new desktop is black, and opaque whatever alpha the decoder left.
     assert_eq!(pixel, [0, 0, 0, 255], "drawn by {renderer}");
 }
+
+/// A key event as a keyboard sends it: `typed` is what the key types with the modifiers held.
+fn key_event(typed: &str, code: iced::keyboard::key::Code, pressed: bool) -> iced::Event {
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+    let physical_key = iced::keyboard::key::Physical::Code(code);
+    let key = Key::Character(typed.into());
+    iced::Event::Keyboard(if pressed {
+        Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key,
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+            text: Some(typed.into()),
+            repeat: false,
+        }
+    } else {
+        Event::KeyReleased {
+            key: key.clone(),
+            modified_key: key,
+            physical_key,
+            location: Location::Standard,
+            modifiers: Modifiers::default(),
+        }
+    })
+}
+
+#[test]
+fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+        },
+    );
+    let mut ui = simulator(&shell);
+    // Shift+1 types '!'; Shift let go first, the key's release types '1'.
+    let _ = ui.simulate([
+        key_event("!", iced::keyboard::key::Code::Digit1, true),
+        key_event("1", iced::keyboard::key::Code::Digit1, false),
+    ]);
+    let keysyms: Vec<(Option<u32>, bool)> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|input| match input {
+            DesktopInput::Key {
+                keysym, pressed, ..
+            } => Some((keysym, pressed)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keysyms, [(Some(0x21), true), (Some(0x21), false)]);
+}

@@ -173,8 +173,10 @@ pub enum Purpose {
     Shell,
     /// An SFTP session.
     Files,
-    /// A remote desktop.
+    /// A remote desktop over RDP.
     Rdp,
+    /// A remote desktop over VNC.
+    Vnc,
 }
 
 /// What an attempt needs.

@@ -33,6 +33,7 @@ use iced_renderer::fallback;
 use iced_renderer::wgpu::primitive::Renderer as _;
 
 use crate::desktop_texture::Desktop;
+use crate::keysym::keysym;
 
 pub use scancodes::scancode;
 
@@ -45,6 +46,9 @@ struct State {
     tab: Option<TabId>,
     /// The picture last built, and the generation it shows.
     picture: RefCell<Option<(u64, image::Handle)>>,
+    /// Keys held, with the keysym sent when each went down: a release sends the same one,
+    /// or Shift released first would turn a held `!` into a `1` and leave `!` stuck.
+    held: Vec<(Physical, u32)>,
 }
 
 /// The desktop of one tab.
@@ -101,18 +105,43 @@ impl<'a, M> DesktopView<'a, M> {
         }
     }
 
-    fn key(&self, shell: &mut Shell<'_, M>, physical_key: Physical, pressed: bool) {
-        if let Some(code) = scancode(physical_key) {
-            self.send(
-                shell,
-                vec![DesktopInput::Key {
-                    scancode: Some(code),
-                    keysym: None,
-                    pressed,
-                }],
-            );
-            shell.capture_event();
+    /// A key went down or up: sent by position (RDP) and by what it types (VNC).
+    fn key(
+        &self,
+        held: &mut Vec<(Physical, u32)>,
+        shell: &mut Shell<'_, M>,
+        key: &keyboard::Key,
+        location: keyboard::Location,
+        physical_key: Physical,
+        pressed: bool,
+    ) {
+        let found = held
+            .iter()
+            .position(|(physical, _)| *physical == physical_key);
+        let keysym = if pressed {
+            let keysym = keysym(key, location);
+            if let (Some(keysym), None) = (keysym, found) {
+                held.push((physical_key, keysym));
+            }
+            found.map(|index| held[index].1).or(keysym)
+        } else {
+            found
+                .map(|index| held.remove(index).1)
+                .or_else(|| keysym(key, location))
+        };
+        let code = scancode(physical_key);
+        if code.is_none() && keysym.is_none() {
+            return;
         }
+        self.send(
+            shell,
+            vec![DesktopInput::Key {
+                scancode: code,
+                keysym,
+                pressed,
+            }],
+        );
+        shell.capture_event();
     }
 
     /// Where `position`, in window coordinates, falls on the desktop.
@@ -241,11 +270,35 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                     shell.capture_event();
                 }
             }
-            Event::Keyboard(keyboard::Event::KeyPressed { physical_key, .. }) => {
-                self.key(shell, *physical_key, true);
+            Event::Keyboard(keyboard::Event::KeyPressed {
+                modified_key,
+                physical_key,
+                location,
+                ..
+            }) => {
+                self.key(
+                    &mut state.held,
+                    shell,
+                    modified_key,
+                    *location,
+                    *physical_key,
+                    true,
+                );
             }
-            Event::Keyboard(keyboard::Event::KeyReleased { physical_key, .. }) => {
-                self.key(shell, *physical_key, false);
+            Event::Keyboard(keyboard::Event::KeyReleased {
+                modified_key,
+                physical_key,
+                location,
+                ..
+            }) => {
+                self.key(
+                    &mut state.held,
+                    shell,
+                    modified_key,
+                    *location,
+                    *physical_key,
+                    false,
+                );
             }
             _ => {}
         }

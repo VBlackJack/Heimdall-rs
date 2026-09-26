@@ -53,6 +53,11 @@ pub enum UiError {
         /// What failed, in the library's words.
         detail: String,
     },
+    /// A VNC session or connection failed in the protocol.
+    VncProtocol {
+        /// What failed, in the library's words.
+        detail: String,
+    },
     /// The server refused the security the client requires (an RDP server without Network
     /// Level Authentication).
     SecurityRefused {
