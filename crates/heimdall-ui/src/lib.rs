@@ -19,6 +19,7 @@
 mod files_view;
 mod i18n;
 mod logging;
+mod rdp_texture;
 pub mod rdp_view;
 pub mod shell;
 pub mod terminal_view;
