@@ -43,6 +43,8 @@ pub enum KeyProblem {
 pub enum UiError {
     /// The host name cannot be used.
     InvalidHost,
+    /// The account name cannot be used.
+    InvalidUsername,
     /// The network connection failed.
     Network {
         /// Operating system message.

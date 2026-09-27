@@ -30,6 +30,12 @@ pub const DEFAULT_RDP_PORT: u16 = 3389;
 /// Port a Telnet server listens on unless a profile says otherwise.
 pub const DEFAULT_TELNET_PORT: u16 = 23;
 
+/// Port of `WinRM` over HTTP unless a profile says otherwise.
+pub const DEFAULT_WINRM_HTTP_PORT: u16 = 5985;
+
+/// Port of `WinRM` over HTTPS unless a profile says otherwise.
+pub const DEFAULT_WINRM_HTTPS_PORT: u16 = 5986;
+
 /// Port a VNC server listens on unless a profile says otherwise: display 0.
 pub const DEFAULT_VNC_PORT: u16 = 5900;
 
@@ -196,6 +202,35 @@ pub struct TelnetProfile {
     pub host: String,
     /// TCP port.
     pub port: u16,
+}
+
+/// A saved `WinRM` destination: a remote `PowerShell` session on a Windows server.
+///
+/// Holds no password: with a user name, `PowerShell` asks for it when connecting; without,
+/// the session runs as the account running Heimdall.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct WinRmProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// `WinRM` over HTTPS.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub use_ssl: bool,
+    /// Over HTTPS, accept whatever certificate the server shows: for test servers only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub skip_certificate_check: bool,
+    /// Account to log in as, `DOMAIN\user` or `user@domain`; `None` for the account running
+    /// Heimdall.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
 }
 
 /// A saved VNC destination, reached directly.

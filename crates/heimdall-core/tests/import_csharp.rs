@@ -18,8 +18,8 @@ use std::path::PathBuf;
 
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
 use heimdall_core::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, LocalArguments,
-    ProfileId, SshProfile,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
+    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, LocalArguments, ProfileId, SshProfile,
 };
 
 /// Environment variable naming a directory that holds a real C# `servers.json`, and
@@ -563,4 +563,120 @@ fn the_clipboard_is_shared_unless_the_csharp_profile_turned_it_off() {
         .map(|profile| (profile.id.as_str(), profile.redirect_clipboard))
         .collect();
     assert_eq!(shared, [("on", true), ("off", false)]);
+}
+
+#[test]
+fn a_winrm_profile_keeps_its_transport_and_account() {
+    let json = servers(
+        r#"{"id": "w", "displayName": "DC", "remoteServer": " dc.lab ", "connectionType": "WinRM",
+            "group": "Win", "winRmPort": 5999, "winRmUseSsl": true,
+            "winRmSkipCertificateCheck": true, "winRmIdentityMode": "Credential",
+            "winRmUsername": " LAB\\admin ", "winRmPasswordEncrypted": "AQAAANCMnd8BFdERjHoAwE"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert!(report.profiles.is_empty() && report.rdp.is_empty());
+    let profile = &report.winrm[0];
+    assert_eq!(profile.id.as_str(), "w");
+    assert_eq!(profile.name, "DC");
+    assert_eq!(profile.group.as_deref(), Some("Win"));
+    assert_eq!(profile.host, "dc.lab");
+    assert_eq!(profile.port, 5999);
+    assert!(profile.use_ssl);
+    assert!(profile.skip_certificate_check);
+    assert_eq!(profile.username.as_deref(), Some("LAB\\admin"));
+}
+
+#[test]
+fn a_winrm_port_left_unset_is_the_default_of_its_transport() {
+    let json = servers(
+        r#"{"id": "http", "remoteServer": "h", "connectionType": "WINRM"},
+           {"id": "https", "remoteServer": "h", "connectionType": "WINRM", "winRmUseSsl": true},
+           {"id": "zero", "remoteServer": "h", "connectionType": "WINRM", "winRmPort": 0,
+            "winRmUseSsl": true}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let ports: Vec<(&str, u16)> = report
+        .winrm
+        .iter()
+        .map(|p| (p.id.as_str(), p.port))
+        .collect();
+    assert_eq!(
+        ports,
+        [
+            ("http", DEFAULT_WINRM_HTTP_PORT),
+            ("https", DEFAULT_WINRM_HTTPS_PORT),
+            ("zero", DEFAULT_WINRM_HTTPS_PORT)
+        ]
+    );
+}
+
+#[test]
+fn a_winrm_profile_as_the_current_user_names_no_account() {
+    let json = servers(
+        r#"{"id": "absent", "remoteServer": "h", "connectionType": "WINRM", "winRmUsername": "x"},
+           {"id": "name", "remoteServer": "h", "connectionType": "WINRM", "winRmUsername": "x",
+            "winRmIdentityMode": "currentuser"},
+           {"id": "number", "remoteServer": "h", "connectionType": "WINRM", "winRmUsername": "x",
+            "winRmIdentityMode": 0},
+           {"id": "credential", "remoteServer": "h", "connectionType": "WINRM",
+            "winRmUsername": "x", "winRmIdentityMode": 1}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let accounts: Vec<(&str, Option<&str>)> = report
+        .winrm
+        .iter()
+        .map(|p| (p.id.as_str(), p.username.as_deref()))
+        .collect();
+    assert_eq!(
+        accounts,
+        [
+            ("absent", None),
+            ("name", None),
+            ("number", None),
+            ("credential", Some("x"))
+        ]
+    );
+}
+
+#[test]
+fn skipping_the_certificate_check_needs_https() {
+    let json = servers(
+        r#"{"id": "w", "remoteServer": "h", "connectionType": "WINRM",
+            "winRmSkipCertificateCheck": true}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(!report.winrm[0].skip_certificate_check);
+}
+
+#[test]
+fn a_winrm_profile_that_cannot_be_connected_is_skipped_with_its_reason() {
+    let json = servers(
+        r#"{"id": "no-user", "remoteServer": "h", "connectionType": "WINRM",
+            "winRmIdentityMode": "Credential", "winRmUsername": "  "},
+           {"id": "mode", "remoteServer": "h", "connectionType": "WINRM", "winRmIdentityMode": 7},
+           {"id": "mode-name", "remoteServer": "h", "connectionType": "WINRM",
+            "winRmIdentityMode": "Kerberos"},
+           {"id": "port", "remoteServer": "h", "connectionType": "WINRM", "winRmPort": 70000},
+           {"id": "host", "remoteServer": " ", "connectionType": "WINRM"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.winrm.is_empty(), "{:?}", report.winrm);
+    let reasons: Vec<(String, SkipReason)> = report
+        .skipped
+        .into_iter()
+        .map(|skipped| (skipped.id, skipped.reason))
+        .collect();
+    assert_eq!(
+        reasons,
+        vec![
+            ("no-user".to_owned(), SkipReason::MissingUsername),
+            ("mode".to_owned(), SkipReason::UnknownIdentityMode),
+            ("mode-name".to_owned(), SkipReason::UnknownIdentityMode),
+            ("port".to_owned(), SkipReason::InvalidPort(70000)),
+            ("host".to_owned(), SkipReason::MissingHost),
+        ]
+    );
 }

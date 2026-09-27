@@ -40,7 +40,7 @@ use heimdall_app::{
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{
-    LocalProfile, RdpProfile, SshProfile, TelnetProfile, VncProfile, display_address,
+    LocalProfile, RdpProfile, SshProfile, TelnetProfile, VncProfile, WinRmProfile, display_address,
 };
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
@@ -248,6 +248,7 @@ enum Listed<'a> {
     Telnet(&'a TelnetProfile),
     Vnc(&'a VncProfile),
     Local(&'a LocalProfile),
+    WinRm(&'a WinRmProfile),
 }
 
 impl<'a> Listed<'a> {
@@ -258,6 +259,7 @@ impl<'a> Listed<'a> {
             Self::Telnet(profile) => profile.group.as_deref(),
             Self::Vnc(profile) => profile.group.as_deref(),
             Self::Local(profile) => profile.group.as_deref(),
+            Self::WinRm(profile) => profile.group.as_deref(),
         }
     }
 
@@ -268,6 +270,7 @@ impl<'a> Listed<'a> {
             Self::Telnet(profile) => &profile.name,
             Self::Vnc(profile) => &profile.name,
             Self::Local(profile) => &profile.name,
+            Self::WinRm(profile) => &profile.name,
         }
     }
 }
@@ -325,6 +328,18 @@ fn profile_row(profile: Listed<'_>) -> Element<'_, Message> {
             ),
             row![],
         ),
+        Listed::WinRm(profile) => {
+            let target = target(&profile.host, profile.port, profile.username.as_deref());
+            (
+                AppMessage::OpenWinRm(profile.id.clone()),
+                if profile.use_ssl {
+                    fl!("ui-sidebar-winrm-https-target", target = target)
+                } else {
+                    fl!("ui-sidebar-winrm-target", target = target)
+                },
+                row![],
+            )
+        }
     };
     buttons = buttons
         .spacing(SPACING / 2.0)
@@ -903,6 +918,7 @@ impl Shell {
             .chain(self.app.telnet_profiles().iter().map(Listed::Telnet))
             .chain(self.app.vnc_profiles().iter().map(Listed::Vnc))
             .chain(self.app.local_profiles().iter().map(Listed::Local))
+            .chain(self.app.winrm_profiles().iter().map(Listed::WinRm))
             .collect();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));

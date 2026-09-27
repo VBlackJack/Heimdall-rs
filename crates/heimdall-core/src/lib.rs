@@ -21,3 +21,4 @@ pub mod import;
 pub mod paths;
 pub mod profile;
 pub mod store;
+pub mod winrm;
