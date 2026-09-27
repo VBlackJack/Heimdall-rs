@@ -1243,3 +1243,108 @@ fn ctrl_click_selects_several_and_their_right_click_is_the_bulk_menu() {
     ui.find("Are you sure you want to delete 2 selected item(s)?\n- server a\n- server b")
         .expect("listed");
 }
+
+#[test]
+fn the_tree_takes_the_keyboard_from_a_terminal_until_a_click_gives_it_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let typed = |shell: &Shell| {
+        let mut ui = simulator(shell);
+        ui.typewrite("x");
+        ui.into_messages()
+            .filter(|message| matches!(message, Message::App(AppMessage::Key { tab: t, .. }) if *t == tab))
+            .count()
+    };
+    assert_eq!(typed(&shell), 1, "the terminal has it");
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    assert_eq!(typed(&shell), 0, "the tree took it");
+    {
+        let mut ui = simulator(&shell);
+        ui.point_at(iced::Point::new(700.0, 400.0));
+        ui.simulate([
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                iced::mouse::Button::Left,
+            )),
+        ]);
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ContentFocus)),
+            "a click in the session"
+        );
+    }
+    let _ = shell.update(Message::ContentFocus);
+    assert_eq!(typed(&shell), 1, "given back");
+}
+
+#[test]
+fn the_tree_keys_move_connect_rename_delete_and_edit_as_the_csharp_ones() {
+    use heimdall_app::Dialog;
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::shell::TreeShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let selected = |shell: &Shell| {
+        shell
+            .app()
+            .selected_profile
+            .clone()
+            .map(|id| id.to_string())
+    };
+
+    // Not before the tree has the keyboard: Ctrl+E is nobody's.
+    let _ = shell.update(Message::App(AppMessage::SelectProfile(ProfileId::new("a"))));
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::Edit));
+    assert!(shell.app().dialog.is_none());
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(
+        selected(&shell).as_deref(),
+        Some("a"),
+        "nor are the arrows the tree's"
+    );
+
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(selected(&shell).as_deref(), Some("b"));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(
+        selected(&shell).as_deref(),
+        Some("c"),
+        "into the next folder"
+    );
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(selected(&shell).as_deref(), Some("c"), "the last stays");
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
+    assert_eq!(selected(&shell).as_deref(), Some("b"));
+
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::RenameProfile { .. })
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::FilesKey(FilesKey::Delete));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::ConfirmDeleteProfile { .. })
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::Edit));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::EditProfile { .. })
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::New));
+    assert!(matches!(
+        &shell.app().dialog,
+        Some(Dialog::EditProfile { draft, .. }) if draft.editing.is_none()
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+
+    // Enter connects the one selected.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 1);
+    assert_eq!(shell.app().tabs[0].title, "server b");
+}

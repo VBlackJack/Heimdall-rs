@@ -65,7 +65,9 @@ use crate::files_view;
 use crate::i18n::fl;
 use crate::report;
 use crate::terminal_view::TerminalView;
-use crate::terminal_view::keys::{WindowShortcut, is_lock_key, is_search_key, window_shortcut};
+use crate::terminal_view::keys::{
+    WindowShortcut, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
+};
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TreeMenu};
 
@@ -126,6 +128,19 @@ const SETTINGS_WIDTH: f32 = 720.0;
 const DIALOG_RESERVED_HEIGHT: f32 = 112.0;
 
 /// Window events and the window's shortcuts.
+/// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
+fn tree_shortcut(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<TreeShortcut> {
+    match ctrl_letter(key, physical, modifiers)? {
+        'e' => Some(TreeShortcut::Edit),
+        'n' => Some(TreeShortcut::New),
+        _ => None,
+    }
+}
+
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
@@ -187,6 +202,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         }) if status == event::Status::Ignored => {
             if is_search_key(&key, physical_key, modifiers) {
                 return Some(Message::FocusSearch);
+            }
+            if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
+                return Some(Message::TreeShortcut(shortcut));
             }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
@@ -290,6 +308,19 @@ pub enum Message {
     /// A click on a profile of the tree: it alone selected, or, with Ctrl, added or taken,
     /// or, with Shift, all from the last one clicked.
     TreeClick(ProfileId),
+    /// A click in the session shown: the keyboard goes back to it from the tree.
+    ContentFocus,
+    /// Ctrl+E or Ctrl+N, uncaptured by any widget.
+    TreeShortcut(TreeShortcut),
+}
+
+/// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeShortcut {
+    /// Ctrl+E: edit the profile selected, when the tree has the keyboard.
+    Edit,
+    /// Ctrl+N: a new session.
+    New,
 }
 
 impl fmt::Debug for Message {
@@ -330,6 +361,8 @@ impl fmt::Debug for Message {
             Self::Tick => f.write_str("Tick"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
+            Self::ContentFocus => f.write_str("ContentFocus"),
+            Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
         }
     }
 }
@@ -454,6 +487,8 @@ pub struct Shell {
     fullscreen: bool,
     /// The keyboard's modifiers, for a click in the tree.
     modifiers: keyboard::Modifiers,
+    /// The tree has the keyboard: a click in it took it from the session shown.
+    tree_focused: bool,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
@@ -526,6 +561,7 @@ impl Shell {
             page: Page::Tab,
             fullscreen: false,
             modifiers: keyboard::Modifiers::empty(),
+            tree_focused: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -593,9 +629,7 @@ impl Shell {
         if self.app.is_locked() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
             return Task::none();
         }
-        if matches!(message, Message::App(AppMessage::SelectTab(_))) {
-            self.page = Page::Tab;
-        }
+        self.note_focus(&message);
         let reveal = matches!(
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
@@ -679,7 +713,10 @@ impl Shell {
             }
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::CopyError(tab) => return self.copy_error(tab),
-            Message::TreeClick(id) => self.tree_click(id),
+            message
+            @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
+                self.tree_input(message)
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -896,6 +933,10 @@ impl Shell {
 
     /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
+        // The tree's first, while it has the keyboard.
+        if let Some(effects) = self.tree_key(key) {
+            return effects;
+        }
         let Some(tab) = self.app.active else {
             return Vec::new();
         };
@@ -1159,7 +1200,7 @@ impl Shell {
         } else {
             row![
                 self.sidebar(),
-                column![self.tab_bar(), self.content()]
+                column![self.tab_bar(), self.focusable_content()]
                     .width(Length::Fill)
                     .height(Length::Fill)
             ]
@@ -1433,6 +1474,114 @@ impl Shell {
         .into()
     }
 
+    /// Where the keyboard goes after `message`: to the tree after a click in it, back to the
+    /// session after a tab is chosen; and the page a chosen tab shows.
+    fn note_focus(&mut self, message: &Message) {
+        match message {
+            Message::App(AppMessage::SelectTab(_)) => {
+                self.page = Page::Tab;
+                self.tree_focused = false;
+            }
+            Message::App(AppMessage::ToggleFolder(_))
+            | Message::OpenTreeMenu(_)
+            | Message::TreeClick(_) => self.tree_focused = true,
+            Message::ContentFocus => self.tree_focused = false,
+            _ => {}
+        }
+    }
+
+    /// A click on a profile of the tree, or one of the tree's shortcuts holding Ctrl.
+    fn tree_input(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::TreeClick(id) => self.tree_click(id),
+            Message::TreeShortcut(shortcut) => self.tree_shortcut(shortcut),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The session shown; while the tree has the keyboard, a click in it takes it back.
+    fn focusable_content(&self) -> Element<'_, Message> {
+        if self.tree_focused {
+            mouse_area(self.content())
+                .on_press(Message::ContentFocus)
+                .into()
+        } else {
+            self.content()
+        }
+    }
+
+    /// A tree shortcut holding Ctrl: Ctrl+E edits the profile selected when the tree has
+    /// the keyboard; Ctrl+N opens a new session's form.
+    fn tree_shortcut(&mut self, shortcut: TreeShortcut) -> Vec<Effect> {
+        if self.app.dialog.is_some() || self.app.is_locked() {
+            return Vec::new();
+        }
+        match shortcut {
+            TreeShortcut::New => self.app.update(AppMessage::NewProfile),
+            TreeShortcut::Edit => match self.app.selected_profile.clone() {
+                Some(id) if self.tree_focused && self.app.can_edit(&id) => {
+                    self.app.update(AppMessage::EditProfile(id))
+                }
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    /// A key of the Files tab's set pressed while the tree has the keyboard, as the C# tree
+    /// takes them: the arrows move the selection, Enter connects, F2 renames, Delete deletes
+    /// once asked; `None` when the tree does not have it.
+    fn tree_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
+        if !self.tree_focused || self.app.dialog.is_some() {
+            return None;
+        }
+        let selected = self.app.selected_profile.clone();
+        let several = !self.app.selected_profiles().is_empty();
+        Some(match key {
+            FilesKey::Previous | FilesKey::Next => {
+                let order: Vec<ProfileId> = self
+                    .app
+                    .tree_rows(&self.search)
+                    .into_iter()
+                    .filter_map(|row| match row {
+                        TreeRow::Profile { profile, .. } => Some(profile.id),
+                        TreeRow::Folder { .. } => None,
+                    })
+                    .collect();
+                let at = selected.and_then(|id| order.iter().position(|found| *found == id));
+                let next = match (key, at) {
+                    (FilesKey::Previous, Some(at)) => at.checked_sub(1),
+                    (_, Some(at)) => Some(at + 1),
+                    (_, None) => Some(0),
+                };
+                match next.and_then(|index| order.get(index)) {
+                    Some(id) => self.app.update(AppMessage::SelectProfile(id.clone())),
+                    None => Vec::new(),
+                }
+            }
+            FilesKey::Open if several => self
+                .app
+                .update(AppMessage::Selection(SelectionMessage::Connect)),
+            FilesKey::Open => match selected {
+                Some(id) => self.app.update(AppMessage::ConnectProfile(id)),
+                None => Vec::new(),
+            },
+            FilesKey::Delete if several => self
+                .app
+                .update(AppMessage::Selection(SelectionMessage::RequestDelete)),
+            FilesKey::Delete => match selected {
+                Some(id) => self.app.update(AppMessage::RequestDeleteProfile(id)),
+                None => Vec::new(),
+            },
+            FilesKey::Rename => match selected {
+                Some(id) if self.app.can_edit(&id) => self
+                    .app
+                    .update(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id))),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        })
+    }
+
     /// A click on profile `id` in the tree, as the C# tree takes it: alone, with Ctrl added or
     /// taken, with Shift all from the last one clicked in the order shown.
     fn tree_click(&mut self, id: ProfileId) -> Vec<Effect> {
@@ -1600,7 +1749,7 @@ impl Shell {
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
-                _ => terminal(tab, self.app.dialog.is_none()),
+                _ => terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
             },
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
@@ -1754,7 +1903,7 @@ impl Shell {
     fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
-            .interactive(self.app.dialog.is_none())
+            .interactive(self.app.dialog.is_none() && !self.tree_focused)
             .fit(fit);
         let tab_id = tab.id;
         let mode = pick_list(
@@ -3386,6 +3535,52 @@ mod tests {
             window_event(ctrl_f(), event::Status::Captured, window::Id::unique()).is_none(),
             "a terminal's Ctrl+F stays its own"
         );
+    }
+
+    #[test]
+    fn ctrl_e_and_ctrl_n_reach_the_tree_only_when_no_widget_took_them() {
+        let ctrl = |letter: &str, modifiers: Modifiers| {
+            let key = Key::Character(letter.into());
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            })
+        };
+        let routed = |letter: &str, modifiers: Modifiers, status: event::Status| {
+            window_event(ctrl(letter, modifiers), status, window::Id::unique())
+        };
+        assert!(matches!(
+            routed("e", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::Edit))
+        ));
+        assert!(matches!(
+            routed("n", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::New))
+        ));
+        assert!(
+            routed("e", Modifiers::CTRL, event::Status::Captured).is_none(),
+            "a shell's Ctrl+E, end of line, stays its own"
+        );
+        assert!(
+            !matches!(
+                routed(
+                    "e",
+                    Modifiers::CTRL | Modifiers::SHIFT,
+                    event::Status::Ignored
+                ),
+                Some(Message::TreeShortcut(_))
+            ),
+            "Ctrl alone"
+        );
+        assert!(!matches!(
+            routed("x", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(_))
+        ));
     }
 
     #[test]

@@ -121,6 +121,21 @@ pub fn is_search_key(
         && letter(key, physical) == Some('f')
 }
 
+/// The letter of Ctrl+letter, `key` with `modifiers`, whatever the keyboard's layout: Ctrl
+/// alone held, without Shift or Alt.
+#[must_use]
+pub fn ctrl_letter(
+    key: &keyboard::Key,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<char> {
+    if modifiers.control() && !modifiers.shift() && !modifiers.alt() {
+        letter(key, physical)
+    } else {
+        None
+    }
+}
+
 /// The window shortcut `key` with `modifiers` stands for, if any.
 #[must_use]
 pub fn window_shortcut(
