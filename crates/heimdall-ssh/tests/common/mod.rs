@@ -100,6 +100,8 @@ pub struct Spec {
     /// Closes a connection idle this long, authenticated or not, as OpenSSH's
     /// `LoginGraceTime` does before authentication.
     pub inactivity_timeout: Option<Duration>,
+    /// Connects onward when a client asks, as a gateway does; off, as `AllowTcpForwarding no`.
+    pub forwarding: bool,
 }
 
 impl Default for Spec {
@@ -118,6 +120,7 @@ impl Default for Spec {
             exit_status: 0,
             key_algorithms: None,
             inactivity_timeout: None,
+            forwarding: false,
         }
     }
 }
@@ -138,6 +141,8 @@ pub struct Observed {
     pub connections_ended: usize,
     /// How each ended connection's session finished, as russh reported it.
     pub endings: Vec<String>,
+    /// Where clients asked to be connected onward, accepted or not.
+    pub forwards: Vec<(String, u32)>,
 }
 
 pub struct TestServer {
@@ -178,6 +183,7 @@ pub async fn start(spec: Spec) -> TestServer {
                 spec: spec.clone(),
                 observed: shared.clone(),
                 kbd_round: 0,
+                relayed: std::collections::HashSet::new(),
             };
             let config = config.clone();
             tokio::spawn(async move {
@@ -199,6 +205,8 @@ struct Connection {
     spec: Arc<Spec>,
     observed: Arc<Mutex<Observed>>,
     kbd_round: usize,
+    /// Channels relayed onward: their data goes to the relay, never to the echo.
+    relayed: std::collections::HashSet<ChannelId>,
 }
 
 fn reject() -> Auth {
@@ -325,6 +333,47 @@ impl server::Handler for Connection {
         Ok(())
     }
 
+    /// Connects onward and relays both ways when forwarding is on; refuses otherwise, as a
+    /// gateway with forwarding off does.
+    async fn channel_open_direct_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        host_to_connect: &str,
+        port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: server::ChannelOpenHandle,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.observe(|o| {
+            o.forwards
+                .push((host_to_connect.to_owned(), port_to_connect));
+        });
+        let target = u16::try_from(port_to_connect)
+            .ok()
+            .filter(|_| self.spec.forwarding);
+        let Some(port) = target else {
+            reply
+                .reject(russh::ChannelOpenFailure::AdministrativelyProhibited)
+                .await;
+            return Ok(());
+        };
+        match tokio::net::TcpStream::connect((host_to_connect, port)).await {
+            Ok(mut onward) => {
+                self.relayed.insert(channel.id());
+                reply.accept().await;
+                tokio::spawn(async move {
+                    let mut stream = channel.into_stream();
+                    let _ = tokio::io::copy_bidirectional(&mut stream, &mut onward).await;
+                });
+            }
+            Err(_) => {
+                reply.reject(russh::ChannelOpenFailure::ConnectFailed).await;
+            }
+        }
+        Ok(())
+    }
+
     async fn pty_request(
         &mut self,
         channel: ChannelId,
@@ -382,6 +431,9 @@ impl server::Handler for Connection {
         data: &[u8],
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if self.relayed.contains(&channel) {
+            return Ok(());
+        }
         self.observe(|o| o.bytes_received += data.len());
         if data == EXIT_COMMAND {
             session.exit_status_request(channel, self.spec.exit_status)?;

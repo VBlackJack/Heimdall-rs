@@ -62,6 +62,9 @@ pub(crate) enum HandlerError {
     Russh(#[from] russh::Error),
     #[error("host key rejected")]
     HostKey(HostKeyRejection),
+    /// A gateway refused to open the connection onward.
+    #[error("the gateway refused to connect onward")]
+    Refused,
 }
 
 pub(crate) struct ClientHandler {
@@ -202,6 +205,7 @@ fn map_handler_error(
                 recorded: algorithm_names(&algorithms),
             }
         }
+        HandlerError::Refused => ConnectError::JumpRefused { host, port },
         HandlerError::Russh(russh::Error::IO(error)) => ConnectError::Network(error),
         HandlerError::Russh(error) => ConnectError::Protocol(error),
     }
@@ -248,6 +252,55 @@ pub async fn establish<P: Prompter>(
     prompter: Arc<P>,
     cancel: CancellationToken,
 ) -> Result<Connection, ConnectError> {
+    establish_via(&[], profile, options, prompter, cancel).await
+}
+
+/// Connects to `profile` through `route`, the gateways nearest first: each one, once its host
+/// key is checked and the user proven, opens a connection onward to the next, and the next
+/// runs its own SSH over it, its own host key checked and its own user proven. The server
+/// sees the last gateway as its client; no gateway sees what passes, only that it passes.
+///
+/// # Errors
+///
+/// See [`ConnectError`]. A host key error names the host it is about, gateway or server;
+/// [`ConnectError::JumpRefused`] names the host a gateway would not reach.
+pub async fn establish_via<P: Prompter>(
+    route: &[SshProfile],
+    profile: &SshProfile,
+    options: &ConnectOptions,
+    prompter: Arc<P>,
+    cancel: CancellationToken,
+) -> Result<Connection, ConnectError> {
+    // Reached over TCP: the nearest gateway, or the server itself without one.
+    let (first, onward): (&SshProfile, Vec<&SshProfile>) = match route.split_first() {
+        Some((nearest, rest)) => (
+            nearest,
+            rest.iter().chain(std::iter::once(profile)).collect(),
+        ),
+        None => (profile, Vec::new()),
+    };
+    let mut handle = hop(first, None, options, prompter.as_ref(), &cancel).await?;
+    for next in onward {
+        // The gateway's handle can go once the next hop runs: its session lives on for as
+        // long as the connection onward is open, and ends when the hop after it disconnects.
+        handle = hop(next, Some(&handle), options, prompter.as_ref(), &cancel).await?;
+    }
+    Ok(Connection::new(handle))
+}
+
+/// Originator address reported to a gateway when it is asked to connect onward: the client
+/// has no address of its own to give inside the tunnel.
+const ORIGINATOR_ADDRESS: &str = "127.0.0.1";
+
+/// Connects to `profile` and authenticates, over TCP or, when `carrier` is given, over a
+/// connection it opens onward.
+async fn hop<P: Prompter>(
+    profile: &SshProfile,
+    carrier: Option<&client::Handle<ClientHandler>>,
+    options: &ConnectOptions,
+    prompter: &P,
+    cancel: &CancellationToken,
+) -> Result<client::Handle<ClientHandler>, ConnectError> {
     let host = validate_host(&profile.host)?;
     let port = profile.port;
     let recorded = KnownHosts::new(&options.known_hosts).recorded(&host, port)?;
@@ -269,7 +322,26 @@ pub async fn establish<P: Prompter>(
         ..client::Config::default()
     });
 
-    let connecting = client::connect(config, (host.as_str(), port), handler);
+    let connecting = async {
+        match carrier {
+            None => client::connect(config, (host.as_str(), port), handler).await,
+            Some(carrier) => {
+                let channel = carrier
+                    .channel_open_direct_tcpip(
+                        host.as_str(),
+                        u32::from(port),
+                        ORIGINATOR_ADDRESS,
+                        0,
+                    )
+                    .await
+                    .map_err(|error| match error {
+                        russh::Error::ChannelOpenFailure(_) => HandlerError::Refused,
+                        other => HandlerError::Russh(other),
+                    })?;
+                client::connect_stream(config, channel.into_stream(), handler).await
+            }
+        }
+    };
     let mut handle = tokio::select! {
         () = cancel.cancelled() => return Err(ConnectError::Cancelled),
         result = tokio::time::timeout(options.connect_timeout, connecting) => match result {
@@ -286,23 +358,23 @@ pub async fn establish<P: Prompter>(
             host: host.clone(),
             port,
         };
-        ask(prompter.username(question), &cancel, options.prompt_timeout).await?
+        ask(prompter.username(question), cancel, options.prompt_timeout).await?
     };
 
     auth::authenticate(AuthContext {
         handle: &mut handle,
-        prompter: prompter.as_ref(),
+        prompter,
         host: &host,
         port,
         username: &username,
         key_path: profile.key_path.as_deref(),
         options,
-        cancel: &cancel,
+        cancel,
         server_message: &server_message,
     })
     .await?;
 
-    Ok(Connection::new(handle))
+    Ok(handle)
 }
 
 #[cfg(test)]

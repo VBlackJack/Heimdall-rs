@@ -208,3 +208,4 @@ ui-error-local-shell = The local shell could not be started: { $detail }
 ui-import-skip-elevation = runs elevated, not supported yet
 ui-import-skip-post-connect = runs commands once started, not supported yet
 ui-import-skip-unsafe-local = its program, arguments or folder cannot be run as written (relative path, quote, NUL character, or a folder on another machine)
+ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.
