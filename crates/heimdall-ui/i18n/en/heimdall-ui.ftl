@@ -215,3 +215,4 @@ ui-dialog-local-body = The profile { $name } runs the command below. Heimdall ru
 ui-dialog-local-folder = Starts in: { $folder }
 ui-dialog-local-rereads = This program reads its command line again with its own rules: & | ^ < > and % in it are commands, not text.
 ui-dialog-local-confirm = Run
+ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.

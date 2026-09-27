@@ -113,6 +113,13 @@ pub enum UiError {
     PtyRefused,
     /// No shell started.
     ShellRefused,
+    /// A gateway on the way would not connect onward to `host`.
+    JumpRefused {
+        /// Host the gateway was asked to reach.
+        host: String,
+        /// Port.
+        port: u16,
+    },
     /// The server refused a subsystem, such as SFTP.
     SubsystemRefused {
         /// Subsystem asked for.
@@ -180,6 +187,7 @@ impl From<ConnectError> for UiError {
             ConnectError::PtyRefused => Self::PtyRefused,
             ConnectError::ShellRefused => Self::ShellRefused,
             ConnectError::SubsystemRefused { name } => Self::SubsystemRefused { name },
+            ConnectError::JumpRefused { host, port } => Self::JumpRefused { host, port },
             ConnectError::Protocol(source) => Self::Protocol {
                 detail: source.to_string(),
             },

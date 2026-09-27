@@ -123,6 +123,15 @@ pub enum ConnectError {
         /// Subsystem asked for.
         name: String,
     },
+    /// A gateway on the way refused to open a connection onward, to the next gateway or to
+    /// the server: forwarding is off there, or the next host cannot be reached from it.
+    #[error("the gateway refused to reach {host}:{port}")]
+    JumpRefused {
+        /// Host the gateway was asked to reach.
+        host: String,
+        /// Port.
+        port: u16,
+    },
     /// Any other SSH protocol error.
     #[error("ssh: {0}")]
     Protocol(#[source] russh::Error),

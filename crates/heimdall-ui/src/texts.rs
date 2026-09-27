@@ -23,6 +23,7 @@ use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
+use heimdall_core::profile::display_address;
 use heimdall_sftp::local_name::LocalNameError;
 use heimdall_sftp::protocol::StatusCode;
 use heimdall_ssh::AuthMethod;
@@ -89,6 +90,10 @@ pub fn error(error: &UiError) -> String {
         UiError::PromptTimedOut => fl!("ui-error-prompt-timeout"),
         UiError::PtyRefused => fl!("ui-error-pty-refused"),
         UiError::ShellRefused => fl!("ui-error-shell-refused"),
+        UiError::JumpRefused { host, port } => fl!(
+            "ui-error-jump-refused",
+            target = display_address(&server_text(host), *port)
+        ),
         UiError::SubsystemRefused { name } => {
             fl!("ui-error-subsystem-refused", name = server_text(name))
         }
