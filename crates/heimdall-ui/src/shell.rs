@@ -52,7 +52,7 @@ use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
     Column, button, center, checkbox, column, container, mouse_area, opaque, operation, pick_list,
-    pin, row, scrollable, stack, text, text_input, tooltip,
+    pin, responsive, row, scrollable, stack, text, text_input, tooltip,
 };
 use iced::{Color, Element, Length, Point, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
@@ -109,6 +109,11 @@ const ELLIPSIS: &str = "...";
 
 /// Opacity of the veil behind a dialog.
 const VEIL_ALPHA: f32 = 0.6;
+
+/// Height of the window a dialog's scrolling fields leave to the rest: the card's padding
+/// (24), the buttons (31), the error line (21) with the spacing around them (16), and a
+/// margin of a spacing and a half above and below the card.
+const DIALOG_RESERVED_HEIGHT: f32 = 112.0;
 
 /// Window events and the window's shortcuts.
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
@@ -379,12 +384,21 @@ pub struct Shell {
 enum DialogFocus {
     /// The name of a new folder or renamed entry.
     Name,
-    /// A profile form, opened or being typed into.
-    Profile,
-    /// A profile form refused for this reason: the field to fix.
-    ProfileError(DraftError),
+    /// A form, opened or being typed into.
+    Form(DialogForm),
+    /// A form refused for this reason: the field to fix.
+    FormError(DialogForm, DraftError),
     /// The vault's master password.
     Vault,
+}
+
+/// A dialog made of fields, focused on its name when it opens.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DialogForm {
+    /// A session's.
+    Profile,
+    /// An SSH gateway's.
+    Gateway,
 }
 
 impl Shell {
@@ -584,8 +598,10 @@ impl Shell {
     }
 
     /// What the dialogs show that the window holds: typed secrets, and where passwords go.
-    fn forms(&self) -> Forms<'_> {
+    /// The dialogs' inputs, for a window `height` high.
+    fn forms(&self, height: f32) -> Forms<'_> {
         Forms {
+            fields_height: (height - DIALOG_RESERVED_HEIGHT).max(0.0),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
             gateway_password: &self.gateway_password,
@@ -769,25 +785,17 @@ impl Shell {
         let (next, field) = match &self.app.dialog {
             Some(Dialog::AskName { .. }) => (Some(DialogFocus::Name), name_field_id()),
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
-            Some(Dialog::EditProfile {
-                error: Some(error), ..
-            }) => (
-                Some(DialogFocus::ProfileError(*error)),
-                profile_field_id(error.field()),
-            ),
-            Some(Dialog::EditProfile { error: None, .. }) => {
-                if matches!(
-                    self.dialog_focus,
-                    Some(DialogFocus::Profile | DialogFocus::ProfileError(_))
-                ) {
-                    // Typing cleared the error: the focus stays where the user put it.
-                    self.dialog_focus = Some(DialogFocus::Profile);
-                    return Task::none();
+            Some(Dialog::EditProfile { error, .. }) => {
+                match self.form_focus(DialogForm::Profile, *error, profile_field_id) {
+                    Some(focus) => focus,
+                    None => return Task::none(),
                 }
-                (
-                    Some(DialogFocus::Profile),
-                    profile_field_id(ProfileField::Name),
-                )
+            }
+            Some(Dialog::EditGateway { error, .. }) => {
+                match self.form_focus(DialogForm::Gateway, *error, gateway_field_id) {
+                    Some(focus) => focus,
+                    None => return Task::none(),
+                }
             }
             _ => (None, name_field_id()),
         };
@@ -800,6 +808,31 @@ impl Shell {
         }
         // Selected, so typing replaces what is there: a renamed entry's name, a wrong value.
         operation::focus(field.clone()).chain(operation::select_all(field))
+    }
+
+    /// Where a form's focus goes: its name when it opens, the field to fix when refused,
+    /// and nowhere once the user types, which clears the error.
+    fn form_focus(
+        &mut self,
+        form: DialogForm,
+        error: Option<DraftError>,
+        field_id: fn(ProfileField) -> iced::widget::Id,
+    ) -> Option<(Option<DialogFocus>, iced::widget::Id)> {
+        if let Some(error) = error {
+            return Some((
+                Some(DialogFocus::FormError(form, error)),
+                field_id(error.field()),
+            ));
+        }
+        if matches!(
+            self.dialog_focus,
+            Some(DialogFocus::Form(shown) | DialogFocus::FormError(shown, _)) if shown == form
+        ) {
+            // Typing cleared the error: the focus stays where the user put it.
+            self.dialog_focus = Some(DialogFocus::Form(form));
+            return None;
+        }
+        Some((Some(DialogFocus::Form(form)), field_id(ProfileField::Name)))
     }
 
     /// Feeds the events of a connection attempt back as messages, until the tab closes: the
@@ -914,18 +947,20 @@ impl Shell {
         // widgets under a dialog, such as how far a list is scrolled.
         let mut layers = stack![body];
         if let Some(dialog) = &self.app.dialog {
+            // Built for the window's height: a long form scrolls above its buttons.
             layers = layers.push(opaque(
-                center(card(dialog_view(dialog, &self.forms()))).style(|_theme: &Theme| {
-                    container::Style {
-                        background: Some(
-                            Color {
-                                a: VEIL_ALPHA,
-                                ..Color::BLACK
-                            }
-                            .into(),
-                        ),
-                        ..container::Style::default()
-                    }
+                container(responsive(move |size| {
+                    center(card(dialog_view(dialog, &self.forms(size.height)))).into()
+                }))
+                .style(|_theme: &Theme| container::Style {
+                    background: Some(
+                        Color {
+                            a: VEIL_ALPHA,
+                            ..Color::BLACK
+                        }
+                        .into(),
+                    ),
+                    ..container::Style::default()
                 }),
             ));
         }
@@ -1392,6 +1427,8 @@ struct Forms<'a> {
     gateways: &'a [SshGateway],
     /// Whether a password typed now can be saved.
     passwords: PasswordStore,
+    /// The most a dialog's scrolling fields may take, so its buttons stay in the window.
+    fields_height: f32,
 }
 
 /// Whether a password typed now can be saved.
@@ -1990,11 +2027,14 @@ fn profile_form<'a>(
     form = form
         .push(section(fl!("ui-profile-section-organization"), None))
         .push(form_field(draft, ProfileField::Group));
+    // The fields scroll; the error and the buttons stay in view under them, as the C#
+    // dialog's footer does.
+    let mut footer = Column::new().spacing(SPACING);
     if let Some(error) = error {
-        form = form.push(text(texts::draft_error(error)).style(text::danger));
+        footer = footer.push(text(texts::draft_error(error)).style(text::danger));
     }
     // As in C#: Cancel, then Save; a profile is deleted from its menu.
-    form = form.push(
+    footer = footer.push(
         row![
             iced::widget::space::horizontal(),
             button(text(fl!("ui-dialog-cancel-button")))
@@ -2004,9 +2044,15 @@ fn profile_form<'a>(
         ]
         .spacing(SPACING),
     );
-    scrollable(form.padding(iced::Padding::ZERO.right(PADDING)))
-        .height(Length::Shrink)
-        .into()
+    column![
+        container(
+            scrollable(form.padding(iced::Padding::ZERO.right(PADDING))).height(Length::Shrink)
+        )
+        .max_height(forms.fields_height),
+        footer,
+    ]
+    .spacing(SPACING)
+    .into()
 }
 
 /// Asks for a name: Enter in the field confirms, like the button.
@@ -2376,6 +2422,53 @@ mod tests {
                 Some(Message::DialogKey { confirm: false })
             ),
             "a field taking Escape does not keep its dialog open"
+        );
+    }
+
+    #[test]
+    fn the_gateway_dialog_opens_on_its_name_and_a_refused_one_on_the_field_to_fix() {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut shell = Shell::with_app(App::new(AppConfig {
+            profiles_file: dir.path().join("profiles.toml"),
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: INITIAL_GRID,
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        }));
+        let _ = shell.update(Message::App(AppMessage::NewProfile));
+        let _ = shell.update(Message::App(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+        assert_eq!(
+            shell.dialog_focus,
+            Some(DialogFocus::Form(DialogForm::Profile))
+        );
+        // Added from the session's form: the gateway's name, not the form's field.
+        let _ = shell.update(Message::App(AppMessage::NewGateway));
+        assert_eq!(
+            shell.dialog_focus,
+            Some(DialogFocus::Form(DialogForm::Gateway))
+        );
+        let _ = shell.update(Message::SaveGatewayForm);
+        let Some(Dialog::EditGateway {
+            error: Some(error), ..
+        }) = &shell.app.dialog
+        else {
+            panic!("an empty gateway is refused: {:?}", shell.app.dialog);
+        };
+        let error = *error;
+        assert_eq!(
+            shell.dialog_focus,
+            Some(DialogFocus::FormError(DialogForm::Gateway, error))
+        );
+        // Typing clears the error; the focus stays where the user put it.
+        let _ = shell.update(Message::App(AppMessage::GatewayField {
+            field: ProfileField::Name,
+            value: "b".to_owned(),
+        }));
+        assert_eq!(
+            shell.dialog_focus,
+            Some(DialogFocus::Form(DialogForm::Gateway))
         );
     }
 }

@@ -310,3 +310,49 @@ fn a_gateway_is_added_from_the_form_and_the_tree_says_via_it() {
     let mut ui = simulator(&shell);
     ui.find("via bastion").expect("the tree's badge");
 }
+
+#[test]
+fn a_form_taller_than_the_window_scrolls_above_buttons_that_stay_in_view() {
+    // Shorter than an SSH form routed through a gateway.
+    const SHORT_WINDOW: Size = Size::new(1200.0, 560.0);
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    let _ = shell.update(app(AppMessage::NewGateway));
+    for (field, value) in [
+        (ProfileField::Name, "bastion"),
+        (ProfileField::Host, "bastion.lab"),
+        (ProfileField::Username, "jump"),
+    ] {
+        let _ = shell.update(app(AppMessage::GatewayField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let _ = shell.update(Message::SaveGatewayForm);
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = Simulator::with_size(settings, SHORT_WINDOW, shell.view());
+    let folder = ui.find("Folder").expect("the last field");
+    assert!(
+        folder.bounds().y + folder.bounds().height > SHORT_WINDOW.height,
+        "the form is taller than the window: {:?}",
+        folder.bounds()
+    );
+    for button in ["Cancel", "Save"] {
+        let found = ui.find(button).expect(button);
+        assert!(
+            found.bounds().y + found.bounds().height <= SHORT_WINDOW.height,
+            "{button} is cut off at {:?}",
+            found.bounds()
+        );
+    }
+    ui.click("Save").expect("save button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::SaveProfileForm))
+    );
+}
