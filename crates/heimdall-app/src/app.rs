@@ -1317,7 +1317,17 @@ impl App {
             MouseAction::Motion {
                 held: Some(MouseButton::Left),
             } if tab.selecting => tab.terminal.extend_selection(input.at),
-            MouseAction::Release(MouseButton::Left) => tab.selecting = false,
+            // Selecting copies, as in PuTTY and MobaXterm: no shortcut to learn.
+            MouseAction::Release(MouseButton::Left) => {
+                let selected = std::mem::take(&mut tab.selecting);
+                if selected && let Some(text) = tab.terminal.selected_text() {
+                    return vec![Effect::WriteClipboard(text)];
+                }
+            }
+            // A right click pastes, through the same checks as the paste shortcut.
+            MouseAction::Press(MouseButton::Right) => {
+                return vec![Effect::ReadClipboard { tab: tab_id }];
+            }
             MouseAction::WheelUp | MouseAction::WheelDown => {
                 let up = input.action == MouseAction::WheelUp;
                 if tab.phase == Phase::Connected
