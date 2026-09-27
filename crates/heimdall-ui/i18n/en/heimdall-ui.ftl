@@ -201,3 +201,7 @@ ui-error-security-refused = The server refused the security Heimdall requires (N
 ui-error-rdp-protocol = RDP error: { $detail }
 ui-error-vnc-protocol = VNC error: { $detail }
 ui-session-vnc-unencrypted = Not encrypted: this desktop and what you type cross the network in clear.
+ui-sidebar-local-shell-button = Local shell
+ui-local-shell-name = Local shell
+ui-local-starting = Starting { $name }...
+ui-error-local-shell = The local shell could not be started: { $detail }

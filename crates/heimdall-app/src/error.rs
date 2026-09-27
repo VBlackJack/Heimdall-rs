@@ -58,6 +58,11 @@ pub enum UiError {
         /// What failed, in the library's words.
         detail: String,
     },
+    /// A local shell could not be started.
+    LocalShell {
+        /// Operating system message.
+        detail: String,
+    },
     /// The server refused the security the client requires (an RDP server without Network
     /// Level Authentication).
     SecurityRefused {

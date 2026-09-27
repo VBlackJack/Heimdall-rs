@@ -48,6 +48,7 @@ use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ids::{AttemptId, QuestionId, TabId};
+use crate::local_driver::{LocalRequest, LocalShell};
 use crate::profile_draft::{DraftError, ProfileDraft, ProfileField};
 use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
@@ -56,6 +57,7 @@ use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
 
 mod files_tab;
+mod local_tab;
 mod profiles;
 mod rdp_tab;
 mod telnet_tab;
@@ -83,7 +85,7 @@ pub struct AppConfig {
     pub agent: AgentSource,
     /// Grid size before the first layout is known.
     pub initial_grid: GridSize,
-    /// Local folder a Files tab starts in.
+    /// Local folder a Files tab and a local shell start in.
     pub files_start: PathBuf,
 }
 
@@ -135,6 +137,8 @@ pub enum Message {
     OpenTelnet(ProfileId),
     /// Open a VNC tab for a saved VNC profile.
     OpenVnc(ProfileId),
+    /// Open a local shell tab.
+    OpenLocal(LocalShell),
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
         /// Tab.
@@ -266,6 +270,8 @@ impl fmt::Debug for Message {
             Self::OpenFiles(id) => write!(f, "OpenFiles({id})"),
             Self::OpenRdp(id) => write!(f, "OpenRdp({id})"),
             Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
+            // The arguments may carry anything: only the program is shown.
+            Self::OpenLocal(shell) => write!(f, "OpenLocal({:?})", shell.program),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
@@ -359,6 +365,15 @@ pub enum Effect {
         /// What to connect to.
         request: Box<VncRequest>,
     },
+    /// Start a local shell and feed its events back as [`Message::Connection`].
+    ConnectLocal {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to run.
+        request: Box<LocalRequest>,
+    },
     /// Deliver an answer through the registry.
     Answer {
         /// Question.
@@ -435,6 +450,9 @@ impl fmt::Debug for Effect {
             }
             Self::ConnectVnc { tab, attempt, .. } => {
                 write!(f, "ConnectVnc({}, {})", tab.value(), attempt.value())
+            }
+            Self::ConnectLocal { tab, attempt, .. } => {
+                write!(f, "ConnectLocal({}, {})", tab.value(), attempt.value())
             }
             Self::Answer { question, answer } => {
                 write!(f, "Answer({}, {answer:?})", question.value())
@@ -622,6 +640,8 @@ pub enum TabProfile {
     Telnet(TelnetProfile),
     /// A VNC remote desktop tab.
     Vnc(VncProfile),
+    /// A local shell tab.
+    Local(LocalShell),
 }
 
 impl TabProfile {
@@ -633,28 +653,19 @@ impl TabProfile {
             Self::Rdp(profile) => &profile.name,
             Self::Telnet(profile) => &profile.name,
             Self::Vnc(profile) => &profile.name,
+            Self::Local(shell) => &shell.name,
         }
     }
 
-    /// Host.
+    /// Host and port; `None` for a local shell, which reaches nothing.
     #[must_use]
-    pub fn host(&self) -> &str {
+    pub fn endpoint(&self) -> Option<(&str, u16)> {
         match self {
-            Self::Ssh(profile) => &profile.host,
-            Self::Rdp(profile) => &profile.host,
-            Self::Telnet(profile) => &profile.host,
-            Self::Vnc(profile) => &profile.host,
-        }
-    }
-
-    /// Port.
-    #[must_use]
-    pub fn port(&self) -> u16 {
-        match self {
-            Self::Ssh(profile) => profile.port,
-            Self::Rdp(profile) => profile.port,
-            Self::Telnet(profile) => profile.port,
-            Self::Vnc(profile) => profile.port,
+            Self::Ssh(profile) => Some((&profile.host, profile.port)),
+            Self::Rdp(profile) => Some((&profile.host, profile.port)),
+            Self::Telnet(profile) => Some((&profile.host, profile.port)),
+            Self::Vnc(profile) => Some((&profile.host, profile.port)),
+            Self::Local(_) => None,
         }
     }
 
@@ -664,8 +675,9 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => profile.username.as_deref(),
             Self::Rdp(profile) => profile.username.as_deref(),
-            // Telnet asks for its account in the session; VNC has none.
-            Self::Telnet(_) | Self::Vnc(_) => None,
+            // Telnet asks for its account in the session; VNC has none; a local shell runs
+            // as the user running Heimdall.
+            Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) => None,
         }
     }
 }
@@ -875,6 +887,7 @@ impl App {
             Message::OpenRdp(id) => self.open_rdp(&id),
             Message::OpenTelnet(id) => self.open_telnet(&id),
             Message::OpenVnc(id) => self.open_vnc(&id),
+            Message::OpenLocal(shell) => self.open_local(shell),
             Message::DesktopResize { tab, width, height } => {
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
                     pane.resize(width, height);

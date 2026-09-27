@@ -28,6 +28,7 @@ mod error;
 mod event;
 pub mod files;
 mod ids;
+pub mod local_driver;
 pub mod profile_draft;
 pub mod rdp_driver;
 mod sink;
