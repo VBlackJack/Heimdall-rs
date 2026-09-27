@@ -24,6 +24,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use heimdall_core::profile::{SshProfile, display_address};
+use heimdall_files::RemoteSession;
 use heimdall_sftp::{ClientConfig, SftpClient};
 use heimdall_ssh::{
     ConnectError, ConnectOptions, KeyboardInteractiveQuestion, PassphraseQuestion,
@@ -369,6 +370,7 @@ async fn open_files(
     match SftpClient::start(stream, ClientConfig::default()).await {
         Ok(client) => {
             log::info!("SFTP session open to {target}");
+            let client = RemoteSession::Sftp(client);
             let _ = events.send(ConnectionEvent::FilesReady { client }).await;
         }
         Err(error) => {

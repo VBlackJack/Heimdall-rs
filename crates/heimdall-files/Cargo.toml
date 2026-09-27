@@ -1,0 +1,20 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+[package]
+name = "heimdall-files"
+description = "Remote file systems behind one interface: what the Files tab asks of a server, whatever the protocol."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+heimdall-sftp.workspace = true
+tokio-util.workspace = true
+
+[lints]
+workspace = true

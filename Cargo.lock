@@ -2102,6 +2102,7 @@ name = "heimdall-app"
 version = "0.1.0"
 dependencies = [
  "heimdall-core",
+ "heimdall-files",
  "heimdall-rdp",
  "heimdall-remote",
  "heimdall-sftp",
@@ -2125,6 +2126,14 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
+name = "heimdall-files"
+version = "0.1.0"
+dependencies = [
+ "heimdall-sftp",
+ "tokio-util",
 ]
 
 [[package]]
@@ -2211,6 +2220,7 @@ version = "0.1.0"
 dependencies = [
  "heimdall-app",
  "heimdall-core",
+ "heimdall-files",
  "heimdall-i18n",
  "heimdall-rdp",
  "heimdall-sftp",

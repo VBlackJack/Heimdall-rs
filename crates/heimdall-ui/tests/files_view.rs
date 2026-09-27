@@ -26,6 +26,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::AgentSource;
@@ -42,7 +43,7 @@ const WINDOW: Size = Size::new(1200.0, 720.0);
 /// Environment variable naming a directory for PNG snapshots.
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
-async fn idle_client() -> SftpClient {
+async fn idle_client() -> RemoteSession {
     let (client_end, mut server) = tokio::io::duplex(4096);
     tokio::spawn(async move {
         let mut length = [0; 4];
@@ -57,9 +58,11 @@ async fn idle_client() -> SftpClient {
         server.write_all(&version.encode()).await.expect("version");
         std::future::pending::<()>().await;
     });
-    SftpClient::start(client_end, ClientConfig::default())
-        .await
-        .expect("started")
+    RemoteSession::Sftp(
+        SftpClient::start(client_end, ClientConfig::default())
+            .await
+            .expect("started"),
+    )
 }
 
 fn app(dir: &Path) -> App {
@@ -93,7 +96,6 @@ fn remote(name: &str, kind: EntryKind, size: u64) -> RemoteEntry {
         kind,
         size: Some(size),
         modified: None,
-        permissions: None,
     }
 }
 
