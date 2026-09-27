@@ -49,6 +49,7 @@ fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
     }
     match physical {
         Physical::Code(Code::KeyC) => Some('c'),
+        Physical::Code(Code::KeyL) => Some('l'),
         Physical::Code(Code::KeyV) => Some('v'),
         Physical::Code(Code::KeyW) => Some('w'),
         _ => None,
@@ -87,6 +88,21 @@ pub enum WindowShortcut {
     PreviousTab,
     /// Close the tab shown: Ctrl+Shift+W.
     CloseTab,
+}
+
+/// Whether `key` with `modifiers` is Ctrl+L, which locks the workspace as in the C#
+/// Heimdall. Not a window shortcut: the session still gets it (a shell clears its screen),
+/// and without a master password it only does that.
+#[must_use]
+pub fn is_lock_key(
+    key: &keyboard::Key,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && letter(key, physical) == Some('l')
 }
 
 /// The window shortcut `key` with `modifiers` stands for, if any.
@@ -239,7 +255,7 @@ mod tests {
     /// A physical key no shortcut reads.
     const ANY_PLACE: Physical = Physical::Code(Code::F24);
 
-    use super::{Shortcut, WindowShortcut, key_input, shortcut, window_shortcut};
+    use super::{Shortcut, WindowShortcut, is_lock_key, key_input, shortcut, window_shortcut};
 
     fn character(c: &str) -> keyboard::Key {
         keyboard::Key::Character(c.into())
@@ -455,6 +471,32 @@ mod tests {
             window_shortcut(&tab, ANY_PLACE, Modifiers::CTRL | Modifiers::ALT),
             None,
             "AltGr is Ctrl+Alt on Windows"
+        );
+    }
+
+    #[test]
+    fn ctrl_l_is_the_lock_key_on_any_layout_and_only_alone() {
+        assert!(is_lock_key(&character("l"), ANY_PLACE, Modifiers::CTRL));
+        assert!(is_lock_key(
+            &keyboard::Key::Character("\u{0434}".into()),
+            Physical::Code(Code::KeyL),
+            Modifiers::CTRL
+        ));
+        assert!(!is_lock_key(&character("l"), ANY_PLACE, Modifiers::empty()));
+        assert!(!is_lock_key(
+            &character("L"),
+            ANY_PLACE,
+            Modifiers::CTRL | Modifiers::SHIFT
+        ));
+        assert!(
+            !is_lock_key(&character("l"), ANY_PLACE, Modifiers::CTRL | Modifiers::ALT),
+            "AltGr is Ctrl+Alt on Windows"
+        );
+        assert!(!is_lock_key(&character("k"), ANY_PLACE, Modifiers::CTRL));
+        assert_eq!(
+            window_shortcut(&character("l"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "the terminal keeps Ctrl+L"
         );
     }
 

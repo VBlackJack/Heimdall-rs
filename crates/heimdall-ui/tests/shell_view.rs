@@ -480,21 +480,152 @@ fn create_vault(core: &mut App) {
     core.update(AppMessage::ShowVault);
     let effects = core.update(AppMessage::SubmitVault {
         password: Secret::new(MASTER.to_owned()),
+        new: None,
         confirm: Some(Secret::new(MASTER.to_owned())),
     });
-    let [
-        Effect::OpenVault {
-            path,
-            password,
-            create,
-        },
-    ] = effects.as_slice()
+    let Ok(
+        [
+            Effect::OpenVault {
+                path,
+                password,
+                job,
+            },
+        ],
+    ) = <[Effect; 1]>::try_from(effects)
     else {
-        panic!("expected OpenVault, got {effects:?}");
+        panic!("expected OpenVault");
     };
     let runtime = tokio::runtime::Runtime::new().expect("runtime");
-    let result = runtime.block_on(open_vault(path.clone(), password.clone(), *create));
+    let result = runtime.block_on(open_vault(path, password, job));
     core.update(AppMessage::VaultOpened(result));
+}
+
+#[test]
+fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Settings").expect("the sidebar's settings");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ShowSettings))
+        );
+    }
+    let _ = shell.update(Message::ShowSettings);
+    assert!(shell.settings_shown());
+    snapshot(&shell, "settings-vault-disabled.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Security",
+            "Master password",
+            "Encrypt your stored credentials under a master password. You will be asked for it each time the app starts.",
+            "Disabled",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("Lock").is_err(), "nothing to lock yet");
+        ui.click("Enable master password").expect("enable");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ShowVault)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ShowVault));
+    let enable_clicked = |shell: &Shell| {
+        let mut ui = simulator(shell);
+        ui.click("Enable").expect("the dialog's button");
+        ui.into_messages()
+            .any(|message| matches!(message, Message::SubmitVault))
+    };
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Set a master password",
+            "New master password",
+            "Confirm master password",
+            "Use at least 12 characters.",
+        ] {
+            ui.find(label).expect(label);
+        }
+    }
+    assert!(!enable_clicked(&shell), "nothing typed");
+    let type_new = |shell: &mut Shell, new: &str, confirm: &str| {
+        for (index, value) in [(0, new), (1, confirm)] {
+            let _ = shell.update(Message::VaultField {
+                index,
+                value: value.to_owned(),
+            });
+        }
+    };
+    type_new(&mut shell, "short", "short");
+    simulator(&shell)
+        .find("Too short: use at least 12 characters.")
+        .expect("too short");
+    type_new(&mut shell, "alllowercase", "alllowercase");
+    simulator(&shell)
+        .find("Use at least 3 character types (lower, upper, digit, symbol), or 20 characters or more.")
+        .expect("too simple");
+    assert!(!enable_clicked(&shell), "refused by the rules");
+    type_new(&mut shell, "Mixed-case 12", "Mixed-case 13");
+    simulator(&shell)
+        .find("Password strength is sufficient.")
+        .expect("strong enough");
+    assert!(!enable_clicked(&shell), "not typed twice alike");
+    type_new(&mut shell, "Mixed-case 12", "Mixed-case 12");
+    snapshot(&shell, "vault-enable.png");
+    assert!(enable_clicked(&shell));
+}
+
+#[test]
+fn the_lock_hides_the_window_until_the_master_password_is_typed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    create_vault(&mut core);
+    // Two sessions: behind the lock, Ctrl+Tab would move between them.
+    open(&mut core, "a");
+    open(&mut core, "a");
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Lock")
+            .expect("the sidebar's lock, once a master password is set");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::LockVault)))
+        );
+    }
+    let _ = shell.update(Message::LockKey);
+    assert!(shell.app().is_locked());
+    snapshot(&shell, "vault-locked.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Workspace locked").expect("the lock screen");
+        ui.find("Enter your master password to unlock.")
+            .expect("says how");
+        assert!(ui.find("Profiles").is_err(), "the window is hidden");
+        assert!(ui.find("Cancel").is_err(), "no way around it");
+    }
+    let shown = shell.app().active;
+    let _ = shell.update(Message::Shortcut(WindowShortcut::NextTab));
+    assert_eq!(
+        shell.app().active,
+        shown,
+        "the window's keys do nothing behind the lock"
+    );
+}
+
+#[test]
+fn showing_a_tab_leaves_the_settings() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::ShowSettings);
+    assert!(shell.settings_shown());
+    let _ = shell.update(Message::App(AppMessage::SelectTab(tab)));
+    assert!(!shell.settings_shown(), "the tab clicked is shown");
 }
 
 /// The password a new connection to profile `a` is answered with by itself, if any.

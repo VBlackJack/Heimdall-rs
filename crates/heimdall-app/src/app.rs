@@ -77,8 +77,9 @@ pub use local_tab::LocalConfirmation;
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
 pub use vault::{
-    MIN_MASTER_PASSWORD_CHARS, OpenedVault, SystemCredentials, VAULT_FILE_NAME, VaultDialog,
-    VaultMode, VaultProblem, VaultStatus, open_vault,
+    LONG_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
+    OpenedVault, SystemCredentials, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, master_password_problem, open_vault,
 };
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
@@ -340,11 +341,17 @@ pub enum Message {
     },
     /// Open the vault dialog: unlock the vault, or create it.
     ShowVault,
-    /// The master password typed into the vault dialog.
+    /// Open the dialog changing the master password.
+    ChangeMasterPassword,
+    /// Open the dialog removing the master password.
+    DisableMasterPassword,
+    /// What was typed into the vault dialog.
     SubmitVault {
-        /// Password.
+        /// The first field: the master password, or the new one when creating.
         password: Secret,
-        /// The same, typed again, when creating.
+        /// The new master password, when changing it.
+        new: Option<Secret>,
+        /// The new master password typed again, when creating or changing it.
         confirm: Option<Secret>,
     },
     /// The vault was opened, or could not be.
@@ -434,6 +441,8 @@ impl fmt::Debug for Message {
             Self::RequestDeleteProfile(id) => write!(f, "RequestDeleteProfile({id})"),
             Self::CopyProfile { id, what } => write!(f, "CopyProfile({id}, {what:?})"),
             Self::ShowVault => f.write_str("ShowVault"),
+            Self::ChangeMasterPassword => f.write_str("ChangeMasterPassword"),
+            Self::DisableMasterPassword => f.write_str("DisableMasterPassword"),
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
@@ -545,14 +554,14 @@ pub enum Effect {
         /// What to transfer.
         request: Box<TransferRequest>,
     },
-    /// Open, or create, the vault; then send [`Message::VaultOpened`].
+    /// Open, create or seal again the vault; then send [`Message::VaultOpened`].
     OpenVault {
         /// Vault file.
         path: PathBuf,
-        /// Master password.
+        /// Master password: the one it is opened with, or created with.
         password: Secret,
-        /// Create it rather than open it.
-        create: bool,
+        /// What to do.
+        job: VaultJob,
     },
     /// Quit the application.
     Exit,
@@ -599,7 +608,7 @@ impl fmt::Debug for Effect {
                 id.value(),
                 request.direction
             ),
-            Self::OpenVault { create, .. } => write!(f, "OpenVault(create: {create})"),
+            Self::OpenVault { job, .. } => write!(f, "OpenVault({})", job.name()),
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -1167,13 +1176,15 @@ impl App {
             | Message::RequestDeleteProfile(_)
             | Message::CopyProfile { .. }) => self.tree_message(message),
             message @ (Message::ShowVault
+            | Message::ChangeMasterPassword
+            | Message::DisableMasterPassword
             | Message::SubmitVault { .. }
             | Message::VaultOpened(_)
             | Message::LockVault) => self.vault_message(message),
-            Message::DismissDialog => {
+            Message::DismissDialog => self.dismiss_vault().unwrap_or_else(|| {
                 self.dismiss_dialog();
                 Vec::new()
-            }
+            }),
         }
     }
 
