@@ -158,7 +158,7 @@ fn a_gateways_key_in_an_rdp_tab_is_learnt_as_the_gateways_and_the_rdp_attempt_st
 }
 
 #[test]
-fn forgetting_the_server_leaves_its_certificate_when_the_gateways_key_changed() {
+fn a_gateways_changed_key_is_forgotten_and_the_rdp_attempt_starts_again_its_certificate_kept() {
     let dir = tempfile::tempdir().expect("dir");
     let known_rdp_hosts = KnownRdpHosts::new(dir.path().join("known_rdp_hosts"));
     known_rdp_hosts
@@ -168,19 +168,40 @@ fn forgetting_the_server_leaves_its_certificate_when_the_gateways_key_changed() 
             &CERTIFICATE.parse().expect("fingerprint"),
         )
         .expect("recorded");
+    let known_hosts = KnownHosts::new(dir.path().join("known_hosts"));
+    known_hosts
+        .learn(
+            "bastion.example.org",
+            2222,
+            &PublicKey::from_openssh(GATEWAY_KEY.trim()).expect("key"),
+        )
+        .expect("learnt");
     let mut app = app(dir.path(), Some("bastion"), vec![bastion()]);
     let (tab, attempt) = open(&mut app);
     app.update(Message::Connection {
         tab,
         attempt,
         event: ConnectionEvent::Failed(UiError::HostKeyChanged {
-            target: Some("bastion.example.org:2222".to_owned()),
+            target: Some(heimdall_app::ServerAddress {
+                host: "bastion.example.org".to_owned(),
+                port: 2222,
+            }),
             recorded: "SHA256:old".to_owned(),
             offered: "SHA256:new".to_owned(),
         }),
     });
     let effects = app.update(Message::ForgetServer(tab));
-    assert!(effects.is_empty(), "{effects:?}");
+    assert!(
+        matches!(effects.as_slice(), [Effect::ConnectRdp { tab: again, .. }] if *again == tab),
+        "{effects:?}"
+    );
+    assert!(
+        known_hosts
+            .recorded("bastion.example.org", 2222)
+            .expect("read")
+            .is_empty(),
+        "the gateway's key is forgotten: its new one is asked about"
+    );
     assert!(
         known_rdp_hosts.knows("dc.internal", 3389).expect("read"),
         "the server's certificate stays"

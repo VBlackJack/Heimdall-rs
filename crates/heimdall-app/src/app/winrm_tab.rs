@@ -25,6 +25,7 @@ use heimdall_core::winrm::{self, CommandError, POWERSHELL_ARGUMENTS};
 use heimdall_term::local::{self, LocalArguments};
 use tokio_util::sync::CancellationToken;
 
+use super::reconnect::Reopen;
 use super::{App, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::error::UiError;
@@ -40,7 +41,7 @@ impl App {
         let Some(profile) = self.winrm_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
-        match winrm::enter_session(&profile) {
+        let effects = match winrm::enter_session(&profile) {
             Ok(command) => {
                 let mut arguments: Vec<String> = POWERSHELL_ARGUMENTS
                     .iter()
@@ -58,7 +59,10 @@ impl App {
                 self.open_refused(profile.name, command_error(&error));
                 Vec::new()
             }
-        }
+        };
+        // Opened again from the profile, checked again: never the refused tab's empty shell.
+        self.reopened_by(Reopen::Profile(profile.id));
+        effects
     }
 
     /// A tab that says why nothing was started.

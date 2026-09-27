@@ -24,6 +24,7 @@ use heimdall_core::profile::{ProfileId, display_address};
 
 use super::gateways::is_missing;
 use super::{App, Dialog, Effect, Message};
+use crate::driver::Purpose;
 use crate::profile_draft::new_id;
 use crate::text::server_text;
 
@@ -257,19 +258,11 @@ impl App {
 
     /// Opens `id` with its own protocol.
     fn connect_profile(&mut self, id: &ProfileId) -> Vec<Effect> {
-        let Some(profile) = self.profile_summary(id) else {
+        if self.profile_summary(id).is_none() {
             return Vec::new();
-        };
-        self.selected_profile = Some(profile.id.clone());
-        let message = match profile.kind {
-            ProfileKind::Ssh => Message::OpenProfile(profile.id),
-            ProfileKind::Rdp => Message::OpenRdp(profile.id),
-            ProfileKind::Telnet => Message::OpenTelnet(profile.id),
-            ProfileKind::Vnc => Message::OpenVnc(profile.id),
-            ProfileKind::Local => Message::OpenLocalProfile(profile.id),
-            ProfileKind::WinRm => Message::OpenWinRm(profile.id),
-        };
-        self.update(message)
+        }
+        self.selected_profile = Some(id.clone());
+        self.open_saved(id, Purpose::Shell)
     }
 
     /// Asks to delete `id`, whatever its protocol.

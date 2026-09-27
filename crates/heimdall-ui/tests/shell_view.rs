@@ -780,3 +780,68 @@ fn the_tree_search_filters_the_profiles_and_says_when_none_match() {
     }
     assert!(ui.find("No sessions match your search.").is_err());
 }
+
+#[test]
+fn a_failed_session_offers_reconnect_and_a_changed_ssh_key_its_way_past() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    {
+        let shell = Shell::with_app(core);
+        assert!(
+            simulator(&shell).find("Reconnect").is_err(),
+            "nothing to reconnect while connecting"
+        );
+        core = shell.into_app();
+    }
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: Some(heimdall_app::ServerAddress {
+                host: "a.lab".to_owned(),
+                port: 22,
+            }),
+            recorded: "SHA256:old".to_owned(),
+            offered: "SHA256:new".to_owned(),
+        }),
+    });
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "session-hostkey-changed.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Reconnect").expect("reconnect");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ReconnectTab(reconnected)) if reconnected == tab
+        )));
+    }
+    let mut ui = simulator(&shell);
+    ui.click("Accept new key (destructive)")
+        .expect("the way past");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::ForgetServer(forgotten)) if forgotten == tab
+    )));
+}
+
+#[test]
+fn a_session_whose_profile_is_gone_offers_close_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::Timeout),
+    });
+    core.update(AppMessage::RequestDeleteProfile(ProfileId::new("a")));
+    core.update(AppMessage::ConfirmDialog);
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Close the tab").expect("close");
+    assert!(
+        ui.find("Reconnect").is_err(),
+        "nothing left to reconnect to"
+    );
+}

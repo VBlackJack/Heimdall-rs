@@ -98,7 +98,7 @@ ui-error-invalid-host = The host name is not valid.
 ui-error-invalid-username = The user name is not valid.
 ui-error-network = The server could not be reached: { $detail }
 ui-error-timeout = The server did not answer in time.
-ui-error-hostkey-changed = The server's key is not the one on record. Someone may be intercepting the connection. Recorded: { $recorded }. Presented: { $offered }. If the change is expected, remove the old entry from Heimdall's known hosts file.
+ui-error-hostkey-changed = The server's key is not the one on record. Someone may be intercepting the connection. Recorded: { $recorded }. Presented: { $offered }. If the change is expected, forget this server: its new certificate is then asked about.
 ui-error-hostkey-algorithm = The server no longer offers the key type on record ({ $recorded }).
 ui-error-host-certificate = The server presented a host certificate; certificates are not supported yet.
 ui-error-known-hosts = The known hosts file could not be used: { $detail }
@@ -243,6 +243,8 @@ ui-dialog-delete-profile-body = The profile { $name } will be deleted. Open sess
 ui-dialog-delete-profile-confirm = Delete
 
 ui-session-forget-server-button = Forget this server
+ui-session-reconnect-button = Reconnect
+ui-session-accept-new-key-button = Accept new key (destructive)
 ui-error-security-refused = The server refused the security Heimdall requires (Network Level Authentication): { $detail }
 ui-error-rdp-protocol = RDP error: { $detail }
 ui-error-vnc-protocol = VNC error: { $detail }

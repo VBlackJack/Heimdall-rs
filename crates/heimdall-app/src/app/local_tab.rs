@@ -25,6 +25,7 @@ use heimdall_core::profile::{LocalApproval, LocalArguments, LocalCommand, Profil
 use heimdall_term::local::{self, LocalArguments as TermArguments};
 use tokio_util::sync::CancellationToken;
 
+use super::reconnect::Reopen;
 use super::{App, Dialog, Effect, Tab, TabProfile, terminal_size};
 use crate::driver::Purpose;
 use crate::ids::{AttemptId, TabId};
@@ -91,10 +92,15 @@ impl App {
         };
         let Ok(program_path) = local::program_path(profile.command.program.as_deref()) else {
             // Nothing can run: the tab says why, as starting it would.
-            return self.open_local(shell(&profile.name, &profile.command, None));
+            let effects = self.open_local(shell(&profile.name, &profile.command, None));
+            self.reopened_by(Reopen::Profile(profile.id));
+            return effects;
         };
         if profile.may_run(&program_path) {
-            return self.open_local(shell(&profile.name, &profile.command, Some(&program_path)));
+            let effects =
+                self.open_local(shell(&profile.name, &profile.command, Some(&program_path)));
+            self.reopened_by(Reopen::Profile(profile.id));
+            return effects;
         }
         let arguments = term_arguments(&profile.command.arguments);
         self.dialog = Some(Dialog::ConfirmLocalCommand(Box::new(LocalConfirmation {
@@ -124,11 +130,15 @@ impl App {
             .store
             .apply(|store| store.approve_local(&id, approval.clone()));
         match recorded {
-            Ok(true) => self.open_local(shell(
-                &name,
-                &approval.command,
-                Some(&approval.program_path),
-            )),
+            Ok(true) => {
+                let effects = self.open_local(shell(
+                    &name,
+                    &approval.command,
+                    Some(&approval.program_path),
+                ));
+                self.reopened_by(Reopen::Profile(id));
+                effects
+            }
             // Deleted meanwhile: nothing to approve, and nothing is run.
             Ok(false) => Vec::new(),
             Err(error) => {
