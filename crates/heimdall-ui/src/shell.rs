@@ -27,6 +27,7 @@ use std::path::PathBuf;
 use heimdall_app::files::{
     Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
 };
+use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::{LocalShell, local_events};
 use heimdall_app::profile_draft::{
     DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle,
@@ -42,7 +43,7 @@ use heimdall_app::{
     server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::display_address;
+use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -214,6 +215,10 @@ pub enum Message {
     ProfilePassword(String),
     /// Save the profile form, with the password typed into it.
     SaveProfileForm,
+    /// The password field of the gateway dialog changed.
+    GatewayPassword(String),
+    /// Save the gateway dialog, with the password typed into it.
+    SaveGatewayForm,
     /// Open a menu of the profile tree at the pointer.
     OpenTreeMenu(TreeMenu),
     /// Close the open menu.
@@ -244,6 +249,8 @@ impl fmt::Debug for Message {
             Self::SubmitVault => f.write_str("SubmitVault"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
+            Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
+            Self::SaveGatewayForm => f.write_str("SaveGatewayForm"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
@@ -359,6 +366,8 @@ pub struct Shell {
     vault_fields: [Zeroizing<String>; 2],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
+    /// What is typed into the password field of the gateway dialog.
+    gateway_password: Zeroizing<String>,
     /// Where the pointer is, for a menu to open there.
     cursor: CursorSpot,
     /// The menu open in the profile tree, and where.
@@ -403,6 +412,7 @@ impl Shell {
             dialog_focus: None,
             vault_fields: Default::default(),
             profile_password: Zeroizing::default(),
+            gateway_password: Zeroizing::default(),
             cursor: CursorSpot::default(),
             menu: None,
         }
@@ -493,6 +503,11 @@ impl Shell {
                 return Task::none();
             }
             Message::SaveProfileForm => self.save_profile_form(),
+            Message::GatewayPassword(value) => {
+                self.gateway_password = Zeroizing::new(value);
+                return Task::none();
+            }
+            Message::SaveGatewayForm => self.save_gateway_form(),
             Message::OpenTreeMenu(menu) => {
                 self.open_tree_menu(menu);
                 return Task::none();
@@ -554,6 +569,13 @@ impl Shell {
         })
     }
 
+    /// Hands the gateway dialog to the core with the password typed, which leaves the window.
+    fn save_gateway_form(&mut self) -> Vec<Effect> {
+        let typed = std::mem::take(&mut *self.gateway_password);
+        let password = (!typed.is_empty()).then(|| Secret::new(typed));
+        self.app.update(AppMessage::SaveGateway { password })
+    }
+
     /// Hands the profile form to the core with the password typed, which leaves the window.
     fn save_profile_form(&mut self) -> Vec<Effect> {
         let typed = std::mem::take(&mut *self.profile_password);
@@ -566,6 +588,8 @@ impl Shell {
         Forms {
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
+            gateway_password: &self.gateway_password,
+            gateways: self.app.gateways(),
             passwords: if self.app.can_save_passwords() {
                 PasswordStore::Ready
             } else if self.app.vault_status() == VaultStatus::Locked {
@@ -647,6 +671,9 @@ impl Shell {
             (true, true) if matches!(self.app.dialog, Some(Dialog::EditProfile { .. })) => {
                 self.save_profile_form()
             }
+            (true, _) if matches!(self.app.dialog, Some(Dialog::EditGateway { .. })) => {
+                self.save_gateway_form()
+            }
             (true, true) => self.app.update(AppMessage::ConfirmDialog),
             // Only a click agrees to this one.
             (true, false) => Vec::new(),
@@ -696,8 +723,19 @@ impl Shell {
         if !matches!(app.dialog, Some(Dialog::Vault(_))) {
             self.vault_fields = Default::default();
         }
-        if !matches!(app.dialog, Some(Dialog::EditProfile { .. })) {
+        // A session's form waiting under the gateway dialog keeps what was typed into it.
+        let form_open = match &app.dialog {
+            Some(Dialog::EditProfile { .. }) => true,
+            Some(Dialog::EditGateway { back, .. }) => {
+                matches!(back.as_deref(), Some(Dialog::EditProfile { .. }))
+            }
+            _ => false,
+        };
+        if !form_open {
             self.profile_password = Zeroizing::default();
+        }
+        if !matches!(app.dialog, Some(Dialog::EditGateway { .. })) {
+            self.gateway_password = Zeroizing::default();
         }
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
         self.drafts.retain(|question, _| {
@@ -1348,6 +1386,10 @@ struct Forms<'a> {
     vault: &'a [Zeroizing<String>; 2],
     /// The profile form's password.
     profile_password: &'a str,
+    /// The gateway dialog's password.
+    gateway_password: &'a str,
+    /// Saved SSH gateways, for the lists to choose from.
+    gateways: &'a [SshGateway],
     /// Whether a password typed now can be saved.
     passwords: PasswordStore,
 }
@@ -1539,6 +1581,242 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::SkipCertificateCheck => fl!("ui-profile-toggle-skip-cert"),
         ProfileToggle::ViewOnly => fl!("ui-profile-toggle-view-only"),
         ProfileToggle::AllowNoPassword => fl!("ui-profile-toggle-no-password"),
+        ProfileToggle::DirectConnection => fl!("ui-profile-direct-connect"),
+    }
+}
+
+/// A gateway in a list: "Name (host:port)", as the C# combo shows one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GatewayChoice {
+    id: ProfileId,
+    label: String,
+}
+
+impl std::fmt::Display for GatewayChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.label)
+    }
+}
+
+fn gateway_choice(gateway: &SshGateway) -> GatewayChoice {
+    GatewayChoice {
+        id: gateway.id.clone(),
+        label: format!(
+            "{} ({})",
+            server_text(&gateway.name),
+            display_address(&server_text(&gateway.host), gateway.port)
+        ),
+    }
+}
+
+/// A session's gateway routing, as the C# Network tab: connect directly, or through a
+/// gateway chosen, added or edited here.
+fn network_section<'a>(draft: &ProfileDraft, gateways: &'a [SshGateway]) -> Element<'a, Message> {
+    let direct = draft.is_on(ProfileToggle::DirectConnection);
+    let mut section_column = column![
+        section(
+            fl!("ui-profile-gateway-routing"),
+            Some(fl!("ui-profile-gateway-routing-desc"))
+        ),
+        toggle_box(
+            draft,
+            ProfileToggle::DirectConnection,
+            fl!("ui-profile-direct-connect")
+        ),
+    ]
+    .spacing(SPACING);
+    if gateways.is_empty() {
+        section_column = section_column
+            .push(text(fl!("ui-gateway-list-empty")).size(SMALL_SIZE))
+            .push(text(fl!("ui-gateway-empty-hint")).size(SMALL_SIZE));
+    }
+    let routed = draft.routed_gateway();
+    if direct {
+        section_column =
+            section_column.push(text(fl!("ui-profile-gateway-direct-hint")).size(SMALL_SIZE));
+    } else {
+        let choices: Vec<GatewayChoice> = gateways.iter().map(gateway_choice).collect();
+        let selected = draft
+            .gateway
+            .as_ref()
+            .and_then(|id| choices.iter().find(|choice| choice.id == *id).cloned());
+        section_column = section_column.push(
+            row![
+                pick_list(choices, selected, |choice: GatewayChoice| {
+                    Message::App(AppMessage::ChooseGateway(choice.id))
+                })
+                .width(Length::Fill),
+                button(text(fl!("ui-gateway-add")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::NewGateway)),
+            ]
+            .spacing(SPACING),
+        );
+        section_column = section_column.push(
+            text(if routed.is_some() {
+                fl!("ui-profile-gateway-explain-tunnel")
+            } else {
+                fl!("ui-profile-gateway-explain-direct")
+            })
+            .size(SMALL_SIZE),
+        );
+    }
+    if let Some(id) = routed.filter(|id| gateways.iter().any(|known| known.id == *id)) {
+        section_column = section_column.push(
+            button(text(fl!("ui-profile-edit-gateway")).size(SMALL_SIZE))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::EditGateway(id))),
+        );
+    }
+    section_column.into()
+}
+
+/// The C# gateway dialog: name, host, port, username, key, password, parent gateway.
+fn gateway_dialog<'a>(
+    draft: &'a GatewayDraft,
+    error: Option<DraftError>,
+    forms: &Forms<'a>,
+) -> Element<'a, Message> {
+    let title = if draft.editing.is_some() {
+        fl!("ui-gateway-edit-title")
+    } else {
+        fl!("ui-gateway-add-title")
+    };
+    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    for field in GATEWAY_FIELDS {
+        let label = match field {
+            ProfileField::Name => fl!("ui-gateway-field-name"),
+            ProfileField::Host => fl!("ui-gateway-field-host"),
+            ProfileField::Port => fl!("ui-gateway-field-port"),
+            ProfileField::Username => fl!("ui-gateway-field-username"),
+            _ => fl!("ui-gateway-field-key"),
+        };
+        form = form.push(
+            column![
+                text(label).size(SMALL_SIZE),
+                text_input("", draft.value(field))
+                    .id(gateway_field_id(field))
+                    .on_input(move |value| Message::App(AppMessage::GatewayField { field, value }))
+                    .on_submit(Message::SaveGatewayForm),
+            ]
+            .spacing(SPACING / 2.0),
+        );
+    }
+    form = form
+        .push(gateway_password(draft, forms))
+        .push(parent_gateway(draft, forms));
+    if let Some(error) = error {
+        form = form.push(text(texts::draft_error(error)).style(text::danger));
+    }
+    form.push(
+        row![
+            iced::widget::space::horizontal(),
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-profile-save-button"))).on_press(Message::SaveGatewayForm),
+        ]
+        .spacing(SPACING),
+    )
+    .into()
+}
+
+/// The gateway's password, as the session form's: an empty field, "Password saved" and
+/// Clear, then the C# hint.
+fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, Message> {
+    let mut form = Column::new().spacing(SPACING);
+    let mut password = text_input("", forms.gateway_password)
+        .id(gateway_field_id(ProfileField::Domain))
+        .secure(true);
+    if forms.passwords == PasswordStore::Ready {
+        password = password
+            .on_input(Message::GatewayPassword)
+            .on_submit(Message::SaveGatewayForm);
+    }
+    form = form.push(
+        column![
+            text(fl!("ui-gateway-field-password")).size(SMALL_SIZE),
+            password
+        ]
+        .spacing(SPACING / 2.0),
+    );
+    match forms.passwords {
+        PasswordStore::Ready if draft.password_saved => {
+            form = form.push(
+                row![
+                    text(fl!("ui-profile-password-saved")).size(SMALL_SIZE),
+                    button(text(fl!("ui-profile-password-clear")).size(SMALL_SIZE))
+                        .style(button::text)
+                        .on_press(Message::App(AppMessage::ClearGatewayPassword)),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+            );
+        }
+        PasswordStore::Ready => {}
+        PasswordStore::VaultLocked => {
+            form = form.push(text(fl!("ui-profile-password-locked")).size(SMALL_SIZE));
+        }
+        PasswordStore::None => {
+            form = form.push(text(fl!("ui-profile-password-no-store")).size(SMALL_SIZE));
+        }
+    }
+    form = form.push(text(fl!("ui-gateway-password-hint")).size(SMALL_SIZE));
+    form
+}
+
+/// The gateway this one is reached through: none, or another saved gateway.
+fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Message> {
+    let mut form = Column::new();
+    let mut parents = vec![ParentChoice::None];
+    parents.extend(
+        forms
+            .gateways
+            .iter()
+            .filter(|gateway| Some(&gateway.id) != draft.editing.as_ref())
+            .map(|gateway| ParentChoice::Gateway(gateway_choice(gateway))),
+    );
+    let selected = parents
+        .iter()
+        .find(|choice| match (choice, &draft.parent) {
+            (ParentChoice::None, None) => true,
+            (ParentChoice::Gateway(gateway), Some(parent)) => gateway.id == *parent,
+            _ => false,
+        })
+        .cloned();
+    form = form.push(
+        column![
+            text(fl!("ui-gateway-field-parent")).size(SMALL_SIZE),
+            pick_list(parents, selected, |choice| {
+                Message::App(AppMessage::ChooseParentGateway(match choice {
+                    ParentChoice::None => None,
+                    ParentChoice::Gateway(gateway) => Some(gateway.id),
+                }))
+            })
+            .width(Length::Fill),
+        ]
+        .spacing(SPACING / 2.0),
+    );
+    form.into()
+}
+
+fn gateway_field_id(field: ProfileField) -> iced::widget::Id {
+    iced::widget::Id::from(format!("gateway-{field:?}"))
+}
+
+/// A choice of parent gateway: none, which the C# list lacks, or a gateway.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ParentChoice {
+    None,
+    Gateway(GatewayChoice),
+}
+
+impl std::fmt::Display for ParentChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::None => f.write_str(&fl!("ui-gateway-parent-none")),
+            Self::Gateway(gateway) => gateway.fmt(f),
+        }
     }
 }
 
@@ -1703,6 +1981,10 @@ fn profile_form<'a>(
     form = form
         .push(credentials_section(draft, forms))
         .push(options_section(draft));
+
+    if draft.protocol.routes_through_gateway() {
+        form = form.push(network_section(draft, forms.gateways));
+    }
 
     // Organization.
     form = form
@@ -2019,6 +2301,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         .spacing(SPACING)
         .into(),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
+        Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),
         Dialog::PasswordSaveFailed { detail: technical } => column![
             heading(fl!("ui-vault-save-failed-title")),
             detail(technical),

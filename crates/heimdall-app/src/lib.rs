@@ -27,6 +27,7 @@ mod driver;
 mod error;
 mod event;
 pub mod files;
+pub mod gateway_draft;
 mod ids;
 pub mod local_driver;
 pub mod profile_draft;
@@ -37,10 +38,11 @@ mod text;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, LocalConfirmation,
-    MIN_MASTER_PASSWORD_CHARS, Message, NameAction, OpenedVault, Phase, PointerInput, ProfileCopy,
-    ProfileKind, ProfileSummary, Prompt, SystemCredentials, Tab, TabProfile, VAULT_FILE_NAME,
-    VaultDialog, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, open_vault,
+    App, AppConfig, Dialog, Effect, FilesMessage, GatewayBadge, ImportSummary, KeyInput,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, Message, NameAction, OpenedVault, Phase,
+    PointerInput, ProfileCopy, ProfileKind, ProfileSummary, Prompt, SystemCredentials, Tab,
+    TabProfile, VAULT_FILE_NAME, VaultDialog, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

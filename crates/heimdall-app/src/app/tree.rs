@@ -22,6 +22,7 @@ use std::collections::HashSet;
 
 use heimdall_core::profile::{ProfileId, display_address};
 
+use super::gateways::is_missing;
 use super::{App, Dialog, Effect, Message};
 use crate::profile_draft::new_id;
 use crate::text::server_text;
@@ -61,6 +62,17 @@ pub struct ProfileSummary {
     pub endpoint: Option<(String, u16)>,
     /// Account.
     pub username: Option<String>,
+    /// The gateway it goes through, when it does.
+    pub gateway: Option<GatewayBadge>,
+}
+
+/// How a session reaches its server, as the C# tree's badge says.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GatewayBadge {
+    /// Through this gateway, by name.
+    Via(String),
+    /// Through a gateway that is not saved: it cannot connect.
+    Missing,
 }
 
 /// What of a profile the menu copies.
@@ -89,6 +101,7 @@ impl App {
                 kind: ProfileKind::Ssh,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: profile.username.clone(),
+                gateway: self.badge(profile.gateway.as_ref()),
             });
         }
         for profile in self.store.rdp_profiles() {
@@ -99,6 +112,7 @@ impl App {
                 kind: ProfileKind::Rdp,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: profile.username.clone(),
+                gateway: self.badge(profile.gateway.as_ref()),
             });
         }
         for profile in self.store.telnet_profiles() {
@@ -109,6 +123,7 @@ impl App {
                 kind: ProfileKind::Telnet,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: None,
+                gateway: None,
             });
         }
         for profile in self.store.vnc_profiles() {
@@ -119,6 +134,7 @@ impl App {
                 kind: ProfileKind::Vnc,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: None,
+                gateway: None,
             });
         }
         for profile in self.store.local_profiles() {
@@ -129,6 +145,7 @@ impl App {
                 kind: ProfileKind::Local,
                 endpoint: None,
                 username: None,
+                gateway: None,
             });
         }
         for profile in self.store.winrm_profiles() {
@@ -139,9 +156,22 @@ impl App {
                 kind: ProfileKind::WinRm,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: profile.username.clone(),
+                gateway: None,
             });
         }
         all
+    }
+
+    /// The badge of a session routed through `gateway`.
+    fn badge(&self, gateway: Option<&ProfileId>) -> Option<GatewayBadge> {
+        let id = gateway?;
+        if is_missing(self.gateways(), Some(id)) {
+            return Some(GatewayBadge::Missing);
+        }
+        self.gateways()
+            .iter()
+            .find(|known| known.id == *id)
+            .map(|known| GatewayBadge::Via(known.name.clone()))
     }
 
     /// One profile, whatever its protocol.
@@ -376,6 +406,7 @@ mod tests {
             kind: ProfileKind::Ssh,
             endpoint: Some(("web.lab".to_owned(), port)),
             username: username.map(str::to_owned),
+            gateway: None,
         }
     }
 

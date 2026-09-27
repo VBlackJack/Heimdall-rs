@@ -20,7 +20,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use heimdall_app::{Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary};
+use heimdall_app::{GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary};
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
@@ -72,7 +72,7 @@ pub fn protocol_label(kind: ProfileKind) -> &'static str {
 /// One profile: protocol and name; the host, account and protocol in its tooltip.
 pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, Message> {
     let id = profile.id.clone();
-    let label = row![
+    let mut label = row![
         text(protocol_label(profile.kind))
             .size(PROTOCOL_SIZE)
             .style(text::secondary),
@@ -80,6 +80,9 @@ pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, M
     ]
     .spacing(6.0)
     .align_y(iced::Alignment::Center);
+    if let Some(badge) = &profile.gateway {
+        label = label.push(gateway_badge(badge));
+    }
     let body = container(label)
         .width(Length::Fill)
         .padding([4.0, 8.0])
@@ -96,6 +99,36 @@ pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, M
     )
     .style(container::rounded_box)
     .into()
+}
+
+/// "via name" when a gateway is on the way, "gateway missing" in the warning colour when it
+/// is not saved: the C# tree's badge.
+fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
+    let missing = matches!(badge, GatewayBadge::Missing);
+    let label = match badge {
+        GatewayBadge::Via(name) => fl!("ui-tree-gateway-via", name = name.as_str()),
+        GatewayBadge::Missing => fl!("ui-tree-gateway-missing"),
+    };
+    container(text(label).size(PROTOCOL_SIZE))
+        .padding([0.0, 4.0])
+        .style(move |theme: &Theme| {
+            let palette = theme.extended_palette();
+            let colour = if missing {
+                palette.danger.base.color
+            } else {
+                palette.primary.base.color
+            };
+            container::Style {
+                text_color: Some(colour),
+                border: iced::Border {
+                    color: colour,
+                    width: 1.0,
+                    radius: 6.0.into(),
+                },
+                ..container::Style::default()
+            }
+        })
+        .into()
 }
 
 fn row_style(theme: &Theme, selected: bool) -> container::Style {
@@ -271,10 +304,13 @@ pub fn menu_entries<'a>(
             ));
         }
         (TreeMenu::Add, _) => {
-            entries = entries.push(entry(
-                fl!("ui-tree-add-session"),
-                Some(AppMessage::NewProfile),
-            ));
+            entries = entries
+                .push(entry(
+                    fl!("ui-tree-add-session"),
+                    Some(AppMessage::NewProfile),
+                ))
+                .push(separator())
+                .push(entry(fl!("ui-gateway-add"), Some(AppMessage::NewGateway)));
         }
         (TreeMenu::More, _) => {
             entries = entries.push(entry(
