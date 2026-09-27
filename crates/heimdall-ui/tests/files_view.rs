@@ -192,14 +192,30 @@ fn files_messages(ui: Simulator<'_, Message>) -> Vec<FilesMessage> {
 }
 
 #[tokio::test]
-async fn the_sidebar_opens_a_files_tab() {
+async fn the_tree_menu_opens_a_files_tab_through_connect_as_sftp() {
+    use heimdall_core::profile::ProfileId;
+    use heimdall_ui::tree_view::TreeMenu;
+
     let dir = tempfile::tempdir().expect("dir");
-    let shell = Shell::with_app(app(dir.path()));
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("a");
+    // As in the C# tree: right click, "Connect as...", "SFTP".
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Connect as...").expect("connect as");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::ConnectAs(asked)) if *asked == id
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone())));
     let mut ui = simulator(&shell);
-    ui.click("Files").expect("files button");
-    assert!(ui.into_messages().any(
-        |message| matches!(message, Message::App(AppMessage::OpenFiles(id)) if id.to_string() == "a")
-    ));
+    ui.click("SFTP").expect("sftp");
+    assert!(ui.into_messages().any(|message| matches!(
+        &message,
+        Message::MenuChoice(AppMessage::OpenFiles(opened)) if *opened == id
+    )));
 }
 
 #[tokio::test]

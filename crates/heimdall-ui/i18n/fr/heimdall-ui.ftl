@@ -6,8 +6,7 @@ ui-window-title-tab = { $tab } - Heimdall
 
 ui-sidebar-title = Profils
 ui-sidebar-empty = Aucun profil enregistré.
-ui-sidebar-import-button = Importer depuis Heimdall
-ui-sidebar-group-none = Sans groupe
+ui-sidebar-group-none = (Sans dossier)
 
 ui-home-welcome = Bienvenue dans Heimdall-rs.
 ui-home-hint = Choisissez un profil à gauche pour ouvrir une session SSH.
@@ -113,7 +112,6 @@ ui-import-skip-missing-host = n'a pas d'hôte
 ui-import-skip-missing-id = n'a pas d'identifiant
 ui-import-skip-invalid-port = port invalide { $port }
 
-ui-sidebar-files-button = Fichiers
 ui-tab-files-title = { $name } (fichiers)
 
 ui-files-local-title = Cet ordinateur
@@ -165,8 +163,6 @@ ui-files-name-reserved = c'est un nom réservé par Windows
 ui-files-name-trailing = il se termine par un point ou une espace
 ui-files-name-too-long = il est trop long
 
-ui-sidebar-new-profile-button = Nouveau profil
-ui-sidebar-edit-button = Modifier
 ui-profile-new-title = Nouveau profil
 ui-profile-edit-title = Modifier le profil
 ui-profile-field-name = Nom

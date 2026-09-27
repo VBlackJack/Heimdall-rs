@@ -37,12 +37,10 @@ use heimdall_app::{
     Effect, FilesMessage, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, Message as AppMessage,
     NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, SystemCredentials, Tab, TabId,
     UiError, VaultDialog, VaultMode, VaultProblem, VaultStatus, connection_events, open_vault,
-    server_text, visible_text,
+    server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::{
-    LocalProfile, RdpProfile, SshProfile, TelnetProfile, VncProfile, WinRmProfile, display_address,
-};
+use heimdall_core::profile::display_address;
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -50,10 +48,10 @@ use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, center, column, container, opaque, operation, row, scrollable, stack, text,
-    text_input, tooltip,
+    Column, button, center, column, container, mouse_area, opaque, operation, pin, row, scrollable,
+    stack, text, text_input, tooltip,
 };
-use iced::{Color, Element, Length, Subscription, Task, Theme, event, keyboard, window};
+use iced::{Color, Element, Length, Point, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
 
 use crate::desktop_view::DesktopView;
@@ -62,6 +60,7 @@ use crate::i18n::fl;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
 use crate::texts;
+use crate::tree_view::{self, CursorSpot, CursorTracker, TreeMenu};
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -207,6 +206,12 @@ pub enum Message {
     ProfilePassword(String),
     /// Save the profile form, with the password typed into it.
     SaveProfileForm,
+    /// Open a menu of the profile tree at the pointer.
+    OpenTreeMenu(TreeMenu),
+    /// Close the open menu.
+    CloseTreeMenu,
+    /// An entry of the open menu was chosen: the menu closes, the core gets the message.
+    MenuChoice(AppMessage),
 }
 
 impl fmt::Debug for Message {
@@ -231,6 +236,9 @@ impl fmt::Debug for Message {
             Self::SubmitVault => f.write_str("SubmitVault"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
+            Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
+            Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
+            Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
         }
     }
 }
@@ -259,126 +267,6 @@ fn answer(kind: &QuestionKind, mut typed: Vec<Zeroizing<String>>) -> Answer {
             Answer::Secrets(typed.iter_mut().map(secret).collect())
         }
     }
-}
-
-/// A saved profile in the sidebar, whatever its protocol.
-#[derive(Clone, Copy)]
-enum Listed<'a> {
-    Ssh(&'a SshProfile),
-    Rdp(&'a RdpProfile),
-    Telnet(&'a TelnetProfile),
-    Vnc(&'a VncProfile),
-    Local(&'a LocalProfile),
-    WinRm(&'a WinRmProfile),
-}
-
-impl<'a> Listed<'a> {
-    fn group(self) -> Option<&'a str> {
-        match self {
-            Self::Ssh(profile) => profile.group.as_deref(),
-            Self::Rdp(profile) => profile.group.as_deref(),
-            Self::Telnet(profile) => profile.group.as_deref(),
-            Self::Vnc(profile) => profile.group.as_deref(),
-            Self::Local(profile) => profile.group.as_deref(),
-            Self::WinRm(profile) => profile.group.as_deref(),
-        }
-    }
-
-    fn name(self) -> &'a str {
-        match self {
-            Self::Ssh(profile) => &profile.name,
-            Self::Rdp(profile) => &profile.name,
-            Self::Telnet(profile) => &profile.name,
-            Self::Vnc(profile) => &profile.name,
-            Self::Local(profile) => &profile.name,
-            Self::WinRm(profile) => &profile.name,
-        }
-    }
-}
-
-/// One profile in the sidebar: its name and address, which open it, then its buttons. The
-/// address has its own line and the buttons sit under it: an address has no place to wrap,
-/// and a label beside it would cover it.
-fn profile_row(profile: Listed<'_>) -> Element<'_, Message> {
-    let (open, address, mut buttons) = match profile {
-        Listed::Ssh(profile) => (
-            AppMessage::OpenProfile(profile.id.clone()),
-            target(&profile.host, profile.port, profile.username.as_deref()),
-            row![
-                button(text(fl!("ui-sidebar-files-button")).size(SMALL_SIZE))
-                    .style(button::secondary)
-                    .on_press(Message::App(AppMessage::OpenFiles(profile.id.clone()))),
-                button(text(fl!("ui-sidebar-edit-button")).size(SMALL_SIZE))
-                    .style(button::secondary)
-                    .on_press(Message::App(AppMessage::EditProfile(profile.id.clone()))),
-            ],
-        ),
-        Listed::Rdp(profile) => (
-            AppMessage::OpenRdp(profile.id.clone()),
-            fl!(
-                "ui-sidebar-rdp-target",
-                target = target(&profile.host, profile.port, profile.username.as_deref())
-            ),
-            row![],
-        ),
-        Listed::Telnet(profile) => (
-            AppMessage::OpenTelnet(profile.id.clone()),
-            fl!(
-                "ui-sidebar-telnet-target",
-                target = target(&profile.host, profile.port, None)
-            ),
-            row![],
-        ),
-        Listed::Vnc(profile) => (
-            AppMessage::OpenVnc(profile.id.clone()),
-            fl!(
-                "ui-sidebar-vnc-target",
-                target = target(&profile.host, profile.port, None)
-            ),
-            row![],
-        ),
-        Listed::Local(profile) => (
-            AppMessage::OpenLocalProfile(profile.id.clone()),
-            fl!(
-                "ui-sidebar-local-target",
-                program = profile
-                    .command
-                    .program
-                    .as_deref()
-                    .map_or_else(|| fl!("ui-sidebar-local-default-program"), visible_text)
-            ),
-            row![],
-        ),
-        Listed::WinRm(profile) => {
-            let target = target(&profile.host, profile.port, profile.username.as_deref());
-            (
-                AppMessage::OpenWinRm(profile.id.clone()),
-                if profile.use_ssl {
-                    fl!("ui-sidebar-winrm-https-target", target = target)
-                } else {
-                    fl!("ui-sidebar-winrm-target", target = target)
-                },
-                row![],
-            )
-        }
-    };
-    buttons = buttons
-        .spacing(SPACING / 2.0)
-        .padding(iced::Padding::ZERO.left(PADDING));
-    column![
-        button(column![
-            text(profile.name()),
-            text(address)
-                .size(SMALL_SIZE)
-                .wrapping(text::Wrapping::Glyph)
-        ])
-        .width(Length::Fill)
-        .style(button::text)
-        .on_press(Message::App(open)),
-        buttons,
-    ]
-    .spacing(SPACING / 2.0)
-    .into()
 }
 
 /// Widget identifier of the name field of a dialog.
@@ -463,6 +351,10 @@ pub struct Shell {
     vault_fields: [Zeroizing<String>; 2],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
+    /// Where the pointer is, for a menu to open there.
+    cursor: CursorSpot,
+    /// The menu open in the profile tree, and where.
+    menu: Option<(TreeMenu, Point)>,
 }
 
 /// A field given focus in a dialog.
@@ -503,6 +395,8 @@ impl Shell {
             dialog_focus: None,
             vault_fields: Default::default(),
             profile_password: Zeroizing::default(),
+            cursor: CursorSpot::default(),
+            menu: None,
         }
     }
 
@@ -591,6 +485,18 @@ impl Shell {
                 return Task::none();
             }
             Message::SaveProfileForm => self.save_profile_form(),
+            Message::OpenTreeMenu(menu) => {
+                self.open_tree_menu(menu);
+                return Task::none();
+            }
+            Message::CloseTreeMenu => {
+                self.menu = None;
+                return Task::none();
+            }
+            Message::MenuChoice(message) => {
+                self.menu = None;
+                self.app.update(message)
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -695,9 +601,26 @@ impl Shell {
         self.app.update(message)
     }
 
+    /// Opens `menu` at the pointer, or, for a sub-menu, where its menu was.
+    fn open_tree_menu(&mut self, menu: TreeMenu) {
+        let at = match (&menu, &self.menu) {
+            (TreeMenu::ConnectAs(_), Some((_, at))) => *at,
+            _ => self.cursor.get(),
+        };
+        // As in the C# tree: a right click selects the row it is on.
+        if let TreeMenu::Profile(id) = &menu {
+            let _ = self.app.update(AppMessage::SelectProfile(id.clone()));
+        }
+        self.menu = Some((menu, at));
+    }
+
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
     /// the selection of a Files tab, and the core ignores the rest.
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
+        if !confirm && self.menu.take().is_some() {
+            // Escape closes the open menu first.
+            return Vec::new();
+        }
         if self.app.dialog.is_none() {
             // Escape reaches here even when a terminal sent it to its session.
             return if confirm {
@@ -960,77 +883,110 @@ impl Shell {
                 }),
             ));
         }
-        layers.into()
+        if let Some((menu, at)) = &self.menu {
+            let profile = match menu {
+                TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
+                TreeMenu::Add | TreeMenu::More => None,
+            };
+            let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
+            let entries =
+                tree_view::menu_entries(menu, profile.as_ref(), editable, self.app.can_import());
+            // Opaque: what is under the menu is neither hovered nor clicked.
+            layers = layers.push(opaque(
+                mouse_area(
+                    pin(entries)
+                        .x(at.x)
+                        .y(at.y)
+                        .width(Length::Fill)
+                        .height(Length::Fill),
+                )
+                .on_press(Message::CloseTreeMenu)
+                .on_right_press(Message::CloseTreeMenu),
+            ));
+        }
+        CursorTracker::new(layers, self.cursor.clone()).into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        let mut list = Column::new()
-            .spacing(SPACING)
-            .padding(PADDING)
-            .push(text(fl!("ui-sidebar-title")).size(HEADING_SIZE));
-        let mut actions = row![
-            button(text(fl!("ui-sidebar-new-profile-button")))
-                .on_press(Message::App(AppMessage::NewProfile)),
-            button(text(fl!("ui-sidebar-local-shell-button")))
-                .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
-                .style(button::secondary),
+        // As in the C# Heimdall: "+" adds, "..." holds the rest; the vault and the local shell
+        // keep their buttons until they find their C# place.
+        let tool = |label: &'static str, tip: String, menu: TreeMenu| {
+            tooltip(
+                button(text(label))
+                    .style(button::secondary)
+                    .on_press(Message::OpenTreeMenu(menu)),
+                text(tip).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+        };
+        let header = row![
+            text(fl!("ui-sidebar-title")).size(HEADING_SIZE),
+            iced::widget::space::horizontal(),
+            tool("+", fl!("ui-tree-add-tooltip"), TreeMenu::Add),
+            tool("...", fl!("ui-tree-more-tooltip"), TreeMenu::More),
         ]
-        .spacing(SPACING / 2.0);
-        if self.app.can_import() {
-            actions = actions.push(
-                button(text(fl!("ui-sidebar-import-button")))
-                    .on_press(Message::App(AppMessage::ImportLegacy))
-                    .style(button::secondary),
-            );
-        }
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center);
         let (vault_label, vault_message) = match self.app.vault_status() {
             VaultStatus::Missing => (fl!("ui-sidebar-vault-create-button"), AppMessage::ShowVault),
             VaultStatus::Locked => (fl!("ui-sidebar-vault-unlock-button"), AppMessage::ShowVault),
             VaultStatus::Open => (fl!("ui-sidebar-vault-lock-button"), AppMessage::LockVault),
         };
-        actions = actions.push(
+        let actions = row![
+            button(text(fl!("ui-sidebar-local-shell-button")))
+                .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
+                .style(button::secondary),
             button(text(vault_label))
                 .on_press(Message::App(vault_message))
                 .style(button::secondary),
-        );
-        list = list.push(actions.wrap());
-        let mut profiles: Vec<Listed<'_>> = self
-            .app
-            .profiles()
-            .iter()
-            .map(Listed::Ssh)
-            .chain(self.app.rdp_profiles().iter().map(Listed::Rdp))
-            .chain(self.app.telnet_profiles().iter().map(Listed::Telnet))
-            .chain(self.app.vnc_profiles().iter().map(Listed::Vnc))
-            .chain(self.app.local_profiles().iter().map(Listed::Local))
-            .chain(self.app.winrm_profiles().iter().map(Listed::WinRm))
-            .collect();
+        ]
+        .spacing(SPACING / 2.0)
+        .wrap();
+        let mut list = Column::new().spacing(2.0);
+        let mut profiles = self.app.profile_summaries();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
-        // Named groups first, alphabetically; profiles without a group last.
+        // Named folders first, alphabetically; profiles without a folder last.
         profiles.sort_by(|a, b| {
-            (a.group().is_none(), a.group(), a.name()).cmp(&(
-                b.group().is_none(),
-                b.group(),
-                b.name(),
+            (a.group.is_none(), &a.group, a.name.to_lowercase()).cmp(&(
+                b.group.is_none(),
+                &b.group,
+                b.name.to_lowercase(),
             ))
         });
-        let mut group: Option<Option<&str>> = None;
+        let mut group: Option<Option<String>> = None;
+        let mut rows: Vec<Element<'_, Message>> = Vec::new();
         for profile in profiles {
-            let current = profile.group();
-            if group != Some(current) {
-                group = Some(current);
-                let label = current.map_or_else(|| fl!("ui-sidebar-group-none"), str::to_owned);
-                list = list.push(text(label).size(SMALL_SIZE));
+            if group.as_ref() != Some(&profile.group) {
+                group = Some(profile.group.clone());
+                let label = profile
+                    .group
+                    .clone()
+                    .unwrap_or_else(|| fl!("ui-sidebar-group-none"));
+                rows.push(text(label).size(SMALL_SIZE).into());
             }
-            list = list.push(profile_row(profile));
+            let selected = self.app.selected_profile.as_ref() == Some(&profile.id);
+            rows.push(tree_view::owned_row(&profile, selected));
         }
-        container(scrollable(list))
-            .width(SIDEBAR_WIDTH)
-            .height(Length::Fill)
-            .style(container::rounded_box)
-            .into()
+        list = list.extend(rows);
+        // A right click beside the rows is the tree's own menu.
+        let tree = mouse_area(
+            container(scrollable(list))
+                .width(Length::Fill)
+                .height(Length::Fill),
+        )
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
+        container(
+            column![header, actions, tree]
+                .spacing(SPACING)
+                .padding(PADDING),
+        )
+        .width(SIDEBAR_WIDTH)
+        .height(Length::Fill)
+        .style(container::rounded_box)
+        .into()
     }
 
     fn tab_bar(&self) -> Element<'_, Message> {
