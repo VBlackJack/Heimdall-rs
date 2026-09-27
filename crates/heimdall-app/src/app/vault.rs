@@ -581,6 +581,15 @@ impl App {
         }
     }
 
+    /// Saves `from`'s password for `to` as well, a copy of the profile.
+    pub(super) fn copy_password(&mut self, from: &ProfileId, to: &ProfileId) {
+        if let Some(bytes) = self.vault.read(&password_entry(from))
+            && let Err(error) = self.vault.write(&password_entry(to), Some(&bytes))
+        {
+            self.password_save_failed(&error);
+        }
+    }
+
     /// Forgets the saved password of a profile being deleted.
     pub(super) fn forget_password(&mut self, profile: &ProfileId) {
         let entry = password_entry(profile);

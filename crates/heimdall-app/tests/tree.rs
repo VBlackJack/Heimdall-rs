@@ -1,0 +1,404 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! The profile tree's actions, as the C# Heimdall's menu offers them: connect with the
+//! profile's own protocol, duplicate, delete and copy, whatever the protocol.
+
+use std::path::Path;
+
+use heimdall_app::{
+    App, AppConfig, Dialog, Effect, Message, ProfileCopy, ProfileKind, SystemCredentials,
+};
+use heimdall_core::profile::{
+    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile,
+    TelnetProfile, VncProfile, WinRmProfile,
+};
+use heimdall_core::store::ProfileStore;
+use heimdall_ssh::{AgentSource, PasswordQuestion, Secret};
+use heimdall_term::GridSize;
+
+const SUFFIX: &str = " (copy)";
+
+fn id(value: &str) -> ProfileId {
+    ProfileId::new(value)
+}
+
+/// One profile of each protocol.
+fn app(dir: &Path, system: &SystemCredentials) -> App {
+    let profiles_file = dir.join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([SshProfile {
+        id: id("ssh"),
+        name: "web".to_owned(),
+        group: Some("Prod".to_owned()),
+        host: "web.lab".to_owned(),
+        port: 2222,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: None,
+    }]);
+    store.merge_rdp([RdpProfile {
+        id: id("rdp"),
+        name: "dc".to_owned(),
+        group: None,
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: Some("admin".to_owned()),
+        domain: None,
+        allow_tls_only: false,
+        gateway: None,
+        redirect_clipboard: true,
+    }]);
+    store.merge_telnet([TelnetProfile {
+        id: id("telnet"),
+        name: "switch".to_owned(),
+        group: None,
+        host: "sw.lab".to_owned(),
+        port: 23,
+    }]);
+    store.merge_vnc([VncProfile {
+        id: id("vnc"),
+        name: "kiosk".to_owned(),
+        group: None,
+        host: "kiosk.lab".to_owned(),
+        port: 5900,
+        view_only: false,
+        allow_no_password: true,
+    }]);
+    let command = LocalCommand {
+        program: None,
+        arguments: LocalArguments::List(Vec::new()),
+        working_directory: None,
+    };
+    store.merge_local([LocalProfile {
+        id: id("local"),
+        name: "shell".to_owned(),
+        group: None,
+        command: command.clone(),
+        approved: None,
+    }]);
+    store.approve_local(
+        &id("local"),
+        LocalApproval {
+            command,
+            program_path: dir.join("sh"),
+        },
+    );
+    store.merge_winrm([WinRmProfile {
+        id: id("winrm"),
+        name: "ps".to_owned(),
+        group: None,
+        host: "ps.lab".to_owned(),
+        port: 5985,
+        use_ssl: false,
+        skip_certificate_check: false,
+        username: None,
+    }]);
+    store.save().expect("save");
+    App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: system.clone(),
+    })
+}
+
+/// What connecting to `profile` asks the UI layer for, by variant name.
+fn connect(app: &mut App, profile: &str) -> String {
+    let effects = app.update(Message::ConnectProfile(id(profile)));
+    match effects.as_slice() {
+        [Effect::Connect { .. }] => "Connect".to_owned(),
+        [Effect::ConnectRdp { .. }] => "ConnectRdp".to_owned(),
+        [Effect::ConnectTelnet { .. }] => "ConnectTelnet".to_owned(),
+        [Effect::ConnectVnc { .. }] => "ConnectVnc".to_owned(),
+        [Effect::ConnectLocal { .. }] => "ConnectLocal".to_owned(),
+        [] if matches!(app.dialog, Some(Dialog::ConfirmLocalCommand(_))) => {
+            "ConfirmLocalCommand".to_owned()
+        }
+        other => format!("{other:?}"),
+    }
+}
+
+#[test]
+fn connecting_uses_the_profiles_own_protocol() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    assert_eq!(connect(&mut app, "ssh"), "Connect");
+    assert_eq!(connect(&mut app, "rdp"), "ConnectRdp");
+    assert_eq!(connect(&mut app, "telnet"), "ConnectTelnet");
+    assert_eq!(connect(&mut app, "vnc"), "ConnectVnc");
+    // A PowerShell entering the session, in a local tab.
+    assert_eq!(connect(&mut app, "winrm"), "ConnectLocal");
+    assert_eq!(
+        app.selected_profile,
+        Some(id("winrm")),
+        "connecting selects"
+    );
+    assert_eq!(connect(&mut app, "gone"), "[]");
+}
+
+#[test]
+fn selecting_keeps_only_a_profile_that_exists() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    app.update(Message::SelectProfile(id("rdp")));
+    assert_eq!(app.selected_profile, Some(id("rdp")));
+    app.update(Message::SelectProfile(id("gone")));
+    assert_eq!(app.selected_profile, None);
+}
+
+#[test]
+fn every_protocol_is_listed_and_only_ssh_opens_the_editor_yet() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app(dir.path(), &SystemCredentials::memory());
+    let mut kinds: Vec<ProfileKind> = app
+        .profile_summaries()
+        .iter()
+        .map(|profile| profile.kind)
+        .collect();
+    kinds.sort_by_key(|kind| format!("{kind:?}"));
+    assert_eq!(
+        kinds,
+        [
+            ProfileKind::Local,
+            ProfileKind::Rdp,
+            ProfileKind::Ssh,
+            ProfileKind::Telnet,
+            ProfileKind::Vnc,
+            ProfileKind::WinRm
+        ]
+    );
+    assert!(app.can_edit(&id("ssh")));
+    assert!(!app.can_edit(&id("rdp")));
+}
+
+fn duplicate(app: &mut App, profile: &str) {
+    app.update(Message::DuplicateProfile {
+        id: id(profile),
+        suffix: SUFFIX.to_owned(),
+    });
+}
+
+fn names(app: &App) -> Vec<String> {
+    let mut names: Vec<String> = app
+        .profile_summaries()
+        .into_iter()
+        .map(|profile| profile.name)
+        .collect();
+    names.sort();
+    names
+}
+
+#[test]
+fn a_duplicate_is_named_and_saved_as_in_the_csharp_app() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), &system);
+    duplicate(&mut app, "ssh");
+    duplicate(&mut app, "ssh");
+    duplicate(&mut app, "rdp");
+    let web: Vec<String> = names(&app)
+        .into_iter()
+        .filter(|name| name.starts_with("web"))
+        .collect();
+    assert_eq!(web, ["web", "web (copy)", "web (copy) 2"]);
+    let copy = app
+        .profile_summaries()
+        .into_iter()
+        .find(|profile| profile.name == "dc (copy)")
+        .expect("rdp copy");
+    assert_eq!(copy.kind, ProfileKind::Rdp);
+    assert_ne!(copy.id, id("rdp"));
+    assert_eq!(
+        app.selected_profile,
+        Some(copy.id.clone()),
+        "the copy is selected"
+    );
+    assert_eq!(copy.group, None);
+    assert_eq!(copy.endpoint, Some(("dc.lab".to_owned(), 3389)));
+
+    // Saved: another start lists them.
+    let reopened = self::app(dir.path(), &system);
+    assert_eq!(names(&reopened).len(), names(&app).len());
+}
+
+#[test]
+fn a_duplicated_local_profile_must_be_approved_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    duplicate(&mut app, "local");
+    let copy = app
+        .local_profiles()
+        .iter()
+        .find(|profile| profile.name == "shell (copy)")
+        .expect("copy");
+    assert!(copy.approved.is_none());
+    assert!(app.local_profiles().iter().any(|p| p.approved.is_some()));
+}
+
+/// What a new connection to `profile` is answered with by itself.
+fn saved_answer(app: &mut App, profile: &str, host: &str, port: u16) -> Option<String> {
+    let effects = app.update(Message::ConnectProfile(id(profile)));
+    let (tab, attempt) = match effects.as_slice() {
+        [Effect::Connect { tab, attempt, .. } | Effect::ConnectRdp { tab, attempt, .. }] => {
+            (*tab, *attempt)
+        }
+        other => panic!("{other:?}"),
+    };
+    let question = heimdall_app::QuestionId::fresh();
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: heimdall_app::ConnectionEvent::Question {
+            question,
+            kind: heimdall_app::QuestionKind::Password(PasswordQuestion {
+                host: host.to_owned(),
+                port,
+                username: "admin".to_owned(),
+                attempt: 1,
+            }),
+        },
+    });
+    match effects.as_slice() {
+        [
+            Effect::Answer {
+                answer: Some(heimdall_app::Answer::Secret(secret)),
+                ..
+            },
+        ] => Some(secret.expose().to_owned()),
+        _ => None,
+    }
+}
+
+#[test]
+fn a_duplicate_takes_the_saved_password_along_except_for_rdp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    app.update(Message::EditProfile(id("ssh")));
+    app.update(Message::SaveProfile {
+        password: Some(Secret::new("pw".to_owned())),
+    });
+    duplicate(&mut app, "ssh");
+    let copy = app.selected_profile.clone().expect("copy");
+    assert_eq!(
+        saved_answer(&mut app, copy.as_str(), "web.lab", 2222).as_deref(),
+        Some("pw")
+    );
+}
+
+#[test]
+fn any_profile_is_deleted_from_its_menu_after_confirming() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    app.update(Message::RequestDeleteProfile(id("rdp")));
+    let Some(Dialog::ConfirmDeleteProfile { name, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(name, "dc");
+    assert!(
+        app.profile_summary(&id("rdp")).is_some(),
+        "not before confirming"
+    );
+    app.update(Message::ConfirmDialog);
+    assert!(app.profile_summary(&id("rdp")).is_none());
+    app.update(Message::RequestDeleteProfile(id("gone")));
+    assert!(app.dialog.is_none());
+}
+
+fn copied(app: &mut App, profile: &str, what: ProfileCopy) -> Option<String> {
+    match app
+        .update(Message::CopyProfile {
+            id: id(profile),
+            what,
+        })
+        .as_slice()
+    {
+        [Effect::WriteClipboard(text)] => Some(text.clone()),
+        [] => None,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn the_copy_entries_put_what_they_say_on_the_clipboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    assert_eq!(
+        copied(&mut app, "ssh", ProfileCopy::Hostname).as_deref(),
+        Some("web.lab")
+    );
+    assert_eq!(
+        copied(&mut app, "ssh", ProfileCopy::Username).as_deref(),
+        Some("admin")
+    );
+    assert_eq!(
+        copied(&mut app, "ssh", ProfileCopy::Address).as_deref(),
+        Some("web.lab:2222")
+    );
+    assert_eq!(
+        copied(&mut app, "ssh", ProfileCopy::SshCommand).as_deref(),
+        Some("ssh admin@web.lab -p 2222")
+    );
+    assert_eq!(
+        copied(&mut app, "winrm", ProfileCopy::Username),
+        None,
+        "no account"
+    );
+    assert_eq!(
+        copied(&mut app, "local", ProfileCopy::Hostname),
+        None,
+        "no host"
+    );
+}
+
+#[test]
+fn a_duplicated_rdp_profile_leaves_its_password_behind_as_in_the_csharp_app() {
+    use heimdall_core::credentials::{
+        CredentialProtocol, Endpoint, SavedPassword, encode, password_entry,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let SystemCredentials::Memory(entries) = &system else {
+        unreachable!()
+    };
+    let saved = SavedPassword {
+        endpoint: Endpoint {
+            protocol: CredentialProtocol::Rdp,
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            username: Some("admin".to_owned()),
+        },
+        password: zeroize::Zeroizing::new("pw".to_owned()),
+    };
+    entries.lock().expect("entries").insert(
+        password_entry(&id("rdp")),
+        zeroize::Zeroizing::new(encode(&saved).to_vec()),
+    );
+    let mut app = app(dir.path(), &system);
+    duplicate(&mut app, "rdp");
+    let copy = app.selected_profile.clone().expect("copy");
+    assert!(
+        !entries
+            .lock()
+            .expect("entries")
+            .contains_key(&password_entry(&copy))
+    );
+    assert_eq!(entries.lock().expect("entries").len(), 1);
+}

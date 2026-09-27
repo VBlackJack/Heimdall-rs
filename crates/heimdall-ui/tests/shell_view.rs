@@ -145,20 +145,23 @@ fn the_sidebar_lists_profiles_by_group_and_a_click_opens_one() {
     let mut ui = simulator(&shell);
     ui.find("Profiles").expect("heading");
     ui.find("Production").expect("group");
-    ui.find("Ungrouped").expect("profiles without a group");
-    ui.find("admin@a.lab:22").expect("target line");
+    ui.find("(No Folder)").expect("profiles without a folder");
     let production = ui.find("Production").expect("group").bounds().y;
-    let ungrouped = ui.find("Ungrouped").expect("group").bounds().y;
-    assert!(production < ungrouped, "profiles without a group come last");
-    ui.click("server b").expect("profile button");
-    let opened: Vec<String> = ui
+    let ungrouped = ui.find("(No Folder)").expect("group").bounds().y;
+    assert!(
+        production < ungrouped,
+        "profiles without a folder come last"
+    );
+    ui.click("server b").expect("profile");
+    ui.click("server b").expect("profile");
+    let connected: Vec<String> = ui
         .into_messages()
         .filter_map(|message| match message {
-            Message::App(AppMessage::OpenProfile(id)) => Some(id.to_string()),
+            Message::App(AppMessage::ConnectProfile(id)) => Some(id.to_string()),
             _ => None,
         })
         .collect();
-    assert_eq!(opened, vec!["b".to_owned()]);
+    assert_eq!(connected, vec!["b".to_owned()], "a double click connects");
 }
 
 #[test]

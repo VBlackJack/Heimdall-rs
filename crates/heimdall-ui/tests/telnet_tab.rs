@@ -61,10 +61,20 @@ fn a_telnet_profile_is_listed_and_opens_a_telnet_tab() {
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, WINDOW, shell.view());
-    ui.find("Telnet sw1.lab:2323").expect("address line");
+    ui.find("Telnet").expect("protocol");
+    // As in the C# tree: a click selects, a double click connects.
     ui.click("Core switch").expect("profile");
-    assert!(ui.into_messages().any(|message| matches!(
+    ui.click("Core switch").expect("profile");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::OpenTelnet(id)) if id.as_str() == "sw"
+        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "sw"
     )));
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ConnectProfile(id)) if id.as_str() == "sw"
+        )),
+        "a double click connects"
+    );
 }

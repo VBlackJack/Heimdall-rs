@@ -25,6 +25,7 @@ use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
+use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
 use iced_test::simulator::Simulator;
 
@@ -81,18 +82,27 @@ fn app(message: AppMessage) -> Message {
 }
 
 #[test]
-fn the_sidebar_opens_an_empty_form_and_typing_reaches_its_field() {
+fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     {
         let mut ui = simulator(&shell);
-        ui.click("New profile").expect("button");
+        ui.click("+").expect("add button");
         assert!(
             ui.into_messages()
-                .any(|message| matches!(message, Message::App(AppMessage::NewProfile)))
+                .any(|message| matches!(message, Message::OpenTreeMenu(TreeMenu::Add)))
         );
     }
-    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Add));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Add Session").expect("menu entry");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::MenuChoice(AppMessage::NewProfile)))
+        );
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::NewProfile));
     snapshot(&shell, "profile-new.png");
     let mut ui = simulator(&shell);
     for label in [
@@ -119,7 +129,7 @@ fn the_sidebar_opens_an_empty_form_and_typing_reaches_its_field() {
 }
 
 #[test]
-fn a_saved_profile_has_an_edit_button_and_a_refused_form_says_why() {
+fn a_saved_profile_is_edited_from_its_menu_and_a_refused_form_says_why() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
@@ -131,12 +141,14 @@ fn a_saved_profile_has_an_edit_button_and_a_refused_form_says_why() {
     }
     let _ = shell.update(app(AppMessage::ConfirmDialog));
     let id = shell.app().profiles()[0].id.clone();
+    // As in the C# tree: right click, then Edit.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
     {
         let mut ui = simulator(&shell);
-        ui.click("Edit").expect("edit button");
+        ui.click("Edit").expect("edit entry");
         assert!(ui.into_messages().any(|message| matches!(
             message,
-            Message::App(AppMessage::EditProfile(edited)) if edited == id
+            Message::MenuChoice(AppMessage::EditProfile(edited)) if edited == id
         )));
     }
     let _ = shell.update(app(AppMessage::EditProfile(id)));

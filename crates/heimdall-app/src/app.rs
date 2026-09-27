@@ -64,6 +64,7 @@ mod local_tab;
 mod profiles;
 mod rdp_tab;
 mod telnet_tab;
+mod tree;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
@@ -71,6 +72,7 @@ mod winrm_tab;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
+pub use tree::{ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
 pub use vault::{
     MIN_MASTER_PASSWORD_CHARS, OpenedVault, SystemCredentials, VAULT_FILE_NAME, VaultDialog,
@@ -283,6 +285,26 @@ pub enum Message {
     },
     /// In the profile form, clear the saved password (done when the form is saved).
     ClearPassword,
+    /// Select a profile in the tree.
+    SelectProfile(ProfileId),
+    /// Connect to a profile with its own protocol.
+    ConnectProfile(ProfileId),
+    /// Save a copy of a profile.
+    DuplicateProfile {
+        /// Profile.
+        id: ProfileId,
+        /// Added to the copy's name, in the user's language: " (copy)".
+        suffix: String,
+    },
+    /// Ask to delete a profile, whatever its protocol.
+    RequestDeleteProfile(ProfileId),
+    /// Put part of a profile on the clipboard.
+    CopyProfile {
+        /// Profile.
+        id: ProfileId,
+        /// What.
+        what: ProfileCopy,
+    },
     /// Open the vault dialog: unlock the vault, or create it.
     ShowVault,
     /// The master password typed into the vault dialog.
@@ -364,6 +386,11 @@ impl fmt::Debug for Message {
             Self::DismissDialog => f.write_str("DismissDialog"),
             Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
             Self::ClearPassword => f.write_str("ClearPassword"),
+            Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
+            Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
+            Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
+            Self::RequestDeleteProfile(id) => write!(f, "RequestDeleteProfile({id})"),
+            Self::CopyProfile { id, what } => write!(f, "CopyProfile({id}, {what:?})"),
             Self::ShowVault => f.write_str("ShowVault"),
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
@@ -876,6 +903,8 @@ pub struct App {
     pub active: Option<TabId>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
+    /// The profile selected in the tree.
+    pub selected_profile: Option<ProfileId>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
     pending_transfer: Option<PendingTransfer>,
@@ -916,6 +945,7 @@ impl App {
             tabs: Vec::new(),
             active: None,
             dialog,
+            selected_profile: None,
             pending_paste: None,
             pending_transfer: None,
             pending_operation: None,
@@ -1067,6 +1097,11 @@ impl App {
                 Vec::new()
             }
             Message::ConfirmDialog => self.confirm_dialog(),
+            message @ (Message::SelectProfile(_)
+            | Message::ConnectProfile(_)
+            | Message::DuplicateProfile { .. }
+            | Message::RequestDeleteProfile(_)
+            | Message::CopyProfile { .. }) => self.tree_message(message),
             message @ (Message::ShowVault
             | Message::SubmitVault { .. }
             | Message::VaultOpened(_)

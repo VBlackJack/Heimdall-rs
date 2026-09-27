@@ -25,6 +25,7 @@ mod logging;
 pub mod shell;
 pub mod terminal_view;
 mod texts;
+pub mod tree_view;
 
 use heimdall_core::paths;
 use iced::{Font, Size, window};

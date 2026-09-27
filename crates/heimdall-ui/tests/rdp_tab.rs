@@ -99,12 +99,22 @@ fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
     let dir = tempfile::tempdir().expect("dir");
     let shell = Shell::with_app(app(dir.path()));
     let mut ui = simulator(&shell);
-    ui.find("RDP admin@dc.lab:3389").expect("address line");
+    ui.find("RDP").expect("protocol");
+    // As in the C# tree: a click selects, a double click connects.
     ui.click("Domain controller").expect("profile");
-    assert!(ui.into_messages().any(|message| matches!(
+    ui.click("Domain controller").expect("profile");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::OpenRdp(id)) if id.as_str() == "dc"
+        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "dc"
     )));
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ConnectProfile(id)) if id.as_str() == "dc"
+        )),
+        "a double click connects"
+    );
 }
 
 #[test]

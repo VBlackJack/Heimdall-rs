@@ -63,10 +63,20 @@ fn a_vnc_profile_is_listed_and_opens_a_vnc_tab() {
         ..Settings::default()
     };
     let mut ui = Simulator::with_size(settings, WINDOW, shell.view());
-    ui.find("VNC kiosk.lab:5901").expect("address line");
+    ui.find("VNC").expect("protocol");
+    // As in the C# tree: a click selects, a double click connects.
     ui.click("Lobby kiosk").expect("profile");
-    assert!(ui.into_messages().any(|message| matches!(
+    ui.click("Lobby kiosk").expect("profile");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::OpenVnc(id)) if id.as_str() == "kiosk"
+        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "kiosk"
     )));
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ConnectProfile(id)) if id.as_str() == "kiosk"
+        )),
+        "a double click connects"
+    );
 }

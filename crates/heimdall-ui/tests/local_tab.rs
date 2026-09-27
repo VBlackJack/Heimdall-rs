@@ -98,13 +98,22 @@ fn a_saved_local_profile_is_listed_and_opens_by_its_id() {
     let dir = tempfile::tempdir().expect("dir");
     let shell = Shell::with_app(app(dir.path(), Some(tool())));
     let mut ui = Simulator::with_size(settings(), WINDOW, shell.view());
-    ui.find(format!("Local {PROGRAM}").as_str())
-        .expect("program line");
+    ui.find("Local").expect("protocol");
+    // As in the C# tree: a click selects, a double click connects.
     ui.click("Build tool").expect("profile");
-    assert!(ui.into_messages().any(|message| matches!(
+    ui.click("Build tool").expect("profile");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::OpenLocalProfile(id)) if id.as_str() == "tool"
+        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "tool"
     )));
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ConnectProfile(id)) if id.as_str() == "tool"
+        )),
+        "a double click connects"
+    );
 }
 
 #[test]
