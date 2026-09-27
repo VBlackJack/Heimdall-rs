@@ -32,6 +32,10 @@ use std::path::{Path, PathBuf};
 #[cfg(windows)]
 const WINDOWS_POWERSHELL: &str = r"System32\WindowsPowerShell\v1.0\powershell.exe";
 
+/// The shell run on Unix when `$SHELL` names none.
+#[cfg(unix)]
+pub const FALLBACK_SHELL: &str = "/bin/sh";
+
 /// Extension `CreateProcessW` adds to a program name that has none.
 #[cfg(windows)]
 const DEFAULT_EXTENSION: &str = "exe";
@@ -127,12 +131,16 @@ pub fn default_shell(system_root: &Path) -> PathBuf {
 ///
 /// [`ProgramError::NulInArgument`].
 pub fn check_arguments(
-    args: &[String],
+    arguments: &super::LocalArguments,
     working_directory: Option<&Path>,
 ) -> Result<(), ProgramError> {
     let folder_has_nul =
         working_directory.is_some_and(|folder| folder.as_os_str().to_string_lossy().contains('\0'));
-    if folder_has_nul || args.iter().any(|arg| arg.contains('\0')) {
+    let argument_has_nul = match arguments {
+        super::LocalArguments::List(args) => args.iter().any(|arg| arg.contains('\0')),
+        super::LocalArguments::WindowsLine(line) => line.contains('\0'),
+    };
+    if folder_has_nul || argument_has_nul {
         return Err(ProgramError::NulInArgument);
     }
     Ok(())
@@ -146,6 +154,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::{ProgramError, check_arguments, resolve};
+    use crate::local::LocalArguments;
 
     #[cfg(unix)]
     const BIN: &str = "/usr/bin";
@@ -258,16 +267,23 @@ mod tests {
 
     #[test]
     fn a_nul_in_an_argument_or_the_folder_is_refused() {
+        let list = |args: &[&str]| {
+            LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect())
+        };
         assert_eq!(
-            check_arguments(&["/c".to_owned(), "x\0".to_owned()], None),
+            check_arguments(&list(&["/c", "x\0"]), None),
             Err(ProgramError::NulInArgument)
         );
         assert_eq!(
-            check_arguments(&[], Some(Path::new("a\0b"))),
+            check_arguments(&LocalArguments::WindowsLine("/c x\0 /p".to_owned()), None),
             Err(ProgramError::NulInArgument)
         );
         assert_eq!(
-            check_arguments(&["-l".to_owned()], Some(Path::new(BIN))),
+            check_arguments(&list(&[]), Some(Path::new("a\0b"))),
+            Err(ProgramError::NulInArgument)
+        );
+        assert_eq!(
+            check_arguments(&list(&["-l"]), Some(Path::new(BIN))),
             Ok(())
         );
     }

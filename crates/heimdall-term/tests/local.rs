@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use heimdall_term::local::{LocalConfig, LocalEvent, LocalSession, spawn};
+use heimdall_term::local::{LocalArguments, LocalConfig, LocalEvent, LocalSession, spawn};
 
 /// Bound on anything the test waits for.
 const WAIT: Duration = Duration::from_secs(15);
@@ -26,7 +26,7 @@ const WAIT: Duration = Duration::from_secs(15);
 fn config(program: &str, args: &[&str]) -> LocalConfig {
     LocalConfig {
         program: Some(program.to_owned()),
-        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        arguments: LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect()),
         working_directory: None,
         columns: 80,
         rows: 24,

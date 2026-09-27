@@ -26,6 +26,7 @@ use heimdall_app::{
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
+use heimdall_term::local::LocalArguments;
 use tokio_stream::StreamExt as _;
 
 /// Bound on anything the test waits for.
@@ -46,7 +47,7 @@ fn shell(program: &str, args: &[&str]) -> LocalShell {
     LocalShell {
         name: "Shell".to_owned(),
         program: Some(program.to_owned()),
-        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        arguments: LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect()),
         working_directory: None,
     }
 }
@@ -142,6 +143,30 @@ async fn a_local_shell_shows_in_its_tab_and_reports_its_exit_code() {
     );
     let screen = screen(&app, tab);
     assert!(screen.contains("hello"), "{screen}");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_that_is_not_there_falls_back_to_the_home_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let mut gone = script("pwd -P");
+    gone.working_directory = Some(dir.path().join("removed"));
+    let (tab, attempt, request) = open(&mut app, gone);
+    follow(&mut app, tab, attempt, request).await;
+    let home = dir.path().canonicalize().expect("canonical");
+    let screen = screen(&app, tab);
+    assert!(
+        screen.contains(home.to_str().expect("utf-8")),
+        "{home:?} in {screen}"
+    );
+    assert_eq!(
+        app.tab(tab).expect("tab").phase,
+        Phase::Closed {
+            exit_status: Some(0)
+        },
+        "started, not failed"
+    );
 }
 
 #[cfg(unix)]
