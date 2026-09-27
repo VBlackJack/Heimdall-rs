@@ -944,3 +944,67 @@ fn a_right_click_on_a_tab_opens_its_menu_as_the_csharp_one() {
         "greyed out on the last tab"
     );
 }
+
+#[test]
+fn a_failed_session_offers_its_error_and_its_profile_as_the_csharp_card() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    let (cancelled, cancelled_attempt) = open(&mut core, "b");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::Timeout),
+    });
+    core.update(AppMessage::Connection {
+        tab: cancelled,
+        attempt: cancelled_attempt,
+        event: ConnectionEvent::Failed(UiError::Cancelled),
+    });
+    core.update(AppMessage::SelectTab(tab));
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "session-failed-card.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Copy error").expect("copy error");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::CopyError(copied) if copied == tab
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Edit profile").expect("edit profile");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::App(AppMessage::EditProfile(id)) if *id == ProfileId::new("a")
+        )));
+    }
+    let report = shell
+        .failure_report(tab, std::time::UNIX_EPOCH)
+        .expect("a report");
+    let lines: Vec<&str> = report.lines().collect();
+    assert_eq!(lines[0], "Heimdall SSH error report");
+    assert_eq!(lines[1], "Time: 1970-01-01 00:00:00Z");
+    assert_eq!(lines[2], "Server: server a (a.lab:22)");
+    assert!(lines[3].starts_with("App: Heimdall-rs v"), "{report}");
+    assert_eq!(
+        lines.last(),
+        Some(&"The server did not answer in time."),
+        "{report}"
+    );
+    assert!(
+        shell
+            .failure_report(cancelled, std::time::UNIX_EPOCH)
+            .is_some(),
+        "a report exists, the card just offers none"
+    );
+
+    let mut core = shell.into_app();
+    core.update(AppMessage::SelectTab(cancelled));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Copy error").is_err(), "a cancel is no error");
+    ui.find("Edit profile")
+        .expect("still the way to the profile");
+}

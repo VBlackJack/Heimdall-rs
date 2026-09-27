@@ -61,6 +61,7 @@ use zeroize::Zeroizing;
 use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
+use crate::report;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{WindowShortcut, is_lock_key, is_search_key, window_shortcut};
 use crate::texts;
@@ -272,6 +273,8 @@ pub enum Message {
     MenuChoice(AppMessage),
     /// A tab menu's Fullscreen: the menu closes, the tab is shown, full screen.
     MenuFullscreen(TabId),
+    /// Copy the report of a tab's failure, as the C# card's "Copy error".
+    CopyError(TabId),
 }
 
 impl fmt::Debug for Message {
@@ -308,6 +311,7 @@ impl fmt::Debug for Message {
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
+            Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
         }
     }
 }
@@ -643,6 +647,7 @@ impl Shell {
                 self.app.update(message)
             }
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
+            Message::CopyError(tab) => return self.copy_error(tab),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -1359,6 +1364,32 @@ impl Shell {
         Task::batch(tasks)
     }
 
+    /// Copies the report of the failure of tab `id`.
+    fn copy_error(&self, id: TabId) -> Task<Message> {
+        self.failure_report(id, std::time::SystemTime::now())
+            .map_or_else(Task::none, iced::clipboard::write)
+    }
+
+    /// The report "Copy error" copies for tab `id` at `now`: when, which server, which
+    /// version, and the error as its card says it; `None` unless its session failed.
+    #[must_use]
+    pub fn failure_report(&self, id: TabId, now: std::time::SystemTime) -> Option<String> {
+        let tab = self.app.tab(id)?;
+        let Phase::Failed(error) = &tab.phase else {
+            return None;
+        };
+        let server = tab
+            .profile
+            .endpoint()
+            .map(|(host, port)| format!("{} ({host}:{port})", tab.profile.name()));
+        Some(report::error_report(
+            self.app.tab_kind(tab).label(),
+            server.as_deref(),
+            &texts::error(error),
+            now,
+        ))
+    }
+
     /// What the menu of tab `id` offers; `None` once the tab is gone.
     fn tab_menu_state(&self, id: TabId) -> Option<TabMenuState> {
         let tab = self.app.tab(id)?;
@@ -1524,14 +1555,33 @@ impl Shell {
         }
     }
 
-    /// What an ended or failed session offers: Reconnect when it can open again, as the C#
-    /// Heimdall's, then Close.
+    /// What an ended or failed session offers, as the C# Heimdall's card: Reconnect when it
+    /// can open again, Copy error for a failure, Edit profile, the way out of a failure
+    /// that would only repeat, then Close.
     fn session_actions(&self, tab: &Tab) -> iced::widget::Row<'_, Message> {
         let mut actions = row![].spacing(SPACING).align_y(iced::Alignment::Center);
         if self.app.can_reconnect(tab) {
             actions = actions.push(
                 button(text(fl!("ui-session-reconnect-button")))
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
+            );
+        }
+        if matches!(&tab.phase, Phase::Failed(error) if *error != UiError::Cancelled) {
+            actions = actions.push(
+                button(text(fl!("ui-session-copy-error-button")))
+                    .style(button::secondary)
+                    .on_press(Message::CopyError(tab.id)),
+            );
+        }
+        if let Some(profile) = self
+            .app
+            .tab_profile(tab)
+            .filter(|profile| self.app.can_edit(&profile.id))
+        {
+            actions = actions.push(
+                button(text(fl!("ui-session-edit-profile-button")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::EditProfile(profile.id))),
             );
         }
         actions.push(

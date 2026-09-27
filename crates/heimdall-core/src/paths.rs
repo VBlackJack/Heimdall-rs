@@ -26,8 +26,8 @@ const QUALIFIER: &str = "";
 /// Organisation part of the application directories; empty, as for a personal project.
 const ORGANIZATION: &str = "";
 
-/// Application name the platform directories are derived from.
-const APPLICATION: &str = "Heimdall-rs";
+/// Application name the platform directories are derived from, and the name it goes by.
+pub const APPLICATION: &str = "Heimdall-rs";
 
 /// Name of the `known_hosts` file inside the configuration directory; Heimdall-rs keeps
 /// its own, so a host accepted here never changes what `ssh` trusts.

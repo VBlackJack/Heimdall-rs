@@ -391,3 +391,11 @@ ui-dialog-rename-tab-title = Rename Tab
 ui-dialog-rename-tab-prompt = Enter new tab name:
 ui-dialog-close-tabs-title = Close Sessions
 ui-dialog-close-tabs-body = Sessions to close: { $count }. Still connected: { $live }. Continue?
+
+## The failure card's other ways out, and the report "Copy error" copies.
+ui-session-copy-error-button = Copy error
+ui-session-edit-profile-button = Edit profile
+ui-error-report-header = Heimdall { $protocol } error report
+ui-error-report-time = Time:
+ui-error-report-server = Server:
+ui-error-report-app = App:
