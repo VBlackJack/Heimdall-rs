@@ -25,7 +25,7 @@ use thiserror::Error;
 
 use crate::profile::{
     LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
-    VncProfile,
+    VncProfile, WinRmProfile,
 };
 
 /// Format version written into the profile file.
@@ -34,7 +34,7 @@ use crate::profile::{
 /// gateways and the gateway an SSH profile goes through. A build that knows an older
 /// version refuses a newer file rather than reading it, dropping the profiles it does not
 /// know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 6;
+pub const PROFILE_FILE_VERSION: u32 = 7;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -55,6 +55,8 @@ struct ProfileFile {
     local: Vec<LocalProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     gateway: Vec<SshGateway>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    winrm: Vec<WinRmProfile>,
 }
 
 /// Why the profile file could not be read or written.
@@ -114,6 +116,7 @@ pub struct ProfileStore {
     vnc: Vec<VncProfile>,
     local: Vec<LocalProfile>,
     gateways: Vec<SshGateway>,
+    winrm: Vec<WinRmProfile>,
 }
 
 /// Why an SSH profile's gateways cannot be followed.
@@ -141,6 +144,7 @@ impl ProfileStore {
             vnc: Vec::new(),
             local: Vec::new(),
             gateways: Vec::new(),
+            winrm: Vec::new(),
         }
     }
 
@@ -178,6 +182,7 @@ impl ProfileStore {
             vnc: file.vnc,
             local: file.local,
             gateways: file.gateway,
+            winrm: file.winrm,
         })
     }
 
@@ -215,6 +220,17 @@ impl ProfileStore {
     #[must_use]
     pub fn local_profiles(&self) -> &[LocalProfile] {
         &self.local
+    }
+
+    /// `WinRM` profiles, in file order.
+    #[must_use]
+    pub fn winrm_profiles(&self) -> &[WinRmProfile] {
+        &self.winrm
+    }
+
+    /// Adds or replaces `WinRM` profiles by identifier; the order of existing ones is kept.
+    pub fn merge_winrm(&mut self, incoming: impl IntoIterator<Item = WinRmProfile>) -> MergeReport {
+        merge_into(&mut self.winrm, incoming, |profile| &profile.id)
     }
 
     /// SSH gateways, in file order.
@@ -319,12 +335,18 @@ impl ProfileStore {
         self.telnet.retain(|profile| profile.id != *id);
         self.vnc.retain(|profile| profile.id != *id);
         self.local.retain(|profile| profile.id != *id);
+        self.winrm.retain(|profile| profile.id != *id);
         self.len() != before
     }
 
     /// Number of profiles, all protocols together.
     fn len(&self) -> usize {
-        self.ssh.len() + self.rdp.len() + self.telnet.len() + self.vnc.len() + self.local.len()
+        self.ssh.len()
+            + self.rdp.len()
+            + self.telnet.len()
+            + self.vnc.len()
+            + self.local.len()
+            + self.winrm.len()
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -358,6 +380,7 @@ impl ProfileStore {
             vnc: self.vnc.clone(),
             local: self.local.clone(),
             gateway: self.gateways.clone(),
+            winrm: self.winrm.clone(),
         })?;
         let dir = self
             .path

@@ -42,6 +42,7 @@ const LIST_SEPARATOR: &str = ", ";
 pub fn error(error: &UiError) -> String {
     match error {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
+        UiError::InvalidUsername => fl!("ui-error-invalid-username"),
         UiError::Network { detail } => fl!("ui-error-network", detail = server_text(detail)),
         UiError::Timeout => fl!("ui-error-timeout"),
         UiError::RdpProtocol { detail } => {
@@ -159,6 +160,8 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         SkipReason::NeedsElevation => fl!("ui-import-skip-elevation"),
         SkipReason::NeedsPostConnectCommands => fl!("ui-import-skip-post-connect"),
         SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),
+        SkipReason::MissingUsername => fl!("ui-import-skip-missing-username"),
+        SkipReason::UnknownIdentityMode => fl!("ui-import-skip-unknown-identity"),
     }
 }
 

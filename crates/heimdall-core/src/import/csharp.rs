@@ -35,9 +35,9 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, LocalArguments,
-    LocalCommand, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
-    VncProfile,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
+    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, LocalArguments, LocalCommand, LocalProfile,
+    ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 
 /// `connectionType` of an SSH profile.
@@ -55,6 +55,17 @@ const VNC_CONNECTION_TYPE: &str = "VNC";
 /// `connectionType` of a local shell profile, compared without case as the C# trust check
 /// does.
 const LOCAL_CONNECTION_TYPE: &str = "LOCAL";
+
+/// `connectionType` of a `WinRM` profile, compared without case as the C# does.
+const WINRM_CONNECTION_TYPE: &str = "WINRM";
+
+/// The C# `WinRmIdentityMode` that logs in with a stored account, by name and by value.
+const WINRM_CREDENTIAL_NAME: &str = "Credential";
+const WINRM_CREDENTIAL_VALUE: i64 = 1;
+
+/// The C# `WinRmIdentityMode` that logs in as the current user, by name and by value.
+const WINRM_CURRENT_USER_NAME: &str = "CurrentUser";
+const WINRM_CURRENT_USER_VALUE: i64 = 0;
 
 /// The C# `ElevationMode` that asks for no elevation, by name and by value.
 const NO_ELEVATION: &str = "None";
@@ -86,6 +97,10 @@ pub enum SkipReason {
     NeedsElevation,
     /// Runs commands once connected, not supported yet.
     NeedsPostConnectCommands,
+    /// A `WinRM` profile logging in with an account it does not name.
+    MissingUsername,
+    /// A `WinRM` identity mode the C# Heimdall does not define.
+    UnknownIdentityMode,
     /// A local shell whose program, arguments or folder cannot be run as written: a quote or
     /// a NUL in the program, a NUL anywhere, a relative program path, or a folder on another
     /// machine, which Windows would reach, and hand its credentials to, on its own.
@@ -116,6 +131,8 @@ pub struct ImportReport {
     pub vnc: Vec<VncProfile>,
     /// Local shell profiles ready to be merged into the store, none approved.
     pub local: Vec<LocalProfile>,
+    /// `WinRM` profiles ready to be merged into the store.
+    pub winrm: Vec<WinRmProfile>,
     /// SSH gateways ready to be merged into the store; each one's parent is among them.
     pub gateways: Vec<SshGateway>,
     /// Profiles left out, with the reason.
@@ -142,6 +159,10 @@ struct LegacyServers {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "mirrors the flags of the C# server JSON, one field per key"
+)]
 struct LegacyServer {
     #[serde(default)]
     id: String,
@@ -184,6 +205,15 @@ struct LegacyServer {
     elevation_mode: Option<serde_json::Value>,
     #[serde(default)]
     post_connect_steps: Vec<LegacyPostConnectStep>,
+    /// Absent or zero or less is the default port of the transport.
+    win_rm_port: Option<i64>,
+    win_rm_username: Option<String>,
+    #[serde(default)]
+    win_rm_use_ssl: bool,
+    #[serde(default)]
+    win_rm_skip_certificate_check: bool,
+    /// A name or a number, as the C# converter accepts both.
+    win_rm_identity_mode: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -263,6 +293,11 @@ pub fn import(
             .eq_ignore_ascii_case(LOCAL_CONNECTION_TYPE)
         {
             convert_local(&server).map(|profile| report.local.push(profile))
+        } else if server
+            .connection_type
+            .eq_ignore_ascii_case(WINRM_CONNECTION_TYPE)
+        {
+            convert_winrm(&server).map(|profile| report.winrm.push(profile))
         } else if server.connection_type == RDP_CONNECTION_TYPE {
             convert_rdp(&server, &known).map(|profile| report.rdp.push(profile))
         } else if server
@@ -684,4 +719,69 @@ fn trimmed(value: Option<&str>) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_owned)
+}
+
+/// A `WinRM` profile as `WinRmPowerShellLaunchBuilder` connects it: directly, never through a
+/// gateway. The stored password is not carried over: `PowerShell` asks for it.
+fn convert_winrm(server: &LegacyServer) -> Result<WinRmProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    if server.remote_server.trim().is_empty() {
+        return Err(SkipReason::MissingHost);
+    }
+    let port = match server.win_rm_port {
+        Some(value) if value > 0 => {
+            u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?
+        }
+        _ if server.win_rm_use_ssl => DEFAULT_WINRM_HTTPS_PORT,
+        _ => DEFAULT_WINRM_HTTP_PORT,
+    };
+    let username = if winrm_uses_credential(server.win_rm_identity_mode.as_ref())? {
+        Some(
+            non_empty(server.win_rm_username.as_ref())
+                .map(|name| name.trim().to_owned())
+                .filter(|name| !name.is_empty())
+                .ok_or(SkipReason::MissingUsername)?,
+        )
+    } else {
+        None
+    };
+    Ok(WinRmProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.is_empty() {
+            server.remote_server.clone()
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        host: server.remote_server.trim().to_owned(),
+        port,
+        use_ssl: server.win_rm_use_ssl,
+        skip_certificate_check: server.win_rm_use_ssl && server.win_rm_skip_certificate_check,
+        username,
+    })
+}
+
+/// Whether the identity mode logs in with a stored account; absent is the current user.
+fn winrm_uses_credential(mode: Option<&serde_json::Value>) -> Result<bool, SkipReason> {
+    match mode {
+        None | Some(serde_json::Value::Null) => Ok(false),
+        Some(serde_json::Value::Number(number)) => match number.as_i64() {
+            Some(WINRM_CURRENT_USER_VALUE) => Ok(false),
+            Some(WINRM_CREDENTIAL_VALUE) => Ok(true),
+            _ => Err(SkipReason::UnknownIdentityMode),
+        },
+        Some(serde_json::Value::String(name))
+            if name.eq_ignore_ascii_case(WINRM_CURRENT_USER_NAME) =>
+        {
+            Ok(false)
+        }
+        Some(serde_json::Value::String(name))
+            if name.eq_ignore_ascii_case(WINRM_CREDENTIAL_NAME) =>
+        {
+            Ok(true)
+        }
+        Some(_) => Err(SkipReason::UnknownIdentityMode),
+    }
 }

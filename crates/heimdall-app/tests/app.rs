@@ -837,7 +837,8 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
             {"id":"x","displayName":"X","remoteServer":"x.lab","connectionType":"SSH"},
             {"id":"r","displayName":"R","remoteServer":"r.lab","connectionType":"RDP"},
             {"id":"t","displayName":"T","remoteServer":"t.lab","connectionType":"Telnet"},
-            {"id":"v","displayName":"V","remoteServer":"v.lab","connectionType":"VNC"}]}"#,
+            {"id":"v","displayName":"V","remoteServer":"v.lab","connectionType":"VNC"},
+            {"id":"w","displayName":"W","remoteServer":"w.lab","connectionType":"WINRM"}]}"#,
     )
     .expect("servers");
     config.legacy_dir = Some(legacy);
@@ -847,7 +848,7 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
     let Some(Dialog::ImportDone(summary)) = &app.dialog else {
         panic!("expected ImportDone, got {:?}", app.dialog);
     };
-    assert_eq!(summary.merged.added, 4, "one profile of each protocol");
+    assert_eq!(summary.merged.added, 5, "one profile of each protocol");
     assert!(summary.skipped.is_empty(), "{:?}", summary.skipped);
     assert_eq!(app.rdp_profiles().len(), 1);
     assert_eq!(app.rdp_profiles()[0].host, "r.lab");
@@ -857,6 +858,8 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
     assert_eq!(reopened.ssh_profiles().len(), 3);
     assert_eq!(reopened.telnet_profiles()[0].host, "t.lab");
     assert_eq!(reopened.vnc_profiles()[0].host, "v.lab");
+    assert_eq!(app.winrm_profiles().len(), 1);
+    assert_eq!(reopened.winrm_profiles()[0].host, "w.lab");
 }
 
 #[test]

@@ -20,7 +20,7 @@ use std::path::PathBuf;
 use heimdall_core::paths::PROFILES_FILE_NAME;
 use heimdall_core::profile::{
     LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshGateway,
-    SshProfile, TelnetProfile, VncProfile,
+    SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 use heimdall_core::store::{
     MergeReport, PROFILE_FILE_VERSION, ProfileStore, RouteError, StoreError,
@@ -167,7 +167,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 6);
+    assert_eq!(PROFILE_FILE_VERSION, 7);
 }
 
 #[test]
@@ -437,4 +437,53 @@ fn the_clipboard_setting_is_written_only_when_turned_off() {
         .map(|profile| profile.redirect_clipboard)
         .collect();
     assert_eq!(shared, [true, false]);
+}
+
+fn winrm(id: &str) -> WinRmProfile {
+    WinRmProfile {
+        id: ProfileId::new(id),
+        name: format!("WinRM {id}"),
+        group: Some("Windows".to_owned()),
+        host: "dc.lab".to_owned(),
+        port: 5986,
+        use_ssl: true,
+        skip_certificate_check: true,
+        username: Some("LAB\\admin".to_owned()),
+    }
+}
+
+#[test]
+fn winrm_profiles_read_back_and_are_removed_like_the_others() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([profile("s", "h")]);
+    let moved = WinRmProfile {
+        port: 5985,
+        use_ssl: false,
+        ..winrm("w")
+    };
+    let report = store.merge_winrm([moved, winrm("w")]);
+    assert_eq!(report.added, 1);
+    assert_eq!(report.updated, 1);
+    store.save().expect("saves");
+    let mut reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.winrm_profiles(), [winrm("w")]);
+    assert!(reopened.remove(&ProfileId::new("w")));
+    assert!(reopened.winrm_profiles().is_empty());
+    assert_eq!(reopened.ssh_profiles().len(), 1, "the SSH profile stays");
+}
+
+#[test]
+fn a_version_6_file_opens_without_winrm_profiles() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 6\n\n[[ssh]]\nid = \"a\"\nname = \"A\"\nhost = \"h\"\nport = 22\n",
+    )
+    .expect("writes");
+    let store = ProfileStore::open(&path).expect("a version 6 file opens");
+    assert_eq!(store.ssh_profiles().len(), 1);
+    assert!(store.winrm_profiles().is_empty());
 }

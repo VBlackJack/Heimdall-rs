@@ -30,6 +30,7 @@ use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{
     LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile,
+    WinRmProfile,
 };
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
@@ -64,6 +65,7 @@ mod profiles;
 mod rdp_tab;
 mod telnet_tab;
 mod vnc_tab;
+mod winrm_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
@@ -144,6 +146,8 @@ pub enum Message {
     OpenLocal(LocalShell),
     /// Open a saved local profile, asking first unless what it runs is approved.
     OpenLocalProfile(ProfileId),
+    /// Open a `WinRM` tab for a saved `WinRM` profile.
+    OpenWinRm(ProfileId),
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
         /// Tab.
@@ -278,6 +282,7 @@ impl fmt::Debug for Message {
             // The arguments may carry anything: only the program is shown.
             Self::OpenLocal(shell) => write!(f, "OpenLocal({:?})", shell.program),
             Self::OpenLocalProfile(id) => write!(f, "OpenLocalProfile({id})"),
+            Self::OpenWinRm(id) => write!(f, "OpenWinRm({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
@@ -878,10 +883,16 @@ impl App {
         self.store.telnet_profiles()
     }
 
-    /// Saved VNC profiles.
+    /// Saved local shell profiles.
     #[must_use]
     pub fn local_profiles(&self) -> &[LocalProfile] {
         self.store.local_profiles()
+    }
+
+    /// Saved `WinRM` profiles.
+    #[must_use]
+    pub fn winrm_profiles(&self) -> &[WinRmProfile] {
+        self.store.winrm_profiles()
     }
 
     /// Saved VNC profiles.
@@ -925,6 +936,7 @@ impl App {
             Message::OpenVnc(id) => self.open_vnc(&id),
             Message::OpenLocal(shell) => self.open_local(shell),
             Message::OpenLocalProfile(id) => self.open_local_profile(&id),
+            Message::OpenWinRm(id) => self.open_winrm(&id),
             Message::DesktopResize { tab, width, height } => {
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
                     pane.resize(width, height);
@@ -1527,15 +1539,15 @@ impl App {
             let telnet = store.merge_telnet(report.telnet);
             let vnc = store.merge_vnc(report.vnc);
             let local = store.merge_local(report.local);
+            let winrm = store.merge_winrm(report.winrm);
             let gateways = store.merge_gateways(report.gateways);
-            [ssh, rdp, telnet, vnc, local, gateways].into_iter().fold(
-                MergeReport::default(),
-                |total, one| MergeReport {
+            [ssh, rdp, telnet, vnc, local, winrm, gateways]
+                .into_iter()
+                .fold(MergeReport::default(), |total, one| MergeReport {
                     added: total.added + one.added,
                     updated: total.updated + one.updated,
                     unchanged: total.unchanged + one.unchanged,
-                },
-            )
+                })
         }) {
             Ok(merged) => merged,
             Err(error) => {
