@@ -171,6 +171,7 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
             framebuffer: session.framebuffer.clone(),
             input: session.input.clone(),
             size: session.size.clone(),
+            clipboard: session.clipboard.clone(),
         })
         .await
         .is_err()
@@ -181,6 +182,7 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
     while let Some(event) = session.events.recv().await {
         let event = match event {
             RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
+            RdpEvent::RemoteClipboard(text) => ConnectionEvent::RemoteClipboard(text),
             RdpEvent::Closed(CloseReason::Failed(detail)) => {
                 log::warn!("RDP session to {target} failed: {detail:?}");
                 ConnectionEvent::Failed(UiError::RdpProtocol { detail })
@@ -228,6 +230,7 @@ async fn open(
         known_hosts: KnownRdpHosts::new(&request.known_hosts),
         accepted: request.accepted,
         timeouts: Timeouts::default(),
+        clipboard: profile.redirect_clipboard,
     };
     if request.route.is_empty() {
         connect(config, ask_credentials, request.cancel.clone()).await

@@ -38,7 +38,8 @@ fluent-syntax = "0.12.0"
 i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.10.1"
 # connector, session, graphics, input: the RDP client; TLS comes from tokio-rustls below.
-ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", "input", "dvc", "displaycontrol"] }
+# cliprdr: the clipboard channel, text only.
+ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", "input", "dvc", "displaycontrol", "cliprdr"] }
 ironrdp-core = "0.2.1"
 ironrdp-tokio = "0.10.0"
 iced = "0.14.0"

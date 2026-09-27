@@ -23,6 +23,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use heimdall_remote::vnc::VncInput;
 use tokio::sync::{mpsc, watch};
+use zeroize::Zeroizing;
 
 /// The pixels of a desktop.
 #[derive(Clone)]
@@ -132,6 +133,8 @@ pub struct DesktopPane {
     /// Grows each time the desktop changes: tells the view to draw it again.
     pub generation: u64,
     sink: DesktopSink,
+    /// Where this side's clipboard text goes, when the clipboard is shared.
+    clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
 }
 
 impl fmt::Debug for DesktopPane {
@@ -149,11 +152,13 @@ impl DesktopPane {
         framebuffer: heimdall_rdp::Framebuffer,
         input: mpsc::UnboundedSender<Vec<Operation>>,
         size: watch::Sender<Option<(u16, u16)>>,
+        clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
     ) -> Self {
         Self {
             framebuffer: DesktopFramebuffer::Rdp(framebuffer),
             generation: 0,
             sink: DesktopSink::Rdp { input, size },
+            clipboard,
         }
     }
 
@@ -165,6 +170,19 @@ impl DesktopPane {
         }
     }
 
+    /// Whether this desktop shares the clipboard with its server.
+    #[must_use]
+    pub fn shares_clipboard(&self) -> bool {
+        self.clipboard.is_some()
+    }
+
+    /// Offers `text`, this side's clipboard, to the server; whether it could be.
+    pub(crate) fn offer_clipboard(&self, text: String) -> bool {
+        self.clipboard
+            .as_ref()
+            .is_some_and(|clipboard| clipboard.send(Zeroizing::new(text)).is_ok())
+    }
+
     /// The desktop of a VNC session; `view_only` sends it nothing.
     pub(crate) fn vnc(
         framebuffer: heimdall_remote::vnc::Framebuffer,
@@ -174,6 +192,8 @@ impl DesktopPane {
         Self {
             framebuffer: DesktopFramebuffer::Vnc(framebuffer),
             generation: 0,
+            // Text crosses VNC in Latin-1 and in clear: not shared.
+            clipboard: None,
             sink: DesktopSink::Vnc(VncSink {
                 input,
                 buttons: AtomicU8::new(0),

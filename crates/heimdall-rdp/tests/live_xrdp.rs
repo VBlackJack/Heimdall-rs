@@ -55,6 +55,8 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         known_hosts: KnownRdpHosts::new(known),
         accepted: None,
         timeouts: Timeouts::default(),
+        // The channel negotiated with a real server must not break the session.
+        clipboard: true,
     }
 }
 
@@ -119,7 +121,7 @@ async fn a_trusted_server_draws_its_login_screen() {
                     }
                 }
                 RdpEvent::Closed(reason) => panic!("closed: {reason:?}"),
-                RdpEvent::Resized { .. } => {}
+                RdpEvent::Resized { .. } | RdpEvent::RemoteClipboard(_) => {}
             }
         }
         false

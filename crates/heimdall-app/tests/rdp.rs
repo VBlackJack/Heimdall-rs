@@ -44,6 +44,7 @@ fn app(dir: &Path) -> App {
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
         gateway: None,
+        redirect_clipboard: true,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -186,6 +187,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
             framebuffer: Framebuffer::new(64, 48),
             input,
             size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
         },
     );
     assert_eq!(app.tabs[0].phase, Phase::Connected);
@@ -292,6 +294,7 @@ fn the_size_the_tab_shows_its_desktop_at_reaches_the_session() {
             framebuffer: Framebuffer::new(64, 48),
             input,
             size,
+            clipboard: None,
         },
     );
     app.update(Message::DesktopResize {

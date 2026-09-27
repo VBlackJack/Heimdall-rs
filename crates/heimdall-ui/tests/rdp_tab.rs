@@ -51,6 +51,7 @@ fn app(dir: &Path) -> App {
         domain: None,
         allow_tls_only: false,
         gateway: None,
+        redirect_clipboard: true,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -154,6 +155,7 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
             framebuffer: Framebuffer::new(1280, 800),
             input,
             size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
         },
     );
     let mut ui = simulator(&shell);
@@ -233,6 +235,7 @@ fn a_connected_desktop_is_drawn_from_its_first_frame() {
             framebuffer: Framebuffer::new(1280, 800),
             input,
             size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
         },
     );
     let (pixel, renderer) = pixel_at(&shell, 700, 400);
@@ -287,6 +290,7 @@ fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
             framebuffer: Framebuffer::new(1280, 800),
             input,
             size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
         },
     );
     let mut ui = simulator(&shell);
@@ -325,6 +329,7 @@ fn the_desktop_reports_the_size_it_is_shown_at() {
             framebuffer: Framebuffer::new(1280, 800),
             input,
             size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
         },
     );
     let mut ui = simulator(&shell);

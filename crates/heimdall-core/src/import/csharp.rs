@@ -164,6 +164,8 @@ struct LegacyServer {
     use_direct_connection: bool,
     /// Absent means the C# default: Network Level Authentication required.
     rdp_nla: Option<bool>,
+    /// Absent means the C# default: the clipboard is shared.
+    rdp_redirect_clipboard: Option<bool>,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
     /// Zero or less means the default port, as `VncHandler` reads it.
@@ -527,6 +529,7 @@ fn convert_rdp(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<RdpPro
         domain: non_empty(server.rdp_domain.as_ref()),
         allow_tls_only: server.rdp_nla == Some(false),
         gateway,
+        redirect_clipboard: server.rdp_redirect_clipboard.unwrap_or(true),
     })
 }
 

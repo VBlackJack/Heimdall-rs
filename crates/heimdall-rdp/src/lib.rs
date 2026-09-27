@@ -21,6 +21,7 @@
 //! user's agreement, refused if it changes. [`session::start`] then runs it.
 
 pub mod certificate;
+mod clipboard;
 pub mod connect;
 mod frames;
 pub mod known_hosts;
@@ -28,6 +29,7 @@ pub mod session;
 mod tls;
 
 pub use certificate::{Fingerprint, ServerCertificate};
+pub use clipboard::MAX_REMOTE_TEXT_BYTES;
 pub use connect::{
     AskCredentials, Credentials, Opening, RdpConfig, RdpConnection, RdpError, Security, Timeouts,
     Transport, connect, connect_over, connect_through, given,
