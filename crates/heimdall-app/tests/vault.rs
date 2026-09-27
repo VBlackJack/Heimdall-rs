@@ -214,10 +214,15 @@ fn a_new_master_password_must_be_long_and_typed_twice_alike() {
     };
     assert!(submit(&mut app, "short", "short").is_empty());
     assert_eq!(problem(&app), Some(VaultProblem::TooShort));
+    // Characters, not bytes: eleven accented letters are 22 bytes and still too short.
+    let eleven = "\u{e9}".repeat(heimdall_app::MIN_MASTER_PASSWORD_CHARS - 1);
+    assert!(submit(&mut app, &eleven, &eleven).is_empty());
+    assert_eq!(problem(&app), Some(VaultProblem::TooShort));
     assert!(submit(&mut app, MASTER, "correct horse battery stapler").is_empty());
     assert_eq!(problem(&app), Some(VaultProblem::Mismatch));
+    let twelve = "\u{e9}".repeat(heimdall_app::MIN_MASTER_PASSWORD_CHARS);
     assert!(matches!(
-        submit(&mut app, MASTER, MASTER).as_slice(),
+        submit(&mut app, &twelve, &twelve).as_slice(),
         [Effect::OpenVault { create: true, .. }]
     ));
     assert!(!dir.path().join(heimdall_app::VAULT_FILE_NAME).exists());
@@ -317,22 +322,30 @@ async fn a_saved_password_refused_is_given_once_then_the_user_is_asked() {
 
 #[tokio::test]
 async fn a_saved_password_failing_the_connection_is_not_given_again() {
-    let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered.as_deref(), Some(PASSWORD));
-    event(
-        &mut app,
-        tab,
-        attempt,
-        ConnectionEvent::Failed(UiError::AuthenticationFailed {
+    // Refused outright, or disconnected by a server tired of wrong passwords.
+    for failure in [
+        UiError::AuthenticationFailed {
             tried: vec![AuthMethod::Password],
-        }),
-    );
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None);
+        },
+        UiError::Disconnected {
+            server_message: Some("Too many authentication failures".to_owned()),
+        },
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut app = saved(dir.path()).await;
+        let (tab, attempt) = open(&mut app);
+        let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
+        assert_eq!(answered.as_deref(), Some(PASSWORD));
+        event(
+            &mut app,
+            tab,
+            attempt,
+            ConnectionEvent::Failed(failure.clone()),
+        );
+        let (tab, attempt) = open(&mut app);
+        let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
+        assert_eq!(answered, None, "{failure:?}");
+    }
 }
 
 #[tokio::test]
@@ -519,4 +532,177 @@ async fn a_saved_password_is_not_spent_on_a_later_try() {
     // The server asks again: every try counts towards a lockout, the user answers.
     let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 2));
     assert_eq!(answered, None);
+}
+
+#[tokio::test]
+async fn a_remembered_password_refused_then_corrected_is_not_the_one_saved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), "a.lab");
+    unlock(&mut app, MASTER).await;
+    let (tab, attempt) = open(&mut app);
+    // A typo, "remember" ticked.
+    let (question, _) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
+    type_remembered(&mut app, tab, question);
+    // Refused: asked again, the right one typed without ticking.
+    let (question, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 2));
+    assert_eq!(answered, None);
+    app.update(Message::Answer {
+        tab,
+        question,
+        answer: Some(Answer::Secret(Secret::new("the right one".to_owned()))),
+    });
+    succeed(&mut app, tab, attempt);
+    let (tab, attempt) = open(&mut app);
+    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
+    assert_eq!(answered, None, "the refused password was not saved");
+}
+
+#[tokio::test]
+async fn cancelling_while_the_key_is_derived_leaves_the_vault_closed() {
+    let dir = tempfile::tempdir().expect("dir");
+    drop(saved(dir.path()).await);
+    let mut app = app_restarted(dir.path());
+    let effects = app.update(Message::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        confirm: None,
+    });
+    let [
+        Effect::OpenVault {
+            path,
+            password,
+            create,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("expected OpenVault, got {effects:?}");
+    };
+    app.update(Message::DismissDialog);
+    let result = open_vault(path.clone(), password.clone(), *create).await;
+    assert!(result.is_ok(), "the right password");
+    app.update(Message::VaultOpened(result));
+    assert_eq!(app.vault_status(), VaultStatus::Locked);
+}
+
+#[tokio::test]
+async fn deleting_a_profile_forgets_its_saved_password() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = saved(dir.path()).await;
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::DeleteProfile);
+    app.update(Message::ConfirmDialog);
+    assert!(app.profiles().is_empty(), "{:?}", app.dialog);
+    drop(app);
+    // The same profile made again, on the same server.
+    let mut again = app_restarted(dir.path());
+    unlock(&mut again, MASTER).await;
+    let (tab, attempt) = open(&mut again);
+    let (_, answered) = ask(&mut again, tab, attempt, password_question("a.lab", 1));
+    assert_eq!(answered, None);
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_password_that_could_not_be_saved_is_not_used_and_an_open_form_stays() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), "a.lab");
+    unlock(&mut app, MASTER).await;
+    let (tab, attempt) = open(&mut app);
+    let (question, _) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
+    type_remembered(&mut app, tab, question);
+    // The folder cannot be written: the save fails.
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).expect("chmod");
+    app.update(Message::NewProfile);
+    succeed(&mut app, tab, attempt);
+    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    assert!(
+        matches!(app.dialog, Some(Dialog::EditProfile { .. })),
+        "the form being filled is kept: {:?}",
+        app.dialog
+    );
+    app.update(Message::DismissDialog);
+    let (tab, attempt) = open(&mut app);
+    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
+    assert_eq!(answered, None, "what was not saved is not used");
+}
+
+/// A vault holding a password for RDP profile `nla` as `CORP\admin` on `dc.lab:3389`, and
+/// the application over it with RDP profiles `nla` and `tls` (without NLA) on that server,
+/// both in domain `domain`.
+async fn rdp_vault(dir: &Path, domain: &str) -> App {
+    use heimdall_core::credentials::{
+        CredentialProtocol, Endpoint, SavedPassword, encode, password_entry,
+    };
+    use heimdall_core::profile::RdpProfile;
+
+    let mut vault =
+        sealvault::Vault::create(dir.join(heimdall_app::VAULT_FILE_NAME), MASTER.as_bytes())
+            .expect("vault");
+    for id in ["nla", "tls"] {
+        let saved = SavedPassword {
+            endpoint: Endpoint {
+                protocol: CredentialProtocol::Rdp,
+                host: "dc.lab".to_owned(),
+                port: 3389,
+                username: Some("CORP\\admin".to_owned()),
+            },
+            password: zeroize::Zeroizing::new("rdp password".to_owned()),
+        };
+        vault.set(password_entry(&ProfileId::new(id)), encode(&saved).to_vec());
+    }
+    vault.save().expect("save");
+    let rdp = |id: &str, allow_tls_only: bool| RdpProfile {
+        id: ProfileId::new(id),
+        name: id.to_owned(),
+        group: None,
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: Some("admin".to_owned()),
+        domain: Some(domain.to_owned()),
+        allow_tls_only,
+        gateway: None,
+        redirect_clipboard: false,
+    };
+    let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
+    store.merge_rdp([rdp("nla", false), rdp("tls", true)]);
+    store.save().expect("save");
+    drop(store);
+    let mut app = app(dir, "a.lab");
+    unlock(&mut app, MASTER).await;
+    app
+}
+
+fn rdp_answer(app: &mut App, id: &str) -> Option<String> {
+    let effects = app.update(Message::OpenRdp(ProfileId::new(id)));
+    let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("expected ConnectRdp, got {effects:?}");
+    };
+    let kind = QuestionKind::Password(PasswordQuestion {
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: "admin".to_owned(),
+        attempt: 1,
+    });
+    ask(app, *tab, *attempt, kind).1
+}
+
+#[tokio::test]
+async fn an_rdp_password_goes_to_its_domain_account_and_never_without_nla() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = rdp_vault(dir.path(), "CORP").await;
+    assert_eq!(rdp_answer(&mut app, "nla").as_deref(), Some("rdp password"));
+    assert_eq!(
+        rdp_answer(&mut app, "tls"),
+        None,
+        "without NLA a wrong password is never refused, so none is sent"
+    );
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = rdp_vault(dir.path(), "LAB").await;
+    assert_eq!(
+        rdp_answer(&mut app, "nla"),
+        None,
+        "the profile moved to another domain: another account"
+    );
 }

@@ -26,7 +26,6 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use heimdall_core::credentials::SavedPassword;
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{
@@ -634,7 +633,7 @@ pub struct Tab {
     /// The attempt a saved password was given to, once.
     auto_answered: Option<AttemptId>,
     /// A password to save if this attempt succeeds.
-    remembered: Option<(AttemptId, ProfileId, SavedPassword)>,
+    remembered: Option<vault::Remembered>,
 }
 
 impl fmt::Debug for Tab {
@@ -1041,12 +1040,7 @@ impl App {
                 tab,
                 question,
                 answer,
-            } => {
-                if let Some(found) = self.tab_mut(tab) {
-                    found.prompts.retain(|prompt| prompt.question != question);
-                }
-                vec![Effect::Answer { question, answer }]
-            }
+            } => self.answer(tab, question, answer),
             Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept),
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
@@ -1165,6 +1159,15 @@ impl App {
         effects
     }
 
+    /// The user answered `question`; `None` declines it.
+    fn answer(&mut self, tab: TabId, question: QuestionId, answer: Option<Answer>) -> Vec<Effect> {
+        self.answering(tab, question);
+        if let Some(found) = self.tab_mut(tab) {
+            found.prompts.retain(|prompt| prompt.question != question);
+        }
+        vec![Effect::Answer { question, answer }]
+    }
+
     fn connection(
         &mut self,
         tab_id: TabId,
@@ -1202,8 +1205,8 @@ impl App {
                 | ConnectionEvent::RdpReady { .. }
                 | ConnectionEvent::VncReady { .. }
         );
-        if let ConnectionEvent::Failed(error) = &event {
-            self.credentials_failed(tab_id, error);
+        if matches!(event, ConnectionEvent::Failed(_)) {
+            self.credentials_failed(tab_id);
         }
         let effects = self.apply_connection_event(tab_id, event);
         if accepted {

@@ -22,9 +22,15 @@
 //! - a saved password answers only a question from the server and account it was saved for,
 //!   compared with the tab's profile as it is now: not a gateway on the way, not a host the
 //!   profile was edited to;
-//! - it answers the first try of an attempt only, once; asked again, the server refused it,
-//!   and until a new one is saved the user is asked;
-//! - a password is saved only once the connection it was typed for succeeded.
+//! - it answers the first try of an attempt only, once; asked again, or the attempt failing
+//!   in any way, it is taken as refused, and until a new one is saved the user is asked;
+//! - it is never given to an RDP server reached without Network Level Authentication, which
+//!   would show a logon screen rather than refuse a wrong one;
+//! - a password is saved only once the connection it was typed for succeeded, and only if
+//!   nothing else was answered after it: a later answer is what the server accepted.
+//!
+//! What it does not do: two Heimdall windows each save their own copy of the vault, and the
+//! last one saved wins; a vault replaced on disk while open is overwritten by the next save.
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -39,9 +45,8 @@ use sealvault::{Vault, VaultError};
 use zeroize::Zeroizing;
 
 use super::{App, Dialog, Effect, Message, Prompt, Tab, TabProfile};
-use crate::error::UiError;
 use crate::event::{Answer, QuestionKind};
-use crate::ids::{QuestionId, TabId};
+use crate::ids::{AttemptId, QuestionId, TabId};
 
 /// Name of the vault file, beside the profiles.
 pub const VAULT_FILE_NAME: &str = "vault.hvlt";
@@ -197,7 +202,11 @@ fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileI
             CredentialProtocol::Rdp,
             (&profile.host, profile.port),
             (question.host.as_str(), question.port),
-            Some(question.username.clone()),
+            // The domain names the account as much as the user name does.
+            Some(match &profile.domain {
+                Some(domain) => format!("{domain}\\{}", question.username),
+                None => question.username.clone(),
+            }),
         ),
         (TabProfile::Vnc(profile), QuestionKind::ServerPassword(question)) => (
             &profile.id,
@@ -251,7 +260,7 @@ impl App {
         self.vault.open.is_some()
             && self
                 .tab(tab)
-                .is_some_and(|tab| remembered_endpoint(tab, &prompt.kind).is_some())
+                .is_some_and(|tab| usable_endpoint(tab, &prompt.kind).is_some())
     }
 
     /// Applies a message about the vault.
@@ -262,6 +271,7 @@ impl App {
                 question,
                 password,
             } => {
+                // Held first, while the question is still there to say what it was for.
                 self.remember(tab, question, &password);
                 self.update(Message::Answer {
                     tab,
@@ -342,14 +352,17 @@ impl App {
 
     /// The vault was opened, or could not be.
     pub(super) fn vault_opened(&mut self, result: Result<OpenedVault, VaultProblem>) {
+        let waiting = matches!(&self.dialog, Some(Dialog::Vault(dialog)) if dialog.busy);
+        if !waiting {
+            // Cancelled while the key was derived: the vault stays closed.
+            return;
+        }
         match result {
             Ok(opened) => {
                 if let Some(vault) = opened.take() {
                     self.vault.open = Some(vault);
                 }
-                if matches!(self.dialog, Some(Dialog::Vault(_))) {
-                    self.dialog = None;
-                }
+                self.dialog = None;
             }
             Err(problem) => {
                 if let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() {
@@ -360,7 +373,7 @@ impl App {
         }
     }
 
-    /// Closes the vault: its secrets leave memory, and nothing is answered from it.
+    /// Closes the vault: its saved passwords leave memory, and nothing is answered from it.
     pub(super) fn lock_vault(&mut self) {
         self.vault.open = None;
     }
@@ -368,7 +381,7 @@ impl App {
     /// The saved password answering `kind` in `tab_id`, if the rules allow one.
     pub(super) fn saved_answer(&mut self, tab_id: TabId, kind: &QuestionKind) -> Option<Answer> {
         let tab = self.tab(tab_id)?;
-        let (profile, endpoint) = asked_endpoint(&tab.profile, kind)?;
+        let (profile, endpoint) = usable_endpoint(tab, kind)?;
         let answered_before = tab.auto_answered == Some(tab.attempt);
         if try_number(kind) > 1 || answered_before {
             // Asked again after a saved password: the server refused it.
@@ -401,17 +414,37 @@ impl App {
         let Some(prompt) = tab.prompts.iter().find(|p| p.question == question) else {
             return;
         };
-        let Some((profile, endpoint)) = remembered_endpoint(tab, &prompt.kind) else {
+        let Some((profile, endpoint)) = usable_endpoint(tab, &prompt.kind) else {
             return;
         };
-        tab.remembered = Some((
-            tab.attempt,
+        tab.remembered = Some(Remembered {
+            attempt: tab.attempt,
+            question,
             profile,
-            SavedPassword {
+            saved: SavedPassword {
                 endpoint,
                 password: Zeroizing::new(password.expose().to_owned()),
             },
-        ));
+        });
+    }
+
+    /// `question` of `tab_id` is being answered: a password held for an earlier question is
+    /// dropped, since whatever succeeds now does so on a later answer.
+    pub(super) fn answering(&mut self, tab_id: TabId, question: QuestionId) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        let asks_a_secret = tab.prompts.iter().any(|prompt| {
+            prompt.question == question && !matches!(prompt.kind, QuestionKind::Username(_))
+        });
+        if asks_a_secret
+            && tab
+                .remembered
+                .as_ref()
+                .is_some_and(|held| held.question != question)
+        {
+            tab.remembered = None;
+        }
     }
 
     /// The connection of `tab_id` succeeded: a password held for it is saved.
@@ -419,48 +452,88 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
-        let Some((attempt, profile, saved)) = tab.remembered.take() else {
+        let Some(held) = tab.remembered.take() else {
             return;
         };
-        if attempt != tab.attempt {
+        if held.attempt != tab.attempt {
             return;
         }
+        let entry = password_entry(&held.profile);
         let Some(vault) = self.vault.open.as_mut() else {
             return;
         };
-        vault.set(password_entry(&profile), encode(&saved).to_vec());
+        let before = vault.get(&entry).map(<[u8]>::to_vec).map(Zeroizing::new);
+        vault.set(entry.clone(), encode(&held.saved).to_vec());
         match vault.save() {
             Ok(()) => {
-                self.vault.refused.remove(&profile);
+                self.vault.refused.remove(&held.profile);
             }
             Err(error) => {
-                self.dialog = Some(Dialog::VaultSaveFailed {
-                    detail: error.to_string(),
-                });
+                // Not saved is not used either: the vault in memory is put back as on disk.
+                match before {
+                    Some(bytes) => vault.set(entry, bytes.to_vec()),
+                    None => {
+                        vault.remove(&entry);
+                    }
+                }
+                self.vault_save_failed(&error);
             }
         }
     }
 
-    /// The connection of `tab_id` failed with `error`.
-    pub(super) fn credentials_failed(&mut self, tab_id: TabId, error: &UiError) {
+    /// Forgets the saved password of a profile being deleted, when the vault is open.
+    pub(super) fn forget_password(&mut self, profile: &ProfileId) {
+        let Some(vault) = self.vault.open.as_mut() else {
+            return;
+        };
+        if vault.remove(&password_entry(profile))
+            && let Err(error) = vault.save()
+        {
+            self.vault_save_failed(&error);
+        }
+    }
+
+    /// Says a save failed, unless another dialog is open: what the user is doing there is
+    /// not thrown away for it.
+    fn vault_save_failed(&mut self, error: &VaultError) {
+        log::warn!("the vault could not be saved: {error}");
+        if self.dialog.is_none() {
+            self.dialog = Some(Dialog::VaultSaveFailed {
+                detail: error.to_string(),
+            });
+        }
+    }
+
+    /// The connection of `tab_id` failed. After a saved password, whatever the reason: a
+    /// server tired of wrong passwords disconnects rather than refuses, and asking the user
+    /// once too often costs less than a locked account.
+    pub(super) fn credentials_failed(&mut self, tab_id: TabId) {
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
         // A password held for this attempt stays unsaved: it is tied to the attempt, which
         // is over.
         if tab.auto_answered == Some(tab.attempt)
-            && matches!(error, UiError::AuthenticationFailed { .. })
-            && let Some((profile, _)) = saved_profile(&tab.profile)
+            && let Some(profile) = saved_profile(&tab.profile)
         {
             self.vault.refused.insert(profile);
         }
     }
 }
 
-/// The endpoint a password typed for `kind` would be saved for, when it can be: not for an
+/// A password typed with "remember" ticked, held until its attempt succeeds.
+#[derive(Debug)]
+pub(super) struct Remembered {
+    attempt: AttemptId,
+    question: QuestionId,
+    profile: ProfileId,
+    saved: SavedPassword,
+}
+
+/// The endpoint a password for `kind` is saved for and given to, when there is one: never an
 /// RDP server reached without Network Level Authentication, where a desktop shown proves
-/// nothing about the password.
-fn remembered_endpoint(tab: &Tab, kind: &QuestionKind) -> Option<(ProfileId, Endpoint)> {
+/// nothing about the password and a wrong one is never refused.
+fn usable_endpoint(tab: &Tab, kind: &QuestionKind) -> Option<(ProfileId, Endpoint)> {
     if let TabProfile::Rdp(profile) = &tab.profile
         && profile.allow_tls_only
     {
@@ -470,11 +543,58 @@ fn remembered_endpoint(tab: &Tab, kind: &QuestionKind) -> Option<(ProfileId, End
 }
 
 /// The profile of a tab that can have a saved password.
-fn saved_profile(profile: &TabProfile) -> Option<(ProfileId, CredentialProtocol)> {
+fn saved_profile(profile: &TabProfile) -> Option<ProfileId> {
     match profile {
-        TabProfile::Ssh(profile) => Some((profile.id.clone(), CredentialProtocol::Ssh)),
-        TabProfile::Rdp(profile) => Some((profile.id.clone(), CredentialProtocol::Rdp)),
-        TabProfile::Vnc(profile) => Some((profile.id.clone(), CredentialProtocol::Vnc)),
+        TabProfile::Ssh(profile) => Some(profile.id.clone()),
+        TabProfile::Rdp(profile) => Some(profile.id.clone()),
+        TabProfile::Vnc(profile) => Some(profile.id.clone()),
         _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use heimdall_core::profile::RdpProfile;
+    use heimdall_ssh::PasswordQuestion;
+
+    use super::*;
+
+    fn rdp(domain: Option<&str>) -> TabProfile {
+        TabProfile::Rdp(RdpProfile {
+            id: ProfileId::new("r"),
+            name: "r".to_owned(),
+            group: None,
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            username: Some("admin".to_owned()),
+            domain: domain.map(str::to_owned),
+            allow_tls_only: false,
+            gateway: None,
+            redirect_clipboard: false,
+        })
+    }
+
+    fn asked(port: u16) -> QuestionKind {
+        QuestionKind::Password(PasswordQuestion {
+            host: "DC.lab".to_owned(),
+            port,
+            username: "admin".to_owned(),
+            attempt: 1,
+        })
+    }
+
+    #[test]
+    fn an_rdp_account_is_named_with_its_domain() {
+        let account = |domain| {
+            asked_endpoint(&rdp(domain), &asked(3389)).and_then(|(_, endpoint)| endpoint.username)
+        };
+        assert_eq!(account(Some("CORP")).as_deref(), Some("CORP\\admin"));
+        assert_eq!(account(None).as_deref(), Some("admin"));
+    }
+
+    #[test]
+    fn another_port_on_the_same_host_is_another_server() {
+        assert!(asked_endpoint(&rdp(None), &asked(3389)).is_some());
+        assert!(asked_endpoint(&rdp(None), &asked(22)).is_none());
     }
 }

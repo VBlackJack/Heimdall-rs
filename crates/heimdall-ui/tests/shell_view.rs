@@ -548,18 +548,34 @@ fn a_password_ticked_to_be_remembered_answers_the_next_connection() {
         },
     }));
 
-    // Another connection to the same server: answered without asking.
+    // Another connection to the same server: answered without asking, with what was typed.
     let mut core = shell_core(shell);
     let (tab, attempt) = open(&mut core, "a");
-    let question = ask_password(&mut core, tab, attempt);
-    assert!(
-        core.tab(tab)
-            .expect("tab")
-            .prompts
-            .iter()
-            .all(|prompt| prompt.question != question),
-        "answered from the vault"
-    );
+    let question = QuestionId::fresh();
+    let effects = core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Question {
+            question,
+            kind: QuestionKind::Password(PasswordQuestion {
+                host: "a.lab".to_owned(),
+                port: 22,
+                username: "admin".to_owned(),
+                attempt: 1,
+            }),
+        },
+    });
+    let [
+        heimdall_app::Effect::Answer {
+            question: answered,
+            answer: Some(heimdall_app::Answer::Secret(secret)),
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("expected an answer, got {effects:?}");
+    };
+    assert_eq!(*answered, question);
+    assert_eq!(secret.expose(), "hunter2");
 }
 
 #[test]
