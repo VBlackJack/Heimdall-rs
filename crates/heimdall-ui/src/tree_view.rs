@@ -21,8 +21,8 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::{
-    ConnectAs, GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary,
-    TabGroup, TabId, TabMenuMessage,
+    ConnectAs, GatewayBadge, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
+    ProfileSummary, TabGroup, TabId, TabMenuMessage,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -36,6 +36,13 @@ use crate::shell::Message;
 
 /// Size of a menu entry's text.
 const MENU_TEXT_SIZE: f32 = 14.0;
+
+/// Size of a folder's name.
+const FOLDER_SIZE: f32 = 13.0;
+
+/// What an open folder shows before its name, and a closed one.
+const OPEN_MARKER: &str = "\u{25BE}";
+const CLOSED_MARKER: &str = "\u{25B8}";
 
 /// Width of a menu.
 const MENU_WIDTH: f32 = 230.0;
@@ -59,6 +66,57 @@ pub enum TreeMenu {
     More,
     /// A tab's menu, drawn as the tree's are.
     Tab(TabId),
+}
+
+/// How far a row moves right for each folder it is in.
+const INDENT: f32 = 14.0;
+
+/// `row` moved right for `depth` folders.
+#[must_use]
+pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message> {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a folder depth, far below the 2^24 where f32 loses units"
+    )]
+    let left = depth as f32 * INDENT;
+    container(row)
+        .padding(iced::Padding {
+            left,
+            ..iced::Padding::ZERO
+        })
+        .into()
+}
+
+/// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
+pub fn folder_row<'a>(
+    path: String,
+    name: String,
+    depth: usize,
+    open: bool,
+) -> Element<'a, Message> {
+    let label = if path == NO_FOLDER {
+        fl!("ui-sidebar-group-none")
+    } else {
+        name
+    };
+    let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
+    let body = container(
+        row![
+            text(marker).size(PROTOCOL_SIZE).style(text::secondary),
+            text(label).size(FOLDER_SIZE),
+        ]
+        .spacing(6.0)
+        .align_y(iced::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([2.0, 4.0]);
+    indented(
+        mouse_area(body)
+            .on_press(Message::App(AppMessage::ToggleFolder(path)))
+            .interaction(mouse::Interaction::Pointer)
+            .into(),
+        depth,
+    )
 }
 
 /// One profile: protocol and name; the host, account and protocol in its tooltip.

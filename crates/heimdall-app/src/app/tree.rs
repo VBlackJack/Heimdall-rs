@@ -237,6 +237,10 @@ impl App {
                 self.selected_profile = self.profile_summary(&id).map(|profile| profile.id);
                 Vec::new()
             }
+            Message::ToggleFolder(path) => {
+                self.toggle_folder(&path);
+                Vec::new()
+            }
             Message::ConnectProfile(id) => self.connect_profile(&id),
             Message::DuplicateProfile { id, suffix } => {
                 self.duplicate_profile(&id, &suffix);

@@ -40,7 +40,7 @@ use heimdall_app::{
     Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
     QuestionId, QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
     connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -1246,12 +1246,11 @@ impl Shell {
         }
         let actions = actions.wrap();
         let mut list = Column::new().spacing(2.0);
-        let mut profiles = self.app.profile_summaries();
-        if profiles.is_empty() {
+        if self.app.profile_summaries().is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
-        profiles.retain(|profile| profile.matches(&self.search));
-        if profiles.is_empty() && !self.search.trim().is_empty() {
+        let rows = self.app.tree_rows(&self.search);
+        if rows.is_empty() && !self.search.trim().is_empty() {
             list = list
                 .push(text(fl!("ui-tree-search-no-results")).size(SMALL_SIZE))
                 .push(
@@ -1260,29 +1259,19 @@ impl Shell {
                         .on_press(Message::Search(String::new())),
                 );
         }
-        // Named folders first, alphabetically; profiles without a folder last.
-        profiles.sort_by(|a, b| {
-            (a.group.is_none(), &a.group, a.name.to_lowercase()).cmp(&(
-                b.group.is_none(),
-                &b.group,
-                b.name.to_lowercase(),
-            ))
-        });
-        let mut group: Option<Option<String>> = None;
-        let mut rows: Vec<Element<'_, Message>> = Vec::new();
-        for profile in profiles {
-            if group.as_ref() != Some(&profile.group) {
-                group = Some(profile.group.clone());
-                let label = profile
-                    .group
-                    .clone()
-                    .unwrap_or_else(|| fl!("ui-sidebar-group-none"));
-                rows.push(text(label).size(SMALL_SIZE).into());
+        // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
+        list = list.extend(rows.into_iter().map(|row| match row {
+            TreeRow::Folder {
+                path,
+                name,
+                depth,
+                open,
+            } => tree_view::folder_row(path, name, depth, open),
+            TreeRow::Profile { profile, depth } => {
+                let selected = self.app.selected_profile.as_ref() == Some(&profile.id);
+                tree_view::indented(tree_view::owned_row(&profile, selected), depth)
             }
-            let selected = self.app.selected_profile.as_ref() == Some(&profile.id);
-            rows.push(tree_view::owned_row(&profile, selected));
-        }
-        list = list.extend(rows);
+        }));
         // A right click beside the rows is the tree's own menu.
         let tree = mouse_area(
             container(scrollable(list))

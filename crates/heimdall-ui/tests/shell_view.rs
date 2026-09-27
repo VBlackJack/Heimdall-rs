@@ -1044,3 +1044,25 @@ fn an_unknown_ssh_host_is_asked_about_as_the_csharp_one_with_trust_this_session(
         Message::App(AppMessage::HostKeyDecision { accept: true, .. })
     )));
 }
+
+#[test]
+fn a_click_on_a_folder_folds_it_and_hides_its_profiles() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("server a").expect("shown");
+        ui.click("Production").expect("folder");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::App(AppMessage::ToggleFolder(path)) if path == "Production"
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::ToggleFolder(
+        "Production".to_owned(),
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Production").expect("the folder stays");
+    assert!(ui.find("server a").is_err(), "its profiles are folded away");
+    ui.find("server c").expect("another folder's profile stays");
+}

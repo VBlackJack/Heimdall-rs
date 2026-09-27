@@ -63,6 +63,7 @@ use crate::vnc_driver::VncRequest;
 mod auto_reconnect;
 mod connect_as;
 mod files_tab;
+mod folders;
 mod gateways;
 mod local_tab;
 mod profiles;
@@ -79,6 +80,7 @@ pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use connect_as::ConnectAs;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
+pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
@@ -360,6 +362,8 @@ pub enum Message {
     },
     /// In a session's form, route it through this gateway.
     ChooseGateway(ProfileId),
+    /// Open a folder of the tree, or close it.
+    ToggleFolder(String),
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
     /// Connect to a profile with its own protocol.
@@ -486,6 +490,7 @@ impl fmt::Debug for Message {
             Self::ClearGatewayPassword => f.write_str("ClearGatewayPassword"),
             Self::SaveGateway { .. } => f.write_str("SaveGateway(..)"),
             Self::ChooseGateway(id) => write!(f, "ChooseGateway({id})"),
+            Self::ToggleFolder(path) => write!(f, "ToggleFolder({path})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
@@ -1110,6 +1115,8 @@ pub struct App {
     run_trust: RunTrust,
     /// RDP certificates trusted for this run only: server, port, key.
     rdp_run_trust: Vec<(String, u16, heimdall_rdp::Fingerprint)>,
+    /// The folders of the tree shown closed, by path, [`NO_FOLDER`] included.
+    closed_folders: std::collections::HashSet<String>,
 }
 
 impl fmt::Debug for App {
@@ -1152,6 +1159,7 @@ impl App {
             vault,
             run_trust: RunTrust::default(),
             rdp_run_trust: Vec::new(),
+            closed_folders: std::collections::HashSet::new(),
         };
         // A vault on disk is offered to unlock at start: its passwords are then ready.
         if app.dialog.is_none() {
@@ -1308,6 +1316,7 @@ impl App {
             }
             Message::ConfirmDialog => self.confirm_dialog(),
             message @ (Message::SelectProfile(_)
+            | Message::ToggleFolder(_)
             | Message::ConnectProfile(_)
             | Message::DuplicateProfile { .. }
             | Message::RequestDeleteProfile(_)
