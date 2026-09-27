@@ -62,7 +62,7 @@ use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
 use crate::terminal_view::TerminalView;
-use crate::terminal_view::keys::{WindowShortcut, is_lock_key, window_shortcut};
+use crate::terminal_view::keys::{WindowShortcut, is_lock_key, is_search_key, window_shortcut};
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TreeMenu};
 
@@ -168,6 +168,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             repeat,
             ..
         }) if status == event::Status::Ignored => {
+            if is_search_key(&key, physical_key, modifiers) {
+                return Some(Message::FocusSearch);
+            }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
@@ -221,6 +224,10 @@ pub enum Message {
     LockKey,
     /// Show the settings.
     ShowSettings,
+    /// The tree's search changed.
+    Search(String),
+    /// Ctrl+F: move to the tree's search.
+    FocusSearch,
     /// A field of the vault dialog changed.
     VaultField {
         /// Field, in the order the dialog shows them.
@@ -267,6 +274,8 @@ impl fmt::Debug for Message {
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
+            Self::Search(_) => f.write_str("Search(..)"),
+            Self::FocusSearch => f.write_str("FocusSearch"),
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
             Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
             Self::SubmitVault => f.write_str("SubmitVault"),
@@ -397,6 +406,8 @@ pub struct Shell {
     menu: Option<(TreeMenu, Point)>,
     /// What the content area shows.
     page: Page,
+    /// What the tree's search holds: the profiles it finds are shown.
+    search: String,
 }
 
 /// What the content area shows.
@@ -463,6 +474,7 @@ impl Shell {
             cursor: CursorSpot::default(),
             menu: None,
             page: Page::Tab,
+            search: String::new(),
         }
     }
 
@@ -565,6 +577,16 @@ impl Shell {
             Message::LockKey => {
                 self.menu = None;
                 self.app.update(AppMessage::LockVault)
+            }
+            Message::Search(term) => {
+                self.search = term;
+                return Task::none();
+            }
+            // Under a dialog, the tree is not there to search.
+            Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
+            Message::FocusSearch => {
+                return operation::focus(search_field_id())
+                    .chain(operation::select_all(search_field_id()));
             }
             Message::ShowSettings => {
                 self.menu = None;
@@ -1119,6 +1141,16 @@ impl Shell {
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
+        profiles.retain(|profile| profile.matches(&self.search));
+        if profiles.is_empty() && !self.search.trim().is_empty() {
+            list = list
+                .push(text(fl!("ui-tree-search-no-results")).size(SMALL_SIZE))
+                .push(
+                    button(text(fl!("ui-tree-search-clear")).size(SMALL_SIZE))
+                        .style(button::secondary)
+                        .on_press(Message::Search(String::new())),
+                );
+        }
         // Named folders first, alphabetically; profiles without a folder last.
         profiles.sort_by(|a, b| {
             (a.group.is_none(), &a.group, a.name.to_lowercase()).cmp(&(
@@ -1150,7 +1182,7 @@ impl Shell {
         )
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
         container(
-            column![header, actions, tree]
+            column![header, actions, self.search_box(), tree]
                 .spacing(SPACING)
                 .padding(PADDING),
         )
@@ -1158,6 +1190,36 @@ impl Shell {
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// The tree's search, as the C# sidebar's: typing filters the profiles, Ctrl+F comes
+    /// here, and the clear button empties it.
+    fn search_box(&self) -> Element<'_, Message> {
+        let mut search = row![
+            tooltip(
+                text_input(&fl!("ui-tree-search-placeholder"), &self.search)
+                    .id(search_field_id())
+                    .on_input(Message::Search),
+                text(fl!("ui-tree-search-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+        ]
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center);
+        if !self.search.is_empty() {
+            search = search.push(
+                tooltip(
+                    button(text(fl!("ui-tree-search-clear-button")))
+                        .style(button::secondary)
+                        .on_press(Message::Search(String::new())),
+                    text(fl!("ui-tree-search-clear")).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
+        search.into()
     }
 
     /// The settings, as the C# Settings tab's Security page: the master password card.
@@ -2350,6 +2412,10 @@ fn open_vault_task(path: PathBuf, password: Secret, job: VaultJob) -> Task<Messa
     })
 }
 
+fn search_field_id() -> iced::widget::Id {
+    iced::widget::Id::new("tree-search")
+}
+
 fn vault_field_id(index: usize) -> iced::widget::Id {
     iced::widget::Id::from(format!("vault-field-{index}"))
 }
@@ -2619,6 +2685,30 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn ctrl_f_goes_to_the_search_only_when_no_widget_took_it() {
+        let ctrl_f = || {
+            let key = Key::Character("f".into());
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers: Modifiers::CTRL,
+                text: None,
+                repeat: false,
+            })
+        };
+        assert!(matches!(
+            window_event(ctrl_f(), event::Status::Ignored, window::Id::unique()),
+            Some(Message::FocusSearch)
+        ));
+        assert!(
+            window_event(ctrl_f(), event::Status::Captured, window::Id::unique()).is_none(),
+            "a terminal's Ctrl+F stays its own"
+        );
     }
 
     #[test]

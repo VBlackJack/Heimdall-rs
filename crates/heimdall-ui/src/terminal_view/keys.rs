@@ -49,6 +49,7 @@ fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
     }
     match physical {
         Physical::Code(Code::KeyC) => Some('c'),
+        Physical::Code(Code::KeyF) => Some('f'),
         Physical::Code(Code::KeyL) => Some('l'),
         Physical::Code(Code::KeyV) => Some('v'),
         Physical::Code(Code::KeyW) => Some('w'),
@@ -103,6 +104,21 @@ pub fn is_lock_key(
         && !modifiers.shift()
         && !modifiers.alt()
         && letter(key, physical) == Some('l')
+}
+
+/// Whether `key` with `modifiers` is Ctrl+F, which goes to the tree's search as in the C#
+/// Heimdall. Not a window shortcut: a terminal keeps it (a shell's forward-char), and it
+/// reaches the window only when no widget took it.
+#[must_use]
+pub fn is_search_key(
+    key: &keyboard::Key,
+    physical: Physical,
+    modifiers: keyboard::Modifiers,
+) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && letter(key, physical) == Some('f')
 }
 
 /// The window shortcut `key` with `modifiers` stands for, if any.
@@ -255,7 +271,9 @@ mod tests {
     /// A physical key no shortcut reads.
     const ANY_PLACE: Physical = Physical::Code(Code::F24);
 
-    use super::{Shortcut, WindowShortcut, is_lock_key, key_input, shortcut, window_shortcut};
+    use super::{
+        Shortcut, WindowShortcut, is_lock_key, is_search_key, key_input, shortcut, window_shortcut,
+    };
 
     fn character(c: &str) -> keyboard::Key {
         keyboard::Key::Character(c.into())
@@ -471,6 +489,37 @@ mod tests {
             window_shortcut(&tab, ANY_PLACE, Modifiers::CTRL | Modifiers::ALT),
             None,
             "AltGr is Ctrl+Alt on Windows"
+        );
+    }
+
+    #[test]
+    fn ctrl_f_is_the_search_key_and_the_terminal_keeps_it() {
+        assert!(is_search_key(&character("f"), ANY_PLACE, Modifiers::CTRL));
+        assert!(!is_search_key(&character("g"), ANY_PLACE, Modifiers::CTRL));
+        assert!(is_search_key(
+            &keyboard::Key::Character("\u{0430}".into()),
+            Physical::Code(Code::KeyF),
+            Modifiers::CTRL
+        ));
+        assert!(!is_search_key(
+            &character("f"),
+            ANY_PLACE,
+            Modifiers::empty()
+        ));
+        assert!(!is_search_key(
+            &character("F"),
+            ANY_PLACE,
+            Modifiers::CTRL | Modifiers::SHIFT
+        ));
+        assert!(!is_search_key(
+            &character("f"),
+            ANY_PLACE,
+            Modifiers::CTRL | Modifiers::ALT
+        ));
+        assert_eq!(
+            window_shortcut(&character("f"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "not a window shortcut: the terminal keeps Ctrl+F"
         );
     }
 
