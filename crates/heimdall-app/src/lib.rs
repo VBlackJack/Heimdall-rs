@@ -38,7 +38,7 @@ mod text;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, Dialog, Effect, FilesMessage, GatewayBadge, ImportSummary, KeyInput,
+    App, AppConfig, ConnectAs, Dialog, Effect, FilesMessage, GatewayBadge, ImportSummary, KeyInput,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message, NameAction, OpenedVault, Phase, PointerInput,
     ProfileCopy, ProfileKind, ProfileSummary, Prompt, RDP_MAX_ATTEMPTS, Retry, SystemCredentials,

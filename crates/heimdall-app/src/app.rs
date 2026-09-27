@@ -61,6 +61,7 @@ use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
 
 mod auto_reconnect;
+mod connect_as;
 mod files_tab;
 mod gateways;
 mod local_tab;
@@ -75,6 +76,7 @@ mod vnc_tab;
 mod winrm_tab;
 
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
+pub use connect_as::ConnectAs;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
@@ -214,6 +216,13 @@ pub enum Message {
     },
     /// Stop a tab's session from opening again by itself.
     CancelAutoReconnect(TabId),
+    /// Open a profile's host with another protocol, as a session never saved.
+    ConnectAs {
+        /// Profile.
+        id: ProfileId,
+        /// Protocol.
+        protocol: ConnectAs,
+    },
     /// Something happened in a tab's connection attempt.
     Connection {
         /// Tab.
@@ -425,6 +434,7 @@ impl fmt::Debug for Message {
                 write!(f, "AutoReconnect({}, {})", tab.value(), attempt.value())
             }
             Self::CancelAutoReconnect(tab) => write!(f, "CancelAutoReconnect({})", tab.value()),
+            Self::ConnectAs { id, protocol } => write!(f, "ConnectAs({id}, {protocol:?})"),
             Self::Connection {
                 tab,
                 attempt,
@@ -1223,6 +1233,7 @@ impl App {
             | Message::OpenLocalProfile(_)
             | Message::OpenWinRm(_)
             | Message::ReconnectTab(_)
+            | Message::ConnectAs { .. }
             | Message::ForgetServer(_)) => self.open_message(message),
             message @ (Message::DesktopResize { .. }
             | Message::DesktopInput { .. }
@@ -1242,10 +1253,8 @@ impl App {
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::TabMenu(message) => self.tab_menu(message),
-            Message::AutoReconnect { tab, attempt } => self.auto_reconnect(tab, attempt),
-            Message::CancelAutoReconnect(tab) => {
-                self.cancel_auto_reconnect(tab);
-                Vec::new()
+            message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
+                self.retry_message(&message)
             }
             Message::Connection {
                 tab,
@@ -1343,6 +1352,7 @@ impl App {
             Message::OpenWinRm(id) => self.open_winrm(&id),
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
+            Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),
             _ => Vec::new(),
         }
     }
@@ -1389,6 +1399,11 @@ impl App {
         let Some(profile) = self.profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
+        self.open_ssh(profile, purpose)
+    }
+
+    /// Opens a tab for `profile`, a shell or its files.
+    pub(super) fn open_ssh(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();

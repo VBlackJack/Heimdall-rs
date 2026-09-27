@@ -21,8 +21,8 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::{
-    GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary, TabGroup, TabId,
-    TabMenuMessage,
+    ConnectAs, GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary,
+    TabGroup, TabId, TabMenuMessage,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -217,6 +217,7 @@ fn separator<'a>() -> Element<'a, Message> {
 pub fn menu_entries<'a>(
     menu: &TreeMenu,
     profile: Option<&ProfileSummary>,
+    connect_as: &[ConnectAs],
     editable: bool,
     can_import: bool,
 ) -> Element<'a, Message> {
@@ -234,7 +235,7 @@ pub fn menu_entries<'a>(
                 fl!("ui-tree-connect"),
                 Some(AppMessage::ConnectProfile(id.clone())),
             ));
-            if profile.kind == ProfileKind::Ssh {
+            if !connect_as.is_empty() {
                 entries = entries.push(
                     button(text(fl!("ui-tree-connect-as")).size(MENU_TEXT_SIZE))
                         .width(Length::Fill)
@@ -288,12 +289,16 @@ pub fn menu_entries<'a>(
             );
         }
         (TreeMenu::ConnectAs(_), Some(profile)) => {
-            // SFTP opens the Files view of an SSH profile.
-            entries = entries.push(entry(
-                "SFTP".to_owned(),
-                (profile.kind == ProfileKind::Ssh)
-                    .then(|| AppMessage::OpenFiles(profile.id.clone())),
-            ));
+            // The protocols but the profile's own, as the C# menu lists them.
+            for protocol in connect_as {
+                entries = entries.push(entry(
+                    protocol.label().to_owned(),
+                    Some(AppMessage::ConnectAs {
+                        id: profile.id.clone(),
+                        protocol: *protocol,
+                    }),
+                ));
+            }
         }
         (TreeMenu::Add, _) => {
             entries = entries

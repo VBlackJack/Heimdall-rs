@@ -24,7 +24,7 @@
 
 use std::time::{Duration, Instant};
 
-use super::{App, Effect, Phase};
+use super::{App, Effect, Message, Phase};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
@@ -98,9 +98,21 @@ impl App {
         }]
     }
 
+    /// Applies a message about a tab's attempts.
+    pub(super) fn retry_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::AutoReconnect { tab, attempt } => self.auto_reconnect(tab, attempt),
+            Message::CancelAutoReconnect(tab) => {
+                self.cancel_auto_reconnect(tab);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
     /// The time of the attempt of `tab_id` waiting after `attempt` has come: its session
     /// opens again in its place, unless it was cancelled, closed or reopened meanwhile.
-    pub(super) fn auto_reconnect(&mut self, tab_id: TabId, attempt: AttemptId) -> Vec<Effect> {
+    fn auto_reconnect(&mut self, tab_id: TabId, attempt: AttemptId) -> Vec<Effect> {
         let waiting = self.tab(tab_id).is_some_and(|tab| {
             tab.retry.is_some() && tab.attempt == attempt && matches!(tab.phase, Phase::Failed(_))
         });
@@ -111,7 +123,7 @@ impl App {
     }
 
     /// Stops the attempts of `tab_id`: its failure is shown, with Reconnect.
-    pub(super) fn cancel_auto_reconnect(&mut self, tab_id: TabId) {
+    fn cancel_auto_reconnect(&mut self, tab_id: TabId) {
         if let Some(tab) = self.tab_mut(tab_id) {
             tab.retry = None;
         }

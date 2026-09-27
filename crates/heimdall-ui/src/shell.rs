@@ -1166,7 +1166,17 @@ impl Shell {
                         TreeMenu::Add | TreeMenu::More | TreeMenu::Tab(_) => None,
                     };
                     let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
-                    tree_view::menu_entries(menu, profile.as_ref(), editable, self.app.can_import())
+                    let connect_as = profile
+                        .as_ref()
+                        .map(|p| self.app.connect_as_choices(&p.id))
+                        .unwrap_or_default();
+                    tree_view::menu_entries(
+                        menu,
+                        profile.as_ref(),
+                        &connect_as,
+                        editable,
+                        self.app.can_import(),
+                    )
                 };
                 Some((entries, *at))
             });

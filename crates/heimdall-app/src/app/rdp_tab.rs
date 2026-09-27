@@ -120,6 +120,11 @@ impl App {
         let Some(profile) = self.rdp_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
+        self.open_rdp_profile(profile)
+    }
+
+    /// Opens an RDP tab for `profile`.
+    pub(super) fn open_rdp_profile(&mut self, profile: RdpProfile) -> Vec<Effect> {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();

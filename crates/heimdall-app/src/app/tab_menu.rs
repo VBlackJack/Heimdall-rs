@@ -135,7 +135,7 @@ impl App {
     pub fn can_reopen(&self, tab: &Tab) -> bool {
         match &tab.reopen {
             Reopen::Profile(id) => self.profile_summary(id).is_some(),
-            Reopen::Shell(_) => true,
+            Reopen::Shell(_) | Reopen::Transient(..) => true,
         }
     }
 
@@ -146,10 +146,7 @@ impl App {
             return Vec::new();
         };
         let (reopen, purpose) = (tab.reopen.clone(), tab.purpose);
-        match reopen {
-            Reopen::Profile(id) => self.open_saved(&id, purpose),
-            Reopen::Shell(shell) => self.open_local(shell),
-        }
+        self.open_again(reopen, purpose)
     }
 
     /// The protocol of `tab`: its saved profile's, else that of what it runs.
@@ -164,7 +161,7 @@ impl App {
     pub fn tab_profile(&self, tab: &Tab) -> Option<ProfileSummary> {
         match &tab.reopen {
             Reopen::Profile(id) => self.profile_summary(id),
-            Reopen::Shell(_) => None,
+            Reopen::Shell(_) | Reopen::Transient(..) => None,
         }
     }
 }

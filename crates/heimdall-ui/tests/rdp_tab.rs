@@ -628,3 +628,34 @@ async fn a_dropped_desktop_counts_down_to_its_next_attempt_and_can_be_stopped() 
     ui.find("Reconnecting (attempt 1/20)...")
         .expect("while connecting");
 }
+
+#[test]
+fn an_rdp_profile_connects_as_the_other_protocols() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("dc");
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Connect as...").expect("connect as");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::ConnectAs(asked)) if *asked == id
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone())));
+    let mut ui = simulator(&shell);
+    for label in ["SSH", "SFTP", "VNC", "Telnet"] {
+        ui.find(label).expect(label);
+    }
+    ui.click("Telnet").expect("telnet");
+    assert!(ui.into_messages().any(|message| matches!(
+        &message,
+        Message::MenuChoice(AppMessage::ConnectAs {
+            id: asked,
+            protocol: heimdall_app::ConnectAs::Telnet,
+        }) if *asked == id
+    )));
+}

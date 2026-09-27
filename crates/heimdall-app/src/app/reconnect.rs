@@ -36,6 +36,8 @@ pub(super) enum Reopen {
     Profile(ProfileId),
     /// The same local shell again: one started from the sidebar, with no profile.
     Shell(LocalShell),
+    /// The same session saved nowhere, as "Connect as..." opened it, for its purpose.
+    Transient(Box<TabProfile>, Purpose),
 }
 
 impl Reopen {
@@ -81,10 +83,7 @@ impl App {
         }
         let (reopen, purpose) = (self.tabs[index].reopen.clone(), self.tabs[index].purpose);
         let before = self.tabs.len();
-        let effects = match reopen {
-            Reopen::Profile(id) => self.open_saved(&id, purpose),
-            Reopen::Shell(shell) => self.open_local(shell),
-        };
+        let effects = self.open_again(reopen, purpose);
         if self.tabs.len() > before
             && let Some(reopened) = self.tabs.pop()
         {
@@ -112,6 +111,20 @@ impl App {
             ProfileKind::WinRm => Message::OpenWinRm(profile.id),
         };
         self.update(message)
+    }
+
+    /// Opens what `reopen` names again, in a new tab, the last, which opens again the same
+    /// way; a saved profile for `purpose`.
+    pub(super) fn open_again(&mut self, reopen: Reopen, purpose: Purpose) -> Vec<Effect> {
+        match reopen {
+            Reopen::Profile(id) => self.open_saved(&id, purpose),
+            Reopen::Shell(shell) => self.open_local(shell),
+            Reopen::Transient(profile, purpose) => {
+                let effects = self.open_transient(TabProfile::clone(&profile), purpose);
+                self.reopened_by(Reopen::Transient(profile, purpose));
+                effects
+            }
+        }
     }
 
     /// Records how the tab just opened (the last one) opens again.
