@@ -157,6 +157,10 @@ pub struct RdpProfile {
     /// travels in the logon packet, inside TLS, once the server's key is trusted.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_tls_only: bool,
+    /// The SSH gateway the server is reached through, if any: the RDP connection then runs
+    /// in a tunnel the gateway opens to the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<ProfileId>,
 }
 
 /// A saved Telnet destination, reached directly.

@@ -17,21 +17,26 @@
 //! One RDP connection attempt, reported as [`ConnectionEvent`]s like an SSH one: questions
 //! for the user name and the password, the certificate question, then the session.
 
+use std::io;
+use std::net::{Ipv4Addr, SocketAddr};
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
-use heimdall_core::profile::{RdpProfile, display_address};
+use heimdall_core::profile::{RdpProfile, SshProfile, display_address};
 use heimdall_rdp::session::{self, RdpEvent};
 use heimdall_rdp::{
-    AskCredentials, CloseReason, Fingerprint, KnownRdpHosts, RdpConfig, RdpError, Security,
-    Timeouts, connect,
+    AskCredentials, CloseReason, Fingerprint, KnownRdpHosts, Opening, RdpConfig, RdpConnection,
+    RdpError, Security, Timeouts, Transport, connect, connect_through,
 };
-use heimdall_ssh::{AuthMethod, PasswordQuestion, UsernameQuestion};
+use heimdall_ssh::{
+    AuthMethod, ConnectError, ConnectOptions, PasswordQuestion, UsernameQuestion, establish_via,
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-use crate::driver::{AnswerRegistry, ask};
+use crate::driver::{AnswerRegistry, ChannelPrompter, ask, report_failure};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 
@@ -52,8 +57,55 @@ pub struct RdpRequest {
     pub accepted: Option<Fingerprint>,
     /// Desktop size asked for.
     pub desktop: (u16, u16),
+    /// The SSH gateways the server is reached through, nearest first, each as the hop it
+    /// is; empty for a direct connection.
+    pub route: Vec<SshProfile>,
+    /// Settings of the SSH connections to the gateways.
+    pub ssh: ConnectOptions,
     /// Cancels the attempt and, once connected, the session.
     pub cancel: CancellationToken,
+}
+
+/// Address this side reports to the server through a tunnel: it has none of its own there.
+const TUNNEL_CLIENT_ADDRESS: SocketAddr =
+    SocketAddr::new(std::net::IpAddr::V4(Ipv4Addr::LOCALHOST), 0);
+
+/// Where an SSH failure on the way to the server waits to be reported as itself: the RDP
+/// connection sees only that its stream could not be opened.
+type TunnelFailure = Arc<Mutex<Option<ConnectError>>>;
+
+/// The stream to the server through `route`, opened once the RDP connection asks for it, so
+/// that credentials asked before the connection are asked before the tunnel too.
+fn tunnel(request: &RdpRequest, prompter: Arc<ChannelPrompter>, failure: TunnelFailure) -> Opening {
+    let route = request.route.clone();
+    let options = request.ssh.clone();
+    let cancel = request.cancel.clone();
+    let host = request.profile.host.clone();
+    let port = request.profile.port;
+    Box::pin(async move {
+        let opened = match route.split_last() {
+            Some((last, before)) => {
+                match establish_via(before, last, &options, prompter, cancel).await {
+                    Ok(gateway) => gateway.open_tunnel(&host, port).await,
+                    Err(error) => Err(error),
+                }
+            }
+            None => Err(ConnectError::Cancelled),
+        };
+        match opened {
+            Ok(stream) => Ok((
+                Box::new(stream) as Box<dyn Transport>,
+                TUNNEL_CLIENT_ADDRESS,
+            )),
+            Err(error) => {
+                let reason = error.to_string();
+                if let Ok(mut slot) = failure.lock() {
+                    *slot = Some(error);
+                }
+                Err(io::Error::other(reason))
+            }
+        }
+    })
 }
 
 /// Starts an attempt on the current tokio runtime. The stream ends after
@@ -77,22 +129,16 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         let (profile, registry, events) = (profile.clone(), registry.clone(), events.clone());
         Box::new(move || Box::pin(async move { credentials(&profile, &registry, &events).await }))
     };
-    let config = RdpConfig {
-        host: profile.host.clone(),
-        port: profile.port,
-        domain: profile.domain.clone(),
-        desktop: request.desktop,
-        keyboard_layout: 0,
-        security: if profile.allow_tls_only {
-            Security::NlaOrTls
-        } else {
-            Security::Nla
-        },
-        known_hosts: KnownRdpHosts::new(&request.known_hosts),
-        accepted: request.accepted,
-        timeouts: Timeouts::default(),
-    };
-    let connection = match connect(config, ask_credentials, request.cancel.clone()).await {
+    let failure = TunnelFailure::default();
+    let connecting = open(&request, &registry, &events, ask_credentials, &failure).await;
+    // A failure on the way to the server is reported as itself: an unknown gateway key asks
+    // its question, a refusal names the host.
+    if connecting.is_err()
+        && let Some(error) = failure.lock().ok().and_then(|mut slot| slot.take())
+    {
+        return report_failure(error, &events, &target).await;
+    }
+    let connection = match connecting {
         Ok(connection) => connection,
         Err(RdpError::UnknownCertificate(certificate)) => {
             log::info!(
@@ -154,6 +200,52 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         if last {
             return;
         }
+    }
+}
+
+/// Opens the RDP connection, over TCP or through the tunnel `request.route` leads to. An
+/// SSH failure on the way lands in `failure`.
+async fn open(
+    request: &RdpRequest,
+    registry: &AnswerRegistry,
+    events: &mpsc::Sender<ConnectionEvent>,
+    ask_credentials: AskCredentials,
+    failure: &TunnelFailure,
+) -> Result<RdpConnection, RdpError> {
+    let profile = &request.profile;
+    let config = RdpConfig {
+        host: profile.host.clone(),
+        port: profile.port,
+        domain: profile.domain.clone(),
+        desktop: request.desktop,
+        keyboard_layout: 0,
+        security: if profile.allow_tls_only {
+            Security::NlaOrTls
+        } else {
+            Security::Nla
+        },
+        known_hosts: KnownRdpHosts::new(&request.known_hosts),
+        accepted: request.accepted,
+        timeouts: Timeouts::default(),
+    };
+    if request.route.is_empty() {
+        connect(config, ask_credentials, request.cancel.clone()).await
+    } else {
+        let prompter = Arc::new(ChannelPrompter {
+            events: events.clone(),
+            registry: registry.clone(),
+        });
+        let opening = tunnel(request, prompter, failure.clone());
+        // No limit of its own: each SSH hop bounds its steps, and a gateway may ask for a
+        // password, which a person types.
+        connect_through(
+            config,
+            ask_credentials,
+            request.cancel.clone(),
+            opening,
+            None,
+        )
+        .await
     }
 }
 

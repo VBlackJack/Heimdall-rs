@@ -98,7 +98,7 @@ fn an_rdp_profile_keeps_its_port_user_and_domain() {
 }
 
 #[test]
-fn an_rdp_profile_through_a_gateway_is_left_out_unless_direct() {
+fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
     let json = servers(
         r#"{"id": "tunnel", "remoteServer": "h", "connectionType": "RDP", "sshGatewayId": "g"},
            {"id": "direct", "remoteServer": "h", "connectionType": "RDP", "sshGatewayId": "g",
@@ -118,7 +118,8 @@ fn an_rdp_profile_through_a_gateway_is_left_out_unless_direct() {
     assert_eq!(
         reasons,
         vec![
-            ("tunnel".to_owned(), SkipReason::NeedsJumpHost),
+            // Its gateway is not in the settings, which this import has none of.
+            ("tunnel".to_owned(), SkipReason::MissingGateway),
             ("rdg".to_owned(), SkipReason::NeedsRdGateway),
             ("port".to_owned(), SkipReason::InvalidPort(0)),
         ]
@@ -248,9 +249,8 @@ fn gateways_are_imported_with_their_parents_and_profiles_keep_theirs() {
     assert_eq!(outer.username, None);
     assert_eq!(outer.parent, None);
     assert_eq!(report.profiles[0].gateway, Some(ProfileId::new("inner")));
-    // RDP through a gateway is not supported yet.
-    assert_eq!(report.skipped.len(), 1);
-    assert_eq!(report.skipped[0].reason, SkipReason::NeedsJumpHost);
+    assert_eq!(report.rdp[0].gateway, Some(ProfileId::new("inner")));
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
 }
 
 #[test]

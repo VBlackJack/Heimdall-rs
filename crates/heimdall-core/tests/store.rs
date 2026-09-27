@@ -143,6 +143,7 @@ fn rdp(id: &str) -> RdpProfile {
         username: Some("admin".to_owned()),
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
+        gateway: None,
     }
 }
 

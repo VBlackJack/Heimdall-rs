@@ -204,9 +204,14 @@ pub struct RdpConnection {
     pub result: ConnectionResult,
 }
 
-/// Opens a connection to `config.host`. The future can be spawned: the connection sequence
-/// runs on a blocking thread of the current runtime, as `IronRDP`'s connector futures cannot
-/// be shown to be `Send`.
+/// How the bytes reach the server: the stream once open, and the address this side reports
+/// to the server as its own.
+pub type Opening =
+    Pin<Box<dyn Future<Output = io::Result<(Box<dyn Transport>, SocketAddr)>> + Send>>;
+
+/// Opens a connection to `config.host` over TCP. The future can be spawned: the connection
+/// sequence runs on a blocking thread of the current runtime, as `IronRDP`'s connector
+/// futures cannot be shown to be `Send`.
 ///
 /// # Errors
 ///
@@ -216,19 +221,55 @@ pub async fn connect(
     credentials: AskCredentials,
     cancel: CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
+    let host = config.host.clone();
+    let port = config.port;
+    let tcp: Opening = Box::pin(async move {
+        let tcp = TcpStream::connect((host.as_str(), port)).await?;
+        let local = tcp.local_addr()?;
+        Ok((Box::new(tcp) as Box<dyn Transport>, local))
+    });
+    let limit = config.timeouts.connect;
+    connect_through(config, credentials, cancel, tcp, Some(limit)).await
+}
+
+/// [`connect`], with the stream opened by `opening` instead of a TCP connection of its own:
+/// through an SSH tunnel, for one. The server is still `config.host` for its certificate and
+/// for the logon: only the way to it changes.
+///
+/// `limit` bounds the opening; `None` leaves it to `opening`, which may wait for a person (a
+/// gateway's password) and bounds its own steps.
+///
+/// # Errors
+///
+/// As [`connect`]; a failure of `opening` is [`RdpError::Network`].
+pub async fn connect_through(
+    config: RdpConfig,
+    credentials: AskCredentials,
+    cancel: CancellationToken,
+    opening: Opening,
+    limit: Option<Duration>,
+) -> Result<RdpConnection, RdpError> {
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        runtime.block_on(connect_in_place(&config, credentials, &cancel))
+        runtime.block_on(connect_in_place(
+            &config,
+            credentials,
+            &cancel,
+            opening,
+            limit,
+        ))
     })
     .await
     .map_err(|error| RdpError::Protocol(error.to_string()))?
 }
 
-/// [`connect`], on the calling task: its future is not `Send`.
+/// [`connect_through`], on the calling task: its future is not `Send`.
 async fn connect_in_place(
     config: &RdpConfig,
     credentials: AskCredentials,
     cancel: &CancellationToken,
+    opening: Opening,
+    limit: Option<Duration>,
 ) -> Result<RdpConnection, RdpError> {
     // A server waits for the credentials only so long: Windows Server 2022 dropped a
     // connection between 60 and 90 s (measured on 2026-09-26). So a server whose identity is
@@ -247,16 +288,17 @@ async fn connect_in_place(
     } else {
         credentials
     };
-    let tcp = phase(
-        config.timeouts.connect,
-        cancel,
-        TcpStream::connect((config.host.as_str(), config.port)),
-    )
-    .await?
-    .map_err(RdpError::Network)?;
-    let client_addr = tcp.local_addr().map_err(RdpError::Network)?;
+    let opened = if let Some(limit) = limit {
+        phase(limit, cancel, opening).await?
+    } else {
+        tokio::select! {
+            () = cancel.cancelled() => return Err(RdpError::Cancelled),
+            opened = opening => opened,
+        }
+    };
+    let (stream, client_addr) = opened.map_err(RdpError::Network)?;
     Box::pin(connect_over(
-        Box::new(tcp),
+        stream,
         client_addr,
         config,
         credentials,

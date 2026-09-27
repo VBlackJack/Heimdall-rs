@@ -50,6 +50,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         domain: None,
         allow_tls_only: false,
+        gateway: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

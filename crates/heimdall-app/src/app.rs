@@ -1146,9 +1146,10 @@ impl App {
     }
 
     fn host_key_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+        // An RDP tab asks about the server's certificate, or, on the way, a gateway's SSH key.
         if self
             .tab(tab_id)
-            .is_some_and(|tab| tab.purpose == Purpose::Rdp)
+            .is_some_and(|tab| tab.purpose == Purpose::Rdp && tab.pending_rdp_key.is_some())
         {
             return self.rdp_certificate_decision(tab_id, accept);
         }
@@ -1187,8 +1188,11 @@ impl App {
             tab.phase = Phase::Failed(error);
             return Vec::new();
         }
-        let TabProfile::Ssh(profile) = tab.profile.clone() else {
-            return Vec::new();
+        let profile = match tab.profile.clone() {
+            TabProfile::Ssh(profile) => profile,
+            // A gateway's key, learnt: the RDP connection starts again through it.
+            TabProfile::Rdp(_) => return self.reconnect_rdp(tab_id, None),
+            _ => return Vec::new(),
         };
         let grid = tab.terminal.size();
         let attempt = AttemptId::fresh();
