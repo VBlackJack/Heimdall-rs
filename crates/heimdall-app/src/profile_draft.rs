@@ -20,7 +20,11 @@ use std::hash::{BuildHasher as _, RandomState};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::profile::{
+    DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT,
+    DEFAULT_WINRM_HTTPS_PORT, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
+    WinRmProfile,
+};
 
 /// Port when the field is left empty.
 pub const DEFAULT_SSH_PORT: u16 = 22;
@@ -43,18 +47,120 @@ pub enum ProfileField {
     Username,
     /// Private key file.
     KeyPath,
+    /// Windows domain of an RDP account.
+    Domain,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Name,
         Self::Group,
         Self::Host,
         Self::Port,
         Self::Username,
+        Self::Domain,
         Self::KeyPath,
     ];
+}
+
+/// The protocol a form is for: every protocol the editor knows.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum DraftProtocol {
+    /// SSH, with SFTP for its files.
+    #[default]
+    Ssh,
+    /// Remote desktop.
+    Rdp,
+    /// VNC desktop.
+    Vnc,
+    /// Remote `PowerShell`.
+    WinRm,
+    /// Telnet terminal.
+    Telnet,
+}
+
+impl DraftProtocol {
+    /// Every protocol, in the order the picker shows them.
+    pub const ALL: [Self; 5] = [Self::Rdp, Self::Ssh, Self::WinRm, Self::Vnc, Self::Telnet];
+
+    /// Whether a form for this protocol shows `field`.
+    #[must_use]
+    pub fn shows(self, field: ProfileField) -> bool {
+        match field {
+            ProfileField::Name | ProfileField::Group | ProfileField::Host | ProfileField::Port => {
+                true
+            }
+            ProfileField::Username => matches!(self, Self::Ssh | Self::Rdp | Self::WinRm),
+            ProfileField::Domain => self == Self::Rdp,
+            ProfileField::KeyPath => self == Self::Ssh,
+        }
+    }
+
+    /// Whether a password can be saved with this protocol's profiles. A `WinRM` password is
+    /// typed into `PowerShell`, which asks for it.
+    #[must_use]
+    pub fn saves_password(self) -> bool {
+        matches!(self, Self::Ssh | Self::Rdp | Self::Vnc)
+    }
+
+    /// Whether a saved password belongs to an account, which the form must then name.
+    #[must_use]
+    pub fn password_needs_username(self) -> bool {
+        matches!(self, Self::Ssh | Self::Rdp)
+    }
+}
+
+/// An option of a form, shown as a box to tick.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileToggle {
+    /// RDP: require Network Level Authentication, as the C# "Enable Network Level
+    /// Authentication" box, ticked by default; cleared, a server with TLS alone is accepted.
+    Nla,
+    /// RDP: share the clipboard.
+    RedirectClipboard,
+    /// `WinRM`: log in with a stored account rather than the current Windows identity.
+    StoredCredential,
+    /// `WinRM`: over HTTPS.
+    UseSsl,
+    /// `WinRM` over HTTPS: accept any certificate.
+    SkipCertificateCheck,
+    /// VNC: watch only.
+    ViewOnly,
+    /// VNC: connect to a server asking no password.
+    AllowNoPassword,
+}
+
+impl ProfileToggle {
+    /// The options of `protocol`'s form, in form order.
+    #[must_use]
+    pub fn of(protocol: DraftProtocol) -> &'static [Self] {
+        match protocol {
+            DraftProtocol::Rdp => &[Self::RedirectClipboard, Self::Nla],
+            DraftProtocol::WinRm => &[
+                Self::StoredCredential,
+                Self::UseSsl,
+                Self::SkipCertificateCheck,
+            ],
+            DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
+            DraftProtocol::Ssh | DraftProtocol::Telnet => &[],
+        }
+    }
+}
+
+/// The profile a form saves, of its protocol.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DraftProfile {
+    /// SSH.
+    Ssh(SshProfile),
+    /// RDP.
+    Rdp(RdpProfile),
+    /// VNC.
+    Vnc(VncProfile),
+    /// `WinRM`.
+    WinRm(WinRmProfile),
+    /// Telnet.
+    Telnet(TelnetProfile),
 }
 
 /// What the form holds, as typed.
@@ -77,6 +183,14 @@ pub struct ProfileDraft {
     /// The SSH gateway of the profile being edited, which the form does not show: kept as it
     /// is, so that saving the form never drops it.
     pub gateway: Option<ProfileId>,
+    /// Protocol.
+    pub protocol: DraftProtocol,
+    /// A new profile's protocol was chosen: the form shows its fields, not the picker.
+    pub protocol_chosen: bool,
+    /// Windows domain (RDP).
+    pub domain: String,
+    /// Options ticked.
+    pub toggles: Vec<ProfileToggle>,
     /// A password is saved for the profile: the form says so, its field stays empty.
     pub password_saved: bool,
     /// The saved password is to be removed when the form is saved.
@@ -104,6 +218,10 @@ pub enum DraftError {
     ControlCharacter,
     /// A password is typed but no user name: a password is for an account.
     UsernameForPassword,
+    /// A stored `WinRM` credential names no account.
+    UsernameMissing,
+    /// The domain holds a space or a double quote.
+    DomainInvalid,
 }
 
 impl DraftError {
@@ -116,7 +234,10 @@ impl DraftError {
                 ProfileField::Host
             }
             Self::PortInvalid => ProfileField::Port,
-            Self::UsernameInvalid | Self::UsernameForPassword => ProfileField::Username,
+            Self::UsernameInvalid | Self::UsernameForPassword | Self::UsernameMissing => {
+                ProfileField::Username
+            }
+            Self::DomainInvalid => ProfileField::Domain,
         }
     }
 }
@@ -138,9 +259,273 @@ impl ProfileDraft {
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             gateway: profile.gateway.clone(),
-            password_saved: false,
-            clear_password: false,
+            protocol: DraftProtocol::Ssh,
+            protocol_chosen: true,
+            ..Self::default()
         }
+    }
+
+    /// A form filled from a saved RDP profile.
+    #[must_use]
+    pub fn from_rdp(profile: &RdpProfile) -> Self {
+        let mut toggles = Vec::new();
+        if profile.redirect_clipboard {
+            toggles.push(ProfileToggle::RedirectClipboard);
+        }
+        if !profile.allow_tls_only {
+            toggles.push(ProfileToggle::Nla);
+        }
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            host: profile.host.clone(),
+            port: profile.port.to_string(),
+            username: profile.username.clone().unwrap_or_default(),
+            domain: profile.domain.clone().unwrap_or_default(),
+            gateway: profile.gateway.clone(),
+            protocol: DraftProtocol::Rdp,
+            protocol_chosen: true,
+            toggles,
+            ..Self::default()
+        }
+    }
+
+    /// A form filled from a saved VNC profile.
+    #[must_use]
+    pub fn from_vnc(profile: &VncProfile) -> Self {
+        let mut toggles = Vec::new();
+        if profile.view_only {
+            toggles.push(ProfileToggle::ViewOnly);
+        }
+        if profile.allow_no_password {
+            toggles.push(ProfileToggle::AllowNoPassword);
+        }
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            host: profile.host.clone(),
+            port: profile.port.to_string(),
+            protocol: DraftProtocol::Vnc,
+            protocol_chosen: true,
+            toggles,
+            ..Self::default()
+        }
+    }
+
+    /// A form filled from a saved `WinRM` profile.
+    #[must_use]
+    pub fn from_winrm(profile: &WinRmProfile) -> Self {
+        let mut toggles = Vec::new();
+        if profile.username.is_some() {
+            toggles.push(ProfileToggle::StoredCredential);
+        }
+        if profile.use_ssl {
+            toggles.push(ProfileToggle::UseSsl);
+        }
+        if profile.skip_certificate_check {
+            toggles.push(ProfileToggle::SkipCertificateCheck);
+        }
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            host: profile.host.clone(),
+            port: profile.port.to_string(),
+            username: profile.username.clone().unwrap_or_default(),
+            protocol: DraftProtocol::WinRm,
+            protocol_chosen: true,
+            toggles,
+            ..Self::default()
+        }
+    }
+
+    /// A form filled from a saved Telnet profile.
+    #[must_use]
+    pub fn from_telnet(profile: &TelnetProfile) -> Self {
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            host: profile.host.clone(),
+            port: profile.port.to_string(),
+            protocol: DraftProtocol::Telnet,
+            protocol_chosen: true,
+            ..Self::default()
+        }
+    }
+
+    /// An empty form for `protocol`, as a new C# session starts: its default port written
+    /// in, and for RDP the clipboard shared and Network Level Authentication required.
+    #[must_use]
+    pub fn new_for(protocol: DraftProtocol) -> Self {
+        let mut draft = Self {
+            protocol,
+            protocol_chosen: true,
+            toggles: match protocol {
+                DraftProtocol::Rdp => vec![ProfileToggle::RedirectClipboard, ProfileToggle::Nla],
+                _ => Vec::new(),
+            },
+            ..Self::default()
+        };
+        draft.port = draft.default_port().to_string();
+        draft
+    }
+
+    /// Whether `toggle` is ticked.
+    #[must_use]
+    pub fn is_on(&self, toggle: ProfileToggle) -> bool {
+        self.toggles.contains(&toggle)
+    }
+
+    /// Ticks or clears `toggle`. As in the C# dialog, "Use SSL" moves a `WinRM` port still
+    /// on the other transport's default to its own default; a port typed by hand stays.
+    pub fn toggle(&mut self, toggle: ProfileToggle, on: bool) {
+        let before = self.default_port();
+        self.toggles.retain(|ticked| *ticked != toggle);
+        if on {
+            self.toggles.push(toggle);
+        }
+        let port = self.port.trim();
+        if toggle == ProfileToggle::UseSsl && (port.is_empty() || port == before.to_string()) {
+            self.port = self.default_port().to_string();
+        }
+    }
+
+    /// Whether `field` is shown now: the `WinRM` account only for a stored credential.
+    #[must_use]
+    pub fn shows(&self, field: ProfileField) -> bool {
+        self.protocol.shows(field)
+            && !(self.protocol == DraftProtocol::WinRm
+                && field == ProfileField::Username
+                && !self.is_on(ProfileToggle::StoredCredential))
+    }
+
+    /// Whether `toggle` is shown now: skipping certificate checks only over HTTPS.
+    #[must_use]
+    pub fn shows_toggle(&self, toggle: ProfileToggle) -> bool {
+        toggle != ProfileToggle::SkipCertificateCheck || self.is_on(ProfileToggle::UseSsl)
+    }
+
+    /// The port an empty field stands for.
+    #[must_use]
+    pub fn default_port(&self) -> u16 {
+        match self.protocol {
+            DraftProtocol::Ssh => DEFAULT_SSH_PORT,
+            DraftProtocol::Rdp => DEFAULT_RDP_PORT,
+            DraftProtocol::Vnc => DEFAULT_VNC_PORT,
+            DraftProtocol::Telnet => DEFAULT_TELNET_PORT,
+            DraftProtocol::WinRm if self.is_on(ProfileToggle::UseSsl) => DEFAULT_WINRM_HTTPS_PORT,
+            DraftProtocol::WinRm => DEFAULT_WINRM_HTTP_PORT,
+        }
+    }
+
+    /// The profile this form describes, of its protocol, under `id`.
+    ///
+    /// # Errors
+    ///
+    /// The first [`DraftError`] in form order.
+    pub fn to_saved(&self, id: ProfileId) -> Result<DraftProfile, DraftError> {
+        let name = self.name.trim();
+        if name.is_empty() {
+            return Err(DraftError::NameMissing);
+        }
+        let group = self.group.trim();
+        let key_path = self.key_path.trim();
+        let domain = self.domain.trim();
+        if [name, group, key_path, domain]
+            .iter()
+            .any(|text| text.chars().any(char::is_control))
+        {
+            return Err(DraftError::ControlCharacter);
+        }
+        let host = host(&self.host)?;
+        let port = match self.port.trim() {
+            "" => self.default_port(),
+            typed => typed
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or(DraftError::PortInvalid)?,
+        };
+        let username = if self.shows(ProfileField::Username) {
+            self.username.trim()
+        } else {
+            ""
+        };
+        // A double quote is refused too: a WinRM account is written into a command, and no
+        // account name holds one.
+        if username
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '"')
+        {
+            return Err(DraftError::UsernameInvalid);
+        }
+        if domain.chars().any(|c| c.is_whitespace() || c == '"') {
+            return Err(DraftError::DomainInvalid);
+        }
+        let optional = |text: &str| (!text.is_empty()).then(|| text.to_owned());
+        let group = optional(group);
+        let name = name.to_owned();
+        Ok(match self.protocol {
+            DraftProtocol::Ssh => DraftProfile::Ssh(SshProfile {
+                id,
+                name,
+                group,
+                host,
+                port,
+                username: optional(username),
+                key_path: optional(key_path).map(PathBuf::from),
+                gateway: self.gateway.clone(),
+            }),
+            DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
+                id,
+                name,
+                group,
+                host,
+                port,
+                username: optional(username),
+                domain: optional(domain),
+                allow_tls_only: !self.is_on(ProfileToggle::Nla),
+                gateway: self.gateway.clone(),
+                redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
+            }),
+            DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
+                id,
+                name,
+                group,
+                host,
+                port,
+                view_only: self.is_on(ProfileToggle::ViewOnly),
+                allow_no_password: self.is_on(ProfileToggle::AllowNoPassword),
+            }),
+            DraftProtocol::WinRm => {
+                let stored = self.is_on(ProfileToggle::StoredCredential);
+                if stored && username.is_empty() {
+                    return Err(DraftError::UsernameMissing);
+                }
+                let use_ssl = self.is_on(ProfileToggle::UseSsl);
+                DraftProfile::WinRm(WinRmProfile {
+                    id,
+                    name,
+                    group,
+                    host,
+                    port,
+                    use_ssl,
+                    skip_certificate_check: use_ssl
+                        && self.is_on(ProfileToggle::SkipCertificateCheck),
+                    username: stored.then(|| username.to_owned()),
+                })
+            }
+            DraftProtocol::Telnet => DraftProfile::Telnet(TelnetProfile {
+                id,
+                name,
+                group,
+                host,
+                port,
+            }),
+        })
     }
 
     /// The text of `field`.
@@ -153,6 +538,7 @@ impl ProfileDraft {
             ProfileField::Port => &self.port,
             ProfileField::Username => &self.username,
             ProfileField::KeyPath => &self.key_path,
+            ProfileField::Domain => &self.domain,
         }
     }
 
@@ -165,6 +551,7 @@ impl ProfileDraft {
             ProfileField::Port => &mut self.port,
             ProfileField::Username => &mut self.username,
             ProfileField::KeyPath => &mut self.key_path,
+            ProfileField::Domain => &mut self.domain,
         } = value;
     }
 
@@ -366,5 +753,140 @@ mod tests {
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
+    }
+
+    #[test]
+    fn a_new_session_starts_as_the_csharp_one() {
+        let rdp = ProfileDraft::new_for(DraftProtocol::Rdp);
+        assert_eq!(rdp.port, "3389");
+        assert!(rdp.is_on(ProfileToggle::RedirectClipboard));
+        assert!(rdp.is_on(ProfileToggle::Nla), "NLA required unless cleared");
+        for (protocol, port) in [
+            (DraftProtocol::Ssh, "22"),
+            (DraftProtocol::WinRm, "5985"),
+            (DraftProtocol::Vnc, "5900"),
+            (DraftProtocol::Telnet, "23"),
+        ] {
+            assert_eq!(ProfileDraft::new_for(protocol).port, port, "{protocol:?}");
+        }
+    }
+
+    #[test]
+    fn every_protocol_reads_back_from_its_form() {
+        let rdp = RdpProfile {
+            id: id(),
+            name: "dc".to_owned(),
+            group: Some("Win".to_owned()),
+            host: "dc.lab".to_owned(),
+            port: 3390,
+            username: Some("admin".to_owned()),
+            domain: Some("CORP".to_owned()),
+            allow_tls_only: true,
+            gateway: Some(ProfileId::new("gw")),
+            redirect_clipboard: false,
+        };
+        assert_eq!(
+            ProfileDraft::from_rdp(&rdp).to_saved(id()),
+            Ok(DraftProfile::Rdp(rdp.clone()))
+        );
+        let nla = RdpProfile {
+            allow_tls_only: false,
+            redirect_clipboard: true,
+            ..rdp
+        };
+        assert_eq!(
+            ProfileDraft::from_rdp(&nla).to_saved(id()),
+            Ok(DraftProfile::Rdp(nla))
+        );
+        let vnc = VncProfile {
+            id: id(),
+            name: "kiosk".to_owned(),
+            group: None,
+            host: "kiosk.lab".to_owned(),
+            port: 5901,
+            view_only: true,
+            allow_no_password: true,
+        };
+        assert_eq!(
+            ProfileDraft::from_vnc(&vnc).to_saved(id()),
+            Ok(DraftProfile::Vnc(vnc))
+        );
+        let winrm = WinRmProfile {
+            id: id(),
+            name: "ps".to_owned(),
+            group: None,
+            host: "ps.lab".to_owned(),
+            port: 5986,
+            use_ssl: true,
+            skip_certificate_check: true,
+            username: Some("LAB\\admin".to_owned()),
+        };
+        assert_eq!(
+            ProfileDraft::from_winrm(&winrm).to_saved(id()),
+            Ok(DraftProfile::WinRm(winrm))
+        );
+        let telnet = TelnetProfile {
+            id: id(),
+            name: "sw".to_owned(),
+            group: None,
+            host: "sw.lab".to_owned(),
+            port: 2323,
+        };
+        assert_eq!(
+            ProfileDraft::from_telnet(&telnet).to_saved(id()),
+            Ok(DraftProfile::Telnet(telnet))
+        );
+    }
+
+    #[test]
+    fn use_ssl_moves_a_default_winrm_port_and_keeps_a_typed_one() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::WinRm);
+        form.toggle(ProfileToggle::UseSsl, true);
+        assert_eq!(form.port, "5986");
+        form.toggle(ProfileToggle::UseSsl, false);
+        assert_eq!(form.port, "5985");
+        form.port = "6000".to_owned();
+        form.toggle(ProfileToggle::UseSsl, true);
+        assert_eq!(form.port, "6000", "a port typed by hand stays");
+    }
+
+    #[test]
+    fn a_winrm_account_shows_and_counts_only_for_a_stored_credential() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::WinRm);
+        form.name = "ps".to_owned();
+        form.host = "ps.lab".to_owned();
+        form.username = "ignored".to_owned();
+        assert!(!form.shows(ProfileField::Username));
+        let Ok(DraftProfile::WinRm(current)) = form.to_saved(id()) else {
+            panic!("winrm");
+        };
+        assert_eq!(current.username, None, "the current Windows identity");
+        form.toggle(ProfileToggle::StoredCredential, true);
+        form.username = String::new();
+        assert!(form.shows(ProfileField::Username));
+        assert_eq!(form.to_saved(id()), Err(DraftError::UsernameMissing));
+        form.username = "a\"b".to_owned();
+        assert_eq!(form.to_saved(id()), Err(DraftError::UsernameInvalid));
+        // Skipping certificate checks only over HTTPS.
+        form.username = "admin".to_owned();
+        form.toggle(ProfileToggle::SkipCertificateCheck, true);
+        assert!(!form.shows_toggle(ProfileToggle::SkipCertificateCheck));
+        let Ok(DraftProfile::WinRm(http)) = form.to_saved(id()) else {
+            panic!("winrm");
+        };
+        assert!(!http.skip_certificate_check);
+    }
+
+    #[test]
+    fn a_domain_is_checked_and_only_rdp_shows_one() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::Rdp);
+        form.name = "dc".to_owned();
+        form.host = "dc.lab".to_owned();
+        form.domain = "CO RP".to_owned();
+        assert_eq!(form.to_saved(id()), Err(DraftError::DomainInvalid));
+        assert_eq!(DraftError::DomainInvalid.field(), ProfileField::Domain);
+        assert!(form.shows(ProfileField::Domain));
+        assert!(!ProfileDraft::new_for(DraftProtocol::Ssh).shows(ProfileField::Domain));
+        assert!(!ProfileDraft::new_for(DraftProtocol::Vnc).shows(ProfileField::Username));
     }
 }

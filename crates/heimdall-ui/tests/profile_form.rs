@@ -19,7 +19,7 @@
 
 use std::path::Path;
 
-use heimdall_app::profile_draft::ProfileField;
+use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{App, AppConfig, Message as AppMessage};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -103,23 +103,37 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         );
     }
     let _ = shell.update(Message::MenuChoice(AppMessage::NewProfile));
+    // As in C#: the protocol first.
+    {
+        let mut ui = simulator(&shell);
+        snapshot(&shell, "profile-protocols.png");
+        ui.find("Choose a protocol").expect("picker");
+        ui.find("Windows remote desktop session").expect("RDP card");
+        ui.click("Secure shell terminal").expect("SSH card");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ChooseProtocol(DraftProtocol::Ssh))
+        )));
+    }
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     snapshot(&shell, "profile-new.png");
     let mut ui = simulator(&shell);
     for label in [
-        "Name",
-        "Group",
-        "Server address",
-        "Port",
-        "User name",
-        "Private key file",
+        "Add Session",
+        "Connection basics",
+        "Display name *",
+        "Server *",
+        "Remote SSH port",
+        "SSH credentials",
+        "Username",
+        "SSH key",
+        "Password",
+        "Folder",
         "Save",
     ] {
         ui.find(label).expect(label);
     }
-    assert!(
-        ui.find("Delete this profile").is_err(),
-        "a new profile has nothing to delete"
-    );
+    assert!(ui.find("22").is_ok(), "the default port is written in");
     ui.click("server.example.org").expect("host field");
     ui.typewrite("w");
     assert!(ui.into_messages().any(|message| matches!(
@@ -133,6 +147,7 @@ fn a_saved_profile_is_edited_from_its_menu_and_a_refused_form_says_why() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     for (field, value) in [(ProfileField::Name, "web"), (ProfileField::Host, "web")] {
         let _ = shell.update(app(AppMessage::ProfileField {
             field,
@@ -159,8 +174,77 @@ fn a_saved_profile_is_edited_from_its_menu_and_a_refused_form_says_why() {
     let _ = shell.update(app(AppMessage::ConfirmDialog));
     snapshot(&shell, "profile-refused.png");
     let mut ui = simulator(&shell);
-    ui.find("Edit profile").expect("title");
+    ui.find("Edit Session").expect("title");
     ui.find("The port is a number from 1 to 65535.")
         .expect("reason");
-    ui.find("Delete this profile").expect("delete button");
+    assert!(
+        ui.find("Delete this profile").is_err(),
+        "as in C#, a profile is deleted from its menu"
+    );
+}
+
+#[test]
+fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    snapshot(&shell, "profile-rdp.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Remote Desktop",
+            "Remote RDP port",
+            "RDP credentials",
+            "Windows domain",
+            "Password",
+            "RDP session options",
+            "Redirect clipboard",
+            "Enable Network Level Authentication",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("SSH key").is_err(), "an SSH field");
+        ui.click("Enable Network Level Authentication")
+            .expect("nla box");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileToggle {
+                toggle: ProfileToggle::Nla,
+                on: false
+            })
+        )));
+    }
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::Nla,
+        on: false,
+    }));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(
+            "Without Network Level Authentication, a saved password is not sent: Heimdall asks for it.",
+        )
+        .expect("says what clearing NLA costs");
+    }
+
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::WinRm)));
+    {
+        let mut ui = simulator(&shell);
+        for label in ["WinRM port", "WinRM credentials", "Identity", "Use SSL"] {
+            ui.find(label).expect(label);
+        }
+        assert!(
+            ui.find("Username").is_err(),
+            "the current identity names no account"
+        );
+        assert!(ui.find("Password").is_err(), "PowerShell asks for it");
+    }
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::StoredCredential,
+        on: true,
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Username")
+        .expect("a stored credential names its account");
 }

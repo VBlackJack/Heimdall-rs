@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
-use heimdall_app::profile_draft::{DraftError, ProfileField};
+use heimdall_app::profile_draft::{DraftError, DraftProtocol, ProfileField};
 use heimdall_app::{App, AppConfig, Dialog, Message};
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -63,6 +63,7 @@ fn a_new_profile_is_saved_to_the_file() {
     let file = dir.path().join("profiles.toml");
     let mut app = App::new(config(file.clone(), dir.path()));
     app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
     assert!(
         matches!(&app.dialog, Some(Dialog::EditProfile { draft, error: None })
         if draft.editing.is_none() && draft.name.is_empty())
@@ -85,6 +86,7 @@ fn an_edit_keeps_the_identifier_and_replaces_the_profile() {
     let file = dir.path().join("profiles.toml");
     let mut app = App::new(config(file.clone(), dir.path()));
     app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
     fill(&mut app, "web", "web.example.org", "");
     app.update(Message::ConfirmDialog);
     let id = app.profiles()[0].id.clone();
@@ -109,6 +111,7 @@ fn a_refused_form_stays_open_with_the_reason_and_touches_nothing() {
     let file = dir.path().join("profiles.toml");
     let mut app = App::new(config(file.clone(), dir.path()));
     app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
     fill(&mut app, "web", "root@web", "");
     app.update(Message::ConfirmDialog);
     assert!(
@@ -133,6 +136,7 @@ fn a_delete_asks_first_and_a_dismissed_one_keeps_the_profile() {
     let file = dir.path().join("profiles.toml");
     let mut app = App::new(config(file.clone(), dir.path()));
     app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
     fill(&mut app, "web", "web", "");
     app.update(Message::ConfirmDialog);
     let id = app.profiles()[0].id.clone();
@@ -159,6 +163,7 @@ fn a_new_profile_form_has_nothing_to_delete() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = App::new(config(dir.path().join("profiles.toml"), dir.path()));
     app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
     app.update(Message::DeleteProfile);
     assert!(matches!(&app.dialog, Some(Dialog::EditProfile { .. })));
 }
@@ -171,6 +176,7 @@ fn a_save_that_fails_leaves_the_list_as_its_file_is() {
     std::fs::write(&blocker, b"").expect("blocker");
     let mut app = App::new(config(blocker.join("profiles.toml"), dir.path()));
     app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
     fill(&mut app, "web", "web", "");
     app.update(Message::ConfirmDialog);
     assert!(matches!(&app.dialog, Some(Dialog::StoreError { .. })));

@@ -174,7 +174,6 @@ ui-profile-field-key = Archivo de clave privada
 ui-profile-optional = opcional
 ui-profile-host-placeholder = servidor.ejemplo.es
 ui-profile-save-button = Guardar
-ui-profile-delete-button = Eliminar este perfil
 ui-profile-error-name-missing = Dé un nombre al perfil.
 ui-profile-error-host-missing = Escriba la dirección del servidor.
 ui-profile-error-host-invalid = La dirección del servidor no puede contener espacios.

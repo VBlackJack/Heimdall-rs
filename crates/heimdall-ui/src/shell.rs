@@ -28,7 +28,9 @@ use heimdall_app::files::{
     Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
 };
 use heimdall_app::local_driver::{LocalShell, local_events};
-use heimdall_app::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileDraft, ProfileField};
+use heimdall_app::profile_draft::{
+    DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle,
+};
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
@@ -48,8 +50,8 @@ use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, center, column, container, mouse_area, opaque, operation, pin, row, scrollable,
-    stack, text, text_input, tooltip,
+    Column, button, center, checkbox, column, container, mouse_area, opaque, operation, pick_list,
+    pin, row, scrollable, stack, text, text_input, tooltip,
 };
 use iced::{Color, Element, Length, Point, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
@@ -85,6 +87,12 @@ const HEADING_SIZE: f32 = 20.0;
 
 /// Size of secondary text, in logical pixels.
 const SMALL_SIZE: f32 = 12.0;
+
+/// Size of a form section's title.
+const BODY_SIZE: f32 = 16.0;
+
+/// Width of the port column beside the server field, as in the C# dialog.
+const PORT_FIELD_WIDTH: f32 = 150.0;
 
 /// Tallest the list of skipped profiles grows before it scrolls, in logical pixels.
 const SKIPPED_LIST_HEIGHT: f32 = 200.0;
@@ -1404,65 +1412,319 @@ fn password_field_id() -> iced::widget::Id {
     iced::widget::Id::from("profile-password")
 }
 
-/// The profile form: Enter in any field saves, Tab moves between fields.
+/// A protocol as the picker and the chip name it: the C# Heimdall's names.
+fn protocol_name(protocol: DraftProtocol) -> String {
+    match protocol {
+        DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-name"),
+        DraftProtocol::Ssh => fl!("ui-profile-protocol-ssh-name"),
+        DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-name"),
+        DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
+        DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
+    }
+}
+
+fn protocol_description(protocol: DraftProtocol) -> String {
+    match protocol {
+        DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-desc"),
+        DraftProtocol::Ssh => fl!("ui-profile-protocol-ssh-desc"),
+        DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-desc"),
+        DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
+        DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
+    }
+}
+
+/// The first step of a new session, as in the C# dialog: a card per protocol.
+fn protocol_picker<'a>() -> Element<'a, Message> {
+    let mut cards = Column::new().spacing(SPACING / 2.0);
+    for protocol in DraftProtocol::ALL {
+        cards = cards.push(
+            button(column![
+                text(protocol_name(protocol)),
+                text(protocol_description(protocol)).size(SMALL_SIZE),
+            ])
+            .width(Length::Fill)
+            .style(button::secondary)
+            .on_press(Message::App(AppMessage::ChooseProtocol(protocol))),
+        );
+    }
+    column![
+        text(fl!("ui-profile-new-title")).size(HEADING_SIZE),
+        text(fl!("ui-profile-protocol-picker-title")),
+        text(fl!("ui-profile-protocol-picker-desc")).size(SMALL_SIZE),
+        cards,
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+        ],
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// A section of the form: its title, and its description when it has one.
+fn section<'a>(title: String, description: Option<String>) -> Element<'a, Message> {
+    let mut heading = column![text(title).size(BODY_SIZE)].spacing(2.0);
+    if let Some(description) = description {
+        heading = heading.push(text(description).size(SMALL_SIZE));
+    }
+    heading.into()
+}
+
+/// A text field of the form: its label, then the box. Enter saves.
+fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message> {
+    let (label, placeholder) = match field {
+        ProfileField::Name => (fl!("ui-profile-field-name"), String::new()),
+        ProfileField::Group => (
+            fl!("ui-profile-field-group"),
+            fl!("ui-profile-folder-placeholder"),
+        ),
+        ProfileField::Host => (
+            fl!("ui-profile-field-host"),
+            fl!("ui-profile-host-placeholder"),
+        ),
+        ProfileField::Port => (
+            match draft.protocol {
+                DraftProtocol::Rdp => fl!("ui-profile-port-rdp"),
+                DraftProtocol::Ssh => fl!("ui-profile-port-ssh"),
+                DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
+                DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
+                DraftProtocol::Telnet => fl!("ui-profile-port-telnet"),
+            },
+            draft.default_port().to_string(),
+        ),
+        ProfileField::Username => (
+            fl!("ui-profile-field-username"),
+            if draft.protocol == DraftProtocol::Rdp {
+                fl!("ui-profile-username-rdp-placeholder")
+            } else {
+                fl!("ui-profile-optional")
+            },
+        ),
+        ProfileField::Domain => (
+            fl!("ui-profile-field-domain"),
+            fl!("ui-profile-domain-placeholder"),
+        ),
+        ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
+    };
+    column![
+        text(label).size(SMALL_SIZE),
+        text_input(&placeholder, draft.value(field))
+            .id(profile_field_id(field))
+            .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
+            .on_submit(Message::SaveProfileForm),
+    ]
+    .spacing(SPACING / 2.0)
+    .into()
+}
+
+/// A box to tick, sending `toggle`.
+fn toggle_box<'a>(
+    draft: &ProfileDraft,
+    toggle: ProfileToggle,
+    label: String,
+) -> Element<'a, Message> {
+    checkbox(draft.is_on(toggle))
+        .label(label)
+        .on_toggle(move |on| Message::App(AppMessage::ProfileToggle { toggle, on }))
+        .into()
+}
+
+fn toggle_label(toggle: ProfileToggle) -> String {
+    match toggle {
+        ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
+        ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
+        ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
+        ProfileToggle::UseSsl => fl!("ui-profile-toggle-use-ssl"),
+        ProfileToggle::SkipCertificateCheck => fl!("ui-profile-toggle-skip-cert"),
+        ProfileToggle::ViewOnly => fl!("ui-profile-toggle-view-only"),
+        ProfileToggle::AllowNoPassword => fl!("ui-profile-toggle-no-password"),
+    }
+}
+
+/// The `WinRM` identity, as the C# Identity list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum WinRmIdentity {
+    /// The Windows account running Heimdall.
+    Current,
+    /// An account named in the profile.
+    Stored,
+}
+
+impl std::fmt::Display for WinRmIdentity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self {
+            Self::Current => fl!("ui-profile-winrm-identity-current"),
+            Self::Stored => fl!("ui-profile-winrm-identity-stored"),
+        })
+    }
+}
+
+/// The protocol's credentials, as its C# card: title, account fields, password.
+fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Message> {
+    let mut form = Column::new().spacing(SPACING);
+    let credentials = match draft.protocol {
+        DraftProtocol::Rdp => Some((
+            fl!("ui-profile-credentials-rdp"),
+            Some(fl!("ui-profile-credentials-rdp-desc")),
+        )),
+        DraftProtocol::Ssh => Some((
+            fl!("ui-profile-credentials-ssh"),
+            Some(fl!("ui-profile-credentials-ssh-desc")),
+        )),
+        DraftProtocol::WinRm => Some((
+            fl!("ui-profile-credentials-winrm"),
+            Some(fl!("ui-profile-credentials-winrm-desc")),
+        )),
+        DraftProtocol::Vnc => Some((fl!("ui-profile-credentials-vnc"), None)),
+        DraftProtocol::Telnet => None,
+    };
+    if let Some((title, description)) = credentials {
+        form = form.push(section(title, description));
+    }
+    if draft.protocol == DraftProtocol::WinRm {
+        // As in C#: an Identity list, the current Windows identity by default.
+        let selected = if draft.is_on(ProfileToggle::StoredCredential) {
+            WinRmIdentity::Stored
+        } else {
+            WinRmIdentity::Current
+        };
+        form = form.push(
+            column![
+                text(fl!("ui-profile-winrm-identity")).size(SMALL_SIZE),
+                pick_list(
+                    [WinRmIdentity::Current, WinRmIdentity::Stored],
+                    Some(selected),
+                    |identity| Message::App(AppMessage::ProfileToggle {
+                        toggle: ProfileToggle::StoredCredential,
+                        on: identity == WinRmIdentity::Stored,
+                    }),
+                )
+                .width(Length::Fill),
+            ]
+            .spacing(SPACING / 2.0),
+        );
+    }
+    for field in [
+        ProfileField::Username,
+        ProfileField::Domain,
+        ProfileField::KeyPath,
+    ] {
+        if draft.shows(field) {
+            form = form.push(form_field(draft, field));
+        }
+    }
+    if draft.protocol == DraftProtocol::Rdp {
+        form = form.push(text(fl!("ui-profile-domain-hint")).size(SMALL_SIZE));
+    }
+    if draft.protocol.saves_password() {
+        form = form.push(password_field(draft, forms));
+    }
+
+    form
+}
+
+/// The protocol's options, as its C# card.
+fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
+    let mut form = Column::new().spacing(SPACING);
+    let options = match draft.protocol {
+        DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
+        DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
+        DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
+        DraftProtocol::Ssh | DraftProtocol::WinRm => None,
+    };
+    if let Some(options) = options {
+        form = form.push(section(options, None));
+    }
+    for toggle in ProfileToggle::of(draft.protocol) {
+        if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
+            form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
+        }
+    }
+    if draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::Nla) {
+        form = form.push(
+            text(fl!("ui-profile-nla-off-hint"))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+        );
+    }
+    if draft.protocol == DraftProtocol::Telnet {
+        form = form.push(
+            text(fl!("ui-profile-telnet-warning"))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+        );
+    }
+
+    form
+}
+
+/// The profile form, in the C# session dialog's order: the protocol, the connection basics,
+/// the protocol's credentials, its options, then the folder. Enter in a field saves.
 fn profile_form<'a>(
     draft: &'a ProfileDraft,
     error: Option<DraftError>,
     forms: &Forms<'a>,
 ) -> Element<'a, Message> {
-    let title = if draft.editing.is_some() {
-        fl!("ui-profile-edit-title")
-    } else {
-        fl!("ui-profile-new-title")
-    };
-    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
-    for field in ProfileField::ALL {
-        let (label, placeholder) = match field {
-            ProfileField::Name => (fl!("ui-profile-field-name"), String::new()),
-            ProfileField::Group => (fl!("ui-profile-field-group"), fl!("ui-profile-optional")),
-            ProfileField::Host => (
-                fl!("ui-profile-field-host"),
-                fl!("ui-profile-host-placeholder"),
-            ),
-            ProfileField::Port => (fl!("ui-profile-field-port"), DEFAULT_SSH_PORT.to_string()),
-            ProfileField::Username => {
-                (fl!("ui-profile-field-username"), fl!("ui-profile-optional"))
-            }
-            ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
-        };
-        form = form.push(
-            column![
-                text(label).size(SMALL_SIZE),
-                text_input(&placeholder, draft.value(field))
-                    .id(profile_field_id(field))
-                    .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
-                    .on_submit(Message::SaveProfileForm),
-            ]
-            .spacing(SPACING / 2.0),
-        );
-        // As in the C# editor: the password after the user name and the key.
-        if field == ProfileField::KeyPath {
-            form = form.push(password_field(draft, forms));
-        }
+    if !draft.protocol_chosen {
+        return protocol_picker();
     }
+    let adding = draft.editing.is_none();
+    let title = if adding {
+        fl!("ui-profile-new-title")
+    } else {
+        fl!("ui-profile-edit-title")
+    };
+    // The protocol chip: in a new session it goes back to the picker, as in C#.
+    let chip = button(text(protocol_name(draft.protocol)).size(SMALL_SIZE))
+        .style(button::secondary)
+        .on_press_maybe(adding.then_some(Message::App(AppMessage::NewProfile)));
+    let mut form = column![
+        text(title).size(HEADING_SIZE),
+        row![
+            text(fl!("ui-profile-protocol-badge")).size(SMALL_SIZE),
+            chip
+        ]
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center),
+        section(
+            fl!("ui-profile-section-basics"),
+            Some(fl!("ui-profile-section-basics-desc"))
+        ),
+        form_field(draft, ProfileField::Name),
+        row![
+            container(form_field(draft, ProfileField::Host)).width(Length::Fill),
+            container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING);
+
+    form = form
+        .push(credentials_section(draft, forms))
+        .push(options_section(draft));
+
+    // Organization.
+    form = form
+        .push(section(fl!("ui-profile-section-organization"), None))
+        .push(form_field(draft, ProfileField::Group));
     if let Some(error) = error {
         form = form.push(text(texts::draft_error(error)).style(text::danger));
     }
-    let mut buttons = row![
-        button(text(fl!("ui-dialog-cancel-button")))
-            .style(button::secondary)
-            .on_press(Message::App(AppMessage::DismissDialog)),
-        button(text(fl!("ui-profile-save-button"))).on_press(Message::SaveProfileForm),
-    ]
-    .spacing(SPACING);
-    if draft.editing.is_some() {
-        buttons = buttons.push(
-            button(text(fl!("ui-profile-delete-button")))
-                .style(button::danger)
-                .on_press(Message::App(AppMessage::DeleteProfile)),
-        );
-    }
-    form.push(buttons).into()
+    // As in C#: Cancel, then Save; a profile is deleted from its menu.
+    form = form.push(
+        row![
+            iced::widget::space::horizontal(),
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-profile-save-button"))).on_press(Message::SaveProfileForm),
+        ]
+        .spacing(SPACING),
+    );
+    scrollable(form.padding(iced::Padding::ZERO.right(PADDING)))
+        .height(Length::Shrink)
+        .into()
 }
 
 /// Asks for a name: Enter in the field confirms, like the button.

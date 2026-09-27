@@ -164,7 +164,7 @@ fn selecting_keeps_only_a_profile_that_exists() {
 }
 
 #[test]
-fn every_protocol_is_listed_and_only_ssh_opens_the_editor_yet() {
+fn every_protocol_is_listed_and_all_but_a_local_program_open_the_editor() {
     let dir = tempfile::tempdir().expect("dir");
     let app = app(dir.path(), &SystemCredentials::memory());
     let mut kinds: Vec<ProfileKind> = app
@@ -184,8 +184,13 @@ fn every_protocol_is_listed_and_only_ssh_opens_the_editor_yet() {
             ProfileKind::WinRm
         ]
     );
-    assert!(app.can_edit(&id("ssh")));
-    assert!(!app.can_edit(&id("rdp")));
+    for editable in ["ssh", "rdp", "vnc", "winrm", "telnet"] {
+        assert!(app.can_edit(&id(editable)), "{editable}");
+    }
+    assert!(
+        !app.can_edit(&id("local")),
+        "its command has an editor of its own to come"
+    );
 }
 
 fn duplicate(app: &mut App, profile: &str) {
