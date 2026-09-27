@@ -156,6 +156,100 @@ pub struct VncProfile {
     pub allow_no_password: bool,
 }
 
+/// The arguments of a local program.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LocalArguments {
+    /// One per entry, each quoted as needed when the command line is built.
+    List(Vec<String>),
+    /// A Windows argument string, put after the program exactly as written: how the C#
+    /// Heimdall passed it, and what a profile imported from it keeps. Splitting it would not
+    /// give back the same line for every program, `cmd` first.
+    WindowsLine(String),
+}
+
+impl Default for LocalArguments {
+    fn default() -> Self {
+        Self::List(Vec::new())
+    }
+}
+
+impl LocalArguments {
+    /// Whether there are none.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        match self {
+            Self::List(list) => list.is_empty(),
+            Self::WindowsLine(line) => line.is_empty(),
+        }
+    }
+}
+
+/// What a local profile runs.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+pub struct LocalCommand {
+    /// The program, a full path or a name looked up in `PATH`; `None` for the default shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub program: Option<String>,
+    /// Its arguments.
+    #[serde(default, skip_serializing_if = "LocalArguments::is_empty")]
+    pub arguments: LocalArguments,
+    /// Folder it starts in; `None` for the home folder.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub working_directory: Option<PathBuf>,
+}
+
+impl LocalCommand {
+    /// Whether it is the default shell, as the Local shell button opens it: nothing to run
+    /// that the user did not choose.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        self.program.is_none() && self.arguments.is_empty() && self.working_directory.is_none()
+    }
+}
+
+/// What the user agreed to run: the command as shown, and the file its program was found
+/// at then. It holds for as long as both are still what would run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalApproval {
+    /// The command shown.
+    pub command: LocalCommand,
+    /// The full path its program was found at.
+    pub program_path: PathBuf,
+}
+
+/// A saved local program: a shell, or any command-line program, run in a terminal tab.
+///
+/// A profile that runs anything other than the default shell runs only once the user has
+/// approved exactly what it runs; an imported profile never carries an approval.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct LocalProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// What it runs.
+    pub command: LocalCommand,
+    /// What the user approved, if anything.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approved: Option<LocalApproval>,
+}
+
+impl LocalProfile {
+    /// Whether `program_path`, where the program is found now, may run without asking:
+    /// the default shell always may; anything else only as approved, program path included.
+    #[must_use]
+    pub fn may_run(&self, program_path: &std::path::Path) -> bool {
+        self.command.is_default()
+            || self.approved.as_ref().is_some_and(|approval| {
+                approval.command == self.command && approval.program_path == program_path
+            })
+    }
+}
+
 /// `host:port` as people write it: an IPv6 address in brackets, so the port stays
 /// apart from it (`[fe80::1]:22`).
 #[must_use]
@@ -169,11 +263,78 @@ pub fn display_address(host: &str, port: u16) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::display_address;
+    use std::path::{Path, PathBuf};
+
+    use super::{
+        LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, display_address,
+    };
 
     #[test]
     fn an_ipv6_address_is_bracketed_so_its_port_stays_apart() {
         assert_eq!(display_address("fe80::1", 22), "[fe80::1]:22");
         assert_eq!(display_address("srv.lab", 2222), "srv.lab:2222");
+    }
+
+    fn tool() -> LocalCommand {
+        LocalCommand {
+            program: Some("tool".to_owned()),
+            arguments: LocalArguments::List(vec!["-x".to_owned()]),
+            working_directory: None,
+        }
+    }
+
+    fn profile(command: LocalCommand, approved: Option<LocalApproval>) -> LocalProfile {
+        LocalProfile {
+            id: ProfileId::new("p"),
+            name: "P".to_owned(),
+            group: None,
+            command,
+            approved,
+        }
+    }
+
+    const FOUND: &str = "/usr/bin/tool";
+
+    fn approval(command: LocalCommand) -> LocalApproval {
+        LocalApproval {
+            command,
+            program_path: PathBuf::from(FOUND),
+        }
+    }
+
+    #[test]
+    fn the_default_shell_runs_without_approval() {
+        assert!(profile(LocalCommand::default(), None).may_run(Path::new("/bin/sh")));
+    }
+
+    #[test]
+    fn anything_else_runs_only_once_approved() {
+        assert!(!profile(tool(), None).may_run(Path::new(FOUND)));
+        assert!(profile(tool(), Some(approval(tool()))).may_run(Path::new(FOUND)));
+    }
+
+    #[test]
+    fn an_approval_lapses_when_the_command_changes() {
+        let mut changed = tool();
+        changed.arguments = LocalArguments::List(vec!["-y".to_owned()]);
+        assert!(!profile(changed.clone(), Some(approval(tool()))).may_run(Path::new(FOUND)));
+        changed = tool();
+        changed.working_directory = Some(PathBuf::from("/tmp"));
+        assert!(!profile(changed, Some(approval(tool()))).may_run(Path::new(FOUND)));
+    }
+
+    #[test]
+    fn an_approval_lapses_when_the_program_is_found_elsewhere() {
+        assert!(!profile(tool(), Some(approval(tool()))).may_run(Path::new("/opt/evil/tool")));
+    }
+
+    #[test]
+    fn arguments_alone_are_not_the_default_shell() {
+        let arguments_only = LocalCommand {
+            arguments: LocalArguments::WindowsLine("-NoExit".to_owned()),
+            ..LocalCommand::default()
+        };
+        assert!(!arguments_only.is_default());
+        assert!(!profile(arguments_only, None).may_run(Path::new("/bin/sh")));
     }
 }

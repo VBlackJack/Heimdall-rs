@@ -129,6 +129,9 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         SkipReason::InvalidPort(port) => {
             fl!("ui-import-skip-invalid-port", port = port.to_string())
         }
+        SkipReason::NeedsElevation => fl!("ui-import-skip-elevation"),
+        SkipReason::NeedsPostConnectCommands => fl!("ui-import-skip-post-connect"),
+        SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),
     }
 }
 

@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! Import of the SSH and RDP profiles of the C# Heimdall.
+//! Import of the profiles of the C# Heimdall.
 //!
 //! Reads `servers.json` and, for the group defaults, `settings.json`. Group defaults are
 //! resolved exactly as `GroupDefaultsDto.Resolve` and `GroupDefaultsDto.ApplyTo` do in the
@@ -35,8 +35,8 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, ProfileId,
-    RdpProfile, SshProfile, TelnetProfile, VncProfile,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, LocalArguments,
+    LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
 };
 
 /// `connectionType` of an SSH profile.
@@ -50,6 +50,13 @@ const TELNET_CONNECTION_TYPE: &str = "Telnet";
 
 /// `connectionType` of a VNC profile, compared without case as the C# catalog does.
 const VNC_CONNECTION_TYPE: &str = "VNC";
+
+/// `connectionType` of a local shell profile, compared without case as the C# trust check
+/// does.
+const LOCAL_CONNECTION_TYPE: &str = "LOCAL";
+
+/// The C# `ElevationMode` that asks for no elevation, by name and by value.
+const NO_ELEVATION: &str = "None";
 
 /// `connectionType` the C# Heimdall assumes when the field is absent.
 const DEFAULT_CONNECTION_TYPE: &str = "RDP";
@@ -72,6 +79,14 @@ pub enum SkipReason {
     MissingId,
     /// Its port is outside 1 to 65535; carries the value found.
     InvalidPort(i64),
+    /// A local shell run elevated, not supported yet.
+    NeedsElevation,
+    /// Runs commands once connected, not supported yet.
+    NeedsPostConnectCommands,
+    /// A local shell whose program, arguments or folder cannot be run as written: a quote or
+    /// a NUL in the program, a NUL anywhere, a relative program path, or a folder on another
+    /// machine, which Windows would reach, and hand its credentials to, on its own.
+    UnsafeLocalCommand,
 }
 
 /// A profile that was not imported.
@@ -96,6 +111,8 @@ pub struct ImportReport {
     pub telnet: Vec<TelnetProfile>,
     /// VNC profiles ready to be merged into the store.
     pub vnc: Vec<VncProfile>,
+    /// Local shell profiles ready to be merged into the store, none approved.
+    pub local: Vec<LocalProfile>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
 }
@@ -150,6 +167,25 @@ struct LegacyServer {
     vnc_password: Option<String>,
     #[serde(default)]
     vnc_view_only: bool,
+    local_shell_executable: Option<String>,
+    local_shell_arguments: Option<String>,
+    local_shell_working_directory: Option<String>,
+    /// Before `elevationMode`: `true` meant elevated.
+    #[serde(default)]
+    local_shell_elevated: bool,
+    /// A name or a number: the C# does not tie the enum to its names.
+    elevation_mode: Option<serde_json::Value>,
+    #[serde(default)]
+    post_connect_steps: Vec<LegacyPostConnectStep>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyPostConnectStep {
+    #[serde(default)]
+    enabled: bool,
+    input: Option<String>,
+    command_library_id: Option<String>,
 }
 
 fn default_connection_type() -> String {
@@ -195,7 +231,12 @@ pub fn import(
     for mut server in servers.servers {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
             .apply_to(&mut server);
-        let converted = if server.connection_type == RDP_CONNECTION_TYPE {
+        let converted = if server
+            .connection_type
+            .eq_ignore_ascii_case(LOCAL_CONNECTION_TYPE)
+        {
+            convert_local(&server).map(|profile| report.local.push(profile))
+        } else if server.connection_type == RDP_CONNECTION_TYPE {
             convert_rdp(&server).map(|profile| report.rdp.push(profile))
         } else if server
             .connection_type
@@ -427,4 +468,100 @@ fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
         view_only: server.vnc_view_only,
         allow_no_password: is_null_or_empty(server.vnc_password.as_ref()),
     })
+}
+
+/// A local shell profile as `LocalShellHandler` runs it, never approved: whatever the C# file
+/// says was confirmed there, the user has not seen it here. The arguments stay the string the
+/// C# handed to the program.
+fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    if is_elevated(server) {
+        return Err(SkipReason::NeedsElevation);
+    }
+    if server.post_connect_steps.iter().any(|step| {
+        step.enabled
+            && (!is_blank(step.input.as_deref()) || !is_blank(step.command_library_id.as_deref()))
+    }) {
+        return Err(SkipReason::NeedsPostConnectCommands);
+    }
+    // Blank is absent, as `string.IsNullOrWhiteSpace` makes it in the C#.
+    let program = trimmed(server.local_shell_executable.as_deref());
+    let working_directory = trimmed(server.local_shell_working_directory.as_deref());
+    let arguments = match server.local_shell_arguments.as_deref() {
+        Some(line) if !line.trim().is_empty() => LocalArguments::WindowsLine(line.to_owned()),
+        _ => LocalArguments::default(),
+    };
+    if !is_safe_local(program.as_deref(), &arguments, working_directory.as_deref()) {
+        return Err(SkipReason::UnsafeLocalCommand);
+    }
+    Ok(LocalProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.is_empty() {
+            program.clone().unwrap_or_else(|| server.id.clone())
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        command: LocalCommand {
+            program,
+            arguments,
+            working_directory: working_directory.map(PathBuf::from),
+        },
+        approved: None,
+    })
+}
+
+/// Whether the profile asks to run elevated, as `EffectiveElevationMode` reads it.
+fn is_elevated(server: &LegacyServer) -> bool {
+    let by_mode = match &server.elevation_mode {
+        None | Some(serde_json::Value::Null) => false,
+        Some(serde_json::Value::Number(number)) => number.as_i64() != Some(0),
+        Some(serde_json::Value::String(name)) => !name.eq_ignore_ascii_case(NO_ELEVATION),
+        // Anything else is not a mode the C# wrote: taken as a request, never as none.
+        Some(_) => true,
+    };
+    by_mode || server.local_shell_elevated
+}
+
+/// Whether the command can be run as written, without a folder that depends on how the
+/// program is started and without reaching another machine.
+fn is_safe_local(
+    program: Option<&str>,
+    arguments: &LocalArguments,
+    working_directory: Option<&str>,
+) -> bool {
+    let line = match arguments {
+        LocalArguments::WindowsLine(line) => line.as_str(),
+        LocalArguments::List(_) => "",
+    };
+    let program_ok = program.is_none_or(|program| {
+        !program.contains(['"', '\0'])
+            && (is_windows_absolute(program) || !program.contains(['\\', '/']))
+    });
+    // A drive letter is required: it also keeps out `\\host\share` and the `\\?\` forms.
+    let folder_ok = working_directory
+        .is_none_or(|folder| !folder.contains('\0') && is_windows_absolute(folder));
+    program_ok && folder_ok && !line.contains('\0')
+}
+
+/// `C:\...` or `C:/...`: a path with a drive and a root, the only absolute form kept.
+fn is_windows_absolute(path: &str) -> bool {
+    let bytes = path.as_bytes();
+    bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && (bytes[2] == b'\\' || bytes[2] == b'/')
+}
+
+fn is_blank(value: Option<&str>) -> bool {
+    value.is_none_or(|value| value.trim().is_empty())
+}
+
+fn trimmed(value: Option<&str>) -> Option<String> {
+    value
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned)
 }

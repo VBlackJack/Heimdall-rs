@@ -18,7 +18,10 @@ use std::fs;
 use std::path::PathBuf;
 
 use heimdall_core::paths::PROFILES_FILE_NAME;
-use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile};
+use heimdall_core::profile::{
+    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile,
+    TelnetProfile, VncProfile,
+};
 use heimdall_core::store::{MergeReport, PROFILE_FILE_VERSION, ProfileStore, StoreError};
 
 fn profile(id: &str, host: &str) -> SshProfile {
@@ -159,7 +162,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 4);
+    assert_eq!(PROFILE_FILE_VERSION, 5);
 }
 
 #[test]
@@ -260,4 +263,77 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
         1,
         "the Telnet profile stays"
     );
+}
+
+fn local(id: &str, line: &str) -> LocalProfile {
+    LocalProfile {
+        id: ProfileId::new(id),
+        name: id.to_uppercase(),
+        group: Some("Tools".to_owned()),
+        command: LocalCommand {
+            program: Some("pwsh.exe".to_owned()),
+            arguments: LocalArguments::WindowsLine(line.to_owned()),
+            working_directory: Some(PathBuf::from(r"C:\work")),
+        },
+        approved: None,
+    }
+}
+
+fn approval_of(profile: &LocalProfile) -> LocalApproval {
+    LocalApproval {
+        command: profile.command.clone(),
+        program_path: PathBuf::from(r"C:\Program Files\PowerShell\7\pwsh.exe"),
+    }
+}
+
+#[test]
+fn local_profiles_read_back_with_their_approval_and_are_removed_like_the_others() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([profile("s", "h")]);
+    let tool = local("l", "-NoExit -Command \"ssh a\"");
+    assert_eq!(store.merge_local([tool.clone()]).added, 1);
+    assert!(store.approve_local(&ProfileId::new("l"), approval_of(&tool)));
+    assert!(!store.approve_local(&ProfileId::new("nobody"), approval_of(&tool)));
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert!(text.contains("[[local]]"), "{text}");
+    let mut reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.local_profiles(), store.local_profiles());
+    assert_eq!(
+        reopened.local_profiles()[0].approved,
+        Some(approval_of(&tool))
+    );
+    assert!(reopened.remove(&ProfileId::new("l")));
+    assert!(reopened.local_profiles().is_empty());
+    assert_eq!(reopened.ssh_profiles().len(), 1, "the SSH profile stays");
+}
+
+#[test]
+fn a_reimport_keeps_the_approval_and_never_brings_one() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    let tool = local("l", "-NoExit");
+    store.merge_local([tool.clone()]);
+    store.approve_local(&tool.id, approval_of(&tool));
+
+    // The same profile again, as an import brings it: no approval of its own.
+    let report = store.merge_local([tool.clone()]);
+    assert_eq!(report.unchanged, 1, "{report:?}");
+    assert_eq!(store.local_profiles()[0].approved, Some(approval_of(&tool)));
+
+    // Changed: kept as the record of what was approved, which no longer matches.
+    let changed = local("l", "-NoExit -Command calc");
+    assert_eq!(store.merge_local([changed.clone()]).updated, 1);
+    let stored = &store.local_profiles()[0];
+    assert_eq!(stored.command, changed.command);
+    assert_eq!(stored.approved, Some(approval_of(&tool)));
+    assert!(!stored.may_run(&approval_of(&tool).program_path));
+
+    // An incoming approval is dropped, whatever it says.
+    let mut forged = local("m", "-Command calc");
+    forged.approved = Some(approval_of(&forged));
+    store.merge_local([forged]);
+    assert_eq!(store.local_profiles()[1].approved, None);
 }
