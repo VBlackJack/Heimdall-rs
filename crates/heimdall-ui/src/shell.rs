@@ -1448,11 +1448,10 @@ impl Shell {
             } else {
                 tab_label(tab.display_title())
             };
-            // The protocol before the name, as the C# tab's icon.
+            // The protocol before the name, as the C# tab's icon; in the button's own colour,
+            // which a secondary one would lose on both the active and the other tabs.
             let mut label = row![
-                text(self.app.tab_kind(tab).label())
-                    .size(SMALL_SIZE)
-                    .style(text::secondary),
+                text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
                 text(title),
             ]
             .spacing(SPACING / 2.0)
