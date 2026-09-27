@@ -17,14 +17,12 @@
 //! What a failed session's "Copy error" copies, as the C# Heimdall's error report: a
 //! heading, when (UTC), which server, which version, then the error as the card says it.
 
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::SystemTime;
 
 use heimdall_core::paths::APPLICATION;
+use heimdall_core::utc::UtcTime;
 
 use crate::i18n::fl;
-
-/// Seconds in a day.
-const DAY_SECONDS: u64 = 86_400;
 
 /// The report of a failure of `protocol`'s session with `server`, at `now`.
 pub fn error_report(protocol: &str, server: Option<&str>, error: &str, now: SystemTime) -> String {
@@ -48,44 +46,21 @@ pub fn error_report(protocol: &str, server: Option<&str>, error: &str, now: Syst
 /// `time` in UTC as `2026-09-27 21:05:03Z`, the C# report's "u" format; the epoch for a time
 /// before it.
 fn utc_time(time: SystemTime) -> String {
-    let seconds = time
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |since| since.as_secs());
-    let (days, of_day) = (seconds / DAY_SECONDS, seconds % DAY_SECONDS);
-    let (year, month, day) = civil_date(days);
+    let at = UtcTime::of(time);
     format!(
-        "{year:04}-{month:02}-{day:02} {:02}:{:02}:{:02}Z",
-        of_day / 3600,
-        of_day % 3600 / 60,
-        of_day % 60
+        "{:04}-{:02}-{:02} {:02}:{:02}:{:02}Z",
+        at.year, at.month, at.day, at.hour, at.minute, at.second
     )
-}
-
-/// The calendar date `days` after 1970-01-01, by Howard Hinnant's `civil_from_days`.
-fn civil_date(days: u64) -> (u64, u64, u64) {
-    // Counted from 0000-03-01, so a leap day ends its year.
-    let shifted = days + 719_468;
-    let era = shifted / 146_097;
-    let day_of_era = shifted % 146_097;
-    let year_of_era =
-        (day_of_era - day_of_era / 1460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
-    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
-    let month_index = (5 * day_of_year + 2) / 153;
-    let day = day_of_year - (153 * month_index + 2) / 5 + 1;
-    let month = if month_index < 10 {
-        month_index + 3
-    } else {
-        month_index - 9
-    };
-    let year = year_of_era + era * 400 + u64::from(month <= 2);
-    (year, month, day)
 }
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
+    use std::time::{Duration, UNIX_EPOCH};
 
     use super::*;
+
+    /// Seconds in a day.
+    const DAY_SECONDS: u64 = 86_400;
 
     fn at(seconds: u64) -> String {
         utc_time(UNIX_EPOCH + Duration::from_secs(seconds))

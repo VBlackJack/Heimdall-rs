@@ -1770,3 +1770,103 @@ fn the_settings_page_has_the_terminal_appearance_section() {
     ui.find("Terminal Appearance").expect("its section");
     ui.find("Color scheme").expect("its label");
 }
+
+#[test]
+fn a_transcript_starts_from_the_tab_menu_and_its_tab_says_rec() {
+    use heimdall_app::TabMenuMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let chosen = |shell: &Shell, entry: &str| {
+        let mut ui = simulator(shell);
+        ui.click(entry).expect(entry);
+        ui.into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(chosen) => Some(format!("{chosen:?}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(simulator(&shell).find("REC").is_err());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert_eq!(
+        chosen(&shell, "Start Transcript"),
+        [format!(
+            "{:?}",
+            AppMessage::TabMenu(TabMenuMessage::StartTranscript(tab))
+        )]
+    );
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        TabMenuMessage::StartTranscript(tab),
+    )));
+    snapshot(&shell, "tab-recording.png");
+    let path = shell.app().tabs[0]
+        .transcript
+        .as_ref()
+        .map(|transcript| transcript.path().to_owned())
+        .expect("kept");
+    assert!(path.starts_with(dir.path()), "beside the profiles");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("REC").expect("the badge");
+        ui.find(format!("Transcript started: {}", path.display()).as_str())
+            .expect("the status says where");
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert!(simulator(&shell).find("Start Transcript").is_err());
+    assert_eq!(
+        chosen(&shell, "Stop Transcript"),
+        [format!(
+            "{:?}",
+            AppMessage::TabMenu(TabMenuMessage::StopTranscript(tab))
+        )]
+    );
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        TabMenuMessage::StopTranscript(tab),
+    )));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("REC").is_err());
+    ui.find("Transcript stopped").expect("said");
+}
+
+#[test]
+fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Session Logging").expect("its section");
+        ui.click("Enable session logging").expect("its box");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(true)))
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("logs/sessions").expect("its folder");
+        ui.typewrite("x");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::LogDirectoryEdited(_)))
+        );
+    }
+    let _ = shell.update(Message::LogDirectoryEdited("records".to_owned()));
+    assert_eq!(
+        shell.app().settings().session_log_directory,
+        "logs/sessions",
+        "typed, not yet applied"
+    );
+    let _ = shell.update(Message::LogDirectoryApply);
+    assert_eq!(shell.app().settings().session_log_directory, "records");
+    let _ = shell.update(Message::LogDirectoryApply);
+    assert_eq!(
+        shell.app().settings().session_log_directory,
+        "records",
+        "nothing typed since: nothing changes"
+    );
+}

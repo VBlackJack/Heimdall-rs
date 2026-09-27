@@ -29,6 +29,7 @@ pub mod shell;
 pub mod status_bar;
 pub mod terminal_view;
 mod texts;
+pub mod transcript_lines;
 pub mod tree_view;
 
 use heimdall_core::paths;

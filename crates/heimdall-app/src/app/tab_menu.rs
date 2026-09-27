@@ -35,6 +35,10 @@ pub enum TabMenuMessage {
     ResetTitle(TabId),
     /// Open the session of a tab again, in a new tab.
     Duplicate(TabId),
+    /// Start keeping a transcript of a tab's session.
+    StartTranscript(TabId),
+    /// Stop keeping it.
+    StopTranscript(TabId),
     /// Close the tabs of a group, asking first when a live session would end.
     Close {
         /// The tab the menu is for.
@@ -77,6 +81,14 @@ impl App {
                 Vec::new()
             }
             TabMenuMessage::Duplicate(tab) => self.duplicate_tab(tab),
+            TabMenuMessage::StartTranscript(tab) => {
+                self.start_transcript(tab, true);
+                Vec::new()
+            }
+            TabMenuMessage::StopTranscript(tab) => {
+                self.end_transcript(tab, true);
+                Vec::new()
+            }
             TabMenuMessage::Close { tab, group } => {
                 self.close_group(tab, group);
                 Vec::new()

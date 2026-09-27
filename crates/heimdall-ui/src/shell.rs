@@ -40,14 +40,14 @@ use heimdall_app::{
     Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
     LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
     Message as AppMessage, NameAction, Phase, ProfileMenuMessage, Prompt, Purpose, QuestionId,
-    QuestionKind, Retry, SelectionMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    connection_events, master_password_problem, open_vault, server_text,
+    QuestionKind, Retry, SelectionMessage, SettingsMessage, SpecialKeys, SystemCredentials, Tab,
+    TabGroup, TabId, TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
-use heimdall_core::settings::ColorScheme;
+use heimdall_core::settings::{ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -73,7 +73,7 @@ use crate::terminal_view::keys::{
 };
 use crate::terminal_view::metrics::DEFAULT_FONT_SIZE;
 use crate::texts;
-use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TreeMenu};
+use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TranscriptEntry, TreeMenu};
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -336,6 +336,10 @@ pub enum Message {
     FinderFind(FindDirection),
     /// Close the terminal's search bar.
     FinderClose,
+    /// The transcripts' folder typed in the Settings page.
+    LogDirectoryEdited(String),
+    /// Apply the folder typed.
+    LogDirectoryApply,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -395,6 +399,8 @@ impl fmt::Debug for Message {
             Self::FinderQuery(_) => f.write_str("FinderQuery(..)"),
             Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
             Self::FinderClose => f.write_str("FinderClose"),
+            Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
+            Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
         }
     }
 }
@@ -527,6 +533,8 @@ pub struct Shell {
     palette: Option<Palette>,
     /// The terminal's search bar, while open.
     finder: Option<Finder>,
+    /// The transcripts' folder as typed in the Settings page, until applied.
+    log_directory: Option<String>,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
     /// search bar's, just opened.
     focus_next: Option<iced::widget::Id>,
@@ -586,7 +594,8 @@ impl Shell {
 
     /// The window over an application core already in some state.
     #[must_use]
-    pub fn with_app(app: App) -> Self {
+    pub fn with_app(mut app: App) -> Self {
+        app.set_transcript_lines(crate::transcript_lines::lines());
         Self {
             app,
             registry: AnswerRegistry::default(),
@@ -607,6 +616,7 @@ impl Shell {
             palette: None,
             finder: None,
             focus_next: None,
+            log_directory: None,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -744,6 +754,9 @@ impl Shell {
             | Message::PaletteClose) => self.palette_message(message),
             message @ (Message::FinderQuery(_) | Message::FinderFind(_) | Message::FinderClose) => {
                 self.finder_message(message)
+            }
+            message @ (Message::LogDirectoryEdited(_) | Message::LogDirectoryApply) => {
+                self.log_directory_message(message)
             }
         };
         let mut tasks: Vec<Task<Message>> =
@@ -1686,11 +1699,65 @@ impl Shell {
                 vault_card,
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
+                text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
+                self.session_log_settings(),
             ]
             .spacing(SPACING)
             .padding(PADDING),
         )
         .into()
+    }
+
+    /// Session logging, as the C# Settings page offers it: on or off, and the folder the
+    /// transcripts go to, applied with Enter.
+    fn session_log_settings(&self) -> Element<'_, Message> {
+        let settings = self.app.settings();
+        let typed = self
+            .log_directory
+            .as_deref()
+            .unwrap_or(&settings.session_log_directory);
+        container(
+            column![
+                checkbox(settings.session_logging)
+                    .label(fl!("ui-settings-session-logging-enabled"))
+                    .on_toggle(|on| {
+                        Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(on)))
+                    }),
+                row![
+                    text(fl!("ui-settings-session-log-directory")),
+                    text_input(DEFAULT_SESSION_LOG_DIRECTORY, typed)
+                        .on_input(Message::LogDirectoryEdited)
+                        .on_submit(Message::LogDirectoryApply),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+                text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
+    }
+
+    /// The transcripts' folder typed, or applied.
+    fn log_directory_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::LogDirectoryEdited(typed) => {
+                self.log_directory = Some(typed);
+                Vec::new()
+            }
+            _ => match self.log_directory.take() {
+                Some(typed) => {
+                    self.app
+                        .update(AppMessage::Settings(SettingsMessage::SessionLogDirectory(
+                            typed,
+                        )))
+                }
+                None => Vec::new(),
+            },
+        }
     }
 
     /// The terminal's appearance: its colour scheme, as the C# Settings page offers it.
@@ -1702,7 +1769,9 @@ impl Shell {
                 pick_list(
                     ColorScheme::ALL.map(SchemeChoice).to_vec(),
                     Some(SchemeChoice(self.app.settings().color_scheme)),
-                    |SchemeChoice(scheme)| Message::App(AppMessage::SetColorScheme(scheme)),
+                    |SchemeChoice(scheme)| Message::App(AppMessage::Settings(
+                        SettingsMessage::ColorScheme(scheme)
+                    )),
                 ),
             ]
             .spacing(SPACING)
@@ -1952,6 +2021,13 @@ impl Shell {
             profile,
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
+            transcript: if tab.transcript.is_some() {
+                TranscriptEntry::Stop
+            } else if shows_terminal(tab) {
+                TranscriptEntry::Start(self.app.can_start_transcript(tab))
+            } else {
+                TranscriptEntry::Absent
+            },
         })
     }
 
@@ -1974,6 +2050,16 @@ impl Shell {
             .align_y(iced::Alignment::Center);
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+            }
+            if tab.transcript.is_some() {
+                label = label.push(
+                    tooltip(
+                        text(fl!("ui-tab-recording")).size(SMALL_SIZE),
+                        text(fl!("ui-tab-recording-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Bottom,
+                    )
+                    .style(container::rounded_box),
+                );
             }
             tabs = tabs.push(
                 row![

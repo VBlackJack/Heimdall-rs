@@ -79,11 +79,28 @@ impl ColorScheme {
     }
 }
 
+/// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
+pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
+
 /// What the Settings page changes.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Settings {
     /// The terminal's colours.
     pub color_scheme: ColorScheme,
+    /// Every SSH, Telnet and local session keeps a transcript from when it connects.
+    pub session_logging: bool,
+    /// Where transcripts go: a folder, or one relative to the settings file's.
+    pub session_log_directory: String,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            color_scheme: ColorScheme::default(),
+            session_logging: false,
+            session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -91,6 +108,16 @@ struct SettingsFile {
     version: u32,
     #[serde(default)]
     terminal: TerminalSection,
+    #[serde(default)]
+    session_log: SessionLogSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct SessionLogSection {
+    #[serde(default)]
+    enabled: bool,
+    #[serde(default)]
+    directory: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -141,7 +168,26 @@ impl Settings {
                 .as_deref()
                 .map(ColorScheme::named)
                 .unwrap_or_default(),
+            session_logging: file.session_log.enabled,
+            session_log_directory: file
+                .session_log
+                .directory
+                .filter(|directory| !directory.trim().is_empty())
+                .unwrap_or_else(|| DEFAULT_SESSION_LOG_DIRECTORY.to_owned()),
         })
+    }
+
+    /// The folder transcripts go to: the one chosen when absolute, else under the folder of
+    /// `settings_file`.
+    #[must_use]
+    pub fn session_log_folder(&self, settings_file: &Path) -> PathBuf {
+        let chosen = Path::new(self.session_log_directory.trim());
+        if chosen.is_absolute() {
+            return chosen.to_owned();
+        }
+        settings_file
+            .parent()
+            .map_or_else(|| chosen.to_owned(), |base| base.join(chosen))
     }
 
     /// Writes the settings to `path`, through a temporary file.
@@ -154,6 +200,10 @@ impl Settings {
             version: SETTINGS_FILE_VERSION,
             terminal: TerminalSection {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
+            },
+            session_log: SessionLogSection {
+                enabled: self.session_logging,
+                directory: Some(self.session_log_directory.clone()),
             },
         })?;
         write_atomic(path, &text)

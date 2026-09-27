@@ -495,3 +495,18 @@ ui-scheme-dracula = Dracula
 ui-scheme-solarized-dark = Solarized Dark
 ui-scheme-monokai = Monokai
 ui-scheme-nord = Nord
+
+## Session transcripts, as the C# session log.
+ui-tab-menu-start-transcript = Start Transcript
+ui-tab-menu-stop-transcript = Stop Transcript
+ui-tab-recording = REC
+ui-tab-recording-tooltip = Session output is being recorded
+ui-status-transcript-started = Transcript started: { $path }
+ui-status-transcript-stopped = Transcript stopped
+ui-status-transcript-failed = The transcript could not be written and stopped: { $reason }
+ui-transcript-header = ===== Session started { $started } | { $protocol } | host { $host } | { $title } =====
+ui-transcript-footer = ===== Session ended { $ended } | duration { $duration } =====
+ui-settings-session-logging = Session Logging
+ui-settings-session-logging-enabled = Enable session logging
+ui-settings-session-log-directory = Session log directory:
+ui-settings-session-log-directory-hint = Directory for session log files, relative to the settings folder unless absolute. Press Enter to apply.

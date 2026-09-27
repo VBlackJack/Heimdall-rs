@@ -45,6 +45,12 @@ pub enum Notice {
     Copied(String),
     /// This folder was created.
     FolderCreated(String),
+    /// A transcript was started, in this file.
+    TranscriptStarted(String),
+    /// A transcript was stopped.
+    TranscriptStopped,
+    /// A transcript could not be written, for this reason, and stopped.
+    TranscriptFailed(String),
 }
 
 /// The state of `tab`, named by its title.

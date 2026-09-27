@@ -32,7 +32,7 @@ use heimdall_core::profile::{
     LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile,
     WinRmProfile,
 };
-use heimdall_core::settings::{ColorScheme, Settings};
+use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
@@ -78,11 +78,14 @@ mod selection;
 mod status;
 mod tab_menu;
 mod telnet_tab;
+mod transcripts;
 mod tree;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
 
+use crate::transcript::{Transcript, TranscriptLines};
+pub use appearance::SettingsMessage;
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use connect_as::ConnectAs;
 pub use files_tab::FilesMessage;
@@ -432,8 +435,8 @@ pub enum Message {
     VaultOpened(Result<OpenedVault, VaultProblem>),
     /// Close the vault.
     LockVault,
-    /// The terminals' colours, from the Settings page.
-    SetColorScheme(ColorScheme),
+    /// A change from the Settings page.
+    Settings(SettingsMessage),
 }
 
 impl fmt::Debug for Message {
@@ -540,7 +543,7 @@ impl fmt::Debug for Message {
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
-            Self::SetColorScheme(scheme) => write!(f, "SetColorScheme({scheme:?})"),
+            Self::Settings(message) => write!(f, "Settings({message:?})"),
         }
     }
 }
@@ -793,6 +796,8 @@ pub struct Tab {
     pub retry: Option<Retry>,
     /// The last search in its history found nothing.
     pub find_missed: bool,
+    /// The transcript it keeps, while it keeps one.
+    pub transcript: Option<Transcript>,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -880,6 +885,7 @@ impl Tab {
             end_reason: None,
             retry: None,
             find_missed: false,
+            transcript: None,
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
@@ -912,6 +918,8 @@ impl Tab {
     fn stop(&mut self) {
         self.cancel.cancel();
         self.desktop = None;
+        // Its footer is written as it goes.
+        self.transcript = None;
         if let Some(files) = self.files.as_mut() {
             files.stop();
         }
@@ -1200,6 +1208,8 @@ pub struct App {
     /// What the Settings page changes, and the file it is saved to.
     settings: Settings,
     settings_file: std::path::PathBuf,
+    /// The transcripts' first and last lines, as the window words them.
+    transcript_lines: Option<TranscriptLines>,
     /// What was just done, and the session shown then with its state.
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
     viewport: GridSize,
@@ -1245,6 +1255,7 @@ impl App {
         let mut app = Self {
             settings,
             settings_file,
+            transcript_lines: None,
             viewport: config.initial_grid,
             config,
             store,
@@ -1393,7 +1404,7 @@ impl App {
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
             | Message::ImportLegacy
-            | Message::SetColorScheme(_)) => self.window_message(&message),
+            | Message::Settings(_)) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
             | Message::ProfileField { .. }
@@ -1612,6 +1623,12 @@ impl App {
         if matches!(event, ConnectionEvent::Failed(_)) {
             self.credentials_failed(tab_id);
         }
+        if let ConnectionEvent::Output(bytes) = &event {
+            self.record(tab_id, bytes);
+        }
+        let was_connected = self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.phase == Phase::Connected);
         let failure = match &event {
             ConnectionEvent::Failed(error) => {
                 Some((error.clone(), self.tab(tab_id).is_some_and(Tab::is_live)))
@@ -1619,6 +1636,7 @@ impl App {
             _ => None,
         };
         let mut effects = self.apply_connection_event(tab_id, event);
+        self.follow_transcript(tab_id, was_connected);
         if let Some((error, was_live)) = failure {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
@@ -2110,7 +2128,7 @@ impl App {
     }
 
     /// The window's focus and its close, and what it asks of the application: the import
-    /// from the C# Heimdall, the terminals' colours.
+    /// from the C# Heimdall, a change of the settings.
     fn window_message(&mut self, message: &Message) -> Vec<Effect> {
         match message {
             Message::WindowFocus(focused) => self.window_focus(*focused),
@@ -2119,7 +2137,7 @@ impl App {
                 self.import_legacy();
                 Vec::new()
             }
-            Message::SetColorScheme(scheme) => self.set_color_scheme(*scheme),
+            Message::Settings(message) => self.settings_message(message),
             _ => Vec::new(),
         }
     }

@@ -19,7 +19,7 @@
 
 use std::path::Path;
 
-use heimdall_app::{App, AppConfig, Dialog, Message};
+use heimdall_app::{App, AppConfig, Dialog, Message, SettingsMessage};
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::settings::{ColorScheme, SETTINGS_FILE_NAME};
 use heimdall_core::store::ProfileStore;
@@ -70,7 +70,9 @@ fn a_scheme_chosen_colours_every_terminal_and_is_kept_for_the_next_run() {
     open(&mut app);
     assert_eq!(backgrounds(&app), [Palette::dracula().background]);
 
-    app.update(Message::SetColorScheme(ColorScheme::Nord));
+    app.update(Message::Settings(SettingsMessage::ColorScheme(
+        ColorScheme::Nord,
+    )));
     assert_eq!(app.settings().color_scheme, ColorScheme::Nord);
     assert_eq!(
         backgrounds(&app),
@@ -92,7 +94,7 @@ fn a_scheme_chosen_colours_every_terminal_and_is_kept_for_the_next_run() {
         (ColorScheme::Monokai, Palette::monokai()),
         (ColorScheme::Dracula, Palette::dracula()),
     ] {
-        app.update(Message::SetColorScheme(scheme));
+        app.update(Message::Settings(SettingsMessage::ColorScheme(scheme)));
         assert_eq!(backgrounds(&app)[0], palette.background, "{scheme:?}");
     }
     assert_eq!(Palette::standard().background, Rgb { r: 0, g: 0, b: 0 });
@@ -108,7 +110,9 @@ fn an_unreadable_settings_file_is_said_and_never_written_over() {
     assert_eq!(app.settings().color_scheme, ColorScheme::Dracula);
     app.update(Message::DismissDialog);
 
-    app.update(Message::SetColorScheme(ColorScheme::Monokai));
+    app.update(Message::Settings(SettingsMessage::ColorScheme(
+        ColorScheme::Monokai,
+    )));
     assert_eq!(app.settings().color_scheme, ColorScheme::Monokai);
     assert_eq!(
         std::fs::read_to_string(&path).expect("kept"),
@@ -127,7 +131,9 @@ fn a_scheme_that_cannot_be_saved_is_said_and_not_applied() {
     let mut app = app(dir.path());
     app.update(Message::DismissDialog);
     open(&mut app);
-    app.update(Message::SetColorScheme(ColorScheme::Nord));
+    app.update(Message::Settings(SettingsMessage::ColorScheme(
+        ColorScheme::Nord,
+    )));
     assert!(matches!(app.dialog, Some(Dialog::StoreError { .. })));
     assert_eq!(app.settings().color_scheme, ColorScheme::Dracula);
     assert_eq!(backgrounds(&app), [Palette::dracula().background]);

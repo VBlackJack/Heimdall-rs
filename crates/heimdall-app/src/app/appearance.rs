@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! How the terminals look: the colour scheme of the Settings page, saved beside the
-//! profiles and applied to every terminal, those open included.
+//! What the Settings page changes: the terminals' colour scheme, applied to every terminal,
+//! those open included, and the session logging; saved beside the profiles.
 
 use std::path::PathBuf;
 
@@ -23,6 +23,17 @@ use heimdall_core::settings::{ColorScheme, Settings, settings_path};
 use heimdall_term::Palette;
 
 use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION};
+
+/// A change from the Settings page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsMessage {
+    /// The terminals' colours.
+    ColorScheme(ColorScheme),
+    /// Session logging on or off.
+    SessionLogging(bool),
+    /// The folder transcripts go to.
+    SessionLogDirectory(String),
+}
 
 /// The colours of `scheme`.
 #[must_use]
@@ -68,10 +79,19 @@ impl App {
         palette(self.settings.color_scheme)
     }
 
-    /// Makes `scheme` the terminals' colours, those open included, and saves it.
-    pub(super) fn set_color_scheme(&mut self, scheme: ColorScheme) -> Vec<Effect> {
+    /// Applies `message` and saves the settings; one that cannot be saved is said and not
+    /// applied. A colour scheme colours the terminals open too.
+    pub(super) fn settings_message(&mut self, message: &SettingsMessage) -> Vec<Effect> {
         let before = self.settings.clone();
-        self.settings.color_scheme = scheme;
+        match message {
+            SettingsMessage::ColorScheme(scheme) => self.settings.color_scheme = *scheme,
+            SettingsMessage::SessionLogging(on) => self.settings.session_logging = *on,
+            SettingsMessage::SessionLogDirectory(directory) => {
+                directory
+                    .trim()
+                    .clone_into(&mut self.settings.session_log_directory);
+            }
+        }
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;
             self.dialog = Some(Dialog::StoreError {
@@ -79,7 +99,7 @@ impl App {
             });
             return Vec::new();
         }
-        let palette = palette(scheme);
+        let palette = palette(self.settings.color_scheme);
         for tab in &mut self.tabs {
             tab.terminal.set_palette(palette);
         }

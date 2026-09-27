@@ -26,6 +26,7 @@ pub mod mode;
 pub mod mouse;
 pub mod palette;
 pub mod paste;
+pub mod plain;
 pub mod terminal;
 
 pub use keys::{Key, KeyLocation, KeyPress, Modifiers, NamedKey, encode_key};
@@ -36,6 +37,7 @@ pub use mouse::{
 };
 pub use palette::{Palette, Rgb};
 pub use paste::encode_paste;
+pub use plain::PlainText;
 pub use terminal::{
     CellPixels, CellPoint, CellWidth, ClipboardPolicy, CursorStyle, FeedOutput, FindDirection,
     GridSize, Screen, ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig,

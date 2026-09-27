@@ -433,6 +433,17 @@ fn add_entries(entries: Column<'_, Message>) -> Column<'_, Message> {
         ))
 }
 
+/// The transcript entry of a tab's menu.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TranscriptEntry {
+    /// None: the tab shows no session of text.
+    Absent,
+    /// Start Transcript, offered when it can start now.
+    Start(bool),
+    /// Stop Transcript.
+    Stop,
+}
+
 /// What a tab's menu offers, worked out by the window from the core.
 #[derive(Debug, Clone)]
 #[expect(
@@ -456,10 +467,12 @@ pub struct TabMenuState {
     pub others: bool,
     /// There are tabs after it.
     pub right: bool,
+    /// Its transcript entry.
+    pub transcript: TranscriptEntry,
 }
 
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
-/// does: no pin, split, detach, transcript or macros.
+/// does: no pin, split, detach or macros.
 pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let tab = state.tab;
     let menu = |message| Some(AppMessage::TabMenu(message));
@@ -525,6 +538,17 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
                 }),
             ));
     }
+    entries = match state.transcript {
+        TranscriptEntry::Absent => entries,
+        TranscriptEntry::Start(can) => entries.push(separator()).push(entry(
+            fl!("ui-tab-menu-start-transcript"),
+            can.then(|| AppMessage::TabMenu(TabMenuMessage::StartTranscript(tab))),
+        )),
+        TranscriptEntry::Stop => entries.push(separator()).push(entry(
+            fl!("ui-tab-menu-stop-transcript"),
+            menu(TabMenuMessage::StopTranscript(tab)),
+        )),
+    };
     let close = |group| menu(TabMenuMessage::Close { tab, group });
     entries = entries
         .push(separator())

@@ -37,6 +37,13 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>) -> String {
         return match notice {
             Notice::Copied(copied) => fl!("ui-status-copied", text = copied.as_str()),
             Notice::FolderCreated(path) => fl!("ui-status-folder-created", path = path.as_str()),
+            Notice::TranscriptStarted(path) => {
+                fl!("ui-status-transcript-started", path = path.as_str())
+            }
+            Notice::TranscriptStopped => fl!("ui-status-transcript-stopped"),
+            Notice::TranscriptFailed(reason) => {
+                fl!("ui-status-transcript-failed", reason = reason.as_str())
+            }
         };
     }
     let (name, state) = match status {

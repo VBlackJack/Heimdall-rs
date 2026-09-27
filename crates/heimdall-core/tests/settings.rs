@@ -41,6 +41,7 @@ fn each_scheme_is_written_by_its_csharp_name_and_read_back() {
     for scheme in ColorScheme::ALL {
         Settings {
             color_scheme: scheme,
+            ..Settings::default()
         }
         .save(&path)
         .expect("saved");
@@ -50,6 +51,7 @@ fn each_scheme_is_written_by_its_csharp_name_and_read_back() {
     assert!(text.contains("color_scheme = \"Nord\""), "{text}");
     Settings {
         color_scheme: ColorScheme::SolarizedDark,
+        ..Settings::default()
     }
     .save(&path)
     .expect("saved");
@@ -106,4 +108,48 @@ fn a_newer_or_broken_file_is_refused_not_guessed() {
     ));
     std::fs::write(&path, "version = 1\n").expect("written");
     assert!(Settings::load(&path).is_ok(), "the current version");
+}
+
+#[test]
+fn session_logging_is_off_by_default_and_its_folder_beside_the_settings() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings::load(&path).expect("defaults");
+    assert!(!settings.session_logging, "as the C# default");
+    assert_eq!(
+        settings.session_log_folder(&path),
+        dir.path().join("logs").join("sessions")
+    );
+
+    let chosen = Settings {
+        session_logging: true,
+        session_log_directory: "transcripts".to_owned(),
+        ..Settings::default()
+    };
+    chosen.save(&path).expect("saved");
+    let read = Settings::load(&path).expect("read");
+    assert_eq!(read, chosen);
+    assert_eq!(
+        read.session_log_folder(&path),
+        dir.path().join("transcripts")
+    );
+
+    let absolute = Settings {
+        session_log_directory: dir.path().join("elsewhere").display().to_string(),
+        ..Settings::default()
+    };
+    assert_eq!(
+        absolute.session_log_folder(&path),
+        dir.path().join("elsewhere"),
+        "an absolute folder as it is"
+    );
+    let blank = written(
+        dir.path(),
+        "version = 1\n[session_log]\nenabled = true\ndirectory = \"  \"\n",
+    );
+    assert!(blank.session_logging);
+    assert_eq!(
+        blank.session_log_directory, "logs/sessions",
+        "blank: the default"
+    );
 }
