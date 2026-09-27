@@ -845,3 +845,102 @@ fn a_session_whose_profile_is_gone_offers_close_only() {
         "nothing left to reconnect to"
     );
 }
+
+#[test]
+fn a_right_click_on_a_tab_opens_its_menu_as_the_csharp_one() {
+    use heimdall_app::{TabGroup, TabMenuMessage};
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::mouse;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let (second, _) = open(&mut core, "b");
+    // A name of its own: the tree shows the profile's, so the click can only be the tab's.
+    core.update(AppMessage::TabMenu(TabMenuMessage::Rename(tab)));
+    core.update(AppMessage::TabMenu(TabMenuMessage::NameEdited(
+        "first tab".to_owned(),
+    )));
+    core.update(AppMessage::ConfirmDialog);
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        let title = ui.find("first tab").expect("tab title");
+        ui.point_at(title.bounds().center());
+        ui.simulate([
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+        ]);
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::OpenTreeMenu(TreeMenu::Tab(opened)) if opened == tab
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    snapshot(&shell, "tab-menu.png");
+    for (entry, expected) in [
+        ("Disconnect", Some(AppMessage::RequestCloseTab(tab))),
+        (
+            "Rename tab",
+            Some(AppMessage::TabMenu(TabMenuMessage::Rename(tab))),
+        ),
+        (
+            "Reset title",
+            Some(AppMessage::TabMenu(TabMenuMessage::ResetTitle(tab))),
+        ),
+        // Still connecting: nothing to reconnect yet.
+        ("Reconnect Session", None),
+        (
+            "Duplicate Session",
+            Some(AppMessage::TabMenu(TabMenuMessage::Duplicate(tab))),
+        ),
+        ("Edit", Some(AppMessage::EditProfile(ProfileId::new("a")))),
+        (
+            "Close others",
+            Some(AppMessage::TabMenu(TabMenuMessage::Close {
+                tab,
+                group: TabGroup::Others,
+            })),
+        ),
+        (
+            "Close to the right",
+            Some(AppMessage::TabMenu(TabMenuMessage::Close {
+                tab,
+                group: TabGroup::Right,
+            })),
+        ),
+    ] {
+        let mut ui = simulator(&shell);
+        ui.click(entry).expect(entry);
+        let chosen: Vec<Message> = ui
+            .into_messages()
+            .filter(|message| matches!(message, Message::MenuChoice(_)))
+            .collect();
+        match expected {
+            Some(expected) => assert!(
+                matches!(chosen.as_slice(), [Message::MenuChoice(got)]
+                    if format!("{got:?}") == format!("{expected:?}")),
+                "{entry}: {chosen:?}"
+            ),
+            None => assert!(chosen.is_empty(), "{entry} is greyed out: {chosen:?}"),
+        }
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Fullscreen (F11)").expect("fullscreen");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuFullscreen(shown) if shown == tab
+        )));
+    }
+    // The last tab has none to its right, and no name of its own to reset.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(second)));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Reset title").is_err());
+    ui.click("Close to the right").expect("entry");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(_))),
+        "greyed out on the last tab"
+    );
+}

@@ -52,26 +52,31 @@ impl Reopen {
 }
 
 impl App {
-    /// Whether `tab` offers Reconnect: its session failed or ended, and what it ran can run
-    /// again, its profile still saved.
+    /// Whether `tab` offers Reconnect on its card: its session failed or ended, and what it
+    /// ran can run again, its profile still saved.
     #[must_use]
     pub fn can_reconnect(&self, tab: &Tab) -> bool {
-        if !matches!(tab.phase, Phase::Failed(_) | Phase::Closed { .. }) {
-            return false;
-        }
-        match &tab.reopen {
-            Reopen::Profile(id) => self.profile_summary(id).is_some(),
-            Reopen::Shell(_) => true,
-        }
+        matches!(tab.phase, Phase::Failed(_) | Phase::Closed { .. }) && self.can_reopen(tab)
     }
 
-    /// Opens the session of `tab_id` again, in its place; the old attempt is stopped. When
-    /// nothing opens (a local command waiting for approval), the tab stays as it was.
+    /// Whether the tab's menu offers Reconnect: as the C# Heimdall's, a live session too,
+    /// once it is past connecting.
+    #[must_use]
+    pub fn can_restart(&self, tab: &Tab) -> bool {
+        matches!(
+            tab.phase,
+            Phase::Connected | Phase::Failed(_) | Phase::Closed { .. }
+        ) && self.can_reopen(tab)
+    }
+
+    /// Opens the session of `tab_id` again, in its place, under the name the user gave it;
+    /// the old session is stopped. When nothing opens (a local command waiting for
+    /// approval), the tab stays as it was.
     pub(super) fn reconnect_tab(&mut self, tab_id: TabId) -> Vec<Effect> {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
             return Vec::new();
         };
-        if !self.can_reconnect(&self.tabs[index]) {
+        if !self.can_restart(&self.tabs[index]) {
             return Vec::new();
         }
         let (reopen, purpose) = (self.tabs[index].reopen.clone(), self.tabs[index].purpose);
@@ -84,6 +89,7 @@ impl App {
             && let Some(reopened) = self.tabs.pop()
         {
             let mut old = std::mem::replace(&mut self.tabs[index], reopened);
+            self.tabs[index].custom_title = old.custom_title.take();
             old.stop();
             self.active = Some(self.tabs[index].id);
         }

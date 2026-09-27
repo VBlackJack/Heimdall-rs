@@ -20,7 +20,10 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
-use heimdall_app::{GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary};
+use heimdall_app::{
+    GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary, TabGroup, TabId,
+    TabMenuMessage,
+};
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
@@ -54,6 +57,8 @@ pub enum TreeMenu {
     Add,
     /// The "..." button's menu.
     More,
+    /// A tab's menu, drawn as the tree's are.
+    Tab(TabId),
 }
 
 /// One profile: protocol and name; the host, account and protocol in its tooltip.
@@ -307,6 +312,115 @@ pub fn menu_entries<'a>(
         }
         _ => {}
     }
+    container(entries)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// What a tab's menu offers, worked out by the window from the core.
+#[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per entry that can be greyed out, each decided on its own"
+)]
+pub struct TabMenuState {
+    /// The tab.
+    pub tab: TabId,
+    /// It has a name the user gave it.
+    pub renamed: bool,
+    /// Its session can open again in its place.
+    pub can_restart: bool,
+    /// Its session can open again in a new tab.
+    pub can_reopen: bool,
+    /// The saved profile it was opened from, while saved.
+    pub profile: Option<ProfileSummary>,
+    /// That profile can be edited.
+    pub editable: bool,
+    /// There are other tabs.
+    pub others: bool,
+    /// There are tabs after it.
+    pub right: bool,
+}
+
+/// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
+/// does: no pin, split, detach, transcript or macros.
+pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
+    let tab = state.tab;
+    let menu = |message| Some(AppMessage::TabMenu(message));
+    let mut entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(
+            fl!("ui-tab-menu-disconnect"),
+            Some(AppMessage::RequestCloseTab(tab)),
+        ))
+        .push(entry(
+            fl!("ui-tab-menu-rename"),
+            menu(TabMenuMessage::Rename(tab)),
+        ));
+    if state.renamed {
+        entries = entries.push(entry(
+            fl!("ui-tab-menu-reset-title"),
+            menu(TabMenuMessage::ResetTitle(tab)),
+        ));
+    }
+    entries = entries
+        .push(separator())
+        .push(
+            button(text(fl!("ui-tab-menu-fullscreen")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::MenuFullscreen(tab)),
+        )
+        .push(entry(
+            fl!("ui-tab-menu-reconnect"),
+            state.can_restart.then_some(AppMessage::ReconnectTab(tab)),
+        ))
+        .push(entry(
+            fl!("ui-tab-menu-duplicate"),
+            state
+                .can_reopen
+                .then(|| AppMessage::TabMenu(TabMenuMessage::Duplicate(tab))),
+        ));
+    if let Some(profile) = &state.profile {
+        let id = profile.id.clone();
+        let has_user = profile
+            .username
+            .as_deref()
+            .is_some_and(|user| !user.is_empty());
+        entries = entries
+            .push(separator())
+            .push(entry(
+                fl!("ui-tree-edit"),
+                state.editable.then(|| AppMessage::EditProfile(id.clone())),
+            ))
+            .push(entry(
+                fl!("ui-tree-copy-hostname"),
+                profile.endpoint.is_some().then(|| AppMessage::CopyProfile {
+                    id: id.clone(),
+                    what: ProfileCopy::Hostname,
+                }),
+            ))
+            .push(entry(
+                fl!("ui-tree-copy-username"),
+                has_user.then(|| AppMessage::CopyProfile {
+                    id,
+                    what: ProfileCopy::Username,
+                }),
+            ));
+    }
+    let close = |group| menu(TabMenuMessage::Close { tab, group });
+    entries = entries
+        .push(separator())
+        .push(entry(
+            fl!("ui-tab-menu-close-others"),
+            close(TabGroup::Others).filter(|_| state.others),
+        ))
+        .push(entry(
+            fl!("ui-tab-menu-close-right"),
+            close(TabGroup::Right).filter(|_| state.right),
+        ));
     container(entries)
         .padding(4.0)
         .style(container::rounded_box)

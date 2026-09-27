@@ -66,6 +66,7 @@ mod local_tab;
 mod profiles;
 mod rdp_tab;
 mod reconnect;
+mod tab_menu;
 mod telnet_tab;
 mod tree;
 mod vault;
@@ -75,6 +76,7 @@ mod winrm_tab;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
+pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
 pub use vault::{
@@ -190,7 +192,8 @@ pub enum Message {
     SendClipboard(TabId),
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
-    /// Open the failed or ended session of a tab again, in its place.
+    /// Open the session of a tab again, in its place: a failed or ended one, or, from the
+    /// tab's menu, a live one.
     ReconnectTab(TabId),
     /// Something in a Files tab.
     Files(FilesMessage),
@@ -198,6 +201,8 @@ pub enum Message {
     SelectTab(TabId),
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
+    /// Something from a tab's menu.
+    TabMenu(TabMenuMessage),
     /// Something happened in a tab's connection attempt.
     Connection {
         /// Tab.
@@ -401,6 +406,7 @@ impl fmt::Debug for Message {
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
+            Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
             Self::Connection {
                 tab,
                 attempt,
@@ -694,6 +700,8 @@ pub struct Tab {
     pub profile: TabProfile,
     /// Title: the profile name, or the one the server set, made safe.
     pub title: String,
+    /// The name the user gave the tab, shown instead of its title until reset.
+    pub custom_title: Option<String>,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -736,6 +744,12 @@ impl fmt::Debug for Tab {
 }
 
 impl Tab {
+    /// What the tab is called: the name the user gave it, else its title.
+    #[must_use]
+    pub fn display_title(&self) -> &str {
+        self.custom_title.as_deref().unwrap_or(&self.title)
+    }
+
     /// Whether a live session would be lost by closing the tab. An attempt still
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
@@ -763,6 +777,7 @@ impl Tab {
         Self {
             id,
             title: profile.name().to_owned(),
+            custom_title: None,
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
@@ -814,6 +829,18 @@ pub enum TabProfile {
 }
 
 impl TabProfile {
+    /// The protocol it connects with; a local shell's, `WinRM` included, is local.
+    #[must_use]
+    pub fn kind(&self) -> ProfileKind {
+        match self {
+            Self::Ssh(_) => ProfileKind::Ssh,
+            Self::Rdp(_) => ProfileKind::Rdp,
+            Self::Telnet(_) => ProfileKind::Telnet,
+            Self::Vnc(_) => ProfileKind::Vnc,
+            Self::Local(_) => ProfileKind::Local,
+        }
+    }
+
     /// Name shown to the user.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -951,6 +978,20 @@ pub enum Dialog {
     PasswordSaveFailed {
         /// Technical detail.
         detail: String,
+    },
+    /// A name for a tab.
+    RenameTab {
+        /// Tab.
+        tab: TabId,
+        /// The name typed so far.
+        value: String,
+    },
+    /// Close several tabs, some of them live.
+    ConfirmCloseTabs {
+        /// The tabs.
+        tabs: Vec<TabId>,
+        /// How many are live.
+        live: usize,
     },
 }
 
@@ -1132,6 +1173,7 @@ impl App {
                 self.tab(tab).map(clipboard_offer).unwrap_or_default()
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
+            Message::TabMenu(message) => self.tab_menu(message),
             Message::Connection {
                 tab,
                 attempt,
@@ -1750,6 +1792,16 @@ impl App {
         match self.dialog.take() {
             Some(Dialog::ConfirmCloseTab(tab)) => {
                 self.close_tab(tab);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmCloseTabs { tabs, .. }) => {
+                for tab in tabs {
+                    self.close_tab(tab);
+                }
+                Vec::new()
+            }
+            Some(Dialog::RenameTab { tab, value }) => {
+                self.rename_tab(tab, &value);
                 Vec::new()
             }
             Some(Dialog::ConfirmExit { .. }) => {

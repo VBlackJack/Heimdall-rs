@@ -377,3 +377,17 @@ ui-gateway-parent-none = None (direct connection)
 ui-gateway-error-loop = A gateway cannot be reached through itself.
 ui-tree-gateway-via = via { $name }
 ui-tree-gateway-missing = gateway missing
+
+## A tab's menu, as the C# Heimdall's.
+ui-tab-menu-disconnect = Disconnect
+ui-tab-menu-rename = Rename tab
+ui-tab-menu-reset-title = Reset title
+ui-tab-menu-fullscreen = Fullscreen (F11)
+ui-tab-menu-reconnect = Reconnect Session
+ui-tab-menu-duplicate = Duplicate Session
+ui-tab-menu-close-others = Close others
+ui-tab-menu-close-right = Close to the right
+ui-dialog-rename-tab-title = Rename Tab
+ui-dialog-rename-tab-prompt = Enter new tab name:
+ui-dialog-close-tabs-title = Close Sessions
+ui-dialog-close-tabs-body = Sessions to close: { $count }. Still connected: { $live }. Continue?
