@@ -91,6 +91,8 @@ pub enum WindowShortcut {
     CloseTab,
     /// The terminal's text larger, smaller or back to its size: Ctrl +, Ctrl -, Ctrl 0.
     Zoom(Zoom),
+    /// Open or close the terminal's search bar: Ctrl+Shift+F.
+    Find,
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
@@ -184,6 +186,9 @@ pub fn window_shortcut(
         keyboard::Key::Named(Named::PageDown) if !shift => Some(WindowShortcut::NextTab),
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('w') => {
             Some(WindowShortcut::CloseTab)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('f') => {
+            Some(WindowShortcut::Find)
         }
         _ => zoom(key, physical, shift).map(WindowShortcut::Zoom),
     }
@@ -320,6 +325,33 @@ mod tests {
         Shortcut, WindowShortcut, Zoom, is_lock_key, is_search_key, key_input, shortcut,
         window_shortcut,
     };
+
+    #[test]
+    fn ctrl_shift_f_opens_the_terminal_search_on_any_layout() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&character("F"), ANY_PLACE, ctrl_shift),
+            Some(WindowShortcut::Find)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("\u{0430}"),
+                Physical::Code(Code::KeyF),
+                ctrl_shift
+            ),
+            Some(WindowShortcut::Find),
+            "the F key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            window_shortcut(&character("f"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+F is the tree's search"
+        );
+        assert_eq!(
+            window_shortcut(&character("f"), ANY_PLACE, ctrl_shift | Modifiers::ALT),
+            None
+        );
+    }
 
     #[test]
     fn ctrl_plus_minus_and_zero_zoom_on_any_layout_and_only_with_ctrl() {

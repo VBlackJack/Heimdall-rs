@@ -26,7 +26,7 @@ use std::time::Instant;
 
 use alacritty_terminal::event::{Event, EventListener, WindowSize};
 use alacritty_terminal::grid::{Dimensions, Scroll};
-use alacritty_terminal::index::{Column, Point, Side};
+use alacritty_terminal::index::{Column, Line, Point, Side};
 use alacritty_terminal::selection::{Selection, SelectionType};
 use alacritty_terminal::term::cell::{Cell, Flags};
 use alacritty_terminal::term::{Config, Osc52, Term, point_to_viewport, viewport_to_point};
@@ -319,6 +319,23 @@ impl Screen {
     }
 }
 
+/// Which way [`Terminal::find`] looks through the history.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FindDirection {
+    /// Towards the newest lines.
+    Down,
+    /// Towards the oldest lines.
+    Up,
+}
+
+/// Lines shown above a match found, as the C# terminal scrolls to one.
+const FIND_CONTEXT_LINES: i32 = 5;
+
+/// A count of lines as a line offset, saturated.
+fn to_i32(count: usize) -> i32 {
+    i32::try_from(count).unwrap_or(i32::MAX)
+}
+
 /// A cell under the pointer, in viewport coordinates, with the half of the cell it is in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct CellPoint {
@@ -469,6 +486,73 @@ impl Terminal {
             Side::Left
         };
         (viewport_to_point(self.display_offset(), viewport), side)
+    }
+
+    /// Looks for `query`, whatever its case, in the history and on the screen, from the
+    /// match found before (the selection) or else from the view, going `direction`; a
+    /// match found is selected and scrolled into view, a few lines below its top, as the
+    /// C# terminal does. False when there is none that way.
+    pub fn find(&mut self, query: &str, direction: FindDirection) -> bool {
+        let query = query.to_lowercase();
+        if query.is_empty() {
+            return false;
+        }
+        let step = match direction {
+            FindDirection::Down => 1,
+            FindDirection::Up => -1,
+        };
+        let (top, bottom) = (self.term.topmost_line(), self.term.bottommost_line());
+        let view_top = Line(-to_i32(self.display_offset()));
+        let before = self
+            .term
+            .selection
+            .as_ref()
+            .and_then(|selection| selection.to_range(&self.term))
+            .map(|range| range.start.line);
+        let mut line = match (before, direction) {
+            (Some(line), _) => line + step,
+            (None, FindDirection::Down) => view_top,
+            (None, FindDirection::Up) => view_top + to_i32(self.term.screen_lines()) - 1,
+        };
+        while line >= top && line <= bottom {
+            if let Some((start, end)) = self.match_in(line, &query) {
+                let mut selection =
+                    Selection::new(SelectionType::Simple, Point::new(line, start), Side::Left);
+                selection.update(Point::new(line, end), Side::Right);
+                self.term.selection = Some(selection);
+                // Scrolling stops at either end of the history by itself.
+                let offset = FIND_CONTEXT_LINES - line.0;
+                self.term
+                    .scroll_display(Scroll::Delta(offset - to_i32(self.display_offset())));
+                return true;
+            }
+            line += step;
+        }
+        false
+    }
+
+    /// The first and last columns of `query`, already lower case, in `line`.
+    fn match_in(&self, line: Line, query: &str) -> Option<(Column, Column)> {
+        let row = &self.term.grid()[line];
+        let mut text = String::new();
+        let mut columns = Vec::new();
+        for col in 0..self.term.columns() {
+            let cell = &row[Column(col)];
+            if cell
+                .flags
+                .intersects(Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER)
+            {
+                continue;
+            }
+            for lower in cell.c.to_lowercase() {
+                text.push(lower);
+                columns.push(col);
+            }
+        }
+        let at = text.find(query)?;
+        let first = text[..at].chars().count();
+        let last = first + query.chars().count() - 1;
+        Some((Column(columns[first]), Column(columns[last])))
     }
 
     /// Starts a selection at `at`.

@@ -38,9 +38,9 @@ use heimdall_ssh::{
     Secret, TerminalSize, Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
-    CellPixels, CellPoint, FeedOutput, GridSize, Key, KeyLocation, KeyPress, Modifiers,
-    MotionFilter, MouseAction, MouseButton, MouseEvent, SelectionKind, Terminal, TerminalConfig,
-    TitleChange, encode_focus, encode_key, encode_mouse, encode_paste, is_reported,
+    CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
+    Modifiers, MotionFilter, MouseAction, MouseButton, MouseEvent, SelectionKind, Terminal,
+    TerminalConfig, TitleChange, encode_focus, encode_key, encode_mouse, encode_paste, is_reported,
     wheel_as_arrows,
 };
 use tokio_util::sync::CancellationToken;
@@ -295,6 +295,15 @@ pub enum Message {
         /// Lines.
         lines: i32,
     },
+    /// Look for text in a tab's history, as the C# terminal's search bar.
+    FindInTerminal {
+        /// Tab.
+        tab: TabId,
+        /// What to look for, whatever its case.
+        query: String,
+        /// Which way.
+        direction: FindDirection,
+    },
     /// Copy the selection.
     Copy(TabId),
     /// Paste the clipboard.
@@ -479,6 +488,9 @@ impl fmt::Debug for Message {
             Self::Pointer { tab, input } => write!(f, "Pointer({}, {input:?})", tab.value()),
             Self::Resize { tab, grid, .. } => {
                 write!(f, "Resize({}, {}x{})", tab.value(), grid.cols, grid.rows)
+            }
+            Self::FindInTerminal { tab, direction, .. } => {
+                write!(f, "FindInTerminal({}, {direction:?})", tab.value())
             }
             Self::ScrollHistory { tab, lines } => {
                 write!(f, "ScrollHistory({}, {lines})", tab.value())
@@ -774,6 +786,8 @@ pub struct Tab {
     pub end_reason: Option<String>,
     /// The session waiting to open again by itself, after it dropped.
     pub retry: Option<Retry>,
+    /// The last search in its history found nothing.
+    pub find_missed: bool,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -859,6 +873,7 @@ impl Tab {
             custom_title: None,
             end_reason: None,
             retry: None,
+            find_missed: false,
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
@@ -1349,18 +1364,17 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
-            Message::ScrollHistory { tab, lines } => self.scroll_history(tab, lines),
+            message @ (Message::ScrollHistory { .. } | Message::FindInTerminal { .. }) => {
+                self.history_message(message)
+            }
             message @ (Message::Copy(_)
             | Message::PasteRequest(_)
             | Message::SendClipboard(_)
             | Message::ClipboardText { .. }) => self.clipboard_message(message),
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
-            Message::WindowFocus(focused) => self.window_focus(focused),
-            Message::WindowCloseRequested => self.close_window(),
-            Message::ImportLegacy => {
-                self.import_legacy();
-                Vec::new()
-            }
+            message @ (Message::WindowFocus(_)
+            | Message::WindowCloseRequested
+            | Message::ImportLegacy) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
             | Message::ProfileField { .. }
@@ -1403,9 +1417,24 @@ impl App {
     }
 
     /// Scrolls the history of `tab_id` by `lines`, up when positive.
-    fn scroll_history(&mut self, tab_id: TabId, lines: i32) -> Vec<Effect> {
-        if let Some(found) = self.tab_mut(tab_id) {
-            found.terminal.scroll(lines);
+    /// Scrolls a tab's history, or looks for text in it.
+    fn history_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::ScrollHistory { tab, lines } => {
+                if let Some(found) = self.tab_mut(tab) {
+                    found.terminal.scroll(lines);
+                }
+            }
+            Message::FindInTerminal {
+                tab,
+                query,
+                direction,
+            } => {
+                if let Some(found) = self.tab_mut(tab) {
+                    found.find_missed = !found.terminal.find(&query, direction);
+                }
+            }
+            _ => {}
         }
         Vec::new()
     }
@@ -2057,6 +2086,19 @@ impl App {
                 | Dialog::PasswordSaveFailed { .. },
             )
             | None => Vec::new(),
+        }
+    }
+
+    /// The window's focus and its close, and the import from the C# Heimdall, asked from it.
+    fn window_message(&mut self, message: &Message) -> Vec<Effect> {
+        match message {
+            Message::WindowFocus(focused) => self.window_focus(*focused),
+            Message::WindowCloseRequested => self.close_window(),
+            Message::ImportLegacy => {
+                self.import_legacy();
+                Vec::new()
+            }
+            _ => Vec::new(),
         }
     }
 

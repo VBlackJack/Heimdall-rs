@@ -48,7 +48,7 @@ use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_ssh::{AgentSource, Secret};
-use heimdall_term::GridSize;
+use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
 use iced::keyboard::key::Named;
 use iced::task::Handle;
@@ -62,6 +62,7 @@ use zeroize::Zeroizing;
 
 use crate::desktop_view::DesktopView;
 use crate::files_view;
+use crate::finder::Finder;
 use crate::i18n::fl;
 use crate::palette::Palette;
 use crate::report;
@@ -328,6 +329,12 @@ pub enum Message {
     PaletteChoose(usize),
     /// Close Quick Connect.
     PaletteClose,
+    /// The terminal search bar's text changed.
+    FinderQuery(String),
+    /// Look for the search bar's text, that way.
+    FinderFind(FindDirection),
+    /// Close the terminal's search bar.
+    FinderClose,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -384,6 +391,9 @@ impl fmt::Debug for Message {
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
+            Self::FinderQuery(_) => f.write_str("FinderQuery(..)"),
+            Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
+            Self::FinderClose => f.write_str("FinderClose"),
         }
     }
 }
@@ -514,8 +524,11 @@ pub struct Shell {
     tree_focused: bool,
     /// Quick Connect, while open.
     palette: Option<Palette>,
-    /// Quick Connect just opened: its field gets the keyboard.
-    palette_opened: bool,
+    /// The terminal's search bar, while open.
+    finder: Option<Finder>,
+    /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
+    /// search bar's, just opened.
+    focus_next: Option<iced::widget::Id>,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
@@ -591,7 +604,8 @@ impl Shell {
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
             palette: None,
-            palette_opened: false,
+            finder: None,
+            focus_next: None,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -727,14 +741,17 @@ impl Shell {
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
             | Message::PaletteClose) => self.palette_message(message),
+            message @ (Message::FinderQuery(_) | Message::FinderFind(_) | Message::FinderClose) => {
+                self.finder_message(message)
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
-        if std::mem::take(&mut self.palette_opened) {
-            tasks.push(operation::focus(crate::palette::field_id()));
+        if let Some(field) = self.focus_next.take() {
+            tasks.push(operation::focus(field));
         }
         if reveal {
             tasks.push(self.reveal_selection());
@@ -901,6 +918,10 @@ impl Shell {
                 self.zoom(active, zoom);
                 return Vec::new();
             }
+            (WindowShortcut::Find, _) => {
+                self.toggle_finder(active);
+                return Vec::new();
+            }
             (WindowShortcut::CloseTab, _) => AppMessage::RequestCloseTab(active),
             (WindowShortcut::NextTab, Some(index)) => {
                 AppMessage::SelectTab(self.app.tabs[(index + 1) % count].id)
@@ -911,6 +932,59 @@ impl Shell {
             (_, None) => return Vec::new(),
         };
         self.app.update(message)
+    }
+
+    /// Opens the search bar over `tab`'s terminal, or closes it when open; only a tab
+    /// showing a terminal has one.
+    fn toggle_finder(&mut self, tab: TabId) {
+        if self.finder.take().is_some() {
+            return;
+        }
+        if self.app.tab(tab).is_some_and(shows_terminal) {
+            self.finder = Some(Finder::new(tab));
+            self.focus_next = Some(crate::finder::field_id());
+        }
+    }
+
+    /// A change in the terminal's search bar: its text, a search, closed.
+    fn finder_message(&mut self, message: Message) -> Vec<Effect> {
+        let Some(finder) = self.finder.as_mut() else {
+            return Vec::new();
+        };
+        match message {
+            Message::FinderQuery(query) => finder.query = query,
+            Message::FinderFind(direction) => {
+                finder.searched = Some(finder.query.clone());
+                let (tab, query) = (finder.tab, finder.query.clone());
+                return self.app.update(AppMessage::FindInTerminal {
+                    tab,
+                    query,
+                    direction,
+                });
+            }
+            _ => self.finder = None,
+        }
+        Vec::new()
+    }
+
+    /// The search bar over the terminal of `tab`, when open there.
+    fn finder_of(&self, tab: &Tab) -> Option<&Finder> {
+        self.finder.as_ref().filter(|finder| finder.tab == tab.id)
+    }
+
+    /// `tab`'s terminal, with its search bar over it when open. Under the bar the terminal
+    /// takes no keys: Escape and what is typed are the bar's.
+    fn searchable_terminal<'a>(&'a self, tab: &'a Tab, interactive: bool) -> Element<'a, Message> {
+        let finder = self.finder_of(tab);
+        let shown = terminal(tab, interactive && finder.is_none(), self.font_size(tab.id));
+        match finder {
+            Some(finder) => stack![
+                shown,
+                crate::finder::view(finder, tab.find_missed, self.modifiers.shift())
+            ]
+            .into(),
+            None => shown,
+        }
     }
 
     /// The text size of `tab`'s terminal.
@@ -970,6 +1044,10 @@ impl Shell {
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
         if !confirm && self.palette.take().is_some() {
             // Escape closes Quick Connect first.
+            return Vec::new();
+        }
+        if !confirm && self.finder.take().is_some() {
+            // Then the terminal's search bar.
             return Vec::new();
         }
         if !confirm && self.menu.take().is_some() {
@@ -1710,7 +1788,7 @@ impl Shell {
             TreeShortcut::QuickConnect => {
                 self.menu = None;
                 self.palette = Some(Palette::default());
-                self.palette_opened = true;
+                self.focus_next = Some(crate::palette::field_id());
                 Vec::new()
             }
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
@@ -1937,11 +2015,7 @@ impl Shell {
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
-                _ => terminal(
-                    tab,
-                    self.app.dialog.is_none() && !self.tree_focused,
-                    self.font_size(tab.id),
-                ),
+                _ => self.searchable_terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
             },
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
@@ -1960,7 +2034,7 @@ impl Shell {
                     |status| fl!("ui-session-closed-status", status = status.to_string()),
                 );
                 column![
-                    terminal(tab, self.app.dialog.is_none(), self.font_size(tab.id)),
+                    self.searchable_terminal(tab, self.app.dialog.is_none()),
                     row![text(status), self.session_actions(tab)]
                         .spacing(SPACING)
                         .padding(PADDING)
@@ -2252,6 +2326,14 @@ impl Default for Shell {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Whether `tab` shows a terminal: a session of text, connected or ended.
+fn shows_terminal(tab: &Tab) -> bool {
+    tab.files.is_none()
+        && tab.desktop.is_none()
+        && !matches!(tab.purpose, Purpose::Files | Purpose::Rdp | Purpose::Vnc)
+        && matches!(tab.phase, Phase::Connected | Phase::Closed { .. })
 }
 
 fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message> {

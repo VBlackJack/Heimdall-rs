@@ -37,6 +37,7 @@ pub use mouse::{
 pub use palette::{Palette, Rgb};
 pub use paste::encode_paste;
 pub use terminal::{
-    CellPixels, CellPoint, CellWidth, ClipboardPolicy, CursorStyle, FeedOutput, GridSize, Screen,
-    ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig, TitleChange, Underline,
+    CellPixels, CellPoint, CellWidth, ClipboardPolicy, CursorStyle, FeedOutput, FindDirection,
+    GridSize, Screen, ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig,
+    TitleChange, Underline,
 };

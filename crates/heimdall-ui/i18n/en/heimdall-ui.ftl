@@ -479,3 +479,10 @@ ui-status-sessions-filtered = { $shown } of { $count ->
     [one] 1 session
    *[other] { $count } sessions
 }
+
+## The terminal's search bar, as the C# one.
+ui-find-placeholder = Search...
+ui-find-previous = ▲
+ui-find-next = ▼
+ui-find-close = ✕
+ui-find-nothing = No match

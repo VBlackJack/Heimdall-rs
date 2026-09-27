@@ -1640,3 +1640,122 @@ fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
         "it scrolls: {scrolled:?}"
     );
 }
+
+#[test]
+fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
+    use heimdall_term::FindDirection;
+    use iced::keyboard;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let output: String = (0..60)
+        .map(|n| {
+            if n == 10 {
+                "an error here\r\n".to_owned()
+            } else {
+                format!("line {n}\r\n")
+            }
+        })
+        .collect();
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(output.into_bytes()),
+    }));
+    let bar_shown = |shell: &Shell| simulator(shell).find("\u{25b2}").is_ok();
+    assert!(!bar_shown(&shell));
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    assert!(bar_shown(&shell));
+    snapshot(&shell, "terminal-find.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.typewrite("x");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+            "under the bar, the terminal takes no keys"
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Search...").expect("its field");
+        ui.typewrite("e");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::FinderQuery(query) if query == "e"))
+        );
+    }
+    let _ = shell.update(Message::FinderQuery("ERROR".to_owned()));
+    let _ = shell.update(Message::FinderFind(FindDirection::Up));
+    assert_eq!(
+        shell.app().tabs[0].terminal.selected_text().as_deref(),
+        Some("error"),
+        "found, whatever the case"
+    );
+    assert!(simulator(&shell).find("No match").is_err());
+
+    let _ = shell.update(Message::FinderQuery("absent".to_owned()));
+    let _ = shell.update(Message::FinderFind(FindDirection::Down));
+    simulator(&shell).find("No match").expect("said");
+    let _ = shell.update(Message::FinderQuery("absen".to_owned()));
+    assert!(
+        simulator(&shell).find("No match").is_err(),
+        "not for a text not yet looked for"
+    );
+
+    // Enter looks down; with Shift, up.
+    let _ = shell.update(Message::FinderQuery(String::new()));
+    for (modifiers, direction) in [
+        (keyboard::Modifiers::empty(), FindDirection::Down),
+        (keyboard::Modifiers::SHIFT, FindDirection::Up),
+    ] {
+        let _ = shell.update(Message::Modifiers(modifiers));
+        let mut ui = simulator(&shell);
+        ui.click("Search...").expect("its field");
+        let _ = ui.tap_key(keyboard_named(Named::Enter));
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::FinderFind(d) if d == direction)),
+            "{direction:?}"
+        );
+    }
+    let _ = shell.update(Message::Modifiers(keyboard::Modifiers::empty()));
+
+    // Escape closes it, then the terminal takes keys again; Ctrl+Shift+F toggles it.
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(!bar_shown(&shell));
+    {
+        let mut ui = simulator(&shell);
+        ui.typewrite("x");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+        );
+    }
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    assert!(!bar_shown(&shell), "the shortcut again closes it");
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    let _ = shell.update(Message::FinderClose);
+    assert!(!bar_shown(&shell));
+}
+
+#[test]
+fn a_session_still_connecting_has_no_search_bar() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    assert!(simulator(&shell).find("\u{25b2}").is_err());
+    // Nor once it is connected: the shortcut asked for none then.
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    }));
+    assert!(simulator(&shell).find("\u{25b2}").is_err());
+}
