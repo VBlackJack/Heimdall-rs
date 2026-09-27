@@ -1,0 +1,28 @@
+# Copyright 2026 Julien Bombled
+# Licensed under the Apache License, Version 2.0. See LICENSE.
+
+[package]
+name = "heimdall-keyring"
+description = "Named secrets in the operating system's own credential store: Windows Credential Manager, Secret Service on Linux."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+publish.workspace = true
+
+[dependencies]
+keyring-core.workspace = true
+thiserror.workspace = true
+zeroize.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-native-keyring-store.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+# crypto-rust: the session with the Secret Service is encrypted, with crates already in use.
+zbus-secret-service-keyring-store = { workspace = true, features = ["crypto-rust"] }
+
+[lints]
+workspace = true
