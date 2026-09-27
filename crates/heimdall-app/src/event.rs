@@ -27,7 +27,7 @@ use heimdall_ssh::{
 use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use heimdall_sftp::SftpClient;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use zeroize::Zeroizing;
 
 use crate::error::UiError;
@@ -115,6 +115,8 @@ pub enum ConnectionEvent {
         framebuffer: Framebuffer,
         /// Where keyboard and mouse input goes.
         input: mpsc::UnboundedSender<Vec<Operation>>,
+        /// The desktop size the tab wants.
+        size: watch::Sender<Option<(u16, u16)>>,
         /// Where this side's clipboard text goes, when the clipboard is shared.
         clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
     },

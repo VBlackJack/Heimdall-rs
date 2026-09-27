@@ -31,6 +31,8 @@ use ironrdp::connector::{
     self, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind, ConnectorResult,
     DesktopSize,
 };
+use ironrdp::displaycontrol::client::DisplayControlClient;
+use ironrdp::dvc::DrdynvcClient;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
 use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
@@ -336,7 +338,12 @@ pub async fn connect_over(
     credentials: AskCredentials,
     cancel: &CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
-    let mut connector = ClientConnector::new(connector_config(config), client_addr);
+    // Display Control lets the desktop follow the size of the tab showing it.
+    let mut connector = ClientConnector::new(connector_config(config), client_addr)
+        .with_static_channel(
+            DrdynvcClient::new()
+                .with_dynamic_channel(DisplayControlClient::new(|_| Ok(Vec::new()))),
+        );
     let clipboard = config.clipboard.then(|| {
         let (requests, received) = mpsc::unbounded_channel();
         let offered = Offered::default();
@@ -395,6 +402,9 @@ pub async fn connect_over(
         () = cancel.cancelled() => return Err(RdpError::Cancelled),
         answer = credentials() => answer.ok_or(RdpError::Cancelled)?,
     };
+    // With a password in hand the server logs straight in, as mstsc does: a TLS-only server
+    // such as xrdp would otherwise show its own login form after Heimdall's question.
+    connector.config.autologon = !password.is_empty();
     // IronRDP and sspi hold the password as a plain String from here on.
     connector.config.credentials = connector::Credentials::UsernamePassword {
         username,

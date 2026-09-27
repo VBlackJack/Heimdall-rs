@@ -216,3 +216,68 @@ async fn cancelling_the_login_screen_is_a_close_not_a_failure() {
     .expect("closed in time");
     assert_eq!(ended, Some(CloseReason::Server));
 }
+
+/// The lab account of the xrdp container, from `HEIMDALL_LIVE_XRDP_USER` and
+/// `HEIMDALL_LIVE_XRDP_PASSWORD`: resizing needs a logged-in session, the login screen ignores
+/// it.
+fn lab_account() -> Option<(String, Zeroizing<String>)> {
+    Some((
+        std::env::var("HEIMDALL_LIVE_XRDP_USER").ok()?,
+        Zeroizing::new(std::env::var("HEIMDALL_LIVE_XRDP_PASSWORD").ok()?),
+    ))
+}
+
+#[tokio::test]
+async fn a_logged_in_desktop_follows_the_size_asked_for() {
+    // Only against a server that applies Display Control: the lab's xrdp 0.9.21 receives the
+    // request (sent once, after settling) and ignores it. Opt in with HEIMDALL_LIVE_RDP_RESIZE.
+    let (Some(port), Some((user, password)), true) = (
+        live_port(),
+        lab_account(),
+        std::env::var_os("HEIMDALL_LIVE_RDP_RESIZE").is_some(),
+    ) else {
+        eprintln!(
+            "{PORT_VARIABLE}, the lab account or HEIMDALL_LIVE_RDP_RESIZE is not set; skipped"
+        );
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut config = config(port, &dir.path().join("known"), Security::NlaOrTls);
+    let cancel = CancellationToken::new();
+    let Err(RdpError::UnknownCertificate(certificate)) = connect(
+        config.clone(),
+        given(user.clone(), password.clone()),
+        cancel.clone(),
+    )
+    .await
+    else {
+        panic!("expected the certificate question");
+    };
+    config.accepted = Some(certificate.fingerprint);
+    // The password given, the server logs in without its own form.
+    let connection = connect(config, given(user, password), cancel.clone())
+        .await
+        .expect("connected");
+    let mut session = session::start(connection, cancel.clone());
+    // Asked twice in a row: only the last size counts, once it has settled.
+    session.size.send_replace(Some((900, 700)));
+    session.size.send_replace(Some((1000, 700)));
+    let resized = tokio::time::timeout(Duration::from_secs(60), async {
+        while let Some(event) = session.events.recv().await {
+            match event {
+                RdpEvent::Resized { width, height } if (width, height) == (1000, 700) => {
+                    return (width, height);
+                }
+                RdpEvent::Closed(reason) => panic!("closed: {reason:?}"),
+                _ => {}
+            }
+        }
+        panic!("no more events");
+    })
+    .await
+    .expect("resized in time");
+    assert_eq!(resized, (1000, 700));
+    let size = session.framebuffer.read(|width, height, _| (width, height));
+    assert_eq!(size, (1000, 700));
+    cancel.cancel();
+}

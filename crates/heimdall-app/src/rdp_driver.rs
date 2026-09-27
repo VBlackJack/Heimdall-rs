@@ -170,6 +170,7 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         .send(ConnectionEvent::RdpReady {
             framebuffer: session.framebuffer.clone(),
             input: session.input.clone(),
+            size: session.size.clone(),
             clipboard: session.clipboard.clone(),
         })
         .await

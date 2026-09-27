@@ -154,6 +154,7 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
         ConnectionEvent::RdpReady {
             framebuffer: Framebuffer::new(1280, 800),
             input,
+            size: tokio::sync::watch::channel(None).0,
             clipboard: None,
         },
     );
@@ -233,6 +234,7 @@ fn a_connected_desktop_is_drawn_from_its_first_frame() {
         ConnectionEvent::RdpReady {
             framebuffer: Framebuffer::new(1280, 800),
             input,
+            size: tokio::sync::watch::channel(None).0,
             clipboard: None,
         },
     );
@@ -287,6 +289,7 @@ fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
         ConnectionEvent::RdpReady {
             framebuffer: Framebuffer::new(1280, 800),
             input,
+            size: tokio::sync::watch::channel(None).0,
             clipboard: None,
         },
     );
@@ -311,4 +314,44 @@ fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
         })
         .collect();
     assert_eq!(keysyms, [(Some(0x21), true), (Some(0x21), false)]);
+}
+
+#[test]
+fn the_desktop_reports_the_size_it_is_shown_at() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    let mut ui = simulator(&shell);
+    // A frame drawn: the view learns its area.
+    let _ = ui.snapshot(&Theme::Dark).expect("drawn");
+    let sizes: Vec<(u16, u16)> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopResize {
+                tab: resized,
+                width,
+                height,
+            }) if resized == tab => Some((width, height)),
+            _ => None,
+        })
+        .collect();
+    let [(width, height)] = sizes.as_slice() else {
+        panic!("one report, got {sizes:?}");
+    };
+    // The window less the sidebar and the tab bar.
+    assert!(
+        (600..1200).contains(width) && (400..720).contains(height),
+        "{width}x{height}"
+    );
 }

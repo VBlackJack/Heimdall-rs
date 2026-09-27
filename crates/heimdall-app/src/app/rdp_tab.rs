@@ -53,10 +53,16 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         ConnectionEvent::RdpReady {
             framebuffer,
             input,
+            size,
             clipboard,
         } => {
             tab.phase = Phase::Connected;
-            tab.desktop = Some(Box::new(DesktopPane::rdp(framebuffer, input, clipboard)));
+            tab.desktop = Some(Box::new(DesktopPane::rdp(
+                framebuffer,
+                input,
+                size,
+                clipboard,
+            )));
         }
         ConnectionEvent::DesktopFrame => {
             if let Some(pane) = tab.desktop.as_mut() {

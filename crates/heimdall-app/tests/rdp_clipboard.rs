@@ -80,6 +80,7 @@ fn ready(
         event: ConnectionEvent::RdpReady {
             framebuffer: Framebuffer::new(64, 48),
             input,
+            size: tokio::sync::watch::channel(None).0,
             clipboard: shared.then_some(offers),
         },
     });

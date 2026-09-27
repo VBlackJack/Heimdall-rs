@@ -22,7 +22,7 @@ use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use heimdall_remote::vnc::VncInput;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 use zeroize::Zeroizing;
 
 /// The pixels of a desktop.
@@ -108,7 +108,10 @@ pub enum DesktopInput {
 
 /// Where the input of a desktop goes.
 enum DesktopSink {
-    Rdp(mpsc::UnboundedSender<Vec<Operation>>),
+    Rdp {
+        input: mpsc::UnboundedSender<Vec<Operation>>,
+        size: watch::Sender<Option<(u16, u16)>>,
+    },
     Vnc(VncSink),
 }
 
@@ -148,13 +151,22 @@ impl DesktopPane {
     pub(crate) fn rdp(
         framebuffer: heimdall_rdp::Framebuffer,
         input: mpsc::UnboundedSender<Vec<Operation>>,
+        size: watch::Sender<Option<(u16, u16)>>,
         clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
     ) -> Self {
         Self {
             framebuffer: DesktopFramebuffer::Rdp(framebuffer),
             generation: 0,
-            sink: DesktopSink::Rdp(input),
+            sink: DesktopSink::Rdp { input, size },
             clipboard,
+        }
+    }
+
+    /// The size the tab shows the desktop at, in pixels: the RDP session asks the server for
+    /// it once it settles. VNC keeps the server's size.
+    pub(crate) fn resize(&self, width: u16, height: u16) {
+        if let DesktopSink::Rdp { size, .. } = &self.sink {
+            size.send_replace(Some((width, height)));
         }
     }
 
@@ -195,10 +207,10 @@ impl DesktopPane {
     /// receiver: the input then goes nowhere, as it should.
     pub(crate) fn send(&self, inputs: &[DesktopInput]) {
         match &self.sink {
-            DesktopSink::Rdp(sender) => {
+            DesktopSink::Rdp { input, .. } => {
                 let operations = rdp_operations(inputs);
                 if !operations.is_empty() {
-                    let _ = sender.send(operations);
+                    let _ = input.send(operations);
                 }
             }
             DesktopSink::Vnc(sink) => sink.send(inputs),

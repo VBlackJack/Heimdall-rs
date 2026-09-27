@@ -144,6 +144,15 @@ pub enum Message {
     OpenLocal(LocalShell),
     /// Open a saved local profile, asking first unless what it runs is approved.
     OpenLocalProfile(ProfileId),
+    /// The size a tab shows its remote desktop at, in pixels.
+    DesktopResize {
+        /// Tab.
+        tab: TabId,
+        /// Width.
+        width: u16,
+        /// Height.
+        height: u16,
+    },
     /// Keyboard or mouse input for the remote desktop of a tab.
     DesktopInput {
         /// Tab.
@@ -271,6 +280,9 @@ impl fmt::Debug for Message {
             Self::OpenLocalProfile(id) => write!(f, "OpenLocalProfile({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             // What was typed is never shown, as for a terminal.
+            Self::DesktopResize { tab, width, height } => {
+                write!(f, "DesktopResize({}, {width}x{height})", tab.value())
+            }
             Self::DesktopInput { tab, inputs } => {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
@@ -913,6 +925,12 @@ impl App {
             Message::OpenVnc(id) => self.open_vnc(&id),
             Message::OpenLocal(shell) => self.open_local(shell),
             Message::OpenLocalProfile(id) => self.open_local_profile(&id),
+            Message::DesktopResize { tab, width, height } => {
+                if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
+                    pane.resize(width, height);
+                }
+                Vec::new()
+            }
             Message::DesktopInput { tab, inputs } => {
                 self.desktop_input(tab, &inputs);
                 Vec::new()
@@ -963,18 +981,7 @@ impl App {
             Message::PasteRequest(tab) => vec![Effect::ReadClipboard { tab }],
             Message::ClipboardText { tab, text } => self.clipboard_text(tab, text),
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
-            Message::WindowFocus(focused) => {
-                if let Some(found) = self.active.and_then(|id| self.tab(id))
-                    && let Some(bytes) = encode_focus(focused, &found.terminal.input_mode())
-                {
-                    found.write(bytes);
-                }
-                // Back to the window: the desktop shown gets what was copied elsewhere.
-                match self.active.and_then(|id| self.tab(id)) {
-                    Some(found) if focused => clipboard_offer(found),
-                    _ => Vec::new(),
-                }
-            }
+            Message::WindowFocus(focused) => self.window_focus(focused),
             Message::WindowCloseRequested => self.close_window(),
             Message::ImportLegacy => {
                 self.import_legacy();
@@ -1331,6 +1338,22 @@ impl App {
             let _ = sink.resize(terminal_size(grid, Some(cell)));
         }
         Vec::new()
+    }
+
+    /// The window gained or lost the focus: the terminal shown is told when it asked to be,
+    /// and a desktop shown gets what was copied elsewhere meanwhile.
+    fn window_focus(&self, focused: bool) -> Vec<Effect> {
+        let Some(found) = self.active.and_then(|id| self.tab(id)) else {
+            return Vec::new();
+        };
+        if let Some(bytes) = encode_focus(focused, &found.terminal.input_mode()) {
+            found.write(bytes);
+        }
+        if focused {
+            clipboard_offer(found)
+        } else {
+            Vec::new()
+        }
     }
 
     /// This side's clipboard, read for `tab_id`: offered to its server when it is a desktop
