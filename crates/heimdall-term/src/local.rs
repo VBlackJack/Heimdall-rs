@@ -22,6 +22,7 @@
 //! `SIGCHLD`; on Windows one thread waits on a poller that the `ConPTY` pipes and the child
 //! watcher post to.
 
+mod command_line;
 pub mod program;
 #[cfg(unix)]
 mod unix;
@@ -49,6 +50,22 @@ const TERMINAL_TYPE: &str = "xterm-256color";
 /// Largest side `ConPTY` accepts, in characters.
 const MAX_SIDE: u16 = 0x7fff;
 
+/// The arguments of a local program.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LocalArguments {
+    /// One per entry: on Windows each is quoted as the C runtime reads it back.
+    List(Vec<String>),
+    /// A Windows argument string, put after the program exactly as written. Refused on Unix,
+    /// where there is no command line to put it in.
+    WindowsLine(String),
+}
+
+impl Default for LocalArguments {
+    fn default() -> Self {
+        Self::List(Vec::new())
+    }
+}
+
 /// What to run.
 #[derive(Debug, Clone, Default)]
 pub struct LocalConfig {
@@ -56,7 +73,7 @@ pub struct LocalConfig {
     /// shell. See [`program`] for what is refused.
     pub program: Option<String>,
     /// Its arguments.
-    pub args: Vec<String>,
+    pub arguments: LocalArguments,
     /// Folder it starts in; `None` for the current one.
     pub working_directory: Option<PathBuf>,
     /// Columns.
@@ -154,16 +171,52 @@ pub fn spawn(config: &LocalConfig) -> io::Result<LocalSession> {
     return windows::spawn(&options, window_size(config.columns, config.rows));
 }
 
-fn options(config: &LocalConfig) -> io::Result<Options> {
-    program::check_arguments(&config.args, config.working_directory.as_deref())?;
-    let search = std::env::var_os("PATH");
-    let resolve = |name: &str| program::resolve(name, search.as_deref(), Path::is_file);
-    let shell = match config.program.as_deref() {
-        Some(name) => Some(shell(&resolve(name)?, config.args.clone())),
-        None => default_shell(&config.args)?,
+/// The file `program` names, as [`spawn`] finds it: the default shell for `None`, a full
+/// path as given, a bare name in the absolute folders of `PATH`.
+///
+/// # Errors
+///
+/// The name is refused or found nowhere; see [`program`].
+pub fn program_path(program: Option<&str>) -> io::Result<PathBuf> {
+    match program {
+        Some(name) => {
+            let search = std::env::var_os("PATH");
+            Ok(program::resolve(name, search.as_deref(), Path::is_file)?)
+        }
+        None => default_program(),
+    }
+}
+
+/// The command as it runs, for someone to read before it does. On Windows it is the very
+/// command line the program receives, built by the function [`spawn`] uses; on Unix, where a
+/// program receives its arguments one by one, each is shown quoted when it needs to be.
+#[must_use]
+pub fn command_text(program_path: &Path, arguments: &LocalArguments) -> String {
+    #[cfg(windows)]
+    return command_line::windows(program_path, arguments);
+    #[cfg(unix)]
+    return command_line::unix_display(program_path, arguments);
+}
+
+/// Whether the program reads its command line again with rules of its own, so that what the
+/// arguments look like is not what it does with them: `cmd.exe`, and batch files, which
+/// Windows runs through it. `&`, `|`, `^` and `%` are commands to it.
+#[must_use]
+pub fn rereads_its_command_line(program_path: &Path) -> bool {
+    #[cfg(windows)]
+    return command_line::is_cmd(program_path);
+    #[cfg(unix)]
+    return {
+        let _ = program_path;
+        false
     };
+}
+
+fn options(config: &LocalConfig) -> io::Result<Options> {
+    program::check_arguments(&config.arguments, config.working_directory.as_deref())?;
+    let program = program_path(config.program.as_deref())?;
     Ok(Options {
-        shell,
+        shell: Some(shell(&program, &config.arguments)?),
         working_directory: config.working_directory.clone(),
         drain_on_exit: false,
         // Passed to the child only: `tty::setup_env` would change this process's own.
@@ -171,47 +224,63 @@ fn options(config: &LocalConfig) -> io::Result<Options> {
             ("TERM".to_owned(), TERMINAL_TYPE.to_owned()),
             ("COLORTERM".to_owned(), "truecolor".to_owned()),
         ]),
-        // Arguments with spaces stay whole on the command line Windows builds from them.
+        // The command line is built whole here, by `command_line::windows`: nothing is added
+        // to it on the way.
         #[cfg(windows)]
-        escape_args: true,
+        escape_args: false,
     })
 }
 
-/// The shell run for `program`, a full path. On Windows the path goes into the command line
-/// quoted: unquoted, `C:\My Tools\x.exe` would first be tried as `C:\My.exe`.
-fn shell(program: &Path, args: Vec<String>) -> Shell {
-    Shell::new(command_program(program), args)
+/// What `alacritty_terminal` runs. On Windows the whole command line goes in as the program:
+/// it is put into `CreateProcessW` as it is, so the line shown is the line run.
+#[cfg(windows)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as on Unix, where a Windows argument string is refused"
+)]
+fn shell(program: &Path, arguments: &LocalArguments) -> io::Result<Shell> {
+    Ok(Shell::new(
+        command_line::windows(program, arguments),
+        Vec::new(),
+    ))
 }
 
-/// `program` as it starts the command line.
-fn command_program(program: &Path) -> String {
-    let program = program.to_string_lossy();
-    #[cfg(windows)]
-    return format!("\"{program}\"");
-    #[cfg(unix)]
-    return program.into_owned();
+/// What `alacritty_terminal` runs: the program and its arguments, one by one.
+#[cfg(unix)]
+fn shell(program: &Path, arguments: &LocalArguments) -> io::Result<Shell> {
+    match arguments {
+        LocalArguments::List(args) => Ok(Shell::new(
+            program.to_string_lossy().into_owned(),
+            args.clone(),
+        )),
+        LocalArguments::WindowsLine(_) => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "a Windows argument string has no meaning here",
+        )),
+    }
 }
 
 /// The shell run when none is named: Windows `PowerShell` by its full path.
 #[cfg(windows)]
-fn default_shell(args: &[String]) -> io::Result<Option<Shell>> {
+fn default_program() -> io::Result<PathBuf> {
     let root = std::env::var_os("SystemRoot")
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "SystemRoot is not set"))?;
-    Ok(Some(shell(
-        &program::default_shell(Path::new(&root)),
-        args.to_vec(),
-    )))
+    Ok(program::default_shell(Path::new(&root)))
 }
 
-/// The shell run when none is named: the account's login shell, a full path from the user
-/// database, which `alacritty_terminal` looks up itself.
+/// The shell run when none is named: `$SHELL` when it is a full path, as a terminal opens it,
+/// else `/bin/sh`. Named here rather than left to `alacritty_terminal`, so that what is shown
+/// and approved is the file that runs.
 #[cfg(unix)]
 #[expect(
     clippy::unnecessary_wraps,
     reason = "the same signature as on Windows, where finding the default can fail"
 )]
-fn default_shell(_args: &[String]) -> io::Result<Option<Shell>> {
-    Ok(None)
+fn default_program() -> io::Result<PathBuf> {
+    Ok(std::env::var_os("SHELL")
+        .map(PathBuf::from)
+        .filter(|shell| shell.is_absolute())
+        .unwrap_or_else(|| PathBuf::from(program::FALLBACK_SHELL)))
 }
 
 /// A size the pseudo-terminal accepts: at least one cell, at most what `ConPTY` takes, which
@@ -247,7 +316,7 @@ mod tests {
     fn the_shell_is_told_its_terminal_and_nothing_else_is_changed() {
         let options = options(&LocalConfig {
             program: Some(FULL_PATH.to_owned()),
-            args: vec!["-l".to_owned()],
+            arguments: LocalArguments::List(vec!["-l".to_owned()]),
             ..LocalConfig::default()
         })
         .expect("options");
@@ -263,12 +332,34 @@ mod tests {
         assert!(options.shell.is_some());
     }
 
-    #[cfg(windows)]
     #[test]
-    fn a_windows_program_goes_into_the_command_line_quoted() {
+    fn the_default_program_is_named_by_its_full_path() {
+        let default = program_path(None).expect("a default");
+        assert!(default.is_absolute(), "{default:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_windows_argument_string_is_refused_on_unix() {
+        let error = options(&LocalConfig {
+            program: Some(FULL_PATH.to_owned()),
+            arguments: LocalArguments::WindowsLine("-c exit".to_owned()),
+            ..LocalConfig::default()
+        })
+        .expect_err("refused");
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn the_command_shown_is_built_by_the_same_function_as_the_one_run() {
+        let arguments = LocalArguments::List(vec!["two words".to_owned()]);
+        let shown = command_text(Path::new(FULL_PATH), &arguments);
+        #[cfg(windows)]
         assert_eq!(
-            command_program(Path::new(r"C:\My Tools\x.exe")),
-            r#""C:\My Tools\x.exe""#
+            shown,
+            command_line::windows(Path::new(FULL_PATH), &arguments)
         );
+        #[cfg(unix)]
+        assert_eq!(shown, "/bin/sh 'two words'");
     }
 }
