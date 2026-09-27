@@ -16,7 +16,7 @@
 
 //! VNC tabs: a remote desktop like an RDP one, drawn from a VNC session.
 
-use heimdall_core::profile::ProfileId;
+use heimdall_core::profile::{ProfileId, VncProfile};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
@@ -32,6 +32,11 @@ impl App {
         let Some(profile) = self.vnc_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
+        self.open_vnc_profile(profile)
+    }
+
+    /// Opens a VNC tab for `profile`.
+    pub(super) fn open_vnc_profile(&mut self, profile: VncProfile) -> Vec<Effect> {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();

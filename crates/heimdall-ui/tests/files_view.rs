@@ -214,7 +214,10 @@ async fn the_tree_menu_opens_a_files_tab_through_connect_as_sftp() {
     ui.click("SFTP").expect("sftp");
     assert!(ui.into_messages().any(|message| matches!(
         &message,
-        Message::MenuChoice(AppMessage::OpenFiles(opened)) if *opened == id
+        Message::MenuChoice(AppMessage::ConnectAs {
+            id: opened,
+            protocol: heimdall_app::ConnectAs::Sftp,
+        }) if *opened == id
     )));
 }
 

@@ -40,6 +40,7 @@ use zeroize::Zeroizing;
 use crate::driver::{AnswerRegistry, ChannelPrompter, ask, report_failure};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
+use crate::text::server_text;
 
 /// Events buffered before the attempt waits for the UI to read them.
 const EVENT_QUEUE_LENGTH: usize = 64;
@@ -56,6 +57,8 @@ pub struct RdpRequest {
     pub known_hosts: PathBuf,
     /// A key the user accepted after the certificate question.
     pub accepted: Option<Fingerprint>,
+    /// Keys the user trusted for this server for this run only.
+    pub trusted_for_run: Vec<Fingerprint>,
     /// Desktop size asked for.
     pub desktop: (u16, u16),
     /// The SSH gateways the server is reached through, nearest first, each as the hop it
@@ -188,6 +191,12 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                 log::warn!("RDP session to {target} failed: {detail:?}");
                 ConnectionEvent::Failed(UiError::RdpProtocol { detail })
             }
+            RdpEvent::Closed(CloseReason::Disconnected(reason)) => {
+                log::info!("RDP session to {target} ended: {reason}");
+                ConnectionEvent::Ended {
+                    reason: server_text(&reason),
+                }
+            }
             RdpEvent::Closed(_) => {
                 log::info!("RDP session to {target} ended");
                 ConnectionEvent::Closed { exit_status: None }
@@ -195,7 +204,9 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         };
         let last = matches!(
             event,
-            ConnectionEvent::Closed { .. } | ConnectionEvent::Failed(_)
+            ConnectionEvent::Closed { .. }
+                | ConnectionEvent::Ended { .. }
+                | ConnectionEvent::Failed(_)
         );
         if events.send(event).await.is_err() {
             request.cancel.cancel();
@@ -237,6 +248,7 @@ async fn open(
         } else {
             Vec::new()
         },
+        trusted_for_run: request.trusted_for_run.clone(),
     };
     if request.route.is_empty() {
         connect(config, ask_credentials, request.cancel.clone()).await
@@ -299,9 +311,7 @@ async fn failed(events: &mpsc::Sender<ConnectionEvent>, error: UiError) {
 /// How an RDP failure is shown.
 fn ui_error(error: RdpError) -> UiError {
     match error {
-        RdpError::Network(error) => UiError::Network {
-            detail: error.to_string(),
-        },
+        RdpError::Network(error) => UiError::network(&error),
         RdpError::Timeout => UiError::Timeout,
         RdpError::Cancelled => UiError::Cancelled,
         RdpError::Negotiation(detail) => UiError::SecurityRefused { detail },

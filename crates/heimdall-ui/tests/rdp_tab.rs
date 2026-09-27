@@ -524,3 +524,138 @@ fn a_fitted_desktop_asks_the_server_for_no_size() {
         "the server keeps its size"
     );
 }
+
+#[test]
+fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .parse()
+                .expect("fingerprint"),
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Unrecognised Server Certificate").expect("title");
+    ui.find(
+        "\"Domain controller\" answered at dc.lab:3389, presenting a certificate this profile has never approved.",
+    )
+    .expect("body");
+    ui.click("Just this once").expect("once");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyTrustOnce(trusted)) if trusted == tab
+    )));
+    let mut ui = simulator(&shell);
+    ui.click("Trust this certificate").expect("always");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyDecision { tab: decided, accept: true }) if decided == tab
+    )));
+    let mut ui = simulator(&shell);
+    ui.click("Do not connect").expect("refuse");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyDecision { accept: false, .. })
+    )));
+}
+
+#[test]
+fn a_session_the_server_ended_says_why() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: "Another user connected to the session".to_owned(),
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("The session ended.").expect("ended");
+    ui.find("The server said: Another user connected to the session")
+        .expect("its reason");
+    ui.click("Reconnect").expect("reconnect");
+}
+
+#[tokio::test]
+async fn a_dropped_desktop_counts_down_to_its_next_attempt_and_can_be_stopped() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Reconnecting (attempt 1/20)...")
+            .expect("which attempt");
+        ui.find("in 2s").expect("how long");
+        assert!(
+            ui.find("The connection failed").is_err(),
+            "not the failure yet"
+        );
+        ui.click("Cancel").expect("cancel");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::CancelAutoReconnect(cancelled)) if cancelled == tab
+        )));
+    }
+    // The attempt itself says it is one.
+    let _ = shell.update(Message::App(AppMessage::AutoReconnect { tab, attempt }));
+    let mut ui = simulator(&shell);
+    ui.find("Reconnecting (attempt 1/20)...")
+        .expect("while connecting");
+}
+
+#[test]
+fn an_rdp_profile_connects_as_the_other_protocols() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("dc");
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Connect as...").expect("connect as");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::ConnectAs(asked)) if *asked == id
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone())));
+    let mut ui = simulator(&shell);
+    for label in ["SSH", "SFTP", "VNC", "Telnet"] {
+        ui.find(label).expect(label);
+    }
+    ui.click("Telnet").expect("telnet");
+    assert!(ui.into_messages().any(|message| matches!(
+        &message,
+        Message::MenuChoice(AppMessage::ConnectAs {
+            id: asked,
+            protocol: heimdall_app::ConnectAs::Telnet,
+        }) if *asked == id
+    )));
+}

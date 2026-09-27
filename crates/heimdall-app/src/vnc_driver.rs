@@ -148,9 +148,7 @@ async fn password(
 /// How a VNC failure is shown.
 fn ui_error(error: VncError) -> UiError {
     match error {
-        VncError::Network(error) => UiError::Network {
-            detail: error.to_string(),
-        },
+        VncError::Network(error) => UiError::network(&error),
         VncError::Timeout => UiError::Timeout,
         VncError::Cancelled => UiError::Cancelled,
         VncError::Rfb(RfbError::AuthenticationFailed(_)) => UiError::AuthenticationFailed {

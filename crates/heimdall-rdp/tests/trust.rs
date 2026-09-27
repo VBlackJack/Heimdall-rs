@@ -168,6 +168,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
         },
         clipboard: false,
         drives: Vec::new(),
+        trusted_for_run: Vec::new(),
     }
 }
 
@@ -292,6 +293,37 @@ async fn an_accepted_key_is_recorded_once_and_then_known() {
 }
 
 #[tokio::test]
+async fn a_key_trusted_for_the_run_is_let_through_and_never_recorded() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    let mut trusting = config(&known, None, PORT);
+    trusting.trusted_for_run = vec![expected_pin()];
+    let (outcome, seen) = attempt(&trusting, KEY).await;
+    assert!(
+        !matches!(
+            outcome,
+            Err(RdpError::UnknownCertificate(_) | RdpError::CertificateChanged { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert!(seen.after_handshake > 0, "CredSSP started");
+    assert!(lines(&known).is_empty(), "nothing recorded");
+
+    // Another key trusted for the run is no trust in this one.
+    trusting.trusted_for_run = vec![
+        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            .parse()
+            .expect("fingerprint"),
+    ];
+    let (outcome, seen) = attempt(&trusting, KEY).await;
+    assert!(
+        matches!(outcome, Err(RdpError::UnknownCertificate(_))),
+        "{outcome:?}"
+    );
+    assert_eq!(seen.after_handshake, 0);
+}
+
+#[tokio::test]
 async fn a_changed_key_is_refused_without_a_question() {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
@@ -387,13 +419,15 @@ fn connecting_can_be_spawned(config: RdpConfig, password: Zeroizing<String>) {
 }
 
 /// Connects through [`connect`], over TCP to a fake server on this machine, with the key
-/// recorded for it first when `recorded`. The outcome, and when the credentials were asked:
+/// recorded for it first when `recorded`, and `trusted_for_run` as the keys trusted for this
+/// run. The outcome, and when the credentials were asked:
 /// `Some(true)` once the server had accepted the connection, `Some(false)` before, `None`
 /// never.
 async fn attempt_over_tcp(
     known: &Path,
     accepted: Option<Fingerprint>,
     recorded: bool,
+    trusted_for_run: Vec<Fingerprint>,
 ) -> (Result<(), RdpError>, Option<bool>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let port = listener.local_addr().expect("address").port();
@@ -418,6 +452,7 @@ async fn attempt_over_tcp(
     });
     let mut config = config(known, accepted, port);
     "127.0.0.1".clone_into(&mut config.host);
+    config.trusted_for_run = trusted_for_run;
     let outcome = tokio::time::timeout(
         WAIT * 3,
         connect(config, credentials, CancellationToken::new()),
@@ -433,7 +468,8 @@ async fn attempt_over_tcp(
 #[tokio::test]
 async fn a_recorded_server_gets_the_credentials_before_the_connection_opens() {
     let dir = tempfile::tempdir().expect("dir");
-    let (outcome, asked) = attempt_over_tcp(&dir.path().join("known"), None, true).await;
+    let (outcome, asked) =
+        attempt_over_tcp(&dir.path().join("known"), None, true, Vec::new()).await;
     assert!(
         !matches!(
             outcome,
@@ -452,8 +488,32 @@ async fn a_recorded_server_gets_the_credentials_before_the_connection_opens() {
 #[tokio::test]
 async fn a_just_accepted_server_gets_the_credentials_before_the_connection_opens() {
     let dir = tempfile::tempdir().expect("dir");
+    let (outcome, asked) = attempt_over_tcp(
+        &dir.path().join("known"),
+        Some(expected_pin()),
+        false,
+        Vec::new(),
+    )
+    .await;
+    assert!(
+        !matches!(
+            outcome,
+            Err(RdpError::UnknownCertificate(_) | RdpError::CertificateChanged { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert_eq!(
+        asked,
+        Some(false),
+        "asked before the server accepted anything"
+    );
+}
+
+#[tokio::test]
+async fn a_server_trusted_for_the_run_gets_the_credentials_before_the_connection_opens() {
+    let dir = tempfile::tempdir().expect("dir");
     let (outcome, asked) =
-        attempt_over_tcp(&dir.path().join("known"), Some(expected_pin()), false).await;
+        attempt_over_tcp(&dir.path().join("known"), None, false, vec![expected_pin()]).await;
     assert!(
         !matches!(
             outcome,
@@ -471,7 +531,8 @@ async fn a_just_accepted_server_gets_the_credentials_before_the_connection_opens
 #[tokio::test]
 async fn an_unknown_server_over_tcp_is_asked_about_and_asks_nothing() {
     let dir = tempfile::tempdir().expect("dir");
-    let (outcome, asked) = attempt_over_tcp(&dir.path().join("known"), None, false).await;
+    let (outcome, asked) =
+        attempt_over_tcp(&dir.path().join("known"), None, false, Vec::new()).await;
     assert!(
         matches!(outcome, Err(RdpError::UnknownCertificate(_))),
         "{outcome:?}"

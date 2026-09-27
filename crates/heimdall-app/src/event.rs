@@ -148,6 +148,11 @@ pub enum ConnectionEvent {
         /// Exit status, when reported.
         exit_status: Option<u32>,
     },
+    /// The server ended the session and said why, made safe. Last event of the attempt.
+    Ended {
+        /// Its reason.
+        reason: String,
+    },
     /// The attempt failed. Last event of the attempt.
     Failed(UiError),
 }
@@ -193,6 +198,7 @@ impl fmt::Debug for ConnectionEvent {
                 .debug_struct("Closed")
                 .field("exit_status", exit_status)
                 .finish(),
+            Self::Ended { reason } => f.debug_struct("Ended").field("reason", reason).finish(),
             Self::Failed(error) => f.debug_tuple("Failed").field(error).finish(),
         }
     }

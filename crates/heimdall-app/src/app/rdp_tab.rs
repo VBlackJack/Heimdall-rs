@@ -23,7 +23,7 @@ use heimdall_rdp::{Fingerprint, KnownRdpHosts};
 use heimdall_ssh::ConnectOptions;
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Effect, Phase, Tab, TabProfile};
+use super::{App, Effect, KeyTrust, Phase, Tab, TabProfile};
 use crate::desktop::{DesktopInput, DesktopPane};
 use crate::driver::Purpose;
 use crate::error::UiError;
@@ -42,6 +42,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             port,
             fingerprint,
         } => {
+            tab.retry = None;
             tab.prompts.clear();
             tab.pending_rdp_key = Some(fingerprint);
             tab.phase = Phase::HostKey {
@@ -56,6 +57,8 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             size,
             clipboard,
         } => {
+            // Back: the attempts stop.
+            tab.retry = None;
             tab.phase = Phase::Connected;
             tab.desktop = Some(Box::new(DesktopPane::rdp(
                 framebuffer,
@@ -94,10 +97,17 @@ impl App {
             .map_err(UiError::Route)?;
         let mut ssh = ConnectOptions::new(self.config.known_hosts.clone());
         ssh.agent = self.config.agent.clone();
+        ssh.run_trust = self.run_trust.clone();
         Ok(RdpRequest {
             profile: profile.clone(),
             known_hosts: self.known_rdp_hosts(),
             accepted,
+            trusted_for_run: self
+                .rdp_run_trust
+                .iter()
+                .filter(|(host, port, _)| *host == profile.host && *port == profile.port)
+                .map(|(_, _, key)| *key)
+                .collect(),
             desktop: DEFAULT_DESKTOP,
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
@@ -110,6 +120,11 @@ impl App {
         let Some(profile) = self.rdp_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
+        self.open_rdp_profile(profile)
+    }
+
+    /// Opens an RDP tab for `profile`.
+    pub(super) fn open_rdp_profile(&mut self, profile: RdpProfile) -> Vec<Effect> {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
@@ -173,20 +188,35 @@ impl App {
     }
 
     /// The user's answer to the certificate question of an RDP tab.
-    pub(super) fn rdp_certificate_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+    pub(super) fn rdp_certificate_decision(
+        &mut self,
+        tab_id: TabId,
+        trust: KeyTrust,
+    ) -> Vec<Effect> {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        let (Phase::HostKey { .. }, Some(fingerprint)) = (&tab.phase, tab.pending_rdp_key.take())
+        let (Phase::HostKey { .. }, Some(fingerprint), TabProfile::Rdp(profile)) =
+            (&tab.phase, tab.pending_rdp_key.take(), &tab.profile)
         else {
             return Vec::new();
         };
-        if !accept {
-            tab.phase = Phase::Failed(UiError::Cancelled);
-            return Vec::new();
+        match trust {
+            KeyTrust::Refused => {
+                tab.phase = Phase::Failed(UiError::Cancelled);
+                Vec::new()
+            }
+            // Held in memory for this run: the file is not written.
+            KeyTrust::Once => {
+                let server = (profile.host.clone(), profile.port, fingerprint);
+                if !self.rdp_run_trust.contains(&server) {
+                    self.rdp_run_trust.push(server);
+                }
+                self.reconnect_rdp(tab_id, None)
+            }
+            // Recorded by the next attempt, and only if the server presents exactly this key.
+            KeyTrust::Always => self.reconnect_rdp(tab_id, Some(fingerprint)),
         }
-        // Recorded by the next attempt, and only if the server presents exactly this key.
-        self.reconnect_rdp(tab_id, Some(fingerprint))
     }
 
     /// Forgets the key recorded for the server of an RDP tab whose key changed, then

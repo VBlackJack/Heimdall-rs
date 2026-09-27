@@ -39,9 +39,9 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
     Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
-    QuestionId, QuestionKind, SpecialKeys, SystemCredentials, Tab, TabId, UiError, VaultDialog,
-    VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem,
-    open_vault, server_text,
+    QuestionId, QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
+    TabMenuMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
@@ -61,10 +61,11 @@ use zeroize::Zeroizing;
 use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
+use crate::report;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{WindowShortcut, is_lock_key, is_search_key, window_shortcut};
 use crate::texts;
-use crate::tree_view::{self, CursorSpot, CursorTracker, TreeMenu};
+use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TreeMenu};
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -101,6 +102,9 @@ const SKIPPED_LIST_HEIGHT: f32 = 200.0;
 
 /// Height the command of a local profile scrolls within, however long it is.
 const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
+
+/// How often a waiting session's countdown is drawn anew.
+const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Longest tab title shown, in characters.
 const MAX_TAB_TITLE_CHARS: usize = 32;
@@ -270,6 +274,12 @@ pub enum Message {
     CloseTreeMenu,
     /// An entry of the open menu was chosen: the menu closes, the core gets the message.
     MenuChoice(AppMessage),
+    /// A tab menu's Fullscreen: the menu closes, the tab is shown, full screen.
+    MenuFullscreen(TabId),
+    /// Copy the report of a tab's failure, as the C# card's "Copy error".
+    CopyError(TabId),
+    /// A second passed while a tab waits to open again: its countdown is drawn anew.
+    Tick,
 }
 
 impl fmt::Debug for Message {
@@ -305,6 +315,9 @@ impl fmt::Debug for Message {
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
+            Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
+            Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
+            Self::Tick => f.write_str("Tick"),
         }
     }
 }
@@ -534,7 +547,7 @@ impl Shell {
     #[must_use]
     pub fn title(&self) -> String {
         match self.app.active_tab() {
-            Some(tab) => fl!("ui-window-title-tab", tab = tab.title.as_str()),
+            Some(tab) => fl!("ui-window-title-tab", tab = tab.display_title()),
             None => fl!("ui-window-title"),
         }
     }
@@ -547,7 +560,15 @@ impl Shell {
 
     /// Window events and shortcuts.
     pub fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(window_event)
+        let events = event::listen_with(window_event);
+        if self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
+            Subscription::batch([
+                events,
+                iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick),
+            ])
+        } else {
+            events
+        }
     }
 
     /// Applies a message.
@@ -639,6 +660,9 @@ impl Shell {
                 self.menu = None;
                 self.app.update(message)
             }
+            Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
+            Message::CopyError(tab) => return self.copy_error(tab),
+            Message::Tick => return Task::none(),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -923,7 +947,9 @@ impl Shell {
     /// a form is refused; never again while the user types.
     fn focus_dialog(&mut self) -> Task<Message> {
         let (next, field) = match &self.app.dialog {
-            Some(Dialog::AskName { .. }) => (Some(DialogFocus::Name), name_field_id()),
+            Some(Dialog::AskName { .. } | Dialog::RenameTab { .. }) => {
+                (Some(DialogFocus::Name), name_field_id())
+            }
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
             Some(Dialog::EditProfile { error, .. }) => {
                 match self.form_focus(DialogForm::Profile, *error, profile_field_id) {
@@ -1057,6 +1083,14 @@ impl Shell {
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
+            Effect::RetryAt {
+                tab,
+                attempt,
+                deadline,
+            } => Task::perform(
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)),
+                move |()| Message::App(AppMessage::AutoReconnect { tab, attempt }),
+            ),
             Effect::WakeAt {
                 tab,
                 generation,
@@ -1117,14 +1151,36 @@ impl Shell {
                 }),
             ));
         }
-        if let Some((menu, at)) = self.menu.as_ref().filter(|_| !locked) {
-            let profile = match menu {
-                TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
-                TreeMenu::Add | TreeMenu::More => None,
-            };
-            let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
-            let entries =
-                tree_view::menu_entries(menu, profile.as_ref(), editable, self.app.can_import());
+        let open_menu = self
+            .menu
+            .as_ref()
+            .filter(|_| !locked)
+            .and_then(|(menu, at)| {
+                let entries = if let TreeMenu::Tab(tab) = menu {
+                    tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+                } else {
+                    let profile = match menu {
+                        TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => {
+                            self.app.profile_summary(id)
+                        }
+                        TreeMenu::Add | TreeMenu::More | TreeMenu::Tab(_) => None,
+                    };
+                    let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
+                    let connect_as = profile
+                        .as_ref()
+                        .map(|p| self.app.connect_as_choices(&p.id))
+                        .unwrap_or_default();
+                    tree_view::menu_entries(
+                        menu,
+                        profile.as_ref(),
+                        &connect_as,
+                        editable,
+                        self.app.can_import(),
+                    )
+                };
+                Some((entries, *at))
+            });
+        if let Some((entries, at)) = open_menu {
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
                 mouse_area(
@@ -1329,28 +1385,92 @@ impl Shell {
         .into()
     }
 
+    /// A tab menu's Fullscreen: the menu closes, the tab is shown, and the window goes full
+    /// screen as F11 takes it.
+    fn menu_fullscreen(&mut self, tab: TabId) -> Task<Message> {
+        self.menu = None;
+        self.page = Page::Tab;
+        let effects = self.app.update(AppMessage::SelectTab(tab));
+        let mut tasks: Vec<Task<Message>> =
+            effects.into_iter().map(|effect| self.run(effect)).collect();
+        tasks.push(self.view_message(&Message::ToggleFullscreen));
+        Task::batch(tasks)
+    }
+
+    /// Copies the report of the failure of tab `id`.
+    fn copy_error(&self, id: TabId) -> Task<Message> {
+        self.failure_report(id, std::time::SystemTime::now())
+            .map_or_else(Task::none, iced::clipboard::write)
+    }
+
+    /// The report "Copy error" copies for tab `id` at `now`: when, which server, which
+    /// version, and the error as its card says it; `None` unless its session failed.
+    #[must_use]
+    pub fn failure_report(&self, id: TabId, now: std::time::SystemTime) -> Option<String> {
+        let tab = self.app.tab(id)?;
+        let Phase::Failed(error) = &tab.phase else {
+            return None;
+        };
+        let server = tab
+            .profile
+            .endpoint()
+            .map(|(host, port)| format!("{} ({host}:{port})", tab.profile.name()));
+        Some(report::error_report(
+            self.app.tab_kind(tab).label(),
+            server.as_deref(),
+            &texts::error(error),
+            now,
+        ))
+    }
+
+    /// What the menu of tab `id` offers; `None` once the tab is gone.
+    fn tab_menu_state(&self, id: TabId) -> Option<TabMenuState> {
+        let tab = self.app.tab(id)?;
+        let profile = self.app.tab_profile(tab);
+        Some(TabMenuState {
+            tab: id,
+            renamed: tab.custom_title.is_some(),
+            can_restart: self.app.can_restart(tab),
+            can_reopen: self.app.can_reopen(tab),
+            editable: profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id)),
+            profile,
+            others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
+            right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
+        })
+    }
+
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         for tab in &self.app.tabs {
             let active = self.app.active == Some(tab.id);
-            let title = if tab.files.is_some() {
-                fl!("ui-tab-files-title", name = tab_label(&tab.title))
+            let title = if tab.files.is_some() && tab.custom_title.is_none() {
+                fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
             } else {
-                tab_label(&tab.title)
+                tab_label(tab.display_title())
             };
-            let mut label = row![text(title)].spacing(SPACING);
+            // The protocol before the name, as the C# tab's icon; in the button's own colour,
+            // which a secondary one would lose on both the active and the other tabs.
+            let mut label = row![
+                text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
+                text(title),
+            ]
+            .spacing(SPACING / 2.0)
+            .align_y(iced::Alignment::Center);
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
             }
             tabs = tabs.push(
                 row![
-                    button(label)
-                        .style(if active {
-                            button::primary
-                        } else {
-                            button::secondary
-                        })
-                        .on_press(Message::App(AppMessage::SelectTab(tab.id))),
+                    mouse_area(
+                        button(label)
+                            .style(if active {
+                                button::primary
+                            } else {
+                                button::secondary
+                            })
+                            .on_press(Message::App(AppMessage::SelectTab(tab.id)))
+                    )
+                    .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab.id))),
                     button(text(fl!("ui-tab-close-button")).size(SMALL_SIZE))
                         .style(button::text)
                         .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
@@ -1381,12 +1501,13 @@ impl Shell {
         match &tab.phase {
             Phase::Connecting => center(card(
                 column![
-                    text(match tab.profile.endpoint() {
-                        Some((host, port)) => fl!(
+                    text(match (tab.retry, tab.profile.endpoint()) {
+                        (Some(retry), _) => reconnecting(retry),
+                        (None, Some((host, port))) => fl!(
                             "ui-connect-progress",
                             target = target(host, port, tab.profile.username())
                         ),
-                        None => fl!("ui-local-starting", name = tab.profile.name()),
+                        (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
                     }),
                     button(text(fl!("ui-connect-cancel-button")))
                         .style(button::secondary)
@@ -1399,7 +1520,13 @@ impl Shell {
                 host,
                 port,
                 fingerprint,
-            } => host_key_card(tab.id, host, *port, fingerprint),
+            } => host_key_card(
+                tab.id,
+                host,
+                *port,
+                fingerprint,
+                tab.asks_about_certificate().then(|| tab.profile.name()),
+            ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
@@ -1407,11 +1534,14 @@ impl Shell {
             },
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
-                center(card(
-                    column![text(fl!("ui-session-closed")), self.session_actions(tab)]
-                        .spacing(SPACING),
-                ))
-                .into()
+                let mut ended = column![text(fl!("ui-session-closed"))].spacing(SPACING);
+                if let Some(reason) = &tab.end_reason {
+                    ended = ended.push(text(fl!(
+                        "ui-session-closed-reason",
+                        reason = reason.as_str()
+                    )));
+                }
+                center(card(ended.push(self.session_actions(tab)))).into()
             }
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
@@ -1432,49 +1562,72 @@ impl Shell {
                     .spacing(SPACING),
             ))
             .into(),
-            Phase::Failed(error) => {
-                let mut actions = self.session_actions(tab);
-                // A changed key's way out is deliberate, never part of the connection: the
-                // old key is forgotten, and the new one asked about as on a first contact.
-                // An RDP certificate is routine to change (Windows renews its own every six
-                // months); an SSH key, as the C# Heimdall warns, may be an interception.
-                let forget = match error {
-                    UiError::HostKeyChanged { target: None, .. } if tab.purpose == Purpose::Rdp => {
-                        Some(fl!("ui-session-forget-server-button"))
-                    }
-                    UiError::HostKeyChanged {
-                        target: Some(_), ..
-                    } => Some(fl!("ui-session-accept-new-key-button")),
-                    _ => None,
-                };
-                if let Some(label) = forget {
-                    actions = actions.push(
-                        button(text(label))
-                            .style(button::danger)
-                            .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
-                    );
-                }
-                center(card(
-                    column![
-                        text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
-                        text(texts::error(error)),
-                        actions,
-                    ]
-                    .spacing(SPACING),
-                ))
-                .into()
-            }
+            Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
+            Phase::Failed(error) => self.failure_card(tab, error),
         }
     }
 
-    /// What an ended or failed session offers: Reconnect when it can open again, as the C#
-    /// Heimdall's, then Close.
+    /// A failed session's card: the error, and its ways out.
+    fn failure_card<'a>(&'a self, tab: &'a Tab, error: &'a UiError) -> Element<'a, Message> {
+        let mut actions = self.session_actions(tab);
+        // A changed key's way out is deliberate, never part of the connection: the old key
+        // is forgotten, and the new one asked about as on a first contact. An RDP
+        // certificate is routine to change (Windows renews its own every six months); an SSH
+        // key, as the C# Heimdall warns, may be an interception.
+        let forget = match error {
+            UiError::HostKeyChanged { target: None, .. } if tab.purpose == Purpose::Rdp => {
+                Some(fl!("ui-session-forget-server-button"))
+            }
+            UiError::HostKeyChanged {
+                target: Some(_), ..
+            } => Some(fl!("ui-session-accept-new-key-button")),
+            _ => None,
+        };
+        if let Some(label) = forget {
+            actions = actions.push(
+                button(text(label))
+                    .style(button::danger)
+                    .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
+            );
+        }
+        center(card(
+            column![
+                text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
+                text(texts::error(error)),
+                actions,
+            ]
+            .spacing(SPACING),
+        ))
+        .into()
+    }
+
+    /// What an ended or failed session offers, as the C# Heimdall's card: Reconnect when it
+    /// can open again, Copy error for a failure, Edit profile, the way out of a failure
+    /// that would only repeat, then Close.
     fn session_actions(&self, tab: &Tab) -> iced::widget::Row<'_, Message> {
         let mut actions = row![].spacing(SPACING).align_y(iced::Alignment::Center);
         if self.app.can_reconnect(tab) {
             actions = actions.push(
                 button(text(fl!("ui-session-reconnect-button")))
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
+            );
+        }
+        if matches!(&tab.phase, Phase::Failed(error) if *error != UiError::Cancelled) {
+            actions = actions.push(
+                button(text(fl!("ui-session-copy-error-button")))
+                    .style(button::secondary)
+                    .on_press(Message::CopyError(tab.id)),
+            );
+        }
+        if let Some(profile) = self
+            .app
+            .tab_profile(tab)
+            .filter(|profile| self.app.can_edit(&profile.id))
+        {
+            actions = actions.push(
+                button(text(fl!("ui-session-edit-profile-button")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::EditProfile(profile.id))),
             );
         }
         actions.push(
@@ -1697,30 +1850,74 @@ fn terminal(tab: &Tab, interactive: bool) -> Element<'_, Message> {
 }
 
 /// The question about an unknown server key.
+/// The question about an unknown key, as the C# Heimdall asks it: an SSH host's, or, when
+/// `certificate` names the profile, an RDP server's own certificate. Either can be trusted
+/// for this run only, never recorded.
 fn host_key_card<'a>(
     tab: TabId,
     host: &'a str,
     port: u16,
     fingerprint: &'a str,
+    certificate: Option<&'a str>,
 ) -> Element<'a, Message> {
+    let port = port.to_string();
+    let (heading, body, fingerprint, [reject, once, accept]) = match certificate {
+        Some(name) => (
+            fl!("ui-certificate-title"),
+            column![
+                text(fl!(
+                    "ui-certificate-body",
+                    name = name,
+                    host = host,
+                    port = port.as_str()
+                )),
+                text(fl!("ui-certificate-caution")),
+            ]
+            .spacing(SPACING),
+            fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
+            [
+                fl!("ui-certificate-refuse-button"),
+                fl!("ui-certificate-trust-once-button"),
+                fl!("ui-certificate-trust-button"),
+            ],
+        ),
+        None => (
+            fl!("ui-hostkey-title"),
+            column![text(fl!(
+                "ui-hostkey-body",
+                host = host,
+                port = port.as_str()
+            ))],
+            fl!("ui-hostkey-fingerprint", fingerprint = fingerprint),
+            [
+                fl!("ui-hostkey-reject-button"),
+                fl!("ui-hostkey-trust-once-button"),
+                fl!("ui-hostkey-accept-button"),
+            ],
+        ),
+    };
     center(card(
         column![
-            text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
-            text(fl!("ui-hostkey-body", host = host, port = port.to_string())),
-            text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint))
-                .font(iced::Font::MONOSPACE),
+            text(heading).size(HEADING_SIZE),
+            body,
+            text(fingerprint).font(iced::Font::MONOSPACE),
             row![
-                button(text(fl!("ui-hostkey-reject-button")))
+                button(text(reject))
                     .style(button::secondary)
                     .on_press(Message::App(AppMessage::HostKeyDecision {
                         tab,
                         accept: false
                     })),
-                button(text(fl!("ui-hostkey-accept-button"))).on_press(Message::App(
-                    AppMessage::HostKeyDecision { tab, accept: true }
-                )),
+                button(text(once))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
+                button(text(accept)).on_press(Message::App(AppMessage::HostKeyDecision {
+                    tab,
+                    accept: true
+                })),
             ]
-            .spacing(SPACING),
+            .spacing(SPACING)
+            .wrap(),
         ]
         .spacing(SPACING),
     ))
@@ -2442,6 +2639,94 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     .into()
 }
 
+/// The dialogs about closing or naming tabs.
+fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
+    let (title, body, action) = match dialog {
+        Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::ConfirmCloseTabs { tabs, live } => (
+            fl!("ui-dialog-close-tabs-title"),
+            fl!(
+                "ui-dialog-close-tabs-body",
+                count = tabs.len(),
+                live = (*live)
+            ),
+            fl!("ui-dialog-close-tab-confirm"),
+        ),
+        _ => (
+            fl!("ui-dialog-close-tab-title"),
+            fl!("ui-dialog-close-tab-body"),
+            fl!("ui-dialog-close-tab-confirm"),
+        ),
+    };
+    column![
+        text(title).size(HEADING_SIZE),
+        text(body),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(action))
+                .style(button::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// "Reconnecting (attempt 2/20)...", as the C# countdown says it.
+fn reconnecting(retry: Retry) -> String {
+    fl!(
+        "ui-session-reconnecting",
+        attempt = retry.attempt,
+        max = retry.max
+    )
+}
+
+/// A session waiting to open again by itself: which attempt, in how long, and Cancel.
+fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
+    let left = retry
+        .due
+        .saturating_duration_since(std::time::Instant::now());
+    // Rounded up: "in 0s" would show while the wait still runs.
+    let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+    center(card(
+        column![
+            text(reconnecting(retry)).size(HEADING_SIZE),
+            text(fl!("ui-session-reconnecting-in", seconds = seconds)),
+            button(text(fl!("ui-session-reconnecting-cancel")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::CancelAutoReconnect(tab))),
+        ]
+        .spacing(SPACING),
+    ))
+    .into()
+}
+
+/// A name for a tab, as the C# "Rename Tab" asks it: the present one written in, an empty
+/// one giving the tab its own title back.
+fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
+    column![
+        text(fl!("ui-dialog-rename-tab-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-rename-tab-prompt")),
+        text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .id(name_field_id())
+            .on_input(|value| Message::App(AppMessage::TabMenu(TabMenuMessage::NameEdited(value))))
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-rename-confirm")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
 /// The command a local profile would run, shown whole before it does: nothing cut, every
 /// invisible character written out, and a warning when the program reads its line again.
 fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message> {
@@ -2752,12 +3037,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     };
     let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
     match dialog {
-        Dialog::ConfirmCloseTab(_) => question(
-            fl!("ui-dialog-close-tab-title"),
-            fl!("ui-dialog-close-tab-body"),
-            fl!("ui-dialog-close-tab-confirm"),
-        )
-        .into(),
+        Dialog::ConfirmCloseTab(_) | Dialog::ConfirmCloseTabs { .. } | Dialog::RenameTab { .. } => {
+            tab_dialog(dialog)
+        }
         Dialog::ConfirmExit { live } => question(
             fl!("ui-dialog-exit-title"),
             fl!("ui-dialog-exit-body", count = (*live)),

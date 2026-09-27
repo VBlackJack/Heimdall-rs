@@ -88,11 +88,19 @@ ui-tab-bell-badge = bell
 ui-connect-progress = Connecting to { $target }...
 ui-connect-cancel-button = Cancel
 
-ui-hostkey-title = Unknown server
-ui-hostkey-body = This is the first connection to { $host } on port { $port }. Check that the fingerprint below is the server's before trusting it.
+ui-hostkey-title = Unknown SSH host
+ui-hostkey-body = This is the first time connecting to { $host }:{ $port }. Verify the fingerprint below matches what the server administrator provided before accepting.
 ui-hostkey-fingerprint = Fingerprint: { $fingerprint }
-ui-hostkey-accept-button = Trust and connect
-ui-hostkey-reject-button = Do not connect
+ui-hostkey-accept-button = Accept
+ui-hostkey-trust-once-button = Trust this session
+ui-hostkey-reject-button = Reject
+ui-certificate-title = Unrecognised Server Certificate
+ui-certificate-body = "{ $name }" answered at { $host }:{ $port }, presenting a certificate this profile has never approved.
+ui-certificate-caution = Heimdall cannot tell whether this is the machine you expect. Approve it only if you recognise the fingerprint below, or if you know that several machines answer to this name.
+ui-certificate-fingerprint = SHA-256 fingerprint: { $fingerprint }
+ui-certificate-trust-button = Trust this certificate
+ui-certificate-trust-once-button = Just this once
+ui-certificate-refuse-button = Do not connect
 
 ui-prompt-submit-button = Continue
 ui-prompt-cancel-button = Cancel
@@ -377,3 +385,37 @@ ui-gateway-parent-none = None (direct connection)
 ui-gateway-error-loop = A gateway cannot be reached through itself.
 ui-tree-gateway-via = via { $name }
 ui-tree-gateway-missing = gateway missing
+
+## A tab's menu, as the C# Heimdall's.
+ui-tab-menu-disconnect = Disconnect
+ui-tab-menu-rename = Rename tab
+ui-tab-menu-reset-title = Reset title
+ui-tab-menu-fullscreen = Fullscreen (F11)
+ui-tab-menu-reconnect = Reconnect Session
+ui-tab-menu-duplicate = Duplicate Session
+ui-tab-menu-close-others = Close others
+ui-tab-menu-close-right = Close to the right
+ui-dialog-rename-tab-title = Rename Tab
+ui-dialog-rename-tab-prompt = Enter new tab name:
+ui-dialog-close-tabs-title = Close Sessions
+ui-dialog-close-tabs-body = Sessions to close: { $count }. Still connected: { $live }. Continue?
+
+## The failure card's other ways out, and the report "Copy error" copies.
+ui-session-copy-error-button = Copy error
+ui-session-edit-profile-button = Edit profile
+ui-error-report-header = Heimdall { $protocol } error report
+ui-error-report-time = Time:
+ui-error-report-server = Server:
+ui-error-report-app = App:
+
+## How a connection failed, as the C# Heimdall tells them apart, and why a server ended one.
+ui-error-network-refused = Connection refused.
+ui-error-network-reset = Connection reset.
+ui-error-network-timed-out = Connection timed out. Check that the host is reachable.
+ui-error-network-unreachable = Host or network is unreachable. Check DNS and routing.
+ui-session-closed-reason = The server said: { $reason }
+
+## A dropped desktop opening again by itself, as the C# countdown.
+ui-session-reconnecting = Reconnecting (attempt { $attempt }/{ $max })...
+ui-session-reconnecting-in = in { $seconds }s
+ui-session-reconnecting-cancel = Cancel

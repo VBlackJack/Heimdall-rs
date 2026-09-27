@@ -34,8 +34,8 @@ use heimdall_core::profile::{
 };
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, Secret,
-    TerminalSize, Verdict, fingerprint, verdict,
+    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
+    Secret, TerminalSize, Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, GridSize, Key, KeyLocation, KeyPress, Modifiers,
@@ -60,21 +60,27 @@ use crate::telnet_driver::TelnetRequest;
 use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
 
+mod auto_reconnect;
+mod connect_as;
 mod files_tab;
 mod gateways;
 mod local_tab;
 mod profiles;
 mod rdp_tab;
 mod reconnect;
+mod tab_menu;
 mod telnet_tab;
 mod tree;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
 
+pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
+pub use connect_as::ConnectAs;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
+pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
 pub use vault::{
@@ -190,7 +196,8 @@ pub enum Message {
     SendClipboard(TabId),
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
-    /// Open the failed or ended session of a tab again, in its place.
+    /// Open the session of a tab again, in its place: a failed or ended one, or, from the
+    /// tab's menu, a live one.
     ReconnectTab(TabId),
     /// Something in a Files tab.
     Files(FilesMessage),
@@ -198,6 +205,24 @@ pub enum Message {
     SelectTab(TabId),
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
+    /// Something from a tab's menu.
+    TabMenu(TabMenuMessage),
+    /// The wait before a tab's session opens again by itself is over.
+    AutoReconnect {
+        /// Tab.
+        tab: TabId,
+        /// The attempt that failed.
+        attempt: AttemptId,
+    },
+    /// Stop a tab's session from opening again by itself.
+    CancelAutoReconnect(TabId),
+    /// Open a profile's host with another protocol, as a session never saved.
+    ConnectAs {
+        /// Profile.
+        id: ProfileId,
+        /// Protocol.
+        protocol: ConnectAs,
+    },
     /// Something happened in a tab's connection attempt.
     Connection {
         /// Tab.
@@ -223,6 +248,9 @@ pub enum Message {
         /// Record the key and connect.
         accept: bool,
     },
+    /// Trust an unknown host key or certificate for this run only, as the C# Heimdall's
+    /// "Trust this session" and "Just this once", and connect.
+    HostKeyTrustOnce(TabId),
     /// A key press in a terminal.
     Key {
         /// Tab.
@@ -401,6 +429,12 @@ impl fmt::Debug for Message {
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
+            Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
+            Self::AutoReconnect { tab, attempt } => {
+                write!(f, "AutoReconnect({}, {})", tab.value(), attempt.value())
+            }
+            Self::CancelAutoReconnect(tab) => write!(f, "CancelAutoReconnect({})", tab.value()),
+            Self::ConnectAs { id, protocol } => write!(f, "ConnectAs({id}, {protocol:?})"),
             Self::Connection {
                 tab,
                 attempt,
@@ -417,6 +451,7 @@ impl fmt::Debug for Message {
             Self::HostKeyDecision { tab, accept } => {
                 write!(f, "HostKeyDecision({}, {accept})", tab.value())
             }
+            Self::HostKeyTrustOnce(tab) => write!(f, "HostKeyTrustOnce({})", tab.value()),
             Self::Key { tab, .. } => write!(f, "Key({}, ..)", tab.value()),
             Self::Pointer { tab, input } => write!(f, "Pointer({}, {input:?})", tab.value()),
             Self::Resize { tab, grid, .. } => {
@@ -580,6 +615,15 @@ pub enum Effect {
         job: VaultJob,
     },
     /// Quit the application.
+    /// Wake the core at `deadline` with [`Message::AutoReconnect`].
+    RetryAt {
+        /// Tab.
+        tab: TabId,
+        /// The attempt that failed.
+        attempt: AttemptId,
+        /// When.
+        deadline: Instant,
+    },
     Exit,
 }
 
@@ -625,6 +669,9 @@ impl fmt::Debug for Effect {
                 request.direction
             ),
             Self::OpenVault { job, .. } => write!(f, "OpenVault({})", job.name()),
+            Self::RetryAt { tab, attempt, .. } => {
+                write!(f, "RetryAt({}, {})", tab.value(), attempt.value())
+            }
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -694,6 +741,12 @@ pub struct Tab {
     pub profile: TabProfile,
     /// Title: the profile name, or the one the server set, made safe.
     pub title: String,
+    /// The name the user gave the tab, shown instead of its title until reset.
+    pub custom_title: Option<String>,
+    /// Why the server ended the session, when it said.
+    pub end_reason: Option<String>,
+    /// The session waiting to open again by itself, after it dropped.
+    pub retry: Option<Retry>,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -736,6 +789,19 @@ impl fmt::Debug for Tab {
 }
 
 impl Tab {
+    /// Whether the question the tab asks is about an RDP server's own certificate, not an
+    /// SSH key on the way to it.
+    #[must_use]
+    pub fn asks_about_certificate(&self) -> bool {
+        self.purpose == Purpose::Rdp && self.pending_rdp_key.is_some()
+    }
+
+    /// What the tab is called: the name the user gave it, else its title.
+    #[must_use]
+    pub fn display_title(&self) -> &str {
+        self.custom_title.as_deref().unwrap_or(&self.title)
+    }
+
     /// Whether a live session would be lost by closing the tab. An attempt still
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
@@ -763,6 +829,9 @@ impl Tab {
         Self {
             id,
             title: profile.name().to_owned(),
+            custom_title: None,
+            end_reason: None,
+            retry: None,
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
@@ -814,6 +883,18 @@ pub enum TabProfile {
 }
 
 impl TabProfile {
+    /// The protocol it connects with; a local shell's, `WinRM` included, is local.
+    #[must_use]
+    pub fn kind(&self) -> ProfileKind {
+        match self {
+            Self::Ssh(_) => ProfileKind::Ssh,
+            Self::Rdp(_) => ProfileKind::Rdp,
+            Self::Telnet(_) => ProfileKind::Telnet,
+            Self::Vnc(_) => ProfileKind::Vnc,
+            Self::Local(_) => ProfileKind::Local,
+        }
+    }
+
     /// Name shown to the user.
     #[must_use]
     pub fn name(&self) -> &str {
@@ -952,6 +1033,20 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// A name for a tab.
+    RenameTab {
+        /// Tab.
+        tab: TabId,
+        /// The name typed so far.
+        value: String,
+    },
+    /// Close several tabs, some of them live.
+    ConfirmCloseTabs {
+        /// The tabs.
+        tabs: Vec<TabId>,
+        /// How many are live.
+        live: usize,
+    },
 }
 
 impl Dialog {
@@ -964,6 +1059,24 @@ impl Dialog {
             self,
             Self::ConfirmLocalCommand(_) | Self::Vault(_) | Self::EditGateway { .. }
         )
+    }
+}
+
+/// The user's answer about an unknown host key or certificate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyTrust {
+    /// Do not connect.
+    Refused,
+    /// Trusted for this run only, never recorded.
+    Once,
+    /// Recorded, then trusted.
+    Always,
+}
+
+impl From<bool> for KeyTrust {
+    /// The answer of the Accept and Reject buttons.
+    fn from(accept: bool) -> Self {
+        if accept { Self::Always } else { Self::Refused }
     }
 }
 
@@ -993,6 +1106,10 @@ pub struct App {
     pending_transfer: Option<PendingTransfer>,
     pending_operation: Option<PendingOperation>,
     vault: VaultState,
+    /// SSH keys trusted for this run only, shared with every connection.
+    run_trust: RunTrust,
+    /// RDP certificates trusted for this run only: server, port, key.
+    rdp_run_trust: Vec<(String, u16, heimdall_rdp::Fingerprint)>,
 }
 
 impl fmt::Debug for App {
@@ -1033,6 +1150,8 @@ impl App {
             pending_transfer: None,
             pending_operation: None,
             vault,
+            run_trust: RunTrust::default(),
+            rdp_run_trust: Vec::new(),
         };
         // A vault on disk is offered to unlock at start: its passwords are then ready.
         if app.dialog.is_none() {
@@ -1114,6 +1233,7 @@ impl App {
             | Message::OpenLocalProfile(_)
             | Message::OpenWinRm(_)
             | Message::ReconnectTab(_)
+            | Message::ConnectAs { .. }
             | Message::ForgetServer(_)) => self.open_message(message),
             message @ (Message::DesktopResize { .. }
             | Message::DesktopInput { .. }
@@ -1132,6 +1252,10 @@ impl App {
                 self.tab(tab).map(clipboard_offer).unwrap_or_default()
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
+            Message::TabMenu(message) => self.tab_menu(message),
+            message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
+                self.retry_message(&message)
+            }
             Message::Connection {
                 tab,
                 attempt,
@@ -1142,7 +1266,8 @@ impl App {
                 question,
                 answer,
             } => self.answer(tab, question, answer),
-            Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept),
+            Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept.into()),
+            Message::HostKeyTrustOnce(tab) => self.host_key_decision(tab, KeyTrust::Once),
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
@@ -1227,6 +1352,7 @@ impl App {
             Message::OpenWinRm(id) => self.open_winrm(&id),
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
+            Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),
             _ => Vec::new(),
         }
     }
@@ -1258,6 +1384,7 @@ impl App {
             .map_err(UiError::Route)?;
         let mut options = ConnectOptions::new(self.config.known_hosts.clone());
         options.agent = self.config.agent.clone();
+        options.run_trust = self.run_trust.clone();
         options.initial_size = terminal_size(grid, None);
         Ok(ConnectRequest {
             profile: profile.clone(),
@@ -1272,6 +1399,11 @@ impl App {
         let Some(profile) = self.profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
+        self.open_ssh(profile, purpose)
+    }
+
+    /// Opens a tab for `profile`, a shell or its files.
+    pub(super) fn open_ssh(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
@@ -1345,7 +1477,17 @@ impl App {
         if matches!(event, ConnectionEvent::Failed(_)) {
             self.credentials_failed(tab_id);
         }
-        self.apply_connection_event(tab_id, event)
+        let failure = match &event {
+            ConnectionEvent::Failed(error) => {
+                Some((error.clone(), self.tab(tab_id).is_some_and(Tab::is_live)))
+            }
+            _ => None,
+        };
+        let mut effects = self.apply_connection_event(tab_id, event);
+        if let Some((error, was_live)) = failure {
+            effects.extend(self.retry_after(tab_id, &error, was_live));
+        }
+        effects
     }
 
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
@@ -1355,6 +1497,7 @@ impl App {
         };
         match event {
             ConnectionEvent::Question { question, kind } => {
+                tab.retry = None;
                 tab.prompts.push_back(Prompt {
                     question,
                     kind: safe_question(kind),
@@ -1367,6 +1510,7 @@ impl App {
                 fingerprint,
                 key,
             } => {
+                tab.retry = None;
                 tab.prompts.clear();
                 tab.pending_host_key = Some(key);
                 tab.phase = Phase::HostKey {
@@ -1417,6 +1561,14 @@ impl App {
                 tab.prompts.clear();
                 Vec::new()
             }
+            ConnectionEvent::Ended { reason } => {
+                tab.phase = Phase::Closed { exit_status: None };
+                tab.end_reason = Some(reason);
+                tab.sink = None;
+                tab.desktop = None;
+                tab.prompts.clear();
+                Vec::new()
+            }
             ConnectionEvent::Failed(error) => {
                 tab.phase = Phase::Failed(error);
                 tab.sink = None;
@@ -1427,15 +1579,13 @@ impl App {
         }
     }
 
-    fn host_key_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+    fn host_key_decision(&mut self, tab_id: TabId, trust: KeyTrust) -> Vec<Effect> {
         // An RDP tab asks about the server's certificate, or, on the way, a gateway's SSH key.
-        if self
-            .tab(tab_id)
-            .is_some_and(|tab| tab.purpose == Purpose::Rdp && tab.pending_rdp_key.is_some())
-        {
-            return self.rdp_certificate_decision(tab_id, accept);
+        if self.tab(tab_id).is_some_and(Tab::asks_about_certificate) {
+            return self.rdp_certificate_decision(tab_id, trust);
         }
         let known_hosts = KnownHosts::new(&self.config.known_hosts);
+        let run_trust = self.run_trust.clone();
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -1444,12 +1594,17 @@ impl App {
         else {
             return Vec::new();
         };
-        if !accept {
+        if trust == KeyTrust::Refused {
             tab.phase = Phase::Failed(UiError::Cancelled);
             return Vec::new();
         }
         // Another tab may have recorded a key for this host meanwhile: read again.
         let learned = match known_hosts.recorded(&host, port) {
+            // Held in memory for this run: the file is not written.
+            Ok(_) if trust == KeyTrust::Once => {
+                run_trust.trust(&host, port, PublicKey::clone(&key));
+                Ok(())
+            }
             Ok(recorded) => match verdict(&recorded, &key) {
                 Verdict::Trusted => Ok(()),
                 Verdict::Unknown => known_hosts
@@ -1750,6 +1905,16 @@ impl App {
         match self.dialog.take() {
             Some(Dialog::ConfirmCloseTab(tab)) => {
                 self.close_tab(tab);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmCloseTabs { tabs, .. }) => {
+                for tab in tabs {
+                    self.close_tab(tab);
+                }
+                Vec::new()
+            }
+            Some(Dialog::RenameTab { tab, value }) => {
+                self.rename_tab(tab, &value);
                 Vec::new()
             }
             Some(Dialog::ConfirmExit { .. }) => {

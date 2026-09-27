@@ -16,7 +16,7 @@
 
 //! Telnet tabs: a terminal like an SSH shell, fed by a Telnet session.
 
-use heimdall_core::profile::ProfileId;
+use heimdall_core::profile::{ProfileId, TelnetProfile};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Tab, TabProfile, terminal_size};
@@ -30,6 +30,11 @@ impl App {
         let Some(profile) = self.telnet_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
+        self.open_telnet_profile(profile)
+    }
+
+    /// Opens a Telnet tab for `profile`.
+    pub(super) fn open_telnet_profile(&mut self, profile: TelnetProfile) -> Vec<Effect> {
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();

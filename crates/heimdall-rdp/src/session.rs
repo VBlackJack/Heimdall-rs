@@ -103,6 +103,8 @@ pub enum RdpEvent {
 pub enum CloseReason {
     /// The user logged off or the server ended the session.
     Server,
+    /// The server ended the session and said why, in `IronRDP`'s words.
+    Disconnected(String),
     /// Stopped from this side.
     Local,
     /// The connection failed; a description.
@@ -349,8 +351,10 @@ impl Running {
                     ActiveStageOutput::Terminate(reason) => {
                         return Ok(match reason {
                             GracefulDisconnectReason::UserInitiated => CloseReason::Local,
-                            GracefulDisconnectReason::ServerInitiated
-                            | GracefulDisconnectReason::Other(_) => CloseReason::Server,
+                            GracefulDisconnectReason::ServerInitiated => CloseReason::Server,
+                            GracefulDisconnectReason::Other(reason) => {
+                                CloseReason::Disconnected(reason)
+                            }
                         });
                     }
                     ActiveStageOutput::DeactivateAll => {

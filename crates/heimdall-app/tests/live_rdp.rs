@@ -60,6 +60,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
             },
             known_hosts: dir.path().join("known_rdp_hosts"),
             accepted: None,
+            trusted_for_run: Vec::new(),
             desktop: DEFAULT_DESKTOP,
             route: Vec::new(),
             ssh: heimdall_ssh::ConnectOptions::new(dir.path().join("known_hosts")),

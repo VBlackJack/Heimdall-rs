@@ -38,16 +38,16 @@ mod text;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, Dialog, Effect, FilesMessage, GatewayBadge, ImportSummary, KeyInput,
+    App, AppConfig, ConnectAs, Dialog, Effect, FilesMessage, GatewayBadge, ImportSummary, KeyInput,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message, NameAction, OpenedVault, Phase, PointerInput,
-    ProfileCopy, ProfileKind, ProfileSummary, Prompt, SystemCredentials, Tab, TabProfile,
-    VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
-    master_password_problem, open_vault,
+    ProfileCopy, ProfileKind, ProfileSummary, Prompt, RDP_MAX_ATTEMPTS, Retry, SystemCredentials,
+    Tab, TabGroup, TabMenuMessage, TabProfile, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
-pub use error::{KeyProblem, ServerAddress, UiError};
+pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};
 pub use event::{Answer, ConnectionEvent, QuestionKind, ServerPasswordQuestion};
 pub use ids::{AttemptId, QuestionId, TabId};
 pub use sink::InputSink;

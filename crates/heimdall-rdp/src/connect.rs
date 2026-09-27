@@ -156,6 +156,9 @@ pub struct RdpConfig {
     pub clipboard: bool,
     /// Drives of this computer the server may read and write; none when empty.
     pub drives: Vec<SharedDrive>,
+    /// Keys the user trusted for this server for this run only, as the C# Heimdall's "Just
+    /// this once": accepted, never recorded.
+    pub trusted_for_run: Vec<Fingerprint>,
 }
 
 /// Why a connection did not open.
@@ -299,6 +302,7 @@ async fn connect_in_place(
     // connection between 60 and 90 s (measured on 2026-09-26). So a server whose identity is
     // settled gets them before the connection opens.
     let settled = config.accepted.is_some()
+        || !config.trusted_for_run.is_empty()
         || config
             .known_hosts
             .knows(&config.host, config.port)
@@ -463,6 +467,7 @@ fn trust(config: &RdpConfig, certificate: ServerCertificate) -> Result<(), RdpEr
         .map_err(RdpError::KnownHosts)?;
     match (verdict, config.accepted) {
         (Verdict::Known, _) => Ok(()),
+        (Verdict::Unknown, _) if config.trusted_for_run.contains(&presented) => Ok(()),
         (Verdict::Changed { recorded }, _) => Err(RdpError::CertificateChanged {
             recorded,
             presented: certificate,
