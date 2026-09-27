@@ -22,6 +22,7 @@
 //! `SIGCHLD`; on Windows one thread waits on a poller that the `ConPTY` pipes and the child
 //! watcher post to.
 
+pub mod program;
 #[cfg(unix)]
 mod unix;
 #[cfg(windows)]
@@ -29,7 +30,7 @@ mod windows;
 
 use std::collections::HashMap;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use alacritty_terminal::event::WindowSize;
 use alacritty_terminal::tty::{Options, Shell};
@@ -51,7 +52,8 @@ const MAX_SIDE: u16 = 0x7fff;
 /// What to run.
 #[derive(Debug, Clone, Default)]
 pub struct LocalConfig {
-    /// The program; `None` for the user's default shell.
+    /// The program, a full path or a name looked up in `PATH`; `None` for the user's default
+    /// shell. See [`program`] for what is refused.
     pub program: Option<String>,
     /// Its arguments.
     pub args: Vec<String>,
@@ -145,18 +147,23 @@ impl LocalInput {
 ///
 /// The pseudo-terminal or the program could not be started.
 pub fn spawn(config: &LocalConfig) -> io::Result<LocalSession> {
+    let options = options(config)?;
     #[cfg(unix)]
-    return unix::spawn(&options(config), window_size(config.columns, config.rows));
+    return unix::spawn(&options, window_size(config.columns, config.rows));
     #[cfg(windows)]
-    return windows::spawn(&options(config), window_size(config.columns, config.rows));
+    return windows::spawn(&options, window_size(config.columns, config.rows));
 }
 
-fn options(config: &LocalConfig) -> Options {
-    Options {
-        shell: config
-            .program
-            .clone()
-            .map(|program| Shell::new(program, config.args.clone())),
+fn options(config: &LocalConfig) -> io::Result<Options> {
+    program::check_arguments(&config.args, config.working_directory.as_deref())?;
+    let search = std::env::var_os("PATH");
+    let resolve = |name: &str| program::resolve(name, search.as_deref(), Path::is_file);
+    let shell = match config.program.as_deref() {
+        Some(name) => Some(shell(&resolve(name)?, config.args.clone())),
+        None => default_shell(&config.args)?,
+    };
+    Ok(Options {
+        shell,
         working_directory: config.working_directory.clone(),
         drain_on_exit: false,
         // Passed to the child only: `tty::setup_env` would change this process's own.
@@ -167,7 +174,44 @@ fn options(config: &LocalConfig) -> Options {
         // Arguments with spaces stay whole on the command line Windows builds from them.
         #[cfg(windows)]
         escape_args: true,
-    }
+    })
+}
+
+/// The shell run for `program`, a full path. On Windows the path goes into the command line
+/// quoted: unquoted, `C:\My Tools\x.exe` would first be tried as `C:\My.exe`.
+fn shell(program: &Path, args: Vec<String>) -> Shell {
+    Shell::new(command_program(program), args)
+}
+
+/// `program` as it starts the command line.
+fn command_program(program: &Path) -> String {
+    let program = program.to_string_lossy();
+    #[cfg(windows)]
+    return format!("\"{program}\"");
+    #[cfg(unix)]
+    return program.into_owned();
+}
+
+/// The shell run when none is named: Windows `PowerShell` by its full path.
+#[cfg(windows)]
+fn default_shell(args: &[String]) -> io::Result<Option<Shell>> {
+    let root = std::env::var_os("SystemRoot")
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "SystemRoot is not set"))?;
+    Ok(Some(shell(
+        &program::default_shell(Path::new(&root)),
+        args.to_vec(),
+    )))
+}
+
+/// The shell run when none is named: the account's login shell, a full path from the user
+/// database, which `alacritty_terminal` looks up itself.
+#[cfg(unix)]
+#[expect(
+    clippy::unnecessary_wraps,
+    reason = "the same signature as on Windows, where finding the default can fail"
+)]
+fn default_shell(_args: &[String]) -> io::Result<Option<Shell>> {
+    Ok(None)
 }
 
 /// A size the pseudo-terminal accepts: at least one cell, at most what `ConPTY` takes, which
@@ -185,6 +229,12 @@ fn window_size(columns: u16, rows: u16) -> WindowSize {
 mod tests {
     use super::*;
 
+    /// A program by its full path: taken without a lookup.
+    #[cfg(unix)]
+    const FULL_PATH: &str = "/bin/sh";
+    #[cfg(windows)]
+    const FULL_PATH: &str = r"C:\Windows\System32\cmd.exe";
+
     #[test]
     fn sizes_are_kept_within_what_conpty_accepts() {
         let size = window_size(0, u16::MAX);
@@ -196,10 +246,11 @@ mod tests {
     #[test]
     fn the_shell_is_told_its_terminal_and_nothing_else_is_changed() {
         let options = options(&LocalConfig {
-            program: Some("bash".to_owned()),
+            program: Some(FULL_PATH.to_owned()),
             args: vec!["-l".to_owned()],
             ..LocalConfig::default()
-        });
+        })
+        .expect("options");
         assert_eq!(
             options.env.get("TERM").map(String::as_str),
             Some("xterm-256color")
@@ -210,5 +261,14 @@ mod tests {
         );
         assert!(!options.drain_on_exit);
         assert!(options.shell.is_some());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_windows_program_goes_into_the_command_line_quoted() {
+        assert_eq!(
+            command_program(Path::new(r"C:\My Tools\x.exe")),
+            r#""C:\My Tools\x.exe""#
+        );
     }
 }
