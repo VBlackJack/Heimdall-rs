@@ -28,7 +28,9 @@ use std::time::Instant;
 
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile};
+use heimdall_core::profile::{
+    LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
+};
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, TerminalSize,
@@ -65,6 +67,7 @@ mod vnc_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
+pub use local_tab::LocalConfirmation;
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -139,6 +142,8 @@ pub enum Message {
     OpenVnc(ProfileId),
     /// Open a local shell tab.
     OpenLocal(LocalShell),
+    /// Open a saved local profile, asking first unless what it runs is approved.
+    OpenLocalProfile(ProfileId),
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
         /// Tab.
@@ -272,6 +277,7 @@ impl fmt::Debug for Message {
             Self::OpenTelnet(id) => write!(f, "OpenTelnet({id})"),
             // The arguments may carry anything: only the program is shown.
             Self::OpenLocal(shell) => write!(f, "OpenLocal({:?})", shell.program),
+            Self::OpenLocalProfile(id) => write!(f, "OpenLocalProfile({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
@@ -753,6 +759,8 @@ pub enum Dialog {
         /// Its name, made safe.
         name: String,
     },
+    /// Run a local profile's command, shown whole, which the user has not approved yet.
+    ConfirmLocalCommand(Box<LocalConfirmation>),
     /// Result of an import.
     ImportDone(ImportSummary),
     /// An import could not run.
@@ -765,6 +773,15 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+}
+
+impl Dialog {
+    /// Whether Enter may answer it. Not for running a program: a key pressed as the dialog
+    /// appears, meant for whatever had the focus, must not be taken for agreement.
+    #[must_use]
+    pub fn confirms_on_enter(&self) -> bool {
+        !matches!(self, Self::ConfirmLocalCommand(_))
+    }
 }
 
 /// What a typed name is for.
@@ -850,6 +867,12 @@ impl App {
 
     /// Saved VNC profiles.
     #[must_use]
+    pub fn local_profiles(&self) -> &[LocalProfile] {
+        self.store.local_profiles()
+    }
+
+    /// Saved VNC profiles.
+    #[must_use]
     pub fn vnc_profiles(&self) -> &[VncProfile] {
         self.store.vnc_profiles()
     }
@@ -888,6 +911,7 @@ impl App {
             Message::OpenTelnet(id) => self.open_telnet(&id),
             Message::OpenVnc(id) => self.open_vnc(&id),
             Message::OpenLocal(shell) => self.open_local(shell),
+            Message::OpenLocalProfile(id) => self.open_local_profile(&id),
             Message::DesktopResize { tab, width, height } => {
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
                     pane.resize(width, height);
@@ -1394,6 +1418,7 @@ impl App {
                 self.delete_profile(&id);
                 Vec::new()
             }
+            Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
             Some(
                 Dialog::ImportDone(_) | Dialog::ImportFailed { .. } | Dialog::StoreError { .. },
             )
@@ -1430,11 +1455,14 @@ impl App {
             let rdp = store.merge_rdp(report.rdp);
             let telnet = store.merge_telnet(report.telnet);
             let vnc = store.merge_vnc(report.vnc);
-            MergeReport {
-                added: ssh.added + rdp.added + telnet.added + vnc.added,
-                updated: ssh.updated + rdp.updated + telnet.updated + vnc.updated,
-                unchanged: ssh.unchanged + rdp.unchanged + telnet.unchanged + vnc.unchanged,
-            }
+            let local = store.merge_local(report.local);
+            [ssh, rdp, telnet, vnc, local]
+                .into_iter()
+                .fold(MergeReport::default(), |total, one| MergeReport {
+                    added: total.added + one.added,
+                    updated: total.updated + one.updated,
+                    unchanged: total.unchanged + one.unchanged,
+                })
         }) {
             Ok(merged) => merged,
             Err(error) => {

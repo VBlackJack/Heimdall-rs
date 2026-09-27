@@ -18,7 +18,8 @@ use std::path::PathBuf;
 
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
 use heimdall_core::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, SshProfile,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, LocalArguments,
+    SshProfile,
 };
 
 /// Environment variable naming a directory that holds a real C# `servers.json`, and
@@ -365,4 +366,118 @@ fn a_vnc_profile_keeps_its_port_and_view_only_and_never_its_password() {
     assert_eq!(open.port, DEFAULT_VNC_PORT, "zero is the default port");
     assert!(!open.view_only);
     assert!(open.allow_no_password, "no password in the C# profile");
+}
+
+#[test]
+fn a_local_profile_keeps_its_argument_string_as_written_and_is_never_approved() {
+    let json = servers(
+        r#"{"id": "l", "displayName": "Jump", "connectionType": "LOCAL", "group": "Tools",
+            "localShellExecutable": " pwsh.exe ",
+            "localShellArguments": "-NoExit  -Command \"ssh a\"",
+            "localShellWorkingDirectory": " C:\\work ",
+            "executionConfirmed": true, "elevationMode": 0},
+           {"id": "d", "connectionType": "local", "localShellArguments": "  ",
+            "elevationMode": "None"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let [jump, default] = report.local.as_slice() else {
+        panic!("{:?}", report.local);
+    };
+    assert_eq!(jump.name, "Jump");
+    assert_eq!(jump.group.as_deref(), Some("Tools"));
+    assert_eq!(jump.command.program.as_deref(), Some("pwsh.exe"));
+    // Spaces and quotes as the C# handed them over: not split, not re-quoted.
+    assert_eq!(
+        jump.command.arguments,
+        LocalArguments::WindowsLine("-NoExit  -Command \"ssh a\"".to_owned())
+    );
+    assert_eq!(
+        jump.command.working_directory,
+        Some(PathBuf::from(r"C:\work"))
+    );
+    assert_eq!(jump.approved, None, "confirmed in the C#, not here");
+    assert!(default.command.is_default(), "{:?}", default.command);
+    assert_eq!(default.name, "d");
+}
+
+#[test]
+fn a_local_profile_asking_for_elevation_is_left_out_whatever_the_form() {
+    let json = servers(
+        r#"{"id": "auto", "connectionType": "LOCAL", "elevationMode": 1},
+           {"id": "runas", "connectionType": "LOCAL", "elevationMode": "runas"},
+           {"id": "unknown", "connectionType": "LOCAL", "elevationMode": 7},
+           {"id": "odd", "connectionType": "LOCAL", "elevationMode": true},
+           {"id": "legacy", "connectionType": "LOCAL", "localShellElevated": true,
+            "elevationMode": 0}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.local.is_empty(), "{:?}", report.local);
+    assert!(
+        report
+            .skipped
+            .iter()
+            .all(|skipped| skipped.reason == SkipReason::NeedsElevation),
+        "{:?}",
+        report.skipped
+    );
+    assert_eq!(report.skipped.len(), 5);
+}
+
+#[test]
+fn a_local_profile_with_commands_to_run_after_start_is_left_out() {
+    let json = servers(
+        r#"{"id": "steps", "connectionType": "LOCAL",
+            "postConnectSteps": [{"enabled": true, "input": "whoami"}]},
+           {"id": "library", "connectionType": "LOCAL",
+            "postConnectSteps": [{"enabled": true, "commandLibraryId": "c1"}]},
+           {"id": "off", "connectionType": "LOCAL",
+            "postConnectSteps": [{"enabled": false, "input": "whoami"},
+                                 {"enabled": true, "input": "  "}]}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let skipped: Vec<(&str, &SkipReason)> = report
+        .skipped
+        .iter()
+        .map(|skipped| (skipped.id.as_str(), &skipped.reason))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            ("steps", &SkipReason::NeedsPostConnectCommands),
+            ("library", &SkipReason::NeedsPostConnectCommands),
+        ]
+    );
+    assert_eq!(report.local.len(), 1, "nothing enabled to run");
+}
+
+#[test]
+fn a_local_command_that_cannot_be_run_as_written_is_left_out() {
+    let json = servers(
+        r#"{"id": "quote", "connectionType": "LOCAL",
+            "localShellExecutable": "C:\\x\\a.exe\" & calc"},
+           {"id": "relative", "connectionType": "LOCAL",
+            "localShellExecutable": "tools\\x.exe"},
+           {"id": "unc", "connectionType": "LOCAL",
+            "localShellWorkingDirectory": "\\\\attacker\\share"},
+           {"id": "relative-folder", "connectionType": "LOCAL",
+            "localShellWorkingDirectory": "work"},
+           {"id": "nul", "connectionType": "LOCAL", "localShellArguments": "/c x\u0000 /p"},
+           {"id": "full", "connectionType": "LOCAL",
+            "localShellExecutable": "C:\\Program Files\\PowerShell\\7\\pwsh.exe"},
+           {"id": "bare", "connectionType": "LOCAL", "localShellExecutable": "cmd.exe"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let skipped: Vec<&str> = report
+        .skipped
+        .iter()
+        .inspect(|skipped| assert_eq!(skipped.reason, SkipReason::UnsafeLocalCommand))
+        .map(|skipped| skipped.id.as_str())
+        .collect();
+    assert_eq!(
+        skipped,
+        ["quote", "relative", "unc", "relative-folder", "nul"]
+    );
+    let kept: Vec<&str> = report.local.iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(kept, ["full", "bare"]);
 }

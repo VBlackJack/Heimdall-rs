@@ -34,11 +34,14 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, Message as AppMessage, NameAction, Phase, Prompt, Purpose, QuestionId,
-    QuestionKind, Tab, TabId, UiError, connection_events, server_text,
+    Effect, FilesMessage, LocalConfirmation, Message as AppMessage, NameAction, Phase, Prompt,
+    Purpose, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
+    visible_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
-use heimdall_core::profile::{RdpProfile, SshProfile, TelnetProfile, VncProfile, display_address};
+use heimdall_core::profile::{
+    LocalProfile, RdpProfile, SshProfile, TelnetProfile, VncProfile, display_address,
+};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::GridSize;
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -85,6 +88,9 @@ const SMALL_SIZE: f32 = 12.0;
 
 /// Tallest the list of skipped profiles grows before it scrolls, in logical pixels.
 const SKIPPED_LIST_HEIGHT: f32 = 200.0;
+
+/// Height the command of a local profile scrolls within, however long it is.
+const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 
 /// Longest tab title shown, in characters.
 const MAX_TAB_TITLE_CHARS: usize = 32;
@@ -241,6 +247,7 @@ enum Listed<'a> {
     Rdp(&'a RdpProfile),
     Telnet(&'a TelnetProfile),
     Vnc(&'a VncProfile),
+    Local(&'a LocalProfile),
 }
 
 impl<'a> Listed<'a> {
@@ -250,6 +257,7 @@ impl<'a> Listed<'a> {
             Self::Rdp(profile) => profile.group.as_deref(),
             Self::Telnet(profile) => profile.group.as_deref(),
             Self::Vnc(profile) => profile.group.as_deref(),
+            Self::Local(profile) => profile.group.as_deref(),
         }
     }
 
@@ -259,6 +267,7 @@ impl<'a> Listed<'a> {
             Self::Rdp(profile) => &profile.name,
             Self::Telnet(profile) => &profile.name,
             Self::Vnc(profile) => &profile.name,
+            Self::Local(profile) => &profile.name,
         }
     }
 }
@@ -304,6 +313,18 @@ fn profile_row(profile: Listed<'_>) -> Element<'_, Message> {
             ),
             row![],
         ),
+        Listed::Local(profile) => (
+            AppMessage::OpenLocalProfile(profile.id.clone()),
+            fl!(
+                "ui-sidebar-local-target",
+                program = profile
+                    .command
+                    .program
+                    .as_deref()
+                    .map_or_else(|| fl!("ui-sidebar-local-default-program"), visible_text)
+            ),
+            row![],
+        ),
     };
     buttons = buttons
         .spacing(SPACING / 2.0)
@@ -344,7 +365,7 @@ fn default_local_shell() -> LocalShell {
     LocalShell {
         name: fl!("ui-local-shell-name"),
         program: None,
-        args: Vec::new(),
+        arguments: heimdall_term::local::LocalArguments::default(),
         working_directory: None,
     }
 }
@@ -582,11 +603,17 @@ impl Shell {
                 Vec::new()
             };
         }
-        self.app.update(if confirm {
-            AppMessage::ConfirmDialog
-        } else {
-            AppMessage::DismissDialog
-        })
+        let enter_confirms = self
+            .app
+            .dialog
+            .as_ref()
+            .is_some_and(Dialog::confirms_on_enter);
+        match (confirm, enter_confirms) {
+            (true, true) => self.app.update(AppMessage::ConfirmDialog),
+            // Only a click agrees to this one.
+            (true, false) => Vec::new(),
+            (false, _) => self.app.update(AppMessage::DismissDialog),
+        }
     }
 
     /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
@@ -875,6 +902,7 @@ impl Shell {
             .chain(self.app.rdp_profiles().iter().map(Listed::Rdp))
             .chain(self.app.telnet_profiles().iter().map(Listed::Telnet))
             .chain(self.app.vnc_profiles().iter().map(Listed::Vnc))
+            .chain(self.app.local_profiles().iter().map(Listed::Local))
             .collect();
         if profiles.is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
@@ -1331,6 +1359,51 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     .into()
 }
 
+/// The command a local profile would run, shown whole before it does: nothing cut, every
+/// invisible character written out, and a warning when the program reads its line again.
+fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message> {
+    let mut body = column![
+        text(fl!("ui-dialog-local-title")).size(HEADING_SIZE),
+        text(fl!(
+            "ui-dialog-local-body",
+            name = confirmation.name.as_str()
+        )),
+        container(
+            scrollable(
+                text(confirmation.command.as_str())
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(PADDING)
+        .style(container::rounded_box),
+    ]
+    .spacing(SPACING);
+    if let Some(folder) = &confirmation.folder {
+        body = body.push(text(fl!(
+            "ui-dialog-local-folder",
+            folder = folder.as_str()
+        )));
+    }
+    if confirmation.rereads {
+        body = body.push(text(fl!("ui-dialog-local-rereads")).style(text::danger));
+    }
+    body.push(
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-local-confirm")))
+                .style(button::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    )
+    .into()
+}
+
 fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
     let confirm = |label: String| {
         button(text(label))
@@ -1405,6 +1478,7 @@ fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-paste-confirm"),
         )
         .into(),
+        Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::ImportFailed { detail: technical } => column![
             heading(fl!("ui-dialog-import-failed-title")),

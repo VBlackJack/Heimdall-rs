@@ -37,8 +37,8 @@ mod text;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, Message, NameAction,
-    Phase, PointerInput, Prompt, Tab, TabProfile, WHEEL_LINES,
+    App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, LocalConfirmation,
+    Message, NameAction, Phase, PointerInput, Prompt, Tab, TabProfile, WHEEL_LINES,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
@@ -46,4 +46,4 @@ pub use error::{KeyProblem, UiError};
 pub use event::{Answer, ConnectionEvent, QuestionKind, ServerPasswordQuestion};
 pub use ids::{AttemptId, QuestionId, TabId};
 pub use sink::InputSink;
-pub use text::{MAX_SERVER_TEXT_CHARS, server_text};
+pub use text::{MAX_SERVER_TEXT_CHARS, server_text, visible_text};

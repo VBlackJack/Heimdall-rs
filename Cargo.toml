@@ -26,8 +26,12 @@ heimdall-term = { path = "crates/heimdall-term" }
 heimdall-rdp = { path = "crates/heimdall-rdp" }
 heimdall-twinshell = { path = "crates/heimdall-twinshell" }
 heimdall-remote = { path = "crates/heimdall-remote" }
+sealvault = { path = "crates/sealvault" }
 
+# aes-gcm, argon2, getrandom: the sealvault format; all three already came in through russh.
+aes-gcm = { version = "0.11.1", default-features = false, features = ["aes", "alloc", "zeroize"] }
 alacritty_terminal = { version = "0.26.0", default-features = false }
+argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "zeroize"] }
 data-encoding = "2.11.1"
 directories = "6.0.0"
 fluent-syntax = "0.12.0"
@@ -54,6 +58,7 @@ tempfile = "3.27.0"
 des = "0.9.0"
 # flate2: the zlib stream of VNC ZRLE, pure Rust backend.
 flate2 = "1.1.10"
+getrandom = "0.3.4"
 # png: reading test snapshots back, pixel by pixel.
 png = "0.18.1"
 # polling: the ConPTY pipes of a local shell post to it (Windows).
@@ -75,6 +80,13 @@ unsafe_code = "forbid"
 
 [workspace.lints.clippy]
 pedantic = { level = "warn", priority = -1 }
+
+# Argon2 at the vault's cost takes seconds unoptimised: tests stay fast, nothing else changes.
+[profile.dev.package.argon2]
+opt-level = 3
+
+[profile.dev.package.blake2]
+opt-level = 3
 
 [profile.release]
 codegen-units = 1

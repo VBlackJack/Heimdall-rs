@@ -18,7 +18,7 @@
 
 use std::time::Duration;
 
-use heimdall_term::local::{LocalConfig, LocalEvent, LocalSession, spawn};
+use heimdall_term::local::{LocalArguments, LocalConfig, LocalEvent, LocalSession, spawn};
 
 /// Bound on anything the test waits for.
 const WAIT: Duration = Duration::from_secs(15);
@@ -26,7 +26,7 @@ const WAIT: Duration = Duration::from_secs(15);
 fn config(program: &str, args: &[&str]) -> LocalConfig {
     LocalConfig {
         program: Some(program.to_owned()),
-        args: args.iter().map(|arg| (*arg).to_owned()).collect(),
+        arguments: LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect()),
         working_directory: None,
         columns: 80,
         rows: 24,
@@ -58,6 +58,69 @@ async fn until_exit(session: &mut LocalSession) -> (String, Option<i32>) {
             }
         }
     }
+}
+
+#[tokio::test]
+async fn a_relative_program_or_a_nul_is_refused_before_anything_runs() {
+    for refused in [
+        config("./tool", &[]),
+        config("bin/tool", &[]),
+        config("cmd\"x", &[]),
+        config("sh", &["-c", "echo a\0b"]),
+    ] {
+        let error = spawn(&refused).expect_err("refused");
+        assert_eq!(
+            error.kind(),
+            std::io::ErrorKind::InvalidInput,
+            "{refused:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_name_found_nowhere_is_refused() {
+    let error = spawn(&config("heimdall-no-such-shell", &[])).expect_err("refused");
+    assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+}
+
+/// A copy of `cmd.exe` named `powershell.exe` next to the test program: the first place the
+/// `CreateProcessW` search looks. Removed when dropped.
+#[cfg(windows)]
+struct Planted(std::path::PathBuf);
+
+#[cfg(windows)]
+impl Drop for Planted {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn the_default_shell_is_system_powershell_even_with_one_planted_beside_heimdall() {
+    let beside = std::env::current_exe()
+        .expect("test program")
+        .with_file_name("powershell.exe");
+    let root = std::env::var_os("SystemRoot").expect("SystemRoot");
+    std::fs::copy(
+        std::path::Path::new(&root).join(r"System32\cmd.exe"),
+        &beside,
+    )
+    .expect("planted");
+    let _planted = Planted(beside);
+    let mut session = spawn(&LocalConfig {
+        columns: 80,
+        rows: 24,
+        ..LocalConfig::default()
+    })
+    .expect("spawned");
+    // Only PowerShell turns this into an exit code; `cmd` would reject the line.
+    session
+        .input
+        .write(b"exit (40 + $PSVersionTable.PSVersion.Major)\r".to_vec())
+        .expect("typed");
+    let (output, code) = until_exit(&mut session).await;
+    assert_eq!(code, Some(45), "Windows PowerShell 5 expected: {output:?}");
 }
 
 #[tokio::test]
