@@ -34,8 +34,8 @@ use heimdall_core::profile::{
 };
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, TerminalSize,
-    Verdict, fingerprint, verdict,
+    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, Secret,
+    TerminalSize, Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, GridSize, Key, KeyLocation, KeyPress, Modifiers,
@@ -64,12 +64,18 @@ mod local_tab;
 mod profiles;
 mod rdp_tab;
 mod telnet_tab;
+mod vault;
 mod vnc_tab;
 mod winrm_tab;
 
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
+use vault::VaultState;
+pub use vault::{
+    MIN_MASTER_PASSWORD_CHARS, OpenedVault, VAULT_FILE_NAME, VaultDialog, VaultMode, VaultProblem,
+    VaultStatus, open_vault,
+};
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -268,6 +274,28 @@ pub enum Message {
     ConfirmDialog,
     /// Dismiss the open dialog.
     DismissDialog,
+    /// Answer a password question and save the password once the connection succeeds.
+    AnswerRemembered {
+        /// Tab.
+        tab: TabId,
+        /// Question.
+        question: QuestionId,
+        /// The password typed.
+        password: Secret,
+    },
+    /// Open the vault dialog: unlock the vault, or create it.
+    ShowVault,
+    /// The master password typed into the vault dialog.
+    SubmitVault {
+        /// Password.
+        password: Secret,
+        /// The same, typed again, when creating.
+        confirm: Option<Secret>,
+    },
+    /// The vault was opened, or could not be.
+    VaultOpened(Result<OpenedVault, VaultProblem>),
+    /// Close the vault.
+    LockVault,
 }
 
 impl fmt::Debug for Message {
@@ -334,6 +362,18 @@ impl fmt::Debug for Message {
             Self::DeleteProfile => f.write_str("DeleteProfile"),
             Self::ConfirmDialog => f.write_str("ConfirmDialog"),
             Self::DismissDialog => f.write_str("DismissDialog"),
+            Self::AnswerRemembered { tab, question, .. } => {
+                write!(
+                    f,
+                    "AnswerRemembered({}, {}, ..)",
+                    tab.value(),
+                    question.value()
+                )
+            }
+            Self::ShowVault => f.write_str("ShowVault"),
+            Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
+            Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
+            Self::LockVault => f.write_str("LockVault"),
         }
     }
 }
@@ -442,6 +482,15 @@ pub enum Effect {
         /// What to transfer.
         request: Box<TransferRequest>,
     },
+    /// Open, or create, the vault; then send [`Message::VaultOpened`].
+    OpenVault {
+        /// Vault file.
+        path: PathBuf,
+        /// Master password.
+        password: Secret,
+        /// Create it rather than open it.
+        create: bool,
+    },
     /// Quit the application.
     Exit,
 }
@@ -487,6 +536,7 @@ impl fmt::Debug for Effect {
                 id.value(),
                 request.direction
             ),
+            Self::OpenVault { create, .. } => write!(f, "OpenVault(create: {create})"),
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -580,6 +630,10 @@ pub struct Tab {
     motion: MotionFilter,
     selecting: bool,
     sync_generation: u64,
+    /// The attempt a saved password was given to, once.
+    auto_answered: Option<AttemptId>,
+    /// A password to save if this attempt succeeds.
+    remembered: Option<vault::Remembered>,
 }
 
 impl fmt::Debug for Tab {
@@ -638,6 +692,8 @@ impl Tab {
             motion: MotionFilter::default(),
             selecting: false,
             sync_generation: 0,
+            auto_answered: None,
+            remembered: None,
         }
     }
 
@@ -791,6 +847,13 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// Unlock or create the vault.
+    Vault(VaultDialog),
+    /// A password could not be saved in the vault.
+    VaultSaveFailed {
+        /// Technical detail.
+        detail: String,
+    },
 }
 
 impl Dialog {
@@ -798,7 +861,8 @@ impl Dialog {
     /// appears, meant for whatever had the focus, must not be taken for agreement.
     #[must_use]
     pub fn confirms_on_enter(&self) -> bool {
-        !matches!(self, Self::ConfirmLocalCommand(_))
+        // The vault's password fields submit themselves.
+        !matches!(self, Self::ConfirmLocalCommand(_) | Self::Vault(_))
     }
 }
 
@@ -825,6 +889,7 @@ pub struct App {
     pending_paste: Option<(TabId, String)>,
     pending_transfer: Option<PendingTransfer>,
     pending_operation: Option<PendingOperation>,
+    vault: VaultState,
 }
 
 impl fmt::Debug for App {
@@ -852,7 +917,8 @@ impl App {
                 }),
             ),
         };
-        Self {
+        let vault = VaultState::beside(&config.profiles_file);
+        let mut app = Self {
             viewport: config.initial_grid,
             config,
             store,
@@ -862,7 +928,13 @@ impl App {
             pending_paste: None,
             pending_transfer: None,
             pending_operation: None,
+            vault,
+        };
+        // A vault on disk is offered to unlock at start: its passwords are then ready.
+        if app.dialog.is_none() {
+            app.show_vault_if_locked();
         }
+        app
     }
 
     /// Saved SSH profiles.
@@ -968,12 +1040,7 @@ impl App {
                 tab,
                 question,
                 answer,
-            } => {
-                if let Some(found) = self.tab_mut(tab) {
-                    found.prompts.retain(|prompt| prompt.question != question);
-                }
-                vec![Effect::Answer { question, answer }]
-            }
+            } => self.answer(tab, question, answer),
             Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept),
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
@@ -1016,6 +1083,11 @@ impl App {
                 Vec::new()
             }
             Message::ConfirmDialog => self.confirm_dialog(),
+            message @ (Message::AnswerRemembered { .. }
+            | Message::ShowVault
+            | Message::SubmitVault { .. }
+            | Message::VaultOpened(_)
+            | Message::LockVault) => self.vault_message(message),
             Message::DismissDialog => {
                 self.dialog = None;
                 self.pending_paste = None;
@@ -1087,6 +1159,15 @@ impl App {
         effects
     }
 
+    /// The user answered `question`; `None` declines it.
+    fn answer(&mut self, tab: TabId, question: QuestionId, answer: Option<Answer>) -> Vec<Effect> {
+        self.answering(tab, question);
+        if let Some(found) = self.tab_mut(tab) {
+            found.prompts.retain(|prompt| prompt.question != question);
+        }
+        vec![Effect::Answer { question, answer }]
+    }
+
     fn connection(
         &mut self,
         tab_id: TabId,
@@ -1109,6 +1190,32 @@ impl App {
                 _ => Vec::new(),
             };
         }
+        if let ConnectionEvent::Question { question, kind } = &event
+            && let Some(answer) = self.saved_answer(tab_id, kind)
+        {
+            return vec![Effect::Answer {
+                question: *question,
+                answer: Some(answer),
+            }];
+        }
+        let accepted = matches!(
+            event,
+            ConnectionEvent::Connected { .. }
+                | ConnectionEvent::FilesReady { .. }
+                | ConnectionEvent::RdpReady { .. }
+                | ConnectionEvent::VncReady { .. }
+        );
+        if matches!(event, ConnectionEvent::Failed(_)) {
+            self.credentials_failed(tab_id);
+        }
+        let effects = self.apply_connection_event(tab_id, event);
+        if accepted {
+            self.credentials_accepted(tab_id);
+        }
+        effects
+    }
+
+    fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let active = self.active == Some(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
@@ -1512,8 +1619,15 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
+            Some(dialog @ Dialog::Vault(_)) => {
+                self.dialog = Some(dialog);
+                Vec::new()
+            }
             Some(
-                Dialog::ImportDone(_) | Dialog::ImportFailed { .. } | Dialog::StoreError { .. },
+                Dialog::ImportDone(_)
+                | Dialog::ImportFailed { .. }
+                | Dialog::StoreError { .. }
+                | Dialog::VaultSaveFailed { .. },
             )
             | None => Vec::new(),
         }
