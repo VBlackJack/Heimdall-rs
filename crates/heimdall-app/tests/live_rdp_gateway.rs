@@ -37,6 +37,8 @@ const KEYS_VARIABLE: &str = "HEIMDALL_LIVE_JUMP_KEYS";
 const USER_VARIABLE: &str = "HEIMDALL_LIVE_RDP_USER";
 const PASSWORD_VARIABLE: &str = "HEIMDALL_LIVE_RDP_PASSWORD";
 const STEP: Duration = Duration::from_secs(60);
+/// How long the session must stay up once the clipboard channel is in use.
+const CLIPBOARD_SETTLE: Duration = Duration::from_secs(3);
 /// Attempts: the gateway's key, the server's certificate, then the desktop.
 const ATTEMPTS: usize = 3;
 
@@ -55,6 +57,7 @@ fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -
             // The lab's xrdp offers TLS without Network Level Authentication.
             allow_tls_only: true,
             gateway: None,
+            redirect_clipboard: true,
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,
@@ -124,7 +127,24 @@ async fn a_desktop_comes_up_through_the_lab_gateway() {
                         Some(Answer::Secret(Secret::new(password.clone())))
                     ));
                 }
-                ConnectionEvent::RdpReady { .. } => {
+                ConnectionEvent::RdpReady { clipboard, .. } => {
+                    // The clipboard channel, negotiated with a real server, must keep the
+                    // session up, an offer of this side's text included.
+                    let offers = clipboard.expect("the profile shares the clipboard");
+                    offers
+                        .send(zeroize::Zeroizing::new("heimdall-offer".to_owned()))
+                        .expect("offered");
+                    let settle = tokio::time::sleep(CLIPBOARD_SETTLE);
+                    tokio::pin!(settle);
+                    loop {
+                        tokio::select! {
+                            () = &mut settle => break,
+                            event = events.next() => match event {
+                                Some(ConnectionEvent::DesktopFrame | ConnectionEvent::RemoteClipboard(_)) => {}
+                                other => panic!("the session did not stay up: {other:?}"),
+                            },
+                        }
+                    }
                     cancel.cancel();
                     return;
                 }

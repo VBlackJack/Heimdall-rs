@@ -44,6 +44,7 @@ fn app(dir: &Path) -> App {
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
         gateway: None,
+        redirect_clipboard: true,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -185,6 +186,7 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
         ConnectionEvent::RdpReady {
             framebuffer: Framebuffer::new(64, 48),
             input,
+            clipboard: None,
         },
     );
     assert_eq!(app.tabs[0].phase, Phase::Connected);

@@ -144,6 +144,7 @@ fn rdp(id: &str) -> RdpProfile {
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
         gateway: None,
+        redirect_clipboard: true,
     }
 }
 
@@ -416,4 +417,24 @@ fn a_version_5_file_still_opens() {
     let store = ProfileStore::open(&path).expect("a version 5 file opens");
     assert_eq!(store.ssh_profiles()[0].gateway, None);
     assert!(store.gateways().is_empty());
+}
+
+#[test]
+fn the_clipboard_setting_is_written_only_when_turned_off() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let mut off = rdp("off");
+    off.redirect_clipboard = false;
+    store.merge_rdp([rdp("on"), off]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert_eq!(text.matches("redirect_clipboard").count(), 1, "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    let shared: Vec<bool> = reopened
+        .rdp_profiles()
+        .iter()
+        .map(|profile| profile.redirect_clipboard)
+        .collect();
+    assert_eq!(shared, [true, false]);
 }

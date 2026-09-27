@@ -43,7 +43,11 @@ use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+use ironrdp::cliprdr::CliprdrClient;
+use tokio::sync::mpsc;
+
 use crate::certificate::{Fingerprint, ServerCertificate};
+use crate::clipboard::{Offered, Request, TextBackend};
 use crate::known_hosts::{KnownRdpHosts, Verdict};
 use crate::tls;
 
@@ -142,6 +146,9 @@ pub struct RdpConfig {
     pub accepted: Option<Fingerprint>,
     /// Phase timeouts.
     pub timeouts: Timeouts,
+    /// Share the clipboard with the server, text only: its copies reach this side, and this
+    /// side's text is offered to it.
+    pub clipboard: bool,
 }
 
 /// Why a connection did not open.
@@ -196,10 +203,20 @@ pub enum RdpError {
     Protocol(String),
 }
 
+/// What the session needs of the clipboard channel.
+pub(crate) struct ClipboardLink {
+    /// What the channel's backend asks the session to do.
+    pub(crate) requests: mpsc::UnboundedReceiver<Request>,
+    /// The text this side offers.
+    pub(crate) offered: Offered,
+}
+
 /// An open connection, ready for its session.
 pub struct RdpConnection {
     /// The stream, framed.
     pub framed: MovableTokioFramed<Upgraded>,
+    /// The clipboard channel's side of the session, when the clipboard is shared.
+    pub(crate) clipboard: Option<ClipboardLink>,
     /// What the connection sequence settled.
     pub result: ConnectionResult,
 }
@@ -320,6 +337,18 @@ pub async fn connect_over(
     cancel: &CancellationToken,
 ) -> Result<RdpConnection, RdpError> {
     let mut connector = ClientConnector::new(connector_config(config), client_addr);
+    let clipboard = config.clipboard.then(|| {
+        let (requests, received) = mpsc::unbounded_channel();
+        let offered = Offered::default();
+        connector.attach_static_channel(CliprdrClient::new(Box::new(TextBackend::new(
+            requests,
+            offered.clone(),
+        ))));
+        ClipboardLink {
+            requests: received,
+            offered,
+        }
+    });
     // Movable: its futures are `Send`, so a connection can run in a spawned task.
     let mut framed = MovableTokioFramed::new(stream);
     let should_upgrade = phase(
@@ -394,7 +423,11 @@ pub async fn connect_over(
     if width > MAX_DESKTOP_SIDE || height > MAX_DESKTOP_SIDE {
         return Err(RdpError::DesktopTooLarge { width, height });
     }
-    Ok(RdpConnection { framed, result })
+    Ok(RdpConnection {
+        framed,
+        clipboard,
+        result,
+    })
 }
 
 /// Decides about the server's key; `Ok` lets the credentials go.

@@ -161,6 +161,23 @@ pub struct RdpProfile {
     /// in a tunnel the gateway opens to the server.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<ProfileId>,
+    /// Share the clipboard with the server, text only. On unless turned off, as in the C#
+    /// Heimdall and in the Windows client: written down only when off.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub redirect_clipboard: bool,
+}
+
+/// The clipboard is shared unless a profile says otherwise.
+fn shared() -> bool {
+    true
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_shared(value: &bool) -> bool {
+    *value
 }
 
 /// A saved Telnet destination, reached directly.
