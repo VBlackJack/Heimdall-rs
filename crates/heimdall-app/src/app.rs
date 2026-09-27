@@ -63,6 +63,7 @@ use crate::vnc_driver::VncRequest;
 
 mod appearance;
 mod auto_reconnect;
+mod broadcast;
 mod connect_as;
 mod files_tab;
 mod folder_menu;
@@ -87,6 +88,7 @@ mod winrm_tab;
 use crate::transcript::{Transcript, TranscriptLines};
 pub use appearance::SettingsMessage;
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
+pub use broadcast::BroadcastMessage;
 pub use connect_as::ConnectAs;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
@@ -437,6 +439,8 @@ pub enum Message {
     LockVault,
     /// A change from the Settings page.
     Settings(SettingsMessage),
+    /// A change of broadcast input.
+    Broadcast(BroadcastMessage),
 }
 
 impl fmt::Debug for Message {
@@ -499,9 +503,7 @@ impl fmt::Debug for Message {
             Self::FindInTerminal { tab, direction, .. } => {
                 write!(f, "FindInTerminal({}, {direction:?})", tab.value())
             }
-            Self::ScrollHistory { tab, lines } => {
-                write!(f, "ScrollHistory({}, {lines})", tab.value())
-            }
+            Self::ScrollHistory { tab, lines } => write!(f, "Scroll({}, {lines})", tab.value()),
             Self::Copy(tab) => write!(f, "Copy({})", tab.value()),
             Self::PasteRequest(tab) => write!(f, "PasteRequest({})", tab.value()),
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
@@ -544,6 +546,7 @@ impl fmt::Debug for Message {
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
             Self::Settings(message) => write!(f, "Settings({message:?})"),
+            Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
     }
 }
@@ -1008,6 +1011,8 @@ pub struct ImportSummary {
 pub enum Dialog {
     /// Close a tab whose session is live.
     ConfirmCloseTab(TabId),
+    /// Start broadcast input to every tab.
+    ConfirmBroadcast,
     /// Quit with live sessions.
     ConfirmExit {
         /// Live sessions.
@@ -1210,6 +1215,8 @@ pub struct App {
     settings_file: std::path::PathBuf,
     /// The transcripts' first and last lines, as the window words them.
     transcript_lines: Option<TranscriptLines>,
+    /// Broadcast input: on or off, and the tabs marked.
+    broadcast: broadcast::Broadcast,
     /// What was just done, and the session shown then with its state.
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
     viewport: GridSize,
@@ -1256,6 +1263,7 @@ impl App {
             settings,
             settings_file,
             transcript_lines: None,
+            broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,
             config,
             store,
@@ -1393,10 +1401,9 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
-            message @ (Message::ScrollHistory { .. } | Message::FindInTerminal { .. }) => {
-                self.history_message(message)
-            }
-            message @ (Message::Copy(_)
+            message @ (Message::ScrollHistory { .. }
+            | Message::FindInTerminal { .. }
+            | Message::Copy(_)
             | Message::PasteRequest(_)
             | Message::SendClipboard(_)
             | Message::ClipboardText { .. }) => self.clipboard_message(message),
@@ -1404,7 +1411,8 @@ impl App {
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
             | Message::ImportLegacy
-            | Message::Settings(_)) => self.window_message(&message),
+            | Message::Settings(_)
+            | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
             | Message::ProfileField { .. }
@@ -1815,12 +1823,22 @@ impl App {
         if self.dialog.is_some() {
             return Vec::new();
         }
-        let Some(tab) = self.tab_mut(tab_id) else {
-            return Vec::new();
-        };
-        if tab.phase != Phase::Connected || !tab.prompts.is_empty() {
-            return Vec::new();
+        let typed_into = self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.phase == Phase::Connected && tab.prompts.is_empty());
+        if typed_into {
+            for target in self.input_targets(tab_id) {
+                self.send_key(target, input);
+            }
         }
+        Vec::new()
+    }
+
+    /// Sends `input` to `tab_id`'s session, encoded for its modes.
+    fn send_key(&mut self, tab_id: TabId, input: &KeyInput) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
         let press = KeyPress {
             key: input.key,
             text: input.text.as_deref(),
@@ -1832,7 +1850,6 @@ impl App {
             tab.terminal.scroll_to_bottom();
             tab.write(bytes);
         }
-        Vec::new()
     }
 
     fn pointer(&mut self, tab_id: TabId, input: PointerInput) -> Vec<Effect> {
@@ -1932,7 +1949,8 @@ impl App {
     /// This side's clipboard, read for `tab_id`: offered to its server when it is a desktop
     /// sharing the clipboard, pasted into it when it is a terminal.
     /// Applies a message about the clipboard: a terminal's selection copied, this side's
-    /// clipboard asked for a paste or for a desktop, and what it held.
+    /// clipboard asked for a paste or for a desktop, and what it held; or about a terminal's
+    /// history, scrolled or searched.
     fn clipboard_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::Copy(tab) => self
@@ -1950,7 +1968,7 @@ impl App {
                 .into_iter()
                 .collect(),
             Message::ClipboardText { tab, text } => self.clipboard_text(tab, text),
-            _ => Vec::new(),
+            message => self.history_message(message),
         }
     }
 
@@ -1978,16 +1996,30 @@ impl App {
         if tab.phase != Phase::Connected {
             return Vec::new();
         }
-        let mode = tab.terminal.input_mode();
-        let lines = command_lines(&text);
-        let runs_lines = !mode.bracketed_paste && text.trim_end().contains(['\n', '\r']);
+        let targets = self.input_targets(tab_id);
+        // Asked when a session reached would run the lines one by one.
+        let runs_lines = text.trim_end().contains(['\n', '\r'])
+            && targets.iter().any(|target| {
+                self.tab(*target)
+                    .is_some_and(|tab| !tab.terminal.input_mode().bracketed_paste)
+            });
         if runs_lines {
-            self.dialog = Some(Dialog::ConfirmPaste { tab: tab_id, lines });
+            self.dialog = Some(Dialog::ConfirmPaste {
+                tab: tab_id,
+                lines: command_lines(&text),
+            });
             self.pending_paste = Some((tab_id, text));
             return Vec::new();
         }
-        tab.write(encode_paste(&text, &mode));
+        self.paste_to(&targets, &text);
         Vec::new()
+    }
+
+    /// Pastes `text` into the sessions of `targets`, each as its modes ask.
+    fn paste_to(&self, targets: &[TabId], text: &str) {
+        for tab in targets.iter().filter_map(|target| self.tab(*target)) {
+            tab.write(encode_paste(text, &tab.terminal.input_mode()));
+        }
     }
 
     fn sync_deadline(&mut self, tab_id: TabId, generation: u64) -> Vec<Effect> {
@@ -2087,6 +2119,10 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmConnectFolder { path, .. }) => self.confirm_connect_folder(&path),
+            Some(Dialog::ConfirmBroadcast) => {
+                self.confirm_broadcast();
+                Vec::new()
+            }
             Some(Dialog::ConfirmExit { .. }) => {
                 for tab in &mut self.tabs {
                     tab.stop();
@@ -2094,10 +2130,8 @@ impl App {
                 vec![Effect::Exit]
             }
             Some(Dialog::ConfirmPaste { .. }) => {
-                if let Some((tab_id, text)) = self.pending_paste.take()
-                    && let Some(tab) = self.tab(tab_id)
-                {
-                    tab.write(encode_paste(&text, &tab.terminal.input_mode()));
+                if let Some((tab_id, text)) = self.pending_paste.take() {
+                    self.paste_to(&self.input_targets(tab_id), &text);
                 }
                 Vec::new()
             }
@@ -2128,7 +2162,7 @@ impl App {
     }
 
     /// The window's focus and its close, and what it asks of the application: the import
-    /// from the C# Heimdall, a change of the settings.
+    /// from the C# Heimdall, a change of the settings or of broadcast input.
     fn window_message(&mut self, message: &Message) -> Vec<Effect> {
         match message {
             Message::WindowFocus(focused) => self.window_focus(*focused),
@@ -2138,6 +2172,7 @@ impl App {
                 Vec::new()
             }
             Message::Settings(message) => self.settings_message(message),
+            Message::Broadcast(message) => self.broadcast_message(*message),
             _ => Vec::new(),
         }
     }

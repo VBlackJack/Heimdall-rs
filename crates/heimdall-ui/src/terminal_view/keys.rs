@@ -93,6 +93,8 @@ pub enum WindowShortcut {
     Zoom(Zoom),
     /// Open or close the terminal's search bar: Ctrl+Shift+F.
     Find,
+    /// Turn broadcast input on or off: Ctrl+Alt+B, as the C# one.
+    Broadcast,
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
@@ -176,6 +178,12 @@ pub fn window_shortcut(
     modifiers: keyboard::Modifiers,
 ) -> Option<WindowShortcut> {
     let (ctrl, shift, alt) = (modifiers.control(), modifiers.shift(), modifiers.alt());
+    if ctrl && alt && !shift {
+        // The character itself, never the key's place: AltGr is Ctrl+Alt, and AltGr+B
+        // types a character on some layouts.
+        return matches!(key, keyboard::Key::Character(c) if c.eq_ignore_ascii_case("b"))
+            .then_some(WindowShortcut::Broadcast);
+    }
     if !ctrl || alt {
         return None;
     }
@@ -325,6 +333,34 @@ mod tests {
         Shortcut, WindowShortcut, Zoom, is_lock_key, is_search_key, key_input, shortcut,
         window_shortcut,
     };
+
+    #[test]
+    fn ctrl_alt_b_toggles_broadcast_but_never_takes_a_character_typed_with_altgr() {
+        let ctrl_alt = Modifiers::CTRL | Modifiers::ALT;
+        assert_eq!(
+            window_shortcut(&character("b"), ANY_PLACE, ctrl_alt),
+            Some(WindowShortcut::Broadcast)
+        );
+        assert_eq!(
+            window_shortcut(&character("B"), ANY_PLACE, ctrl_alt),
+            Some(WindowShortcut::Broadcast)
+        );
+        assert_eq!(
+            window_shortcut(&character("{"), Physical::Code(Code::KeyB), ctrl_alt),
+            None,
+            "AltGr+B typing a brace keeps typing it"
+        );
+        assert_eq!(
+            window_shortcut(&character("b"), ANY_PLACE, ctrl_alt | Modifiers::SHIFT),
+            None
+        );
+        assert_eq!(
+            window_shortcut(&character("b"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl alone"
+        );
+        assert_eq!(window_shortcut(&character("c"), ANY_PLACE, ctrl_alt), None);
+    }
 
     #[test]
     fn ctrl_shift_f_opens_the_terminal_search_on_any_layout() {

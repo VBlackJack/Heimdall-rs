@@ -1870,3 +1870,99 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
         "nothing typed since: nothing changes"
     );
 }
+
+#[test]
+fn the_status_bar_turns_broadcast_on_and_marks_tabs_in_the_selected_scope() {
+    use heimdall_app::{BroadcastMessage, Dialog};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let broadcast = |message| Message::App(AppMessage::Broadcast(message));
+    let clicked = |shell: &Shell, label: &str| {
+        let mut ui = simulator(shell);
+        ui.click(label).expect(label);
+        ui.into_messages()
+            .filter_map(|message| match message {
+                Message::App(AppMessage::Broadcast(message)) => Some(message),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(clicked(&shell, "BROADCAST"), [BroadcastMessage::Toggle]);
+    assert_eq!(clicked(&shell, "All tabs"), [BroadcastMessage::Scope]);
+    assert!(
+        simulator(&shell).find("\u{25cb}").is_err(),
+        "no marks while off"
+    );
+
+    let _ = shell.update(broadcast(BroadcastMessage::Toggle));
+    assert_eq!(shell.app().dialog, Some(Dialog::ConfirmBroadcast));
+    snapshot(&shell, "broadcast-confirm.png");
+    simulator(&shell)
+        .find("Broadcast to all tabs?")
+        .expect("asked");
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Broadcast mode ON - All tabs").expect("said");
+        assert!(
+            ui.find("\u{25cb}").is_err(),
+            "every tab is reached: no marks"
+        );
+    }
+
+    let _ = shell.update(broadcast(BroadcastMessage::Scope));
+    snapshot(&shell, "broadcast-selected.png");
+    simulator(&shell)
+        .find("Selected tabs (0)")
+        .expect("its scope");
+    assert_eq!(
+        clicked(&shell, "\u{25cb}"),
+        [BroadcastMessage::Target(tab)],
+        "the tab's mark"
+    );
+    let _ = shell.update(broadcast(BroadcastMessage::Target(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("\u{25c9}").expect("marked");
+        ui.find("Selected tabs (1)").expect("counted");
+    }
+    let _ = shell.update(broadcast(BroadcastMessage::Toggle));
+    assert!(
+        simulator(&shell).find("\u{25c9}").is_err(),
+        "off: no marks, whatever the scope"
+    );
+}
+
+#[test]
+fn ctrl_alt_b_typed_in_a_terminal_is_left_to_the_window() {
+    use iced::keyboard::{self, Location, key};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let pressed = |c: &str| {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character(c.into()),
+            modified_key: keyboard::Key::Character(c.into()),
+            physical_key: key::Physical::Code(key::Code::KeyB),
+            location: Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT,
+            text: None,
+            repeat: false,
+        })
+    };
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([pressed("b")]);
+    assert_eq!(statuses, [event::Status::Ignored], "the window's");
+    let statuses = ui.simulate([pressed("{")]);
+    assert_eq!(
+        statuses,
+        [event::Status::Captured],
+        "AltGr+B typing a brace is the session's"
+    );
+    let keys = ui
+        .into_messages()
+        .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+        .count();
+    assert_eq!(keys, 1, "only the brace reached the terminal");
+}

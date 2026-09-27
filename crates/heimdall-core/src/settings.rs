@@ -79,6 +79,37 @@ impl ColorScheme {
     }
 }
 
+/// Which terminals broadcast input reaches besides the one typed into.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BroadcastScope {
+    /// Every terminal of every tab, asked before it starts.
+    #[default]
+    AllTabs,
+    /// The tabs marked as targets.
+    SelectedTabs,
+}
+
+impl BroadcastScope {
+    /// The name the file holds.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::AllTabs => "AllTabs",
+            Self::SelectedTabs => "SelectedTabs",
+        }
+    }
+
+    /// The scope named `name`, all tabs for a name not known.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        if name.trim().eq_ignore_ascii_case(Self::SelectedTabs.name()) {
+            Self::SelectedTabs
+        } else {
+            Self::AllTabs
+        }
+    }
+}
+
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
@@ -87,6 +118,8 @@ pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 pub struct Settings {
     /// The terminal's colours.
     pub color_scheme: ColorScheme,
+    /// Which terminals broadcast input reaches.
+    pub broadcast_scope: BroadcastScope,
     /// Every SSH, Telnet and local session keeps a transcript from when it connects.
     pub session_logging: bool,
     /// Where transcripts go: a folder, or one relative to the settings file's.
@@ -97,6 +130,7 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             color_scheme: ColorScheme::default(),
+            broadcast_scope: BroadcastScope::default(),
             session_logging: false,
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
         }
@@ -124,6 +158,8 @@ struct SessionLogSection {
 struct TerminalSection {
     #[serde(default)]
     color_scheme: Option<String>,
+    #[serde(default)]
+    broadcast_scope: Option<String>,
 }
 
 /// The settings file of the profile file `profiles_file`: beside it.
@@ -168,6 +204,12 @@ impl Settings {
                 .as_deref()
                 .map(ColorScheme::named)
                 .unwrap_or_default(),
+            broadcast_scope: file
+                .terminal
+                .broadcast_scope
+                .as_deref()
+                .map(BroadcastScope::named)
+                .unwrap_or_default(),
             session_logging: file.session_log.enabled,
             session_log_directory: file
                 .session_log
@@ -200,6 +242,7 @@ impl Settings {
             version: SETTINGS_FILE_VERSION,
             terminal: TerminalSection {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
+                broadcast_scope: Some(self.broadcast_scope.name().to_owned()),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,

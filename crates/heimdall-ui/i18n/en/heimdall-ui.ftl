@@ -510,3 +510,19 @@ ui-settings-session-logging = Session Logging
 ui-settings-session-logging-enabled = Enable session logging
 ui-settings-session-log-directory = Session log directory:
 ui-settings-session-log-directory-hint = Directory for session log files, relative to the settings folder unless absolute. Press Enter to apply.
+
+## Broadcast input, as the C# one.
+ui-broadcast-button = BROADCAST
+ui-broadcast-toggle-tooltip = Toggle Broadcast Mode (send to all terminals), Ctrl+Alt+B
+ui-broadcast-on = Broadcast mode ON - { $scope }
+ui-broadcast-off = Broadcast mode OFF
+ui-broadcast-scope-all = All tabs
+ui-broadcast-scope-selected = Selected tabs ({ $count })
+ui-broadcast-scope-status = Broadcast scope: { $scope }
+ui-broadcast-scope-tooltip = Broadcast scope (click to switch between all tabs and the tabs marked)
+ui-broadcast-target-on = ◉
+ui-broadcast-target-off = ○
+ui-broadcast-target-tooltip = Send broadcast input to this session (broadcast target)
+ui-dialog-broadcast-title = Broadcast to all tabs?
+ui-dialog-broadcast-body = Input you type will be sent to terminal panes in every open tab, including tabs running in the background. Continue?
+ui-dialog-broadcast-confirm = Broadcast

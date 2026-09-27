@@ -36,18 +36,19 @@ use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
-    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
-    Message as AppMessage, NameAction, Phase, ProfileMenuMessage, Prompt, Purpose, QuestionId,
-    QuestionKind, Retry, SelectionMessage, SettingsMessage, SpecialKeys, SystemCredentials, Tab,
-    TabGroup, TabId, TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode,
-    VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault, server_text,
+    Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
+    DesktopPane, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
+    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, ProfileMenuMessage,
+    Prompt, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
+    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TreeRow, UiError,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
+    master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
-use heimdall_core::settings::{ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
+use heimdall_core::settings::{BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -932,6 +933,7 @@ impl Shell {
                 self.zoom(active, zoom);
                 return Vec::new();
             }
+            (WindowShortcut::Broadcast, _) => AppMessage::Broadcast(BroadcastMessage::Toggle),
             (WindowShortcut::Find, _) => {
                 self.toggle_finder(active);
                 return Vec::new();
@@ -1521,10 +1523,44 @@ impl Shell {
             .iter()
             .filter(|profile| profile.matches(&self.search))
             .count();
+        let targets = self.app.broadcast_target_count();
         crate::status_bar::view(
-            crate::status_bar::status_text(&self.app.session_status(), self.app.notice()),
+            crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
+            self.broadcast_controls(targets),
         )
+    }
+
+    /// Broadcast input's toggle and scope, as the C# bar's: lit while on.
+    fn broadcast_controls(&self, targets: usize) -> Element<'_, Message> {
+        let on = self.app.broadcasting();
+        let scope = crate::status_bar::scope_label(self.app.settings().broadcast_scope, targets);
+        let broadcast = |message| Message::App(AppMessage::Broadcast(message));
+        row![
+            tooltip(
+                button(text(fl!("ui-broadcast-button")).size(SMALL_SIZE))
+                    .style(if on { button::primary } else { button::text })
+                    .on_press(broadcast(BroadcastMessage::Toggle)),
+                text(if on {
+                    fl!("ui-broadcast-on", scope = scope.as_str())
+                } else {
+                    fl!("ui-broadcast-toggle-tooltip")
+                })
+                .size(SMALL_SIZE),
+                tooltip::Position::Top,
+            )
+            .style(container::rounded_box),
+            tooltip(
+                button(text(scope.clone()).size(SMALL_SIZE))
+                    .style(button::text)
+                    .on_press(broadcast(BroadcastMessage::Scope)),
+                text(fl!("ui-broadcast-scope-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Top,
+            )
+            .style(container::rounded_box),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -2050,6 +2086,32 @@ impl Shell {
             .align_y(iced::Alignment::Center);
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+            }
+            let marked = self.app.broadcasting()
+                && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
+                && shows_terminal(tab);
+            if marked {
+                // A target of broadcast input, or not, as the C# tab's marker.
+                let target = self.app.is_broadcast_target(tab.id);
+                tabs = tabs.push(
+                    tooltip(
+                        button(
+                            text(if target {
+                                fl!("ui-broadcast-target-on")
+                            } else {
+                                fl!("ui-broadcast-target-off")
+                            })
+                            .size(SMALL_SIZE),
+                        )
+                        .style(button::text)
+                        .on_press(Message::App(AppMessage::Broadcast(
+                            BroadcastMessage::Target(tab.id),
+                        ))),
+                        text(fl!("ui-broadcast-target-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Bottom,
+                    )
+                    .style(container::rounded_box),
+                );
             }
             if tab.transcript.is_some() {
                 label = label.push(
@@ -3746,6 +3808,23 @@ fn vault_problem(problem: &VaultProblem) -> String {
     }
 }
 
+/// The title, text and action of a question about the whole window: leaving it with
+/// sessions live, broadcasting input to every tab.
+fn window_question(dialog: &Dialog) -> (String, String, String) {
+    match dialog {
+        Dialog::ConfirmExit { live } => (
+            fl!("ui-dialog-exit-title"),
+            fl!("ui-dialog-exit-body", count = (*live)),
+            fl!("ui-dialog-exit-confirm"),
+        ),
+        _ => (
+            fl!("ui-dialog-broadcast-title"),
+            fl!("ui-dialog-broadcast-body"),
+            fl!("ui-dialog-broadcast-confirm"),
+        ),
+    }
+}
+
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     let confirm = |label: String| {
         button(text(label))
@@ -3780,12 +3859,10 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmConnectFolder { .. }
         | Dialog::RenameProfile { .. }
         | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
-        Dialog::ConfirmExit { live } => question(
-            fl!("ui-dialog-exit-title"),
-            fl!("ui-dialog-exit-body", count = (*live)),
-            fl!("ui-dialog-exit-confirm"),
-        )
-        .into(),
+        Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } => {
+            let (title, body, action) = window_question(dialog);
+            question(title, body, action).into()
+        }
         Dialog::ConfirmOverwrite {
             direction, name, ..
         } => question(

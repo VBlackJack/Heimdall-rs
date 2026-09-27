@@ -18,7 +18,9 @@
 
 use std::path::Path;
 
-use heimdall_core::settings::{ColorScheme, SETTINGS_FILE_NAME, Settings, settings_path};
+use heimdall_core::settings::{
+    BroadcastScope, ColorScheme, SETTINGS_FILE_NAME, Settings, settings_path,
+};
 use heimdall_core::store::StoreError;
 
 #[test]
@@ -152,4 +154,25 @@ fn session_logging_is_off_by_default_and_its_folder_beside_the_settings() {
         blank.session_log_directory, "logs/sessions",
         "blank: the default"
     );
+}
+
+#[test]
+fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    assert_eq!(
+        Settings::load(&path).expect("defaults").broadcast_scope,
+        BroadcastScope::AllTabs
+    );
+    let chosen = Settings {
+        broadcast_scope: BroadcastScope::SelectedTabs,
+        ..Settings::default()
+    };
+    chosen.save(&path).expect("saved");
+    assert_eq!(Settings::load(&path).expect("read"), chosen);
+    assert_eq!(
+        BroadcastScope::named(" selectedtabs "),
+        BroadcastScope::SelectedTabs
+    );
+    assert_eq!(BroadcastScope::named("CurrentTab"), BroadcastScope::AllTabs);
 }
