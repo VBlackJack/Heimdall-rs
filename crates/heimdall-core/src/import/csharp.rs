@@ -28,7 +28,7 @@
 //! Secrets are never imported: the C# Heimdall encrypts them with Windows DPAPI, which only
 //! that Windows account can reverse.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use serde::Deserialize;
@@ -36,7 +36,8 @@ use thiserror::Error;
 
 use crate::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, LocalArguments,
-    LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
+    LocalCommand, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
+    VncProfile,
 };
 
 /// `connectionType` of an SSH profile.
@@ -69,8 +70,12 @@ const GROUP_SEPARATOR: char = '/';
 pub enum SkipReason {
     /// A protocol not supported yet; carries its `connectionType`.
     NotSsh(String),
-    /// Reaches its server through an SSH gateway, not supported yet.
+    /// Reaches its server through an SSH gateway, not supported yet for this protocol.
     NeedsJumpHost,
+    /// Names an SSH gateway that is not in the file, or that was itself left out.
+    MissingGateway,
+    /// An SSH gateway reached through itself, by way of its parents.
+    GatewayLoop,
     /// Reaches its server through a Remote Desktop Gateway, not supported yet.
     NeedsRdGateway,
     /// Has no host.
@@ -113,6 +118,8 @@ pub struct ImportReport {
     pub vnc: Vec<VncProfile>,
     /// Local shell profiles ready to be merged into the store, none approved.
     pub local: Vec<LocalProfile>,
+    /// SSH gateways ready to be merged into the store; each one's parent is among them.
+    pub gateways: Vec<SshGateway>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
 }
@@ -197,6 +204,24 @@ fn default_connection_type() -> String {
 struct LegacySettings {
     #[serde(default)]
     group_defaults: HashMap<String, LegacyGroupDefaults>,
+    #[serde(default)]
+    ssh_gateways: Vec<LegacyGateway>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyGateway {
+    #[serde(default)]
+    id: String,
+    #[serde(default)]
+    name: String,
+    #[serde(default)]
+    host: String,
+    /// Absent is the SSH default, as `SshGatewayDto` initialises it.
+    port: Option<i64>,
+    user: Option<String>,
+    key_path: Option<String>,
+    parent_gateway_id: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -228,6 +253,8 @@ pub fn import(
     };
 
     let mut report = ImportReport::default();
+    let (gateways, skipped_gateways) = convert_gateways(&settings.ssh_gateways);
+    let known: HashSet<&str> = gateways.iter().map(|gateway| gateway.id.as_str()).collect();
     for mut server in servers.servers {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
             .apply_to(&mut server);
@@ -249,7 +276,7 @@ pub fn import(
         {
             convert_vnc(&server).map(|profile| report.vnc.push(profile))
         } else {
-            convert(&server).map(|profile| report.profiles.push(profile))
+            convert(&server, &known).map(|profile| report.profiles.push(profile))
         };
         match converted {
             Ok(()) => {}
@@ -260,7 +287,90 @@ pub fn import(
             }),
         }
     }
+    report.skipped.extend(skipped_gateways);
+    report.gateways = gateways;
     Ok(report)
+}
+
+/// The gateways that can be used: each with an identifier, a host and a valid port, and a
+/// parent that is itself usable; a chain of parents that comes back on itself is left out
+/// whole. The others are listed with the reason.
+fn convert_gateways(legacy: &[LegacyGateway]) -> (Vec<SshGateway>, Vec<Skipped>) {
+    let mut skipped = Vec::new();
+    let mut candidates: HashMap<&str, SshGateway> = HashMap::new();
+    for gateway in legacy {
+        let port = match gateway.port {
+            None => Ok(DEFAULT_SSH_PORT),
+            Some(value) => u16::try_from(value)
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or(SkipReason::InvalidPort(value)),
+        };
+        let checked = if gateway.id.is_empty() {
+            Err(SkipReason::MissingId)
+        } else if gateway.host.trim().is_empty() {
+            Err(SkipReason::MissingHost)
+        } else {
+            port
+        };
+        match checked {
+            Ok(port) => {
+                candidates.insert(
+                    gateway.id.as_str(),
+                    SshGateway {
+                        id: ProfileId::new(gateway.id.clone()),
+                        name: if gateway.name.is_empty() {
+                            gateway.host.trim().to_owned()
+                        } else {
+                            gateway.name.clone()
+                        },
+                        host: gateway.host.trim().to_owned(),
+                        port,
+                        username: non_empty(gateway.user.as_ref()),
+                        key_path: non_empty(gateway.key_path.as_ref()).map(PathBuf::from),
+                        parent: non_empty(gateway.parent_gateway_id.as_ref()).map(ProfileId::new),
+                    },
+                );
+            }
+            Err(reason) => skipped.push(Skipped {
+                id: gateway.id.clone(),
+                name: gateway.name.clone(),
+                reason,
+            }),
+        }
+    }
+    // Kept in the file's order; each one's whole chain of parents must be kept too.
+    let mut kept = Vec::new();
+    for gateway in legacy {
+        let Some(candidate) = candidates.get(gateway.id.as_str()) else {
+            continue;
+        };
+        match chain_ends(candidate, &candidates) {
+            Ok(()) => kept.push(candidate.clone()),
+            Err(reason) => skipped.push(Skipped {
+                id: gateway.id.clone(),
+                name: gateway.name.clone(),
+                reason,
+            }),
+        }
+    }
+    (kept, skipped)
+}
+
+/// Whether following `gateway`'s parents ends on one with none, every parent there.
+fn chain_ends(gateway: &SshGateway, all: &HashMap<&str, SshGateway>) -> Result<(), SkipReason> {
+    let mut seen = HashSet::from([gateway.id.as_str()]);
+    let mut current = gateway;
+    while let Some(parent) = &current.parent {
+        let Some(next) = all.get(parent.as_str()) else {
+            return Err(SkipReason::MissingGateway);
+        };
+        if !seen.insert(next.id.as_str()) {
+            return Err(SkipReason::GatewayLoop);
+        }
+        current = next;
+    }
+    Ok(())
 }
 
 /// Group defaults in force for `group`, as `GroupDefaultsDto.Resolve` computes them.
@@ -336,7 +446,8 @@ fn non_empty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
 }
 
-fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
+/// An SSH profile, through its gateway when it names one among `gateways`.
+fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile, SkipReason> {
     if server.connection_type != SSH_CONNECTION_TYPE {
         return Err(SkipReason::NotSsh(server.connection_type.clone()));
     }
@@ -346,9 +457,11 @@ fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
     if server.remote_server.trim().is_empty() {
         return Err(SkipReason::MissingHost);
     }
-    if !is_null_or_empty(server.ssh_gateway_id.as_ref()) {
-        return Err(SkipReason::NeedsJumpHost);
-    }
+    let gateway = match non_empty(server.ssh_gateway_id.as_ref()) {
+        None => None,
+        Some(id) if gateways.contains(id.as_str()) => Some(ProfileId::new(id)),
+        Some(_) => return Err(SkipReason::MissingGateway),
+    };
     let port = match server.ssh_port {
         None => DEFAULT_SSH_PORT,
         Some(value) => match u16::try_from(value) {
@@ -368,6 +481,7 @@ fn convert(server: &LegacyServer) -> Result<SshProfile, SkipReason> {
         port,
         username: non_empty(server.ssh_username.as_ref()),
         key_path: non_empty(server.ssh_key_path.as_ref()).map(PathBuf::from),
+        gateway,
     })
 }
 

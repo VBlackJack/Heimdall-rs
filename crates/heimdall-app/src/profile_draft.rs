@@ -74,6 +74,9 @@ pub struct ProfileDraft {
     pub username: String,
     /// Key file.
     pub key_path: String,
+    /// The SSH gateway of the profile being edited, which the form does not show: kept as it
+    /// is, so that saving the form never drops it.
+    pub gateway: Option<ProfileId>,
 }
 
 /// Why a form cannot be saved yet.
@@ -128,6 +131,7 @@ impl ProfileDraft {
                 .as_ref()
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
+            gateway: profile.gateway.clone(),
         }
     }
 
@@ -199,6 +203,7 @@ impl ProfileDraft {
             port,
             username: optional(username),
             key_path: optional(key_path).map(PathBuf::from),
+            gateway: self.gateway.clone(),
         })
     }
 }
@@ -274,6 +279,7 @@ mod tests {
             port: " 2222 ".to_owned(),
             username: " admin ".to_owned(),
             key_path: " /home/me/.ssh/id_ed25519 ".to_owned(),
+            gateway: None,
         };
         let profile = form.to_profile(id()).expect("valid");
         assert_eq!(profile.name, "web");
@@ -348,6 +354,7 @@ mod tests {
             port: 22,
             username: None,
             key_path: None,
+            gateway: None,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);

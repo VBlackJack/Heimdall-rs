@@ -24,6 +24,7 @@ use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
 use heimdall_core::profile::display_address;
+use heimdall_core::store::RouteError;
 use heimdall_sftp::local_name::LocalNameError;
 use heimdall_sftp::protocol::StatusCode;
 use heimdall_ssh::AuthMethod;
@@ -55,11 +56,31 @@ pub fn error(error: &UiError) -> String {
         UiError::LocalShell { detail } => {
             fl!("ui-error-local-shell", detail = server_text(detail))
         }
-        UiError::HostKeyChanged { recorded, offered } => fl!(
+        UiError::HostKeyChanged {
+            target: None,
+            recorded,
+            offered,
+        } => fl!(
             "ui-error-hostkey-changed",
             recorded = recorded.as_str(),
             offered = offered.as_str()
         ),
+        UiError::HostKeyChanged {
+            target: Some(target),
+            recorded,
+            offered,
+        } => fl!(
+            "ui-error-hostkey-changed-at",
+            target = server_text(target),
+            recorded = recorded.as_str(),
+            offered = offered.as_str()
+        ),
+        UiError::Route(RouteError::MissingGateway(id)) => {
+            fl!("ui-error-gateway-missing", id = server_text(id.as_str()))
+        }
+        UiError::Route(RouteError::Loop(id)) => {
+            fl!("ui-error-gateway-loop", id = server_text(id.as_str()))
+        }
         UiError::HostKeyAlgorithmMismatch { recorded } => fl!(
             "ui-error-hostkey-algorithm",
             recorded = recorded.join(LIST_SEPARATOR)
@@ -134,6 +155,8 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         SkipReason::InvalidPort(port) => {
             fl!("ui-import-skip-invalid-port", port = port.to_string())
         }
+        SkipReason::MissingGateway => fl!("ui-import-skip-missing-gateway"),
+        SkipReason::GatewayLoop => fl!("ui-import-skip-gateway-loop"),
         SkipReason::NeedsElevation => fl!("ui-import-skip-elevation"),
         SkipReason::NeedsPostConnectCommands => fl!("ui-import-skip-post-connect"),
         SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),

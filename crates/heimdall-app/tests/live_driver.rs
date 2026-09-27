@@ -48,6 +48,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
     options.agent = AgentSource::Disabled;
     ConnectRequest {
         purpose: heimdall_app::Purpose::Shell,
+        route: Vec::new(),
         profile: SshProfile {
             id: ProfileId::new("live"),
             name: "live".to_owned(),
@@ -56,6 +57,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
             port,
             username: Some(LIVE_USER.to_owned()),
             key_path: None,
+            gateway: None,
         },
         options,
         cancel: CancellationToken::new(),
