@@ -1412,11 +1412,14 @@ impl App {
             let rdp = store.merge_rdp(report.rdp);
             let telnet = store.merge_telnet(report.telnet);
             let vnc = store.merge_vnc(report.vnc);
-            MergeReport {
-                added: ssh.added + rdp.added + telnet.added + vnc.added,
-                updated: ssh.updated + rdp.updated + telnet.updated + vnc.updated,
-                unchanged: ssh.unchanged + rdp.unchanged + telnet.unchanged + vnc.unchanged,
-            }
+            let local = store.merge_local(report.local);
+            [ssh, rdp, telnet, vnc, local]
+                .into_iter()
+                .fold(MergeReport::default(), |total, one| MergeReport {
+                    added: total.added + one.added,
+                    updated: total.updated + one.updated,
+                    unchanged: total.unchanged + one.unchanged,
+                })
         }) {
             Ok(merged) => merged,
             Err(error) => {

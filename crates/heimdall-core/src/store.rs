@@ -23,14 +23,16 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::profile::{ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile};
+use crate::profile::{
+    LocalApproval, LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
+};
 
 /// Format version written into the profile file.
 ///
-/// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles. A build that knows an older
+/// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles. A build that knows an older
 /// version refuses a newer file rather than reading it, dropping the profiles it does not
 /// know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 4;
+pub const PROFILE_FILE_VERSION: u32 = 5;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -47,6 +49,8 @@ struct ProfileFile {
     telnet: Vec<TelnetProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     vnc: Vec<VncProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    local: Vec<LocalProfile>,
 }
 
 /// Why the profile file could not be read or written.
@@ -104,6 +108,7 @@ pub struct ProfileStore {
     rdp: Vec<RdpProfile>,
     telnet: Vec<TelnetProfile>,
     vnc: Vec<VncProfile>,
+    local: Vec<LocalProfile>,
 }
 
 impl ProfileStore {
@@ -118,6 +123,7 @@ impl ProfileStore {
             rdp: Vec::new(),
             telnet: Vec::new(),
             vnc: Vec::new(),
+            local: Vec::new(),
         }
     }
 
@@ -153,6 +159,7 @@ impl ProfileStore {
             rdp: file.rdp,
             telnet: file.telnet,
             vnc: file.vnc,
+            local: file.local,
         })
     }
 
@@ -186,6 +193,12 @@ impl ProfileStore {
         &self.vnc
     }
 
+    /// Local profiles, in file order.
+    #[must_use]
+    pub fn local_profiles(&self) -> &[LocalProfile] {
+        &self.local
+    }
+
     /// Adds or replaces SSH profiles by identifier; the order of existing profiles is kept.
     pub fn merge(&mut self, incoming: impl IntoIterator<Item = SshProfile>) -> MergeReport {
         merge_into(&mut self.ssh, incoming, |profile| &profile.id)
@@ -210,6 +223,37 @@ impl ProfileStore {
         merge_into(&mut self.vnc, incoming, |profile| &profile.id)
     }
 
+    /// Adds or replaces local profiles by identifier; the order of existing profiles is kept.
+    ///
+    /// A profile already in the store keeps its approval: an approval names what it approved,
+    /// so it still holds only if the incoming profile runs the same thing. An approval is
+    /// never taken from the incoming profile.
+    pub fn merge_local(&mut self, incoming: impl IntoIterator<Item = LocalProfile>) -> MergeReport {
+        let incoming: Vec<LocalProfile> = incoming
+            .into_iter()
+            .map(|mut profile| {
+                profile.approved = self
+                    .local
+                    .iter()
+                    .find(|existing| existing.id == profile.id)
+                    .and_then(|existing| existing.approved.clone());
+                profile
+            })
+            .collect();
+        merge_into(&mut self.local, incoming, |profile| &profile.id)
+    }
+
+    /// Records what the user approved for the local profile `id`; whether it was there.
+    pub fn approve_local(&mut self, id: &ProfileId, approval: LocalApproval) -> bool {
+        match self.local.iter_mut().find(|profile| profile.id == *id) {
+            Some(profile) => {
+                profile.approved = Some(approval);
+                true
+            }
+            None => false,
+        }
+    }
+
     /// Removes the profile `id`, of any protocol; whether it was there.
     pub fn remove(&mut self, id: &ProfileId) -> bool {
         let before = self.len();
@@ -217,12 +261,13 @@ impl ProfileStore {
         self.rdp.retain(|profile| profile.id != *id);
         self.telnet.retain(|profile| profile.id != *id);
         self.vnc.retain(|profile| profile.id != *id);
+        self.local.retain(|profile| profile.id != *id);
         self.len() != before
     }
 
     /// Number of profiles, all protocols together.
     fn len(&self) -> usize {
-        self.ssh.len() + self.rdp.len() + self.telnet.len() + self.vnc.len()
+        self.ssh.len() + self.rdp.len() + self.telnet.len() + self.vnc.len() + self.local.len()
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -254,6 +299,7 @@ impl ProfileStore {
             rdp: self.rdp.clone(),
             telnet: self.telnet.clone(),
             vnc: self.vnc.clone(),
+            local: self.local.clone(),
         })?;
         let dir = self
             .path

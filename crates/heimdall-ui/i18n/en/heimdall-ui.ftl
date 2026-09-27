@@ -205,3 +205,6 @@ ui-sidebar-local-shell-button = Local shell
 ui-local-shell-name = Local shell
 ui-local-starting = Starting { $name }...
 ui-error-local-shell = The local shell could not be started: { $detail }
+ui-import-skip-elevation = runs elevated, not supported yet
+ui-import-skip-post-connect = runs commands once started, not supported yet
+ui-import-skip-unsafe-local = its program, arguments or folder cannot be run as written (relative path, quote, NUL character, or a folder on another machine)
