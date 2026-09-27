@@ -58,6 +58,13 @@ pub const VAULT_FILE_NAME: &str = "vault.hvlt";
 /// cost, but a short password still falls to a patient attacker who copied the file.
 pub const MIN_MASTER_PASSWORD_CHARS: usize = 12;
 
+/// Kinds of character (lower case, upper case, digit, other) a master password shorter than
+/// [`LONG_MASTER_PASSWORD_CHARS`] mixes at least, as the C# Heimdall asks.
+pub const MIN_MASTER_PASSWORD_CLASSES: usize = 3;
+
+/// Length from which a master password needs no mix of characters: a passphrase.
+pub const LONG_MASTER_PASSWORD_CHARS: usize = 20;
+
 /// Where the vault stands.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultStatus {
@@ -72,10 +79,42 @@ pub enum VaultStatus {
 /// What the vault dialog does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultMode {
-    /// Open the existing vault.
+    /// Open the existing vault at start: cancelled, the application quits, as the C#
+    /// Heimdall's gate does.
     Unlock,
-    /// Create a vault: the password is typed twice.
+    /// The workspace was locked: it opens again with the master password, and cannot be
+    /// dismissed.
+    Locked,
+    /// Create a vault: the password is typed twice. Passwords saved in the system's store
+    /// move into it.
     Create,
+    /// Seal the open vault with a new password: the current one, then the new one twice.
+    Change,
+    /// Remove the master password: typed once, the saved passwords go back to the system's
+    /// store and the vault is deleted.
+    Disable,
+}
+
+/// What is done with the vault file away from the application's thread.
+pub enum VaultJob {
+    /// Open it.
+    Open,
+    /// Create it.
+    Create,
+    /// Open it, then seal it with this password.
+    Rekey(Secret),
+}
+
+impl VaultJob {
+    /// What it does, for logs: never the password.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::Create => "create",
+            Self::Rekey(_) => "rekey",
+        }
+    }
 }
 
 /// Why the vault could not be opened or created, or a new master password was refused.
@@ -87,6 +126,12 @@ pub enum VaultProblem {
     Mismatch,
     /// Shorter than [`MIN_MASTER_PASSWORD_CHARS`].
     TooShort,
+    /// Shorter than [`LONG_MASTER_PASSWORD_CHARS`] and mixing fewer than
+    /// [`MIN_MASTER_PASSWORD_CLASSES`] kinds of character.
+    TooSimple,
+    /// The master password cannot be removed: this system has no credential store to put
+    /// the saved passwords back in.
+    NoSystemStore,
     /// A vault appeared where one was to be created.
     AlreadyExists,
     /// The file could not be read or written, or no random bytes were given.
@@ -135,8 +180,8 @@ impl std::fmt::Debug for OpenedVault {
     }
 }
 
-/// Opens, or creates, the vault at `path` with `password`: the key derivation runs on a
-/// blocking thread.
+/// Opens, creates or seals again the vault at `path` with `password`: the key derivations
+/// run on a blocking thread.
 ///
 /// # Errors
 ///
@@ -144,14 +189,20 @@ impl std::fmt::Debug for OpenedVault {
 pub async fn open_vault(
     path: PathBuf,
     password: Secret,
-    create: bool,
+    job: VaultJob,
 ) -> Result<OpenedVault, VaultProblem> {
     tokio::task::spawn_blocking(move || {
         let password = password.expose().as_bytes();
-        let vault = if create {
-            Vault::create(path, password)
-        } else {
-            Vault::open(path, password)
+        let vault = match job {
+            VaultJob::Open => Vault::open(path, password),
+            VaultJob::Create => Vault::create(path, password),
+            VaultJob::Rekey(new) => Vault::open(path, password).and_then(|mut vault| {
+                vault.change_password(new.expose().as_bytes())?;
+                // The copy kept beside the vault is the file before this change, sealed with
+                // the old password: saved once more, it is sealed with the new one too.
+                vault.save()?;
+                Ok(vault)
+            }),
         };
         vault
             .map(|vault| OpenedVault(Arc::new(Mutex::new(Some(vault)))))
@@ -336,6 +387,99 @@ impl VaultState {
     }
 }
 
+impl VaultState {
+    /// Takes `vault`, just created, as where passwords are: those saved in the system's store
+    /// under `names` move into it. Nothing is lost on a failure: the new vault is removed and
+    /// the system's store left as it was.
+    fn move_in(&mut self, mut vault: Vault, names: &[String]) -> Result<(), VaultProblem> {
+        let mut moved = Vec::new();
+        let filled = names.iter().try_for_each(|name| {
+            if let Some(bytes) = self.system.get(name)? {
+                vault.set(name.clone(), bytes.to_vec());
+                moved.push(name);
+            }
+            Ok::<(), String>(())
+        });
+        if let Err(detail) = filled.and_then(|()| vault.save().map_err(|error| error.to_string())) {
+            drop(vault);
+            self.remove_files();
+            return Err(VaultProblem::System { detail });
+        }
+        for name in moved {
+            // Left behind, it is only a copy the vault makes unused.
+            if let Err(error) = self.system.remove(name) {
+                log::warn!("a password moved into the vault stays in the system's store: {error}");
+            }
+        }
+        self.open = Some(vault);
+        Ok(())
+    }
+
+    /// Puts every password of `vault`, just opened with its master password, back in the
+    /// system's store, then deletes the vault. On a failure the vault stays where passwords
+    /// are, whole; trying again finishes.
+    fn move_out(&mut self, vault: &Vault) -> Result<(), VaultProblem> {
+        for name in vault.names() {
+            let bytes = vault.get(name).unwrap_or_default();
+            self.system
+                .set(name, bytes)
+                .map_err(|detail| VaultProblem::System { detail })?;
+        }
+        std::fs::remove_file(&self.path).map_err(|error| VaultProblem::System {
+            detail: error.to_string(),
+        })?;
+        self.remove_files();
+        self.open = None;
+        Ok(())
+    }
+
+    /// Deletes the vault and the copy kept beside it, whichever are there.
+    fn remove_files(&self) {
+        for path in [self.path.clone(), sealvault::backup_path(&self.path)] {
+            if let Err(error) = std::fs::remove_file(&path)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                log::warn!("{} could not be deleted: {error}", path.display());
+            }
+        }
+    }
+}
+
+/// Why a new master password typed with `confirm` is refused, if it is: the C# Heimdall's
+/// rules, then the two typed alike.
+fn new_password_problem(password: &Secret, confirm: Option<&Secret>) -> Option<VaultProblem> {
+    let password = password.expose();
+    master_password_problem(password).or_else(|| {
+        (confirm.map(Secret::expose) != Some(password)).then_some(VaultProblem::Mismatch)
+    })
+}
+
+/// Why `password` is refused as a new master password by the C# Heimdall's rules, if it
+/// is: [`VaultProblem::TooShort`] or [`VaultProblem::TooSimple`]. The dialog says it as the
+/// password is typed, with the same rule the core applies.
+#[must_use]
+pub fn master_password_problem(password: &str) -> Option<VaultProblem> {
+    let length = password.chars().count();
+    let classes = [
+        password.chars().any(char::is_lowercase),
+        password.chars().any(char::is_uppercase),
+        password.chars().any(char::is_numeric),
+        password
+            .chars()
+            .any(|c| !(c.is_lowercase() || c.is_uppercase() || c.is_numeric())),
+    ]
+    .into_iter()
+    .filter(|&present| present)
+    .count();
+    if length < MIN_MASTER_PASSWORD_CHARS {
+        Some(VaultProblem::TooShort)
+    } else if length < LONG_MASTER_PASSWORD_CHARS && classes < MIN_MASTER_PASSWORD_CLASSES {
+        Some(VaultProblem::TooSimple)
+    } else {
+        None
+    }
+}
+
 /// The profile and server a question in a tab is about, when it is the tab's own server
 /// asking for its account's password; `None` for anything else (a gateway, a passphrase, a
 /// keyboard-interactive round).
@@ -422,9 +566,19 @@ impl App {
                 self.show_vault();
                 Vec::new()
             }
-            Message::SubmitVault { password, confirm } => {
-                self.submit_vault(password, confirm.as_ref())
+            Message::ChangeMasterPassword => {
+                self.show_master_password(VaultMode::Change);
+                Vec::new()
             }
+            Message::DisableMasterPassword => {
+                self.show_master_password(VaultMode::Disable);
+                Vec::new()
+            }
+            Message::SubmitVault {
+                password,
+                new,
+                confirm,
+            } => self.submit_vault(password, new, confirm.as_ref()),
             Message::VaultOpened(result) => {
                 self.vault_opened(result);
                 Vec::new()
@@ -458,51 +612,83 @@ impl App {
         }));
     }
 
-    /// Checks a master password typed into the vault dialog, then has it tried.
-    fn submit_vault(&mut self, password: Secret, confirm: Option<&Secret>) -> Vec<Effect> {
+    /// Opens the dialog changing the master password, or removing it: only when there is
+    /// one, open, as the C# settings offer them.
+    fn show_master_password(&mut self, mode: VaultMode) {
+        if self.vault_status() == VaultStatus::Open {
+            self.dialog = Some(Dialog::Vault(VaultDialog {
+                mode,
+                problem: None,
+                busy: false,
+            }));
+        }
+    }
+
+    /// Checks what was typed into the vault dialog, then has the vault opened, created or
+    /// sealed again. `password` is the dialog's first field: the master password, or the new
+    /// one when creating; `new` is the new one when changing it.
+    fn submit_vault(
+        &mut self,
+        password: Secret,
+        new: Option<Secret>,
+        confirm: Option<&Secret>,
+    ) -> Vec<Effect> {
+        let system_available = self.vault.system.available();
         let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() else {
             return Vec::new();
         };
         if dialog.busy {
             return Vec::new();
         }
-        let create = dialog.mode == VaultMode::Create;
-        if create {
-            let problem = if password.expose().chars().count() < MIN_MASTER_PASSWORD_CHARS {
-                Some(VaultProblem::TooShort)
-            } else if confirm.map(Secret::expose) != Some(password.expose()) {
-                Some(VaultProblem::Mismatch)
-            } else {
-                None
-            };
-            if problem.is_some() {
-                dialog.problem = problem;
-                return Vec::new();
+        let (problem, job) = match dialog.mode {
+            VaultMode::Unlock | VaultMode::Locked => (None, VaultJob::Open),
+            VaultMode::Create => (new_password_problem(&password, confirm), VaultJob::Create),
+            VaultMode::Change => {
+                let new = new.unwrap_or_else(|| Secret::new(String::new()));
+                (new_password_problem(&new, confirm), VaultJob::Rekey(new))
             }
+            VaultMode::Disable => (
+                (!system_available).then_some(VaultProblem::NoSystemStore),
+                VaultJob::Open,
+            ),
+        };
+        if problem.is_some() {
+            dialog.problem = problem;
+            return Vec::new();
         }
         dialog.busy = true;
         dialog.problem = None;
         vec![Effect::OpenVault {
             path: self.vault.path.clone(),
             password,
-            create,
+            job,
         }]
     }
 
-    /// The vault was opened, or could not be.
+    /// The vault was opened, created or sealed again, or could not be: finishes what the
+    /// dialog was for.
     pub(super) fn vault_opened(&mut self, result: Result<OpenedVault, VaultProblem>) {
-        let waiting = matches!(&self.dialog, Some(Dialog::Vault(dialog)) if dialog.busy);
-        if !waiting {
-            // Cancelled while the key was derived: the vault stays closed.
-            return;
-        }
-        match result {
-            Ok(opened) => {
-                if let Some(vault) = opened.take() {
+        let mode = match &self.dialog {
+            Some(Dialog::Vault(dialog)) if dialog.busy => dialog.mode,
+            // Cancelled while the key was derived: nothing changes.
+            _ => return,
+        };
+        let names = self.password_entries();
+        let done = result.and_then(|opened| {
+            let vault = opened.take().ok_or_else(|| VaultProblem::System {
+                detail: "the vault was handed over twice".to_owned(),
+            })?;
+            match mode {
+                VaultMode::Unlock | VaultMode::Locked | VaultMode::Change => {
                     self.vault.open = Some(vault);
+                    Ok(())
                 }
-                self.dialog = None;
+                VaultMode::Create => self.vault.move_in(vault, &names),
+                VaultMode::Disable => self.vault.move_out(&vault),
             }
+        });
+        match done {
+            Ok(()) => self.dialog = None,
             Err(problem) => {
                 if let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() {
                     dialog.busy = false;
@@ -512,9 +698,56 @@ impl App {
         }
     }
 
+    /// The entry of every profile and gateway that may have a saved password: the system's
+    /// store cannot be listed.
+    fn password_entries(&self) -> Vec<String> {
+        self.profiles()
+            .iter()
+            .map(|profile| &profile.id)
+            .chain(self.gateways().iter().map(|gateway| &gateway.id))
+            .map(password_entry)
+            .collect()
+    }
+
     /// Closes the vault: its saved passwords leave memory, and nothing is answered from it.
+    /// Locks the workspace, as Ctrl+L does in the C# Heimdall: the vault closes, and the
+    /// master password is asked for before anything else. Without an open vault, nothing
+    /// happens.
     pub(super) fn lock_vault(&mut self) {
+        if self.vault_status() != VaultStatus::Open {
+            return;
+        }
         self.vault.open = None;
+        self.dialog = Some(Dialog::Vault(VaultDialog {
+            mode: VaultMode::Locked,
+            problem: None,
+            busy: false,
+        }));
+    }
+
+    /// Whether the workspace is locked: the vault closed behind the lock screen.
+    #[must_use]
+    pub fn is_locked(&self) -> bool {
+        matches!(&self.dialog, Some(Dialog::Vault(dialog)) if dialog.mode == VaultMode::Locked)
+    }
+
+    /// Dismisses the vault dialog as its Cancel does: at start the application quits, the
+    /// lock screen stays, anything else closes. `None` when the dialog is not the vault's.
+    pub(super) fn dismiss_vault(&mut self) -> Option<Vec<Effect>> {
+        let Some(Dialog::Vault(dialog)) = &self.dialog else {
+            return None;
+        };
+        match dialog.mode {
+            VaultMode::Locked => Some(Vec::new()),
+            VaultMode::Unlock => {
+                self.dialog = None;
+                Some(vec![Effect::Exit])
+            }
+            VaultMode::Create | VaultMode::Change | VaultMode::Disable => {
+                self.dialog = None;
+                Some(Vec::new())
+            }
+        }
     }
 
     /// The saved password answering `kind` in `tab_id`, if the rules allow one.

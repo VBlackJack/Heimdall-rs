@@ -37,9 +37,10 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, Message as AppMessage,
-    NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, SystemCredentials, Tab, TabId,
-    UiError, VaultDialog, VaultMode, VaultProblem, VaultStatus, connection_events, open_vault,
+    Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
+    QuestionId, QuestionKind, SystemCredentials, Tab, TabId, UiError, VaultDialog, VaultJob,
+    VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault,
     server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -61,7 +62,7 @@ use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
 use crate::terminal_view::TerminalView;
-use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
+use crate::terminal_view::keys::{WindowShortcut, is_lock_key, window_shortcut};
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TreeMenu};
 
@@ -110,6 +111,9 @@ const ELLIPSIS: &str = "...";
 /// Opacity of the veil behind a dialog.
 const VEIL_ALPHA: f32 = 0.6;
 
+/// Widest the settings' cards grow.
+const SETTINGS_WIDTH: f32 = 720.0;
+
 /// Height of the window a dialog's scrolling fields leave to the rest: the card's padding
 /// (24), the buttons (31), the error line (21) with the spacing around them (16), and a
 /// margin of a spacing and a half above and below the card.
@@ -149,6 +153,14 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             repeat: false,
             ..
         }) => Some(Message::DialogKey { confirm: false }),
+        // Ctrl+L even when a terminal took it: the session gets it too, as a shell's clear.
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key,
+            physical_key,
+            modifiers,
+            repeat: false,
+            ..
+        }) if is_lock_key(&key, physical_key, modifiers) => Some(Message::LockKey),
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
             physical_key,
@@ -205,9 +217,13 @@ pub enum Message {
         /// With Shift: the previous field.
         backward: bool,
     },
+    /// Ctrl+L: lock the workspace, when a master password is set.
+    LockKey,
+    /// Show the settings.
+    ShowSettings,
     /// A field of the vault dialog changed.
     VaultField {
-        /// Field: the password, then its confirmation.
+        /// Field, in the order the dialog shows them.
         index: usize,
         /// New content.
         value: String,
@@ -249,6 +265,8 @@ impl fmt::Debug for Message {
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
+            Self::LockKey => f.write_str("LockKey"),
+            Self::ShowSettings => f.write_str("ShowSettings"),
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
             Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
             Self::SubmitVault => f.write_str("SubmitVault"),
@@ -367,8 +385,8 @@ pub struct Shell {
     focused: Option<QuestionId>,
     /// Which field of the open dialog was last given focus, so it is given once.
     dialog_focus: Option<DialogFocus>,
-    /// What is typed into the vault dialog: the master password and its confirmation.
-    vault_fields: [Zeroizing<String>; 2],
+    /// What is typed into the vault dialog, in the order it shows its fields.
+    vault_fields: [Zeroizing<String>; 3],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
     /// What is typed into the password field of the gateway dialog.
@@ -377,6 +395,21 @@ pub struct Shell {
     cursor: CursorSpot,
     /// The menu open in the profile tree, and where.
     menu: Option<(TreeMenu, Point)>,
+    /// What the content area shows.
+    page: Page,
+}
+
+/// What the content area shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Page {
+    /// The tab shown.
+    Tab,
+    /// The settings, over the tab shown when they were opened: showing another tab leaves
+    /// them.
+    Settings {
+        /// That tab.
+        over: Option<TabId>,
+    },
 }
 
 /// A field given focus in a dialog.
@@ -429,7 +462,17 @@ impl Shell {
             gateway_password: Zeroizing::default(),
             cursor: CursorSpot::default(),
             menu: None,
+            page: Page::Tab,
         }
+    }
+
+    /// Whether the settings are shown.
+    #[must_use]
+    pub fn settings_shown(&self) -> bool {
+        self.page
+            == Page::Settings {
+                over: self.app.active,
+            }
     }
 
     /// The application core.
@@ -472,6 +515,14 @@ impl Shell {
 
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
+        // else of the window is drawn to be clicked.
+        if self.app.is_locked() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
+            return Task::none();
+        }
+        if matches!(message, Message::App(AppMessage::SelectTab(_))) {
+            self.page = Page::Tab;
+        }
         let reveal = matches!(
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
@@ -511,6 +562,17 @@ impl Shell {
                 return Task::none();
             }
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
+            Message::LockKey => {
+                self.menu = None;
+                self.app.update(AppMessage::LockVault)
+            }
+            Message::ShowSettings => {
+                self.menu = None;
+                self.page = Page::Settings {
+                    over: self.app.active,
+                };
+                return Task::none();
+            }
             Message::SubmitVault => self.submit_vault(),
             Message::ProfilePassword(value) => {
                 self.profile_password = Zeroizing::new(value);
@@ -621,12 +683,18 @@ impl Shell {
         let Some(Dialog::Vault(dialog)) = &self.app.dialog else {
             return Vec::new();
         };
-        let create = dialog.mode == VaultMode::Create;
-        let [password, confirm] = std::mem::take(&mut self.vault_fields);
+        let mode = dialog.mode;
+        let [first, second, third] = std::mem::take(&mut self.vault_fields);
         let secret = |mut text: Zeroizing<String>| Secret::new(std::mem::take(&mut *text));
+        let (new, confirm) = match mode {
+            VaultMode::Create => (None, Some(secret(second))),
+            VaultMode::Change => (Some(secret(second)), Some(secret(third))),
+            VaultMode::Unlock | VaultMode::Locked | VaultMode::Disable => (None, None),
+        };
         self.app.update(AppMessage::SubmitVault {
-            password: secret(password),
-            confirm: create.then(|| secret(confirm)),
+            password: secret(first),
+            new,
+            confirm,
         })
     }
 
@@ -928,8 +996,8 @@ impl Shell {
             Effect::OpenVault {
                 path,
                 password,
-                create,
-            } => open_vault_task(path, password, create),
+                job,
+            } => open_vault_task(path, password, job),
             Effect::Exit => iced::exit(),
         }
     }
@@ -937,12 +1005,20 @@ impl Shell {
     /// Draws the window.
     #[must_use]
     pub fn view(&self) -> Element<'_, Message> {
-        let body = row![
-            self.sidebar(),
-            column![self.tab_bar(), self.content()]
-                .width(Length::Fill)
-                .height(Length::Fill)
-        ];
+        let locked = self.app.is_locked();
+        // Locked, the window is not drawn: nothing of it shows, and no hidden field takes
+        // what is typed. Its sessions go on.
+        let body: Element<'_, Message> = if locked {
+            iced::widget::space().into()
+        } else {
+            row![
+                self.sidebar(),
+                column![self.tab_bar(), self.content()]
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+            ]
+            .into()
+        };
         // Always a stack with the window first: a tree of one shape keeps the state of the
         // widgets under a dialog, such as how far a list is scrolled.
         let mut layers = stack![body];
@@ -952,19 +1028,21 @@ impl Shell {
                 container(responsive(move |size| {
                     center(card(dialog_view(dialog, &self.forms(size.height)))).into()
                 }))
-                .style(|_theme: &Theme| container::Style {
-                    background: Some(
+                .style(move |theme: &Theme| container::Style {
+                    background: Some(if locked {
+                        theme.palette().background.into()
+                    } else {
                         Color {
                             a: VEIL_ALPHA,
                             ..Color::BLACK
                         }
-                        .into(),
-                    ),
+                        .into()
+                    }),
                     ..container::Style::default()
                 }),
             ));
         }
-        if let Some((menu, at)) = &self.menu {
+        if let Some((menu, at)) = self.menu.as_ref().filter(|_| !locked) {
             let profile = match menu {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
                 TreeMenu::Add | TreeMenu::More => None,
@@ -1009,21 +1087,33 @@ impl Shell {
         ]
         .spacing(SPACING / 2.0)
         .align_y(iced::Alignment::Center);
-        let (vault_label, vault_message) = match self.app.vault_status() {
-            VaultStatus::Missing => (fl!("ui-sidebar-vault-create-button"), AppMessage::ShowVault),
-            VaultStatus::Locked => (fl!("ui-sidebar-vault-unlock-button"), AppMessage::ShowVault),
-            VaultStatus::Open => (fl!("ui-sidebar-vault-lock-button"), AppMessage::LockVault),
-        };
-        let actions = row![
+        let mut actions = row![
             button(text(fl!("ui-sidebar-local-shell-button")))
                 .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
                 .style(button::secondary),
-            button(text(vault_label))
-                .on_press(Message::App(vault_message))
-                .style(button::secondary),
+            button(text(fl!("ui-sidebar-settings-button")))
+                .on_press(Message::ShowSettings)
+                .style(if self.settings_shown() {
+                    button::primary
+                } else {
+                    button::secondary
+                }),
         ]
-        .spacing(SPACING / 2.0)
-        .wrap();
+        .spacing(SPACING / 2.0);
+        // As the C# toolbar's lock: there only while a master password is set.
+        if self.app.vault_status() == VaultStatus::Open {
+            actions = actions.push(
+                tooltip(
+                    button(text(fl!("ui-sidebar-lock-button")))
+                        .on_press(Message::App(AppMessage::LockVault))
+                        .style(button::secondary),
+                    text(fl!("ui-sidebar-lock-tooltip")).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
+        let actions = actions.wrap();
         let mut list = Column::new().spacing(2.0);
         let mut profiles = self.app.profile_summaries();
         if profiles.is_empty() {
@@ -1070,6 +1160,60 @@ impl Shell {
         .into()
     }
 
+    /// The settings, as the C# Settings tab's Security page: the master password card.
+    fn settings_page(&self) -> Element<'_, Message> {
+        let enabled = self.app.vault_status() != VaultStatus::Missing;
+        let mut actions = row![
+            text(if enabled {
+                fl!("ui-settings-vault-enabled")
+            } else {
+                fl!("ui-settings-vault-disabled")
+            }),
+            iced::widget::space::horizontal(),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center);
+        if enabled {
+            actions = actions
+                .push(
+                    button(text(fl!("ui-settings-vault-change")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::ChangeMasterPassword)),
+                )
+                .push(
+                    button(text(fl!("ui-settings-vault-disable")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::DisableMasterPassword)),
+                );
+        } else {
+            actions = actions.push(
+                button(text(fl!("ui-settings-vault-enable")))
+                    .on_press(Message::App(AppMessage::ShowVault)),
+            );
+        }
+        let vault_card = container(
+            column![
+                text(fl!("ui-settings-vault-title")).size(BODY_SIZE),
+                text(fl!("ui-settings-vault-explanation")).size(SMALL_SIZE),
+                actions,
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box);
+        scrollable(
+            column![
+                text(fl!("ui-settings-title")).size(HEADING_SIZE),
+                text(fl!("ui-settings-security")).size(BODY_SIZE),
+                vault_card,
+            ]
+            .spacing(SPACING)
+            .padding(PADDING),
+        )
+        .into()
+    }
+
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         for tab in &self.app.tabs {
@@ -1103,6 +1247,9 @@ impl Shell {
     }
 
     fn content(&self) -> Element<'_, Message> {
+        if self.settings_shown() {
+            return self.settings_page();
+        }
         let Some(tab) = self.app.active_tab() else {
             return center(
                 column![
@@ -1418,7 +1565,7 @@ fn import_report<'a>(
 /// What the dialogs show that the window holds.
 struct Forms<'a> {
     /// The vault dialog's fields.
-    vault: &'a [Zeroizing<String>; 2],
+    vault: &'a [Zeroizing<String>; 3],
     /// The profile form's password.
     profile_password: &'a str,
     /// The gateway dialog's password.
@@ -2171,8 +2318,8 @@ fn files_task(effect: Effect) -> Task<Message> {
 }
 
 /// Opens the vault away from the window's thread: the key derivation takes a moment.
-fn open_vault_task(path: PathBuf, password: Secret, create: bool) -> Task<Message> {
-    Task::perform(open_vault(path, password, create), |result| {
+fn open_vault_task(path: PathBuf, password: Secret, job: VaultJob) -> Task<Message> {
+    Task::perform(open_vault(path, password, job), |result| {
         Message::App(AppMessage::VaultOpened(result))
     })
 }
@@ -2181,73 +2328,140 @@ fn vault_field_id(index: usize) -> iced::widget::Id {
     iced::widget::Id::from(format!("vault-field-{index}"))
 }
 
-/// Unlocks the vault, or creates it with the password typed twice.
+/// The vault's dialogs, as the C# Heimdall's: the master password asked at start, the lock
+/// screen, and the master password enabled, changed or disabled.
 fn vault_dialog<'a>(
     dialog: &'a VaultDialog,
-    fields: &'a [Zeroizing<String>; 2],
+    fields: &'a [Zeroizing<String>; 3],
 ) -> Element<'a, Message> {
-    let create = dialog.mode == VaultMode::Create;
-    let min = MIN_MASTER_PASSWORD_CHARS;
-    let (title, body, action) = if create {
-        (
-            fl!("ui-vault-create-title"),
-            fl!("ui-vault-create-body", min = min),
-            fl!("ui-vault-create-button"),
-        )
-    } else {
-        (
+    let master = || fl!("ui-vault-field-master");
+    let new = || fl!("ui-vault-field-new");
+    let confirm = || fl!("ui-vault-field-confirm");
+    let (title, body, labels, action, busy) = match dialog.mode {
+        VaultMode::Unlock => (
             fl!("ui-vault-unlock-title"),
-            fl!("ui-vault-unlock-body"),
+            None,
+            vec![master()],
             fl!("ui-vault-unlock-button"),
-        )
+            fl!("ui-vault-unlock-busy"),
+        ),
+        VaultMode::Locked => (
+            fl!("ui-vault-locked-title"),
+            Some(fl!("ui-vault-locked-body")),
+            vec![master()],
+            fl!("ui-vault-unlock-button"),
+            fl!("ui-vault-unlock-busy"),
+        ),
+        VaultMode::Create => (
+            fl!("ui-vault-enable-title"),
+            Some(fl!("ui-vault-enable-body")),
+            vec![new(), confirm()],
+            fl!("ui-vault-enable-button"),
+            fl!("ui-vault-enable-busy"),
+        ),
+        VaultMode::Change => (
+            fl!("ui-vault-change-title"),
+            None,
+            vec![fl!("ui-vault-field-current"), new(), confirm()],
+            fl!("ui-vault-change-button"),
+            fl!("ui-vault-change-busy"),
+        ),
+        VaultMode::Disable => (
+            fl!("ui-vault-disable-title"),
+            Some(fl!("ui-vault-disable-warning")),
+            vec![master()],
+            fl!("ui-vault-disable-button"),
+            fl!("ui-vault-disable-busy"),
+        ),
     };
-    let field = |index: usize, placeholder: String| {
-        let mut input = text_input(&placeholder, fields[index].as_str())
+    // The new master password's field: its strength is said as it is typed, and the
+    // confirmation follows it.
+    let new_field = match dialog.mode {
+        VaultMode::Create => Some(0),
+        VaultMode::Change => Some(1),
+        VaultMode::Unlock | VaultMode::Locked | VaultMode::Disable => None,
+    };
+    let count = labels.len();
+    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    if let Some(body) = body {
+        form = form.push(text(body));
+    }
+    for (index, label) in labels.into_iter().enumerate() {
+        let mut input = text_input("", fields[index].as_str())
             .id(vault_field_id(index))
             .secure(true);
         if !dialog.busy {
             input = input
                 .on_input(move |value| Message::VaultField { index, value })
-                .on_submit(if create && index == 0 {
-                    Message::FocusVaultField(1)
+                .on_submit(if index + 1 < count {
+                    Message::FocusVaultField(index + 1)
                 } else {
                     Message::SubmitVault
                 });
         }
-        input
-    };
-    let mut form = column![
-        text(title).size(HEADING_SIZE),
-        text(body),
-        field(0, fl!("ui-vault-password-placeholder")),
-    ]
-    .spacing(SPACING);
-    if create {
-        form = form.push(field(1, fl!("ui-vault-confirm-placeholder")));
+        form = form.push(column![text(label).size(SMALL_SIZE), input].spacing(SPACING / 2.0));
+        if new_field == Some(index) {
+            form = form.push(text(policy_line(fields[index].as_str())).size(SMALL_SIZE));
+        }
     }
     if let Some(problem) = &dialog.problem {
-        form = form.push(text(vault_problem(problem, min)).style(text::danger));
+        form = form.push(text(vault_problem(problem)).style(text::danger));
     }
     if dialog.busy {
-        form = form.push(text(fl!("ui-vault-busy")).size(SMALL_SIZE));
+        form = form.push(text(busy).size(SMALL_SIZE));
     }
-    form.push(
-        row![
+    // As in C#: a new password is taken once it follows the rules and is typed twice alike.
+    let ready = new_field.is_none_or(|index| {
+        master_password_problem(fields[index].as_str()).is_none()
+            && fields[index].as_str() == fields[index + 1].as_str()
+    });
+    let mut buttons = row![iced::widget::space::horizontal()].spacing(SPACING);
+    // The lock screen has no Cancel; the one asked at start quits.
+    if dialog.mode != VaultMode::Locked {
+        buttons = buttons.push(
             button(text(fl!("ui-dialog-cancel-button")))
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(action)).on_press_maybe((!dialog.busy).then_some(Message::SubmitVault)),
-        ]
-        .spacing(SPACING),
-    )
-    .into()
+        );
+    }
+    buttons = buttons.push(
+        button(text(action))
+            .on_press_maybe((!dialog.busy && ready).then_some(Message::SubmitVault)),
+    );
+    form.push(buttons).into()
 }
 
-fn vault_problem(problem: &VaultProblem, min: usize) -> String {
+/// What the dialog says of a new master password as it is typed, by the core's own rule.
+fn policy_line(password: &str) -> String {
+    if password.is_empty() {
+        return fl!("ui-vault-policy-hint", min = MIN_MASTER_PASSWORD_CHARS);
+    }
+    match master_password_problem(password) {
+        Some(VaultProblem::TooShort) => {
+            fl!("ui-vault-policy-too-short", min = MIN_MASTER_PASSWORD_CHARS)
+        }
+        Some(_) => fl!(
+            "ui-vault-policy-complexity",
+            classes = MIN_MASTER_PASSWORD_CLASSES,
+            long = LONG_MASTER_PASSWORD_CHARS
+        ),
+        None => fl!("ui-vault-policy-ok"),
+    }
+}
+
+fn vault_problem(problem: &VaultProblem) -> String {
     match problem {
         VaultProblem::Unreadable => fl!("ui-vault-problem-unreadable"),
         VaultProblem::Mismatch => fl!("ui-vault-problem-mismatch"),
-        VaultProblem::TooShort => fl!("ui-vault-problem-too-short", min = min),
+        VaultProblem::TooShort => {
+            fl!("ui-vault-policy-too-short", min = MIN_MASTER_PASSWORD_CHARS)
+        }
+        VaultProblem::TooSimple => fl!(
+            "ui-vault-policy-complexity",
+            classes = MIN_MASTER_PASSWORD_CLASSES,
+            long = LONG_MASTER_PASSWORD_CHARS
+        ),
+        VaultProblem::NoSystemStore => fl!("ui-vault-problem-no-system-store"),
         VaultProblem::AlreadyExists => fl!("ui-vault-problem-exists"),
         VaultProblem::System { detail } => {
             fl!("ui-vault-problem-system", detail = detail.as_str())
@@ -2379,6 +2593,45 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn ctrl_l_reaches_the_window_even_when_a_terminal_took_it() {
+        let letter = |modifiers: Modifiers, repeat: bool| {
+            let key = Key::Character("l".into());
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers,
+                text: None,
+                repeat,
+            })
+        };
+        for status in [event::Status::Captured, event::Status::Ignored] {
+            assert!(matches!(
+                window_event(letter(Modifiers::CTRL, false), status, window::Id::unique()),
+                Some(Message::LockKey)
+            ));
+        }
+        assert!(
+            window_event(
+                letter(Modifiers::CTRL, true),
+                event::Status::Captured,
+                window::Id::unique()
+            )
+            .is_none(),
+            "held down, it locks once"
+        );
+        assert!(
+            window_event(
+                letter(Modifiers::empty(), false),
+                event::Status::Ignored,
+                window::Id::unique()
+            )
+            .is_none()
+        );
     }
 
     #[test]

@@ -22,9 +22,9 @@ use std::path::Path;
 
 use heimdall_app::profile_draft::{DraftError, ProfileField};
 use heimdall_app::{
-    Answer, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, Message, QuestionId,
-    QuestionKind, SystemCredentials, TabId, UiError, VaultMode, VaultProblem, VaultStatus,
-    open_vault,
+    Answer, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, Message, OpenedVault,
+    QuestionId, QuestionKind, SystemCredentials, TabId, UiError, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, open_vault,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -75,20 +75,32 @@ async fn unlock(app: &mut App, master: &str) {
     app.update(Message::ShowVault);
     let effects = app.update(Message::SubmitVault {
         password: Secret::new(master.to_owned()),
+        new: None,
         confirm: create.then(|| Secret::new(master.to_owned())),
     });
-    let [
-        Effect::OpenVault {
-            path,
-            password,
-            create,
-        },
-    ] = effects.as_slice()
-    else {
-        panic!("expected OpenVault, got {effects:?}");
-    };
-    let result = open_vault(path.clone(), password.clone(), *create).await;
+    run_vault_job(app, effects).await;
+}
+
+/// Runs the vault job `effects` asks for, as the UI would, and hands the result back.
+async fn run_vault_job(app: &mut App, effects: Vec<Effect>) {
+    let result = open_vault_job(effects).await;
     app.update(Message::VaultOpened(result));
+}
+
+/// Runs the vault job `effects` asks for.
+async fn open_vault_job(effects: Vec<Effect>) -> Result<OpenedVault, VaultProblem> {
+    match <[Effect; 1]>::try_from(effects) {
+        Ok(
+            [
+                Effect::OpenVault {
+                    path,
+                    password,
+                    job,
+                },
+            ],
+        ) => open_vault(path, password, job).await,
+        other => panic!("expected OpenVault, got {other:?}"),
+    }
 }
 
 /// Opens the editor of profile `a` and saves it, `password` typed into it.
@@ -268,6 +280,7 @@ fn a_new_master_password_must_be_long_and_typed_twice_alike() {
     let submit = |app: &mut App, password: &str, confirm: &str| {
         app.update(Message::SubmitVault {
             password: Secret::new(password.to_owned()),
+            new: None,
             confirm: Some(Secret::new(confirm.to_owned())),
         })
     };
@@ -286,10 +299,43 @@ fn a_new_master_password_must_be_long_and_typed_twice_alike() {
     assert_eq!(problem(&app), Some(VaultProblem::TooShort));
     assert!(submit(&mut app, MASTER, "correct horse battery stapler").is_empty());
     assert_eq!(problem(&app), Some(VaultProblem::Mismatch));
+    // Long enough, but one kind of character: the C# rule asks for three below twenty.
     let twelve = "\u{e9}".repeat(heimdall_app::MIN_MASTER_PASSWORD_CHARS);
+    assert!(submit(&mut app, &twelve, &twelve).is_empty());
+    assert_eq!(problem(&app), Some(VaultProblem::TooSimple));
+    let nineteen = "a".repeat(heimdall_app::LONG_MASTER_PASSWORD_CHARS - 1);
+    assert!(submit(&mut app, &nineteen, &nineteen).is_empty());
+    assert_eq!(problem(&app), Some(VaultProblem::TooSimple));
+    // Three kinds: lower case, upper case, then a digit or anything else.
+    for mixed in [
+        "\u{e9}\u{e9}\u{e9}\u{e9}\u{e9}\u{c9}\u{c9}\u{c9}\u{c9}\u{c9}12",
+        "abcdefghiJK!",
+    ] {
+        assert_eq!(
+            mixed.chars().count(),
+            heimdall_app::MIN_MASTER_PASSWORD_CHARS
+        );
+        assert!(
+            matches!(
+                submit(&mut app, mixed, mixed).as_slice(),
+                [Effect::OpenVault {
+                    job: VaultJob::Create,
+                    ..
+                }]
+            ),
+            "{mixed}"
+        );
+        app.update(Message::DismissDialog);
+        app.update(Message::ShowVault);
+    }
+    // Twenty of one kind: a passphrase needs no mix.
+    let twenty = "a".repeat(heimdall_app::LONG_MASTER_PASSWORD_CHARS);
     assert!(matches!(
-        submit(&mut app, &twelve, &twelve).as_slice(),
-        [Effect::OpenVault { create: true, .. }]
+        submit(&mut app, &twenty, &twenty).as_slice(),
+        [Effect::OpenVault {
+            job: VaultJob::Create,
+            ..
+        }]
     ));
     assert!(!dir.path().join(heimdall_app::VAULT_FILE_NAME).exists());
 }
@@ -497,20 +543,11 @@ async fn cancelling_while_the_key_is_derived_leaves_the_vault_closed() {
     let mut app = self::app(dir.path(), "a.lab", &system);
     let effects = app.update(Message::SubmitVault {
         password: Secret::new(MASTER.to_owned()),
+        new: None,
         confirm: None,
     });
-    let [
-        Effect::OpenVault {
-            path,
-            password,
-            create,
-        },
-    ] = effects.as_slice()
-    else {
-        panic!("expected OpenVault, got {effects:?}");
-    };
     app.update(Message::DismissDialog);
-    let result = open_vault(path.clone(), password.clone(), *create).await;
+    let result = open_vault_job(effects).await;
     assert!(result.is_ok(), "the right password");
     app.update(Message::VaultOpened(result));
     assert_eq!(app.vault_status(), VaultStatus::Locked);
@@ -538,7 +575,11 @@ async fn a_password_that_could_not_be_saved_says_so_and_is_not_used() {
     unlock(&mut app, MASTER).await;
     // The copy kept before each save cannot be written: a folder is in its place.
     let vault = dir.path().join(heimdall_app::VAULT_FILE_NAME);
-    std::fs::create_dir(sealvault::backup_path(&vault)).expect("folder");
+    let backup = sealvault::backup_path(&vault);
+    if backup.exists() {
+        std::fs::remove_file(&backup).expect("copy");
+    }
+    std::fs::create_dir(backup).expect("folder");
     save_in_editor(&mut app, Some(PASSWORD));
     assert!(
         matches!(app.dialog, Some(Dialog::PasswordSaveFailed { .. })),
@@ -665,4 +706,258 @@ fn a_password_typed_while_it_cannot_be_saved_does_not_stop_the_profile_from_savi
         "saved without the password: {:?}",
         app.dialog
     );
+}
+
+const NEW_MASTER: &str = "a new, longer master passphrase";
+const GATEWAY_PASSWORD: &str = "jump pw";
+
+/// Adds gateway `bastion` with `GATEWAY_PASSWORD` saved, through its dialog.
+fn save_gateway(app: &mut App) {
+    app.update(Message::NewGateway);
+    for (field, value) in [
+        (ProfileField::Name, "bastion"),
+        (ProfileField::Host, "bastion.lab"),
+        (ProfileField::Username, "jump"),
+    ] {
+        app.update(Message::GatewayField {
+            field,
+            value: value.to_owned(),
+        });
+    }
+    app.update(Message::SaveGateway {
+        password: Some(Secret::new(GATEWAY_PASSWORD.to_owned())),
+    });
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+}
+
+fn system_entries(system: &SystemCredentials) -> usize {
+    let SystemCredentials::Memory(entries) = system else {
+        unreachable!()
+    };
+    entries.lock().expect("entries").len()
+}
+
+fn vault_problem(app: &App) -> Option<VaultProblem> {
+    match &app.dialog {
+        Some(Dialog::Vault(dialog)) => dialog.problem.clone(),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Whether `path` opens with `master`.
+async fn opens(path: &Path, master: &str) -> bool {
+    open_vault(
+        path.to_owned(),
+        Secret::new(master.to_owned()),
+        VaultJob::Open,
+    )
+    .await
+    .is_ok()
+}
+
+#[tokio::test]
+async fn enabling_a_master_password_moves_the_saved_passwords_into_the_vault() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    save_gateway(&mut app);
+    assert_eq!(system_entries(&system), 2, "the server's and the gateway's");
+
+    unlock(&mut app, MASTER).await;
+    assert_eq!(app.vault_status(), VaultStatus::Open);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert_eq!(
+        system_entries(&system),
+        0,
+        "moved, not copied: the system's store keeps nothing"
+    );
+    assert_eq!(first_answer(&mut app, "a.lab").as_deref(), Some(PASSWORD));
+
+    // What moved is in the vault on disk: a restart unlocked answers with it.
+    let mut restarted = self::app(dir.path(), "a.lab", &system);
+    unlock(&mut restarted, MASTER).await;
+    assert_eq!(
+        first_answer(&mut restarted, "a.lab").as_deref(),
+        Some(PASSWORD)
+    );
+}
+
+#[tokio::test]
+async fn changing_the_master_password_seals_the_vault_and_its_copy_with_the_new_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    unlock(&mut app, MASTER).await;
+    let path = dir.path().join(heimdall_app::VAULT_FILE_NAME);
+
+    app.update(Message::ChangeMasterPassword);
+    let change = |current: &str, new: &str, confirm: &str| Message::SubmitVault {
+        password: Secret::new(current.to_owned()),
+        new: Some(Secret::new(new.to_owned())),
+        confirm: Some(Secret::new(confirm.to_owned())),
+    };
+    assert!(app.update(change(MASTER, "short", "short")).is_empty());
+    assert_eq!(vault_problem(&app), Some(VaultProblem::TooShort));
+    assert!(
+        app.update(change(MASTER, NEW_MASTER, "another one"))
+            .is_empty()
+    );
+    assert_eq!(vault_problem(&app), Some(VaultProblem::Mismatch));
+    let effects = app.update(change("not the master", NEW_MASTER, NEW_MASTER));
+    run_vault_job(&mut app, effects).await;
+    assert_eq!(vault_problem(&app), Some(VaultProblem::Unreadable));
+    assert!(
+        opens(&path, MASTER).await,
+        "a wrong current one changes nothing"
+    );
+
+    let effects = app.update(change(MASTER, NEW_MASTER, NEW_MASTER));
+    run_vault_job(&mut app, effects).await;
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert_eq!(app.vault_status(), VaultStatus::Open);
+    assert_eq!(first_answer(&mut app, "a.lab").as_deref(), Some(PASSWORD));
+    assert!(opens(&path, NEW_MASTER).await);
+    assert!(!opens(&path, MASTER).await, "the old one opens nothing");
+    let backup = sealvault::backup_path(&path);
+    assert!(backup.is_file(), "a copy is kept beside the vault");
+    assert!(!opens(&backup, MASTER).await, "nor the copy kept beside it");
+}
+
+#[tokio::test]
+async fn disabling_the_master_password_puts_the_passwords_back_in_the_system_store() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    save_gateway(&mut app);
+    unlock(&mut app, MASTER).await;
+    let path = dir.path().join(heimdall_app::VAULT_FILE_NAME);
+
+    app.update(Message::DisableMasterPassword);
+    let disable = |master: &str| Message::SubmitVault {
+        password: Secret::new(master.to_owned()),
+        new: None,
+        confirm: None,
+    };
+    let effects = app.update(disable("not the master"));
+    run_vault_job(&mut app, effects).await;
+    assert_eq!(vault_problem(&app), Some(VaultProblem::Unreadable));
+    assert!(path.is_file(), "a wrong master password removes nothing");
+    assert_eq!(system_entries(&system), 0);
+
+    let effects = app.update(disable(MASTER));
+    run_vault_job(&mut app, effects).await;
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert_eq!(app.vault_status(), VaultStatus::Missing);
+    assert!(!path.exists(), "the vault is deleted");
+    assert!(
+        !sealvault::backup_path(&path).exists(),
+        "and the copy kept beside it"
+    );
+    assert_eq!(system_entries(&system), 2, "the server's and the gateway's");
+    assert_eq!(first_answer(&mut app, "a.lab").as_deref(), Some(PASSWORD));
+
+    let mut restarted = self::app(dir.path(), "a.lab", &system);
+    assert!(restarted.dialog.is_none(), "no master password to ask for");
+    assert_eq!(
+        first_answer(&mut restarted, "a.lab").as_deref(),
+        Some(PASSWORD)
+    );
+}
+
+#[tokio::test]
+async fn the_master_password_is_changed_or_removed_only_while_the_vault_is_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::memory());
+    for message in [
+        Message::ChangeMasterPassword,
+        Message::DisableMasterPassword,
+    ] {
+        app.update(message);
+        assert!(app.dialog.is_none(), "no master password: {:?}", app.dialog);
+    }
+    unlock(&mut app, MASTER).await;
+    app.update(Message::LockVault);
+    for message in [
+        Message::ChangeMasterPassword,
+        Message::DisableMasterPassword,
+    ] {
+        app.update(message);
+        assert!(app.is_locked(), "the lock screen stays: {:?}", app.dialog);
+    }
+}
+
+#[tokio::test]
+async fn without_a_system_store_the_master_password_cannot_be_removed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::Unavailable);
+    unlock(&mut app, MASTER).await;
+    assert_eq!(app.vault_status(), VaultStatus::Open);
+    app.update(Message::DisableMasterPassword);
+    let effects = app.update(Message::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        new: None,
+        confirm: None,
+    });
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(vault_problem(&app), Some(VaultProblem::NoSystemStore));
+    assert!(dir.path().join(heimdall_app::VAULT_FILE_NAME).is_file());
+}
+
+#[tokio::test]
+async fn a_locked_workspace_stays_locked_until_the_master_password_is_typed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    unlock(&mut app, MASTER).await;
+    assert!(!app.is_locked());
+
+    app.update(Message::LockVault);
+    assert!(app.is_locked());
+    assert_eq!(app.vault_status(), VaultStatus::Locked);
+    assert!(
+        app.update(Message::DismissDialog).is_empty(),
+        "the lock screen has no Cancel"
+    );
+    assert!(app.is_locked(), "still locked: {:?}", app.dialog);
+
+    let submit = |master: &str| Message::SubmitVault {
+        password: Secret::new(master.to_owned()),
+        new: None,
+        confirm: None,
+    };
+    let effects = app.update(submit("not the master"));
+    run_vault_job(&mut app, effects).await;
+    assert!(app.is_locked());
+    assert_eq!(vault_problem(&app), Some(VaultProblem::Unreadable));
+    let effects = app.update(submit(MASTER));
+    run_vault_job(&mut app, effects).await;
+    assert!(!app.is_locked(), "{:?}", app.dialog);
+    assert_eq!(app.vault_status(), VaultStatus::Open);
+    assert_eq!(first_answer(&mut app, "a.lab").as_deref(), Some(PASSWORD));
+}
+
+#[test]
+fn without_a_master_password_there_is_nothing_to_lock() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::memory());
+    app.update(Message::LockVault);
+    assert!(!app.is_locked());
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+}
+
+#[tokio::test]
+async fn cancelling_the_master_password_at_start_quits() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    unlock(&mut app, MASTER).await;
+    drop(app);
+    let mut restarted = self::app(dir.path(), "a.lab", &system);
+    assert!(
+        matches!(&restarted.dialog, Some(Dialog::Vault(dialog)) if dialog.mode == VaultMode::Unlock)
+    );
+    assert!(matches!(
+        restarted.update(Message::DismissDialog).as_slice(),
+        [Effect::Exit]
+    ));
 }
