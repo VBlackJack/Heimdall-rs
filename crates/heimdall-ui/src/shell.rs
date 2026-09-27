@@ -891,7 +891,8 @@ impl Shell {
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
             let entries =
                 tree_view::menu_entries(menu, profile.as_ref(), editable, self.app.can_import());
-            layers = layers.push(
+            // Opaque: what is under the menu is neither hovered nor clicked.
+            layers = layers.push(opaque(
                 mouse_area(
                     pin(entries)
                         .x(at.x)
@@ -901,7 +902,7 @@ impl Shell {
                 )
                 .on_press(Message::CloseTreeMenu)
                 .on_right_press(Message::CloseTreeMenu),
-            );
+            ));
         }
         CursorTracker::new(layers, self.cursor.clone()).into()
     }

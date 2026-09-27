@@ -130,11 +130,56 @@ fn row_tooltip(profile: &ProfileSummary) -> String {
     lines.join("\n")
 }
 
+/// Opacity of a menu entry that cannot be chosen.
+const DISABLED_ALPHA: f32 = 0.4;
+
+/// A menu entry as the C# menu draws one: plain text, the whole row lit under the pointer,
+/// faded when it cannot be chosen.
+fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    let plain = button::Style {
+        text_color: palette.background.base.text,
+        border: iced::Border {
+            radius: 2.0.into(),
+            ..iced::Border::default()
+        },
+        ..button::Style::default()
+    };
+    match status {
+        button::Status::Active => plain,
+        button::Status::Hovered | button::Status::Pressed => button::Style {
+            background: Some(palette.primary.weak.color.into()),
+            text_color: palette.primary.weak.text,
+            ..plain
+        },
+        button::Status::Disabled => button::Style {
+            text_color: palette.background.base.text.scale_alpha(DISABLED_ALPHA),
+            ..plain
+        },
+    }
+}
+
+/// The Delete entry: in the error colour, as in the C# menu.
+fn danger_style(theme: &Theme, status: button::Status) -> button::Style {
+    let palette = theme.extended_palette();
+    match status {
+        button::Status::Hovered | button::Status::Pressed => button::Style {
+            background: Some(palette.danger.base.color.into()),
+            text_color: palette.danger.base.text,
+            ..menu_style(theme, status)
+        },
+        _ => button::Style {
+            text_color: palette.danger.base.color,
+            ..menu_style(theme, status)
+        },
+    }
+}
+
 /// One entry: a label, active when it has a message.
 fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message> {
     button(text(label).size(MENU_TEXT_SIZE))
         .width(Length::Fill)
-        .style(button::text)
+        .style(menu_style)
         .on_press_maybe(message.map(Message::MenuChoice))
         .into()
 }
@@ -168,7 +213,7 @@ pub fn menu_entries<'a>(
                 entries = entries.push(
                     button(text(fl!("ui-tree-connect-as")).size(MENU_TEXT_SIZE))
                         .width(Length::Fill)
-                        .style(button::text)
+                        .style(menu_style)
                         .on_press(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone()))),
                 );
             }
@@ -213,7 +258,7 @@ pub fn menu_entries<'a>(
             entries = entries.push(separator()).push(
                 button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
                     .width(Length::Fill)
-                    .style(button::danger)
+                    .style(danger_style)
                     .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
             );
         }

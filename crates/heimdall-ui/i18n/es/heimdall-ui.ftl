@@ -6,7 +6,7 @@ ui-window-title-tab = { $tab } - Heimdall
 
 ui-sidebar-title = Perfiles
 ui-sidebar-empty = Aún no hay perfiles guardados.
-ui-sidebar-group-none = Sin grupo
+ui-sidebar-group-none = (Sin carpeta)
 
 ui-home-welcome = Bienvenido a Heimdall-rs.
 ui-home-hint = Elija un perfil a la izquierda para abrir una sesión SSH.
