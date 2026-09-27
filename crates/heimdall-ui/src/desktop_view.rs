@@ -14,8 +14,15 @@
  * limitations under the License.
  */
 
-//! The remote desktop of a tab, whatever protocol draws it: drawn at its own size from the
-//! top-left corner, and taking the keyboard and the mouse while it is shown.
+//! The remote desktop of a tab, whatever protocol draws it, taking the keyboard and the mouse
+//! while it is shown. Two ways to show it, as the C# Heimdall's resolution menu has:
+//!
+//! - Match window: the tab's size is asked of the server, and the desktop drawn pixel for
+//!   pixel from the tab's corner. Some servers (xrdp) change the size they paint without
+//!   announcing a new desktop: what lies beyond the tab is not theirs any more, and is cut.
+//! - Fit to window: nothing is asked; the whole desktop is drawn as large as the tab allows
+//!   with its proportions, never larger than itself, centred. For a server that keeps its
+//!   size, as a VNC one does.
 
 use std::cell::RefCell;
 
@@ -59,6 +66,7 @@ pub struct DesktopView<'a, M> {
     tab: TabId,
     wrap: fn(AppMessage) -> M,
     interactive: bool,
+    fit: bool,
 }
 
 impl<'a, M> DesktopView<'a, M> {
@@ -70,7 +78,16 @@ impl<'a, M> DesktopView<'a, M> {
             tab,
             wrap,
             interactive: true,
+            fit: false,
         }
+    }
+
+    /// Fit to window rather than match it: the whole desktop scaled into the tab, and its
+    /// size never asked of the server.
+    #[must_use]
+    pub fn fit(mut self, fit: bool) -> Self {
+        self.fit = fit;
+        self
     }
 
     /// Whether the desktop takes input. A dialog over it turns it off.
@@ -168,27 +185,65 @@ impl<'a, M> DesktopView<'a, M> {
         shell.capture_event();
     }
 
-    /// Where `position`, in window coordinates, falls on the desktop.
+    /// Where `position`, in window coordinates, falls on the desktop drawn in `bounds`.
     fn desktop_point(&self, bounds: Rectangle, position: iced::Point) -> (u16, u16) {
         let (width, height) = self
             .pane
             .framebuffer
             .read(|width, height, _| (width, height));
-        let clamp = |offset: f32, size: u16| {
-            // Truncation to a pixel is intended; the value is clamped to the desktop first.
-            #[allow(
-                clippy::cast_possible_truncation,
-                clippy::cast_sign_loss,
-                reason = "clamped to 0..size before the conversion"
-            )]
-            let pixel = offset.clamp(0.0, f32::from(size.saturating_sub(1))) as u16;
-            pixel
-        };
-        (
-            clamp(position.x - bounds.x, width),
-            clamp(position.y - bounds.y, height),
-        )
+        desktop_point(bounds, (width, height), self.fit, position)
     }
+}
+
+/// Where a desktop of `size` is drawn in `bounds`, and at what scale: fitted, or pixel for
+/// pixel from the corner.
+#[must_use]
+pub fn placed(bounds: Rectangle, size: (u16, u16), fit: bool) -> (Rectangle, f32) {
+    if fit {
+        return fitted(bounds, size);
+    }
+    let native = Size::new(f32::from(size.0), f32::from(size.1));
+    (Rectangle::new(bounds.position(), native), 1.0)
+}
+
+/// Where a desktop of `size` is drawn in `bounds`: as large as fits with its proportions,
+/// never larger than itself, centred; and the scale it is drawn at.
+#[must_use]
+pub fn fitted(bounds: Rectangle, (width, height): (u16, u16)) -> (Rectangle, f32) {
+    let (width, height) = (f32::from(width.max(1)), f32::from(height.max(1)));
+    let scale = (bounds.width / width).min(bounds.height / height).min(1.0);
+    let size = Size::new(width * scale, height * scale);
+    let origin = iced::Point::new(
+        bounds.x + (bounds.width - size.width) / 2.0,
+        bounds.y + (bounds.height - size.height) / 2.0,
+    );
+    (Rectangle::new(origin, size), scale)
+}
+
+/// Where `position`, in window coordinates, falls on a desktop of `size` drawn in `bounds`:
+/// scaled back, and clamped to the desktop.
+#[must_use]
+pub fn desktop_point(
+    bounds: Rectangle,
+    size: (u16, u16),
+    fit: bool,
+    position: iced::Point,
+) -> (u16, u16) {
+    let (area, scale) = placed(bounds, size, fit);
+    let clamp = |offset: f32, extent: u16| {
+        // Truncation to a pixel is intended; the value is clamped to the desktop first.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to 0..extent before the conversion"
+        )]
+        let pixel = (offset / scale).clamp(0.0, f32::from(extent.saturating_sub(1))) as u16;
+        pixel
+    };
+    (
+        clamp(position.x - area.x, size.0),
+        clamp(position.y - area.y, size.1),
+    )
 }
 
 fn mouse_button(button: mouse::Button) -> Option<PointerButton> {
@@ -243,7 +298,10 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             };
         }
         let bounds = layout.bounds();
-        self.report_size(state, shell, bounds);
+        // Fitted, the server keeps its own size.
+        if !self.fit {
+            self.report_size(state, shell, bounds);
+        }
         if !self.interactive {
             return;
         }
@@ -295,6 +353,11 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                     shell.capture_event();
                 }
             }
+            // F11 is the window's: full screen, as in the C# Heimdall.
+            Event::Keyboard(
+                keyboard::Event::KeyPressed { physical_key, .. }
+                | keyboard::Event::KeyReleased { physical_key, .. },
+            ) if *physical_key == Physical::Code(Code::F11) => {}
             Event::Keyboard(keyboard::Event::KeyPressed {
                 modified_key,
                 physical_key,
@@ -340,14 +403,11 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
         _viewport: &Rectangle,
     ) {
         let bounds = layout.bounds();
-        let (width, height) = self
+        let size = self
             .pane
             .framebuffer
             .read(|width, height, _| (width, height));
-        let area = Rectangle::new(
-            bounds.position(),
-            Size::new(f32::from(width), f32::from(height)),
-        );
+        let (area, _) = placed(bounds, size, self.fit);
         // The GPU renderer keeps the desktop in a texture it rewrites; see `desktop_texture`.
         if matches!(renderer, fallback::Renderer::Primary(_)) {
             let desktop = Desktop {
@@ -529,6 +589,65 @@ mod scancodes {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_desktop_larger_than_its_tab_is_fitted_and_pointed_at_where_it_is_drawn() {
+        let bounds = Rectangle::new(iced::Point::new(10.0, 20.0), Size::new(800.0, 600.0));
+        // Twice as large, and wider than the tab's proportions: the width decides.
+        let (area, scale) = fitted(bounds, (1920, 1080));
+        assert!((scale - 800.0 / 1920.0).abs() < f32::EPSILON);
+        assert!((area.width - 800.0).abs() < 0.01);
+        assert!((area.height - 450.0).abs() < 0.01);
+        assert!((area.x - 10.0).abs() < 0.01);
+        assert!((area.y - 95.0).abs() < 0.01, "centred: {area:?}");
+        // The middle of what is drawn is the middle of the desktop.
+        let middle = iced::Point::new(area.x + area.width / 2.0, area.y + area.height / 2.0);
+        assert_eq!(
+            desktop_point(bounds, (1920, 1080), true, middle),
+            (960, 540)
+        );
+        // Beside the picture, the pointer is clamped to its edge.
+        assert_eq!(
+            desktop_point(bounds, (1920, 1080), true, iced::Point::new(12.0, 21.0)),
+            (4, 0)
+        );
+        // Matched, the same point is the desktop's pixel under it, from the corner.
+        assert_eq!(
+            desktop_point(bounds, (1920, 1080), false, middle),
+            (400, 300)
+        );
+    }
+
+    #[test]
+    fn a_desktop_smaller_than_its_tab_keeps_its_size_centred() {
+        let bounds = Rectangle::new(iced::Point::ORIGIN, Size::new(1600.0, 900.0));
+        let (area, scale) = fitted(bounds, (1024, 768));
+        assert!((scale - 1.0).abs() < f32::EPSILON, "never enlarged");
+        assert!(
+            (area.x - 288.0).abs() < 0.01 && (area.y - 66.0).abs() < 0.01,
+            "{area:?}"
+        );
+        assert_eq!(
+            desktop_point(
+                bounds,
+                (1024, 768),
+                true,
+                iced::Point::new(288.0 + 100.0, 66.0 + 50.0)
+            ),
+            (100, 50)
+        );
+        let (area, scale) = placed(bounds, (1024, 768), false);
+        assert!((scale - 1.0).abs() < f32::EPSILON);
+        assert_eq!(
+            area.position(),
+            bounds.position(),
+            "matched: from the corner"
+        );
+        // A tab matched by the server: drawn pixel for pixel where the tab starts.
+        let (area, scale) = fitted(bounds, (1600, 900));
+        assert!((scale - 1.0).abs() < f32::EPSILON);
+        assert_eq!(area, bounds);
+    }
 
     #[test]
     fn keys_map_to_their_set_1_scancodes_by_position() {

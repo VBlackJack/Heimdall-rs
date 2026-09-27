@@ -45,7 +45,7 @@ use heimdall_term::{
 };
 use tokio_util::sync::CancellationToken;
 
-use crate::desktop::{DesktopInput, DesktopPane};
+use crate::desktop::{DesktopInput, DesktopPane, SpecialKeys};
 use crate::driver::{ConnectRequest, Purpose};
 use crate::error::{ServerAddress, UiError};
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
@@ -177,6 +177,13 @@ pub enum Message {
         tab: TabId,
         /// What happened, in order.
         inputs: Vec<DesktopInput>,
+    },
+    /// A key combination from the session's menu, for the remote desktop of a tab.
+    SendKeys {
+        /// Tab.
+        tab: TabId,
+        /// Which.
+        keys: SpecialKeys,
     },
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
@@ -384,6 +391,7 @@ impl fmt::Debug for Message {
             Self::DesktopInput { tab, inputs } => {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
+            Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
@@ -1103,7 +1111,9 @@ impl App {
             | Message::OpenWinRm(_)
             | Message::ReconnectTab(_)
             | Message::ForgetServer(_)) => self.open_message(message),
-            message @ (Message::DesktopResize { .. } | Message::DesktopInput { .. }) => {
+            message @ (Message::DesktopResize { .. }
+            | Message::DesktopInput { .. }
+            | Message::SendKeys { .. }) => {
                 self.desktop_message(message);
                 Vec::new()
             }
@@ -1199,6 +1209,7 @@ impl App {
                 }
             }
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
+            Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
             _ => {}
         }
     }
