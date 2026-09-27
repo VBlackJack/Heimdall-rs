@@ -429,7 +429,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                 // Opaque whatever alpha the decoder left, as the GPU path draws it: a new
                 // desktop is zeros, which would let the window show through.
                 let mut opaque = pixels.to_vec();
-                for pixel in opaque.chunks_exact_mut(4) {
+                for pixel in opaque.as_chunks_mut::<4>().0 {
                     pixel[3] = u8::MAX;
                 }
                 image::Handle::from_rgba(u32::from(width), u32::from(height), opaque)

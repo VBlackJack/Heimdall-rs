@@ -48,6 +48,21 @@ pub enum ProfileKind {
     WinRm,
 }
 
+impl ProfileKind {
+    /// The protocol's name, as the tree shows it and its search finds it.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Ssh => "SSH",
+            Self::Rdp => "RDP",
+            Self::Telnet => "Telnet",
+            Self::Vnc => "VNC",
+            Self::Local => "Local",
+            Self::WinRm => "WinRM",
+        }
+    }
+}
+
 /// What the tree shows and copies of a profile, whatever its protocol.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ProfileSummary {
@@ -65,6 +80,30 @@ pub struct ProfileSummary {
     pub username: Option<String>,
     /// The gateway it goes through, when it does.
     pub gateway: Option<GatewayBadge>,
+}
+
+impl ProfileSummary {
+    /// Whether the tree's search `term` finds this profile, as the C# Heimdall's does: in
+    /// its name, host, folder, account or protocol, whatever the case, and never across two
+    /// of them. An empty term finds every profile.
+    #[must_use]
+    pub fn matches(&self, term: &str) -> bool {
+        let term = term.trim().to_uppercase();
+        if term.is_empty() {
+            return true;
+        }
+        let host = self.endpoint.as_ref().map(|(host, _)| host.as_str());
+        [
+            Some(self.name.as_str()),
+            host,
+            self.group.as_deref(),
+            self.username.as_deref(),
+            Some(self.kind.label()),
+        ]
+        .into_iter()
+        .flatten()
+        .any(|field| field.to_uppercase().contains(&term))
+    }
 }
 
 /// How a session reaches its server, as the C# tree's badge says.

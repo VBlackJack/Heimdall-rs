@@ -407,3 +407,34 @@ fn a_duplicated_rdp_profile_leaves_its_password_behind_as_in_the_csharp_app() {
     );
     assert_eq!(entries.lock().expect("entries").len(), 1);
 }
+
+#[test]
+fn the_search_finds_a_profile_by_name_host_folder_account_or_protocol_never_across_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app(dir.path(), &SystemCredentials::memory());
+    let web = app.profile_summary(&id("ssh")).expect("web");
+    for found in [
+        "", "  ", "web", "WEB", "eb.la", "prod", "admin", "ssh", " Web ",
+    ] {
+        assert!(web.matches(found), "{found:?} finds it");
+    }
+    // "web" then the folder "Prod": only one field at a time.
+    for missed in [
+        "webprod", "web prod", "lab prod", "web web", "2222", "dc", "rdp",
+    ] {
+        assert!(!web.matches(missed), "{missed:?} does not");
+    }
+    let dc = app.profile_summary(&id("rdp")).expect("dc");
+    assert!(dc.matches("rdp"), "by the protocol the tree shows");
+    assert!(!dc.matches("prod"), "no folder");
+    let found: Vec<_> = app
+        .profile_summaries()
+        .into_iter()
+        .filter(|profile| profile.matches("lab"))
+        .map(|profile| profile.id)
+        .collect();
+    assert!(
+        found.contains(&id("telnet")) && found.contains(&id("vnc")),
+        "{found:?}"
+    );
+}

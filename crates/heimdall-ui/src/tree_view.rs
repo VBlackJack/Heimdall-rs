@@ -56,24 +56,11 @@ pub enum TreeMenu {
     More,
 }
 
-/// The protocol's name as the tree shows it.
-#[must_use]
-pub fn protocol_label(kind: ProfileKind) -> &'static str {
-    match kind {
-        ProfileKind::Ssh => "SSH",
-        ProfileKind::Rdp => "RDP",
-        ProfileKind::Telnet => "Telnet",
-        ProfileKind::Vnc => "VNC",
-        ProfileKind::Local => "Local",
-        ProfileKind::WinRm => "WinRM",
-    }
-}
-
 /// One profile: protocol and name; the host, account and protocol in its tooltip.
 pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, Message> {
     let id = profile.id.clone();
     let mut label = row![
-        text(protocol_label(profile.kind))
+        text(profile.kind.label())
             .size(PROTOCOL_SIZE)
             .style(text::secondary),
         text(profile.name.clone()).wrapping(text::Wrapping::Glyph),
@@ -158,7 +145,7 @@ fn row_tooltip(profile: &ProfileSummary) -> String {
     }
     lines.push(fl!(
         "ui-tree-tooltip-protocol",
-        protocol = protocol_label(profile.kind)
+        protocol = profile.kind.label()
     ));
     lines.join("\n")
 }
