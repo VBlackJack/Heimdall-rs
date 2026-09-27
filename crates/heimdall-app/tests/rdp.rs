@@ -305,3 +305,45 @@ fn the_size_the_tab_shows_its_desktop_at_reaches_the_session() {
     });
     assert_eq!(*wanted.borrow(), Some((1600, 900)));
 }
+
+#[test]
+fn every_key_combination_releases_what_it_pressed_modifiers_last() {
+    use heimdall_app::{DesktopInput, SpecialKeys};
+    for keys in SpecialKeys::ALL {
+        let inputs = keys.inputs();
+        let (pressed, released): (Vec<_>, Vec<_>) = inputs
+            .iter()
+            .partition(|input| matches!(input, DesktopInput::Key { pressed: true, .. }));
+        assert_eq!(pressed.len(), released.len(), "{keys:?}");
+        assert!(
+            inputs[..pressed.len()]
+                .iter()
+                .all(|input| matches!(input, DesktopInput::Key { pressed: true, .. })),
+            "{keys:?}: every key down first"
+        );
+        let names = |input: &&DesktopInput| match input {
+            DesktopInput::Key {
+                scancode, keysym, ..
+            } => (*scancode, *keysym),
+            other => panic!("{other:?}"),
+        };
+        let down: Vec<_> = pressed.iter().map(names).collect();
+        let mut up: Vec<_> = released.iter().map(names).collect();
+        up.reverse();
+        assert_eq!(down, up, "{keys:?}: up in the reverse order");
+        assert!(
+            down.iter()
+                .all(|(scancode, keysym)| scancode.is_some() && keysym.is_some()),
+            "{keys:?}: named for RDP and VNC alike"
+        );
+    }
+    // The Windows key is Super_L for VNC, the extended 0x5B for RDP.
+    assert_eq!(
+        SpecialKeys::Windows.inputs()[0],
+        DesktopInput::Key {
+            scancode: Some(heimdall_rdp::Scancode::from_u8(true, 0x5B)),
+            keysym: Some(0xFFEB),
+            pressed: true,
+        }
+    );
+}

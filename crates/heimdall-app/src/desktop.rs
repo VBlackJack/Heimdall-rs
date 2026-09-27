@@ -106,6 +106,90 @@ pub enum DesktopInput {
     },
 }
 
+/// A key combination sent to a remote desktop from the session's menu, as the C# Heimdall's
+/// "Send keys to remote": those this computer keeps for itself when typed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SpecialKeys {
+    /// Ctrl+Alt+Del: the secure attention sequence, for the logon screen.
+    CtrlAltDel,
+    /// The Windows key alone.
+    Windows,
+    /// Alt+Tab.
+    AltTab,
+    /// Ctrl+Esc: the Start menu.
+    CtrlEsc,
+    /// Escape.
+    Escape,
+    /// Print Screen.
+    PrintScreen,
+    /// Win+L: lock the workstation.
+    WinL,
+    /// Win+D: show the desktop.
+    WinD,
+    /// Win+E: the file explorer.
+    WinE,
+}
+
+/// A key as both protocols name it: its set 1 scancode (extended, value) and its X11 keysym.
+type KeyNames = ((bool, u8), u32);
+
+const CONTROL: KeyNames = ((false, 0x1D), 0xFFE3);
+const ALT: KeyNames = ((false, 0x38), 0xFFE9);
+const SUPER: KeyNames = ((true, 0x5B), 0xFFEB);
+const DELETE: KeyNames = ((true, 0x53), 0xFFFF);
+const TAB: KeyNames = ((false, 0x0F), 0xFF09);
+const ESCAPE: KeyNames = ((false, 0x01), 0xFF1B);
+const PRINT: KeyNames = ((true, 0x37), 0xFF61);
+const LETTER_L: KeyNames = ((false, 0x26), 0x006C);
+const LETTER_D: KeyNames = ((false, 0x20), 0x0064);
+const LETTER_E: KeyNames = ((false, 0x12), 0x0065);
+
+impl SpecialKeys {
+    /// Every combination, in the menu's order.
+    pub const ALL: [Self; 9] = [
+        Self::CtrlAltDel,
+        Self::Windows,
+        Self::AltTab,
+        Self::CtrlEsc,
+        Self::Escape,
+        Self::PrintScreen,
+        Self::WinL,
+        Self::WinD,
+        Self::WinE,
+    ];
+
+    /// The keys pressed, the last one being the key the modifiers before it hold.
+    fn keys(self) -> &'static [KeyNames] {
+        match self {
+            Self::CtrlAltDel => &[CONTROL, ALT, DELETE],
+            Self::Windows => &[SUPER],
+            Self::AltTab => &[ALT, TAB],
+            Self::CtrlEsc => &[CONTROL, ESCAPE],
+            Self::Escape => &[ESCAPE],
+            Self::PrintScreen => &[PRINT],
+            Self::WinL => &[SUPER, LETTER_L],
+            Self::WinD => &[SUPER, LETTER_D],
+            Self::WinE => &[SUPER, LETTER_E],
+        }
+    }
+
+    /// What typing the combination sends: every key down in order, then up in reverse, so
+    /// no modifier is left held on the remote side.
+    #[must_use]
+    pub fn inputs(self) -> Vec<DesktopInput> {
+        let key = |((extended, value), keysym): KeyNames, pressed| DesktopInput::Key {
+            scancode: Some(Scancode::from_u8(extended, value)),
+            keysym: Some(keysym),
+            pressed,
+        };
+        let keys = self.keys();
+        keys.iter()
+            .map(|names| key(*names, true))
+            .chain(keys.iter().rev().map(|names| key(*names, false)))
+            .collect()
+    }
+}
+
 /// Where the input of a desktop goes.
 enum DesktopSink {
     Rdp {

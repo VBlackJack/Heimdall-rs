@@ -39,9 +39,9 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
     Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
-    QuestionId, QuestionKind, SystemCredentials, Tab, TabId, UiError, VaultDialog, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault,
-    server_text,
+    QuestionId, QuestionKind, SpecialKeys, SystemCredentials, Tab, TabId, UiError, VaultDialog,
+    VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem,
+    open_vault, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
@@ -153,6 +153,14 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             repeat: false,
             ..
         }) => Some(Message::DialogKey { confirm: false }),
+        // F11 whatever took it: the window's full screen, as in the C# Heimdall. A desktop
+        // keeps it from its server.
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            physical_key: keyboard::key::Physical::Code(keyboard::key::Code::F11),
+            modifiers,
+            repeat: false,
+            ..
+        }) if modifiers.is_empty() => Some(Message::ToggleFullscreen),
         // Ctrl+L even when a terminal took it: the session gets it too, as a shell's clear.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key,
@@ -224,6 +232,15 @@ pub enum Message {
     LockKey,
     /// Show the settings.
     ShowSettings,
+    /// F11: the window full screen, showing the session only, or back.
+    ToggleFullscreen,
+    /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
+    DesktopFit {
+        /// Tab.
+        tab: TabId,
+        /// Fit to window rather than match it.
+        fit: bool,
+    },
     /// The tree's search changed.
     Search(String),
     /// Ctrl+F: move to the tree's search.
@@ -274,6 +291,8 @@ impl fmt::Debug for Message {
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
+            Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
+            Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
             Self::FocusSearch => f.write_str("FocusSearch"),
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
@@ -406,6 +425,10 @@ pub struct Shell {
     menu: Option<(TreeMenu, Point)>,
     /// What the content area shows.
     page: Page,
+    /// Full screen: the window shows the session only.
+    fullscreen: bool,
+    /// Desktops shown otherwise than their protocol's default: fitted or matched.
+    desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
     search: String,
 }
@@ -474,6 +497,8 @@ impl Shell {
             cursor: CursorSpot::default(),
             menu: None,
             page: Page::Tab,
+            fullscreen: false,
+            desktop_fit: HashMap::new(),
             search: String::new(),
         }
     }
@@ -578,6 +603,9 @@ impl Shell {
                 self.menu = None;
                 self.app.update(AppMessage::LockVault)
             }
+            message @ (Message::DesktopFit { .. }
+            | Message::ToggleFullscreen
+            | Message::ShowSettings) => return self.view_message(&message),
             Message::Search(term) => {
                 self.search = term;
                 return Task::none();
@@ -587,13 +615,6 @@ impl Shell {
             Message::FocusSearch => {
                 return operation::focus(search_field_id())
                     .chain(operation::select_all(search_field_id()));
-            }
-            Message::ShowSettings => {
-                self.menu = None;
-                self.page = Page::Settings {
-                    over: self.app.active,
-                };
-                return Task::none();
             }
             Message::SubmitVault => self.submit_vault(),
             Message::ProfilePassword(value) => {
@@ -628,6 +649,34 @@ impl Shell {
             tasks.push(self.reveal_selection());
         }
         Task::batch(tasks)
+    }
+
+    /// Applies a message about what the window shows: the settings, full screen, how a
+    /// desktop is drawn.
+    fn view_message(&mut self, message: &Message) -> Task<Message> {
+        match message {
+            Message::DesktopFit { tab, fit } => {
+                self.desktop_fit.insert(*tab, *fit);
+                Task::none()
+            }
+            Message::ToggleFullscreen => {
+                self.fullscreen = !self.fullscreen;
+                let mode = if self.fullscreen {
+                    window::Mode::Fullscreen
+                } else {
+                    window::Mode::Windowed
+                };
+                window::latest().and_then(move |id| window::set_mode(id, mode))
+            }
+            Message::ShowSettings => {
+                self.menu = None;
+                self.page = Page::Settings {
+                    over: self.app.active,
+                };
+                Task::none()
+            }
+            _ => Task::none(),
+        }
     }
 
     fn prompt(&self, question: QuestionId) -> Option<&Prompt> {
@@ -844,6 +893,7 @@ impl Shell {
             self.gateway_password = Zeroizing::default();
         }
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
+        self.desktop_fit.retain(|tab, _| app.tab(*tab).is_some());
         self.drafts.retain(|question, _| {
             app.tabs.iter().any(|tab| {
                 tab.prompts
@@ -1032,6 +1082,9 @@ impl Shell {
         // what is typed. Its sessions go on.
         let body: Element<'_, Message> = if locked {
             iced::widget::space().into()
+        } else if self.fullscreen {
+            // Full screen is the session's: no tree, no tabs.
+            self.content()
         } else {
             row![
                 self.sidebar(),
@@ -1464,21 +1517,74 @@ impl Shell {
     }
 
     /// The remote desktop of a connected tab.
+    /// Whether `tab`'s desktop is fitted to the tab: as chosen, else as its protocol needs.
+    /// An RDP server matches the tab's size; a VNC server keeps its own, and is fitted.
+    fn fits(&self, tab: &Tab) -> bool {
+        self.desktop_fit
+            .get(&tab.id)
+            .copied()
+            .unwrap_or_else(|| fits_by_default(tab.purpose))
+    }
+
+    /// A remote desktop under its bar, as the C# session's: the keys this computer keeps for
+    /// itself, sent from a menu, how the desktop is shown, and full screen.
     fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
-        let view =
-            DesktopView::new(pane, tab.id, Message::App).interactive(self.app.dialog.is_none());
-        if tab.purpose != Purpose::Vnc {
-            return view.into();
-        }
-        // Always in sight: nothing on a VNC connection is encrypted.
-        column![
-            text(fl!("ui-session-vnc-unencrypted"))
-                .size(SMALL_SIZE)
-                .style(text::danger),
-            view,
+        let fit = self.fits(tab);
+        let view = DesktopView::new(pane, tab.id, Message::App)
+            .interactive(self.app.dialog.is_none())
+            .fit(fit);
+        let tab_id = tab.id;
+        let mode = pick_list(
+            [DesktopMode::Match, DesktopMode::Fit],
+            Some(if fit {
+                DesktopMode::Fit
+            } else {
+                DesktopMode::Match
+            }),
+            move |mode| Message::DesktopFit {
+                tab: tab_id,
+                fit: mode == DesktopMode::Fit,
+            },
+        )
+        .text_size(SMALL_SIZE);
+        let send_keys = pick_list(
+            SpecialKeys::ALL.map(KeysChoice).to_vec(),
+            None::<KeysChoice>,
+            move |KeysChoice(keys)| Message::App(AppMessage::SendKeys { tab: tab_id, keys }),
+        )
+        .placeholder(fl!("ui-desktop-send-keys"))
+        .text_size(SMALL_SIZE);
+        let fullscreen = button(
+            text(if self.fullscreen {
+                fl!("ui-desktop-exit-fullscreen")
+            } else {
+                fl!("ui-desktop-fullscreen")
+            })
+            .size(SMALL_SIZE),
+        )
+        .style(button::secondary)
+        .on_press(Message::ToggleFullscreen);
+        let mut bar = row![
+            tooltip(
+                send_keys,
+                text(fl!("ui-desktop-send-keys-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
+            mode,
+            fullscreen,
         ]
-        .spacing(SPACING / 2.0)
-        .into()
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center);
+        if tab.purpose == Purpose::Vnc {
+            // Always in sight: nothing on a VNC connection is encrypted.
+            bar = bar.push(
+                text(fl!("ui-session-vnc-unencrypted"))
+                    .size(SMALL_SIZE)
+                    .style(text::danger),
+            );
+        }
+        column![bar, view].spacing(SPACING / 2.0).into()
     }
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
@@ -2412,6 +2518,50 @@ fn open_vault_task(path: PathBuf, password: Secret, job: VaultJob) -> Task<Messa
     })
 }
 
+/// Whether a desktop of purpose is fitted to its tab unless the user chose otherwise: a
+/// VNC server keeps its own size, an RDP server is asked for the tab's.
+fn fits_by_default(purpose: Purpose) -> bool {
+    purpose == Purpose::Vnc
+}
+
+/// How a remote desktop is shown, as the C# Heimdall's resolution menu names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DesktopMode {
+    /// The server asked for the tab's size, drawn pixel for pixel.
+    Match,
+    /// The whole desktop scaled into the tab.
+    Fit,
+}
+
+impl fmt::Display for DesktopMode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self {
+            Self::Match => fl!("ui-desktop-match-window"),
+            Self::Fit => fl!("ui-desktop-fit-window"),
+        })
+    }
+}
+
+/// A key combination in the desktop's menu, by the C# Heimdall's name for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct KeysChoice(SpecialKeys);
+
+impl fmt::Display for KeysChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            SpecialKeys::CtrlAltDel => fl!("ui-desktop-keys-ctrl-alt-del"),
+            SpecialKeys::Windows => fl!("ui-desktop-keys-windows"),
+            SpecialKeys::AltTab => fl!("ui-desktop-keys-alt-tab"),
+            SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
+            SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
+            SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
+            SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
+            SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
+            SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),
+        })
+    }
+}
+
 fn search_field_id() -> iced::widget::Id {
     iced::widget::Id::new("tree-search")
 }
@@ -2685,6 +2835,55 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn a_vnc_desktop_is_fitted_and_an_rdp_one_matched_unless_chosen() {
+        assert!(fits_by_default(Purpose::Vnc));
+        assert!(!fits_by_default(Purpose::Rdp));
+    }
+
+    #[test]
+    fn f11_is_the_windows_full_screen_whatever_took_it() {
+        let f11 = |modifiers: Modifiers, repeat: bool| {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Named(Named::F11),
+                modified_key: Key::Named(Named::F11),
+                physical_key: Physical::Code(iced::keyboard::key::Code::F11),
+                location: Location::Standard,
+                modifiers,
+                text: None,
+                repeat,
+            })
+        };
+        for status in [event::Status::Captured, event::Status::Ignored] {
+            assert!(matches!(
+                window_event(f11(Modifiers::empty(), false), status, window::Id::unique()),
+                Some(Message::ToggleFullscreen)
+            ));
+        }
+        assert!(
+            !matches!(
+                window_event(
+                    f11(Modifiers::empty(), true),
+                    event::Status::Ignored,
+                    window::Id::unique()
+                ),
+                Some(Message::ToggleFullscreen)
+            ),
+            "held down, it switches once"
+        );
+        assert!(
+            !matches!(
+                window_event(
+                    f11(Modifiers::CTRL, false),
+                    event::Status::Ignored,
+                    window::Id::unique()
+                ),
+                Some(Message::ToggleFullscreen)
+            ),
+            "Ctrl+F11 is the session's"
+        );
     }
 
     #[test]

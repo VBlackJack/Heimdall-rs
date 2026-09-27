@@ -45,7 +45,7 @@ pub use app::{
     VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
     master_password_problem, open_vault,
 };
-pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton};
+pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, ServerAddress, UiError};
 pub use event::{Answer, ConnectionEvent, QuestionKind, ServerPasswordQuestion};

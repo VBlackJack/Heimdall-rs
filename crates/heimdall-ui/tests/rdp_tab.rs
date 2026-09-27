@@ -366,3 +366,160 @@ fn the_desktop_reports_the_size_it_is_shown_at() {
         "{width}x{height}"
     );
 }
+
+/// A connected RDP tab, and what its session receives.
+fn connected(
+    dir: &Path,
+) -> (
+    Shell,
+    TabId,
+    tokio::sync::mpsc::UnboundedReceiver<Vec<heimdall_rdp::Operation>>,
+) {
+    let (mut shell, tab, attempt) = opened(dir);
+    let (input, received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    (shell, tab, received)
+}
+
+#[test]
+fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_reverse() {
+    use heimdall_rdp::{Operation, Scancode};
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, mut received) = connected(dir.path());
+    // The menu is a pick list, which the simulator cannot open: its message is sent here.
+    let _ = shell.update(Message::App(AppMessage::SendKeys {
+        tab,
+        keys: heimdall_app::SpecialKeys::CtrlAltDel,
+    }));
+    let mut operations = Vec::new();
+    while let Ok(batch) = received.try_recv() {
+        operations.extend(batch);
+    }
+    let (ctrl, alt, del) = (
+        Scancode::from_u8(false, 0x1D),
+        Scancode::from_u8(false, 0x38),
+        Scancode::from_u8(true, 0x53),
+    );
+    let keys: Vec<(bool, Scancode)> = operations
+        .iter()
+        .map(|operation| match operation {
+            Operation::KeyPressed(code) => (true, *code),
+            Operation::KeyReleased(code) => (false, *code),
+            other => panic!("not a key: {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            (true, ctrl),
+            (true, alt),
+            (true, del),
+            (false, del),
+            (false, alt),
+            (false, ctrl),
+        ]
+    );
+}
+
+#[test]
+fn full_screen_shows_the_session_only_and_comes_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _received) = connected(dir.path());
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Profiles").expect("the tree");
+        ui.click("Fullscreen (F11)").expect("the button");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ToggleFullscreen))
+        );
+    }
+    let _ = shell.update(Message::ToggleFullscreen);
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Profiles").is_err(), "no tree in full screen");
+        ui.find("Exit fullscreen (F11)").expect("the way back");
+    }
+    let _ = shell.update(Message::ToggleFullscreen);
+    let mut ui = simulator(&shell);
+    ui.find("Profiles").expect("the tree again");
+    ui.find("Fullscreen (F11)").expect("the button again");
+}
+
+#[test]
+fn f11_stays_with_the_window_and_never_reaches_the_server() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let mut ui = simulator(&shell);
+    let _ = ui.simulate([
+        key_event("", iced::keyboard::key::Code::F11, true),
+        key_event("", iced::keyboard::key::Code::F11, false),
+        key_event("a", iced::keyboard::key::Code::KeyA, true),
+    ]);
+    let keys: Vec<DesktopInput> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+            _ => None,
+        })
+        .flatten()
+        .filter(|input| matches!(input, DesktopInput::Key { .. }))
+        .collect();
+    // Only the A: a positive control that keys do reach it.
+    assert_eq!(keys.len(), 1, "{keys:?}");
+}
+
+#[test]
+fn a_desktop_smaller_than_its_tab_is_drawn_in_its_middle() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(200, 100),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    // Matching the window, as an RDP server does by default: from the tab's corner, and the
+    // middle of the area right of the sidebar is the window's background.
+    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    assert_eq!(corner, [0, 0, 0, 255], "drawn by {renderer}");
+    let (middle, renderer) = pixel_at(&shell, 730, 420);
+    assert_ne!(middle, [0, 0, 0, 255], "drawn by {renderer}");
+
+    let _ = shell.update(Message::DesktopFit { tab, fit: true });
+    // Fitted: never enlarged, centred; the corner is the window's background now.
+    let (middle, renderer) = pixel_at(&shell, 730, 420);
+    assert_eq!(middle, [0, 0, 0, 255], "drawn by {renderer}");
+    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
+}
+
+#[test]
+fn a_fitted_desktop_asks_the_server_for_no_size() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = connected(dir.path());
+    let _ = shell.update(Message::DesktopFit { tab, fit: true });
+    let mut ui = simulator(&shell);
+    let _ = ui.snapshot(&Theme::Dark).expect("drawn");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::DesktopResize { .. }))),
+        "the server keeps its size"
+    );
+}
