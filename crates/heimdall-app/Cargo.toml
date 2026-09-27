@@ -20,6 +20,7 @@ heimdall-remote.workspace = true
 heimdall-sftp.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
+sealvault.workspace = true
 log.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true

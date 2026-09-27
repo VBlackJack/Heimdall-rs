@@ -466,3 +466,137 @@ fn enter_confirms_the_dialog_and_escape_cancels_it() {
         "without a dialog, Enter does nothing"
     );
 }
+
+/// Creates the vault of `core` as its dialog would, the key derivation run to its end.
+fn create_vault(core: &mut App) {
+    use heimdall_app::{Effect, open_vault};
+    use heimdall_ssh::Secret;
+
+    const MASTER: &str = "correct horse battery staple";
+    core.update(AppMessage::ShowVault);
+    let effects = core.update(AppMessage::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        confirm: Some(Secret::new(MASTER.to_owned())),
+    });
+    let [
+        Effect::OpenVault {
+            path,
+            password,
+            create,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("expected OpenVault, got {effects:?}");
+    };
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let result = runtime.block_on(open_vault(path.clone(), password.clone(), *create));
+    core.update(AppMessage::VaultOpened(result));
+}
+
+fn ask_password(core: &mut App, tab: TabId, attempt: AttemptId) -> QuestionId {
+    let question = QuestionId::fresh();
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Question {
+            question,
+            kind: QuestionKind::Password(PasswordQuestion {
+                host: "a.lab".to_owned(),
+                port: 22,
+                username: "admin".to_owned(),
+                attempt: 1,
+            }),
+        },
+    });
+    question
+}
+
+#[test]
+fn a_password_ticked_to_be_remembered_answers_the_next_connection() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    create_vault(&mut core);
+    let (tab, attempt) = open(&mut core, "a");
+    let question = ask_password(&mut core, tab, attempt);
+    let mut shell = Shell::with_app(core);
+    snapshot(&shell, "password-remember.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Lock vault").expect("the vault is open");
+        ui.click("Remember in the vault")
+            .expect("the box is offered");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Remember { question: q, remember: true } if q == question
+        )));
+    }
+    let _ = shell.update(Message::Remember {
+        question,
+        remember: true,
+    });
+    let _ = shell.update(Message::Field {
+        question,
+        index: 0,
+        value: "hunter2".to_owned(),
+    });
+    let _ = shell.update(Message::Submit(tab));
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    }));
+
+    // Another connection to the same server: answered without asking.
+    let mut core = shell_core(shell);
+    let (tab, attempt) = open(&mut core, "a");
+    let question = ask_password(&mut core, tab, attempt);
+    assert!(
+        core.tab(tab)
+            .expect("tab")
+            .prompts
+            .iter()
+            .all(|prompt| prompt.question != question),
+        "answered from the vault"
+    );
+}
+
+#[test]
+fn a_password_left_unticked_is_not_remembered() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    create_vault(&mut core);
+    let (tab, attempt) = open(&mut core, "a");
+    let question = ask_password(&mut core, tab, attempt);
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Field {
+        question,
+        index: 0,
+        value: "hunter2".to_owned(),
+    });
+    let _ = shell.update(Message::Submit(tab));
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    }));
+    let mut core = shell_core(shell);
+    let (tab, attempt) = open(&mut core, "a");
+    let question = ask_password(&mut core, tab, attempt);
+    assert!(
+        core.tab(tab)
+            .expect("tab")
+            .prompts
+            .iter()
+            .any(|prompt| prompt.question == question),
+        "asked"
+    );
+}
+
+/// The core of `shell`, to drive it further by messages.
+fn shell_core(shell: Shell) -> App {
+    shell.into_app()
+}
