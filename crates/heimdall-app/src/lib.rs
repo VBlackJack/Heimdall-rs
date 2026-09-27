@@ -47,7 +47,7 @@ pub use app::{
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
-pub use error::{KeyProblem, UiError};
+pub use error::{KeyProblem, ServerAddress, UiError};
 pub use event::{Answer, ConnectionEvent, QuestionKind, ServerPasswordQuestion};
 pub use ids::{AttemptId, QuestionId, TabId};
 pub use sink::InputSink;

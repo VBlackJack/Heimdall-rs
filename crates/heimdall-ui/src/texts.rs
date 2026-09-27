@@ -71,7 +71,7 @@ pub fn error(error: &UiError) -> String {
             offered,
         } => fl!(
             "ui-error-hostkey-changed-at",
-            target = server_text(target),
+            target = server_text(&target.to_string()),
             recorded = recorded.as_str(),
             offered = offered.as_str()
         ),

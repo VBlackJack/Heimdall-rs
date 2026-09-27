@@ -23,6 +23,21 @@ use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
 use heimdall_ssh::{AuthMethod, ConnectError, KeyFileError, KnownHostsError};
 
+/// A server by host and port, as the `known_hosts` file records it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ServerAddress {
+    /// Host name or address.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+}
+
+impl std::fmt::Display for ServerAddress {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&display_address(&self.host, self.port))
+    }
+}
+
 /// Why a key file could not be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyProblem {
@@ -75,9 +90,9 @@ pub enum UiError {
     },
     /// The server's key is not the recorded one: possible interception.
     HostKeyChanged {
-        /// `host:port` whose key changed, when it may be another than the tab's own: a
-        /// gateway on the way.
-        target: Option<String>,
+        /// The SSH server whose key changed: the tab's own, or a gateway on the way.
+        /// `None` for an RDP server's certificate, the tab's own server.
+        target: Option<ServerAddress>,
         /// SHA-256 fingerprint on record.
         recorded: String,
         /// SHA-256 fingerprint presented.
@@ -186,7 +201,7 @@ impl From<ConnectError> for UiError {
                 recorded,
                 offered,
             } => Self::HostKeyChanged {
-                target: Some(display_address(&host, port)),
+                target: Some(ServerAddress { host, port }),
                 recorded,
                 offered,
             },

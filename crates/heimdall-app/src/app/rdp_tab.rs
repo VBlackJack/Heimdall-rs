@@ -191,7 +191,7 @@ impl App {
 
     /// Forgets the key recorded for the server of an RDP tab whose key changed, then
     /// connects again: the certificate question comes back.
-    pub(super) fn forget_server(&mut self, tab_id: TabId) -> Vec<Effect> {
+    pub(super) fn forget_rdp_certificate(&mut self, tab_id: TabId) -> Vec<Effect> {
         let path = self.known_rdp_hosts();
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
