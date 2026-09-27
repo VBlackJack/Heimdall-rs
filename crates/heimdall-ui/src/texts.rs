@@ -176,6 +176,7 @@ pub fn draft_error(error: DraftError) -> String {
         DraftError::PortInvalid => fl!("ui-profile-error-port-invalid"),
         DraftError::UsernameInvalid => fl!("ui-profile-error-username-invalid"),
         DraftError::ControlCharacter => fl!("ui-profile-error-control"),
+        DraftError::UsernameForPassword => fl!("ui-profile-error-username-for-password"),
     }
 }
 

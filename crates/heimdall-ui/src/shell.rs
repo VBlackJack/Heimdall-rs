@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 
@@ -35,8 +35,9 @@ use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
     Effect, FilesMessage, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, Message as AppMessage,
-    NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, Tab, TabId, UiError, VaultDialog,
-    VaultMode, VaultProblem, VaultStatus, connection_events, open_vault, server_text, visible_text,
+    NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, SystemCredentials, Tab, TabId,
+    UiError, VaultDialog, VaultMode, VaultProblem, VaultStatus, connection_events, open_vault,
+    server_text, visible_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{
@@ -49,8 +50,8 @@ use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, center, checkbox, column, container, opaque, operation, row, scrollable, stack,
-    text, text_input,
+    Column, button, center, column, container, opaque, operation, row, scrollable, stack, text,
+    text_input, tooltip,
 };
 use iced::{Color, Element, Length, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
@@ -202,13 +203,10 @@ pub enum Message {
     FocusVaultField(usize),
     /// Try the master password typed.
     SubmitVault,
-    /// "Remember in the vault" ticked or cleared for a question.
-    Remember {
-        /// Question.
-        question: QuestionId,
-        /// Ticked.
-        remember: bool,
-    },
+    /// The password field of the profile form changed.
+    ProfilePassword(String),
+    /// Save the profile form, with the password typed into it.
+    SaveProfileForm,
 }
 
 impl fmt::Debug for Message {
@@ -231,9 +229,8 @@ impl fmt::Debug for Message {
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
             Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
             Self::SubmitVault => f.write_str("SubmitVault"),
-            Self::Remember { question, remember } => {
-                write!(f, "Remember({}, {remember})", question.value())
-            }
+            Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
+            Self::SaveProfileForm => f.write_str("SaveProfileForm"),
         }
     }
 }
@@ -433,6 +430,9 @@ fn tab_label(title: &str) -> String {
 
 /// Where the application keeps its files; the working directory when the platform has
 /// no home.
+/// Heimdall-rs's name in the system's credential store, apart from the C# Heimdall's.
+const CREDENTIAL_SERVICE: &str = "Heimdall-rs";
+
 fn config() -> AppConfig {
     AppConfig {
         profiles_file: paths::profiles_file().unwrap_or_else(|| PathBuf::from(PROFILES_FILE_NAME)),
@@ -442,6 +442,7 @@ fn config() -> AppConfig {
         agent: AgentSource::Auto,
         initial_grid: INITIAL_GRID,
         files_start: paths::home_dir().unwrap_or_else(|| PathBuf::from(".")),
+        system_credentials: SystemCredentials::keyring(CREDENTIAL_SERVICE),
     }
 }
 
@@ -460,8 +461,8 @@ pub struct Shell {
     dialog_focus: Option<DialogFocus>,
     /// What is typed into the vault dialog: the master password and its confirmation.
     vault_fields: [Zeroizing<String>; 2],
-    /// Questions whose password is to be remembered.
-    remember: HashSet<QuestionId>,
+    /// What is typed into the password field of the profile form.
+    profile_password: Zeroizing<String>,
 }
 
 /// A field given focus in a dialog.
@@ -501,7 +502,7 @@ impl Shell {
             focused: None,
             dialog_focus: None,
             vault_fields: Default::default(),
-            remember: HashSet::new(),
+            profile_password: Zeroizing::default(),
         }
     }
 
@@ -585,14 +586,11 @@ impl Shell {
             }
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::SubmitVault => self.submit_vault(),
-            Message::Remember { question, remember } => {
-                if remember {
-                    self.remember.insert(question);
-                } else {
-                    self.remember.remove(&question);
-                }
+            Message::ProfilePassword(value) => {
+                self.profile_password = Zeroizing::new(value);
                 return Task::none();
             }
+            Message::SaveProfileForm => self.save_profile_form(),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -635,20 +633,32 @@ impl Shell {
         let question = prompt.question;
         let typed = self.drafts.remove(&question).unwrap_or_default();
         let answer = accept.then(|| answer(&prompt.kind, typed));
-        let remember = self.remember.remove(&question) && self.app.can_remember(tab, prompt);
-        match answer {
-            Some(Answer::Secret(password)) if remember => {
-                self.app.update(AppMessage::AnswerRemembered {
-                    tab,
-                    question,
-                    password,
-                })
-            }
-            answer => self.app.update(AppMessage::Answer {
-                tab,
-                question,
-                answer,
-            }),
+        self.app.update(AppMessage::Answer {
+            tab,
+            question,
+            answer,
+        })
+    }
+
+    /// Hands the profile form to the core with the password typed, which leaves the window.
+    fn save_profile_form(&mut self) -> Vec<Effect> {
+        let typed = std::mem::take(&mut *self.profile_password);
+        let password = (!typed.is_empty()).then(|| Secret::new(typed));
+        self.app.update(AppMessage::SaveProfile { password })
+    }
+
+    /// What the dialogs show that the window holds: typed secrets, and where passwords go.
+    fn forms(&self) -> Forms<'_> {
+        Forms {
+            vault: &self.vault_fields,
+            profile_password: &self.profile_password,
+            passwords: if self.app.can_save_passwords() {
+                PasswordStore::Ready
+            } else if self.app.vault_status() == VaultStatus::Locked {
+                PasswordStore::VaultLocked
+            } else {
+                PasswordStore::None
+            },
         }
     }
 
@@ -702,6 +712,10 @@ impl Shell {
             .as_ref()
             .is_some_and(Dialog::confirms_on_enter);
         match (confirm, enter_confirms) {
+            // The form's password is here, not in the core.
+            (true, true) if matches!(self.app.dialog, Some(Dialog::EditProfile { .. })) => {
+                self.save_profile_form()
+            }
             (true, true) => self.app.update(AppMessage::ConfirmDialog),
             // Only a click agrees to this one.
             (true, false) => Vec::new(),
@@ -751,13 +765,9 @@ impl Shell {
         if !matches!(app.dialog, Some(Dialog::Vault(_))) {
             self.vault_fields = Default::default();
         }
-        self.remember.retain(|question| {
-            app.tabs.iter().any(|tab| {
-                tab.prompts
-                    .iter()
-                    .any(|prompt| prompt.question == *question)
-            })
-        });
+        if !matches!(app.dialog, Some(Dialog::EditProfile { .. })) {
+            self.profile_password = Zeroizing::default();
+        }
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
         self.drafts.retain(|question, _| {
             app.tabs.iter().any(|tab| {
@@ -936,7 +946,7 @@ impl Shell {
         let mut layers = stack![body];
         if let Some(dialog) = &self.app.dialog {
             layers = layers.push(opaque(
-                center(card(dialog_view(dialog, &self.vault_fields))).style(|_theme: &Theme| {
+                center(card(dialog_view(dialog, &self.forms()))).style(|_theme: &Theme| {
                     container::Style {
                         background: Some(
                             Color {
@@ -1268,16 +1278,6 @@ impl Shell {
                 }
             }
         }
-        if self.app.can_remember(tab.id, prompt) {
-            form = form.push(
-                checkbox(self.remember.contains(&id))
-                    .label(fl!("ui-prompt-remember"))
-                    .on_toggle(move |remember| Message::Remember {
-                        question: id,
-                        remember,
-                    }),
-            );
-        }
         form.push(
             row![
                 button(text(fl!("ui-prompt-cancel-button")))
@@ -1378,8 +1378,82 @@ fn import_report<'a>(
     content.push(ok).into()
 }
 
+/// What the dialogs show that the window holds.
+struct Forms<'a> {
+    /// The vault dialog's fields.
+    vault: &'a [Zeroizing<String>; 2],
+    /// The profile form's password.
+    profile_password: &'a str,
+    /// Whether a password typed now can be saved.
+    passwords: PasswordStore,
+}
+
+/// Whether a password typed now can be saved.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum PasswordStore {
+    /// It can.
+    Ready,
+    /// A master password is set and the vault is locked.
+    VaultLocked,
+    /// No master password, and no store on this system.
+    None,
+}
+
+/// The password of a profile, as the C# editor shows it: an empty field whatever is saved,
+/// "Password saved" and a button to clear it when one is.
+fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Message> {
+    let mut input = text_input("", forms.profile_password)
+        .id(password_field_id())
+        .secure(true);
+    if forms.passwords == PasswordStore::Ready {
+        input = input
+            .on_input(Message::ProfilePassword)
+            .on_submit(Message::SaveProfileForm);
+    }
+    let mut field = column![
+        text(fl!("ui-profile-field-password")).size(SMALL_SIZE),
+        input
+    ]
+    .spacing(SPACING / 2.0);
+    match forms.passwords {
+        PasswordStore::Ready if draft.password_saved => {
+            field = field.push(
+                row![
+                    text(fl!("ui-profile-password-saved")).size(SMALL_SIZE),
+                    tooltip(
+                        button(text(fl!("ui-profile-password-clear")).size(SMALL_SIZE))
+                            .style(button::text)
+                            .on_press(Message::App(AppMessage::ClearPassword)),
+                        text(fl!("ui-profile-password-clear-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Top,
+                    )
+                    .style(container::rounded_box),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+            );
+        }
+        PasswordStore::Ready => {}
+        PasswordStore::VaultLocked => {
+            field = field.push(text(fl!("ui-profile-password-locked")).size(SMALL_SIZE));
+        }
+        PasswordStore::None => {
+            field = field.push(text(fl!("ui-profile-password-no-store")).size(SMALL_SIZE));
+        }
+    }
+    field.into()
+}
+
+fn password_field_id() -> iced::widget::Id {
+    iced::widget::Id::from("profile-password")
+}
+
 /// The profile form: Enter in any field saves, Tab moves between fields.
-fn profile_form(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'_, Message> {
+fn profile_form<'a>(
+    draft: &'a ProfileDraft,
+    error: Option<DraftError>,
+    forms: &Forms<'a>,
+) -> Element<'a, Message> {
     let title = if draft.editing.is_some() {
         fl!("ui-profile-edit-title")
     } else {
@@ -1406,10 +1480,14 @@ fn profile_form(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'_, 
                 text_input(&placeholder, draft.value(field))
                     .id(profile_field_id(field))
                     .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
-                    .on_submit(Message::App(AppMessage::ConfirmDialog)),
+                    .on_submit(Message::SaveProfileForm),
             ]
             .spacing(SPACING / 2.0),
         );
+        // As in the C# editor: the password after the user name and the key.
+        if field == ProfileField::KeyPath {
+            form = form.push(password_field(draft, forms));
+        }
     }
     if let Some(error) = error {
         form = form.push(text(texts::draft_error(error)).style(text::danger));
@@ -1418,8 +1496,7 @@ fn profile_form(draft: &ProfileDraft, error: Option<DraftError>) -> Element<'_, 
         button(text(fl!("ui-dialog-cancel-button")))
             .style(button::secondary)
             .on_press(Message::App(AppMessage::DismissDialog)),
-        button(text(fl!("ui-profile-save-button")))
-            .on_press(Message::App(AppMessage::ConfirmDialog)),
+        button(text(fl!("ui-profile-save-button"))).on_press(Message::SaveProfileForm),
     ]
     .spacing(SPACING);
     if draft.editing.is_some() {
@@ -1632,10 +1709,7 @@ fn vault_problem(problem: &VaultProblem, min: usize) -> String {
     }
 }
 
-fn dialog_view<'a>(
-    dialog: &'a Dialog,
-    vault_fields: &'a [Zeroizing<String>; 2],
-) -> Element<'a, Message> {
+fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     let confirm = |label: String| {
         button(text(label))
             .style(button::danger)
@@ -1686,7 +1760,7 @@ fn dialog_view<'a>(
         )
         .into(),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
-        Dialog::EditProfile { draft, error } => profile_form(draft, *error),
+        Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmDeleteProfile { name, .. } => question(
             fl!("ui-dialog-delete-profile-title"),
             fl!("ui-dialog-delete-profile-body", name = name.as_str()),
@@ -1726,8 +1800,8 @@ fn dialog_view<'a>(
         ]
         .spacing(SPACING)
         .into(),
-        Dialog::Vault(vault) => vault_dialog(vault, vault_fields),
-        Dialog::VaultSaveFailed { detail: technical } => column![
+        Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
+        Dialog::PasswordSaveFailed { detail: technical } => column![
             heading(fl!("ui-vault-save-failed-title")),
             detail(technical),
             ok(),

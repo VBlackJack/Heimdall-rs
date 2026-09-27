@@ -17,13 +17,39 @@
 //! Creating, editing and deleting saved profiles. Every change is saved before it is kept:
 //! a save that fails leaves the list as its file is.
 
+use heimdall_core::credentials::{CredentialProtocol, Endpoint};
 use heimdall_core::profile::ProfileId;
+use heimdall_ssh::Secret;
 
-use super::{App, Dialog};
-use crate::profile_draft::{ProfileDraft, ProfileField, new_id};
+use super::{App, Dialog, Message};
+use crate::profile_draft::{DraftError, ProfileDraft, ProfileField, new_id};
 use crate::text::server_text;
 
 impl App {
+    /// Applies a message about the profile form.
+    pub(super) fn profile_message(&mut self, message: Message) {
+        match message {
+            Message::NewProfile => self.new_profile(),
+            Message::EditProfile(id) => self.edit_profile(&id),
+            Message::ProfileField { field, value } => self.profile_field(field, value),
+            Message::DeleteProfile => self.ask_delete_profile(),
+            Message::SaveProfile { password } => match self.dialog.take() {
+                Some(Dialog::EditProfile { draft, .. }) => {
+                    self.save_profile(draft, password.as_ref());
+                }
+                // Not the form: whatever is open stays.
+                other => self.dialog = other,
+            },
+            Message::ClearPassword => {
+                if let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut() {
+                    draft.clear_password = true;
+                    draft.password_saved = false;
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// Opens an empty profile form.
     pub(super) fn new_profile(&mut self) {
         self.dialog = Some(Dialog::EditProfile {
@@ -35,8 +61,10 @@ impl App {
     /// Opens the form of a saved profile.
     pub(super) fn edit_profile(&mut self, id: &ProfileId) {
         if let Some(profile) = self.profiles().iter().find(|profile| profile.id == *id) {
+            let mut draft = ProfileDraft::from_profile(profile);
+            draft.password_saved = self.password_saved(id);
             self.dialog = Some(Dialog::EditProfile {
-                draft: Box::new(ProfileDraft::from_profile(profile)),
+                draft: Box::new(draft),
                 error: None,
             });
         }
@@ -67,13 +95,21 @@ impl App {
         self.dialog = Some(Dialog::ConfirmDeleteProfile { id, name });
     }
 
-    /// Saves the form, or puts it back with what to fix.
-    pub(super) fn save_profile(&mut self, draft: Box<ProfileDraft>) {
+    /// Saves the form, with `password` typed into it, or puts it back with what to fix.
+    pub(super) fn save_profile(&mut self, draft: Box<ProfileDraft>, password: Option<&Secret>) {
         let id = draft
             .editing
             .clone()
             .unwrap_or_else(|| new_id(self.profiles()));
+        let typed =
+            password.filter(|typed| !typed.expose().is_empty() && self.can_save_passwords());
         let profile = match draft.to_profile(id) {
+            Ok(profile) if typed.is_some() && profile.username.is_none() => {
+                Err(DraftError::UsernameForPassword)
+            }
+            other => other,
+        };
+        let profile = match profile {
             Ok(profile) => profile,
             Err(error) => {
                 self.dialog = Some(Dialog::EditProfile {
@@ -83,10 +119,21 @@ impl App {
                 return;
             }
         };
+        let endpoint = Endpoint {
+            protocol: CredentialProtocol::Ssh,
+            host: profile.host.clone(),
+            port: profile.port,
+            username: profile.username.clone(),
+        };
+        let id = profile.id.clone();
         if let Err(error) = self.store.apply(|store| store.merge([profile])) {
             self.dialog = Some(Dialog::StoreError {
                 detail: error.to_string(),
             });
+            return;
+        }
+        if self.can_save_passwords() {
+            self.save_edited_password(&id, endpoint, typed, draft.clear_password);
         }
     }
 

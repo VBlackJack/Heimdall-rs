@@ -14,14 +14,17 @@
  * limitations under the License.
  */
 
-//! Saved passwords: kept only once accepted, given back only to the server they were
-//! accepted by, once per attempt, and never again in the session once refused.
+//! Saved passwords, as the C# Heimdall keeps them: typed in the profile editor, kept in the
+//! system's store or, once a master password is set, in the vault; given back only to the
+//! server they are for, once per attempt, and never again in the session once refused.
 
 use std::path::Path;
 
+use heimdall_app::profile_draft::{DraftError, ProfileField};
 use heimdall_app::{
     Answer, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, Message, QuestionId,
-    QuestionKind, TabId, UiError, VaultMode, VaultProblem, VaultStatus, open_vault,
+    QuestionKind, SystemCredentials, TabId, UiError, VaultMode, VaultProblem, VaultStatus,
+    open_vault,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -31,24 +34,29 @@ use heimdall_term::GridSize;
 const MASTER: &str = "correct horse battery staple";
 const PASSWORD: &str = "s3cret!";
 
-fn profile(id: &str, host: &str) -> SshProfile {
+fn profile(id: &str, host: &str, username: Option<&str>) -> SshProfile {
     SshProfile {
         id: ProfileId::new(id),
         name: format!("server {id}"),
         group: None,
         host: host.to_owned(),
         port: 22,
-        username: Some("admin".to_owned()),
+        username: username.map(str::to_owned),
         key_path: None,
         gateway: None,
     }
 }
 
-/// The application over `dir`, with profile `a` at `host`.
-fn app(dir: &Path, host: &str) -> App {
+/// The application over `dir`, with profile `a` at `host` for `admin`, and `system` as the
+/// store used without a master password.
+fn app(dir: &Path, host: &str, system: &SystemCredentials) -> App {
+    app_with(dir, profile("a", host, Some("admin")), system)
+}
+
+fn app_with(dir: &Path, profile: SshProfile, system: &SystemCredentials) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
-    store.merge([profile("a", host)]);
+    store.merge([profile]);
     store.save().expect("save");
     App::new(AppConfig {
         profiles_file,
@@ -57,6 +65,7 @@ fn app(dir: &Path, host: &str) -> App {
         agent: AgentSource::Disabled,
         initial_grid: GridSize { cols: 80, rows: 24 },
         files_start: dir.to_owned(),
+        system_credentials: system.clone(),
     })
 }
 
@@ -80,6 +89,25 @@ async fn unlock(app: &mut App, master: &str) {
     };
     let result = open_vault(path.clone(), password.clone(), *create).await;
     app.update(Message::VaultOpened(result));
+}
+
+/// Opens the editor of profile `a` and saves it, `password` typed into it.
+fn save_in_editor(app: &mut App, password: Option<&str>) {
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::SaveProfile {
+        password: password.map(|typed| Secret::new(typed.to_owned())),
+    });
+}
+
+/// Whether the editor of profile `a` says a password is saved.
+fn editor_says_saved(app: &mut App) -> bool {
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    let saved = match &app.dialog {
+        Some(Dialog::EditProfile { draft, .. }) => draft.password_saved,
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::DismissDialog);
+    saved
 }
 
 fn open(app: &mut App) -> (TabId, AttemptId) {
@@ -142,61 +170,99 @@ fn ask(
     (question, answered)
 }
 
-fn succeed(app: &mut App, tab: TabId, attempt: AttemptId) {
-    #[derive(Debug)]
-    struct Nothing;
-    impl heimdall_app::InputSink for Nothing {
-        fn write(&self, _: Vec<u8>) -> Result<(), heimdall_ssh::SessionClosed> {
-            Ok(())
-        }
-        fn resize(&self, _: heimdall_ssh::TerminalSize) -> Result<(), heimdall_ssh::SessionClosed> {
-            Ok(())
-        }
-        fn close(&self) {}
-    }
-    event(
-        app,
-        tab,
-        attempt,
-        ConnectionEvent::Connected {
-            input: std::sync::Arc::new(Nothing),
-        },
+/// What a new connection to profile `a` is answered with, asked by `host` on its first try.
+fn first_answer(app: &mut App, host: &str) -> Option<String> {
+    let (tab, attempt) = open(app);
+    ask(app, tab, attempt, password_question(host, 1)).1
+}
+
+/// An application with `PASSWORD` saved for profile `a` at `a.lab`, without a master
+/// password.
+fn saved(dir: &Path, system: &SystemCredentials) -> App {
+    let mut app = app(dir, "a.lab", system);
+    save_in_editor(&mut app, Some(PASSWORD));
+    app
+}
+
+#[test]
+fn a_password_saved_in_the_editor_answers_by_itself_after_a_restart_too() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    assert!(app.can_save_passwords(), "without a master password");
+    assert!(!editor_says_saved(&mut app));
+    save_in_editor(&mut app, Some(PASSWORD));
+    assert!(editor_says_saved(&mut app));
+    assert_eq!(first_answer(&mut app, "A.LAB").as_deref(), Some(PASSWORD));
+    assert!(app.dialog.is_none(), "no vault, nothing to unlock");
+
+    let mut restarted = self::app(dir.path(), "a.lab", &system);
+    assert!(
+        restarted.dialog.is_none(),
+        "no master password: no unlock at start"
+    );
+    assert_eq!(
+        first_answer(&mut restarted, "a.lab").as_deref(),
+        Some(PASSWORD)
     );
 }
 
-/// Types `PASSWORD` into the question with "remember" ticked.
-fn type_remembered(app: &mut App, tab: TabId, question: QuestionId) {
-    let prompt = app
-        .tab(tab)
-        .expect("tab")
-        .prompts
-        .iter()
-        .find(|prompt| prompt.question == question)
-        .cloned()
-        .expect("prompt");
-    assert!(app.can_remember(tab, &prompt));
-    app.update(Message::AnswerRemembered {
-        tab,
-        question,
-        password: Secret::new(PASSWORD.to_owned()),
-    });
+#[test]
+fn saving_the_editor_without_typing_keeps_the_password_and_clear_removes_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    save_in_editor(&mut app, None);
+    save_in_editor(&mut app, Some(""));
+    assert_eq!(first_answer(&mut app, "a.lab").as_deref(), Some(PASSWORD));
+
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::ClearPassword);
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert!(!draft.password_saved, "the form stops saying so at once");
+    app.update(Message::SaveProfile { password: None });
+    assert!(!editor_says_saved(&mut app));
+    assert_eq!(first_answer(&mut app, "a.lab"), None);
 }
 
-/// A vault with `PASSWORD` saved for profile `a` at `a.lab`.
-async fn saved(dir: &Path) -> App {
-    let mut app = app(dir, "a.lab");
-    unlock(&mut app, MASTER).await;
-    let (tab, attempt) = open(&mut app);
-    let (question, _) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    type_remembered(&mut app, tab, question);
-    succeed(&mut app, tab, attempt);
-    app
+#[test]
+fn clearing_then_dismissing_the_editor_keeps_the_password() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::ClearPassword);
+    app.update(Message::DismissDialog);
+    assert!(
+        editor_says_saved(&mut app),
+        "removed only when the form is saved"
+    );
+}
+
+#[test]
+fn a_password_needs_a_user_name() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app_with(dir.path(), profile("a", "a.lab", None), &system);
+    save_in_editor(&mut app, Some(PASSWORD));
+    let Some(Dialog::EditProfile { error, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(*error, Some(DraftError::UsernameForPassword));
+    assert_eq!(
+        DraftError::UsernameForPassword.field(),
+        ProfileField::Username
+    );
+    app.update(Message::DismissDialog);
+    assert!(!editor_says_saved(&mut app));
 }
 
 #[test]
 fn a_new_master_password_must_be_long_and_typed_twice_alike() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = app(dir.path(), "a.lab");
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::memory());
     assert_eq!(app.vault_status(), VaultStatus::Missing);
     app.update(Message::ShowVault);
     let submit = |app: &mut App, password: &str, confirm: &str| {
@@ -229,62 +295,69 @@ fn a_new_master_password_must_be_long_and_typed_twice_alike() {
 }
 
 #[tokio::test]
-async fn a_remembered_password_is_kept_only_once_accepted_then_answers_by_itself() {
+async fn with_a_master_password_passwords_go_to_the_vault_which_must_be_open() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = app(dir.path(), "a.lab");
+    let system = SystemCredentials::memory();
+    let SystemCredentials::Memory(entries) = &system else {
+        unreachable!()
+    };
+    let mut app = app(dir.path(), "a.lab", &system);
     unlock(&mut app, MASTER).await;
-    assert_eq!(app.vault_status(), VaultStatus::Open);
-
-    // Refused: nothing is kept.
-    let (tab, attempt) = open(&mut app);
-    let (question, _) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    type_remembered(&mut app, tab, question);
-    event(
-        &mut app,
-        tab,
-        attempt,
-        ConnectionEvent::Failed(UiError::AuthenticationFailed {
-            tried: vec![AuthMethod::Password],
-        }),
+    save_in_editor(&mut app, Some(PASSWORD));
+    assert!(
+        entries.lock().expect("entries").is_empty(),
+        "not in the system's store once a master password is set"
     );
-    let (tab, attempt) = open(&mut app);
-    let (question, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None, "a refused password was not kept");
+    assert_eq!(first_answer(&mut app, "a.lab").as_deref(), Some(PASSWORD));
 
-    // Accepted: kept, and the next connection is answered without asking.
-    type_remembered(&mut app, tab, question);
-    succeed(&mut app, tab, attempt);
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("A.LAB", 1));
-    assert_eq!(answered.as_deref(), Some(PASSWORD));
+    app.update(Message::LockVault);
+    assert!(!app.can_save_passwords());
+    assert!(
+        !editor_says_saved(&mut app),
+        "nothing can be read, nothing is said"
+    );
+    // Typed while locked: not saved anywhere, the profile itself still is.
+    save_in_editor(&mut app, Some("typed while locked"));
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(entries.lock().expect("entries").is_empty());
+    assert_eq!(first_answer(&mut app, "a.lab"), None);
 
-    // In the file: another start, unlocked, answers too.
-    let mut restarted = app_restarted(dir.path());
+    // A restart asks for the master password; unlocked, the vault answers.
+    let mut restarted = self::app(dir.path(), "a.lab", &system);
     assert!(
         matches!(&restarted.dialog, Some(Dialog::Vault(dialog)) if dialog.mode == VaultMode::Unlock),
         "a vault on disk is offered to unlock at start"
     );
     unlock(&mut restarted, MASTER).await;
-    let (tab, attempt) = open(&mut restarted);
-    let (_, answered) = ask(&mut restarted, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered.as_deref(), Some(PASSWORD));
+    assert_eq!(
+        first_answer(&mut restarted, "a.lab").as_deref(),
+        Some(PASSWORD)
+    );
 }
 
-fn app_restarted(dir: &Path) -> App {
-    app(dir, "a.lab")
-}
-
-#[tokio::test]
-async fn a_saved_password_goes_to_its_own_server_only() {
+#[test]
+fn a_saved_password_goes_to_its_own_server_only() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
 
-    // A gateway on the way asks with its own host.
+    assert_eq!(
+        first_answer(&mut app, "gateway.lab"),
+        None,
+        "never to a gateway"
+    );
     let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("gateway.lab", 1));
-    assert_eq!(answered, None, "never to a gateway");
-
-    // Another account on the same server.
+    let other_port = QuestionKind::Password(PasswordQuestion {
+        host: "a.lab".to_owned(),
+        port: 2222,
+        username: "admin".to_owned(),
+        attempt: 1,
+    });
+    assert_eq!(
+        ask(&mut app, tab, attempt, other_port).1,
+        None,
+        "never another port"
+    );
     let (tab, attempt) = open(&mut app);
     let other_account = QuestionKind::Password(PasswordQuestion {
         host: "a.lab".to_owned(),
@@ -292,36 +365,59 @@ async fn a_saved_password_goes_to_its_own_server_only() {
         username: "root".to_owned(),
         attempt: 1,
     });
-    let (_, answered) = ask(&mut app, tab, attempt, other_account);
-    assert_eq!(answered, None, "never to another account");
+    assert_eq!(
+        ask(&mut app, tab, attempt, other_account).1,
+        None,
+        "never another account"
+    );
 
-    // The profile edited to another host: the saved password stays with the old one.
+    // The profile changed outside the editor (an import): the password stays behind.
     drop(app);
-    let mut moved = self::app(dir.path(), "b.lab");
-    unlock(&mut moved, MASTER).await;
-    let (tab, attempt) = open(&mut moved);
-    let (_, answered) = ask(&mut moved, tab, attempt, password_question("b.lab", 1));
-    assert_eq!(answered, None, "never to the host a profile was changed to");
+    let mut moved = self::app(dir.path(), "b.lab", &system);
+    assert_eq!(first_answer(&mut moved, "b.lab"), None);
 }
 
-#[tokio::test]
-async fn a_saved_password_refused_is_given_once_then_the_user_is_asked() {
+#[test]
+fn a_profile_changed_in_the_editor_takes_its_password_along() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::ProfileField {
+        field: ProfileField::Host,
+        value: "b.lab".to_owned(),
+    });
+    app.update(Message::SaveProfile { password: None });
+    assert_eq!(first_answer(&mut app, "b.lab").as_deref(), Some(PASSWORD));
+    assert_eq!(
+        first_answer(&mut app, "a.lab"),
+        None,
+        "the old host no longer gets it"
+    );
+}
+
+#[test]
+fn a_saved_password_refused_is_given_once_then_the_user_is_asked_until_a_new_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
     let (tab, attempt) = open(&mut app);
     let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
     assert_eq!(answered.as_deref(), Some(PASSWORD));
     // The server asks again: it refused the saved password.
     let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 2));
     assert_eq!(answered, None);
-    // Not given again in this session, not even to a new attempt.
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None);
+    assert_eq!(first_answer(&mut app, "a.lab"), None, "not in this session");
+    // A new password saved in the editor is given again.
+    save_in_editor(&mut app, Some("new password"));
+    assert_eq!(
+        first_answer(&mut app, "a.lab").as_deref(),
+        Some("new password")
+    );
 }
 
-#[tokio::test]
-async fn a_saved_password_failing_the_connection_is_not_given_again() {
+#[test]
+fn a_saved_password_failing_the_connection_is_not_given_again() {
     // Refused outright, or disconnected by a server tired of wrong passwords.
     for failure in [
         UiError::AuthenticationFailed {
@@ -332,7 +428,7 @@ async fn a_saved_password_failing_the_connection_is_not_given_again() {
         },
     ] {
         let dir = tempfile::tempdir().expect("dir");
-        let mut app = saved(dir.path()).await;
+        let mut app = saved(dir.path(), &SystemCredentials::memory());
         let (tab, attempt) = open(&mut app);
         let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
         assert_eq!(answered.as_deref(), Some(PASSWORD));
@@ -342,16 +438,14 @@ async fn a_saved_password_failing_the_connection_is_not_given_again() {
             attempt,
             ConnectionEvent::Failed(failure.clone()),
         );
-        let (tab, attempt) = open(&mut app);
-        let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-        assert_eq!(answered, None, "{failure:?}");
+        assert_eq!(first_answer(&mut app, "a.lab"), None, "{failure:?}");
     }
 }
 
-#[tokio::test]
-async fn a_saved_password_answers_one_question_per_attempt() {
+#[test]
+fn a_saved_password_answers_one_question_per_attempt() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
+    let mut app = saved(dir.path(), &SystemCredentials::memory());
     let (tab, attempt) = open(&mut app);
     let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
     assert_eq!(answered.as_deref(), Some(PASSWORD));
@@ -360,169 +454,11 @@ async fn a_saved_password_answers_one_question_per_attempt() {
 }
 
 #[tokio::test]
-async fn a_locked_vault_answers_nothing_and_saves_nothing() {
-    let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
-    app.update(Message::LockVault);
-    assert_eq!(app.vault_status(), VaultStatus::Locked);
-    let (tab, attempt) = open(&mut app);
-    let (question, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None);
-    let prompt = app.tab(tab).expect("tab").prompts[0].clone();
-    assert_eq!(prompt.question, question);
-    assert!(!app.can_remember(tab, &prompt));
-}
-
-#[tokio::test]
-async fn a_wrong_master_password_says_so_and_opens_nothing() {
-    let dir = tempfile::tempdir().expect("dir");
-    drop(saved(dir.path()).await);
-    let mut app = app_restarted(dir.path());
-    unlock(&mut app, "not the master password").await;
-    assert_eq!(app.vault_status(), VaultStatus::Locked);
-    let Some(Dialog::Vault(dialog)) = &app.dialog else {
-        panic!("{:?}", app.dialog);
-    };
-    assert_eq!(dialog.problem, Some(VaultProblem::Unreadable));
-    assert!(!dialog.busy, "the user can try again");
-}
-
-/// Whether the question `kind`, asked in a new tab of `message`'s profile, may be remembered.
-fn rememberable(app: &mut App, message: Message, kind: QuestionKind) -> bool {
-    let effects = app.update(message);
-    let (tab, attempt) = match effects.as_slice() {
-        [Effect::ConnectRdp { tab, attempt, .. } | Effect::ConnectVnc { tab, attempt, .. }] => {
-            (*tab, *attempt)
-        }
-        other => panic!("unexpected {other:?}"),
-    };
-    let (question, answered) = ask(app, tab, attempt, kind);
-    assert_eq!(answered, None);
-    let prompt = app
-        .tab(tab)
-        .expect("tab")
-        .prompts
-        .iter()
-        .find(|prompt| prompt.question == question)
-        .cloned()
-        .expect("prompt");
-    app.can_remember(tab, &prompt)
-}
-
-#[tokio::test]
-async fn rdp_and_vnc_passwords_can_be_remembered_but_not_without_network_level_authentication() {
-    use heimdall_app::ServerPasswordQuestion;
-    use heimdall_core::profile::{RdpProfile, VncProfile};
-
-    let dir = tempfile::tempdir().expect("dir");
-    let rdp = |id: &str, allow_tls_only: bool| RdpProfile {
-        id: ProfileId::new(id),
-        name: id.to_owned(),
-        group: None,
-        host: "dc.lab".to_owned(),
-        port: 3389,
-        username: Some("admin".to_owned()),
-        domain: None,
-        allow_tls_only,
-        gateway: None,
-        redirect_clipboard: false,
-    };
-    let profiles_file = dir.path().join("profiles.toml");
-    let mut store = ProfileStore::open(&profiles_file).expect("store");
-    store.merge_rdp([rdp("nla", false), rdp("tls", true)]);
-    store.merge_vnc([VncProfile {
-        id: ProfileId::new("vnc"),
-        name: "vnc".to_owned(),
-        group: None,
-        host: "screen.lab".to_owned(),
-        port: 5900,
-        view_only: false,
-        allow_no_password: false,
-    }]);
-    store.save().expect("save");
-    drop(store);
-    let mut app = app(dir.path(), "a.lab");
-    unlock(&mut app, MASTER).await;
-
-    let rdp_question = || {
-        QuestionKind::Password(PasswordQuestion {
-            host: "dc.lab".to_owned(),
-            port: 3389,
-            username: "admin".to_owned(),
-            attempt: 1,
-        })
-    };
-    let vnc_question = |host: &str| {
-        QuestionKind::ServerPassword(ServerPasswordQuestion {
-            host: host.to_owned(),
-            port: 5900,
-        })
-    };
-    assert!(rememberable(
-        &mut app,
-        Message::OpenRdp(ProfileId::new("nla")),
-        rdp_question()
-    ));
-    assert!(
-        !rememberable(
-            &mut app,
-            Message::OpenRdp(ProfileId::new("tls")),
-            rdp_question()
-        ),
-        "a desktop shown without NLA proves nothing about the password"
-    );
-    assert!(rememberable(
-        &mut app,
-        Message::OpenVnc(ProfileId::new("vnc")),
-        vnc_question("screen.lab")
-    ));
-    assert!(!rememberable(
-        &mut app,
-        Message::OpenVnc(ProfileId::new("vnc")),
-        vnc_question("other.lab")
-    ));
-}
-
-#[tokio::test]
-async fn a_password_typed_for_an_abandoned_attempt_is_not_saved_by_the_next() {
-    use heimdall_ssh::PublicKey;
-    const HOST_KEY: &str =
-        include_str!("../../heimdall-ssh/tests/fixtures/hostkeys/host-ed25519.pub");
-
-    let dir = tempfile::tempdir().expect("dir");
-    let mut app = app(dir.path(), "a.lab");
-    unlock(&mut app, MASTER).await;
-    let (tab, old) = open(&mut app);
-    let (question, _) = ask(&mut app, tab, old, password_question("a.lab", 1));
-    type_remembered(&mut app, tab, question);
-    // The attempt stops on an unknown key; accepting it starts another.
-    let key = std::sync::Arc::new(PublicKey::from_openssh(HOST_KEY.trim()).expect("key"));
-    event(
-        &mut app,
-        tab,
-        old,
-        ConnectionEvent::UnknownHostKey {
-            host: "a.lab".to_owned(),
-            port: 22,
-            fingerprint: "SHA256:x".to_owned(),
-            key,
-        },
-    );
-    let effects = app.update(Message::HostKeyDecision { tab, accept: true });
-    let [Effect::Connect { attempt: new, .. }] = effects.as_slice() else {
-        panic!("expected a new attempt, got {effects:?}");
-    };
-    // The new attempt succeeds, with whatever password it was given.
-    succeed(&mut app, tab, *new);
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None, "the old attempt's password was not saved");
-}
-
-#[tokio::test]
 async fn a_saved_password_is_not_spent_on_a_later_try() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::memory());
+    unlock(&mut app, MASTER).await;
+    save_in_editor(&mut app, Some(PASSWORD));
     app.update(Message::LockVault);
     let (tab, attempt) = open(&mut app);
     // First try asked of the user, the vault closed; a wrong password typed.
@@ -535,33 +471,30 @@ async fn a_saved_password_is_not_spent_on_a_later_try() {
 }
 
 #[tokio::test]
-async fn a_remembered_password_refused_then_corrected_is_not_the_one_saved() {
+async fn a_wrong_master_password_says_so_and_opens_nothing() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = app(dir.path(), "a.lab");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
     unlock(&mut app, MASTER).await;
-    let (tab, attempt) = open(&mut app);
-    // A typo, "remember" ticked.
-    let (question, _) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    type_remembered(&mut app, tab, question);
-    // Refused: asked again, the right one typed without ticking.
-    let (question, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 2));
-    assert_eq!(answered, None);
-    app.update(Message::Answer {
-        tab,
-        question,
-        answer: Some(Answer::Secret(Secret::new("the right one".to_owned()))),
-    });
-    succeed(&mut app, tab, attempt);
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None, "the refused password was not saved");
+    drop(app);
+    let mut app = self::app(dir.path(), "a.lab", &system);
+    unlock(&mut app, "not the master password").await;
+    assert_eq!(app.vault_status(), VaultStatus::Locked);
+    let Some(Dialog::Vault(dialog)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(dialog.problem, Some(VaultProblem::Unreadable));
+    assert!(!dialog.busy, "the user can try again");
 }
 
 #[tokio::test]
 async fn cancelling_while_the_key_is_derived_leaves_the_vault_closed() {
     let dir = tempfile::tempdir().expect("dir");
-    drop(saved(dir.path()).await);
-    let mut app = app_restarted(dir.path());
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    unlock(&mut app, MASTER).await;
+    drop(app);
+    let mut app = self::app(dir.path(), "a.lab", &system);
     let effects = app.update(Message::SubmitVault {
         password: Secret::new(MASTER.to_owned()),
         confirm: None,
@@ -583,48 +516,41 @@ async fn cancelling_while_the_key_is_derived_leaves_the_vault_closed() {
     assert_eq!(app.vault_status(), VaultStatus::Locked);
 }
 
-#[tokio::test]
-async fn deleting_a_profile_forgets_its_saved_password() {
+#[test]
+fn deleting_a_profile_forgets_its_saved_password() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = saved(dir.path()).await;
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
     app.update(Message::EditProfile(ProfileId::new("a")));
     app.update(Message::DeleteProfile);
     app.update(Message::ConfirmDialog);
     assert!(app.profiles().is_empty(), "{:?}", app.dialog);
     drop(app);
     // The same profile made again, on the same server.
-    let mut again = app_restarted(dir.path());
-    unlock(&mut again, MASTER).await;
-    let (tab, attempt) = open(&mut again);
-    let (_, answered) = ask(&mut again, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None);
+    let mut again = self::app(dir.path(), "a.lab", &system);
+    assert_eq!(first_answer(&mut again, "a.lab"), None);
 }
 
-#[cfg(unix)]
 #[tokio::test]
-async fn a_password_that_could_not_be_saved_is_not_used_and_an_open_form_stays() {
-    use std::os::unix::fs::PermissionsExt as _;
-
+async fn a_password_that_could_not_be_saved_says_so_and_is_not_used() {
     let dir = tempfile::tempdir().expect("dir");
-    let mut app = app(dir.path(), "a.lab");
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::memory());
     unlock(&mut app, MASTER).await;
-    let (tab, attempt) = open(&mut app);
-    let (question, _) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    type_remembered(&mut app, tab, question);
-    // The folder cannot be written: the save fails.
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o500)).expect("chmod");
-    app.update(Message::NewProfile);
-    succeed(&mut app, tab, attempt);
-    std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    // The copy kept before each save cannot be written: a folder is in its place.
+    let vault = dir.path().join(heimdall_app::VAULT_FILE_NAME);
+    std::fs::create_dir(sealvault::backup_path(&vault)).expect("folder");
+    save_in_editor(&mut app, Some(PASSWORD));
     assert!(
-        matches!(app.dialog, Some(Dialog::EditProfile { .. })),
-        "the form being filled is kept: {:?}",
+        matches!(app.dialog, Some(Dialog::PasswordSaveFailed { .. })),
+        "{:?}",
         app.dialog
     );
     app.update(Message::DismissDialog);
-    let (tab, attempt) = open(&mut app);
-    let (_, answered) = ask(&mut app, tab, attempt, password_question("a.lab", 1));
-    assert_eq!(answered, None, "what was not saved is not used");
+    assert_eq!(
+        first_answer(&mut app, "a.lab"),
+        None,
+        "what was not saved is not used"
+    );
 }
 
 /// A vault holding a password for RDP profile `nla` as `CORP\admin` on `dc.lab:3389`, and
@@ -668,7 +594,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
     store.merge_rdp([rdp("nla", false), rdp("tls", true)]);
     store.save().expect("save");
     drop(store);
-    let mut app = app(dir, "a.lab");
+    let mut app = app(dir, "a.lab", &SystemCredentials::memory());
     unlock(&mut app, MASTER).await;
     app
 }
@@ -704,5 +630,39 @@ async fn an_rdp_password_goes_to_its_domain_account_and_never_without_nla() {
         rdp_answer(&mut app, "nla"),
         None,
         "the profile moved to another domain: another account"
+    );
+}
+
+#[test]
+fn saving_a_form_that_is_not_open_leaves_the_open_dialog() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), "a.lab", &SystemCredentials::memory());
+    app.update(Message::ShowVault);
+    app.update(Message::SaveProfile {
+        password: Some(Secret::new(PASSWORD.to_owned())),
+    });
+    assert!(
+        matches!(app.dialog, Some(Dialog::Vault(_))),
+        "{:?}",
+        app.dialog
+    );
+    assert_eq!(first_answer(&mut app, "a.lab"), None);
+}
+
+#[test]
+fn a_password_typed_while_it_cannot_be_saved_does_not_stop_the_profile_from_saving() {
+    let dir = tempfile::tempdir().expect("dir");
+    // No master password and no store on this system: nowhere to save a password.
+    let mut app = app_with(
+        dir.path(),
+        profile("a", "a.lab", None),
+        &SystemCredentials::Unavailable,
+    );
+    assert!(!app.can_save_passwords());
+    save_in_editor(&mut app, Some(PASSWORD));
+    assert!(
+        app.dialog.is_none(),
+        "saved without the password: {:?}",
+        app.dialog
     );
 }

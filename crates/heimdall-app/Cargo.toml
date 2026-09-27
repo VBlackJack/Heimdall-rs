@@ -15,6 +15,7 @@ publish.workspace = true
 [dependencies]
 heimdall-core.workspace = true
 heimdall-files.workspace = true
+heimdall-keyring.workspace = true
 heimdall-rdp.workspace = true
 heimdall-remote.workspace = true
 heimdall-sftp.workspace = true

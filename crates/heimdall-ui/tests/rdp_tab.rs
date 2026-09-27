@@ -61,6 +61,7 @@ fn app(dir: &Path) -> App {
         agent: AgentSource::Disabled,
         initial_grid: GridSize { cols: 80, rows: 24 },
         files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
     })
 }
 

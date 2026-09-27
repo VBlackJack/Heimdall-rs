@@ -73,8 +73,8 @@ use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
 use vault::VaultState;
 pub use vault::{
-    MIN_MASTER_PASSWORD_CHARS, OpenedVault, VAULT_FILE_NAME, VaultDialog, VaultMode, VaultProblem,
-    VaultStatus, open_vault,
+    MIN_MASTER_PASSWORD_CHARS, OpenedVault, SystemCredentials, VAULT_FILE_NAME, VaultDialog,
+    VaultMode, VaultProblem, VaultStatus, open_vault,
 };
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
@@ -98,6 +98,8 @@ pub struct AppConfig {
     pub initial_grid: GridSize,
     /// Local folder a Files tab and a local shell start in.
     pub files_start: PathBuf,
+    /// Where saved passwords go while no master password is set.
+    pub system_credentials: SystemCredentials,
 }
 
 /// A key press, owned, as the UI toolkit reported it.
@@ -274,15 +276,13 @@ pub enum Message {
     ConfirmDialog,
     /// Dismiss the open dialog.
     DismissDialog,
-    /// Answer a password question and save the password once the connection succeeds.
-    AnswerRemembered {
-        /// Tab.
-        tab: TabId,
-        /// Question.
-        question: QuestionId,
-        /// The password typed.
-        password: Secret,
+    /// Save the profile form, with the password typed into it, if any.
+    SaveProfile {
+        /// The password typed; `None` or empty leaves the saved one as it is.
+        password: Option<Secret>,
     },
+    /// In the profile form, clear the saved password (done when the form is saved).
+    ClearPassword,
     /// Open the vault dialog: unlock the vault, or create it.
     ShowVault,
     /// The master password typed into the vault dialog.
@@ -362,14 +362,8 @@ impl fmt::Debug for Message {
             Self::DeleteProfile => f.write_str("DeleteProfile"),
             Self::ConfirmDialog => f.write_str("ConfirmDialog"),
             Self::DismissDialog => f.write_str("DismissDialog"),
-            Self::AnswerRemembered { tab, question, .. } => {
-                write!(
-                    f,
-                    "AnswerRemembered({}, {}, ..)",
-                    tab.value(),
-                    question.value()
-                )
-            }
+            Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
+            Self::ClearPassword => f.write_str("ClearPassword"),
             Self::ShowVault => f.write_str("ShowVault"),
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
@@ -632,8 +626,6 @@ pub struct Tab {
     sync_generation: u64,
     /// The attempt a saved password was given to, once.
     auto_answered: Option<AttemptId>,
-    /// A password to save if this attempt succeeds.
-    remembered: Option<vault::Remembered>,
 }
 
 impl fmt::Debug for Tab {
@@ -693,7 +685,6 @@ impl Tab {
             selecting: false,
             sync_generation: 0,
             auto_answered: None,
-            remembered: None,
         }
     }
 
@@ -849,8 +840,8 @@ pub enum Dialog {
     },
     /// Unlock or create the vault.
     Vault(VaultDialog),
-    /// A password could not be saved in the vault.
-    VaultSaveFailed {
+    /// A password could not be saved.
+    PasswordSaveFailed {
         /// Technical detail.
         detail: String,
     },
@@ -917,7 +908,7 @@ impl App {
                 }),
             ),
         };
-        let vault = VaultState::beside(&config.profiles_file);
+        let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
         let mut app = Self {
             viewport: config.initial_grid,
             config,
@@ -1066,25 +1057,17 @@ impl App {
                 self.import_legacy();
                 Vec::new()
             }
-            Message::NewProfile => {
-                self.new_profile();
-                Vec::new()
-            }
-            Message::EditProfile(id) => {
-                self.edit_profile(&id);
-                Vec::new()
-            }
-            Message::ProfileField { field, value } => {
-                self.profile_field(field, value);
-                Vec::new()
-            }
-            Message::DeleteProfile => {
-                self.ask_delete_profile();
+            message @ (Message::NewProfile
+            | Message::EditProfile(_)
+            | Message::ProfileField { .. }
+            | Message::DeleteProfile
+            | Message::SaveProfile { .. }
+            | Message::ClearPassword) => {
+                self.profile_message(message);
                 Vec::new()
             }
             Message::ConfirmDialog => self.confirm_dialog(),
-            message @ (Message::AnswerRemembered { .. }
-            | Message::ShowVault
+            message @ (Message::ShowVault
             | Message::SubmitVault { .. }
             | Message::VaultOpened(_)
             | Message::LockVault) => self.vault_message(message),
@@ -1161,7 +1144,6 @@ impl App {
 
     /// The user answered `question`; `None` declines it.
     fn answer(&mut self, tab: TabId, question: QuestionId, answer: Option<Answer>) -> Vec<Effect> {
-        self.answering(tab, question);
         if let Some(found) = self.tab_mut(tab) {
             found.prompts.retain(|prompt| prompt.question != question);
         }
@@ -1198,21 +1180,10 @@ impl App {
                 answer: Some(answer),
             }];
         }
-        let accepted = matches!(
-            event,
-            ConnectionEvent::Connected { .. }
-                | ConnectionEvent::FilesReady { .. }
-                | ConnectionEvent::RdpReady { .. }
-                | ConnectionEvent::VncReady { .. }
-        );
         if matches!(event, ConnectionEvent::Failed(_)) {
             self.credentials_failed(tab_id);
         }
-        let effects = self.apply_connection_event(tab_id, event);
-        if accepted {
-            self.credentials_accepted(tab_id);
-        }
-        effects
+        self.apply_connection_event(tab_id, event)
     }
 
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
@@ -1611,7 +1582,7 @@ impl App {
             Some(Dialog::AskName { value, .. }) => self.confirm_operation(Some(&value)),
             Some(Dialog::ConfirmDelete { .. }) => self.confirm_operation(None),
             Some(Dialog::EditProfile { draft, .. }) => {
-                self.save_profile(draft);
+                self.save_profile(draft, None);
                 Vec::new()
             }
             Some(Dialog::ConfirmDeleteProfile { id, .. }) => {
@@ -1627,7 +1598,7 @@ impl App {
                 Dialog::ImportDone(_)
                 | Dialog::ImportFailed { .. }
                 | Dialog::StoreError { .. }
-                | Dialog::VaultSaveFailed { .. },
+                | Dialog::PasswordSaveFailed { .. },
             )
             | None => Vec::new(),
         }

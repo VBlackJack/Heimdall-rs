@@ -103,6 +103,7 @@ fn config(dir: &Path) -> AppConfig {
         agent: AgentSource::Disabled,
         initial_grid: GRID,
         files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
     }
 }
 
