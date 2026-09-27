@@ -67,8 +67,9 @@ use crate::palette::Palette;
 use crate::report;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
-    WindowShortcut, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
+    WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
+use crate::terminal_view::metrics::DEFAULT_FONT_SIZE;
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TreeMenu};
 
@@ -110,6 +111,10 @@ const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
+const MIN_FONT_SIZE: f32 = 8.0;
+const MAX_FONT_SIZE: f32 = 28.0;
 
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
@@ -483,6 +488,8 @@ pub struct Shell {
     /// What is typed into each open question, zeroed when dropped. iced keeps its own
     /// transient copies of a field's text, which this cannot reach.
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
+    /// The terminals' text sizes changed by a zoom, by tab; for this run only, as the C#.
+    font_sizes: HashMap<TabId, f32>,
     /// The question whose first field was last given focus.
     focused: Option<QuestionId>,
     /// Which field of the open dialog was last given focus, so it is given once.
@@ -571,6 +578,7 @@ impl Shell {
             registry: AnswerRegistry::default(),
             connections: HashMap::new(),
             drafts: HashMap::new(),
+            font_sizes: HashMap::new(),
             focused: None,
             dialog_focus: None,
             vault_fields: Default::default(),
@@ -889,6 +897,10 @@ impl Shell {
         let count = self.app.tabs.len();
         let index = self.app.tabs.iter().position(|tab| tab.id == active);
         let message = match (shortcut, index) {
+            (WindowShortcut::Zoom(zoom), _) => {
+                self.zoom(active, zoom);
+                return Vec::new();
+            }
             (WindowShortcut::CloseTab, _) => AppMessage::RequestCloseTab(active),
             (WindowShortcut::NextTab, Some(index)) => {
                 AppMessage::SelectTab(self.app.tabs[(index + 1) % count].id)
@@ -899,6 +911,32 @@ impl Shell {
             (_, None) => return Vec::new(),
         };
         self.app.update(message)
+    }
+
+    /// The text size of `tab`'s terminal.
+    #[must_use]
+    pub fn font_size(&self, tab: TabId) -> f32 {
+        self.font_sizes
+            .get(&tab)
+            .copied()
+            .unwrap_or(DEFAULT_FONT_SIZE)
+    }
+
+    /// Makes `tab`'s terminal text a point larger or smaller, within the C# bounds, or
+    /// back to its size.
+    fn zoom(&mut self, tab: TabId, zoom: Zoom) {
+        // Tabs closed since leave their sizes behind no longer.
+        self.font_sizes.retain(|id, _| self.app.tab(*id).is_some());
+        let size = match zoom {
+            Zoom::Reset => {
+                self.font_sizes.remove(&tab);
+                return;
+            }
+            Zoom::In => self.font_size(tab) + 1.0,
+            Zoom::Out => self.font_size(tab) - 1.0,
+        };
+        self.font_sizes
+            .insert(tab, size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
     }
 
     /// Opens `menu` at the pointer, or, for a sub-menu, where its menu was.
@@ -1899,7 +1937,11 @@ impl Shell {
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
-                _ => terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
+                _ => terminal(
+                    tab,
+                    self.app.dialog.is_none() && !self.tree_focused,
+                    self.font_size(tab.id),
+                ),
             },
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
@@ -1918,7 +1960,7 @@ impl Shell {
                     |status| fl!("ui-session-closed-status", status = status.to_string()),
                 );
                 column![
-                    terminal(tab, self.app.dialog.is_none()),
+                    terminal(tab, self.app.dialog.is_none(), self.font_size(tab.id)),
                     row![text(status), self.session_actions(tab)]
                         .spacing(SPACING)
                         .padding(PADDING)
@@ -2212,10 +2254,15 @@ impl Default for Shell {
     }
 }
 
-fn terminal(tab: &Tab, interactive: bool) -> Element<'_, Message> {
-    container(TerminalView::new(&tab.terminal, tab.id, Message::App).interactive(interactive))
-        .padding(TERMINAL_MARGIN)
-        .into()
+fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message> {
+    container(
+        TerminalView::new(&tab.terminal, tab.id, Message::App)
+            .interactive(interactive)
+            .font_size(font_size)
+            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom))),
+    )
+    .padding(TERMINAL_MARGIN)
+    .into()
 }
 
 /// The question about an unknown server key.

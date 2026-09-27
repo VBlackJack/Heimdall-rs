@@ -1547,3 +1547,96 @@ fn the_status_bar_says_the_session_shown_and_counts_the_sessions() {
         .find("Copied to clipboard: b.lab")
         .expect("what was just done");
 }
+
+#[test]
+fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
+    use heimdall_term::MouseAction;
+    use heimdall_ui::terminal_view::keys::Zoom;
+    use iced::{Point, keyboard, mouse};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let columns = |shell: &Shell| {
+        let mut ui = simulator(shell);
+        // Any event: the terminal reports its size on the first it gets.
+        let _ = ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::empty(),
+        ))]);
+        ui.into_messages()
+            .find_map(|message| match message {
+                Message::App(AppMessage::Resize { grid, .. }) => Some(grid.cols),
+                _ => None,
+            })
+            .expect("a size reported")
+    };
+    let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
+    let normal = columns(&shell);
+    assert!(same(shell.font_size(tab), 15.0));
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
+    assert!(same(shell.font_size(tab), 16.0));
+    assert!(columns(&shell) < normal, "larger text, fewer columns");
+    for _ in 0..20 {
+        let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
+    }
+    assert!(same(shell.font_size(tab), 28.0), "no larger than 28");
+    for _ in 0..30 {
+        let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Out)));
+    }
+    assert!(same(shell.font_size(tab), 8.0), "no smaller than 8");
+    assert!(columns(&shell) > normal);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)));
+    assert!(same(shell.font_size(tab), 15.0));
+    assert_eq!(columns(&shell), normal);
+
+    // The wheel with Ctrl held zooms instead of scrolling; without it, it scrolls.
+    let wheel = |ctrl: bool| {
+        let mut ui = simulator(&shell);
+        ui.point_at(Point::new(700.0, 400.0));
+        let modifiers = if ctrl {
+            keyboard::Modifiers::CTRL
+        } else {
+            keyboard::Modifiers::empty()
+        };
+        let _ = ui.simulate([
+            iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(700.0, 400.0),
+            }),
+            iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+            iced::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+            }),
+        ]);
+        ui.into_messages().collect::<Vec<_>>()
+    };
+    let zoomed = wheel(true);
+    assert!(
+        zoomed
+            .iter()
+            .any(|message| matches!(message, Message::Shortcut(WindowShortcut::Zoom(Zoom::Out)))),
+        "{zoomed:?}"
+    );
+    assert!(
+        !zoomed.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Pointer { input, .. })
+                if matches!(input.action, MouseAction::WheelUp | MouseAction::WheelDown)
+        )),
+        "and does not scroll"
+    );
+    let scrolled = wheel(false);
+    assert!(
+        !scrolled
+            .iter()
+            .any(|message| matches!(message, Message::Shortcut(WindowShortcut::Zoom(_)))),
+        "{scrolled:?}"
+    );
+    assert!(
+        scrolled.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Pointer { input, .. })
+                if matches!(input.action, MouseAction::WheelUp | MouseAction::WheelDown)
+        )),
+        "it scrolls: {scrolled:?}"
+    );
+}

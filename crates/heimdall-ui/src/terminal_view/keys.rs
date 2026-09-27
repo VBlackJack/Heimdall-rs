@@ -89,6 +89,36 @@ pub enum WindowShortcut {
     PreviousTab,
     /// Close the tab shown: Ctrl+Shift+W.
     CloseTab,
+    /// The terminal's text larger, smaller or back to its size: Ctrl +, Ctrl -, Ctrl 0.
+    Zoom(Zoom),
+}
+
+/// A change of the terminal's text size, as the C# Heimdall's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Zoom {
+    /// One point larger.
+    In,
+    /// One point smaller.
+    Out,
+    /// Back to the size it had.
+    Reset,
+}
+
+/// The zoom `key` stands for with Ctrl: + or = larger, - smaller, 0 back, from the main
+/// keys or the keypad and whatever the layout (0 is Shift+0 on AZERTY).
+fn zoom(key: &keyboard::Key, physical: Physical, shift: bool) -> Option<Zoom> {
+    if let keyboard::Key::Character(c) = key {
+        match c.as_str() {
+            "+" | "=" => return Some(Zoom::In),
+            "-" if !shift => return Some(Zoom::Out),
+            "0" => return Some(Zoom::Reset),
+            _ => {}
+        }
+    }
+    match physical {
+        Physical::Code(Code::Digit0 | Code::Numpad0) => Some(Zoom::Reset),
+        _ => None,
+    }
 }
 
 /// Whether `key` with `modifiers` is Ctrl+L, which locks the workspace as in the C#
@@ -155,7 +185,7 @@ pub fn window_shortcut(
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('w') => {
             Some(WindowShortcut::CloseTab)
         }
-        _ => None,
+        _ => zoom(key, physical, shift).map(WindowShortcut::Zoom),
     }
 }
 
@@ -287,8 +317,47 @@ mod tests {
     const ANY_PLACE: Physical = Physical::Code(Code::F24);
 
     use super::{
-        Shortcut, WindowShortcut, is_lock_key, is_search_key, key_input, shortcut, window_shortcut,
+        Shortcut, WindowShortcut, Zoom, is_lock_key, is_search_key, key_input, shortcut,
+        window_shortcut,
     };
+
+    #[test]
+    fn ctrl_plus_minus_and_zero_zoom_on_any_layout_and_only_with_ctrl() {
+        let zoom = |key: &str, physical: Physical, modifiers: Modifiers| match window_shortcut(
+            &character(key),
+            physical,
+            modifiers,
+        ) {
+            Some(WindowShortcut::Zoom(zoom)) => Some(zoom),
+            _ => None,
+        };
+        assert_eq!(zoom("+", ANY_PLACE, Modifiers::CTRL), Some(Zoom::In));
+        assert_eq!(
+            zoom("+", ANY_PLACE, Modifiers::CTRL | Modifiers::SHIFT),
+            Some(Zoom::In),
+            "Shift+= on a US keyboard"
+        );
+        assert_eq!(zoom("=", ANY_PLACE, Modifiers::CTRL), Some(Zoom::In));
+        assert_eq!(zoom("-", ANY_PLACE, Modifiers::CTRL), Some(Zoom::Out));
+        assert_eq!(
+            zoom("-", ANY_PLACE, Modifiers::CTRL | Modifiers::SHIFT),
+            None,
+            "Ctrl+Shift+- is not a zoom"
+        );
+        assert_eq!(zoom("0", ANY_PLACE, Modifiers::CTRL), Some(Zoom::Reset));
+        assert_eq!(
+            zoom("à", Physical::Code(Code::Digit0), Modifiers::CTRL),
+            Some(Zoom::Reset),
+            "the 0 key of an AZERTY keyboard"
+        );
+        assert_eq!(
+            zoom("x", Physical::Code(Code::Numpad0), Modifiers::CTRL),
+            Some(Zoom::Reset)
+        );
+        assert_eq!(zoom("+", ANY_PLACE, Modifiers::empty()), None, "typed");
+        assert_eq!(zoom("-", ANY_PLACE, Modifiers::CTRL | Modifiers::ALT), None);
+        assert_eq!(zoom("9", ANY_PLACE, Modifiers::CTRL), None);
+    }
 
     fn character(c: &str) -> keyboard::Key {
         keyboard::Key::Character(c.into())
