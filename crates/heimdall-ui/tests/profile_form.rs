@@ -248,3 +248,65 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
     ui.find("Username")
         .expect("a stored credential names its account");
 }
+
+#[test]
+fn a_gateway_is_added_from_the_form_and_the_tree_says_via_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    snapshot(&shell, "profile-network.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Gateway routing",
+            "Connect directly without an SSH gateway",
+            "No gateways configured",
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.click("Add Gateway").expect("add gateway");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::NewGateway)))
+        );
+    }
+    let _ = shell.update(app(AppMessage::NewGateway));
+    snapshot(&shell, "gateway-new.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Add SSH Gateway",
+            "Name",
+            "Host",
+            "Port",
+            "Username",
+            "Key Path",
+            "Password",
+            "Parent Gateway",
+        ] {
+            ui.find(label).expect(label);
+        }
+    }
+    for (field, value) in [
+        (ProfileField::Name, "bastion"),
+        (ProfileField::Host, "bastion.lab"),
+        (ProfileField::Username, "jump"),
+    ] {
+        let _ = shell.update(app(AppMessage::GatewayField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let _ = shell.update(Message::SaveGatewayForm);
+    for (field, value) in [(ProfileField::Name, "web"), (ProfileField::Host, "web.lab")] {
+        let _ = shell.update(app(AppMessage::ProfileField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let _ = shell.update(Message::SaveProfileForm);
+    assert!(shell.app().dialog.is_none(), "{:?}", shell.app().dialog);
+    let mut ui = simulator(&shell);
+    ui.find("via bastion").expect("the tree's badge");
+}

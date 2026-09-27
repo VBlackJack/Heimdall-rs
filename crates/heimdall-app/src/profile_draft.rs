@@ -104,6 +104,12 @@ impl DraftProtocol {
         matches!(self, Self::Ssh | Self::Rdp | Self::Vnc)
     }
 
+    /// Whether this protocol's sessions can go through an SSH gateway.
+    #[must_use]
+    pub fn routes_through_gateway(self) -> bool {
+        matches!(self, Self::Ssh | Self::Rdp)
+    }
+
     /// Whether a saved password belongs to an account, which the form must then name.
     #[must_use]
     pub fn password_needs_username(self) -> bool {
@@ -129,6 +135,9 @@ pub enum ProfileToggle {
     ViewOnly,
     /// VNC: connect to a server asking no password.
     AllowNoPassword,
+    /// SSH, RDP: connect directly, not through the gateway chosen, as the C# "Connect
+    /// directly without an SSH gateway" box.
+    DirectConnection,
 }
 
 impl ProfileToggle {
@@ -222,6 +231,8 @@ pub enum DraftError {
     UsernameMissing,
     /// The domain holds a space or a double quote.
     DomainInvalid,
+    /// A gateway's parents lead back to it.
+    GatewayLoop,
 }
 
 impl DraftError {
@@ -229,7 +240,7 @@ impl DraftError {
     #[must_use]
     pub fn field(self) -> ProfileField {
         match self {
-            Self::NameMissing | Self::ControlCharacter => ProfileField::Name,
+            Self::NameMissing | Self::ControlCharacter | Self::GatewayLoop => ProfileField::Name,
             Self::HostMissing | Self::HostInvalid | Self::HostHasUser | Self::HostHasPort => {
                 ProfileField::Host
             }
@@ -408,6 +419,17 @@ impl ProfileDraft {
         toggle != ProfileToggle::SkipCertificateCheck || self.is_on(ProfileToggle::UseSsl)
     }
 
+    /// The gateway saved with the profile: none when "Connect directly" is ticked, the
+    /// chosen one being kept in the form as the C# combo keeps its selection.
+    #[must_use]
+    pub fn routed_gateway(&self) -> Option<ProfileId> {
+        if self.is_on(ProfileToggle::DirectConnection) {
+            None
+        } else {
+            self.gateway.clone()
+        }
+    }
+
     /// The port an empty field stands for.
     #[must_use]
     pub fn default_port(&self) -> u16 {
@@ -477,7 +499,7 @@ impl ProfileDraft {
                 port,
                 username: optional(username),
                 key_path: optional(key_path).map(PathBuf::from),
-                gateway: self.gateway.clone(),
+                gateway: self.routed_gateway(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -488,7 +510,7 @@ impl ProfileDraft {
                 username: optional(username),
                 domain: optional(domain),
                 allow_tls_only: !self.is_on(ProfileToggle::Nla),
-                gateway: self.gateway.clone(),
+                gateway: self.routed_gateway(),
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
@@ -605,7 +627,7 @@ impl ProfileDraft {
 
 /// The address as saved: trimmed, and an IPv6 address without the brackets it may have
 /// been typed with.
-fn host(typed: &str) -> Result<String, DraftError> {
+pub(crate) fn host(typed: &str) -> Result<String, DraftError> {
     let typed = typed.trim();
     if typed.is_empty() {
         return Err(DraftError::HostMissing);

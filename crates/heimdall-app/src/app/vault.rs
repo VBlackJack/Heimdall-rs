@@ -520,8 +520,12 @@ impl App {
     /// The saved password answering `kind` in `tab_id`, if the rules allow one.
     pub(super) fn saved_answer(&mut self, tab_id: TabId, kind: &QuestionKind) -> Option<Answer> {
         let tab = self.tab(tab_id)?;
-        let (profile, endpoint) = usable_endpoint(tab, kind)?;
-        let answered_before = tab.auto_answered == Some(tab.attempt);
+        let (profile, endpoint) =
+            usable_endpoint(tab, kind).or_else(|| self.gateway_endpoint(&tab.profile, kind))?;
+        let answered_before = tab
+            .auto_answered
+            .iter()
+            .any(|(attempt, answered)| *attempt == tab.attempt && *answered == profile);
         if try_number(kind) > 1 || answered_before {
             // Asked again after a saved password: the server refused it.
             if answered_before {
@@ -537,8 +541,47 @@ impl App {
             return None;
         }
         let tab = self.tab_mut(tab_id)?;
-        tab.auto_answered = Some(tab.attempt);
+        let attempt = tab.attempt;
+        tab.auto_answered.retain(|(earlier, _)| *earlier == attempt);
+        tab.auto_answered.push((attempt, profile));
         Some(Answer::Secret(Secret::new(String::clone(&saved.password))))
+    }
+
+    /// The gateway on the way to `profile`'s server that `kind` comes from, when it is one:
+    /// same host, port and account as a gateway of the route. Its own saved password is
+    /// then given, never the server's.
+    fn gateway_endpoint(
+        &self,
+        profile: &TabProfile,
+        kind: &QuestionKind,
+    ) -> Option<(ProfileId, Endpoint)> {
+        let QuestionKind::Password(question) = kind else {
+            return None;
+        };
+        let gateway = match profile {
+            TabProfile::Ssh(profile) => profile.gateway.as_ref(),
+            TabProfile::Rdp(profile) => profile.gateway.as_ref(),
+            _ => None,
+        }?;
+        let route = self.store.route(Some(gateway)).ok()?;
+        route
+            .into_iter()
+            .find(|hop| {
+                hop.host.eq_ignore_ascii_case(&question.host)
+                    && hop.port == question.port
+                    && hop.username.as_deref() == Some(question.username.as_str())
+            })
+            .map(|hop| {
+                (
+                    hop.id,
+                    Endpoint {
+                        protocol: CredentialProtocol::Ssh,
+                        host: hop.host,
+                        port: hop.port,
+                        username: hop.username,
+                    },
+                )
+            })
     }
 
     /// Saves what the profile editor says about `profile`'s password, now at `endpoint`: a
@@ -615,11 +658,16 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
-        if tab.auto_answered == Some(tab.attempt)
-            && let Some(profile) = saved_profile(&tab.profile)
-        {
-            self.vault.refused.insert(profile);
-        }
+        // Which one was wrong is not known: every saved password given in the attempt is
+        // taken as refused, the user asked for each next time.
+        let attempt = tab.attempt;
+        let given: Vec<ProfileId> = tab
+            .auto_answered
+            .iter()
+            .filter(|(answered, _)| *answered == attempt)
+            .map(|(_, profile)| profile.clone())
+            .collect();
+        self.vault.refused.extend(given);
     }
 }
 
@@ -633,16 +681,6 @@ fn usable_endpoint(tab: &Tab, kind: &QuestionKind) -> Option<(ProfileId, Endpoin
         return None;
     }
     asked_endpoint(&tab.profile, kind)
-}
-
-/// The profile of a tab that can have a saved password.
-fn saved_profile(profile: &TabProfile) -> Option<ProfileId> {
-    match profile {
-        TabProfile::Ssh(profile) => Some(profile.id.clone()),
-        TabProfile::Rdp(profile) => Some(profile.id.clone()),
-        TabProfile::Vnc(profile) => Some(profile.id.clone()),
-        _ => None,
-    }
 }
 
 #[cfg(test)]

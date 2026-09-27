@@ -595,3 +595,18 @@ fn with_the_vault_locked_the_form_says_to_unlock_it() {
     ui.find("Unlock the vault to save or change a password.")
         .expect("says why the field is closed");
 }
+
+#[test]
+fn a_password_typed_in_the_form_survives_a_visit_to_the_gateway_dialog() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::ProfilePassword("hunter2".to_owned()));
+    let _ = shell.update(Message::App(AppMessage::NewGateway));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::SaveProfileForm);
+    let mut core = shell.into_app();
+    assert!(core.dialog.is_none(), "{:?}", core.dialog);
+    assert_eq!(saved_answer(&mut core).as_deref(), Some("hunter2"));
+}

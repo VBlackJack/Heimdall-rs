@@ -62,7 +62,8 @@ impl App {
                     *error = None;
                 }
             }
-            _ => {}
+            // The gateway dialog opens from a session's form and returns to it.
+            other => self.gateway_message(other),
         }
     }
 

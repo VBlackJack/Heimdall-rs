@@ -50,6 +50,7 @@ use crate::driver::{ConnectRequest, Purpose};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
+use crate::gateway_draft::GatewayDraft;
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::local_driver::{LocalRequest, LocalShell};
 use crate::profile_draft::{DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle};
@@ -60,6 +61,7 @@ use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
 
 mod files_tab;
+mod gateways;
 mod local_tab;
 mod profiles;
 mod rdp_tab;
@@ -72,7 +74,7 @@ mod winrm_tab;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
-pub use tree::{ProfileCopy, ProfileKind, ProfileSummary};
+pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
 pub use vault::{
     MIN_MASTER_PASSWORD_CHARS, OpenedVault, SystemCredentials, VAULT_FILE_NAME, VaultDialog,
@@ -294,6 +296,28 @@ pub enum Message {
         /// Ticked.
         on: bool,
     },
+    /// Open the gateway dialog for a new gateway.
+    NewGateway,
+    /// Open the gateway dialog for a saved gateway.
+    EditGateway(ProfileId),
+    /// A field of the gateway dialog changed.
+    GatewayField {
+        /// Field.
+        field: ProfileField,
+        /// New text.
+        value: String,
+    },
+    /// In the gateway dialog, choose the gateway it is reached through.
+    ChooseParentGateway(Option<ProfileId>),
+    /// In the gateway dialog, clear the saved password (done when it is saved).
+    ClearGatewayPassword,
+    /// Save the gateway dialog, with the password typed into it, if any.
+    SaveGateway {
+        /// The password typed; `None` or empty leaves the saved one as it is.
+        password: Option<Secret>,
+    },
+    /// In a session's form, route it through this gateway.
+    ChooseGateway(ProfileId),
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
     /// Connect to a profile with its own protocol.
@@ -397,6 +421,13 @@ impl fmt::Debug for Message {
             Self::ClearPassword => f.write_str("ClearPassword"),
             Self::ChooseProtocol(protocol) => write!(f, "ChooseProtocol({protocol:?})"),
             Self::ProfileToggle { toggle, on } => write!(f, "ProfileToggle({toggle:?}, {on})"),
+            Self::NewGateway => f.write_str("NewGateway"),
+            Self::EditGateway(id) => write!(f, "EditGateway({id})"),
+            Self::GatewayField { field, .. } => write!(f, "GatewayField({field:?}, ..)"),
+            Self::ChooseParentGateway(id) => write!(f, "ChooseParentGateway({id:?})"),
+            Self::ClearGatewayPassword => f.write_str("ClearGatewayPassword"),
+            Self::SaveGateway { .. } => f.write_str("SaveGateway(..)"),
+            Self::ChooseGateway(id) => write!(f, "ChooseGateway({id})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
@@ -662,8 +693,9 @@ pub struct Tab {
     motion: MotionFilter,
     selecting: bool,
     sync_generation: u64,
-    /// The attempt a saved password was given to, once.
-    auto_answered: Option<AttemptId>,
+    /// The saved passwords given in an attempt, each once: the server's, and a gateway's on
+    /// the way.
+    auto_answered: Vec<(AttemptId, ProfileId)>,
 }
 
 impl fmt::Debug for Tab {
@@ -722,7 +754,7 @@ impl Tab {
             motion: MotionFilter::default(),
             selecting: false,
             sync_generation: 0,
-            auto_answered: None,
+            auto_answered: Vec::new(),
         }
     }
 
@@ -876,6 +908,15 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// Add or edit an SSH gateway.
+    EditGateway {
+        /// What is typed.
+        draft: Box<GatewayDraft>,
+        /// Why the last save was refused.
+        error: Option<DraftError>,
+        /// The session's form it was opened from, shown again when it closes.
+        back: Option<Box<Dialog>>,
+    },
     /// Unlock or create the vault.
     Vault(VaultDialog),
     /// A password could not be saved.
@@ -891,7 +932,10 @@ impl Dialog {
     #[must_use]
     pub fn confirms_on_enter(&self) -> bool {
         // The vault's password fields submit themselves.
-        !matches!(self, Self::ConfirmLocalCommand(_) | Self::Vault(_))
+        !matches!(
+            self,
+            Self::ConfirmLocalCommand(_) | Self::Vault(_) | Self::EditGateway { .. }
+        )
     }
 }
 
@@ -1105,7 +1149,14 @@ impl App {
             | Message::SaveProfile { .. }
             | Message::ClearPassword
             | Message::ChooseProtocol(_)
-            | Message::ProfileToggle { .. }) => {
+            | Message::ProfileToggle { .. }
+            | Message::NewGateway
+            | Message::EditGateway(_)
+            | Message::GatewayField { .. }
+            | Message::ChooseParentGateway(_)
+            | Message::ClearGatewayPassword
+            | Message::SaveGateway { .. }
+            | Message::ChooseGateway(_)) => {
                 self.profile_message(message);
                 Vec::new()
             }
@@ -1120,13 +1171,22 @@ impl App {
             | Message::VaultOpened(_)
             | Message::LockVault) => self.vault_message(message),
             Message::DismissDialog => {
-                self.dialog = None;
-                self.pending_paste = None;
-                self.pending_transfer = None;
-                self.pending_operation = None;
+                self.dismiss_dialog();
                 Vec::new()
             }
         }
+    }
+
+    /// Closes the open dialog and drops what it held; the gateway dialog returns to the
+    /// session's form it was opened from.
+    fn dismiss_dialog(&mut self) {
+        if self.dismiss_gateway() {
+            return;
+        }
+        self.dialog = None;
+        self.pending_paste = None;
+        self.pending_transfer = None;
+        self.pending_operation = None;
     }
 
     /// What connecting to `profile` needs, its gateways included; an error when they cannot
@@ -1638,7 +1698,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
-            Some(dialog @ Dialog::Vault(_)) => {
+            Some(dialog @ (Dialog::Vault(_) | Dialog::EditGateway { .. })) => {
                 self.dialog = Some(dialog);
                 Vec::new()
             }

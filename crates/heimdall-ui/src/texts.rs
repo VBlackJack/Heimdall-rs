@@ -179,6 +179,7 @@ pub fn draft_error(error: DraftError) -> String {
         DraftError::UsernameForPassword => fl!("ui-profile-error-username-for-password"),
         DraftError::UsernameMissing => fl!("ui-profile-error-username-missing"),
         DraftError::DomainInvalid => fl!("ui-profile-error-domain-invalid"),
+        DraftError::GatewayLoop => fl!("ui-gateway-error-loop"),
     }
 }
 
