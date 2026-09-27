@@ -51,6 +51,9 @@ pub fn error(error: &UiError) -> String {
         UiError::SecurityRefused { detail } => {
             fl!("ui-error-security-refused", detail = server_text(detail))
         }
+        UiError::LocalShell { detail } => {
+            fl!("ui-error-local-shell", detail = server_text(detail))
+        }
         UiError::HostKeyChanged { recorded, offered } => fl!(
             "ui-error-hostkey-changed",
             recorded = recorded.as_str(),
