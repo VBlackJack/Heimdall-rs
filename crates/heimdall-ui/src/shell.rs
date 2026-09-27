@@ -63,6 +63,7 @@ use zeroize::Zeroizing;
 use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
+use crate::palette::Palette;
 use crate::report;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
@@ -110,6 +111,9 @@ const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Room above Quick Connect.
+const PALETTE_TOP: f32 = 80.0;
+
 /// Longest tab title shown, in characters.
 const MAX_TAB_TITLE_CHARS: usize = 32;
 
@@ -137,6 +141,7 @@ fn tree_shortcut(
     match ctrl_letter(key, physical, modifiers)? {
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
+        'k' => Some(TreeShortcut::QuickConnect),
         _ => None,
     }
 }
@@ -310,8 +315,14 @@ pub enum Message {
     TreeClick(ProfileId),
     /// A click in the session shown: the keyboard goes back to it from the tree.
     ContentFocus,
-    /// Ctrl+E or Ctrl+N, uncaptured by any widget.
+    /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
     TreeShortcut(TreeShortcut),
+    /// Quick Connect's search changed.
+    PaletteQuery(String),
+    /// Open Quick Connect's result at this place.
+    PaletteChoose(usize),
+    /// Close Quick Connect.
+    PaletteClose,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -321,6 +332,8 @@ pub enum TreeShortcut {
     Edit,
     /// Ctrl+N: a new session.
     New,
+    /// Ctrl+K: Quick Connect.
+    QuickConnect,
 }
 
 impl fmt::Debug for Message {
@@ -363,6 +376,9 @@ impl fmt::Debug for Message {
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
+            Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
+            Self::PaletteClose => f.write_str("PaletteClose"),
         }
     }
 }
@@ -489,6 +505,10 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// Quick Connect, while open.
+    palette: Option<Palette>,
+    /// Quick Connect just opened: its field gets the keyboard.
+    palette_opened: bool,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
@@ -562,6 +582,8 @@ impl Shell {
             fullscreen: false,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            palette: None,
+            palette_opened: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -636,17 +658,13 @@ impl Shell {
         );
         let effects = match message {
             Message::App(message) => self.app.update(message),
-            Message::Field {
-                question,
-                index,
-                value,
-            } => {
-                self.edit(question, index, value);
-                return Task::none();
-            }
-            Message::FocusField { question, index } => {
-                return operation::focus(field_id(question, index));
-            }
+            message @ (Message::Field { .. }
+            | Message::FocusField { .. }
+            | Message::VaultField { .. }
+            | Message::FocusVaultField(_)
+            | Message::Search(_)
+            | Message::ProfilePassword(_)
+            | Message::GatewayPassword(_)) => return self.input_message(message),
             Message::Submit(tab) => self.reply(tab, true),
             Message::Decline(tab) => self.reply(tab, false),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
@@ -662,13 +680,6 @@ impl Shell {
                 }
                 self.files_key(FilesKey::SwitchPane)
             }
-            Message::VaultField { index, value } => {
-                if let Some(field) = self.vault_fields.get_mut(index) {
-                    *field = Zeroizing::new(value);
-                }
-                return Task::none();
-            }
-            Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::LockKey => {
                 self.menu = None;
                 self.app.update(AppMessage::LockVault)
@@ -678,10 +689,6 @@ impl Shell {
             | Message::ShowSettings
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
-            Message::Search(term) => {
-                self.search = term;
-                return Task::none();
-            }
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
@@ -689,15 +696,7 @@ impl Shell {
                     .chain(operation::select_all(search_field_id()));
             }
             Message::SubmitVault => self.submit_vault(),
-            Message::ProfilePassword(value) => {
-                self.profile_password = Zeroizing::new(value);
-                return Task::none();
-            }
             Message::SaveProfileForm => self.save_profile_form(),
-            Message::GatewayPassword(value) => {
-                self.gateway_password = Zeroizing::new(value);
-                return Task::none();
-            }
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::OpenTreeMenu(menu) => {
                 self.open_tree_menu(menu);
@@ -717,16 +716,48 @@ impl Shell {
             @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
                 self.tree_input(message)
             }
+            message @ (Message::PaletteQuery(_)
+            | Message::PaletteChoose(_)
+            | Message::PaletteClose) => self.palette_message(message),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
+        if std::mem::take(&mut self.palette_opened) {
+            tasks.push(operation::focus(crate::palette::field_id()));
+        }
         if reveal {
             tasks.push(self.reveal_selection());
         }
         Task::batch(tasks)
+    }
+
+    /// Something typed into a field: a question's, the vault's, a password, the search; or
+    /// the keyboard moved to one.
+    fn input_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Field {
+                question,
+                index,
+                value,
+            } => self.edit(question, index, value),
+            Message::FocusField { question, index } => {
+                return operation::focus(field_id(question, index));
+            }
+            Message::VaultField { index, value } => {
+                if let Some(field) = self.vault_fields.get_mut(index) {
+                    *field = Zeroizing::new(value);
+                }
+            }
+            Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
+            Message::Search(term) => self.search = term,
+            Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
+            Message::GatewayPassword(value) => self.gateway_password = Zeroizing::new(value),
+            _ => {}
+        }
+        Task::none()
     }
 
     /// Applies a message about what the window shows: the settings, full screen, how a
@@ -899,6 +930,10 @@ impl Shell {
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
     /// the selection of a Files tab, and the core ignores the rest.
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
+        if !confirm && self.palette.take().is_some() {
+            // Escape closes Quick Connect first.
+            return Vec::new();
+        }
         if !confirm && self.menu.take().is_some() {
             // Escape closes the open menu first.
             return Vec::new();
@@ -933,6 +968,10 @@ impl Shell {
 
     /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
+        // Quick Connect's first, while open.
+        if let Some(effects) = self.palette_key(key) {
+            return effects;
+        }
         // The tree's first, while it has the keyboard.
         if let Some(effects) = self.tree_key(key) {
             return effects;
@@ -1233,53 +1272,20 @@ impl Shell {
             .menu
             .as_ref()
             .filter(|_| !locked)
-            .and_then(|(menu, at)| {
-                let entries = if let TreeMenu::Tab(tab) = menu {
-                    tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
-                } else if let TreeMenu::Folder(path) = menu {
-                    tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
-                } else if let TreeMenu::MoveFolder(path) = menu {
-                    tree_view::move_folder_entries(path, &self.app.folder_targets(path))
-                } else if let TreeMenu::MoveProfile(id) = menu {
-                    tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
-                } else if let TreeMenu::Selection = menu {
-                    let selected = self.app.selected_profiles();
-                    let connectable = selected
-                        .iter()
-                        .filter(|id| self.app.connects_in_bulk(id))
-                        .count();
-                    tree_view::selection_menu_entries(selected.len(), connectable)
-                } else if let TreeMenu::MoveSelection = menu {
-                    tree_view::move_selection_entries(&self.app.folder_paths())
-                } else {
-                    let profile = match menu {
-                        TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => {
-                            self.app.profile_summary(id)
-                        }
-                        TreeMenu::Add
-                        | TreeMenu::More
-                        | TreeMenu::Tab(_)
-                        | TreeMenu::Folder(_)
-                        | TreeMenu::MoveFolder(_)
-                        | TreeMenu::MoveProfile(_)
-                        | TreeMenu::Selection
-                        | TreeMenu::MoveSelection => None,
-                    };
-                    let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
-                    let connect_as = profile
-                        .as_ref()
-                        .map(|p| self.app.connect_as_choices(&p.id))
-                        .unwrap_or_default();
-                    tree_view::menu_entries(
-                        menu,
-                        profile.as_ref(),
-                        &connect_as,
-                        editable,
-                        self.app.can_import(),
-                    )
-                };
-                Some((entries, *at))
-            });
+            .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
+        if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
+            let results = self.app.quick_results(&palette.query);
+            // At the top, as the C# palette; a click beside it closes it.
+            layers = layers.push(opaque(
+                mouse_area(
+                    container(crate::palette::view(palette, &results))
+                        .center_x(Length::Fill)
+                        .padding(PALETTE_TOP)
+                        .height(Length::Fill),
+                )
+                .on_press(Message::PaletteClose),
+            ));
+        }
         if let Some((entries, at)) = open_menu {
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
@@ -1295,6 +1301,53 @@ impl Shell {
             ));
         }
         CursorTracker::new(layers, self.cursor.clone()).into()
+    }
+
+    /// The entries of `menu`, the open one; `None` once what it is for is gone.
+    fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
+        let entries = if let TreeMenu::Tab(tab) = menu {
+            tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+        } else if let TreeMenu::Folder(path) = menu {
+            tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
+        } else if let TreeMenu::MoveFolder(path) = menu {
+            tree_view::move_folder_entries(path, &self.app.folder_targets(path))
+        } else if let TreeMenu::MoveProfile(id) = menu {
+            tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
+        } else if let TreeMenu::Selection = menu {
+            let selected = self.app.selected_profiles();
+            let connectable = selected
+                .iter()
+                .filter(|id| self.app.connects_in_bulk(id))
+                .count();
+            tree_view::selection_menu_entries(selected.len(), connectable)
+        } else if let TreeMenu::MoveSelection = menu {
+            tree_view::move_selection_entries(&self.app.folder_paths())
+        } else {
+            let profile = match menu {
+                TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
+                TreeMenu::Add
+                | TreeMenu::More
+                | TreeMenu::Tab(_)
+                | TreeMenu::Folder(_)
+                | TreeMenu::MoveFolder(_)
+                | TreeMenu::MoveProfile(_)
+                | TreeMenu::Selection
+                | TreeMenu::MoveSelection => None,
+            };
+            let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
+            let connect_as = profile
+                .as_ref()
+                .map(|p| self.app.connect_as_choices(&p.id))
+                .unwrap_or_default();
+            tree_view::menu_entries(
+                menu,
+                profile.as_ref(),
+                &connect_as,
+                editable,
+                self.app.can_import(),
+            )
+        };
+        Some(entries)
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -1490,6 +1543,57 @@ impl Shell {
         }
     }
 
+    /// A change in Quick Connect: its search, a result chosen, closed.
+    fn palette_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::PaletteQuery(query) => {
+                if let Some(palette) = self.palette.as_mut() {
+                    palette.query = query;
+                    palette.chosen = 0;
+                }
+                Vec::new()
+            }
+            Message::PaletteChoose(index) => {
+                let Some(palette) = self.palette.take() else {
+                    return Vec::new();
+                };
+                if let Some(result) = self
+                    .app
+                    .quick_results(&palette.query)
+                    .into_iter()
+                    .nth(index)
+                {
+                    self.app.update(AppMessage::QuickConnect(result))
+                } else {
+                    // Nothing there: the palette stays for another search.
+                    self.palette = Some(palette);
+                    Vec::new()
+                }
+            }
+            _ => {
+                self.palette = None;
+                Vec::new()
+            }
+        }
+    }
+
+    /// A key while Quick Connect is open: the arrows move its choice within its results,
+    /// Enter opens the one chosen, the others are nobody's; `None` while it is closed.
+    fn palette_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
+        let palette = self.palette.as_mut()?;
+        let count = self.app.quick_results(&palette.query).len();
+        match key {
+            FilesKey::Previous => palette.chosen = palette.chosen.saturating_sub(1),
+            FilesKey::Next if palette.chosen + 1 < count => palette.chosen += 1,
+            FilesKey::Open => {
+                let chosen = palette.chosen;
+                return Some(self.palette_message(Message::PaletteChoose(chosen)));
+            }
+            _ => {}
+        }
+        Some(Vec::new())
+    }
+
     /// A click on a profile of the tree, or one of the tree's shortcuts holding Ctrl.
     fn tree_input(&mut self, message: Message) -> Vec<Effect> {
         match message {
@@ -1518,6 +1622,12 @@ impl Shell {
         }
         match shortcut {
             TreeShortcut::New => self.app.update(AppMessage::NewProfile),
+            TreeShortcut::QuickConnect => {
+                self.menu = None;
+                self.palette = Some(Palette::default());
+                self.palette_opened = true;
+                Vec::new()
+            }
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
                 Some(id) if self.tree_focused && self.app.can_edit(&id) => {
                     self.app.update(AppMessage::EditProfile(id))
@@ -3538,7 +3648,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_e_and_ctrl_n_reach_the_tree_only_when_no_widget_took_them() {
+    fn ctrl_e_n_and_k_reach_the_tree_only_when_no_widget_took_them() {
         let ctrl = |letter: &str, modifiers: Modifiers| {
             let key = Key::Character(letter.into());
             iced::Event::Keyboard(keyboard::Event::KeyPressed {
@@ -3561,6 +3671,10 @@ mod tests {
         assert!(matches!(
             routed("n", Modifiers::CTRL, event::Status::Ignored),
             Some(Message::TreeShortcut(TreeShortcut::New))
+        ));
+        assert!(matches!(
+            routed("k", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::QuickConnect))
         ));
         assert!(
             routed("e", Modifiers::CTRL, event::Status::Captured).is_none(),

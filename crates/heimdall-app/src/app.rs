@@ -69,6 +69,7 @@ mod gateways;
 mod local_tab;
 mod profile_menu;
 mod profiles;
+mod quick_connect;
 mod rdp_tab;
 mod reconnect;
 mod selection;
@@ -87,6 +88,7 @@ pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
 pub use profile_menu::ProfileMenuMessage;
+pub use quick_connect::QuickResult;
 pub use selection::SelectionMessage;
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
@@ -224,6 +226,8 @@ pub enum Message {
     },
     /// Stop a tab's session from opening again by itself.
     CancelAutoReconnect(TabId),
+    /// Open what Quick Connect offered.
+    QuickConnect(QuickResult),
     /// Open a profile's host with another protocol, as a session never saved.
     ConnectAs {
         /// Profile.
@@ -451,6 +455,7 @@ impl fmt::Debug for Message {
             }
             Self::CancelAutoReconnect(tab) => write!(f, "CancelAutoReconnect({})", tab.value()),
             Self::ConnectAs { id, protocol } => write!(f, "ConnectAs({id}, {protocol:?})"),
+            Self::QuickConnect(result) => write!(f, "QuickConnect({result:?})"),
             Self::Connection {
                 tab,
                 attempt,
@@ -1300,6 +1305,7 @@ impl App {
             | Message::OpenWinRm(_)
             | Message::ReconnectTab(_)
             | Message::ConnectAs { .. }
+            | Message::QuickConnect(_)
             | Message::ForgetServer(_)) => self.open_message(message),
             message @ (Message::DesktopResize { .. }
             | Message::DesktopInput { .. }
@@ -1426,6 +1432,7 @@ impl App {
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
             Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),
+            Message::QuickConnect(result) => self.quick_connect(result),
             _ => Vec::new(),
         }
     }

@@ -22,6 +22,7 @@ mod files_view;
 mod i18n;
 pub mod keysym;
 mod logging;
+pub mod palette;
 mod report;
 pub mod shell;
 pub mod terminal_view;

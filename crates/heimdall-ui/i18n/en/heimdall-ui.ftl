@@ -449,3 +449,10 @@ ui-selection-duplicate = Duplicate selected
 ui-selection-delete = Delete selected ({ $count })
 ui-dialog-delete-selection-title = Delete Selected Items
 ui-dialog-delete-selection-body = Are you sure you want to delete { $count } selected item(s)?
+
+## Quick Connect, as the C# Ctrl+K palette without its tools.
+ui-palette-placeholder = Search host or IP... (Ctrl+K)
+ui-palette-ssh-to = [SSH] Connect to { $target }
+ui-palette-rdp-to = [RDP] Connect to { $target }
+ui-palette-quick-connect = Quick Connect
+ui-palette-nothing = No session matches, and this is no host to connect to.

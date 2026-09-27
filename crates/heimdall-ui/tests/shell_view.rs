@@ -1348,3 +1348,102 @@ fn the_tree_keys_move_connect_rename_delete_and_edit_as_the_csharp_ones() {
     assert_eq!(shell.app().tabs.len(), 1);
     assert_eq!(shell.app().tabs[0].title, "server b");
 }
+
+#[test]
+fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::shell::TreeShortcut;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(simulator(&shell).find(FIELD).is_err(), "closed at first");
+
+    // Over a menu open, it closes the menu.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Add));
+    simulator(&shell).find("New folder").expect("the menu");
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    assert!(
+        simulator(&shell).find("New folder").is_err(),
+        "the menu closed"
+    );
+    snapshot(&shell, "quick-connect.png");
+    {
+        let mut ui = simulator(&shell);
+        for name in ["SSH  server a", "SSH  server b", "SSH  server c"] {
+            ui.find(name).expect(name);
+        }
+        ui.click(FIELD).expect("its field");
+        ui.typewrite("b");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::PaletteQuery(query) if query == "b"))
+        );
+    }
+    let _ = shell.update(Message::PaletteQuery("B.LAB".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("SSH  server b").expect("found by its host");
+        assert!(ui.find("SSH  server a").is_err(), "filtered out");
+    }
+    // Enter opens the one chosen, and closes the palette.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 1);
+    assert_eq!(shell.app().tabs[0].title, "server b");
+    assert!(
+        simulator(&shell).find("SSH  server b").is_err(),
+        "closed: the tree names it alone"
+    );
+
+    // Escape closes it, and nothing more.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(simulator(&shell).find(FIELD).is_err());
+    assert_eq!(shell.app().tabs.len(), 1);
+
+    // A host no session matches: SSH or RDP to it, the arrows choosing.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("[SSH] Connect to jump.lab").expect("SSH");
+        ui.click("[RDP] Connect to jump.lab").expect("RDP");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::PaletteChoose(1)))
+        );
+    }
+    // Down twice stays on the last; up comes back to the first.
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 2);
+    assert_eq!(
+        shell.app().tab_kind(&shell.app().tabs[1]),
+        heimdall_app::ProfileKind::Ssh
+    );
+
+    // Neither a session nor a host: said, and a choice there opens nothing.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::PaletteQuery("no such thing".to_owned()));
+    simulator(&shell)
+        .find("No session matches, and this is no host to connect to.")
+        .expect("says so");
+    let _ = shell.update(Message::PaletteChoose(0));
+    assert_eq!(shell.app().tabs.len(), 2);
+    simulator(&shell)
+        .find("No session matches, and this is no host to connect to.")
+        .expect("still open");
+    // A new search chooses its first again.
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 3);
+    assert_eq!(
+        shell.app().tab_kind(&shell.app().tabs[2]),
+        heimdall_app::ProfileKind::Ssh
+    );
+}

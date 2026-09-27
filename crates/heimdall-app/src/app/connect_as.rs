@@ -76,7 +76,7 @@ impl ConnectAs {
 
 /// Identifiers of sessions never saved, one per "Connect as...": never those of a profile,
 /// whose identifiers are ULID-like or the C# ones.
-fn transient_id() -> ProfileId {
+pub(super) fn transient_id() -> ProfileId {
     static NEXT: AtomicU64 = AtomicU64::new(1);
     ProfileId::new(format!(
         "connect-as:{}",
