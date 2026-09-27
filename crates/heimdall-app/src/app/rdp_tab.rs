@@ -42,6 +42,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             port,
             fingerprint,
         } => {
+            tab.retry = None;
             tab.prompts.clear();
             tab.pending_rdp_key = Some(fingerprint);
             tab.phase = Phase::HostKey {
@@ -56,6 +57,8 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             size,
             clipboard,
         } => {
+            // Back: the attempts stop.
+            tab.retry = None;
             tab.phase = Phase::Connected;
             tab.desktop = Some(Box::new(DesktopPane::rdp(
                 framebuffer,

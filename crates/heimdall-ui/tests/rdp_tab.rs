@@ -584,3 +584,47 @@ fn a_session_the_server_ended_says_why() {
         .expect("its reason");
     ui.click("Reconnect").expect("reconnect");
 }
+
+#[tokio::test]
+async fn a_dropped_desktop_counts_down_to_its_next_attempt_and_can_be_stopped() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Reconnecting (attempt 1/20)...")
+            .expect("which attempt");
+        ui.find("in 2s").expect("how long");
+        assert!(
+            ui.find("The connection failed").is_err(),
+            "not the failure yet"
+        );
+        ui.click("Cancel").expect("cancel");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::CancelAutoReconnect(cancelled)) if cancelled == tab
+        )));
+    }
+    // The attempt itself says it is one.
+    let _ = shell.update(Message::App(AppMessage::AutoReconnect { tab, attempt }));
+    let mut ui = simulator(&shell);
+    ui.find("Reconnecting (attempt 1/20)...")
+        .expect("while connecting");
+}

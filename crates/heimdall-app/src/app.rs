@@ -60,6 +60,7 @@ use crate::telnet_driver::TelnetRequest;
 use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
 
+mod auto_reconnect;
 mod files_tab;
 mod gateways;
 mod local_tab;
@@ -73,6 +74,7 @@ mod vault;
 mod vnc_tab;
 mod winrm_tab;
 
+pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use local_tab::LocalConfirmation;
@@ -203,6 +205,15 @@ pub enum Message {
     RequestCloseTab(TabId),
     /// Something from a tab's menu.
     TabMenu(TabMenuMessage),
+    /// The wait before a tab's session opens again by itself is over.
+    AutoReconnect {
+        /// Tab.
+        tab: TabId,
+        /// The attempt that failed.
+        attempt: AttemptId,
+    },
+    /// Stop a tab's session from opening again by itself.
+    CancelAutoReconnect(TabId),
     /// Something happened in a tab's connection attempt.
     Connection {
         /// Tab.
@@ -410,6 +421,10 @@ impl fmt::Debug for Message {
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
+            Self::AutoReconnect { tab, attempt } => {
+                write!(f, "AutoReconnect({}, {})", tab.value(), attempt.value())
+            }
+            Self::CancelAutoReconnect(tab) => write!(f, "CancelAutoReconnect({})", tab.value()),
             Self::Connection {
                 tab,
                 attempt,
@@ -590,6 +605,15 @@ pub enum Effect {
         job: VaultJob,
     },
     /// Quit the application.
+    /// Wake the core at `deadline` with [`Message::AutoReconnect`].
+    RetryAt {
+        /// Tab.
+        tab: TabId,
+        /// The attempt that failed.
+        attempt: AttemptId,
+        /// When.
+        deadline: Instant,
+    },
     Exit,
 }
 
@@ -635,6 +659,9 @@ impl fmt::Debug for Effect {
                 request.direction
             ),
             Self::OpenVault { job, .. } => write!(f, "OpenVault({})", job.name()),
+            Self::RetryAt { tab, attempt, .. } => {
+                write!(f, "RetryAt({}, {})", tab.value(), attempt.value())
+            }
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -708,6 +735,8 @@ pub struct Tab {
     pub custom_title: Option<String>,
     /// Why the server ended the session, when it said.
     pub end_reason: Option<String>,
+    /// The session waiting to open again by itself, after it dropped.
+    pub retry: Option<Retry>,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -792,6 +821,7 @@ impl Tab {
             title: profile.name().to_owned(),
             custom_title: None,
             end_reason: None,
+            retry: None,
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
@@ -1212,6 +1242,11 @@ impl App {
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::TabMenu(message) => self.tab_menu(message),
+            Message::AutoReconnect { tab, attempt } => self.auto_reconnect(tab, attempt),
+            Message::CancelAutoReconnect(tab) => {
+                self.cancel_auto_reconnect(tab);
+                Vec::new()
+            }
             Message::Connection {
                 tab,
                 attempt,
@@ -1427,7 +1462,17 @@ impl App {
         if matches!(event, ConnectionEvent::Failed(_)) {
             self.credentials_failed(tab_id);
         }
-        self.apply_connection_event(tab_id, event)
+        let failure = match &event {
+            ConnectionEvent::Failed(error) => {
+                Some((error.clone(), self.tab(tab_id).is_some_and(Tab::is_live)))
+            }
+            _ => None,
+        };
+        let mut effects = self.apply_connection_event(tab_id, event);
+        if let Some((error, was_live)) = failure {
+            effects.extend(self.retry_after(tab_id, &error, was_live));
+        }
+        effects
     }
 
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
@@ -1437,6 +1482,7 @@ impl App {
         };
         match event {
             ConnectionEvent::Question { question, kind } => {
+                tab.retry = None;
                 tab.prompts.push_back(Prompt {
                     question,
                     kind: safe_question(kind),
@@ -1449,6 +1495,7 @@ impl App {
                 fingerprint,
                 key,
             } => {
+                tab.retry = None;
                 tab.prompts.clear();
                 tab.pending_host_key = Some(key);
                 tab.phase = Phase::HostKey {

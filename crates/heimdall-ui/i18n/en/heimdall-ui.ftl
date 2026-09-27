@@ -414,3 +414,8 @@ ui-error-network-reset = Connection reset.
 ui-error-network-timed-out = Connection timed out. Check that the host is reachable.
 ui-error-network-unreachable = Host or network is unreachable. Check DNS and routing.
 ui-session-closed-reason = The server said: { $reason }
+
+## A dropped desktop opening again by itself, as the C# countdown.
+ui-session-reconnecting = Reconnecting (attempt { $attempt }/{ $max })...
+ui-session-reconnecting-in = in { $seconds }s
+ui-session-reconnecting-cancel = Cancel

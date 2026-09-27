@@ -1,0 +1,292 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! Auto-reconnect of a dropped RDP desktop, as the C# Heimdall's: after 2, 5, then 15
+//! seconds, up to 20 attempts, in its tab; stopped by Cancel, by success, or by anything
+//! that needs the user.
+
+use std::path::Path;
+use std::time::{Duration, Instant};
+
+use heimdall_app::{
+    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, NetworkFailure, Phase,
+    RDP_MAX_ATTEMPTS, TabId, UiError,
+};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
+use heimdall_core::store::ProfileStore;
+use heimdall_rdp::Framebuffer;
+use heimdall_ssh::AgentSource;
+use heimdall_term::GridSize;
+use tokio::sync::mpsc;
+
+fn app(dir: &Path) -> App {
+    let profiles_file = dir.join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_rdp([RdpProfile {
+        id: ProfileId::new("dc"),
+        name: "Domain controller".to_owned(),
+        group: None,
+        host: "dc.lab".to_owned(),
+        port: 3389,
+        username: Some("admin".to_owned()),
+        domain: None,
+        allow_tls_only: false,
+        gateway: None,
+        redirect_clipboard: false,
+        redirect_drives: false,
+    }]);
+    store.merge([SshProfile {
+        id: ProfileId::new("web"),
+        name: "web".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: None,
+    }]);
+    store.save().expect("save");
+    App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    })
+}
+
+fn connect_rdp(effects: &[Effect]) -> (TabId, AttemptId) {
+    match effects {
+        [Effect::ConnectRdp { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("expected one ConnectRdp, got {other:?}"),
+    }
+}
+
+fn event(app: &mut App, tab: TabId, attempt: AttemptId, event: ConnectionEvent) -> Vec<Effect> {
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event,
+    })
+}
+
+fn ready(app: &mut App, tab: TabId, attempt: AttemptId) {
+    let (input, _received) = mpsc::unbounded_channel();
+    event(
+        app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(64, 48),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    assert_eq!(app.tab(tab).expect("tab").phase, Phase::Connected);
+}
+
+fn dropped() -> ConnectionEvent {
+    ConnectionEvent::Failed(UiError::Network {
+        failure: NetworkFailure::Reset,
+        detail: "reset".to_owned(),
+    })
+}
+
+/// A live desktop of profile "dc".
+fn live(app: &mut App) -> (TabId, AttemptId) {
+    let (tab, attempt) = connect_rdp(&app.update(Message::OpenRdp(ProfileId::new("dc"))));
+    ready(app, tab, attempt);
+    (tab, attempt)
+}
+
+/// The wake-up `effects` ask for, checked to be `wait` from now.
+fn wake(effects: &[Effect], tab: TabId, failed: AttemptId, wait: Duration) {
+    let [
+        Effect::RetryAt {
+            tab: woken,
+            attempt,
+            deadline,
+        },
+    ] = effects
+    else {
+        panic!("expected one RetryAt, got {effects:?}");
+    };
+    assert_eq!((*woken, *attempt), (tab, failed));
+    let left = deadline.saturating_duration_since(Instant::now());
+    assert!(
+        left <= wait && left + Duration::from_millis(500) >= wait,
+        "{left:?} for {wait:?}"
+    );
+}
+
+#[test]
+fn a_dropped_desktop_opens_again_by_itself_after_2_then_5_seconds() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = live(&mut app);
+
+    let effects = event(&mut app, tab, attempt, dropped());
+    wake(&effects, tab, attempt, Duration::from_secs(2));
+    let retry = app.tab(tab).expect("tab").retry.expect("waiting");
+    assert_eq!((retry.attempt, retry.max), (1, RDP_MAX_ATTEMPTS));
+    assert!(matches!(app.tab(tab).expect("tab").phase, Phase::Failed(_)));
+
+    let (again, second) = connect_rdp(&app.update(Message::AutoReconnect { tab, attempt }));
+    assert_eq!(again, tab, "in its own tab");
+    assert_ne!(second, attempt);
+    assert_eq!(app.tab(tab).expect("tab").phase, Phase::Connecting);
+    assert!(
+        app.update(Message::AutoReconnect { tab, attempt })
+            .is_empty(),
+        "a wake-up for an attempt gone does nothing"
+    );
+
+    // The server is still away: the second attempt waits longer.
+    let effects = event(
+        &mut app,
+        tab,
+        second,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    wake(&effects, tab, second, Duration::from_secs(5));
+    assert_eq!(
+        app.tab(tab).expect("tab").retry.expect("waiting").attempt,
+        2
+    );
+    assert!(
+        app.update(Message::AutoReconnect { tab, attempt })
+            .is_empty(),
+        "the first wake-up, late, does not cut the second wait short"
+    );
+
+    let (_, third) = connect_rdp(&app.update(Message::AutoReconnect {
+        tab,
+        attempt: second,
+    }));
+    ready(&mut app, tab, third);
+    assert_eq!(app.tab(tab).expect("tab").retry, None, "back: stopped");
+}
+
+#[test]
+fn the_attempts_stop_at_the_twentieth() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, mut attempt) = live(&mut app);
+    let mut effects = event(&mut app, tab, attempt, dropped());
+    for expected in 1..=RDP_MAX_ATTEMPTS {
+        assert_eq!(
+            app.tab(tab).expect("tab").retry.expect("waiting").attempt,
+            expected
+        );
+        assert_eq!(effects.len(), 1);
+        attempt = connect_rdp(&app.update(Message::AutoReconnect { tab, attempt })).1;
+        effects = event(&mut app, tab, attempt, dropped());
+    }
+    assert!(effects.is_empty(), "no twenty-first");
+    assert_eq!(app.tab(tab).expect("tab").retry, None);
+    assert!(app.can_reconnect(app.tab(tab).expect("tab")));
+}
+
+#[test]
+fn cancel_stops_the_attempts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = live(&mut app);
+    event(&mut app, tab, attempt, dropped());
+    app.update(Message::CancelAutoReconnect(tab));
+    assert_eq!(app.tab(tab).expect("tab").retry, None);
+    assert!(
+        app.update(Message::AutoReconnect { tab, attempt })
+            .is_empty()
+    );
+    assert!(matches!(app.tab(tab).expect("tab").phase, Phase::Failed(_)));
+}
+
+#[test]
+fn only_a_live_desktop_that_dropped_for_a_passing_reason_comes_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    // Never connected: the failure is shown.
+    let (first, attempt) = connect_rdp(&app.update(Message::OpenRdp(ProfileId::new("dc"))));
+    assert!(event(&mut app, first, attempt, dropped()).is_empty());
+    assert_eq!(app.tab(first).expect("tab").retry, None);
+
+    // A reason that will not pass by itself.
+    let (tab, attempt) = live(&mut app);
+    let refused = ConnectionEvent::Failed(UiError::AuthenticationFailed { tried: Vec::new() });
+    assert!(event(&mut app, tab, attempt, refused).is_empty());
+    assert_eq!(app.tab(tab).expect("tab").retry, None);
+
+    // An SSH session: not by default, as in the C# Heimdall.
+    let effects = app.update(Message::OpenProfile(ProfileId::new("web")));
+    let [Effect::Connect { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Connected {
+            input: std::sync::Arc::new(NullSink),
+        },
+    );
+    assert!(event(&mut app, tab, attempt, dropped()).is_empty());
+}
+
+#[test]
+fn a_question_on_the_way_back_stops_the_attempts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = live(&mut app);
+    event(&mut app, tab, attempt, dropped());
+    let (_, again) = connect_rdp(&app.update(Message::AutoReconnect { tab, attempt }));
+    event(
+        &mut app,
+        tab,
+        again,
+        ConnectionEvent::UnknownRdpCertificate {
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .parse()
+                .expect("fingerprint"),
+        },
+    );
+    assert_eq!(app.tab(tab).expect("tab").retry, None, "the user decides");
+    app.update(Message::HostKeyDecision { tab, accept: false });
+    assert_eq!(
+        app.tab(tab).expect("tab").phase,
+        Phase::Failed(UiError::Cancelled)
+    );
+    assert_eq!(app.tab(tab).expect("tab").retry, None);
+}
+
+#[derive(Debug)]
+struct NullSink;
+
+impl heimdall_app::InputSink for NullSink {
+    fn write(&self, _bytes: Vec<u8>) -> Result<(), heimdall_ssh::SessionClosed> {
+        Ok(())
+    }
+    fn resize(&self, _size: heimdall_ssh::TerminalSize) -> Result<(), heimdall_ssh::SessionClosed> {
+        Ok(())
+    }
+    fn close(&self) {}
+}

@@ -39,9 +39,9 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
     Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
-    QuestionId, QuestionKind, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
-    UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
-    master_password_problem, open_vault, server_text,
+    QuestionId, QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
+    TabMenuMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
@@ -102,6 +102,9 @@ const SKIPPED_LIST_HEIGHT: f32 = 200.0;
 
 /// Height the command of a local profile scrolls within, however long it is.
 const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
+
+/// How often a waiting session's countdown is drawn anew.
+const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Longest tab title shown, in characters.
 const MAX_TAB_TITLE_CHARS: usize = 32;
@@ -275,6 +278,8 @@ pub enum Message {
     MenuFullscreen(TabId),
     /// Copy the report of a tab's failure, as the C# card's "Copy error".
     CopyError(TabId),
+    /// A second passed while a tab waits to open again: its countdown is drawn anew.
+    Tick,
 }
 
 impl fmt::Debug for Message {
@@ -312,6 +317,7 @@ impl fmt::Debug for Message {
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
+            Self::Tick => f.write_str("Tick"),
         }
     }
 }
@@ -554,7 +560,15 @@ impl Shell {
 
     /// Window events and shortcuts.
     pub fn subscription(&self) -> Subscription<Message> {
-        event::listen_with(window_event)
+        let events = event::listen_with(window_event);
+        if self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
+            Subscription::batch([
+                events,
+                iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick),
+            ])
+        } else {
+            events
+        }
     }
 
     /// Applies a message.
@@ -648,6 +662,7 @@ impl Shell {
             }
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::CopyError(tab) => return self.copy_error(tab),
+            Message::Tick => return Task::none(),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -1068,6 +1083,14 @@ impl Shell {
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
+            Effect::RetryAt {
+                tab,
+                attempt,
+                deadline,
+            } => Task::perform(
+                tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)),
+                move |()| Message::App(AppMessage::AutoReconnect { tab, attempt }),
+            ),
             Effect::WakeAt {
                 tab,
                 generation,
@@ -1469,12 +1492,13 @@ impl Shell {
         match &tab.phase {
             Phase::Connecting => center(card(
                 column![
-                    text(match tab.profile.endpoint() {
-                        Some((host, port)) => fl!(
+                    text(match (tab.retry, tab.profile.endpoint()) {
+                        (Some(retry), _) => reconnecting(retry),
+                        (None, Some((host, port))) => fl!(
                             "ui-connect-progress",
                             target = target(host, port, tab.profile.username())
                         ),
-                        None => fl!("ui-local-starting", name = tab.profile.name()),
+                        (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
                     }),
                     button(text(fl!("ui-connect-cancel-button")))
                         .style(button::secondary)
@@ -1529,6 +1553,7 @@ impl Shell {
                     .spacing(SPACING),
             ))
             .into(),
+            Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
             Phase::Failed(error) => self.failure_card(tab, error),
         }
     }
@@ -2638,6 +2663,35 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
         .spacing(SPACING),
     ]
     .spacing(SPACING)
+    .into()
+}
+
+/// "Reconnecting (attempt 2/20)...", as the C# countdown says it.
+fn reconnecting(retry: Retry) -> String {
+    fl!(
+        "ui-session-reconnecting",
+        attempt = retry.attempt,
+        max = retry.max
+    )
+}
+
+/// A session waiting to open again by itself: which attempt, in how long, and Cancel.
+fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
+    let left = retry
+        .due
+        .saturating_duration_since(std::time::Instant::now());
+    // Rounded up: "in 0s" would show while the wait still runs.
+    let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+    center(card(
+        column![
+            text(reconnecting(retry)).size(HEADING_SIZE),
+            text(fl!("ui-session-reconnecting-in", seconds = seconds)),
+            button(text(fl!("ui-session-reconnecting-cancel")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::CancelAutoReconnect(tab))),
+        ]
+        .spacing(SPACING),
+    ))
     .into()
 }
 
