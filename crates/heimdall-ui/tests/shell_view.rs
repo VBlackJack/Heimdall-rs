@@ -90,6 +90,7 @@ fn app(dir: &Path) -> App {
         agent: AgentSource::Disabled,
         initial_grid: GRID,
         files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
     })
 }
 
@@ -493,64 +494,9 @@ fn create_vault(core: &mut App) {
     core.update(AppMessage::VaultOpened(result));
 }
 
-fn ask_password(core: &mut App, tab: TabId, attempt: AttemptId) -> QuestionId {
-    let question = QuestionId::fresh();
-    core.update(AppMessage::Connection {
-        tab,
-        attempt,
-        event: ConnectionEvent::Question {
-            question,
-            kind: QuestionKind::Password(PasswordQuestion {
-                host: "a.lab".to_owned(),
-                port: 22,
-                username: "admin".to_owned(),
-                attempt: 1,
-            }),
-        },
-    });
-    question
-}
-
-#[test]
-fn a_password_ticked_to_be_remembered_answers_the_next_connection() {
-    let dir = tempfile::tempdir().expect("dir");
-    let mut core = app(dir.path());
-    create_vault(&mut core);
-    let (tab, attempt) = open(&mut core, "a");
-    let question = ask_password(&mut core, tab, attempt);
-    let mut shell = Shell::with_app(core);
-    snapshot(&shell, "password-remember.png");
-    {
-        let mut ui = simulator(&shell);
-        ui.find("Lock vault").expect("the vault is open");
-        ui.click("Remember in the vault")
-            .expect("the box is offered");
-        assert!(ui.into_messages().any(|message| matches!(
-            message,
-            Message::Remember { question: q, remember: true } if q == question
-        )));
-    }
-    let _ = shell.update(Message::Remember {
-        question,
-        remember: true,
-    });
-    let _ = shell.update(Message::Field {
-        question,
-        index: 0,
-        value: "hunter2".to_owned(),
-    });
-    let _ = shell.update(Message::Submit(tab));
-    let _ = shell.update(Message::App(AppMessage::Connection {
-        tab,
-        attempt,
-        event: ConnectionEvent::Connected {
-            input: Arc::new(NullSink),
-        },
-    }));
-
-    // Another connection to the same server: answered without asking, with what was typed.
-    let mut core = shell_core(shell);
-    let (tab, attempt) = open(&mut core, "a");
+/// The password a new connection to profile `a` is answered with by itself, if any.
+fn saved_answer(core: &mut App) -> Option<String> {
+    let (tab, attempt) = open(core, "a");
     let question = QuestionId::fresh();
     let effects = core.update(AppMessage::Connection {
         tab,
@@ -565,54 +511,84 @@ fn a_password_ticked_to_be_remembered_answers_the_next_connection() {
             }),
         },
     });
-    let [
-        heimdall_app::Effect::Answer {
-            question: answered,
-            answer: Some(heimdall_app::Answer::Secret(secret)),
-        },
-    ] = effects.as_slice()
-    else {
-        panic!("expected an answer, got {effects:?}");
-    };
-    assert_eq!(*answered, question);
-    assert_eq!(secret.expose(), "hunter2");
+    match effects.as_slice() {
+        [] => None,
+        [
+            heimdall_app::Effect::Answer {
+                question: answered,
+                answer: Some(heimdall_app::Answer::Secret(secret)),
+            },
+        ] if *answered == question => Some(secret.expose().to_owned()),
+        other => panic!("unexpected {other:?}"),
+    }
 }
 
 #[test]
-fn a_password_left_unticked_is_not_remembered() {
+fn the_profile_form_saves_a_password_and_then_says_it_is_saved() {
     let dir = tempfile::tempdir().expect("dir");
     let mut core = app(dir.path());
-    create_vault(&mut core);
-    let (tab, attempt) = open(&mut core, "a");
-    let question = ask_password(&mut core, tab, attempt);
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
     let mut shell = Shell::with_app(core);
-    let _ = shell.update(Message::Field {
-        question,
-        index: 0,
-        value: "hunter2".to_owned(),
-    });
-    let _ = shell.update(Message::Submit(tab));
-    let _ = shell.update(Message::App(AppMessage::Connection {
-        tab,
-        attempt,
-        event: ConnectionEvent::Connected {
-            input: Arc::new(NullSink),
-        },
-    }));
-    let mut core = shell_core(shell);
-    let (tab, attempt) = open(&mut core, "a");
-    let question = ask_password(&mut core, tab, attempt);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Password").expect("a password field");
+        assert!(ui.find("Password saved").is_err(), "none yet");
+    }
+    let _ = shell.update(Message::ProfilePassword("hunter2".to_owned()));
+    let _ = shell.update(Message::SaveProfileForm);
+    let mut core = shell.into_app();
+    assert!(core.dialog.is_none(), "{:?}", core.dialog);
+    assert_eq!(saved_answer(&mut core).as_deref(), Some("hunter2"));
+
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "profile-password-saved.png");
+    let mut ui = simulator(&shell);
+    ui.find("Password saved").expect("says so");
+    ui.click("Clear").expect("a clear button");
     assert!(
-        core.tab(tab)
-            .expect("tab")
-            .prompts
-            .iter()
-            .any(|prompt| prompt.question == question),
-        "asked"
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ClearPassword)))
     );
 }
 
-/// The core of `shell`, to drive it further by messages.
-fn shell_core(shell: Shell) -> App {
-    shell.into_app()
+#[test]
+fn enter_in_the_profile_form_saves_the_password_typed_too() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::ProfilePassword("hunter2".to_owned()));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let mut core = shell.into_app();
+    assert!(core.dialog.is_none(), "{:?}", core.dialog);
+    assert_eq!(saved_answer(&mut core).as_deref(), Some("hunter2"));
+}
+
+#[test]
+fn a_password_typed_then_dismissed_is_neither_saved_nor_kept() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::ProfilePassword("hunter2".to_owned()));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    // Opened again and saved without typing: what was typed before is gone.
+    let _ = shell.update(Message::App(AppMessage::EditProfile(ProfileId::new("a"))));
+    let _ = shell.update(Message::SaveProfileForm);
+    let mut core = shell.into_app();
+    assert_eq!(saved_answer(&mut core), None);
+}
+
+#[test]
+fn with_the_vault_locked_the_form_says_to_unlock_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    create_vault(&mut core);
+    core.update(AppMessage::LockVault);
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Unlock the vault to save or change a password.")
+        .expect("says why the field is closed");
 }

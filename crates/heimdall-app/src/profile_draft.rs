@@ -77,6 +77,10 @@ pub struct ProfileDraft {
     /// The SSH gateway of the profile being edited, which the form does not show: kept as it
     /// is, so that saving the form never drops it.
     pub gateway: Option<ProfileId>,
+    /// A password is saved for the profile: the form says so, its field stays empty.
+    pub password_saved: bool,
+    /// The saved password is to be removed when the form is saved.
+    pub clear_password: bool,
 }
 
 /// Why a form cannot be saved yet.
@@ -98,6 +102,8 @@ pub enum DraftError {
     UsernameInvalid,
     /// A text holds a control character.
     ControlCharacter,
+    /// A password is typed but no user name: a password is for an account.
+    UsernameForPassword,
 }
 
 impl DraftError {
@@ -110,7 +116,7 @@ impl DraftError {
                 ProfileField::Host
             }
             Self::PortInvalid => ProfileField::Port,
-            Self::UsernameInvalid => ProfileField::Username,
+            Self::UsernameInvalid | Self::UsernameForPassword => ProfileField::Username,
         }
     }
 }
@@ -132,6 +138,8 @@ impl ProfileDraft {
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             gateway: profile.gateway.clone(),
+            password_saved: false,
+            clear_password: false,
         }
     }
 
@@ -279,7 +287,7 @@ mod tests {
             port: " 2222 ".to_owned(),
             username: " admin ".to_owned(),
             key_path: " /home/me/.ssh/id_ed25519 ".to_owned(),
-            gateway: None,
+            ..ProfileDraft::default()
         };
         let profile = form.to_profile(id()).expect("valid");
         assert_eq!(profile.name, "web");

@@ -2103,6 +2103,7 @@ version = "0.1.0"
 dependencies = [
  "heimdall-core",
  "heimdall-files",
+ "heimdall-keyring",
  "heimdall-rdp",
  "heimdall-remote",
  "heimdall-sftp",

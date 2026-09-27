@@ -38,9 +38,9 @@ pub mod vnc_driver;
 
 pub use app::{
     App, AppConfig, Dialog, Effect, FilesMessage, ImportSummary, KeyInput, LocalConfirmation,
-    MIN_MASTER_PASSWORD_CHARS, Message, NameAction, OpenedVault, Phase, PointerInput, Prompt, Tab,
-    TabProfile, VAULT_FILE_NAME, VaultDialog, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
-    open_vault,
+    MIN_MASTER_PASSWORD_CHARS, Message, NameAction, OpenedVault, Phase, PointerInput, Prompt,
+    SystemCredentials, Tab, TabProfile, VAULT_FILE_NAME, VaultDialog, VaultMode, VaultProblem,
+    VaultStatus, WHEEL_LINES, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
