@@ -92,10 +92,13 @@ impl App {
 
     /// Deletes a profile. Its open tabs keep their own copy and stay as they are.
     pub(super) fn delete_profile(&mut self, id: &ProfileId) {
-        if let Err(error) = self.store.apply(|store| store.remove(id)) {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+        match self.store.apply(|store| store.remove(id)) {
+            Ok(_) => self.forget_password(id),
+            Err(error) => {
+                self.dialog = Some(Dialog::StoreError {
+                    detail: error.to_string(),
+                });
+            }
         }
     }
 }

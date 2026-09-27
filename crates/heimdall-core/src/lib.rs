@@ -17,6 +17,7 @@
 //! Domain model shared by every Heimdall crate: server profiles, settings, paths and the
 //! credential vault.
 
+pub mod credentials;
 pub mod import;
 pub mod paths;
 pub mod profile;

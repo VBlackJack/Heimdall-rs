@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::path::PathBuf;
 
@@ -34,9 +34,9 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, LocalConfirmation, Message as AppMessage, NameAction, Phase, Prompt,
-    Purpose, QuestionId, QuestionKind, Tab, TabId, UiError, connection_events, server_text,
-    visible_text,
+    Effect, FilesMessage, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, Message as AppMessage,
+    NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, Tab, TabId, UiError, VaultDialog,
+    VaultMode, VaultProblem, VaultStatus, connection_events, open_vault, server_text, visible_text,
 };
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{
@@ -49,8 +49,8 @@ use iced::keyboard::key::Named;
 use iced::task::Handle;
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, center, column, container, opaque, operation, row, scrollable, stack, text,
-    text_input,
+    Column, button, center, checkbox, column, container, opaque, operation, row, scrollable, stack,
+    text, text_input,
 };
 use iced::{Color, Element, Length, Subscription, Task, Theme, event, keyboard, window};
 use zeroize::Zeroizing;
@@ -191,6 +191,24 @@ pub enum Message {
         /// With Shift: the previous field.
         backward: bool,
     },
+    /// A field of the vault dialog changed.
+    VaultField {
+        /// Field: the password, then its confirmation.
+        index: usize,
+        /// New content.
+        value: String,
+    },
+    /// Move to field `index` of the vault dialog.
+    FocusVaultField(usize),
+    /// Try the master password typed.
+    SubmitVault,
+    /// "Remember in the vault" ticked or cleared for a question.
+    Remember {
+        /// Question.
+        question: QuestionId,
+        /// Ticked.
+        remember: bool,
+    },
 }
 
 impl fmt::Debug for Message {
@@ -210,6 +228,12 @@ impl fmt::Debug for Message {
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
+            Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
+            Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
+            Self::SubmitVault => f.write_str("SubmitVault"),
+            Self::Remember { question, remember } => {
+                write!(f, "Remember({}, {remember})", question.value())
+            }
         }
     }
 }
@@ -434,6 +458,10 @@ pub struct Shell {
     focused: Option<QuestionId>,
     /// Which field of the open dialog was last given focus, so it is given once.
     dialog_focus: Option<DialogFocus>,
+    /// What is typed into the vault dialog: the master password and its confirmation.
+    vault_fields: [Zeroizing<String>; 2],
+    /// Questions whose password is to be remembered.
+    remember: HashSet<QuestionId>,
 }
 
 /// A field given focus in a dialog.
@@ -445,6 +473,8 @@ enum DialogFocus {
     Profile,
     /// A profile form refused for this reason: the field to fix.
     ProfileError(DraftError),
+    /// The vault's master password.
+    Vault,
 }
 
 impl Shell {
@@ -470,6 +500,8 @@ impl Shell {
             drafts: HashMap::new(),
             focused: None,
             dialog_focus: None,
+            vault_fields: Default::default(),
+            remember: HashSet::new(),
         }
     }
 
@@ -477,6 +509,12 @@ impl Shell {
     #[must_use]
     pub fn app(&self) -> &App {
         &self.app
+    }
+
+    /// The application core, the window dropped.
+    #[must_use]
+    pub fn into_app(self) -> App {
+        self.app
     }
 
     /// Whether something typed into `question` is held.
@@ -539,6 +577,22 @@ impl Shell {
                 }
                 self.files_key(FilesKey::SwitchPane)
             }
+            Message::VaultField { index, value } => {
+                if let Some(field) = self.vault_fields.get_mut(index) {
+                    *field = Zeroizing::new(value);
+                }
+                return Task::none();
+            }
+            Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
+            Message::SubmitVault => self.submit_vault(),
+            Message::Remember { question, remember } => {
+                if remember {
+                    self.remember.insert(question);
+                } else {
+                    self.remember.remove(&question);
+                }
+                return Task::none();
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -581,10 +635,34 @@ impl Shell {
         let question = prompt.question;
         let typed = self.drafts.remove(&question).unwrap_or_default();
         let answer = accept.then(|| answer(&prompt.kind, typed));
-        self.app.update(AppMessage::Answer {
-            tab,
-            question,
-            answer,
+        let remember = self.remember.remove(&question) && self.app.can_remember(tab, prompt);
+        match answer {
+            Some(Answer::Secret(password)) if remember => {
+                self.app.update(AppMessage::AnswerRemembered {
+                    tab,
+                    question,
+                    password,
+                })
+            }
+            answer => self.app.update(AppMessage::Answer {
+                tab,
+                question,
+                answer,
+            }),
+        }
+    }
+
+    /// Hands the master password typed to the core; the fields are emptied either way.
+    fn submit_vault(&mut self) -> Vec<Effect> {
+        let Some(Dialog::Vault(dialog)) = &self.app.dialog else {
+            return Vec::new();
+        };
+        let create = dialog.mode == VaultMode::Create;
+        let [password, confirm] = std::mem::take(&mut self.vault_fields);
+        let secret = |mut text: Zeroizing<String>| Secret::new(std::mem::take(&mut *text));
+        self.app.update(AppMessage::SubmitVault {
+            password: secret(password),
+            confirm: create.then(|| secret(confirm)),
         })
     }
 
@@ -670,6 +748,16 @@ impl Shell {
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
     fn forget_finished(&mut self) {
         let app = &self.app;
+        if !matches!(app.dialog, Some(Dialog::Vault(_))) {
+            self.vault_fields = Default::default();
+        }
+        self.remember.retain(|question| {
+            app.tabs.iter().any(|tab| {
+                tab.prompts
+                    .iter()
+                    .any(|prompt| prompt.question == *question)
+            })
+        });
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
         self.drafts.retain(|question, _| {
             app.tabs.iter().any(|tab| {
@@ -701,6 +789,7 @@ impl Shell {
     fn focus_dialog(&mut self) -> Task<Message> {
         let (next, field) = match &self.app.dialog {
             Some(Dialog::AskName { .. }) => (Some(DialogFocus::Name), name_field_id()),
+            Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
             Some(Dialog::EditProfile {
                 error: Some(error), ..
             }) => (
@@ -809,39 +898,10 @@ impl Shell {
                 }
                 Task::none()
             }
-            Effect::ListRemote { tab, client, path } => {
-                Task::perform(list_remote(client, path), move |result| {
-                    Message::App(AppMessage::Files(FilesMessage::RemoteListed {
-                        tab,
-                        result,
-                    }))
-                })
-            }
-            Effect::ListLocal { tab, path } => Task::perform(list_local(path), move |result| {
-                Message::App(AppMessage::Files(FilesMessage::LocalListed { tab, result }))
-            }),
-            Effect::Transfer { tab, id, request } => {
-                // Started inside the task, like a connection: spawning needs the runtime.
-                let events = stream::once(async move { transfer_events(*request) }).flatten();
-                Task::stream(events).map(move |event| {
-                    Message::App(AppMessage::Files(FilesMessage::TransferEvent {
-                        tab,
-                        id,
-                        event,
-                    }))
-                })
-            }
-            Effect::FileOperation {
-                tab,
-                side,
-                operation,
-            } => Task::perform(file_operation(*operation), move |result| {
-                Message::App(AppMessage::Files(FilesMessage::OperationDone {
-                    tab,
-                    side,
-                    result,
-                }))
-            }),
+            effect @ (Effect::ListRemote { .. }
+            | Effect::ListLocal { .. }
+            | Effect::Transfer { .. }
+            | Effect::FileOperation { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
@@ -853,6 +913,11 @@ impl Shell {
                 tokio::time::sleep_until(tokio::time::Instant::from_std(deadline)),
                 move |()| Message::App(AppMessage::SyncDeadline { tab, generation }),
             ),
+            Effect::OpenVault {
+                path,
+                password,
+                create,
+            } => open_vault_task(path, password, create),
             Effect::Exit => iced::exit(),
         }
     }
@@ -870,8 +935,8 @@ impl Shell {
         // widgets under a dialog, such as how far a list is scrolled.
         let mut layers = stack![body];
         if let Some(dialog) = &self.app.dialog {
-            layers = layers.push(opaque(center(card(dialog_view(dialog))).style(
-                |_theme: &Theme| {
+            layers = layers.push(opaque(
+                center(card(dialog_view(dialog, &self.vault_fields))).style(|_theme: &Theme| {
                     container::Style {
                         background: Some(
                             Color {
@@ -882,8 +947,8 @@ impl Shell {
                         ),
                         ..container::Style::default()
                     }
-                },
-            )));
+                }),
+            ));
         }
         layers.into()
     }
@@ -908,6 +973,16 @@ impl Shell {
                     .style(button::secondary),
             );
         }
+        let (vault_label, vault_message) = match self.app.vault_status() {
+            VaultStatus::Missing => (fl!("ui-sidebar-vault-create-button"), AppMessage::ShowVault),
+            VaultStatus::Locked => (fl!("ui-sidebar-vault-unlock-button"), AppMessage::ShowVault),
+            VaultStatus::Open => (fl!("ui-sidebar-vault-lock-button"), AppMessage::LockVault),
+        };
+        actions = actions.push(
+            button(text(vault_label))
+                .on_press(Message::App(vault_message))
+                .style(button::secondary),
+        );
         list = list.push(actions.wrap());
         let mut profiles: Vec<Listed<'_>> = self
             .app
@@ -1193,6 +1268,16 @@ impl Shell {
                 }
             }
         }
+        if self.app.can_remember(tab.id, prompt) {
+            form = form.push(
+                checkbox(self.remember.contains(&id))
+                    .label(fl!("ui-prompt-remember"))
+                    .on_toggle(move |remember| Message::Remember {
+                        question: id,
+                        remember,
+                    }),
+            );
+        }
         form.push(
             row![
                 button(text(fl!("ui-prompt-cancel-button")))
@@ -1422,7 +1507,135 @@ fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message
     .into()
 }
 
-fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
+/// The work of a Files tab: listing, transferring, changing entries.
+fn files_task(effect: Effect) -> Task<Message> {
+    match effect {
+        Effect::ListRemote { tab, client, path } => {
+            Task::perform(list_remote(client, path), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::RemoteListed {
+                    tab,
+                    result,
+                }))
+            })
+        }
+        Effect::ListLocal { tab, path } => Task::perform(list_local(path), move |result| {
+            Message::App(AppMessage::Files(FilesMessage::LocalListed { tab, result }))
+        }),
+        Effect::Transfer { tab, id, request } => {
+            // Started inside the task, like a connection: spawning needs the runtime.
+            let events = stream::once(async move { transfer_events(*request) }).flatten();
+            Task::stream(events).map(move |event| {
+                Message::App(AppMessage::Files(FilesMessage::TransferEvent {
+                    tab,
+                    id,
+                    event,
+                }))
+            })
+        }
+        Effect::FileOperation {
+            tab,
+            side,
+            operation,
+        } => Task::perform(file_operation(*operation), move |result| {
+            Message::App(AppMessage::Files(FilesMessage::OperationDone {
+                tab,
+                side,
+                result,
+            }))
+        }),
+        _ => Task::none(),
+    }
+}
+
+/// Opens the vault away from the window's thread: the key derivation takes a moment.
+fn open_vault_task(path: PathBuf, password: Secret, create: bool) -> Task<Message> {
+    Task::perform(open_vault(path, password, create), |result| {
+        Message::App(AppMessage::VaultOpened(result))
+    })
+}
+
+fn vault_field_id(index: usize) -> iced::widget::Id {
+    iced::widget::Id::from(format!("vault-field-{index}"))
+}
+
+/// Unlocks the vault, or creates it with the password typed twice.
+fn vault_dialog<'a>(
+    dialog: &'a VaultDialog,
+    fields: &'a [Zeroizing<String>; 2],
+) -> Element<'a, Message> {
+    let create = dialog.mode == VaultMode::Create;
+    let min = MIN_MASTER_PASSWORD_CHARS;
+    let (title, body, action) = if create {
+        (
+            fl!("ui-vault-create-title"),
+            fl!("ui-vault-create-body", min = min),
+            fl!("ui-vault-create-button"),
+        )
+    } else {
+        (
+            fl!("ui-vault-unlock-title"),
+            fl!("ui-vault-unlock-body"),
+            fl!("ui-vault-unlock-button"),
+        )
+    };
+    let field = |index: usize, placeholder: String| {
+        let mut input = text_input(&placeholder, fields[index].as_str())
+            .id(vault_field_id(index))
+            .secure(true);
+        if !dialog.busy {
+            input = input
+                .on_input(move |value| Message::VaultField { index, value })
+                .on_submit(if create && index == 0 {
+                    Message::FocusVaultField(1)
+                } else {
+                    Message::SubmitVault
+                });
+        }
+        input
+    };
+    let mut form = column![
+        text(title).size(HEADING_SIZE),
+        text(body),
+        field(0, fl!("ui-vault-password-placeholder")),
+    ]
+    .spacing(SPACING);
+    if create {
+        form = form.push(field(1, fl!("ui-vault-confirm-placeholder")));
+    }
+    if let Some(problem) = &dialog.problem {
+        form = form.push(text(vault_problem(problem, min)).style(text::danger));
+    }
+    if dialog.busy {
+        form = form.push(text(fl!("ui-vault-busy")).size(SMALL_SIZE));
+    }
+    form.push(
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(action)).on_press_maybe((!dialog.busy).then_some(Message::SubmitVault)),
+        ]
+        .spacing(SPACING),
+    )
+    .into()
+}
+
+fn vault_problem(problem: &VaultProblem, min: usize) -> String {
+    match problem {
+        VaultProblem::Unreadable => fl!("ui-vault-problem-unreadable"),
+        VaultProblem::Mismatch => fl!("ui-vault-problem-mismatch"),
+        VaultProblem::TooShort => fl!("ui-vault-problem-too-short", min = min),
+        VaultProblem::AlreadyExists => fl!("ui-vault-problem-exists"),
+        VaultProblem::System { detail } => {
+            fl!("ui-vault-problem-system", detail = detail.as_str())
+        }
+    }
+}
+
+fn dialog_view<'a>(
+    dialog: &'a Dialog,
+    vault_fields: &'a [Zeroizing<String>; 2],
+) -> Element<'a, Message> {
     let confirm = |label: String| {
         button(text(label))
             .style(button::danger)
@@ -1508,6 +1721,14 @@ fn dialog_view(dialog: &Dialog) -> Element<'_, Message> {
         Dialog::StoreError { detail: technical } => column![
             heading(fl!("ui-dialog-store-title")),
             text(fl!("ui-dialog-store-body")),
+            detail(technical),
+            ok(),
+        ]
+        .spacing(SPACING)
+        .into(),
+        Dialog::Vault(vault) => vault_dialog(vault, vault_fields),
+        Dialog::VaultSaveFailed { detail: technical } => column![
+            heading(fl!("ui-vault-save-failed-title")),
             detail(technical),
             ok(),
         ]
