@@ -246,3 +246,135 @@ async fn a_view_only_tab_sends_nothing() {
     .await;
     assert!(server.await.expect("server").is_empty());
 }
+
+/// Runs the attempt as [`session`] does; once the desktop is open, `opened` acts through the
+/// application. Returns what the application asked of the window for the server's events.
+async fn session_with(
+    app: &mut App,
+    tab: TabId,
+    attempt: AttemptId,
+    request: VncRequest,
+    opened: impl FnOnce(&mut App),
+) -> Vec<Effect> {
+    let registry = AnswerRegistry::default();
+    let mut events = vnc_events(request, registry.clone());
+    let mut opened = Some(opened);
+    let mut effects = Vec::new();
+    while let Some(event) = tokio::time::timeout(WAIT, events.next())
+        .await
+        .expect("in time")
+    {
+        let question = match &event {
+            ConnectionEvent::Question { question, .. } => Some(*question),
+            _ => None,
+        };
+        let ready = matches!(event, ConnectionEvent::VncReady { .. });
+        effects.extend(app.update(Message::Connection {
+            tab,
+            attempt,
+            event,
+        }));
+        if let Some(question) = question {
+            assert!(registry.answer(
+                question,
+                Some(Answer::Secret(Secret::new("Secret12".to_owned())))
+            ));
+        }
+        if ready && let Some(opened) = opened.take() {
+            opened(app);
+        }
+    }
+    effects
+}
+
+#[tokio::test]
+async fn the_clipboard_goes_to_the_server_on_a_click_only_in_latin_1() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    // ClientCutText: type, three padding bytes, the length, the Latin-1 text.
+    let server = tokio::spawn(serve(listener, 8 + 7));
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), port, false);
+    let (tab, attempt, request) = open(&mut app);
+    session_with(&mut app, tab, attempt, request, |app| {
+        // Shown, it sends nothing by itself: VNC carries the text in clear.
+        assert!(app.update(Message::SelectTab(tab)).is_empty());
+        assert!(matches!(
+            app.update(Message::SendClipboard(tab)).as_slice(),
+            [Effect::ReadClipboard { tab: asked }] if *asked == tab
+        ));
+        app.update(Message::ClipboardText {
+            tab,
+            text: Some("h\u{e9}llo \u{20ac}".to_owned()),
+        });
+    })
+    .await;
+    assert_eq!(
+        server.await.expect("server"),
+        [
+            6, 0, 0, 0, 0, 0, 0, 7, b'h', 0xE9, b'l', b'l', b'o', b' ', b'?'
+        ],
+        "the euro sign is not Latin-1"
+    );
+}
+
+#[tokio::test]
+async fn a_view_only_tab_sends_no_clipboard() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(serve(listener, 0));
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), port, true);
+    let (tab, attempt, request) = open(&mut app);
+    session_with(&mut app, tab, attempt, request, |app| {
+        assert!(app.update(Message::SendClipboard(tab)).is_empty());
+        app.update(Message::ClipboardText {
+            tab,
+            text: Some("secret".to_owned()),
+        });
+    })
+    .await;
+    assert!(server.await.expect("server").is_empty());
+}
+
+/// As [`serve`], then sends the server's clipboard, `text` in Latin-1, and closes.
+async fn serve_cut_text(listener: TcpListener, text: &[u8]) {
+    let (mut stream, _) = listener.accept().await.expect("accepted");
+    stream.write_all(b"RFB 003.008\n").await.expect("version");
+    let _ = read_exactly(&mut stream, 12).await;
+    stream.write_all(&[1, 2]).await.expect("types");
+    let _ = read_exactly(&mut stream, 1).await;
+    stream.write_all(&CHALLENGE).await.expect("challenge");
+    let _ = read_exactly(&mut stream, 16).await;
+    stream.write_all(&[0, 0, 0, 0]).await.expect("result");
+    let _ = read_exactly(&mut stream, 1).await;
+    let mut init = vec![0, 4, 0, 2];
+    init.extend_from_slice(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0]);
+    init.extend_from_slice(&[0, 0, 0, 0]);
+    stream.write_all(&init).await.expect("init");
+    let _ = read_exactly(&mut stream, OPENING_REQUESTS).await;
+    let mut cut = vec![3, 0, 0, 0];
+    cut.extend_from_slice(&u32::try_from(text.len()).expect("short").to_be_bytes());
+    cut.extend_from_slice(text);
+    stream.write_all(&cut).await.expect("cut text");
+    tokio::time::sleep(QUIET).await;
+}
+
+#[tokio::test]
+async fn what_the_server_copies_reaches_this_sides_clipboard() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(serve_cut_text(listener, b"caf\xe9"));
+    let dir = tempfile::tempdir().expect("dir");
+    // Watched only, it still receives: nothing is sent to the server.
+    let mut app = app(dir.path(), port, true);
+    let (tab, attempt, request) = open(&mut app);
+    let effects = session_with(&mut app, tab, attempt, request, |_| {}).await;
+    server.await.expect("server");
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::WriteClipboard(text) if text == "caf\u{e9}")),
+        "{effects:?}"
+    );
+}

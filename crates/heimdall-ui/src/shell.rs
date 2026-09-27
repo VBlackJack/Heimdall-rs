@@ -1565,10 +1565,11 @@ impl Shell {
         .style(button::secondary)
         .on_press(Message::ToggleFullscreen);
         let mut bar = row![
+            // Beside it: below, it would cover the menu's first entry.
             tooltip(
                 send_keys,
                 text(fl!("ui-desktop-send-keys-tooltip")).size(SMALL_SIZE),
-                tooltip::Position::Bottom,
+                tooltip::Position::Right,
             )
             .style(container::rounded_box),
             mode,
@@ -1576,6 +1577,20 @@ impl Shell {
         ]
         .spacing(SPACING)
         .align_y(iced::Alignment::Center);
+        // VNC carries the clipboard in clear: sent on a click only, as the C# Heimdall's
+        // noVNC "sync" does. RDP shares it by itself when its profile says so.
+        if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
+            bar = bar.push(
+                tooltip(
+                    button(text(fl!("ui-desktop-send-clipboard")).size(SMALL_SIZE))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::SendClipboard(tab_id))),
+                    text(fl!("ui-desktop-send-clipboard-tooltip")).size(SMALL_SIZE),
+                    tooltip::Position::Right,
+                )
+                .style(container::rounded_box),
+            );
+        }
         if tab.purpose == Purpose::Vnc {
             // Always in sight: nothing on a VNC connection is encrypted.
             bar = bar.push(

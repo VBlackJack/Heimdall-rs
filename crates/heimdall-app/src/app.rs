@@ -185,6 +185,9 @@ pub enum Message {
         /// Which.
         keys: SpecialKeys,
     },
+    /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
+    /// noVNC "sync" does: on a click, never by itself over a clear VNC connection.
+    SendClipboard(TabId),
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
     /// Open the failed or ended session of a tab again, in its place.
@@ -392,6 +395,7 @@ impl fmt::Debug for Message {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
             Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
+            Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
@@ -1148,14 +1152,10 @@ impl App {
                 }
                 Vec::new()
             }
-            Message::Copy(tab) => self
-                .tab(tab)
-                .and_then(|found| found.terminal.selected_text())
-                .map(Effect::WriteClipboard)
-                .into_iter()
-                .collect(),
-            Message::PasteRequest(tab) => vec![Effect::ReadClipboard { tab }],
-            Message::ClipboardText { tab, text } => self.clipboard_text(tab, text),
+            message @ (Message::Copy(_)
+            | Message::PasteRequest(_)
+            | Message::SendClipboard(_)
+            | Message::ClipboardText { .. }) => self.clipboard_message(message),
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
             Message::WindowFocus(focused) => self.window_focus(focused),
             Message::WindowCloseRequested => self.close_window(),
@@ -1623,11 +1623,34 @@ impl App {
 
     /// This side's clipboard, read for `tab_id`: offered to its server when it is a desktop
     /// sharing the clipboard, pasted into it when it is a terminal.
+    /// Applies a message about the clipboard: a terminal's selection copied, this side's
+    /// clipboard asked for a paste or for a desktop, and what it held.
+    fn clipboard_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::Copy(tab) => self
+                .tab(tab)
+                .and_then(|found| found.terminal.selected_text())
+                .map(Effect::WriteClipboard)
+                .into_iter()
+                .collect(),
+            Message::PasteRequest(tab) => vec![Effect::ReadClipboard { tab }],
+            Message::SendClipboard(tab) => self
+                .tab(tab)
+                .and_then(|found| found.desktop.as_deref())
+                .filter(|pane| pane.accepts_clipboard())
+                .map(|_| Effect::ReadClipboard { tab })
+                .into_iter()
+                .collect(),
+            Message::ClipboardText { tab, text } => self.clipboard_text(tab, text),
+            _ => Vec::new(),
+        }
+    }
+
     fn clipboard_text(&mut self, tab_id: TabId, text: Option<String>) -> Vec<Effect> {
         if let Some(pane) = self
             .tab(tab_id)
             .and_then(|tab| tab.desktop.as_deref())
-            .filter(|pane| pane.shares_clipboard())
+            .filter(|pane| pane.accepts_clipboard())
         {
             if let Some(text) = text.filter(|text| !text.is_empty()) {
                 pane.offer_clipboard(text);

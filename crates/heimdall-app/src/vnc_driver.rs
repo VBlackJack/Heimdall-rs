@@ -102,8 +102,10 @@ async fn run(request: VncRequest, registry: AnswerRegistry, events: mpsc::Sender
     while let Some(event) = session.events.recv().await {
         let event = match event {
             VncEvent::Updated(_) | VncEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
-            // The bell and the server's clipboard are not used yet.
-            VncEvent::Bell | VncEvent::CutText(_) => continue,
+            // What the server copied goes to this side's clipboard, as RDP's does.
+            VncEvent::CutText(text) => ConnectionEvent::RemoteClipboard(Zeroizing::new(text)),
+            // The bell is not used yet.
+            VncEvent::Bell => continue,
             VncEvent::Closed(CloseReason::Failed(detail)) => {
                 log::warn!("VNC session to {target} failed: {detail:?}");
                 ConnectionEvent::Failed(UiError::VncProtocol { detail })

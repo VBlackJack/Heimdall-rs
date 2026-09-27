@@ -254,17 +254,34 @@ impl DesktopPane {
         }
     }
 
-    /// Whether this desktop shares the clipboard with its server.
+    /// Whether this desktop shares the clipboard with its server by itself: this side's
+    /// clipboard offered each time the tab is shown. RDP, when its profile shares it.
     #[must_use]
     pub fn shares_clipboard(&self) -> bool {
         self.clipboard.is_some()
     }
 
-    /// Offers `text`, this side's clipboard, to the server; whether it could be.
+    /// Whether this side's clipboard can be sent to the server when the user asks: a
+    /// shared RDP clipboard, or a VNC desktop not only watched. VNC carries it in clear,
+    /// so it goes on a click only, as the C# Heimdall's noVNC sync does, never by itself.
+    #[must_use]
+    pub fn accepts_clipboard(&self) -> bool {
+        match &self.sink {
+            DesktopSink::Rdp { .. } => self.shares_clipboard(),
+            DesktopSink::Vnc(sink) => !sink.view_only,
+        }
+    }
+
+    /// Offers `text`, this side's clipboard, to the server; whether it could be. Asked only
+    /// of a desktop that [accepts it](Self::accepts_clipboard).
     pub(crate) fn offer_clipboard(&self, text: String) -> bool {
-        self.clipboard
-            .as_ref()
-            .is_some_and(|clipboard| clipboard.send(Zeroizing::new(text)).is_ok())
+        match &self.sink {
+            DesktopSink::Rdp { .. } => self
+                .clipboard
+                .as_ref()
+                .is_some_and(|clipboard| clipboard.send(Zeroizing::new(text)).is_ok()),
+            DesktopSink::Vnc(sink) => sink.input.cut_text(text).is_ok(),
+        }
     }
 
     /// The desktop of a VNC session; `view_only` sends it nothing.
@@ -276,7 +293,7 @@ impl DesktopPane {
         Self {
             framebuffer: DesktopFramebuffer::Vnc(framebuffer),
             generation: 0,
-            // Text crosses VNC in Latin-1 and in clear: not shared.
+            // Not by itself: VNC carries text in clear, sent on a click only.
             clipboard: None,
             sink: DesktopSink::Vnc(VncSink {
                 input,
