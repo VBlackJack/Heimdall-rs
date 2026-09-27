@@ -171,6 +171,10 @@ pub struct RdpProfile {
     /// Heimdall and in the Windows client: written down only when off.
     #[serde(default = "shared", skip_serializing_if = "is_shared")]
     pub redirect_clipboard: bool,
+    /// Share this computer's drives with the server, as mstsc does. Off unless turned on,
+    /// as in the C# Heimdall: written down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub redirect_drives: bool,
 }
 
 /// The clipboard is shared unless a profile says otherwise.

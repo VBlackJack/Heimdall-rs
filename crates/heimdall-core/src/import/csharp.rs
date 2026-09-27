@@ -187,6 +187,9 @@ struct LegacyServer {
     rdp_nla: Option<bool>,
     /// Absent means the C# default: the clipboard is shared.
     rdp_redirect_clipboard: Option<bool>,
+    /// Absent means the C# default: no drive is shared.
+    #[serde(default)]
+    rdp_redirect_drives: bool,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
     /// Zero or less means the default port, as `VncHandler` reads it.
@@ -565,6 +568,7 @@ fn convert_rdp(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<RdpPro
         allow_tls_only: server.rdp_nla == Some(false),
         gateway,
         redirect_clipboard: server.rdp_redirect_clipboard.unwrap_or(true),
+        redirect_drives: server.rdp_redirect_drives,
     })
 }
 

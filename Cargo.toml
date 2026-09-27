@@ -5,7 +5,7 @@
 resolver = "3"
 members = ["crates/*", "xtask"]
 # Patched third-party crates, see vendor/PATCHES.md: not ours to lint or format.
-exclude = ["vendor/ironrdp-connector", "vendor/ironrdp-session"]
+exclude = ["vendor/ironrdp-connector", "vendor/ironrdp-rdpdr", "vendor/ironrdp-session"]
 
 [workspace.package]
 version = "0.1.0"
@@ -46,7 +46,7 @@ i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-request
 i18n-embed-fl = "0.10.1"
 # connector, session, graphics, input: the RDP client; TLS comes from tokio-rustls below.
 # cliprdr: the clipboard channel, text only.
-ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", "input", "dvc", "displaycontrol", "cliprdr"] }
+ironrdp = { version = "0.17.0", features = ["connector", "session", "graphics", "input", "dvc", "displaycontrol", "cliprdr", "rdpdr", "rdpsnd", "svc"] }
 ironrdp-core = "0.2.1"
 ironrdp-tokio = "0.10.0"
 iced = "0.14.0"
@@ -106,4 +106,5 @@ strip = true
 # See vendor/PATCHES.md for what each patch changes and when it goes.
 [patch.crates-io]
 ironrdp-connector = { path = "vendor/ironrdp-connector" }
+ironrdp-rdpdr = { path = "vendor/ironrdp-rdpdr" }
 ironrdp-session = { path = "vendor/ironrdp-session" }

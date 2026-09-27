@@ -125,6 +125,8 @@ pub enum ProfileToggle {
     Nla,
     /// RDP: share the clipboard.
     RedirectClipboard,
+    /// RDP: share this computer's drives.
+    RedirectDrives,
     /// `WinRM`: log in with a stored account rather than the current Windows identity.
     StoredCredential,
     /// `WinRM`: over HTTPS.
@@ -145,7 +147,7 @@ impl ProfileToggle {
     #[must_use]
     pub fn of(protocol: DraftProtocol) -> &'static [Self] {
         match protocol {
-            DraftProtocol::Rdp => &[Self::RedirectClipboard, Self::Nla],
+            DraftProtocol::Rdp => &[Self::RedirectClipboard, Self::RedirectDrives, Self::Nla],
             DraftProtocol::WinRm => &[
                 Self::StoredCredential,
                 Self::UseSsl,
@@ -282,6 +284,9 @@ impl ProfileDraft {
         let mut toggles = Vec::new();
         if profile.redirect_clipboard {
             toggles.push(ProfileToggle::RedirectClipboard);
+        }
+        if profile.redirect_drives {
+            toggles.push(ProfileToggle::RedirectDrives);
         }
         if !profile.allow_tls_only {
             toggles.push(ProfileToggle::Nla);
@@ -512,6 +517,7 @@ impl ProfileDraft {
                 allow_tls_only: !self.is_on(ProfileToggle::Nla),
                 gateway: self.routed_gateway(),
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
+                redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -782,7 +788,20 @@ mod tests {
         let rdp = ProfileDraft::new_for(DraftProtocol::Rdp);
         assert_eq!(rdp.port, "3389");
         assert!(rdp.is_on(ProfileToggle::RedirectClipboard));
+        assert!(
+            !rdp.is_on(ProfileToggle::RedirectDrives),
+            "drives kept unless shared"
+        );
         assert!(rdp.is_on(ProfileToggle::Nla), "NLA required unless cleared");
+        assert_eq!(
+            ProfileToggle::of(DraftProtocol::Rdp),
+            [
+                ProfileToggle::RedirectClipboard,
+                ProfileToggle::RedirectDrives,
+                ProfileToggle::Nla
+            ],
+            "in the C# dialog's order"
+        );
         for (protocol, port) in [
             (DraftProtocol::Ssh, "22"),
             (DraftProtocol::WinRm, "5985"),
@@ -806,6 +825,7 @@ mod tests {
             allow_tls_only: true,
             gateway: Some(ProfileId::new("gw")),
             redirect_clipboard: false,
+            redirect_drives: false,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),
@@ -814,6 +834,7 @@ mod tests {
         let nla = RdpProfile {
             allow_tls_only: false,
             redirect_clipboard: true,
+            redirect_drives: false,
             ..rdp
         };
         assert_eq!(

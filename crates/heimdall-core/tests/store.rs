@@ -145,6 +145,7 @@ fn rdp(id: &str) -> RdpProfile {
         allow_tls_only: false,
         gateway: None,
         redirect_clipboard: true,
+        redirect_drives: false,
     }
 }
 
@@ -437,6 +438,26 @@ fn the_clipboard_setting_is_written_only_when_turned_off() {
         .map(|profile| profile.redirect_clipboard)
         .collect();
     assert_eq!(shared, [true, false]);
+}
+
+#[test]
+fn the_drives_setting_is_written_only_when_turned_on() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let mut on = rdp("on");
+    on.redirect_drives = true;
+    store.merge_rdp([rdp("off"), on]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert_eq!(text.matches("redirect_drives").count(), 1, "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    let shared: Vec<bool> = reopened
+        .rdp_profiles()
+        .iter()
+        .map(|profile| profile.redirect_drives)
+        .collect();
+    assert_eq!(shared, [false, true]);
 }
 
 fn winrm(id: &str) -> WinRmProfile {

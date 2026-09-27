@@ -1968,6 +1968,7 @@ fn toggle_box<'a>(
 fn toggle_label(toggle: ProfileToggle) -> String {
     match toggle {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
+        ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
         ProfileToggle::UseSsl => fl!("ui-profile-toggle-use-ssl"),

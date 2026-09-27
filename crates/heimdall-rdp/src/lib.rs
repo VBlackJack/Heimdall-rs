@@ -23,6 +23,7 @@
 pub mod certificate;
 mod clipboard;
 pub mod connect;
+pub mod drives;
 mod frames;
 pub mod known_hosts;
 pub mod session;

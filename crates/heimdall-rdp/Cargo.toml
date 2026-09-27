@@ -26,6 +26,10 @@ tokio-util.workspace = true
 x509-cert.workspace = true
 zeroize.workspace = true
 
+# fs: the size and free space of a shared drive (Unix).
+[target.'cfg(unix)'.dependencies]
+rustix = { workspace = true, features = ["fs"] }
+
 [dev-dependencies]
 tempfile.workspace = true
 # rt-multi-thread, macros: async tests.

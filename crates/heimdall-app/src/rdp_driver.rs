@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use heimdall_core::profile::{RdpProfile, SshProfile, display_address};
+use heimdall_rdp::drives::local_drives;
 use heimdall_rdp::session::{self, RdpEvent};
 use heimdall_rdp::{
     AskCredentials, CloseReason, Fingerprint, KnownRdpHosts, Opening, RdpConfig, RdpConnection,
@@ -231,6 +232,11 @@ async fn open(
         accepted: request.accepted,
         timeouts: Timeouts::default(),
         clipboard: profile.redirect_clipboard,
+        drives: if profile.redirect_drives {
+            local_drives()
+        } else {
+            Vec::new()
+        },
     };
     if request.route.is_empty() {
         connect(config, ask_credentials, request.cancel.clone()).await
