@@ -565,3 +565,22 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
         Message::App(AppMessage::HostKeyDecision { accept: false, .. })
     )));
 }
+
+#[test]
+fn a_session_the_server_ended_says_why() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: "Another user connected to the session".to_owned(),
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("The session ended.").expect("ended");
+    ui.find("The server said: Another user connected to the session")
+        .expect("its reason");
+    ui.click("Reconnect").expect("reconnect");
+}

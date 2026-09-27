@@ -62,6 +62,8 @@ pub enum UiError {
     InvalidUsername,
     /// The network connection failed.
     Network {
+        /// How, as far as the operating system tells.
+        failure: NetworkFailure,
         /// Operating system message.
         detail: String,
     },
@@ -183,13 +185,67 @@ impl From<&KnownHostsError> for UiError {
     }
 }
 
+/// How a network connection failed, as the C# Heimdall tells them apart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetworkFailure {
+    /// Nothing accepted the connection on that port.
+    Refused,
+    /// The connection was cut.
+    Reset,
+    /// Nothing answered in time.
+    TimedOut,
+    /// No route to the host, or its name could not be resolved.
+    Unreachable,
+    /// Anything else: its message says.
+    Other,
+}
+
+/// Windows' "no such host is known" and "no data record of the requested type".
+const WINDOWS_NAME_NOT_FOUND: [i32; 2] = [11001, 11004];
+
+/// How the standard library begins the error of a name that could not be resolved.
+const LOOKUP_FAILED: &str = "failed to lookup address information";
+
+impl NetworkFailure {
+    /// How `error` failed.
+    #[must_use]
+    pub fn of(error: &std::io::Error) -> Self {
+        use std::io::ErrorKind;
+        match error.kind() {
+            ErrorKind::ConnectionRefused => Self::Refused,
+            ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted => Self::Reset,
+            ErrorKind::TimedOut => Self::TimedOut,
+            ErrorKind::HostUnreachable | ErrorKind::NetworkUnreachable | ErrorKind::NetworkDown => {
+                Self::Unreachable
+            }
+            _ if error
+                .raw_os_error()
+                .is_some_and(|code| cfg!(windows) && WINDOWS_NAME_NOT_FOUND.contains(&code))
+                || error.to_string().starts_with(LOOKUP_FAILED) =>
+            {
+                Self::Unreachable
+            }
+            _ => Self::Other,
+        }
+    }
+}
+
+impl UiError {
+    /// The error of a network connection that failed with `error`.
+    #[must_use]
+    pub fn network(error: &std::io::Error) -> Self {
+        Self::Network {
+            failure: NetworkFailure::of(error),
+            detail: error.to_string(),
+        }
+    }
+}
+
 impl From<ConnectError> for UiError {
     fn from(error: ConnectError) -> Self {
         match error {
             ConnectError::InvalidHost => Self::InvalidHost,
-            ConnectError::Network(source) => Self::Network {
-                detail: source.to_string(),
-            },
+            ConnectError::Network(source) => Self::network(&source),
             ConnectError::Timeout => Self::Timeout,
             // Handled before conversion, as a question to the user; kept total here.
             ConnectError::UnknownHostKey { .. } => Self::Protocol {
@@ -228,4 +284,70 @@ impl From<ConnectError> for UiError {
 
 fn error_text(error: &ConnectError) -> String {
     error.to_string()
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, ErrorKind};
+    use std::net::{Ipv4Addr, TcpListener, TcpStream};
+
+    use super::{NetworkFailure, UiError};
+
+    #[test]
+    fn a_failure_is_told_by_its_kind() {
+        for (kind, failure) in [
+            (ErrorKind::ConnectionRefused, NetworkFailure::Refused),
+            (ErrorKind::ConnectionReset, NetworkFailure::Reset),
+            (ErrorKind::ConnectionAborted, NetworkFailure::Reset),
+            (ErrorKind::TimedOut, NetworkFailure::TimedOut),
+            (ErrorKind::HostUnreachable, NetworkFailure::Unreachable),
+            (ErrorKind::NetworkUnreachable, NetworkFailure::Unreachable),
+            (ErrorKind::NetworkDown, NetworkFailure::Unreachable),
+            (ErrorKind::PermissionDenied, NetworkFailure::Other),
+        ] {
+            assert_eq!(
+                NetworkFailure::of(&io::Error::from(kind)),
+                failure,
+                "{kind:?}"
+            );
+        }
+        assert_eq!(
+            NetworkFailure::of(&io::Error::other(
+                "failed to lookup address information: Name or service not known"
+            )),
+            NetworkFailure::Unreachable,
+            "a name that did not resolve"
+        );
+        assert_eq!(
+            NetworkFailure::of(&io::Error::other("something else")),
+            NetworkFailure::Other
+        );
+        let windows_no_host = NetworkFailure::of(&io::Error::from_raw_os_error(11001));
+        if cfg!(windows) {
+            assert_eq!(windows_no_host, NetworkFailure::Unreachable);
+        }
+    }
+
+    #[test]
+    fn a_closed_port_is_refused_and_an_unknown_name_unreachable() {
+        let port = {
+            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
+            listener.local_addr().expect("address").port()
+        };
+        let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect_err("closed");
+        assert!(matches!(
+            UiError::network(&refused),
+            UiError::Network {
+                failure: NetworkFailure::Refused,
+                ..
+            }
+        ));
+        // `.invalid` never resolves (RFC 2606); without DNS at all the lookup fails too.
+        let unknown = TcpStream::connect(("heimdall-test.invalid", 22)).expect_err("no such name");
+        assert_eq!(
+            NetworkFailure::of(&unknown),
+            NetworkFailure::Unreachable,
+            "{unknown}"
+        );
+    }
 }

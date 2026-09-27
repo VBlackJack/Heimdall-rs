@@ -40,6 +40,7 @@ use zeroize::Zeroizing;
 use crate::driver::{AnswerRegistry, ChannelPrompter, ask, report_failure};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
+use crate::text::server_text;
 
 /// Events buffered before the attempt waits for the UI to read them.
 const EVENT_QUEUE_LENGTH: usize = 64;
@@ -190,6 +191,12 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                 log::warn!("RDP session to {target} failed: {detail:?}");
                 ConnectionEvent::Failed(UiError::RdpProtocol { detail })
             }
+            RdpEvent::Closed(CloseReason::Disconnected(reason)) => {
+                log::info!("RDP session to {target} ended: {reason}");
+                ConnectionEvent::Ended {
+                    reason: server_text(&reason),
+                }
+            }
             RdpEvent::Closed(_) => {
                 log::info!("RDP session to {target} ended");
                 ConnectionEvent::Closed { exit_status: None }
@@ -197,7 +204,9 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         };
         let last = matches!(
             event,
-            ConnectionEvent::Closed { .. } | ConnectionEvent::Failed(_)
+            ConnectionEvent::Closed { .. }
+                | ConnectionEvent::Ended { .. }
+                | ConnectionEvent::Failed(_)
         );
         if events.send(event).await.is_err() {
             request.cancel.cancel();
@@ -302,9 +311,7 @@ async fn failed(events: &mpsc::Sender<ConnectionEvent>, error: UiError) {
 /// How an RDP failure is shown.
 fn ui_error(error: RdpError) -> UiError {
     match error {
-        RdpError::Network(error) => UiError::Network {
-            detail: error.to_string(),
-        },
+        RdpError::Network(error) => UiError::network(&error),
         RdpError::Timeout => UiError::Timeout,
         RdpError::Cancelled => UiError::Cancelled,
         RdpError::Negotiation(detail) => UiError::SecurityRefused { detail },

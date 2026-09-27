@@ -407,3 +407,10 @@ ui-error-report-header = Heimdall { $protocol } error report
 ui-error-report-time = Time:
 ui-error-report-server = Server:
 ui-error-report-app = App:
+
+## How a connection failed, as the C# Heimdall tells them apart, and why a server ended one.
+ui-error-network-refused = Connection refused.
+ui-error-network-reset = Connection reset.
+ui-error-network-timed-out = Connection timed out. Check that the host is reachable.
+ui-error-network-unreachable = Host or network is unreachable. Check DNS and routing.
+ui-session-closed-reason = The server said: { $reason }

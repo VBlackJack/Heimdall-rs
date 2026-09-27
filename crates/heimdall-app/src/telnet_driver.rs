@@ -29,7 +29,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::UiError;
+use crate::error::{NetworkFailure, UiError};
 use crate::event::ConnectionEvent;
 use crate::sink::InputSink;
 
@@ -96,7 +96,11 @@ async fn run(request: TelnetRequest, events: mpsc::Sender<ConnectionEvent>) {
             }
             TelnetEvent::Closed(CloseReason::Failed(detail)) => {
                 log::warn!("Telnet session to {target} failed: {detail}");
-                (ConnectionEvent::Failed(UiError::Network { detail }), true)
+                let failure = NetworkFailure::Other;
+                (
+                    ConnectionEvent::Failed(UiError::Network { failure, detail }),
+                    true,
+                )
             }
         };
         if events.send(event).await.is_err() {
@@ -112,9 +116,7 @@ async fn run(request: TelnetRequest, events: mpsc::Sender<ConnectionEvent>) {
 
 fn ui_error(error: TelnetError) -> UiError {
     match error {
-        TelnetError::Network(error) => UiError::Network {
-            detail: error.to_string(),
-        },
+        TelnetError::Network(error) => UiError::network(&error),
         TelnetError::Timeout => UiError::Timeout,
         TelnetError::Cancelled => UiError::Cancelled,
     }

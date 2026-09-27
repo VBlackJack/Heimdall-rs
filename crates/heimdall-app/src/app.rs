@@ -706,6 +706,8 @@ pub struct Tab {
     pub title: String,
     /// The name the user gave the tab, shown instead of its title until reset.
     pub custom_title: Option<String>,
+    /// Why the server ended the session, when it said.
+    pub end_reason: Option<String>,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -789,6 +791,7 @@ impl Tab {
             id,
             title: profile.name().to_owned(),
             custom_title: None,
+            end_reason: None,
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
@@ -1491,6 +1494,14 @@ impl App {
             }
             ConnectionEvent::Closed { exit_status } => {
                 tab.phase = Phase::Closed { exit_status };
+                tab.sink = None;
+                tab.desktop = None;
+                tab.prompts.clear();
+                Vec::new()
+            }
+            ConnectionEvent::Ended { reason } => {
+                tab.phase = Phase::Closed { exit_status: None };
+                tab.end_reason = Some(reason);
                 tab.sink = None;
                 tab.desktop = None;
                 tab.prompts.clear();

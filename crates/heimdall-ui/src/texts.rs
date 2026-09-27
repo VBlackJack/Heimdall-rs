@@ -21,7 +21,7 @@
 
 use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
-use heimdall_app::{KeyProblem, UiError, server_text};
+use heimdall_app::{KeyProblem, NetworkFailure, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
 use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
@@ -42,7 +42,13 @@ pub fn error(error: &UiError) -> String {
     match error {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::InvalidUsername => fl!("ui-error-invalid-username"),
-        UiError::Network { detail } => fl!("ui-error-network", detail = server_text(detail)),
+        UiError::Network { failure, detail } => match failure {
+            NetworkFailure::Refused => fl!("ui-error-network-refused"),
+            NetworkFailure::Reset => fl!("ui-error-network-reset"),
+            NetworkFailure::TimedOut => fl!("ui-error-network-timed-out"),
+            NetworkFailure::Unreachable => fl!("ui-error-network-unreachable"),
+            NetworkFailure::Other => fl!("ui-error-network", detail = server_text(detail)),
+        },
         UiError::Timeout => fl!("ui-error-timeout"),
         UiError::RdpProtocol { detail } => {
             fl!("ui-error-rdp-protocol", detail = server_text(detail))
@@ -266,6 +272,29 @@ mod tests {
     use heimdall_ssh::AuthMethod;
 
     use super::{error, skip_reason};
+
+    #[test]
+    fn a_network_failure_says_what_the_csharp_one_says() {
+        use heimdall_app::NetworkFailure;
+
+        let network = |failure| {
+            error(&UiError::Network {
+                failure,
+                detail: "os detail".to_owned(),
+            })
+        };
+        assert_eq!(network(NetworkFailure::Refused), "Connection refused.");
+        assert_eq!(network(NetworkFailure::Reset), "Connection reset.");
+        assert_eq!(
+            network(NetworkFailure::TimedOut),
+            "Connection timed out. Check that the host is reachable."
+        );
+        assert_eq!(
+            network(NetworkFailure::Unreachable),
+            "Host or network is unreachable. Check DNS and routing."
+        );
+        assert!(network(NetworkFailure::Other).contains("os detail"));
+    }
 
     #[test]
     fn values_are_placed_in_the_sentence() {

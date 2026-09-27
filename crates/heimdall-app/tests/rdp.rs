@@ -231,6 +231,30 @@ fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
 }
 
 #[test]
+fn a_session_the_server_ended_keeps_its_reason_until_it_opens_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: "Another user connected".to_owned(),
+        },
+    );
+    let ended = app.tab(tab).expect("tab");
+    assert_eq!(ended.phase, Phase::Closed { exit_status: None });
+    assert_eq!(ended.end_reason.as_deref(), Some("Another user connected"));
+    assert!(app.can_reconnect(ended));
+    let effects = app.update(Message::ReconnectTab(tab));
+    let [Effect::ConnectRdp { tab: again, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(app.tab(*again).expect("again").end_reason, None);
+}
+
+#[test]
 fn input_reaches_a_connected_desktop_and_nothing_else() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
