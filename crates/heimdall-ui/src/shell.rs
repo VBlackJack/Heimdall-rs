@@ -1827,6 +1827,8 @@ impl Shell {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
+            // A tab's menu is the tab bar's: the keyboard stays where it was.
+            Message::OpenTreeMenu(TreeMenu::Tab(_)) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
             | Message::TreeClick(_) => self.tree_focused = true,

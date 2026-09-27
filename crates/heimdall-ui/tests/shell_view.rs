@@ -1966,3 +1966,30 @@ fn ctrl_alt_b_typed_in_a_terminal_is_left_to_the_window() {
         .count();
     assert_eq!(keys, 1, "only the brace reached the terminal");
 }
+
+#[test]
+fn a_tab_menu_leaves_the_keyboard_to_the_session() {
+    use heimdall_app::TabMenuMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    // A profile selected in the tree: Enter there would open it.
+    let _ = shell.update(Message::App(AppMessage::SelectProfile(ProfileId::new("a"))));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        TabMenuMessage::StartTranscript(tab),
+    )));
+    let mut ui = simulator(&shell);
+    ui.typewrite("ls");
+    assert_eq!(
+        ui.into_messages()
+            .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+            .count(),
+        2,
+        "typed into the session"
+    );
+    // Enter is the session's too: it opens nothing from the tree.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 1);
+}
