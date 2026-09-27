@@ -25,6 +25,7 @@ mod logging;
 pub mod palette;
 mod report;
 pub mod shell;
+pub mod status_bar;
 pub mod terminal_view;
 mod texts;
 pub mod tree_view;

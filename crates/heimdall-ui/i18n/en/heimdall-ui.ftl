@@ -460,3 +460,22 @@ ui-palette-ssh-to = [SSH] Connect to { $target }
 ui-palette-rdp-to = [RDP] Connect to { $target }
 ui-palette-quick-connect = Quick Connect
 ui-palette-nothing = No session matches, and this is no host to connect to.
+
+## The status bar, as the C# one.
+ui-status-ready = Ready. Select a session to get started.
+ui-status-connected = Connected to: { $name }
+ui-status-state = { $name }: { $state }
+ui-status-connecting = Connecting...
+ui-status-reconnecting = Reconnecting...
+ui-status-disconnected = Disconnected
+ui-status-error = Error
+ui-status-copied = Copied to clipboard: { $text }
+ui-status-folder-created = Folder "{ $path }" created.
+ui-status-sessions = { $count ->
+    [one] 1 session
+   *[other] { $count } sessions
+}
+ui-status-sessions-filtered = { $shown } of { $count ->
+    [one] 1 session
+   *[other] { $count } sessions
+}

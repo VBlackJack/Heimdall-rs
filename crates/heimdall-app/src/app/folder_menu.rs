@@ -183,10 +183,13 @@ impl App {
     /// cannot be taken.
     pub(super) fn confirm_folder_name(&mut self, naming: FolderNaming, value: String) {
         let result = match &naming {
-            FolderNaming::New(parent) => self
-                .store
-                .apply(|store| store.add_folder(parent, &value))
-                .map(|added| added.map(|_| ())),
+            FolderNaming::New(parent) => {
+                let result = self.store.apply(|store| store.add_folder(parent, &value));
+                if let Ok(Ok(path)) = &result {
+                    self.tell(super::Notice::FolderCreated(path.clone()));
+                }
+                result.map(|added| added.map(|_| ()))
+            }
             FolderNaming::Rename(path) => {
                 let path = path.clone();
                 return self.rename_folder(naming, &path, value);

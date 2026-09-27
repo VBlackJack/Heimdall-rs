@@ -1513,3 +1513,37 @@ fn with_sessions_saved_the_window_says_how_to_open_one() {
     assert!(ui.find("Welcome to Heimdall-rs").is_err());
     assert!(ui.find("Add Session").is_err());
 }
+
+#[test]
+fn the_status_bar_says_the_session_shown_and_counts_the_sessions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Ready. Select a session to get started.")
+            .expect("ready");
+        ui.find("3 sessions").expect("counted");
+    }
+    let _ = shell.update(Message::Search("b.lab".to_owned()));
+    simulator(&shell)
+        .find("1 of 3 sessions")
+        .expect("those the search shows");
+    let _ = shell.update(Message::Search("  ".to_owned()));
+    simulator(&shell)
+        .find("3 sessions")
+        .expect("blank: no search");
+    let _ = shell.update(Message::Search(String::new()));
+
+    let _ = shell.update(Message::App(AppMessage::OpenProfile(ProfileId::new("a"))));
+    snapshot(&shell, "status-bar.png");
+    simulator(&shell)
+        .find("server a: Connecting...")
+        .expect("the session shown");
+    let _ = shell.update(Message::App(AppMessage::CopyProfile {
+        id: ProfileId::new("b"),
+        what: heimdall_app::ProfileCopy::Hostname,
+    }));
+    simulator(&shell)
+        .find("Copied to clipboard: b.lab")
+        .expect("what was just done");
+}

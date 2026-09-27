@@ -254,12 +254,16 @@ impl App {
                 self.request_delete(&id);
                 Vec::new()
             }
-            Message::CopyProfile { id, what } => self
-                .profile_summary(&id)
-                .and_then(|profile| copied_text(&profile, what))
-                .map(Effect::WriteClipboard)
-                .into_iter()
-                .collect(),
+            Message::CopyProfile { id, what } => {
+                let Some(text) = self
+                    .profile_summary(&id)
+                    .and_then(|profile| copied_text(&profile, what))
+                else {
+                    return Vec::new();
+                };
+                self.tell(super::Notice::Copied(text.clone()));
+                vec![Effect::WriteClipboard(text)]
+            }
             _ => Vec::new(),
         }
     }

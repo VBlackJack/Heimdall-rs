@@ -73,6 +73,7 @@ mod quick_connect;
 mod rdp_tab;
 mod reconnect;
 mod selection;
+mod status;
 mod tab_menu;
 mod telnet_tab;
 mod tree;
@@ -90,6 +91,7 @@ pub use local_tab::LocalConfirmation;
 pub use profile_menu::ProfileMenuMessage;
 pub use quick_connect::QuickResult;
 pub use selection::SelectionMessage;
+pub use status::{Notice, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
@@ -1168,6 +1170,8 @@ pub struct App {
     pub selected_profile: Option<ProfileId>,
     /// The profiles selected together, when more than one is.
     selection: std::collections::BTreeSet<ProfileId>,
+    /// What was just done, and the session shown then with its state.
+    notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
     pending_transfer: Option<PendingTransfer>,
@@ -1216,6 +1220,7 @@ impl App {
             dialog,
             selected_profile: None,
             selection: std::collections::BTreeSet::new(),
+            notice: None,
             pending_paste: None,
             pending_transfer: None,
             pending_operation: None,
@@ -1294,6 +1299,7 @@ impl App {
 
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
+        self.forget_stale_notice();
         match message {
             message @ (Message::OpenProfile(_)
             | Message::OpenFiles(_)

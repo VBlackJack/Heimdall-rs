@@ -1237,11 +1237,15 @@ impl Shell {
             // Full screen is the session's: no tree, no tabs.
             self.content()
         } else {
-            row![
-                self.sidebar(),
-                column![self.tab_bar(), self.focusable_content()]
-                    .width(Length::Fill)
-                    .height(Length::Fill)
+            column![
+                row![
+                    self.sidebar(),
+                    column![self.tab_bar(), self.focusable_content()]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                ]
+                .height(Length::Fill),
+                self.status_bar(),
             ]
             .into()
         };
@@ -1378,6 +1382,19 @@ impl Shell {
             .align_x(iced::Alignment::Center),
         )
         .into()
+    }
+
+    /// The status bar: the session shown, or what was just done; the sessions counted.
+    fn status_bar(&self) -> Element<'_, Message> {
+        let summaries = self.app.profile_summaries();
+        let shown = summaries
+            .iter()
+            .filter(|profile| profile.matches(&self.search))
+            .count();
+        crate::status_bar::view(
+            crate::status_bar::status_text(&self.app.session_status(), self.app.notice()),
+            crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
+        )
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
