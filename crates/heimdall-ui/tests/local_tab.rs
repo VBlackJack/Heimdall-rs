@@ -105,7 +105,7 @@ fn a_saved_local_profile_is_listed_and_opens_by_its_id() {
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "tool"
+        Message::TreeClick(id) if id.as_str() == "tool"
     )));
     assert!(
         messages.iter().any(|message| matches!(

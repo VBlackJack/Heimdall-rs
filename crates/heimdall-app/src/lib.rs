@@ -42,9 +42,9 @@ pub use app::{
     GatewayBadge, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
     MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction,
     OpenedVault, Phase, PointerInput, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
-    Prompt, RDP_MAX_ATTEMPTS, Retry, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
-    TreeRow, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    WHEEL_LINES, master_password_problem, open_vault,
+    Prompt, RDP_MAX_ATTEMPTS, Retry, SelectionMessage, SystemCredentials, Tab, TabGroup,
+    TabMenuMessage, TabProfile, TreeRow, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

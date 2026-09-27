@@ -146,6 +146,12 @@ impl App {
         Vec::new()
     }
 
+    /// Every folder the tree shows, empty ones included.
+    #[must_use]
+    pub fn folder_paths(&self) -> Vec<String> {
+        self.store.folder_paths()
+    }
+
     /// How many sessions "Connect all" of `path` opens.
     #[must_use]
     pub fn folder_connectable(&self, path: &str) -> usize {

@@ -1202,3 +1202,44 @@ fn a_profile_renames_and_moves_to_another_folder_from_its_menu() {
         }
     }
 }
+
+#[test]
+fn ctrl_click_selects_several_and_their_right_click_is_the_bulk_menu() {
+    use heimdall_app::SelectionMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::keyboard::Modifiers;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("b")));
+    let _ = shell.update(Message::Modifiers(Modifiers::CTRL));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::Modifiers(Modifiers::empty()));
+    let core = shell.into_app();
+    assert_eq!(
+        core.selected_profiles(),
+        [ProfileId::new("a"), ProfileId::new("b")]
+    );
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(ProfileId::new(
+        "a",
+    ))));
+    snapshot(&shell, "selection-menu.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("2 items selected").expect("the bulk menu");
+        ui.find("Connect selected (2)").expect("connect");
+        ui.click("Delete selected (2)").expect("delete");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::Selection(SelectionMessage::RequestDelete))
+        )));
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::Selection(
+        SelectionMessage::RequestDelete,
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Delete Selected Items").expect("asked");
+    ui.find("Are you sure you want to delete 2 selected item(s)?\n- server a\n- server b")
+        .expect("listed");
+}

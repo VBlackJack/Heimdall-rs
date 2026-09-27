@@ -40,8 +40,8 @@ use heimdall_app::{
     Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
     LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
     Message as AppMessage, NameAction, Phase, ProfileMenuMessage, Prompt, Purpose, QuestionId,
-    QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
-    TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    QuestionKind, Retry, SelectionMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
+    TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
     connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
@@ -130,6 +130,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
             Some(Message::App(AppMessage::WindowCloseRequested))
+        }
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+            Some(Message::Modifiers(modifiers))
         }
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
@@ -282,6 +285,11 @@ pub enum Message {
     CopyError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
     Tick,
+    /// Shift, Ctrl, Alt or the logo key pressed or released.
+    Modifiers(keyboard::Modifiers),
+    /// A click on a profile of the tree: it alone selected, or, with Ctrl, added or taken,
+    /// or, with Shift, all from the last one clicked.
+    TreeClick(ProfileId),
 }
 
 impl fmt::Debug for Message {
@@ -320,6 +328,8 @@ impl fmt::Debug for Message {
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
+            Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
+            Self::TreeClick(id) => write!(f, "TreeClick({id})"),
         }
     }
 }
@@ -442,6 +452,8 @@ pub struct Shell {
     page: Page,
     /// Full screen: the window shows the session only.
     fullscreen: bool,
+    /// The keyboard's modifiers, for a click in the tree.
+    modifiers: keyboard::Modifiers,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
@@ -513,6 +525,7 @@ impl Shell {
             menu: None,
             page: Page::Tab,
             fullscreen: false,
+            modifiers: keyboard::Modifiers::empty(),
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -628,7 +641,9 @@ impl Shell {
             }
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
-            | Message::ShowSettings) => return self.view_message(&message),
+            | Message::ShowSettings
+            | Message::Modifiers(_)
+            | Message::Tick) => return self.view_message(&message),
             Message::Search(term) => {
                 self.search = term;
                 return Task::none();
@@ -664,7 +679,7 @@ impl Shell {
             }
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::CopyError(tab) => return self.copy_error(tab),
-            Message::Tick => return Task::none(),
+            Message::TreeClick(id) => self.tree_click(id),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -693,6 +708,10 @@ impl Shell {
                     window::Mode::Windowed
                 };
                 window::latest().and_then(move |id| window::set_mode(id, mode))
+            }
+            Message::Modifiers(modifiers) => {
+                self.modifiers = *modifiers;
+                Task::none()
             }
             Message::ShowSettings => {
                 self.menu = None;
@@ -818,10 +837,20 @@ impl Shell {
     fn open_tree_menu(&mut self, menu: TreeMenu) {
         let at = match (&menu, &self.menu) {
             (
-                TreeMenu::ConnectAs(_) | TreeMenu::MoveFolder(_) | TreeMenu::MoveProfile(_),
+                TreeMenu::ConnectAs(_)
+                | TreeMenu::MoveFolder(_)
+                | TreeMenu::MoveProfile(_)
+                | TreeMenu::MoveSelection,
                 Some((_, at)),
             ) => *at,
             _ => self.cursor.get(),
+        };
+        // A right click on one of the profiles selected together is theirs, as in C#.
+        let menu = match menu {
+            TreeMenu::Profile(id) if self.app.selected_profiles().contains(&id) => {
+                TreeMenu::Selection
+            }
+            menu => menu,
         };
         // As in the C# tree: a right click selects the row it is on.
         if let TreeMenu::Profile(id) = &menu {
@@ -1172,6 +1201,15 @@ impl Shell {
                     tree_view::move_folder_entries(path, &self.app.folder_targets(path))
                 } else if let TreeMenu::MoveProfile(id) = menu {
                     tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
+                } else if let TreeMenu::Selection = menu {
+                    let selected = self.app.selected_profiles();
+                    let connectable = selected
+                        .iter()
+                        .filter(|id| self.app.connects_in_bulk(id))
+                        .count();
+                    tree_view::selection_menu_entries(selected.len(), connectable)
+                } else if let TreeMenu::MoveSelection = menu {
+                    tree_view::move_selection_entries(&self.app.folder_paths())
                 } else {
                     let profile = match menu {
                         TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => {
@@ -1182,7 +1220,9 @@ impl Shell {
                         | TreeMenu::Tab(_)
                         | TreeMenu::Folder(_)
                         | TreeMenu::MoveFolder(_)
-                        | TreeMenu::MoveProfile(_) => None,
+                        | TreeMenu::MoveProfile(_)
+                        | TreeMenu::Selection
+                        | TreeMenu::MoveSelection => None,
                     };
                     let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
                     let connect_as = profile
@@ -1287,7 +1327,7 @@ impl Shell {
                 open,
             } => tree_view::folder_row(path, name, depth, open),
             TreeRow::Profile { profile, depth } => {
-                let selected = self.app.selected_profile.as_ref() == Some(&profile.id);
+                let selected = self.app.is_selected(&profile.id);
                 tree_view::indented(tree_view::owned_row(&profile, selected), depth)
             }
         }));
@@ -1391,6 +1431,28 @@ impl Shell {
             .padding(PADDING),
         )
         .into()
+    }
+
+    /// A click on profile `id` in the tree, as the C# tree takes it: alone, with Ctrl added or
+    /// taken, with Shift all from the last one clicked in the order shown.
+    fn tree_click(&mut self, id: ProfileId) -> Vec<Effect> {
+        let message = if self.modifiers.command() {
+            SelectionMessage::Toggle(id)
+        } else if self.modifiers.shift() {
+            let order = self
+                .app
+                .tree_rows(&self.search)
+                .into_iter()
+                .filter_map(|row| match row {
+                    TreeRow::Profile { profile, .. } => Some(profile.id),
+                    TreeRow::Folder { .. } => None,
+                })
+                .collect();
+            SelectionMessage::Range { to: id, order }
+        } else {
+            return self.app.update(AppMessage::SelectProfile(id));
+        };
+        self.app.update(AppMessage::Selection(message))
     }
 
     /// A tab menu's Fullscreen: the menu closes, the tab is shown, and the window goes full
@@ -2732,6 +2794,14 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-folder-delete"),
         ),
         Dialog::RenameProfile { value, .. } => return rename_profile_dialog(value),
+        Dialog::ConfirmDeleteProfiles { ids, names } => (
+            fl!("ui-dialog-delete-selection-title"),
+            std::iter::once(fl!("ui-dialog-delete-selection-body", count = ids.len()))
+                .chain(names.iter().map(|name| format!("- {name}")))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            fl!("ui-dialog-delete-profile-confirm"),
+        ),
         Dialog::ConfirmConnectFolder { count, .. } => (
             fl!("ui-folder-connect-all-title"),
             fl!("ui-folder-connect-all-body", count = (*count)),
@@ -3154,7 +3224,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::FolderName { .. }
         | Dialog::ConfirmDeleteFolder { .. }
         | Dialog::ConfirmConnectFolder { .. }
-        | Dialog::RenameProfile { .. } => folder_dialog(dialog),
+        | Dialog::RenameProfile { .. }
+        | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
         Dialog::ConfirmExit { live } => question(
             fl!("ui-dialog-exit-title"),
             fl!("ui-dialog-exit-body", count = (*live)),

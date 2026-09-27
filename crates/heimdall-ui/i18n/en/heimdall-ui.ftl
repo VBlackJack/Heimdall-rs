@@ -441,3 +441,11 @@ ui-folder-connect-all-confirm = Connect
 ui-tree-rename = Rename
 ui-tree-rename-title = Rename Session
 ui-tree-move-to-folder = Move to folder
+
+## Several profiles selected together, as the C# bulk menu.
+ui-selection-count = { $count } items selected
+ui-selection-connect = Connect selected ({ $count })
+ui-selection-duplicate = Duplicate selected
+ui-selection-delete = Delete selected ({ $count })
+ui-dialog-delete-selection-title = Delete Selected Items
+ui-dialog-delete-selection-body = Are you sure you want to delete { $count } selected item(s)?

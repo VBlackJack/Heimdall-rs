@@ -22,7 +22,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::{
     ConnectAs, FolderMessage, GatewayBadge, Message as AppMessage, NO_FOLDER, ProfileCopy,
-    ProfileKind, ProfileMenuMessage, ProfileSummary, TabGroup, TabId, TabMenuMessage,
+    ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, TabGroup, TabId,
+    TabMenuMessage,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -77,6 +78,10 @@ pub enum TreeMenu {
     MoveFolder(String),
     /// Which folder a profile can move to.
     MoveProfile(ProfileId),
+    /// The menu of the profiles selected together.
+    Selection,
+    /// Which folder the profiles selected together can move to.
+    MoveSelection,
 }
 
 /// How far a row moves right for each folder it is in.
@@ -150,7 +155,7 @@ pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, M
         .padding([4.0, 8.0])
         .style(move |theme: &Theme| row_style(theme, selected));
     let area = mouse_area(body)
-        .on_press(Message::App(AppMessage::SelectProfile(id.clone())))
+        .on_press(Message::TreeClick(id.clone()))
         .on_double_click(Message::App(AppMessage::ConnectProfile(id.clone())))
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Profile(id)))
         .interaction(mouse::Interaction::Pointer);
@@ -614,6 +619,72 @@ pub fn move_profile_entries<'a>(
                         to: to.clone(),
                     })
                 }),
+            )
+        }));
+    container(scrollable(entries).height(Length::Shrink))
+        .max_height(MOVE_MENU_HEIGHT)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// The menu of `count` profiles selected together, as the C# bulk menu: how many, Connect
+/// selected, Duplicate selected, Move to folder, Delete selected.
+pub fn selection_menu_entries<'a>(count: usize, connectable: usize) -> Element<'a, Message> {
+    let selection = |message| Some(AppMessage::Selection(message));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-selection-count", count = count), None))
+        .push(separator())
+        .push(entry(
+            fl!("ui-selection-connect", count = connectable),
+            (connectable > 0).then_some(AppMessage::Selection(SelectionMessage::Connect)),
+        ))
+        .push(entry(
+            fl!("ui-selection-duplicate"),
+            selection(SelectionMessage::Duplicate {
+                suffix: fl!("ui-tree-duplicate-suffix"),
+            }),
+        ))
+        .push(separator())
+        .push(
+            button(text(fl!("ui-tree-move-to-folder")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::MoveSelection)),
+        )
+        .push(separator())
+        .push(
+            button(text(fl!("ui-selection-delete", count = count)).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(danger_style)
+                .on_press(Message::MenuChoice(AppMessage::Selection(
+                    SelectionMessage::RequestDelete,
+                ))),
+        );
+    container(entries)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// Which folder the profiles selected together can move to: "(No Folder)", then every
+/// folder.
+pub fn move_selection_entries<'a>(folders: &[String]) -> Element<'a, Message> {
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(
+            fl!("ui-sidebar-group-none"),
+            Some(AppMessage::Selection(SelectionMessage::Move(None))),
+        ))
+        .extend(folders.iter().map(|path| {
+            entry(
+                path.clone(),
+                Some(AppMessage::Selection(SelectionMessage::Move(Some(
+                    path.clone(),
+                )))),
             )
         }));
     container(scrollable(entries).height(Length::Shrink))

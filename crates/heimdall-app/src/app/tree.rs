@@ -234,7 +234,8 @@ impl App {
     pub(super) fn tree_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::SelectProfile(id) => {
-                self.selected_profile = self.profile_summary(&id).map(|profile| profile.id);
+                let found = self.profile_summary(&id).map(|profile| profile.id);
+                self.select_only(found);
                 Vec::new()
             }
             Message::ToggleFolder(path) => {
@@ -243,6 +244,7 @@ impl App {
             }
             Message::Folder(message) => self.folder_menu(message),
             Message::ProfileMenu(message) => self.profile_menu(message),
+            Message::Selection(message) => self.selection_message(message),
             Message::ConnectProfile(id) => self.connect_profile(&id),
             Message::DuplicateProfile { id, suffix } => {
                 self.duplicate_profile(&id, &suffix);
@@ -284,7 +286,7 @@ impl App {
     /// Saves a copy of `id` named as the C# Heimdall names one: `suffix` (" (copy)" in
     /// English) added, then a number when that name is taken. Its saved password comes
     /// along, except an RDP one, as there.
-    fn duplicate_profile(&mut self, id: &ProfileId, suffix: &str) {
+    pub(super) fn duplicate_profile(&mut self, id: &ProfileId, suffix: &str) {
         let Some(source) = self.profile_summary(id) else {
             return;
         };

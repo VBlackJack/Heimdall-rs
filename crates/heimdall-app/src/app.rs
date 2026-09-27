@@ -71,6 +71,7 @@ mod profile_menu;
 mod profiles;
 mod rdp_tab;
 mod reconnect;
+mod selection;
 mod tab_menu;
 mod telnet_tab;
 mod tree;
@@ -86,6 +87,7 @@ pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
 pub use profile_menu::ProfileMenuMessage;
+pub use selection::SelectionMessage;
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
@@ -372,6 +374,8 @@ pub enum Message {
     Folder(FolderMessage),
     /// A profile's Rename or "Move to folder".
     ProfileMenu(ProfileMenuMessage),
+    /// Something about the profiles selected together.
+    Selection(SelectionMessage),
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
     /// Connect to a profile with its own protocol.
@@ -501,6 +505,7 @@ impl fmt::Debug for Message {
             Self::ToggleFolder(path) => write!(f, "ToggleFolder({path})"),
             Self::Folder(message) => write!(f, "Folder({message:?})"),
             Self::ProfileMenu(message) => write!(f, "ProfileMenu({message:?})"),
+            Self::Selection(message) => write!(f, "Selection({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
@@ -1064,6 +1069,13 @@ pub enum Dialog {
         /// Why the last name was refused, until the user types again.
         error: Option<heimdall_core::folder::FolderError>,
     },
+    /// Delete several profiles.
+    ConfirmDeleteProfiles {
+        /// The profiles.
+        ids: Vec<ProfileId>,
+        /// Their names, sorted, when they are few enough to list; empty otherwise.
+        names: Vec<String>,
+    },
     /// A new name for a profile.
     RenameProfile {
         /// The profile.
@@ -1146,8 +1158,11 @@ pub struct App {
     pub active: Option<TabId>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
-    /// The profile selected in the tree.
+    /// The profile selected in the tree, the last one clicked: where a Shift+click range
+    /// starts.
     pub selected_profile: Option<ProfileId>,
+    /// The profiles selected together, when more than one is.
+    selection: std::collections::BTreeSet<ProfileId>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
     pending_transfer: Option<PendingTransfer>,
@@ -1195,6 +1210,7 @@ impl App {
             active: None,
             dialog,
             selected_profile: None,
+            selection: std::collections::BTreeSet::new(),
             pending_paste: None,
             pending_transfer: None,
             pending_operation: None,
@@ -1356,6 +1372,7 @@ impl App {
             | Message::ToggleFolder(_)
             | Message::Folder(_)
             | Message::ProfileMenu(_)
+            | Message::Selection(_)
             | Message::ConnectProfile(_)
             | Message::DuplicateProfile { .. }
             | Message::RequestDeleteProfile(_)
@@ -1975,6 +1992,10 @@ impl App {
             }
             Some(Dialog::FolderName { naming, value, .. }) => {
                 self.confirm_folder_name(naming, value);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteProfiles { ids, .. }) => {
+                self.confirm_delete_profiles(&ids);
                 Vec::new()
             }
             Some(Dialog::RenameProfile { id, value }) => {

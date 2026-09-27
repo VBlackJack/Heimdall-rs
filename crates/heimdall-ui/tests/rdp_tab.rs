@@ -107,7 +107,7 @@ fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "dc"
+        Message::TreeClick(id) if id.as_str() == "dc"
     )));
     assert!(
         messages.iter().any(|message| matches!(
