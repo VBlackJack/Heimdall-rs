@@ -1066,3 +1066,75 @@ fn a_click_on_a_folder_folds_it_and_hides_its_profiles() {
     assert!(ui.find("server a").is_err(), "its profiles are folded away");
     ui.find("server c").expect("another folder's profile stays");
 }
+
+#[test]
+fn a_folder_has_the_csharp_menu_and_its_name_dialog_says_why_a_name_is_refused() {
+    use heimdall_app::FolderMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::mouse;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        let folder = ui.find("Production").expect("folder");
+        ui.point_at(folder.bounds().center());
+        ui.simulate([
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+        ]);
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::Folder(path)) if path == "Production"
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Folder(
+        "Production".to_owned(),
+    )));
+    snapshot(&shell, "folder-menu.png");
+    {
+        let mut ui = simulator(&shell);
+        for entry in [
+            "Connect all (2)",
+            "Add Session",
+            "New folder",
+            "Rename",
+            "Move to",
+        ] {
+            ui.find(entry).expect(entry);
+        }
+        ui.click("Delete folder").expect("delete");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::MenuChoice(AppMessage::Folder(FolderMessage::RequestDelete(path)))
+                if path == "Production"
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Move to").expect("move to");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::MoveFolder(path)) if path == "Production"
+        )));
+    }
+    // At the top already, with no other folder: nowhere to go.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::MoveFolder(
+        "Production".to_owned(),
+    )));
+    assert!(simulator(&shell).find("Top level").is_err());
+
+    let _ = shell.update(Message::MenuChoice(AppMessage::Folder(
+        FolderMessage::New {
+            parent: String::new(),
+        },
+    )));
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::NameEdited(
+        "production".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("New Folder").expect("the dialog stays");
+    ui.find("A folder with this name already exists at the same level.")
+        .expect("and says why");
+}

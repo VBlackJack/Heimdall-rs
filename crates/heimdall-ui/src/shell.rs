@@ -37,12 +37,14 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
-    QuestionId, QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    connection_events, master_password_problem, open_vault, server_text,
+    Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
+    Message as AppMessage, NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, Retry,
+    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TreeRow, UiError,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
+    master_password_problem, open_vault, server_text,
 };
+use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_ssh::{AgentSource, Secret};
@@ -947,7 +949,7 @@ impl Shell {
     /// a form is refused; never again while the user types.
     fn focus_dialog(&mut self) -> Task<Message> {
         let (next, field) = match &self.app.dialog {
-            Some(Dialog::AskName { .. } | Dialog::RenameTab { .. }) => {
+            Some(Dialog::AskName { .. } | Dialog::RenameTab { .. } | Dialog::FolderName { .. }) => {
                 (Some(DialogFocus::Name), name_field_id())
             }
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
@@ -1158,12 +1160,20 @@ impl Shell {
             .and_then(|(menu, at)| {
                 let entries = if let TreeMenu::Tab(tab) = menu {
                     tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+                } else if let TreeMenu::Folder(path) = menu {
+                    tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
+                } else if let TreeMenu::MoveFolder(path) = menu {
+                    tree_view::move_folder_entries(path, &self.app.folder_targets(path))
                 } else {
                     let profile = match menu {
                         TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => {
                             self.app.profile_summary(id)
                         }
-                        TreeMenu::Add | TreeMenu::More | TreeMenu::Tab(_) => None,
+                        TreeMenu::Add
+                        | TreeMenu::More
+                        | TreeMenu::Tab(_)
+                        | TreeMenu::Folder(_)
+                        | TreeMenu::MoveFolder(_) => None,
                     };
                     let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
                     let connect_as = profile
@@ -2628,6 +2638,76 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     .into()
 }
 
+/// The dialogs about folders: a name, a deletion, connecting all it holds.
+fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
+    let buttons = |action: String| {
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(action)).on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING)
+    };
+    let (title, body, action) = match dialog {
+        Dialog::FolderName {
+            naming,
+            value,
+            error,
+        } => {
+            let (title, action) = match naming {
+                FolderNaming::New(_) => (
+                    fl!("ui-folder-new-title"),
+                    fl!("ui-dialog-new-folder-confirm"),
+                ),
+                FolderNaming::Rename(_) => (
+                    fl!("ui-folder-rename-title"),
+                    fl!("ui-dialog-rename-confirm"),
+                ),
+            };
+            let mut content = column![
+                text(title).size(HEADING_SIZE),
+                text(fl!("ui-folder-name-field")),
+                text_input(&fl!("ui-dialog-name-placeholder"), value)
+                    .id(name_field_id())
+                    .on_input(
+                        |value| Message::App(AppMessage::Folder(FolderMessage::NameEdited(value)))
+                    )
+                    .on_submit(Message::App(AppMessage::ConfirmDialog)),
+            ]
+            .spacing(SPACING);
+            if let Some(error) = error {
+                content = content.push(
+                    text(match error {
+                        FolderError::Collision => fl!("ui-folder-error-collision"),
+                        _ => fl!("ui-folder-error-invalid"),
+                    })
+                    .style(text::danger),
+                );
+            }
+            return content.push(buttons(action)).into();
+        }
+        Dialog::ConfirmDeleteFolder { name, count, .. } => (
+            fl!("ui-folder-delete"),
+            fl!(
+                "ui-folder-delete-body",
+                name = name.as_str(),
+                count = (*count)
+            ),
+            fl!("ui-folder-delete"),
+        ),
+        Dialog::ConfirmConnectFolder { count, .. } => (
+            fl!("ui-folder-connect-all-title"),
+            fl!("ui-folder-connect-all-body", count = (*count)),
+            fl!("ui-folder-connect-all-confirm"),
+        ),
+        _ => return column![].into(),
+    };
+    column![text(title).size(HEADING_SIZE), text(body), buttons(action)]
+        .spacing(SPACING)
+        .into()
+}
+
 /// The dialogs about closing or naming tabs.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
@@ -3029,6 +3109,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmCloseTab(_) | Dialog::ConfirmCloseTabs { .. } | Dialog::RenameTab { .. } => {
             tab_dialog(dialog)
         }
+        Dialog::FolderName { .. }
+        | Dialog::ConfirmDeleteFolder { .. }
+        | Dialog::ConfirmConnectFolder { .. } => folder_dialog(dialog),
         Dialog::ConfirmExit { live } => question(
             fl!("ui-dialog-exit-title"),
             fl!("ui-dialog-exit-body", count = (*live)),

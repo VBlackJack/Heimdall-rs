@@ -63,6 +63,7 @@ use crate::vnc_driver::VncRequest;
 mod auto_reconnect;
 mod connect_as;
 mod files_tab;
+mod folder_menu;
 mod folders;
 mod gateways;
 mod local_tab;
@@ -80,6 +81,7 @@ pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use connect_as::ConnectAs;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
+pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
 pub use tab_menu::{TabGroup, TabMenuMessage};
@@ -364,6 +366,8 @@ pub enum Message {
     ChooseGateway(ProfileId),
     /// Open a folder of the tree, or close it.
     ToggleFolder(String),
+    /// Something from a folder's menu.
+    Folder(FolderMessage),
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
     /// Connect to a profile with its own protocol.
@@ -491,6 +495,7 @@ impl fmt::Debug for Message {
             Self::SaveGateway { .. } => f.write_str("SaveGateway(..)"),
             Self::ChooseGateway(id) => write!(f, "ChooseGateway({id})"),
             Self::ToggleFolder(path) => write!(f, "ToggleFolder({path})"),
+            Self::Folder(message) => write!(f, "Folder({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
@@ -1045,6 +1050,31 @@ pub enum Dialog {
         /// The name typed so far.
         value: String,
     },
+    /// A name for a folder: a new one, or one renamed.
+    FolderName {
+        /// What for.
+        naming: FolderNaming,
+        /// The name typed so far.
+        value: String,
+        /// Why the last name was refused, until the user types again.
+        error: Option<heimdall_core::folder::FolderError>,
+    },
+    /// Delete a folder; its profiles go to no folder.
+    ConfirmDeleteFolder {
+        /// Its path.
+        path: String,
+        /// Its name.
+        name: String,
+        /// How many profiles it holds, its folders' included.
+        count: usize,
+    },
+    /// Connect every session a folder holds.
+    ConfirmConnectFolder {
+        /// Its path.
+        path: String,
+        /// How many sessions.
+        count: usize,
+    },
     /// Close several tabs, some of them live.
     ConfirmCloseTabs {
         /// The tabs.
@@ -1279,12 +1309,7 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
-            Message::ScrollHistory { tab, lines } => {
-                if let Some(found) = self.tab_mut(tab) {
-                    found.terminal.scroll(lines);
-                }
-                Vec::new()
-            }
+            Message::ScrollHistory { tab, lines } => self.scroll_history(tab, lines),
             message @ (Message::Copy(_)
             | Message::PasteRequest(_)
             | Message::SendClipboard(_)
@@ -1317,6 +1342,7 @@ impl App {
             Message::ConfirmDialog => self.confirm_dialog(),
             message @ (Message::SelectProfile(_)
             | Message::ToggleFolder(_)
+            | Message::Folder(_)
             | Message::ConnectProfile(_)
             | Message::DuplicateProfile { .. }
             | Message::RequestDeleteProfile(_)
@@ -1332,6 +1358,14 @@ impl App {
                 Vec::new()
             }),
         }
+    }
+
+    /// Scrolls the history of `tab_id` by `lines`, up when positive.
+    fn scroll_history(&mut self, tab_id: TabId, lines: i32) -> Vec<Effect> {
+        if let Some(found) = self.tab_mut(tab_id) {
+            found.terminal.scroll(lines);
+        }
+        Vec::new()
     }
 
     /// Applies a message for a remote desktop.
@@ -1926,6 +1960,15 @@ impl App {
                 self.rename_tab(tab, &value);
                 Vec::new()
             }
+            Some(Dialog::FolderName { naming, value, .. }) => {
+                self.confirm_folder_name(naming, value);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteFolder { path, .. }) => {
+                self.confirm_delete_folder(&path);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmConnectFolder { path, .. }) => self.confirm_connect_folder(&path),
             Some(Dialog::ConfirmExit { .. }) => {
                 for tab in &mut self.tabs {
                     tab.stop();

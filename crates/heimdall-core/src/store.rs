@@ -23,6 +23,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
+use crate::folder::{self, FolderError};
 use crate::profile::{
     LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
     VncProfile, WinRmProfile,
@@ -31,10 +32,10 @@ use crate::profile::{
 /// Format version written into the profile file.
 ///
 /// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
-/// gateways and the gateway an SSH profile goes through. A build that knows an older
-/// version refuses a newer file rather than reading it, dropping the profiles it does not
-/// know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 7;
+/// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
+/// included. A build that knows an older version refuses a newer file rather than reading
+/// it, dropping what it does not know, and saving it back.
+pub const PROFILE_FILE_VERSION: u32 = 8;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -57,6 +58,8 @@ struct ProfileFile {
     gateway: Vec<SshGateway>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     winrm: Vec<WinRmProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    folder: Vec<String>,
 }
 
 /// Why the profile file could not be read or written.
@@ -117,6 +120,8 @@ pub struct ProfileStore {
     local: Vec<LocalProfile>,
     gateways: Vec<SshGateway>,
     winrm: Vec<WinRmProfile>,
+    /// Folders kept for themselves, as the C# Heimdall's empty groups: normalised.
+    folders: Vec<String>,
 }
 
 /// Why an SSH profile's gateways cannot be followed.
@@ -145,6 +150,7 @@ impl ProfileStore {
             local: Vec::new(),
             gateways: Vec::new(),
             winrm: Vec::new(),
+            folders: Vec::new(),
         }
     }
 
@@ -183,6 +189,12 @@ impl ProfileStore {
             local: file.local,
             gateways: file.gateway,
             winrm: file.winrm,
+            folders: file
+                .folder
+                .iter()
+                .map(|path| folder::normal(path))
+                .filter(|path| !path.is_empty())
+                .collect(),
         })
     }
 
@@ -339,6 +351,154 @@ impl ProfileStore {
         self.len() != before
     }
 
+    /// The folders kept for themselves, empty ones included.
+    #[must_use]
+    pub fn folders(&self) -> &[String] {
+        &self.folders
+    }
+
+    /// The folder of every profile, of any protocol.
+    fn groups(&self) -> impl Iterator<Item = Option<&str>> {
+        self.ssh
+            .iter()
+            .map(|p| p.group.as_deref())
+            .chain(self.rdp.iter().map(|p| p.group.as_deref()))
+            .chain(self.telnet.iter().map(|p| p.group.as_deref()))
+            .chain(self.vnc.iter().map(|p| p.group.as_deref()))
+            .chain(self.local.iter().map(|p| p.group.as_deref()))
+            .chain(self.winrm.iter().map(|p| p.group.as_deref()))
+    }
+
+    /// The folder of every profile, of any protocol, to change.
+    fn groups_mut(&mut self) -> impl Iterator<Item = &mut Option<String>> {
+        self.ssh
+            .iter_mut()
+            .map(|p| &mut p.group)
+            .chain(self.rdp.iter_mut().map(|p| &mut p.group))
+            .chain(self.telnet.iter_mut().map(|p| &mut p.group))
+            .chain(self.vnc.iter_mut().map(|p| &mut p.group))
+            .chain(self.local.iter_mut().map(|p| &mut p.group))
+            .chain(self.winrm.iter_mut().map(|p| &mut p.group))
+    }
+
+    /// Every folder the tree shows: those kept for themselves, those of the profiles, and
+    /// every folder on the way to them; each once, normalised.
+    #[must_use]
+    pub fn folder_paths(&self) -> Vec<String> {
+        let mut paths: Vec<String> = self
+            .groups()
+            .filter_map(|group| group.map(folder::normal))
+            .chain(self.folders.iter().cloned())
+            .filter(|path| !path.is_empty())
+            .flat_map(|path| {
+                let parts: Vec<String> = folder::parts(&path)
+                    .into_iter()
+                    .map(str::to_owned)
+                    .collect();
+                (1..=parts.len())
+                    .map(|end| parts[..end].join("/"))
+                    .collect::<Vec<_>>()
+            })
+            .collect();
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
+    /// Keeps folder `name` under `parent` for itself; its path.
+    ///
+    /// # Errors
+    ///
+    /// [`FolderError::InvalidName`] for an empty name or one with a `/`,
+    /// [`FolderError::Collision`] when a folder of that name is already there.
+    pub fn add_folder(&mut self, parent: &str, name: &str) -> Result<String, FolderError> {
+        let path = folder::child(parent, name)?;
+        if self
+            .folder_paths()
+            .iter()
+            .any(|existing| folder::same_folder(existing, &path))
+        {
+            return Err(FolderError::Collision);
+        }
+        self.folders.push(path.clone());
+        Ok(path)
+    }
+
+    /// Renames folder `path` to `name`, at the same level: its profiles and its folders
+    /// follow. Its new path.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::add_folder`], and [`FolderError::Missing`] for no such folder.
+    pub fn rename_folder(&mut self, path: &str, name: &str) -> Result<String, FolderError> {
+        let renamed = folder::child(&folder::parent(path), name)?;
+        self.relocate(path, &renamed)
+    }
+
+    /// Moves folder `path` under `parent`, the top level for an empty one: its profiles and
+    /// its folders follow. Its new path.
+    ///
+    /// # Errors
+    ///
+    /// [`FolderError::IntoItself`] when `parent` is the folder or inside it,
+    /// [`FolderError::Collision`] when a folder of its name is already there,
+    /// [`FolderError::Missing`] for no such folder.
+    pub fn move_folder(&mut self, path: &str, parent: &str) -> Result<String, FolderError> {
+        if folder::is_within(parent, path) {
+            return Err(FolderError::IntoItself);
+        }
+        let moved = folder::child(parent, &folder::name(path))?;
+        self.relocate(path, &moved)
+    }
+
+    /// Gives folder `path`, and all it holds, the path `to`.
+    fn relocate(&mut self, path: &str, to: &str) -> Result<String, FolderError> {
+        let path = folder::normal(path);
+        if path.is_empty() || !self.folder_paths().contains(&path) {
+            return Err(FolderError::Missing);
+        }
+        if path == to {
+            return Ok(path);
+        }
+        let taken = self.folder_paths().iter().any(|existing| {
+            folder::same_folder(existing, to) && !folder::same_folder(existing, &path)
+        });
+        if taken {
+            return Err(FolderError::Collision);
+        }
+        for group in self.groups_mut() {
+            if let Some(current) = group
+                .as_deref()
+                .filter(|current| folder::is_within(current, &path))
+            {
+                *group = Some(folder::relabel(current, &path, to));
+            }
+        }
+        for kept in &mut self.folders {
+            if folder::is_within(kept, &path) {
+                *kept = folder::relabel(kept, &path, to);
+            }
+        }
+        Ok(to.to_owned())
+    }
+
+    /// Deletes folder `path` and the folders in it; their profiles go to no folder, as the
+    /// C# Heimdall moves them. How many profiles moved.
+    pub fn delete_folder(&mut self, path: &str) -> usize {
+        let mut moved = 0;
+        for group in self.groups_mut() {
+            if group
+                .as_deref()
+                .is_some_and(|current| folder::is_within(current, path))
+            {
+                *group = None;
+                moved += 1;
+            }
+        }
+        self.folders.retain(|kept| !folder::is_within(kept, path));
+        moved
+    }
+
     /// Number of profiles, all protocols together.
     fn len(&self) -> usize {
         self.ssh.len()
@@ -381,6 +541,7 @@ impl ProfileStore {
             local: self.local.clone(),
             gateway: self.gateways.clone(),
             winrm: self.winrm.clone(),
+            folder: self.folders.clone(),
         })?;
         let dir = self
             .path

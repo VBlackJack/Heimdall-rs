@@ -419,3 +419,20 @@ ui-session-closed-reason = The server said: { $reason }
 ui-session-reconnecting = Reconnecting (attempt { $attempt }/{ $max })...
 ui-session-reconnecting-in = in { $seconds }s
 ui-session-reconnecting-cancel = Cancel
+
+## A folder's menu and dialogs, as the C# Heimdall's.
+ui-folder-connect-all = Connect all ({ $count })
+ui-folder-new = New folder
+ui-folder-rename = Rename
+ui-folder-move-to = Move to
+ui-folder-move-top = Top level
+ui-folder-delete = Delete folder
+ui-folder-new-title = New Folder
+ui-folder-rename-title = Rename Folder
+ui-folder-name-field = Folder name:
+ui-folder-error-collision = A folder with this name already exists at the same level.
+ui-folder-error-invalid = A folder name cannot be empty or contain "/".
+ui-folder-delete-body = Delete folder "{ $name }"? Affected entries in this folder and its subfolders, including entries hidden by the current filter: { $count }. All will be moved to "(No Folder)".
+ui-folder-connect-all-title = Connect All
+ui-folder-connect-all-body = Connect to all { $count } sessions in this folder?
+ui-folder-connect-all-confirm = Connect

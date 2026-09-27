@@ -241,6 +241,7 @@ impl App {
                 self.toggle_folder(&path);
                 Vec::new()
             }
+            Message::Folder(message) => self.folder_menu(message),
             Message::ConnectProfile(id) => self.connect_profile(&id),
             Message::DuplicateProfile { id, suffix } => {
                 self.duplicate_profile(&id, &suffix);
@@ -261,7 +262,7 @@ impl App {
     }
 
     /// Opens `id` with its own protocol.
-    fn connect_profile(&mut self, id: &ProfileId) -> Vec<Effect> {
+    pub(super) fn connect_profile(&mut self, id: &ProfileId) -> Vec<Effect> {
         if self.profile_summary(id).is_none() {
             return Vec::new();
         }

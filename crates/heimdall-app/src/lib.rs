@@ -38,12 +38,13 @@ mod text;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, ConnectAs, Dialog, Effect, FilesMessage, GatewayBadge, ImportSummary, KeyInput,
-    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, OpenedVault, Phase, PointerInput,
-    ProfileCopy, ProfileKind, ProfileSummary, Prompt, RDP_MAX_ATTEMPTS, Retry, SystemCredentials,
-    Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow, VAULT_FILE_NAME, VaultDialog, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    App, AppConfig, ConnectAs, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
+    GatewayBadge, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
+    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction,
+    OpenedVault, Phase, PointerInput, ProfileCopy, ProfileKind, ProfileSummary, Prompt,
+    RDP_MAX_ATTEMPTS, Retry, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow,
+    VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

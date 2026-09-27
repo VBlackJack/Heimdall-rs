@@ -21,6 +21,8 @@
 
 use std::collections::{BTreeMap, HashSet};
 
+use heimdall_core::folder;
+
 use super::App;
 use super::tree::ProfileSummary;
 
@@ -49,21 +51,6 @@ pub enum TreeRow {
         /// How deep: its folder's depth plus one.
         depth: usize,
     },
-}
-
-/// The parts of a folder path: trimmed, the empty ones dropped.
-#[must_use]
-pub(super) fn folder_parts(path: &str) -> Vec<&str> {
-    path.split('/')
-        .map(str::trim)
-        .filter(|part| !part.is_empty())
-        .collect()
-}
-
-/// A folder path written the one way: its parts joined by `/`.
-#[must_use]
-pub(super) fn normal_folder(path: &str) -> String {
-    folder_parts(path).join("/")
 }
 
 /// A folder and what it holds.
@@ -98,12 +85,19 @@ impl App {
             let parts = profile
                 .group
                 .as_deref()
-                .map(folder_parts)
+                .map(folder::parts)
                 .unwrap_or_default();
             if parts.is_empty() {
                 loose.push(profile);
             } else {
                 root.at(&parts).profiles.push(profile);
+            }
+        }
+        // The folders kept for themselves, empty ones included; a search shows only what it
+        // found.
+        if !searching {
+            for path in self.store.folder_paths() {
+                root.at(&folder::parts(&path));
             }
         }
         let mut rows = Vec::new();
@@ -133,7 +127,7 @@ impl App {
         let key = if path == NO_FOLDER {
             NO_FOLDER.to_owned()
         } else {
-            normal_folder(path)
+            folder::normal(path)
         };
         if !self.closed_folders.remove(&key) {
             self.closed_folders.insert(key);

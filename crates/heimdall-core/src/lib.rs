@@ -18,6 +18,7 @@
 //! credential vault.
 
 pub mod credentials;
+pub mod folder;
 pub mod import;
 pub mod paths;
 pub mod profile;
