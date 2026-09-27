@@ -475,6 +475,19 @@ impl fmt::Debug for Effect {
     }
 }
 
+/// Reads this side's clipboard for `tab` when it is a desktop sharing the clipboard.
+fn clipboard_offer(tab: &Tab) -> Vec<Effect> {
+    if tab
+        .desktop
+        .as_deref()
+        .is_some_and(DesktopPane::shares_clipboard)
+    {
+        vec![Effect::ReadClipboard { tab: tab.id }]
+    } else {
+        Vec::new()
+    }
+}
+
 /// Lines a shell would run from pasted text: CR, LF and CR LF all end a line, and empty
 /// lines run nothing.
 fn command_lines(text: &str) -> usize {
@@ -907,11 +920,13 @@ impl App {
             Message::ForgetServer(tab) => self.forget_server(tab),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => {
-                if let Some(found) = self.tab_mut(tab) {
-                    found.bell = false;
-                    self.active = Some(tab);
-                }
-                Vec::new()
+                let Some(found) = self.tab_mut(tab) else {
+                    return Vec::new();
+                };
+                found.bell = false;
+                self.active = Some(tab);
+                // Back to a desktop: its server gets what was copied meanwhile.
+                self.tab(tab).map(clipboard_offer).unwrap_or_default()
             }
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::Connection {
@@ -946,7 +961,7 @@ impl App {
                 .into_iter()
                 .collect(),
             Message::PasteRequest(tab) => vec![Effect::ReadClipboard { tab }],
-            Message::ClipboardText { tab, text } => self.paste(tab, text),
+            Message::ClipboardText { tab, text } => self.clipboard_text(tab, text),
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
             Message::WindowFocus(focused) => {
                 if let Some(found) = self.active.and_then(|id| self.tab(id))
@@ -954,7 +969,11 @@ impl App {
                 {
                     found.write(bytes);
                 }
-                Vec::new()
+                // Back to the window: the desktop shown gets what was copied elsewhere.
+                match self.active.and_then(|id| self.tab(id)) {
+                    Some(found) if focused => clipboard_offer(found),
+                    _ => Vec::new(),
+                }
             }
             Message::WindowCloseRequested => self.close_window(),
             Message::ImportLegacy => {
@@ -1102,7 +1121,11 @@ impl App {
             | ConnectionEvent::RdpReady { .. }
             | ConnectionEvent::DesktopFrame) => {
                 rdp_tab::apply(tab, event);
-                Vec::new()
+                // A new desktop is offered this side's clipboard at once.
+                clipboard_offer(tab)
+            }
+            ConnectionEvent::RemoteClipboard(text) => {
+                vec![Effect::WriteClipboard(String::clone(&text))]
             }
             event @ ConnectionEvent::VncReady { .. } => {
                 vnc_tab::apply(tab, event);
@@ -1308,6 +1331,22 @@ impl App {
             let _ = sink.resize(terminal_size(grid, Some(cell)));
         }
         Vec::new()
+    }
+
+    /// This side's clipboard, read for `tab_id`: offered to its server when it is a desktop
+    /// sharing the clipboard, pasted into it when it is a terminal.
+    fn clipboard_text(&mut self, tab_id: TabId, text: Option<String>) -> Vec<Effect> {
+        if let Some(pane) = self
+            .tab(tab_id)
+            .and_then(|tab| tab.desktop.as_deref())
+            .filter(|pane| pane.shares_clipboard())
+        {
+            if let Some(text) = text.filter(|text| !text.is_empty()) {
+                pane.offer_clipboard(text);
+            }
+            return Vec::new();
+        }
+        self.paste(tab_id, text)
     }
 
     fn paste(&mut self, tab_id: TabId, text: Option<String>) -> Vec<Effect> {

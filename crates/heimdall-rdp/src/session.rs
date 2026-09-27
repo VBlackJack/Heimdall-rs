@@ -35,7 +35,12 @@ use tokio::io::{AsyncWriteExt as _, ReadHalf, WriteHalf};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
-use crate::connect::{MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
+use ironrdp::cliprdr::CliprdrClient;
+use ironrdp::cliprdr::pdu::ClipboardFormatId;
+use zeroize::Zeroizing;
+
+use crate::clipboard::{Offered, Request, offered_formats};
+use crate::connect::{ClipboardLink, MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
 use crate::frames::FrameReader;
 
 /// Events queued before the session waits for the receiver.
@@ -84,6 +89,8 @@ pub enum RdpEvent {
         /// Height.
         height: u16,
     },
+    /// The server's clipboard, as text: the server copied it.
+    RemoteClipboard(Zeroizing<String>),
     /// The session ended; nothing follows.
     Closed(CloseReason),
 }
@@ -108,15 +115,27 @@ pub struct RdpSession {
     /// Keyboard and mouse input. Unbounded, so a key is never dropped while the session
     /// is busy drawing.
     pub input: mpsc::UnboundedSender<Vec<Operation>>,
+    /// Text this side's clipboard holds, to offer the server; `None` when the clipboard is
+    /// not shared.
+    pub clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
 }
 
 /// Starts the session of `connection`; `cancel` ends it.
 #[must_use]
 pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession {
-    let RdpConnection { framed, result } = connection;
+    let RdpConnection {
+        framed,
+        clipboard,
+        result,
+    } = connection;
     let framebuffer = Framebuffer::new(result.desktop_size.width, result.desktop_size.height);
     let (events, event_receiver) = mpsc::channel(EVENT_QUEUE);
     let (input, input_receiver) = mpsc::unbounded_channel();
+    let (offers, offer_receiver) = mpsc::unbounded_channel();
+    let shared = clipboard.map(|link| Shared {
+        link,
+        offers: offer_receiver,
+    });
     let (stream, leftover) = framed.into_inner();
     let (read_half, write_half) = tokio::io::split(stream);
     let running = Running {
@@ -126,11 +145,44 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         reader: FrameReader::new(read_half, leftover),
         writer: write_half,
     };
-    tokio::spawn(running.run(result, cancel));
+    let offers = shared.is_some().then_some(offers);
+    tokio::spawn(running.run(result, shared, cancel));
     RdpSession {
         framebuffer,
         events: event_receiver,
         input,
+        clipboard: offers,
+    }
+}
+
+/// The session's side of a shared clipboard.
+struct Shared {
+    link: ClipboardLink,
+    /// Text offered from this side.
+    offers: mpsc::UnboundedReceiver<Zeroizing<String>>,
+}
+
+/// What the loop has to do for the clipboard next.
+enum ClipboardStep {
+    Request(Request),
+    Offer(Zeroizing<String>),
+}
+
+impl Shared {
+    async fn next(&mut self) -> Option<ClipboardStep> {
+        tokio::select! {
+            Some(request) = self.link.requests.recv() => Some(ClipboardStep::Request(request)),
+            Some(text) = self.offers.recv() => Some(ClipboardStep::Offer(text)),
+            else => None,
+        }
+    }
+}
+
+/// Waits for the next clipboard step; forever when the clipboard is not shared.
+async fn next_clipboard_step(shared: &mut Option<Shared>) -> Option<ClipboardStep> {
+    match shared {
+        Some(shared) => shared.next().await,
+        None => std::future::pending().await,
     }
 }
 
@@ -169,8 +221,13 @@ struct Running {
 }
 
 impl Running {
-    async fn run(mut self, result: ConnectionResult, cancel: CancellationToken) {
-        let reason = match self.serve(result, cancel).await {
+    async fn run(
+        mut self,
+        result: ConnectionResult,
+        shared: Option<Shared>,
+        cancel: CancellationToken,
+    ) {
+        let reason = match self.serve(result, shared, cancel).await {
             Ok(reason) => reason,
             Err(description) => CloseReason::Failed(description),
         };
@@ -180,6 +237,7 @@ impl Running {
     async fn serve(
         &mut self,
         result: ConnectionResult,
+        mut shared: Option<Shared>,
         cancel: CancellationToken,
     ) -> Result<CloseReason, String> {
         let activation = result.activation_factory;
@@ -219,6 +277,11 @@ impl Running {
                         .process_fastpath_input(&mut image, &events)
                         .map_err(|error| described(&error))?
                 }
+                Some(step) = next_clipboard_step(&mut shared) => {
+                    let offered = shared.as_ref().map(|shared| shared.link.offered.clone());
+                    self.clipboard(&mut stage, step, offered).await?;
+                    Vec::new()
+                }
             };
             for output in outputs {
                 match output {
@@ -248,6 +311,43 @@ impl Running {
                 }
             }
         }
+    }
+
+    /// Does what the clipboard channel asked, or offers this side's new text.
+    async fn clipboard(
+        &mut self,
+        stage: &mut ActiveStage,
+        step: ClipboardStep,
+        offered: Option<Offered>,
+    ) -> Result<(), String> {
+        let Some(offered) = offered else {
+            return Ok(());
+        };
+        let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else {
+            return Ok(());
+        };
+        let messages = match step {
+            ClipboardStep::Request(Request::Received(text)) => {
+                let _ = self.events.send(RdpEvent::RemoteClipboard(text)).await;
+                return Ok(());
+            }
+            ClipboardStep::Request(Request::Paste) => {
+                channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
+            }
+            ClipboardStep::Request(Request::Answer(answer)) => channel.submit_format_data(answer),
+            ClipboardStep::Request(Request::Offer) => {
+                channel.initiate_copy(&offered_formats(&offered))
+            }
+            ClipboardStep::Offer(text) => {
+                *offered.lock().unwrap_or_else(PoisonError::into_inner) = Some(text);
+                channel.initiate_copy(&offered_formats(&offered))
+            }
+        }
+        .map_err(|error| error.to_string())?;
+        let frame = stage
+            .process_svc_processor_messages(messages)
+            .map_err(|error| described(&error))?;
+        self.send(&frame).await
     }
 
     async fn send(&mut self, frame: &[u8]) -> Result<(), String> {

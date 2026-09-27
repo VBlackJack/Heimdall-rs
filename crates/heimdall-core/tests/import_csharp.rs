@@ -548,3 +548,19 @@ fn a_local_command_that_cannot_be_run_as_written_is_left_out() {
     let kept: Vec<&str> = report.local.iter().map(|p| p.id.as_str()).collect();
     assert_eq!(kept, ["full", "bare"]);
 }
+
+#[test]
+fn the_clipboard_is_shared_unless_the_csharp_profile_turned_it_off() {
+    let json = servers(
+        r#"{"id": "on", "remoteServer": "h", "connectionType": "RDP"},
+           {"id": "off", "remoteServer": "h", "connectionType": "RDP",
+            "rdpRedirectClipboard": false}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let shared: Vec<(&str, bool)> = report
+        .rdp
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.redirect_clipboard))
+        .collect();
+    assert_eq!(shared, [("on", true), ("off", false)]);
+}

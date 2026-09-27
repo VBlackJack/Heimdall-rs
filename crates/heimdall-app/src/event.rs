@@ -28,6 +28,7 @@ use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use heimdall_sftp::SftpClient;
 use tokio::sync::mpsc;
+use zeroize::Zeroizing;
 
 use crate::error::UiError;
 use crate::ids::QuestionId;
@@ -114,7 +115,11 @@ pub enum ConnectionEvent {
         framebuffer: Framebuffer,
         /// Where keyboard and mouse input goes.
         input: mpsc::UnboundedSender<Vec<Operation>>,
+        /// Where this side's clipboard text goes, when the clipboard is shared.
+        clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
     },
+    /// The server copied this text: it goes to this side's clipboard.
+    RemoteClipboard(Zeroizing<String>),
     /// The VNC session is open.
     VncReady {
         /// The desktop, drawn by the UI.
@@ -175,6 +180,8 @@ impl fmt::Debug for ConnectionEvent {
                 .field("fingerprint", &fingerprint.to_string())
                 .finish(),
             Self::RdpReady { .. } => f.write_str("RdpReady"),
+            // What was copied can be a password: never shown.
+            Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
             Self::VncReady { .. } => f.write_str("VncReady"),
             Self::DesktopFrame => f.write_str("DesktopFrame"),
             Self::Connected { .. } => f.write_str("Connected"),

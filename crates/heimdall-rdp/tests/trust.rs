@@ -166,6 +166,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
             handshake: WAIT,
             logon: WAIT,
         },
+        clipboard: false,
     }
 }
 
