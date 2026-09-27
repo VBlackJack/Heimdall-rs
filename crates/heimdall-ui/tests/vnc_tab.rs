@@ -70,7 +70,7 @@ fn a_vnc_profile_is_listed_and_opens_a_vnc_tab() {
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "kiosk"
+        Message::TreeClick(id) if id.as_str() == "kiosk"
     )));
     assert!(
         messages.iter().any(|message| matches!(

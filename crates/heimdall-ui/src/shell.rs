@@ -37,12 +37,14 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, Prompt, Purpose,
-    QuestionId, QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
+    Message as AppMessage, NameAction, Phase, ProfileMenuMessage, Prompt, Purpose, QuestionId,
+    QuestionKind, Retry, SelectionMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
+    TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
     connection_events, master_password_problem, open_vault, server_text,
 };
+use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_ssh::{AgentSource, Secret};
@@ -61,9 +63,12 @@ use zeroize::Zeroizing;
 use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::i18n::fl;
+use crate::palette::Palette;
 use crate::report;
 use crate::terminal_view::TerminalView;
-use crate::terminal_view::keys::{WindowShortcut, is_lock_key, is_search_key, window_shortcut};
+use crate::terminal_view::keys::{
+    WindowShortcut, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
+};
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TreeMenu};
 
@@ -106,6 +111,9 @@ const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Room above Quick Connect.
+const PALETTE_TOP: f32 = 80.0;
+
 /// Longest tab title shown, in characters.
 const MAX_TAB_TITLE_CHARS: usize = 32;
 
@@ -124,10 +132,27 @@ const SETTINGS_WIDTH: f32 = 720.0;
 const DIALOG_RESERVED_HEIGHT: f32 = 112.0;
 
 /// Window events and the window's shortcuts.
+/// The tree shortcut `key` with `modifiers` is, as the C# Heimdall's: Ctrl+E, Ctrl+N.
+fn tree_shortcut(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: keyboard::Modifiers,
+) -> Option<TreeShortcut> {
+    match ctrl_letter(key, physical, modifiers)? {
+        'e' => Some(TreeShortcut::Edit),
+        'n' => Some(TreeShortcut::New),
+        'k' => Some(TreeShortcut::QuickConnect),
+        _ => None,
+    }
+}
+
 fn window_event(event: iced::Event, status: event::Status, _window: window::Id) -> Option<Message> {
     match event {
         iced::Event::Window(window::Event::CloseRequested) => {
             Some(Message::App(AppMessage::WindowCloseRequested))
+        }
+        iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
+            Some(Message::Modifiers(modifiers))
         }
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
@@ -182,6 +207,9 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         }) if status == event::Status::Ignored => {
             if is_search_key(&key, physical_key, modifiers) {
                 return Some(Message::FocusSearch);
+            }
+            if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
+                return Some(Message::TreeShortcut(shortcut));
             }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
@@ -280,6 +308,32 @@ pub enum Message {
     CopyError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
     Tick,
+    /// Shift, Ctrl, Alt or the logo key pressed or released.
+    Modifiers(keyboard::Modifiers),
+    /// A click on a profile of the tree: it alone selected, or, with Ctrl, added or taken,
+    /// or, with Shift, all from the last one clicked.
+    TreeClick(ProfileId),
+    /// A click in the session shown: the keyboard goes back to it from the tree.
+    ContentFocus,
+    /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
+    TreeShortcut(TreeShortcut),
+    /// Quick Connect's search changed.
+    PaletteQuery(String),
+    /// Open Quick Connect's result at this place.
+    PaletteChoose(usize),
+    /// Close Quick Connect.
+    PaletteClose,
+}
+
+/// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TreeShortcut {
+    /// Ctrl+E: edit the profile selected, when the tree has the keyboard.
+    Edit,
+    /// Ctrl+N: a new session.
+    New,
+    /// Ctrl+K: Quick Connect.
+    QuickConnect,
 }
 
 impl fmt::Debug for Message {
@@ -318,6 +372,13 @@ impl fmt::Debug for Message {
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
+            Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
+            Self::TreeClick(id) => write!(f, "TreeClick({id})"),
+            Self::ContentFocus => f.write_str("ContentFocus"),
+            Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
+            Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
+            Self::PaletteClose => f.write_str("PaletteClose"),
         }
     }
 }
@@ -440,6 +501,14 @@ pub struct Shell {
     page: Page,
     /// Full screen: the window shows the session only.
     fullscreen: bool,
+    /// The keyboard's modifiers, for a click in the tree.
+    modifiers: keyboard::Modifiers,
+    /// The tree has the keyboard: a click in it took it from the session shown.
+    tree_focused: bool,
+    /// Quick Connect, while open.
+    palette: Option<Palette>,
+    /// Quick Connect just opened: its field gets the keyboard.
+    palette_opened: bool,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
@@ -511,6 +580,10 @@ impl Shell {
             menu: None,
             page: Page::Tab,
             fullscreen: false,
+            modifiers: keyboard::Modifiers::empty(),
+            tree_focused: false,
+            palette: None,
+            palette_opened: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -578,26 +651,20 @@ impl Shell {
         if self.app.is_locked() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
             return Task::none();
         }
-        if matches!(message, Message::App(AppMessage::SelectTab(_))) {
-            self.page = Page::Tab;
-        }
+        self.note_focus(&message);
         let reveal = matches!(
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
         );
         let effects = match message {
             Message::App(message) => self.app.update(message),
-            Message::Field {
-                question,
-                index,
-                value,
-            } => {
-                self.edit(question, index, value);
-                return Task::none();
-            }
-            Message::FocusField { question, index } => {
-                return operation::focus(field_id(question, index));
-            }
+            message @ (Message::Field { .. }
+            | Message::FocusField { .. }
+            | Message::VaultField { .. }
+            | Message::FocusVaultField(_)
+            | Message::Search(_)
+            | Message::ProfilePassword(_)
+            | Message::GatewayPassword(_)) => return self.input_message(message),
             Message::Submit(tab) => self.reply(tab, true),
             Message::Decline(tab) => self.reply(tab, false),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
@@ -613,24 +680,15 @@ impl Shell {
                 }
                 self.files_key(FilesKey::SwitchPane)
             }
-            Message::VaultField { index, value } => {
-                if let Some(field) = self.vault_fields.get_mut(index) {
-                    *field = Zeroizing::new(value);
-                }
-                return Task::none();
-            }
-            Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::LockKey => {
                 self.menu = None;
                 self.app.update(AppMessage::LockVault)
             }
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
-            | Message::ShowSettings) => return self.view_message(&message),
-            Message::Search(term) => {
-                self.search = term;
-                return Task::none();
-            }
+            | Message::ShowSettings
+            | Message::Modifiers(_)
+            | Message::Tick) => return self.view_message(&message),
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
@@ -638,15 +696,7 @@ impl Shell {
                     .chain(operation::select_all(search_field_id()));
             }
             Message::SubmitVault => self.submit_vault(),
-            Message::ProfilePassword(value) => {
-                self.profile_password = Zeroizing::new(value);
-                return Task::none();
-            }
             Message::SaveProfileForm => self.save_profile_form(),
-            Message::GatewayPassword(value) => {
-                self.gateway_password = Zeroizing::new(value);
-                return Task::none();
-            }
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::OpenTreeMenu(menu) => {
                 self.open_tree_menu(menu);
@@ -662,17 +712,52 @@ impl Shell {
             }
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::CopyError(tab) => return self.copy_error(tab),
-            Message::Tick => return Task::none(),
+            message
+            @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
+                self.tree_input(message)
+            }
+            message @ (Message::PaletteQuery(_)
+            | Message::PaletteChoose(_)
+            | Message::PaletteClose) => self.palette_message(message),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
+        if std::mem::take(&mut self.palette_opened) {
+            tasks.push(operation::focus(crate::palette::field_id()));
+        }
         if reveal {
             tasks.push(self.reveal_selection());
         }
         Task::batch(tasks)
+    }
+
+    /// Something typed into a field: a question's, the vault's, a password, the search; or
+    /// the keyboard moved to one.
+    fn input_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::Field {
+                question,
+                index,
+                value,
+            } => self.edit(question, index, value),
+            Message::FocusField { question, index } => {
+                return operation::focus(field_id(question, index));
+            }
+            Message::VaultField { index, value } => {
+                if let Some(field) = self.vault_fields.get_mut(index) {
+                    *field = Zeroizing::new(value);
+                }
+            }
+            Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
+            Message::Search(term) => self.search = term,
+            Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
+            Message::GatewayPassword(value) => self.gateway_password = Zeroizing::new(value),
+            _ => {}
+        }
+        Task::none()
     }
 
     /// Applies a message about what the window shows: the settings, full screen, how a
@@ -691,6 +776,10 @@ impl Shell {
                     window::Mode::Windowed
                 };
                 window::latest().and_then(move |id| window::set_mode(id, mode))
+            }
+            Message::Modifiers(modifiers) => {
+                self.modifiers = *modifiers;
+                Task::none()
             }
             Message::ShowSettings => {
                 self.menu = None;
@@ -815,8 +904,21 @@ impl Shell {
     /// Opens `menu` at the pointer, or, for a sub-menu, where its menu was.
     fn open_tree_menu(&mut self, menu: TreeMenu) {
         let at = match (&menu, &self.menu) {
-            (TreeMenu::ConnectAs(_), Some((_, at))) => *at,
+            (
+                TreeMenu::ConnectAs(_)
+                | TreeMenu::MoveFolder(_)
+                | TreeMenu::MoveProfile(_)
+                | TreeMenu::MoveSelection,
+                Some((_, at)),
+            ) => *at,
             _ => self.cursor.get(),
+        };
+        // A right click on one of the profiles selected together is theirs, as in C#.
+        let menu = match menu {
+            TreeMenu::Profile(id) if self.app.selected_profiles().contains(&id) => {
+                TreeMenu::Selection
+            }
+            menu => menu,
         };
         // As in the C# tree: a right click selects the row it is on.
         if let TreeMenu::Profile(id) = &menu {
@@ -828,6 +930,10 @@ impl Shell {
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
     /// the selection of a Files tab, and the core ignores the rest.
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
+        if !confirm && self.palette.take().is_some() {
+            // Escape closes Quick Connect first.
+            return Vec::new();
+        }
         if !confirm && self.menu.take().is_some() {
             // Escape closes the open menu first.
             return Vec::new();
@@ -862,6 +968,14 @@ impl Shell {
 
     /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
+        // Quick Connect's first, while open.
+        if let Some(effects) = self.palette_key(key) {
+            return effects;
+        }
+        // The tree's first, while it has the keyboard.
+        if let Some(effects) = self.tree_key(key) {
+            return effects;
+        }
         let Some(tab) = self.app.active else {
             return Vec::new();
         };
@@ -947,9 +1061,12 @@ impl Shell {
     /// a form is refused; never again while the user types.
     fn focus_dialog(&mut self) -> Task<Message> {
         let (next, field) = match &self.app.dialog {
-            Some(Dialog::AskName { .. } | Dialog::RenameTab { .. }) => {
-                (Some(DialogFocus::Name), name_field_id())
-            }
+            Some(
+                Dialog::AskName { .. }
+                | Dialog::RenameTab { .. }
+                | Dialog::FolderName { .. }
+                | Dialog::RenameProfile { .. },
+            ) => (Some(DialogFocus::Name), name_field_id()),
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
             Some(Dialog::EditProfile { error, .. }) => {
                 match self.form_focus(DialogForm::Profile, *error, profile_field_id) {
@@ -1120,11 +1237,15 @@ impl Shell {
             // Full screen is the session's: no tree, no tabs.
             self.content()
         } else {
-            row![
-                self.sidebar(),
-                column![self.tab_bar(), self.content()]
-                    .width(Length::Fill)
-                    .height(Length::Fill)
+            column![
+                row![
+                    self.sidebar(),
+                    column![self.tab_bar(), self.focusable_content()]
+                        .width(Length::Fill)
+                        .height(Length::Fill)
+                ]
+                .height(Length::Fill),
+                self.status_bar(),
             ]
             .into()
         };
@@ -1155,31 +1276,20 @@ impl Shell {
             .menu
             .as_ref()
             .filter(|_| !locked)
-            .and_then(|(menu, at)| {
-                let entries = if let TreeMenu::Tab(tab) = menu {
-                    tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
-                } else {
-                    let profile = match menu {
-                        TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => {
-                            self.app.profile_summary(id)
-                        }
-                        TreeMenu::Add | TreeMenu::More | TreeMenu::Tab(_) => None,
-                    };
-                    let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
-                    let connect_as = profile
-                        .as_ref()
-                        .map(|p| self.app.connect_as_choices(&p.id))
-                        .unwrap_or_default();
-                    tree_view::menu_entries(
-                        menu,
-                        profile.as_ref(),
-                        &connect_as,
-                        editable,
-                        self.app.can_import(),
-                    )
-                };
-                Some((entries, *at))
-            });
+            .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
+        if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
+            let results = self.app.quick_results(&palette.query);
+            // At the top, as the C# palette; a click beside it closes it.
+            layers = layers.push(opaque(
+                mouse_area(
+                    container(crate::palette::view(palette, &results))
+                        .center_x(Length::Fill)
+                        .padding(PALETTE_TOP)
+                        .height(Length::Fill),
+                )
+                .on_press(Message::PaletteClose),
+            ));
+        }
         if let Some((entries, at)) = open_menu {
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
@@ -1195,6 +1305,96 @@ impl Shell {
             ));
         }
         CursorTracker::new(layers, self.cursor.clone()).into()
+    }
+
+    /// The entries of `menu`, the open one; `None` once what it is for is gone.
+    fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
+        let entries = if let TreeMenu::Tab(tab) = menu {
+            tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+        } else if let TreeMenu::Folder(path) = menu {
+            tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
+        } else if let TreeMenu::MoveFolder(path) = menu {
+            tree_view::move_folder_entries(path, &self.app.folder_targets(path))
+        } else if let TreeMenu::MoveProfile(id) = menu {
+            tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
+        } else if let TreeMenu::Selection = menu {
+            let selected = self.app.selected_profiles();
+            let connectable = selected
+                .iter()
+                .filter(|id| self.app.connects_in_bulk(id))
+                .count();
+            tree_view::selection_menu_entries(selected.len(), connectable)
+        } else if let TreeMenu::MoveSelection = menu {
+            tree_view::move_selection_entries(&self.app.folder_paths())
+        } else {
+            let profile = match menu {
+                TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
+                TreeMenu::Add
+                | TreeMenu::More
+                | TreeMenu::Tab(_)
+                | TreeMenu::Folder(_)
+                | TreeMenu::MoveFolder(_)
+                | TreeMenu::MoveProfile(_)
+                | TreeMenu::Selection
+                | TreeMenu::MoveSelection => None,
+            };
+            let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
+            let connect_as = profile
+                .as_ref()
+                .map(|p| self.app.connect_as_choices(&p.id))
+                .unwrap_or_default();
+            tree_view::menu_entries(
+                menu,
+                profile.as_ref(),
+                &connect_as,
+                editable,
+                self.app.can_import(),
+            )
+        };
+        Some(entries)
+    }
+
+    /// No session shown, as the C# window: with no session saved, a welcome and the ways
+    /// to add one; otherwise, how to open one.
+    fn home(&self) -> Element<'_, Message> {
+        if !self.app.profile_summaries().is_empty() {
+            return center(text(fl!("ui-home-select"))).into();
+        }
+        center(
+            column![
+                text(fl!("ui-home-welcome")).size(HEADING_SIZE),
+                text(fl!("ui-home-subtitle")),
+                row![
+                    button(text(fl!("ui-home-add-button")))
+                        .on_press(Message::App(AppMessage::NewProfile)),
+                    button(text(fl!("ui-home-import-button")))
+                        .style(button::secondary)
+                        .on_press_maybe(
+                            self.app
+                                .can_import()
+                                .then_some(Message::App(AppMessage::ImportLegacy)),
+                        ),
+                ]
+                .spacing(SPACING),
+                text(fl!("ui-home-shortcuts")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING)
+            .align_x(iced::Alignment::Center),
+        )
+        .into()
+    }
+
+    /// The status bar: the session shown, or what was just done; the sessions counted.
+    fn status_bar(&self) -> Element<'_, Message> {
+        let summaries = self.app.profile_summaries();
+        let shown = summaries
+            .iter()
+            .filter(|profile| profile.matches(&self.search))
+            .count();
+        crate::status_bar::view(
+            crate::status_bar::status_text(&self.app.session_status(), self.app.notice()),
+            crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
+        )
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -1246,12 +1446,11 @@ impl Shell {
         }
         let actions = actions.wrap();
         let mut list = Column::new().spacing(2.0);
-        let mut profiles = self.app.profile_summaries();
-        if profiles.is_empty() {
+        if self.app.profile_summaries().is_empty() {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
-        profiles.retain(|profile| profile.matches(&self.search));
-        if profiles.is_empty() && !self.search.trim().is_empty() {
+        let rows = self.app.tree_rows(&self.search);
+        if rows.is_empty() && !self.search.trim().is_empty() {
             list = list
                 .push(text(fl!("ui-tree-search-no-results")).size(SMALL_SIZE))
                 .push(
@@ -1260,29 +1459,19 @@ impl Shell {
                         .on_press(Message::Search(String::new())),
                 );
         }
-        // Named folders first, alphabetically; profiles without a folder last.
-        profiles.sort_by(|a, b| {
-            (a.group.is_none(), &a.group, a.name.to_lowercase()).cmp(&(
-                b.group.is_none(),
-                &b.group,
-                b.name.to_lowercase(),
-            ))
-        });
-        let mut group: Option<Option<String>> = None;
-        let mut rows: Vec<Element<'_, Message>> = Vec::new();
-        for profile in profiles {
-            if group.as_ref() != Some(&profile.group) {
-                group = Some(profile.group.clone());
-                let label = profile
-                    .group
-                    .clone()
-                    .unwrap_or_else(|| fl!("ui-sidebar-group-none"));
-                rows.push(text(label).size(SMALL_SIZE).into());
+        // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
+        list = list.extend(rows.into_iter().map(|row| match row {
+            TreeRow::Folder {
+                path,
+                name,
+                depth,
+                open,
+            } => tree_view::folder_row(path, name, depth, open),
+            TreeRow::Profile { profile, depth } => {
+                let selected = self.app.is_selected(&profile.id);
+                tree_view::indented(tree_view::owned_row(&profile, selected), depth)
             }
-            let selected = self.app.selected_profile.as_ref() == Some(&profile.id);
-            rows.push(tree_view::owned_row(&profile, selected));
-        }
-        list = list.extend(rows);
+        }));
         // A right click beside the rows is the tree's own menu.
         let tree = mouse_area(
             container(scrollable(list))
@@ -1383,6 +1572,193 @@ impl Shell {
             .padding(PADDING),
         )
         .into()
+    }
+
+    /// Where the keyboard goes after `message`: to the tree after a click in it, back to the
+    /// session after a tab is chosen; and the page a chosen tab shows.
+    fn note_focus(&mut self, message: &Message) {
+        match message {
+            Message::App(AppMessage::SelectTab(_)) => {
+                self.page = Page::Tab;
+                self.tree_focused = false;
+            }
+            Message::App(AppMessage::ToggleFolder(_))
+            | Message::OpenTreeMenu(_)
+            | Message::TreeClick(_) => self.tree_focused = true,
+            Message::ContentFocus => self.tree_focused = false,
+            _ => {}
+        }
+    }
+
+    /// A change in Quick Connect: its search, a result chosen, closed.
+    fn palette_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::PaletteQuery(query) => {
+                if let Some(palette) = self.palette.as_mut() {
+                    palette.query = query;
+                    palette.chosen = 0;
+                }
+                Vec::new()
+            }
+            Message::PaletteChoose(index) => {
+                let Some(palette) = self.palette.take() else {
+                    return Vec::new();
+                };
+                if let Some(result) = self
+                    .app
+                    .quick_results(&palette.query)
+                    .into_iter()
+                    .nth(index)
+                {
+                    self.app.update(AppMessage::QuickConnect(result))
+                } else {
+                    // Nothing there: the palette stays for another search.
+                    self.palette = Some(palette);
+                    Vec::new()
+                }
+            }
+            _ => {
+                self.palette = None;
+                Vec::new()
+            }
+        }
+    }
+
+    /// A key while Quick Connect is open: the arrows move its choice within its results,
+    /// Enter opens the one chosen, the others are nobody's; `None` while it is closed.
+    fn palette_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
+        let palette = self.palette.as_mut()?;
+        let count = self.app.quick_results(&palette.query).len();
+        match key {
+            FilesKey::Previous => palette.chosen = palette.chosen.saturating_sub(1),
+            FilesKey::Next if palette.chosen + 1 < count => palette.chosen += 1,
+            FilesKey::Open => {
+                let chosen = palette.chosen;
+                return Some(self.palette_message(Message::PaletteChoose(chosen)));
+            }
+            _ => {}
+        }
+        Some(Vec::new())
+    }
+
+    /// A click on a profile of the tree, or one of the tree's shortcuts holding Ctrl.
+    fn tree_input(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::TreeClick(id) => self.tree_click(id),
+            Message::TreeShortcut(shortcut) => self.tree_shortcut(shortcut),
+            _ => Vec::new(),
+        }
+    }
+
+    /// The session shown; while the tree has the keyboard, a click in it takes it back.
+    fn focusable_content(&self) -> Element<'_, Message> {
+        if self.tree_focused {
+            mouse_area(self.content())
+                .on_press(Message::ContentFocus)
+                .into()
+        } else {
+            self.content()
+        }
+    }
+
+    /// A tree shortcut holding Ctrl: Ctrl+E edits the profile selected when the tree has
+    /// the keyboard; Ctrl+N opens a new session's form.
+    fn tree_shortcut(&mut self, shortcut: TreeShortcut) -> Vec<Effect> {
+        if self.app.dialog.is_some() || self.app.is_locked() {
+            return Vec::new();
+        }
+        match shortcut {
+            TreeShortcut::New => self.app.update(AppMessage::NewProfile),
+            TreeShortcut::QuickConnect => {
+                self.menu = None;
+                self.palette = Some(Palette::default());
+                self.palette_opened = true;
+                Vec::new()
+            }
+            TreeShortcut::Edit => match self.app.selected_profile.clone() {
+                Some(id) if self.tree_focused && self.app.can_edit(&id) => {
+                    self.app.update(AppMessage::EditProfile(id))
+                }
+                _ => Vec::new(),
+            },
+        }
+    }
+
+    /// A key of the Files tab's set pressed while the tree has the keyboard, as the C# tree
+    /// takes them: the arrows move the selection, Enter connects, F2 renames, Delete deletes
+    /// once asked; `None` when the tree does not have it.
+    fn tree_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
+        if !self.tree_focused || self.app.dialog.is_some() {
+            return None;
+        }
+        let selected = self.app.selected_profile.clone();
+        let several = !self.app.selected_profiles().is_empty();
+        Some(match key {
+            FilesKey::Previous | FilesKey::Next => {
+                let order: Vec<ProfileId> = self
+                    .app
+                    .tree_rows(&self.search)
+                    .into_iter()
+                    .filter_map(|row| match row {
+                        TreeRow::Profile { profile, .. } => Some(profile.id),
+                        TreeRow::Folder { .. } => None,
+                    })
+                    .collect();
+                let at = selected.and_then(|id| order.iter().position(|found| *found == id));
+                let next = match (key, at) {
+                    (FilesKey::Previous, Some(at)) => at.checked_sub(1),
+                    (_, Some(at)) => Some(at + 1),
+                    (_, None) => Some(0),
+                };
+                match next.and_then(|index| order.get(index)) {
+                    Some(id) => self.app.update(AppMessage::SelectProfile(id.clone())),
+                    None => Vec::new(),
+                }
+            }
+            FilesKey::Open if several => self
+                .app
+                .update(AppMessage::Selection(SelectionMessage::Connect)),
+            FilesKey::Open => match selected {
+                Some(id) => self.app.update(AppMessage::ConnectProfile(id)),
+                None => Vec::new(),
+            },
+            FilesKey::Delete if several => self
+                .app
+                .update(AppMessage::Selection(SelectionMessage::RequestDelete)),
+            FilesKey::Delete => match selected {
+                Some(id) => self.app.update(AppMessage::RequestDeleteProfile(id)),
+                None => Vec::new(),
+            },
+            FilesKey::Rename => match selected {
+                Some(id) if self.app.can_edit(&id) => self
+                    .app
+                    .update(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id))),
+                _ => Vec::new(),
+            },
+            _ => Vec::new(),
+        })
+    }
+
+    /// A click on profile `id` in the tree, as the C# tree takes it: alone, with Ctrl added or
+    /// taken, with Shift all from the last one clicked in the order shown.
+    fn tree_click(&mut self, id: ProfileId) -> Vec<Effect> {
+        let message = if self.modifiers.command() {
+            SelectionMessage::Toggle(id)
+        } else if self.modifiers.shift() {
+            let order = self
+                .app
+                .tree_rows(&self.search)
+                .into_iter()
+                .filter_map(|row| match row {
+                    TreeRow::Profile { profile, .. } => Some(profile.id),
+                    TreeRow::Folder { .. } => None,
+                })
+                .collect();
+            SelectionMessage::Range { to: id, order }
+        } else {
+            return self.app.update(AppMessage::SelectProfile(id));
+        };
+        self.app.update(AppMessage::Selection(message))
     }
 
     /// A tab menu's Fullscreen: the menu closes, the tab is shown, and the window goes full
@@ -1486,14 +1862,7 @@ impl Shell {
             return self.settings_page();
         }
         let Some(tab) = self.app.active_tab() else {
-            return center(
-                column![
-                    text(fl!("ui-home-welcome")).size(HEADING_SIZE),
-                    text(fl!("ui-home-hint")),
-                ]
-                .spacing(SPACING),
-            )
-            .into();
+            return self.home();
         };
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();
@@ -1530,7 +1899,7 @@ impl Shell {
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
-                _ => terminal(tab, self.app.dialog.is_none()),
+                _ => terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
             },
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
@@ -1684,7 +2053,7 @@ impl Shell {
     fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
-            .interactive(self.app.dialog.is_none())
+            .interactive(self.app.dialog.is_none() && !self.tree_focused)
             .fit(fit);
         let tab_id = tab.id;
         let mode = pick_list(
@@ -2639,10 +3008,120 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     .into()
 }
 
-/// The dialogs about closing or naming tabs.
+/// A new name for a profile, its present one written in.
+fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
+    column![
+        text(fl!("ui-tree-rename-title")).size(HEADING_SIZE),
+        text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .id(name_field_id())
+            .on_input(|value| {
+                Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::NameEdited(
+                    value,
+                )))
+            })
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-rename-confirm")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The dialogs about the tree: a folder's name, its deletion, connecting all it holds, a
+/// profile's name.
+fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
+    let buttons = |action: String| {
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(action)).on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING)
+    };
+    let (title, body, action) = match dialog {
+        Dialog::FolderName {
+            naming,
+            value,
+            error,
+        } => {
+            let (title, action) = match naming {
+                FolderNaming::New(_) => (
+                    fl!("ui-folder-new-title"),
+                    fl!("ui-dialog-new-folder-confirm"),
+                ),
+                FolderNaming::Rename(_) => (
+                    fl!("ui-folder-rename-title"),
+                    fl!("ui-dialog-rename-confirm"),
+                ),
+            };
+            let mut content = column![
+                text(title).size(HEADING_SIZE),
+                text(fl!("ui-folder-name-field")),
+                text_input(&fl!("ui-dialog-name-placeholder"), value)
+                    .id(name_field_id())
+                    .on_input(
+                        |value| Message::App(AppMessage::Folder(FolderMessage::NameEdited(value)))
+                    )
+                    .on_submit(Message::App(AppMessage::ConfirmDialog)),
+            ]
+            .spacing(SPACING);
+            if let Some(error) = error {
+                content = content.push(
+                    text(match error {
+                        FolderError::Collision => fl!("ui-folder-error-collision"),
+                        _ => fl!("ui-folder-error-invalid"),
+                    })
+                    .style(text::danger),
+                );
+            }
+            return content.push(buttons(action)).into();
+        }
+        Dialog::ConfirmDeleteFolder { name, count, .. } => (
+            fl!("ui-folder-delete"),
+            fl!(
+                "ui-folder-delete-body",
+                name = name.as_str(),
+                count = (*count)
+            ),
+            fl!("ui-folder-delete"),
+        ),
+        Dialog::RenameProfile { value, .. } => return rename_profile_dialog(value),
+        Dialog::ConfirmDeleteProfiles { ids, names } => (
+            fl!("ui-dialog-delete-selection-title"),
+            std::iter::once(fl!("ui-dialog-delete-selection-body", count = ids.len()))
+                .chain(names.iter().map(|name| format!("- {name}")))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            fl!("ui-dialog-delete-profile-confirm"),
+        ),
+        Dialog::ConfirmConnectFolder { count, .. } => (
+            fl!("ui-folder-connect-all-title"),
+            fl!("ui-folder-connect-all-body", count = (*count)),
+            fl!("ui-folder-connect-all-confirm"),
+        ),
+        _ => return column![].into(),
+    };
+    column![text(title).size(HEADING_SIZE), text(body), buttons(action)]
+        .spacing(SPACING)
+        .into()
+}
+
+/// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::ConfirmPaste { lines, .. } => (
+            fl!("ui-dialog-paste-title"),
+            fl!("ui-dialog-paste-body", count = (*lines)),
+            fl!("ui-dialog-paste-confirm"),
+        ),
         Dialog::ConfirmCloseTabs { tabs, live } => (
             fl!("ui-dialog-close-tabs-title"),
             fl!(
@@ -3037,9 +3516,15 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     };
     let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
     match dialog {
-        Dialog::ConfirmCloseTab(_) | Dialog::ConfirmCloseTabs { .. } | Dialog::RenameTab { .. } => {
-            tab_dialog(dialog)
-        }
+        Dialog::ConfirmCloseTab(_)
+        | Dialog::ConfirmCloseTabs { .. }
+        | Dialog::RenameTab { .. }
+        | Dialog::ConfirmPaste { .. } => tab_dialog(dialog),
+        Dialog::FolderName { .. }
+        | Dialog::ConfirmDeleteFolder { .. }
+        | Dialog::ConfirmConnectFolder { .. }
+        | Dialog::RenameProfile { .. }
+        | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
         Dialog::ConfirmExit { live } => question(
             fl!("ui-dialog-exit-title"),
             fl!("ui-dialog-exit-body", count = (*live)),
@@ -3075,12 +3560,6 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
                 fl!("ui-dialog-delete-file-body", name = name.as_str())
             },
             fl!("ui-dialog-delete-confirm"),
-        )
-        .into(),
-        Dialog::ConfirmPaste { lines, .. } => question(
-            fl!("ui-dialog-paste-title"),
-            fl!("ui-dialog-paste-body", count = (*lines)),
-            fl!("ui-dialog-paste-confirm"),
         )
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
@@ -3206,6 +3685,56 @@ mod tests {
             window_event(ctrl_f(), event::Status::Captured, window::Id::unique()).is_none(),
             "a terminal's Ctrl+F stays its own"
         );
+    }
+
+    #[test]
+    fn ctrl_e_n_and_k_reach_the_tree_only_when_no_widget_took_them() {
+        let ctrl = |letter: &str, modifiers: Modifiers| {
+            let key = Key::Character(letter.into());
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                location: Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            })
+        };
+        let routed = |letter: &str, modifiers: Modifiers, status: event::Status| {
+            window_event(ctrl(letter, modifiers), status, window::Id::unique())
+        };
+        assert!(matches!(
+            routed("e", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::Edit))
+        ));
+        assert!(matches!(
+            routed("n", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::New))
+        ));
+        assert!(matches!(
+            routed("k", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::QuickConnect))
+        ));
+        assert!(
+            routed("e", Modifiers::CTRL, event::Status::Captured).is_none(),
+            "a shell's Ctrl+E, end of line, stays its own"
+        );
+        assert!(
+            !matches!(
+                routed(
+                    "e",
+                    Modifiers::CTRL | Modifiers::SHIFT,
+                    event::Status::Ignored
+                ),
+                Some(Message::TreeShortcut(_))
+            ),
+            "Ctrl alone"
+        );
+        assert!(!matches!(
+            routed("x", Modifiers::CTRL, event::Status::Ignored),
+            Some(Message::TreeShortcut(_))
+        ));
     }
 
     #[test]

@@ -21,14 +21,17 @@
 use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::{
-    ConnectAs, GatewayBadge, Message as AppMessage, ProfileCopy, ProfileKind, ProfileSummary,
-    TabGroup, TabId, TabMenuMessage,
+    ConnectAs, FolderMessage, GatewayBadge, Message as AppMessage, NO_FOLDER, ProfileCopy,
+    ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, TabGroup, TabId,
+    TabMenuMessage,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
-use iced::widget::{button, column, container, mouse_area, row, rule, text, tooltip};
+use iced::widget::{
+    Column, button, column, container, mouse_area, row, rule, scrollable, text, tooltip,
+};
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
 use crate::i18n::fl;
@@ -36,6 +39,16 @@ use crate::shell::Message;
 
 /// Size of a menu entry's text.
 const MENU_TEXT_SIZE: f32 = 14.0;
+
+/// Tallest a "Move to folder" list grows before it scrolls.
+const MOVE_MENU_HEIGHT: f32 = 360.0;
+
+/// Size of a folder's name.
+const FOLDER_SIZE: f32 = 13.0;
+
+/// What an open folder shows before its name, and a closed one.
+const OPEN_MARKER: &str = "\u{25BE}";
+const CLOSED_MARKER: &str = "\u{25B8}";
 
 /// Width of a menu.
 const MENU_WIDTH: f32 = 230.0;
@@ -59,6 +72,68 @@ pub enum TreeMenu {
     More,
     /// A tab's menu, drawn as the tree's are.
     Tab(TabId),
+    /// A folder's menu, [`NO_FOLDER`] included.
+    Folder(String),
+    /// Where a folder can move to.
+    MoveFolder(String),
+    /// Which folder a profile can move to.
+    MoveProfile(ProfileId),
+    /// The menu of the profiles selected together.
+    Selection,
+    /// Which folder the profiles selected together can move to.
+    MoveSelection,
+}
+
+/// How far a row moves right for each folder it is in.
+const INDENT: f32 = 14.0;
+
+/// `row` moved right for `depth` folders.
+#[must_use]
+pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message> {
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a folder depth, far below the 2^24 where f32 loses units"
+    )]
+    let left = depth as f32 * INDENT;
+    container(row)
+        .padding(iced::Padding {
+            left,
+            ..iced::Padding::ZERO
+        })
+        .into()
+}
+
+/// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
+pub fn folder_row<'a>(
+    path: String,
+    name: String,
+    depth: usize,
+    open: bool,
+) -> Element<'a, Message> {
+    let label = if path == NO_FOLDER {
+        fl!("ui-sidebar-group-none")
+    } else {
+        name
+    };
+    let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
+    let body = container(
+        row![
+            text(marker).size(PROTOCOL_SIZE).style(text::secondary),
+            text(label).size(FOLDER_SIZE),
+        ]
+        .spacing(6.0)
+        .align_y(iced::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .padding([2.0, 4.0]);
+    indented(
+        mouse_area(body)
+            .on_press(Message::App(AppMessage::ToggleFolder(path.clone())))
+            .on_right_press(Message::OpenTreeMenu(TreeMenu::Folder(path)))
+            .interaction(mouse::Interaction::Pointer)
+            .into(),
+        depth,
+    )
 }
 
 /// One profile: protocol and name; the host, account and protocol in its tooltip.
@@ -80,7 +155,7 @@ pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, M
         .padding([4.0, 8.0])
         .style(move |theme: &Theme| row_style(theme, selected));
     let area = mouse_area(body)
-        .on_press(Message::App(AppMessage::SelectProfile(id.clone())))
+        .on_press(Message::TreeClick(id.clone()))
         .on_double_click(Message::App(AppMessage::ConnectProfile(id.clone())))
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Profile(id)))
         .interaction(mouse::Interaction::Pointer);
@@ -224,69 +299,7 @@ pub fn menu_entries<'a>(
     let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
     match (menu, profile) {
         (TreeMenu::Profile(_), Some(profile)) => {
-            let id = profile.id.clone();
-            let copy = |what| {
-                Some(AppMessage::CopyProfile {
-                    id: id.clone(),
-                    what,
-                })
-            };
-            entries = entries.push(entry(
-                fl!("ui-tree-connect"),
-                Some(AppMessage::ConnectProfile(id.clone())),
-            ));
-            if !connect_as.is_empty() {
-                entries = entries.push(
-                    button(text(fl!("ui-tree-connect-as")).size(MENU_TEXT_SIZE))
-                        .width(Length::Fill)
-                        .style(menu_style)
-                        .on_press(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone()))),
-                );
-            }
-            entries = entries
-                .push(entry(
-                    fl!("ui-tree-edit"),
-                    editable.then(|| AppMessage::EditProfile(id.clone())),
-                ))
-                .push(entry(
-                    fl!("ui-tree-duplicate"),
-                    Some(AppMessage::DuplicateProfile {
-                        id: id.clone(),
-                        suffix: fl!("ui-tree-duplicate-suffix"),
-                    }),
-                ));
-            if profile.endpoint.is_some() {
-                let has_user = profile
-                    .username
-                    .as_deref()
-                    .is_some_and(|user| !user.is_empty());
-                entries = entries
-                    .push(separator())
-                    .push(entry(
-                        fl!("ui-tree-copy-hostname"),
-                        copy(ProfileCopy::Hostname),
-                    ))
-                    .push(entry(
-                        fl!("ui-tree-copy-username"),
-                        copy(ProfileCopy::Username).filter(|_| has_user),
-                    ))
-                    .push(entry(
-                        fl!("ui-tree-copy-address"),
-                        copy(ProfileCopy::Address),
-                    ));
-                if profile.kind == ProfileKind::Ssh {
-                    entries = entries.push(entry(
-                        fl!("ui-tree-copy-ssh-command"),
-                        copy(ProfileCopy::SshCommand),
-                    ));
-                }
-            }
-            entries = entries.push(separator()).push(
-                button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
-                    .width(Length::Fill)
-                    .style(danger_style)
-                    .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
-            );
+            entries = profile_entries(entries, profile, connect_as, editable);
         }
         (TreeMenu::ConnectAs(_), Some(profile)) => {
             // The protocols but the profile's own, as the C# menu lists them.
@@ -300,15 +313,7 @@ pub fn menu_entries<'a>(
                 ));
             }
         }
-        (TreeMenu::Add, _) => {
-            entries = entries
-                .push(entry(
-                    fl!("ui-tree-add-session"),
-                    Some(AppMessage::NewProfile),
-                ))
-                .push(separator())
-                .push(entry(fl!("ui-gateway-add"), Some(AppMessage::NewGateway)));
-        }
+        (TreeMenu::Add, _) => entries = add_entries(entries),
         (TreeMenu::More, _) => {
             entries = entries.push(entry(
                 fl!("ui-tree-import-sessions"),
@@ -321,6 +326,111 @@ pub fn menu_entries<'a>(
         .padding(4.0)
         .style(container::rounded_box)
         .into()
+}
+
+/// A profile's menu, in the C# order this version has: Connect, Connect as, Rename, Edit,
+/// Duplicate, Move to folder, the copies, Delete.
+fn profile_entries<'a>(
+    mut entries: Column<'a, Message>,
+    profile: &ProfileSummary,
+    connect_as: &[ConnectAs],
+    editable: bool,
+) -> Column<'a, Message> {
+    let id = profile.id.clone();
+    let copy = |what| {
+        Some(AppMessage::CopyProfile {
+            id: id.clone(),
+            what,
+        })
+    };
+    entries = entries.push(entry(
+        fl!("ui-tree-connect"),
+        Some(AppMessage::ConnectProfile(id.clone())),
+    ));
+    if !connect_as.is_empty() {
+        entries = entries.push(
+            button(text(fl!("ui-tree-connect-as")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone()))),
+        );
+    }
+    entries = entries
+        .push(entry(
+            fl!("ui-tree-rename"),
+            editable.then(|| AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id.clone()))),
+        ))
+        .push(entry(
+            fl!("ui-tree-edit"),
+            editable.then(|| AppMessage::EditProfile(id.clone())),
+        ))
+        .push(entry(
+            fl!("ui-tree-duplicate"),
+            Some(AppMessage::DuplicateProfile {
+                id: id.clone(),
+                suffix: fl!("ui-tree-duplicate-suffix"),
+            }),
+        ))
+        .push(separator())
+        .push(
+            button(text(fl!("ui-tree-move-to-folder")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press_maybe(
+                    editable.then(|| Message::OpenTreeMenu(TreeMenu::MoveProfile(id.clone()))),
+                ),
+        );
+    if profile.endpoint.is_some() {
+        let has_user = profile
+            .username
+            .as_deref()
+            .is_some_and(|user| !user.is_empty());
+        entries = entries
+            .push(separator())
+            .push(entry(
+                fl!("ui-tree-copy-hostname"),
+                copy(ProfileCopy::Hostname),
+            ))
+            .push(entry(
+                fl!("ui-tree-copy-username"),
+                copy(ProfileCopy::Username).filter(|_| has_user),
+            ))
+            .push(entry(
+                fl!("ui-tree-copy-address"),
+                copy(ProfileCopy::Address),
+            ));
+        if profile.kind == ProfileKind::Ssh {
+            entries = entries.push(entry(
+                fl!("ui-tree-copy-ssh-command"),
+                copy(ProfileCopy::SshCommand),
+            ));
+        }
+    }
+    entries = entries.push(separator()).push(
+        button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
+            .width(Length::Fill)
+            .style(danger_style)
+            .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
+    );
+    entries
+}
+
+/// The tree's own menu and the "+" button's, as the C# one: Add Session, Add gateway, New
+/// folder.
+fn add_entries(entries: Column<'_, Message>) -> Column<'_, Message> {
+    entries
+        .push(entry(
+            fl!("ui-tree-add-session"),
+            Some(AppMessage::NewProfile),
+        ))
+        .push(separator())
+        .push(entry(fl!("ui-gateway-add"), Some(AppMessage::NewGateway)))
+        .push(entry(
+            fl!("ui-folder-new"),
+            Some(AppMessage::Folder(FolderMessage::New {
+                parent: String::new(),
+            })),
+        ))
 }
 
 /// What a tab's menu offers, worked out by the window from the core.
@@ -426,6 +536,184 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             fl!("ui-tab-menu-close-right"),
             close(TabGroup::Right).filter(|_| state.right),
         ));
+    container(entries)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// A folder's menu, in the C# order: Connect all, Add Session and New folder in it, then,
+/// for a folder of its own, Rename, Move to and Delete folder.
+pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Message> {
+    let folder = |message| Some(AppMessage::Folder(message));
+    let mut entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(
+            fl!("ui-folder-connect-all", count = connectable),
+            (connectable > 0)
+                .then(|| AppMessage::Folder(FolderMessage::RequestConnectAll(path.to_owned()))),
+        ))
+        .push(separator())
+        .push(entry(
+            fl!("ui-tree-add-session"),
+            folder(FolderMessage::NewProfileIn(path.to_owned())),
+        ));
+    if path == NO_FOLDER {
+        entries = entries.push(entry(
+            fl!("ui-folder-new"),
+            folder(FolderMessage::New {
+                parent: String::new(),
+            }),
+        ));
+    } else {
+        entries = entries
+            .push(entry(
+                fl!("ui-folder-new"),
+                folder(FolderMessage::New {
+                    parent: path.to_owned(),
+                }),
+            ))
+            .push(separator())
+            .push(entry(
+                fl!("ui-folder-rename"),
+                folder(FolderMessage::Rename(path.to_owned())),
+            ))
+            .push(
+                button(text(fl!("ui-folder-move-to")).size(MENU_TEXT_SIZE))
+                    .width(Length::Fill)
+                    .style(menu_style)
+                    .on_press(Message::OpenTreeMenu(TreeMenu::MoveFolder(path.to_owned()))),
+            )
+            .push(
+                button(text(fl!("ui-folder-delete")).size(MENU_TEXT_SIZE))
+                    .width(Length::Fill)
+                    .style(danger_style)
+                    .on_press(Message::MenuChoice(AppMessage::Folder(
+                        FolderMessage::RequestDelete(path.to_owned()),
+                    ))),
+            );
+    }
+    container(entries)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// Which folder profile `id` can move to: "(No Folder)" first, then every folder, its own
+/// greyed, as the C# "Move to folder".
+pub fn move_profile_entries<'a>(
+    id: &ProfileId,
+    targets: &[(Option<String>, bool)],
+) -> Element<'a, Message> {
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .extend(targets.iter().map(|(to, other)| {
+            let label = to.clone().unwrap_or_else(|| fl!("ui-sidebar-group-none"));
+            entry(
+                label,
+                other.then(|| {
+                    AppMessage::ProfileMenu(ProfileMenuMessage::Move {
+                        id: id.clone(),
+                        to: to.clone(),
+                    })
+                }),
+            )
+        }));
+    container(scrollable(entries).height(Length::Shrink))
+        .max_height(MOVE_MENU_HEIGHT)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// The menu of `count` profiles selected together, as the C# bulk menu: how many, Connect
+/// selected, Duplicate selected, Move to folder, Delete selected.
+pub fn selection_menu_entries<'a>(count: usize, connectable: usize) -> Element<'a, Message> {
+    let selection = |message| Some(AppMessage::Selection(message));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-selection-count", count = count), None))
+        .push(separator())
+        .push(entry(
+            fl!("ui-selection-connect", count = connectable),
+            (connectable > 0).then_some(AppMessage::Selection(SelectionMessage::Connect)),
+        ))
+        .push(entry(
+            fl!("ui-selection-duplicate"),
+            selection(SelectionMessage::Duplicate {
+                suffix: fl!("ui-tree-duplicate-suffix"),
+            }),
+        ))
+        .push(separator())
+        .push(
+            button(text(fl!("ui-tree-move-to-folder")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::MoveSelection)),
+        )
+        .push(separator())
+        .push(
+            button(text(fl!("ui-selection-delete", count = count)).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(danger_style)
+                .on_press(Message::MenuChoice(AppMessage::Selection(
+                    SelectionMessage::RequestDelete,
+                ))),
+        );
+    container(entries)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// Which folder the profiles selected together can move to: "(No Folder)", then every
+/// folder.
+pub fn move_selection_entries<'a>(folders: &[String]) -> Element<'a, Message> {
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(
+            fl!("ui-sidebar-group-none"),
+            Some(AppMessage::Selection(SelectionMessage::Move(None))),
+        ))
+        .extend(folders.iter().map(|path| {
+            entry(
+                path.clone(),
+                Some(AppMessage::Selection(SelectionMessage::Move(Some(
+                    path.clone(),
+                )))),
+            )
+        }));
+    container(scrollable(entries).height(Length::Shrink))
+        .max_height(MOVE_MENU_HEIGHT)
+        .padding(4.0)
+        .style(container::rounded_box)
+        .into()
+}
+
+/// Where folder `path` can move: the top level first, then every folder but itself, those
+/// it holds and the one it is in, as the C# "Move to".
+pub fn move_folder_entries<'a>(path: &str, targets: &[String]) -> Element<'a, Message> {
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .extend(targets.iter().map(|to| {
+            let label = if to.is_empty() {
+                fl!("ui-folder-move-top")
+            } else {
+                to.clone()
+            };
+            entry(
+                label,
+                Some(AppMessage::Folder(FolderMessage::Move {
+                    path: path.to_owned(),
+                    to: to.clone(),
+                })),
+            )
+        }));
     container(entries)
         .padding(4.0)
         .style(container::rounded_box)

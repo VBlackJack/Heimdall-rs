@@ -1044,3 +1044,506 @@ fn an_unknown_ssh_host_is_asked_about_as_the_csharp_one_with_trust_this_session(
         Message::App(AppMessage::HostKeyDecision { accept: true, .. })
     )));
 }
+
+#[test]
+fn a_click_on_a_folder_folds_it_and_hides_its_profiles() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("server a").expect("shown");
+        ui.click("Production").expect("folder");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::App(AppMessage::ToggleFolder(path)) if path == "Production"
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::ToggleFolder(
+        "Production".to_owned(),
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Production").expect("the folder stays");
+    assert!(ui.find("server a").is_err(), "its profiles are folded away");
+    ui.find("server c").expect("another folder's profile stays");
+}
+
+#[test]
+fn a_folder_has_the_csharp_menu_and_its_name_dialog_says_why_a_name_is_refused() {
+    use heimdall_app::FolderMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::mouse;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        let folder = ui.find("Production").expect("folder");
+        ui.point_at(folder.bounds().center());
+        ui.simulate([
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+        ]);
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::Folder(path)) if path == "Production"
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Folder(
+        "Production".to_owned(),
+    )));
+    snapshot(&shell, "folder-menu.png");
+    {
+        let mut ui = simulator(&shell);
+        for entry in [
+            "Connect all (2)",
+            "Add Session",
+            "New folder",
+            "Rename",
+            "Move to",
+        ] {
+            ui.find(entry).expect(entry);
+        }
+        ui.click("Delete folder").expect("delete");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::MenuChoice(AppMessage::Folder(FolderMessage::RequestDelete(path)))
+                if path == "Production"
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Move to").expect("move to");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::MoveFolder(path)) if path == "Production"
+        )));
+    }
+    // At the top already, with no other folder: nowhere to go.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::MoveFolder(
+        "Production".to_owned(),
+    )));
+    assert!(simulator(&shell).find("Top level").is_err());
+
+    let _ = shell.update(Message::MenuChoice(AppMessage::Folder(
+        FolderMessage::New {
+            parent: String::new(),
+        },
+    )));
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::NameEdited(
+        "production".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("New Folder").expect("the dialog stays");
+    ui.find("A folder with this name already exists at the same level.")
+        .expect("and says why");
+}
+
+#[test]
+fn a_profile_renames_and_moves_to_another_folder_from_its_menu() {
+    use heimdall_app::ProfileMenuMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("a");
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Rename").expect("rename");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::MenuChoice(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(renamed)))
+                if *renamed == id
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Move to folder").expect("move");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::MoveProfile(moved)) if *moved == id
+        )));
+    }
+    // The list alone: every label is unique there, the tree's own "(No Folder)" aside.
+    let targets = vec![
+        (None, true),
+        (Some("Production".to_owned()), false),
+        (Some("Lab".to_owned()), true),
+    ];
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    for (label, expected) in [
+        ("(No Folder)", Some(None)),
+        ("Production", None),
+        ("Lab", Some(Some("Lab".to_owned()))),
+    ] {
+        let mut ui = Simulator::with_size(
+            settings.clone(),
+            WINDOW,
+            heimdall_ui::tree_view::move_profile_entries(&id, &targets),
+        );
+        ui.click(label).expect(label);
+        let moved: Vec<Option<String>> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(AppMessage::ProfileMenu(ProfileMenuMessage::Move {
+                    to,
+                    ..
+                })) => Some(to),
+                _ => None,
+            })
+            .collect();
+        match expected {
+            Some(to) => assert_eq!(moved, [to], "{label}"),
+            None => assert!(moved.is_empty(), "{label} is its own folder: greyed"),
+        }
+    }
+}
+
+#[test]
+fn ctrl_click_selects_several_and_their_right_click_is_the_bulk_menu() {
+    use heimdall_app::SelectionMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::keyboard::Modifiers;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("b")));
+    let _ = shell.update(Message::Modifiers(Modifiers::CTRL));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::Modifiers(Modifiers::empty()));
+    let core = shell.into_app();
+    assert_eq!(
+        core.selected_profiles(),
+        [ProfileId::new("a"), ProfileId::new("b")]
+    );
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(ProfileId::new(
+        "a",
+    ))));
+    snapshot(&shell, "selection-menu.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("2 items selected").expect("the bulk menu");
+        ui.find("Connect selected (2)").expect("connect");
+        ui.click("Delete selected (2)").expect("delete");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::Selection(SelectionMessage::RequestDelete))
+        )));
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::Selection(
+        SelectionMessage::RequestDelete,
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Delete Selected Items").expect("asked");
+    ui.find("Are you sure you want to delete 2 selected item(s)?\n- server a\n- server b")
+        .expect("listed");
+}
+
+#[test]
+fn the_tree_takes_the_keyboard_from_a_terminal_until_a_click_gives_it_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let typed = |shell: &Shell| {
+        let mut ui = simulator(shell);
+        ui.typewrite("x");
+        ui.into_messages()
+            .filter(|message| matches!(message, Message::App(AppMessage::Key { tab: t, .. }) if *t == tab))
+            .count()
+    };
+    assert_eq!(typed(&shell), 1, "the terminal has it");
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    assert_eq!(typed(&shell), 0, "the tree took it");
+    {
+        let mut ui = simulator(&shell);
+        ui.point_at(iced::Point::new(700.0, 400.0));
+        ui.simulate([
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                iced::mouse::Button::Left,
+            )),
+        ]);
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ContentFocus)),
+            "a click in the session"
+        );
+    }
+    let _ = shell.update(Message::ContentFocus);
+    assert_eq!(typed(&shell), 1, "given back");
+}
+
+#[test]
+fn the_tree_keys_move_connect_rename_delete_and_edit_as_the_csharp_ones() {
+    use heimdall_app::Dialog;
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::shell::TreeShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let selected = |shell: &Shell| {
+        shell
+            .app()
+            .selected_profile
+            .clone()
+            .map(|id| id.to_string())
+    };
+
+    // Not before the tree has the keyboard: Ctrl+E is nobody's.
+    let _ = shell.update(Message::App(AppMessage::SelectProfile(ProfileId::new("a"))));
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::Edit));
+    assert!(shell.app().dialog.is_none());
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(
+        selected(&shell).as_deref(),
+        Some("a"),
+        "nor are the arrows the tree's"
+    );
+
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(selected(&shell).as_deref(), Some("b"));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(
+        selected(&shell).as_deref(),
+        Some("c"),
+        "into the next folder"
+    );
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(selected(&shell).as_deref(), Some("c"), "the last stays");
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
+    assert_eq!(selected(&shell).as_deref(), Some("b"));
+
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::RenameProfile { .. })
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::FilesKey(FilesKey::Delete));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::ConfirmDeleteProfile { .. })
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::Edit));
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::EditProfile { .. })
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::New));
+    assert!(matches!(
+        &shell.app().dialog,
+        Some(Dialog::EditProfile { draft, .. }) if draft.editing.is_none()
+    ));
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+
+    // Enter connects the one selected.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 1);
+    assert_eq!(shell.app().tabs[0].title, "server b");
+}
+
+#[test]
+fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::shell::TreeShortcut;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(simulator(&shell).find(FIELD).is_err(), "closed at first");
+
+    // Over a menu open, it closes the menu.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Add));
+    simulator(&shell).find("New folder").expect("the menu");
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    assert!(
+        simulator(&shell).find("New folder").is_err(),
+        "the menu closed"
+    );
+    snapshot(&shell, "quick-connect.png");
+    {
+        let mut ui = simulator(&shell);
+        for name in ["SSH  server a", "SSH  server b", "SSH  server c"] {
+            ui.find(name).expect(name);
+        }
+        ui.click(FIELD).expect("its field");
+        ui.typewrite("b");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::PaletteQuery(query) if query == "b"))
+        );
+    }
+    let _ = shell.update(Message::PaletteQuery("B.LAB".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("SSH  server b").expect("found by its host");
+        assert!(ui.find("SSH  server a").is_err(), "filtered out");
+    }
+    // Enter opens the one chosen, and closes the palette.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 1);
+    assert_eq!(shell.app().tabs[0].title, "server b");
+    assert!(
+        simulator(&shell).find("SSH  server b").is_err(),
+        "closed: the tree names it alone"
+    );
+
+    // Escape closes it, and nothing more.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(simulator(&shell).find(FIELD).is_err());
+    assert_eq!(shell.app().tabs.len(), 1);
+
+    // A host no session matches: SSH or RDP to it, the arrows choosing.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("[SSH] Connect to jump.lab").expect("SSH");
+        ui.click("[RDP] Connect to jump.lab").expect("RDP");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::PaletteChoose(1)))
+        );
+    }
+    // Down twice stays on the last; up comes back to the first.
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 2);
+    assert_eq!(
+        shell.app().tab_kind(&shell.app().tabs[1]),
+        heimdall_app::ProfileKind::Ssh
+    );
+
+    // Neither a session nor a host: said, and a choice there opens nothing.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::QuickConnect));
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::PaletteQuery("no such thing".to_owned()));
+    simulator(&shell)
+        .find("No session matches, and this is no host to connect to.")
+        .expect("says so");
+    let _ = shell.update(Message::PaletteChoose(0));
+    assert_eq!(shell.app().tabs.len(), 2);
+    simulator(&shell)
+        .find("No session matches, and this is no host to connect to.")
+        .expect("still open");
+    // A new search chooses its first again.
+    let _ = shell.update(Message::PaletteQuery("jump.lab".to_owned()));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 3);
+    assert_eq!(
+        shell.app().tab_kind(&shell.app().tabs[2]),
+        heimdall_app::ProfileKind::Ssh
+    );
+}
+
+#[test]
+fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    snapshot(&shell, "home-empty.png");
+    let mut ui = simulator(&shell);
+    ui.find("Welcome to Heimdall-rs").expect("welcomes");
+    ui.find("Ctrl+N to add a session, Ctrl+K to quick connect")
+        .expect("the shortcuts");
+    assert!(
+        ui.find("Select a session or press Ctrl+K to connect")
+            .is_err(),
+        "no session to select"
+    );
+    ui.click("Import Connections").expect("shown");
+    ui.click("Add Session").expect("its button");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        matches!(messages.as_slice(), [Message::App(AppMessage::NewProfile)]),
+        "nothing to import from here: {messages:?}"
+    );
+
+    // With the C# Heimdall's sessions beside it, they are offered.
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir(&legacy).expect("dir");
+    std::fs::write(
+        legacy.join(heimdall_core::paths::LEGACY_SERVERS_FILE_NAME),
+        "[]",
+    )
+    .expect("written");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: Some(legacy),
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    let mut ui = simulator(&shell);
+    ui.click("Import Connections").expect("its button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ImportLegacy)))
+    );
+}
+
+#[test]
+fn with_sessions_saved_the_window_says_how_to_open_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(app(dir.path()));
+    let mut ui = simulator(&shell);
+    ui.find("Select a session or press Ctrl+K to connect")
+        .expect("how to open one");
+    assert!(ui.find("Welcome to Heimdall-rs").is_err());
+    assert!(ui.find("Add Session").is_err());
+}
+
+#[test]
+fn the_status_bar_says_the_session_shown_and_counts_the_sessions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Ready. Select a session to get started.")
+            .expect("ready");
+        ui.find("3 sessions").expect("counted");
+    }
+    let _ = shell.update(Message::Search("b.lab".to_owned()));
+    simulator(&shell)
+        .find("1 of 3 sessions")
+        .expect("those the search shows");
+    let _ = shell.update(Message::Search("  ".to_owned()));
+    simulator(&shell)
+        .find("3 sessions")
+        .expect("blank: no search");
+    let _ = shell.update(Message::Search(String::new()));
+
+    let _ = shell.update(Message::App(AppMessage::OpenProfile(ProfileId::new("a"))));
+    snapshot(&shell, "status-bar.png");
+    simulator(&shell)
+        .find("server a: Connecting...")
+        .expect("the session shown");
+    let _ = shell.update(Message::App(AppMessage::CopyProfile {
+        id: ProfileId::new("b"),
+        what: heimdall_app::ProfileCopy::Hostname,
+    }));
+    simulator(&shell)
+        .find("Copied to clipboard: b.lab")
+        .expect("what was just done");
+}

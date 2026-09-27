@@ -84,6 +84,20 @@ fn app(message: AppMessage) -> Message {
 #[test]
 fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
     let dir = tempfile::tempdir().expect("dir");
+    // One session saved: the window's welcome, and its own Add Session, are gone.
+    let mut store =
+        heimdall_core::store::ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge([heimdall_core::profile::SshProfile {
+        id: heimdall_core::profile::ProfileId::new("saved"),
+        name: "saved".to_owned(),
+        group: None,
+        host: "saved.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        gateway: None,
+    }]);
+    store.save().expect("save");
     let mut shell = shell(dir.path());
     {
         let mut ui = simulator(&shell);

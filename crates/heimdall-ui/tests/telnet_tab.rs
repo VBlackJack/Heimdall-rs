@@ -68,7 +68,7 @@ fn a_telnet_profile_is_listed_and_opens_a_telnet_tab() {
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,
-        Message::App(AppMessage::SelectProfile(id)) if id.as_str() == "sw"
+        Message::TreeClick(id) if id.as_str() == "sw"
     )));
     assert!(
         messages.iter().any(|message| matches!(

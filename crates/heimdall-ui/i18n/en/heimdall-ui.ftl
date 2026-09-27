@@ -79,8 +79,12 @@ ui-vault-problem-system = The vault file could not be used: { $detail }
 ui-vault-save-failed-title = The password could not be saved.
 ui-sidebar-group-none = (No Folder)
 
-ui-home-welcome = Welcome to Heimdall-rs.
-ui-home-hint = Pick a profile on the left to open an SSH session.
+ui-home-welcome = Welcome to Heimdall-rs
+ui-home-subtitle = Add a session or import your existing connections to get started.
+ui-home-add-button = Add Session
+ui-home-import-button = Import Connections
+ui-home-shortcuts = Ctrl+N to add a session, Ctrl+K to quick connect
+ui-home-select = Select a session or press Ctrl+K to connect
 
 ui-tab-close-button = Close
 ui-tab-bell-badge = bell
@@ -419,3 +423,59 @@ ui-session-closed-reason = The server said: { $reason }
 ui-session-reconnecting = Reconnecting (attempt { $attempt }/{ $max })...
 ui-session-reconnecting-in = in { $seconds }s
 ui-session-reconnecting-cancel = Cancel
+
+## A folder's menu and dialogs, as the C# Heimdall's.
+ui-folder-connect-all = Connect all ({ $count })
+ui-folder-new = New folder
+ui-folder-rename = Rename
+ui-folder-move-to = Move to
+ui-folder-move-top = Top level
+ui-folder-delete = Delete folder
+ui-folder-new-title = New Folder
+ui-folder-rename-title = Rename Folder
+ui-folder-name-field = Folder name:
+ui-folder-error-collision = A folder with this name already exists at the same level.
+ui-folder-error-invalid = A folder name cannot be empty or contain "/".
+ui-folder-delete-body = Delete folder "{ $name }"? Affected entries in this folder and its subfolders, including entries hidden by the current filter: { $count }. All will be moved to "(No Folder)".
+ui-folder-connect-all-title = Connect All
+ui-folder-connect-all-body = Connect to all { $count } sessions in this folder?
+ui-folder-connect-all-confirm = Connect
+
+## A profile's Rename and "Move to folder", as the C# tree menu's.
+ui-tree-rename = Rename
+ui-tree-rename-title = Rename Session
+ui-tree-move-to-folder = Move to folder
+
+## Several profiles selected together, as the C# bulk menu.
+ui-selection-count = { $count } items selected
+ui-selection-connect = Connect selected ({ $count })
+ui-selection-duplicate = Duplicate selected
+ui-selection-delete = Delete selected ({ $count })
+ui-dialog-delete-selection-title = Delete Selected Items
+ui-dialog-delete-selection-body = Are you sure you want to delete { $count } selected item(s)?
+
+## Quick Connect, as the C# Ctrl+K palette without its tools.
+ui-palette-placeholder = Search host or IP... (Ctrl+K)
+ui-palette-ssh-to = [SSH] Connect to { $target }
+ui-palette-rdp-to = [RDP] Connect to { $target }
+ui-palette-quick-connect = Quick Connect
+ui-palette-nothing = No session matches, and this is no host to connect to.
+
+## The status bar, as the C# one.
+ui-status-ready = Ready. Select a session to get started.
+ui-status-connected = Connected to: { $name }
+ui-status-state = { $name }: { $state }
+ui-status-connecting = Connecting...
+ui-status-reconnecting = Reconnecting...
+ui-status-disconnected = Disconnected
+ui-status-error = Error
+ui-status-copied = Copied to clipboard: { $text }
+ui-status-folder-created = Folder "{ $path }" created.
+ui-status-sessions = { $count ->
+    [one] 1 session
+   *[other] { $count } sessions
+}
+ui-status-sessions-filtered = { $shown } of { $count ->
+    [one] 1 session
+   *[other] { $count } sessions
+}
