@@ -27,6 +27,7 @@ use std::path::PathBuf;
 use heimdall_app::files::{
     Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
 };
+use heimdall_app::local_driver::{LocalShell, local_events};
 use heimdall_app::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileDraft, ProfileField};
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
@@ -336,6 +337,16 @@ fn profile_field_id(field: ProfileField) -> iced::widget::Id {
 /// Widget identifier of a question field.
 fn field_id(question: QuestionId, index: usize) -> iced::widget::Id {
     iced::widget::Id::from(format!("question-{}-{index}", question.value()))
+}
+
+/// The shell the sidebar button opens: the user's own, in the home folder.
+fn default_local_shell() -> LocalShell {
+    LocalShell {
+        name: fl!("ui-local-shell-name"),
+        program: None,
+        args: Vec::new(),
+        working_directory: None,
+    }
 }
 
 /// `user@host:port`, or `host:port` without a user.
@@ -742,6 +753,14 @@ impl Shell {
                 let events = stream::once(async move { vnc_events(*request, registry) }).flatten();
                 self.connection_task(tab, attempt, events)
             }
+            Effect::ConnectLocal {
+                tab,
+                attempt,
+                request,
+            } => {
+                let events = stream::once(async move { local_events(*request) }).flatten();
+                self.connection_task(tab, attempt, events)
+            }
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
                     log::debug!("question {} was no longer waiting", question.value());
@@ -834,7 +853,10 @@ impl Shell {
             .push(text(fl!("ui-sidebar-title")).size(HEADING_SIZE));
         let mut actions = row![
             button(text(fl!("ui-sidebar-new-profile-button")))
-                .on_press(Message::App(AppMessage::NewProfile))
+                .on_press(Message::App(AppMessage::NewProfile)),
+            button(text(fl!("ui-sidebar-local-shell-button")))
+                .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
+                .style(button::secondary),
         ]
         .spacing(SPACING / 2.0);
         if self.app.can_import() {
@@ -935,14 +957,13 @@ impl Shell {
         match &tab.phase {
             Phase::Connecting => center(card(
                 column![
-                    text(fl!(
-                        "ui-connect-progress",
-                        target = target(
-                            tab.profile.host(),
-                            tab.profile.port(),
-                            tab.profile.username()
-                        )
-                    )),
+                    text(match tab.profile.endpoint() {
+                        Some((host, port)) => fl!(
+                            "ui-connect-progress",
+                            target = target(host, port, tab.profile.username())
+                        ),
+                        None => fl!("ui-local-starting", name = tab.profile.name()),
+                    }),
                     button(text(fl!("ui-connect-cancel-button")))
                         .style(button::secondary)
                         .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
@@ -1103,7 +1124,7 @@ impl Shell {
                 form = form.push(text(fl!(
                     "ui-prompt-interactive-title",
                     user = asked.username.as_str(),
-                    host = profile.host()
+                    host = profile.endpoint().map_or("", |(host, _)| host)
                 )));
                 // Server words are labelled as such, so they cannot pass for Heimdall's.
                 for said in [&asked.name, &asked.instructions] {
