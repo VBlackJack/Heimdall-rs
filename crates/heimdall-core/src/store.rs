@@ -24,15 +24,17 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::profile::{
-    LocalApproval, LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
+    LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
+    VncProfile,
 };
 
 /// Format version written into the profile file.
 ///
-/// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles. A build that knows an older
+/// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
+/// gateways and the gateway an SSH profile goes through. A build that knows an older
 /// version refuses a newer file rather than reading it, dropping the profiles it does not
 /// know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 5;
+pub const PROFILE_FILE_VERSION: u32 = 6;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -51,6 +53,8 @@ struct ProfileFile {
     vnc: Vec<VncProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     local: Vec<LocalProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    gateway: Vec<SshGateway>,
 }
 
 /// Why the profile file could not be read or written.
@@ -109,6 +113,18 @@ pub struct ProfileStore {
     telnet: Vec<TelnetProfile>,
     vnc: Vec<VncProfile>,
     local: Vec<LocalProfile>,
+    gateways: Vec<SshGateway>,
+}
+
+/// Why an SSH profile's gateways cannot be followed.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum RouteError {
+    /// A gateway named on the way is not in the store.
+    #[error("the SSH gateway {0} is not in the profiles")]
+    MissingGateway(ProfileId),
+    /// A gateway is reached through itself.
+    #[error("the SSH gateway {0} is reached through itself")]
+    Loop(ProfileId),
 }
 
 impl ProfileStore {
@@ -124,6 +140,7 @@ impl ProfileStore {
             telnet: Vec::new(),
             vnc: Vec::new(),
             local: Vec::new(),
+            gateways: Vec::new(),
         }
     }
 
@@ -160,6 +177,7 @@ impl ProfileStore {
             telnet: file.telnet,
             vnc: file.vnc,
             local: file.local,
+            gateways: file.gateway,
         })
     }
 
@@ -197,6 +215,45 @@ impl ProfileStore {
     #[must_use]
     pub fn local_profiles(&self) -> &[LocalProfile] {
         &self.local
+    }
+
+    /// SSH gateways, in file order.
+    #[must_use]
+    pub fn gateways(&self) -> &[SshGateway] {
+        &self.gateways
+    }
+
+    /// The gateways to go through to reach a server whose gateway is `gateway`, nearest to
+    /// this machine first: the gateway's parents from the farthest back, then the gateway.
+    ///
+    /// # Errors
+    ///
+    /// [`RouteError`] when a gateway on the way is not in the store, or comes back.
+    pub fn route(&self, gateway: Option<&ProfileId>) -> Result<Vec<SshGateway>, RouteError> {
+        let mut route = Vec::new();
+        let mut next = gateway;
+        while let Some(id) = next {
+            if route.iter().any(|seen: &SshGateway| &seen.id == id) {
+                return Err(RouteError::Loop(id.clone()));
+            }
+            let found = self
+                .gateways
+                .iter()
+                .find(|candidate| &candidate.id == id)
+                .ok_or_else(|| RouteError::MissingGateway(id.clone()))?;
+            route.push(found.clone());
+            next = found.parent.as_ref();
+        }
+        route.reverse();
+        Ok(route)
+    }
+
+    /// Adds or replaces SSH gateways by identifier; the order of existing ones is kept.
+    pub fn merge_gateways(
+        &mut self,
+        incoming: impl IntoIterator<Item = SshGateway>,
+    ) -> MergeReport {
+        merge_into(&mut self.gateways, incoming, |gateway| &gateway.id)
     }
 
     /// Adds or replaces SSH profiles by identifier; the order of existing profiles is kept.
@@ -300,6 +357,7 @@ impl ProfileStore {
             telnet: self.telnet.clone(),
             vnc: self.vnc.clone(),
             local: self.local.clone(),
+            gateway: self.gateways.clone(),
         })?;
         let dir = self
             .path

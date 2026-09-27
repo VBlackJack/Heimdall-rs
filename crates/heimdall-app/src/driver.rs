@@ -27,8 +27,8 @@ use heimdall_core::profile::{SshProfile, display_address};
 use heimdall_sftp::{ClientConfig, SftpClient};
 use heimdall_ssh::{
     ConnectError, ConnectOptions, KeyboardInteractiveQuestion, PassphraseQuestion,
-    PasswordQuestion, Prompter, Secret, SessionEvent, ShellSession, UsernameQuestion, connect,
-    establish, fingerprint,
+    PasswordQuestion, Prompter, Secret, SessionEvent, ShellSession, UsernameQuestion,
+    establish_via, fingerprint,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -184,6 +184,8 @@ pub enum Purpose {
 pub struct ConnectRequest {
     /// Destination.
     pub profile: SshProfile,
+    /// The SSH gateways it is reached through, nearest first, each as the hop it is.
+    pub route: Vec<SshProfile>,
     /// Shell or files.
     pub purpose: Purpose,
     /// Connection settings, initial terminal size included.
@@ -222,13 +224,22 @@ async fn run(
         open_files(&request, prompter, &events, &target).await;
         return;
     }
-    let result = connect(
+    let result = match establish_via(
+        &request.route,
         &request.profile,
         &request.options,
         prompter,
         request.cancel.clone(),
     )
-    .await;
+    .await
+    {
+        Ok(connection) => {
+            connection
+                .open_shell(&request.options, request.cancel.clone())
+                .await
+        }
+        Err(error) => Err(error),
+    };
     let session = match result {
         Ok(session) => session,
         Err(ConnectError::UnknownHostKey { host, port, key }) => {
@@ -328,7 +339,8 @@ async fn open_files(
     events: &mpsc::Sender<ConnectionEvent>,
     target: &str,
 ) {
-    let connection = match establish(
+    let connection = match establish_via(
+        &request.route,
         &request.profile,
         &request.options,
         prompter,

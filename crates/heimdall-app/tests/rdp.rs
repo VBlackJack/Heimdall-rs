@@ -253,6 +253,7 @@ fn a_changed_key_can_be_forgotten_and_the_question_comes_back() {
         tab,
         attempt,
         ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: None,
             recorded: KEY.to_owned(),
             offered: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
         }),

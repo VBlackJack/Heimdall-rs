@@ -207,6 +207,8 @@ fn ui_error(error: RdpError) -> UiError {
             recorded,
             presented,
         } => UiError::HostKeyChanged {
+            // The tab's own server: RDP goes through no gateway.
+            target: None,
             recorded: recorded.to_string(),
             offered: presented.fingerprint.to_string(),
         },

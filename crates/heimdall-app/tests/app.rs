@@ -87,6 +87,7 @@ fn profile(id: &str) -> SshProfile {
         port: 22,
         username: Some("admin".to_owned()),
         key_path: None,
+        gateway: None,
     }
 }
 

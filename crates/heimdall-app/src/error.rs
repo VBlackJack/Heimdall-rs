@@ -19,6 +19,8 @@
 //! The UI chooses a localised sentence per variant; `detail` fields carry technical text
 //! (an OS error, a path) shown as-is under it.
 
+use heimdall_core::profile::display_address;
+use heimdall_core::store::RouteError;
 use heimdall_ssh::{AuthMethod, ConnectError, KeyFileError, KnownHostsError};
 
 /// Why a key file could not be used.
@@ -71,6 +73,9 @@ pub enum UiError {
     },
     /// The server's key is not the recorded one: possible interception.
     HostKeyChanged {
+        /// `host:port` whose key changed, when it may be another than the tab's own: a
+        /// gateway on the way.
+        target: Option<String>,
         /// SHA-256 fingerprint on record.
         recorded: String,
         /// SHA-256 fingerprint presented.
@@ -113,6 +118,8 @@ pub enum UiError {
     PtyRefused,
     /// No shell started.
     ShellRefused,
+    /// The SSH gateways of the profile cannot be followed.
+    Route(RouteError),
     /// A gateway on the way would not connect onward to `host`.
     JumpRefused {
         /// Host the gateway was asked to reach.
@@ -172,8 +179,15 @@ impl From<ConnectError> for UiError {
                 detail: error_text(&error),
             },
             ConnectError::HostKeyChanged {
-                recorded, offered, ..
-            } => Self::HostKeyChanged { recorded, offered },
+                host,
+                port,
+                recorded,
+                offered,
+            } => Self::HostKeyChanged {
+                target: Some(display_address(&host, port)),
+                recorded,
+                offered,
+            },
             ConnectError::HostKeyAlgorithmMismatch { recorded, .. } => {
                 Self::HostKeyAlgorithmMismatch { recorded }
             }
