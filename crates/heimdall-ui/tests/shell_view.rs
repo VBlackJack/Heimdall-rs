@@ -1008,3 +1008,39 @@ fn a_failed_session_offers_its_error_and_its_profile_as_the_csharp_card() {
     ui.find("Edit profile")
         .expect("still the way to the profile");
 }
+
+#[test]
+fn an_unknown_ssh_host_is_asked_about_as_the_csharp_one_with_trust_this_session() {
+    use heimdall_ssh::PublicKey;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    let key = include_str!("../../heimdall-ssh/tests/fixtures/hostkeys/host-ed25519.pub");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::UnknownHostKey {
+            host: "a.lab".to_owned(),
+            port: 22,
+            fingerprint: "SHA256:x".to_owned(),
+            key: Arc::new(PublicKey::from_openssh(key.trim()).expect("key")),
+        },
+    });
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "hostkey-unknown.png");
+    let mut ui = simulator(&shell);
+    ui.find("Unknown SSH host").expect("title");
+    assert!(ui.find("Unrecognised Server Certificate").is_err());
+    ui.click("Trust this session").expect("once");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyTrustOnce(trusted)) if trusted == tab
+    )));
+    let mut ui = simulator(&shell);
+    ui.click("Accept").expect("accept");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyDecision { accept: true, .. })
+    )));
+}

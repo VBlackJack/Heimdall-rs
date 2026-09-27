@@ -62,6 +62,7 @@ fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,
+        trusted_for_run: Vec::new(),
         desktop: DEFAULT_DESKTOP,
         route: vec![SshProfile {
             id: ProfileId::new("gw"),

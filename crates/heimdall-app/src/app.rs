@@ -34,8 +34,8 @@ use heimdall_core::profile::{
 };
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, Secret,
-    TerminalSize, Verdict, fingerprint, verdict,
+    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
+    Secret, TerminalSize, Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, GridSize, Key, KeyLocation, KeyPress, Modifiers,
@@ -228,6 +228,9 @@ pub enum Message {
         /// Record the key and connect.
         accept: bool,
     },
+    /// Trust an unknown host key or certificate for this run only, as the C# Heimdall's
+    /// "Trust this session" and "Just this once", and connect.
+    HostKeyTrustOnce(TabId),
     /// A key press in a terminal.
     Key {
         /// Tab.
@@ -423,6 +426,7 @@ impl fmt::Debug for Message {
             Self::HostKeyDecision { tab, accept } => {
                 write!(f, "HostKeyDecision({}, {accept})", tab.value())
             }
+            Self::HostKeyTrustOnce(tab) => write!(f, "HostKeyTrustOnce({})", tab.value()),
             Self::Key { tab, .. } => write!(f, "Key({}, ..)", tab.value()),
             Self::Pointer { tab, input } => write!(f, "Pointer({}, {input:?})", tab.value()),
             Self::Resize { tab, grid, .. } => {
@@ -744,6 +748,13 @@ impl fmt::Debug for Tab {
 }
 
 impl Tab {
+    /// Whether the question the tab asks is about an RDP server's own certificate, not an
+    /// SSH key on the way to it.
+    #[must_use]
+    pub fn asks_about_certificate(&self) -> bool {
+        self.purpose == Purpose::Rdp && self.pending_rdp_key.is_some()
+    }
+
     /// What the tab is called: the name the user gave it, else its title.
     #[must_use]
     pub fn display_title(&self) -> &str {
@@ -1008,6 +1019,24 @@ impl Dialog {
     }
 }
 
+/// The user's answer about an unknown host key or certificate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KeyTrust {
+    /// Do not connect.
+    Refused,
+    /// Trusted for this run only, never recorded.
+    Once,
+    /// Recorded, then trusted.
+    Always,
+}
+
+impl From<bool> for KeyTrust {
+    /// The answer of the Accept and Reject buttons.
+    fn from(accept: bool) -> Self {
+        if accept { Self::Always } else { Self::Refused }
+    }
+}
+
 /// What a typed name is for.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NameAction {
@@ -1034,6 +1063,10 @@ pub struct App {
     pending_transfer: Option<PendingTransfer>,
     pending_operation: Option<PendingOperation>,
     vault: VaultState,
+    /// SSH keys trusted for this run only, shared with every connection.
+    run_trust: RunTrust,
+    /// RDP certificates trusted for this run only: server, port, key.
+    rdp_run_trust: Vec<(String, u16, heimdall_rdp::Fingerprint)>,
 }
 
 impl fmt::Debug for App {
@@ -1074,6 +1107,8 @@ impl App {
             pending_transfer: None,
             pending_operation: None,
             vault,
+            run_trust: RunTrust::default(),
+            rdp_run_trust: Vec::new(),
         };
         // A vault on disk is offered to unlock at start: its passwords are then ready.
         if app.dialog.is_none() {
@@ -1184,7 +1219,8 @@ impl App {
                 question,
                 answer,
             } => self.answer(tab, question, answer),
-            Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept),
+            Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept.into()),
+            Message::HostKeyTrustOnce(tab) => self.host_key_decision(tab, KeyTrust::Once),
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
@@ -1300,6 +1336,7 @@ impl App {
             .map_err(UiError::Route)?;
         let mut options = ConnectOptions::new(self.config.known_hosts.clone());
         options.agent = self.config.agent.clone();
+        options.run_trust = self.run_trust.clone();
         options.initial_size = terminal_size(grid, None);
         Ok(ConnectRequest {
             profile: profile.clone(),
@@ -1469,15 +1506,13 @@ impl App {
         }
     }
 
-    fn host_key_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+    fn host_key_decision(&mut self, tab_id: TabId, trust: KeyTrust) -> Vec<Effect> {
         // An RDP tab asks about the server's certificate, or, on the way, a gateway's SSH key.
-        if self
-            .tab(tab_id)
-            .is_some_and(|tab| tab.purpose == Purpose::Rdp && tab.pending_rdp_key.is_some())
-        {
-            return self.rdp_certificate_decision(tab_id, accept);
+        if self.tab(tab_id).is_some_and(Tab::asks_about_certificate) {
+            return self.rdp_certificate_decision(tab_id, trust);
         }
         let known_hosts = KnownHosts::new(&self.config.known_hosts);
+        let run_trust = self.run_trust.clone();
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -1486,12 +1521,17 @@ impl App {
         else {
             return Vec::new();
         };
-        if !accept {
+        if trust == KeyTrust::Refused {
             tab.phase = Phase::Failed(UiError::Cancelled);
             return Vec::new();
         }
         // Another tab may have recorded a key for this host meanwhile: read again.
         let learned = match known_hosts.recorded(&host, port) {
+            // Held in memory for this run: the file is not written.
+            Ok(_) if trust == KeyTrust::Once => {
+                run_trust.trust(&host, port, PublicKey::clone(&key));
+                Ok(())
+            }
             Ok(recorded) => match verdict(&recorded, &key) {
                 Verdict::Trusted => Ok(()),
                 Verdict::Unknown => known_hosts

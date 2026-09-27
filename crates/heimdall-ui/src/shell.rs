@@ -1487,7 +1487,13 @@ impl Shell {
                 host,
                 port,
                 fingerprint,
-            } => host_key_card(tab.id, host, *port, fingerprint),
+            } => host_key_card(
+                tab.id,
+                host,
+                *port,
+                fingerprint,
+                tab.asks_about_certificate().then(|| tab.profile.name()),
+            ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
@@ -1520,39 +1526,42 @@ impl Shell {
                     .spacing(SPACING),
             ))
             .into(),
-            Phase::Failed(error) => {
-                let mut actions = self.session_actions(tab);
-                // A changed key's way out is deliberate, never part of the connection: the
-                // old key is forgotten, and the new one asked about as on a first contact.
-                // An RDP certificate is routine to change (Windows renews its own every six
-                // months); an SSH key, as the C# Heimdall warns, may be an interception.
-                let forget = match error {
-                    UiError::HostKeyChanged { target: None, .. } if tab.purpose == Purpose::Rdp => {
-                        Some(fl!("ui-session-forget-server-button"))
-                    }
-                    UiError::HostKeyChanged {
-                        target: Some(_), ..
-                    } => Some(fl!("ui-session-accept-new-key-button")),
-                    _ => None,
-                };
-                if let Some(label) = forget {
-                    actions = actions.push(
-                        button(text(label))
-                            .style(button::danger)
-                            .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
-                    );
-                }
-                center(card(
-                    column![
-                        text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
-                        text(texts::error(error)),
-                        actions,
-                    ]
-                    .spacing(SPACING),
-                ))
-                .into()
-            }
+            Phase::Failed(error) => self.failure_card(tab, error),
         }
+    }
+
+    /// A failed session's card: the error, and its ways out.
+    fn failure_card<'a>(&'a self, tab: &'a Tab, error: &'a UiError) -> Element<'a, Message> {
+        let mut actions = self.session_actions(tab);
+        // A changed key's way out is deliberate, never part of the connection: the old key
+        // is forgotten, and the new one asked about as on a first contact. An RDP
+        // certificate is routine to change (Windows renews its own every six months); an SSH
+        // key, as the C# Heimdall warns, may be an interception.
+        let forget = match error {
+            UiError::HostKeyChanged { target: None, .. } if tab.purpose == Purpose::Rdp => {
+                Some(fl!("ui-session-forget-server-button"))
+            }
+            UiError::HostKeyChanged {
+                target: Some(_), ..
+            } => Some(fl!("ui-session-accept-new-key-button")),
+            _ => None,
+        };
+        if let Some(label) = forget {
+            actions = actions.push(
+                button(text(label))
+                    .style(button::danger)
+                    .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
+            );
+        }
+        center(card(
+            column![
+                text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
+                text(texts::error(error)),
+                actions,
+            ]
+            .spacing(SPACING),
+        ))
+        .into()
     }
 
     /// What an ended or failed session offers, as the C# Heimdall's card: Reconnect when it
@@ -1804,30 +1813,74 @@ fn terminal(tab: &Tab, interactive: bool) -> Element<'_, Message> {
 }
 
 /// The question about an unknown server key.
+/// The question about an unknown key, as the C# Heimdall asks it: an SSH host's, or, when
+/// `certificate` names the profile, an RDP server's own certificate. Either can be trusted
+/// for this run only, never recorded.
 fn host_key_card<'a>(
     tab: TabId,
     host: &'a str,
     port: u16,
     fingerprint: &'a str,
+    certificate: Option<&'a str>,
 ) -> Element<'a, Message> {
+    let port = port.to_string();
+    let (heading, body, fingerprint, [reject, once, accept]) = match certificate {
+        Some(name) => (
+            fl!("ui-certificate-title"),
+            column![
+                text(fl!(
+                    "ui-certificate-body",
+                    name = name,
+                    host = host,
+                    port = port.as_str()
+                )),
+                text(fl!("ui-certificate-caution")),
+            ]
+            .spacing(SPACING),
+            fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
+            [
+                fl!("ui-certificate-refuse-button"),
+                fl!("ui-certificate-trust-once-button"),
+                fl!("ui-certificate-trust-button"),
+            ],
+        ),
+        None => (
+            fl!("ui-hostkey-title"),
+            column![text(fl!(
+                "ui-hostkey-body",
+                host = host,
+                port = port.as_str()
+            ))],
+            fl!("ui-hostkey-fingerprint", fingerprint = fingerprint),
+            [
+                fl!("ui-hostkey-reject-button"),
+                fl!("ui-hostkey-trust-once-button"),
+                fl!("ui-hostkey-accept-button"),
+            ],
+        ),
+    };
     center(card(
         column![
-            text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
-            text(fl!("ui-hostkey-body", host = host, port = port.to_string())),
-            text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint))
-                .font(iced::Font::MONOSPACE),
+            text(heading).size(HEADING_SIZE),
+            body,
+            text(fingerprint).font(iced::Font::MONOSPACE),
             row![
-                button(text(fl!("ui-hostkey-reject-button")))
+                button(text(reject))
                     .style(button::secondary)
                     .on_press(Message::App(AppMessage::HostKeyDecision {
                         tab,
                         accept: false
                     })),
-                button(text(fl!("ui-hostkey-accept-button"))).on_press(Message::App(
-                    AppMessage::HostKeyDecision { tab, accept: true }
-                )),
+                button(text(once))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
+                button(text(accept)).on_press(Message::App(AppMessage::HostKeyDecision {
+                    tab,
+                    accept: true
+                })),
             ]
-            .spacing(SPACING),
+            .spacing(SPACING)
+            .wrap(),
         ]
         .spacing(SPACING),
     ))

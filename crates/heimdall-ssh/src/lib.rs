@@ -31,6 +31,7 @@ mod key_file;
 mod known_hosts;
 mod options;
 mod prompter;
+mod run_trust;
 mod secret;
 mod session;
 
@@ -44,6 +45,7 @@ pub use prompter::{
     KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PassphraseQuestion, PasswordQuestion,
     Prompter, UsernameQuestion,
 };
+pub use run_trust::RunTrust;
 pub use russh::keys::{Algorithm, PublicKey};
 pub use secret::Secret;
 pub use session::{SessionClosed, SessionEvent, SessionInput, ShellSession};

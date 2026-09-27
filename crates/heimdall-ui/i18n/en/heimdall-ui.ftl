@@ -88,11 +88,19 @@ ui-tab-bell-badge = bell
 ui-connect-progress = Connecting to { $target }...
 ui-connect-cancel-button = Cancel
 
-ui-hostkey-title = Unknown server
-ui-hostkey-body = This is the first connection to { $host } on port { $port }. Check that the fingerprint below is the server's before trusting it.
+ui-hostkey-title = Unknown SSH host
+ui-hostkey-body = This is the first time connecting to { $host }:{ $port }. Verify the fingerprint below matches what the server administrator provided before accepting.
 ui-hostkey-fingerprint = Fingerprint: { $fingerprint }
-ui-hostkey-accept-button = Trust and connect
-ui-hostkey-reject-button = Do not connect
+ui-hostkey-accept-button = Accept
+ui-hostkey-trust-once-button = Trust this session
+ui-hostkey-reject-button = Reject
+ui-certificate-title = Unrecognised Server Certificate
+ui-certificate-body = "{ $name }" answered at { $host }:{ $port }, presenting a certificate this profile has never approved.
+ui-certificate-caution = Heimdall cannot tell whether this is the machine you expect. Approve it only if you recognise the fingerprint below, or if you know that several machines answer to this name.
+ui-certificate-fingerprint = SHA-256 fingerprint: { $fingerprint }
+ui-certificate-trust-button = Trust this certificate
+ui-certificate-trust-once-button = Just this once
+ui-certificate-refuse-button = Do not connect
 
 ui-prompt-submit-button = Continue
 ui-prompt-cancel-button = Cancel

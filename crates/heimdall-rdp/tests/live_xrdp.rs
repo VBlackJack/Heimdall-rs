@@ -58,6 +58,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         // The channel negotiated with a real server must not break the session.
         clipboard: true,
         drives: Vec::new(),
+        trusted_for_run: Vec::new(),
     }
 }
 

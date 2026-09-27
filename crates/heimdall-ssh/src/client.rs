@@ -303,7 +303,8 @@ async fn hop<P: Prompter>(
 ) -> Result<client::Handle<ClientHandler>, ConnectError> {
     let host = validate_host(&profile.host)?;
     let port = profile.port;
-    let recorded = KnownHosts::new(&options.known_hosts).recorded(&host, port)?;
+    let mut recorded = KnownHosts::new(&options.known_hosts).recorded(&host, port)?;
+    recorded.extend(options.run_trust.keys(&host, port));
 
     let server_message = ServerMessage::default();
     let handler = ClientHandler {

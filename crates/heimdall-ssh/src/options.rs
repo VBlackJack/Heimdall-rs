@@ -16,6 +16,7 @@
 
 //! Connection settings and their defaults.
 
+use crate::run_trust::RunTrust;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -87,6 +88,8 @@ pub struct ConnectOptions {
     pub known_hosts: PathBuf,
     /// Where to look for an SSH agent.
     pub agent: AgentSource,
+    /// Keys trusted for this run only, counted as recorded beside `known_hosts`.
+    pub run_trust: RunTrust,
 }
 
 impl ConnectOptions {
@@ -102,6 +105,7 @@ impl ConnectOptions {
             initial_size: DEFAULT_TERMINAL_SIZE,
             known_hosts,
             agent: AgentSource::Auto,
+            run_trust: RunTrust::default(),
         }
     }
 }

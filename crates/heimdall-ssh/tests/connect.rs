@@ -131,6 +131,39 @@ async fn a_learned_key_is_trusted_on_the_next_connection() {
 }
 
 #[tokio::test]
+async fn a_key_trusted_for_the_run_connects_and_is_never_written() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut options = options_empty(dir.path());
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD, PASSWORD]));
+
+    let Err(ConnectError::UnknownHostKey { host, port, key }) =
+        run(server.port, None, &options, prompter.clone()).await
+    else {
+        panic!("expected UnknownHostKey");
+    };
+    let trust = heimdall_ssh::RunTrust::default();
+    options.run_trust = trust.clone();
+    trust.trust(&host, port, *key);
+    let session = run(server.port, None, &options, prompter.clone()).await;
+    assert!(session.is_ok(), "{:?}", session.err());
+    assert!(
+        !options.known_hosts.exists(),
+        "trusted for this run only: nothing written"
+    );
+
+    // Another port of the same host is another server, asked about.
+    let other = start(Spec::default()).await;
+    let error = run(other.port, None, &options, prompter)
+        .await
+        .expect_err("unknown");
+    assert!(
+        matches!(error, ConnectError::UnknownHostKey { .. }),
+        "{error:?}"
+    );
+}
+
+#[tokio::test]
 async fn a_changed_key_is_refused_without_asking() {
     let server = start(Spec::default()).await;
     let dir = tempfile::tempdir().expect("temp dir");

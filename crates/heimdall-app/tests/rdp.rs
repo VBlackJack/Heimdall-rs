@@ -47,6 +47,20 @@ fn app(dir: &Path) -> App {
         redirect_clipboard: true,
         redirect_drives: false,
     }]);
+    // The same port on another server.
+    store.merge_rdp([RdpProfile {
+        id: ProfileId::new("web"),
+        name: "Web".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 3389,
+        username: None,
+        domain: None,
+        allow_tls_only: false,
+        gateway: None,
+        redirect_clipboard: true,
+        redirect_drives: false,
+    }]);
     store.save().expect("save");
     App::new(AppConfig {
         profiles_file,
@@ -163,6 +177,57 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
             .is_empty()
     );
     assert_eq!(app.tabs[0].phase, Phase::Failed(UiError::Cancelled));
+}
+
+#[test]
+fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: key(),
+        },
+    );
+    assert!(app.tabs[0].asks_about_certificate());
+    let effects = app.update(Message::HostKeyTrustOnce(tab));
+    let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(request.accepted, None, "nothing to record");
+    assert_eq!(request.trusted_for_run, [key()]);
+    assert!(!app.tabs[0].asks_about_certificate());
+
+    // Another tab to the same server carries it too, once.
+    let (again, again_attempt) = open(&mut app);
+    event(
+        &mut app,
+        again,
+        again_attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: key(),
+        },
+    );
+    let effects = app.update(Message::HostKeyTrustOnce(again));
+    let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(request.trusted_for_run, [key()], "listed once");
+    assert!(!dir.path().join("known_rdp_hosts").exists());
+
+    // Another server is not trusted by it.
+    let effects = app.update(Message::OpenRdp(ProfileId::new("web")));
+    let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(request.trusted_for_run.is_empty());
 }
 
 #[test]

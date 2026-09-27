@@ -306,6 +306,40 @@ fn accepting_an_unknown_key_records_it_and_reconnects() {
 }
 
 #[test]
+fn a_key_trusted_this_once_connects_serves_later_tabs_and_is_never_recorded() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt) = open(&mut app, "a");
+    event(&mut app, tab, attempt, unknown_key_event(HOST_KEY));
+    let key = PublicKey::from_openssh(HOST_KEY.trim()).expect("key");
+
+    let effects = app.update(Message::HostKeyTrustOnce(tab));
+    let [Effect::Connect { request, .. }] = effects.as_slice() else {
+        panic!("expected a new attempt, got {effects:?}");
+    };
+    assert_eq!(
+        request.options.run_trust.keys("a.lab", 22),
+        std::slice::from_ref(&key)
+    );
+    assert_eq!(app.tab(tab).expect("tab").phase, Phase::Connecting);
+    assert!(
+        !dir.path().join("known_hosts").exists(),
+        "for this run only: nothing written"
+    );
+
+    // A later tab to the same server is not asked again.
+    let effects = app.update(Message::OpenProfile(ProfileId::new("a")));
+    let [Effect::Connect { request, .. }] = effects.as_slice() else {
+        panic!("expected one Connect, got {effects:?}");
+    };
+    assert_eq!(request.options.run_trust.keys("a.lab", 22), [key]);
+    assert!(request.options.run_trust.keys("b.lab", 22).is_empty());
+
+    // Nothing is asked about: nothing to trust.
+    assert!(app.update(Message::HostKeyTrustOnce(tab)).is_empty());
+}
+
+#[test]
 fn rejecting_an_unknown_key_records_nothing() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));

@@ -524,3 +524,44 @@ fn a_fitted_desktop_asks_the_server_for_no_size() {
         "the server keeps its size"
     );
 }
+
+#[test]
+fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .parse()
+                .expect("fingerprint"),
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Unrecognised Server Certificate").expect("title");
+    ui.find(
+        "\"Domain controller\" answered at dc.lab:3389, presenting a certificate this profile has never approved.",
+    )
+    .expect("body");
+    ui.click("Just this once").expect("once");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyTrustOnce(trusted)) if trusted == tab
+    )));
+    let mut ui = simulator(&shell);
+    ui.click("Trust this certificate").expect("always");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyDecision { tab: decided, accept: true }) if decided == tab
+    )));
+    let mut ui = simulator(&shell);
+    ui.click("Do not connect").expect("refuse");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::HostKeyDecision { accept: false, .. })
+    )));
+}

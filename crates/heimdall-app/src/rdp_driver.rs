@@ -56,6 +56,8 @@ pub struct RdpRequest {
     pub known_hosts: PathBuf,
     /// A key the user accepted after the certificate question.
     pub accepted: Option<Fingerprint>,
+    /// Keys the user trusted for this server for this run only.
+    pub trusted_for_run: Vec<Fingerprint>,
     /// Desktop size asked for.
     pub desktop: (u16, u16),
     /// The SSH gateways the server is reached through, nearest first, each as the hop it
@@ -237,6 +239,7 @@ async fn open(
         } else {
             Vec::new()
         },
+        trusted_for_run: request.trusted_for_run.clone(),
     };
     if request.route.is_empty() {
         connect(config, ask_credentials, request.cancel.clone()).await
