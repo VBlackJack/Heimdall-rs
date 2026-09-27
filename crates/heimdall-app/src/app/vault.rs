@@ -39,7 +39,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use heimdall_core::credentials::{
-    CredentialProtocol, Endpoint, SavedPassword, decode, encode, password_entry,
+    CredentialProtocol, Endpoint, SavedPassword, decode, encode, password_entry, rdp_account,
 };
 use heimdall_core::profile::ProfileId;
 use heimdall_keyring::SystemKeyring;
@@ -354,10 +354,7 @@ fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileI
             (&profile.host, profile.port),
             (question.host.as_str(), question.port),
             // The domain names the account as much as the user name does.
-            Some(match &profile.domain {
-                Some(domain) => format!("{domain}\\{}", question.username),
-                None => question.username.clone(),
-            }),
+            Some(rdp_account(profile.domain.as_deref(), &question.username)),
         ),
         (TabProfile::Vnc(profile), QuestionKind::ServerPassword(question)) => (
             &profile.id,

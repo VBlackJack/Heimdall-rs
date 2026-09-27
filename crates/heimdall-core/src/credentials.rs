@@ -103,6 +103,16 @@ impl std::fmt::Debug for SavedPassword {
     }
 }
 
+/// The account an RDP password is for: `user` in `domain` when the profile names one, as
+/// `DOMAIN\user`. The one spelling both saving a password and giving it back use.
+#[must_use]
+pub fn rdp_account(domain: Option<&str>, user: &str) -> String {
+    match domain.filter(|domain| !domain.is_empty()) {
+        Some(domain) => format!("{domain}\\{user}"),
+        None => user.to_owned(),
+    }
+}
+
 /// Name of the vault entry holding `profile`'s password.
 #[must_use]
 pub fn password_entry(profile: &ProfileId) -> String {
@@ -280,6 +290,13 @@ mod tests {
     fn a_password_never_shows_in_debug_output() {
         let shown = format!("{:?}", saved());
         assert!(!shown.contains("p\u{e4}ss"), "{shown}");
+    }
+
+    #[test]
+    fn an_rdp_account_carries_its_domain() {
+        assert_eq!(rdp_account(Some("CORP"), "admin"), "CORP\\admin");
+        assert_eq!(rdp_account(Some(""), "admin"), "admin");
+        assert_eq!(rdp_account(None, "admin"), "admin");
     }
 
     #[test]

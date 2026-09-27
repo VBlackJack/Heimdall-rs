@@ -152,11 +152,12 @@ impl App {
             .find(|profile| profile.id == *id)
     }
 
-    /// Whether the editor opens `id`: the profile editor knows SSH profiles only for now.
+    /// Whether the editor opens `id`: every protocol but a local program, whose command has
+    /// an editor of its own to come.
     #[must_use]
     pub fn can_edit(&self, id: &ProfileId) -> bool {
         self.profile_summary(id)
-            .is_some_and(|profile| profile.kind == ProfileKind::Ssh)
+            .is_some_and(|profile| profile.kind != ProfileKind::Local)
     }
 
     /// Applies a message about the tree.
@@ -298,7 +299,7 @@ impl App {
     }
 
     /// An identifier no saved profile has.
-    fn fresh_id(&self) -> ProfileId {
+    pub(super) fn fresh_id(&self) -> ProfileId {
         let taken: HashSet<ProfileId> = self
             .profile_summaries()
             .into_iter()

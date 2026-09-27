@@ -52,7 +52,7 @@ use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::local_driver::{LocalRequest, LocalShell};
-use crate::profile_draft::{DraftError, ProfileDraft, ProfileField};
+use crate::profile_draft::{DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle};
 use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
 use crate::telnet_driver::TelnetRequest;
@@ -285,6 +285,15 @@ pub enum Message {
     },
     /// In the profile form, clear the saved password (done when the form is saved).
     ClearPassword,
+    /// In a new profile's form, choose its protocol.
+    ChooseProtocol(DraftProtocol),
+    /// In the profile form, tick or clear an option.
+    ProfileToggle {
+        /// Option.
+        toggle: ProfileToggle,
+        /// Ticked.
+        on: bool,
+    },
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
     /// Connect to a profile with its own protocol.
@@ -386,6 +395,8 @@ impl fmt::Debug for Message {
             Self::DismissDialog => f.write_str("DismissDialog"),
             Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
             Self::ClearPassword => f.write_str("ClearPassword"),
+            Self::ChooseProtocol(protocol) => write!(f, "ChooseProtocol({protocol:?})"),
+            Self::ProfileToggle { toggle, on } => write!(f, "ProfileToggle({toggle:?}, {on})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
@@ -1092,7 +1103,9 @@ impl App {
             | Message::ProfileField { .. }
             | Message::DeleteProfile
             | Message::SaveProfile { .. }
-            | Message::ClearPassword) => {
+            | Message::ClearPassword
+            | Message::ChooseProtocol(_)
+            | Message::ProfileToggle { .. }) => {
                 self.profile_message(message);
                 Vec::new()
             }

@@ -14,15 +14,17 @@
  * limitations under the License.
  */
 
-//! Creating, editing and deleting saved profiles. Every change is saved before it is kept:
-//! a save that fails leaves the list as its file is.
+//! Creating, editing and deleting saved profiles, of every protocol but a local program, as
+//! the C# Heimdall's session dialog does: a new profile's protocol is chosen first, a saved
+//! one is edited in its own protocol. Every change is saved before it is kept: a save that
+//! fails leaves the list as its file is.
 
-use heimdall_core::credentials::{CredentialProtocol, Endpoint};
+use heimdall_core::credentials::{CredentialProtocol, Endpoint, rdp_account};
 use heimdall_core::profile::ProfileId;
 use heimdall_ssh::Secret;
 
 use super::{App, Dialog, Message};
-use crate::profile_draft::{DraftError, ProfileDraft, ProfileField, new_id};
+use crate::profile_draft::{DraftError, DraftProfile, ProfileDraft, ProfileField};
 use crate::text::server_text;
 
 impl App {
@@ -46,11 +48,25 @@ impl App {
                     draft.password_saved = false;
                 }
             }
+            Message::ChooseProtocol(protocol) => {
+                if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut()
+                    && draft.editing.is_none()
+                {
+                    **draft = ProfileDraft::new_for(protocol);
+                    *error = None;
+                }
+            }
+            Message::ProfileToggle { toggle, on } => {
+                if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut() {
+                    draft.toggle(toggle, on);
+                    *error = None;
+                }
+            }
             _ => {}
         }
     }
 
-    /// Opens an empty profile form.
+    /// Opens an empty profile form, on its protocol picker.
     pub(super) fn new_profile(&mut self) {
         self.dialog = Some(Dialog::EditProfile {
             draft: Box::default(),
@@ -58,16 +74,24 @@ impl App {
         });
     }
 
-    /// Opens the form of a saved profile.
+    /// Opens the form of a saved profile, in its own protocol.
     pub(super) fn edit_profile(&mut self, id: &ProfileId) {
-        if let Some(profile) = self.profiles().iter().find(|profile| profile.id == *id) {
-            let mut draft = ProfileDraft::from_profile(profile);
-            draft.password_saved = self.password_saved(id);
-            self.dialog = Some(Dialog::EditProfile {
-                draft: Box::new(draft),
-                error: None,
-            });
-        }
+        let draft = if let Some(profile) = self.profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_profile(profile)
+        } else if let Some(profile) = self.rdp_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_rdp(profile)
+        } else if let Some(profile) = self.vnc_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_vnc(profile)
+        } else if let Some(profile) = self.winrm_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_winrm(profile)
+        } else if let Some(profile) = self.telnet_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_telnet(profile)
+        } else {
+            return;
+        };
+        let mut draft = Box::new(draft);
+        draft.password_saved = draft.protocol.saves_password() && self.password_saved(id);
+        self.dialog = Some(Dialog::EditProfile { draft, error: None });
     }
 
     /// A field of the open form changed.
@@ -88,29 +112,32 @@ impl App {
             return;
         };
         let name = self
-            .profiles()
-            .iter()
-            .find(|profile| profile.id == id)
+            .profile_summary(&id)
             .map_or_else(String::new, |profile| server_text(&profile.name));
         self.dialog = Some(Dialog::ConfirmDeleteProfile { id, name });
     }
 
     /// Saves the form, with `password` typed into it, or puts it back with what to fix.
     pub(super) fn save_profile(&mut self, draft: Box<ProfileDraft>, password: Option<&Secret>) {
-        let id = draft
-            .editing
-            .clone()
-            .unwrap_or_else(|| new_id(self.profiles()));
-        let typed =
-            password.filter(|typed| !typed.expose().is_empty() && self.can_save_passwords());
-        let profile = match draft.to_profile(id) {
-            Ok(profile) if typed.is_some() && profile.username.is_none() => {
+        let id = draft.editing.clone().unwrap_or_else(|| self.fresh_id());
+        let typed = password.filter(|typed| {
+            !typed.expose().is_empty()
+                && draft.protocol.saves_password()
+                && self.can_save_passwords()
+        });
+        let saved = draft.to_saved(id).and_then(|profile| {
+            let endpoint = password_endpoint(&profile);
+            let has_account = endpoint
+                .as_ref()
+                .is_some_and(|endpoint| endpoint.username.is_some());
+            if typed.is_some() && draft.protocol.password_needs_username() && !has_account {
                 Err(DraftError::UsernameForPassword)
+            } else {
+                Ok((profile, endpoint))
             }
-            other => other,
-        };
-        let profile = match profile {
-            Ok(profile) => profile,
+        });
+        let (profile, endpoint) = match saved {
+            Ok(saved) => saved,
             Err(error) => {
                 self.dialog = Some(Dialog::EditProfile {
                     draft,
@@ -119,20 +146,25 @@ impl App {
                 return;
             }
         };
-        let endpoint = Endpoint {
-            protocol: CredentialProtocol::Ssh,
-            host: profile.host.clone(),
-            port: profile.port,
-            username: profile.username.clone(),
-        };
-        let id = profile.id.clone();
-        if let Err(error) = self.store.apply(|store| store.merge([profile])) {
+        let id = saved_id(&profile).clone();
+        let result = self.store.apply(|store| {
+            match profile {
+                DraftProfile::Ssh(profile) => store.merge([profile]),
+                DraftProfile::Rdp(profile) => store.merge_rdp([profile]),
+                DraftProfile::Vnc(profile) => store.merge_vnc([profile]),
+                DraftProfile::WinRm(profile) => store.merge_winrm([profile]),
+                DraftProfile::Telnet(profile) => store.merge_telnet([profile]),
+            };
+        });
+        if let Err(error) = result {
             self.dialog = Some(Dialog::StoreError {
                 detail: error.to_string(),
             });
             return;
         }
-        if self.can_save_passwords() {
+        if let Some(endpoint) = endpoint
+            && self.can_save_passwords()
+        {
             self.save_edited_password(&id, endpoint, typed, draft.clear_password);
         }
     }
@@ -147,5 +179,44 @@ impl App {
                 });
             }
         }
+    }
+}
+
+fn saved_id(profile: &DraftProfile) -> &ProfileId {
+    match profile {
+        DraftProfile::Ssh(profile) => &profile.id,
+        DraftProfile::Rdp(profile) => &profile.id,
+        DraftProfile::Vnc(profile) => &profile.id,
+        DraftProfile::WinRm(profile) => &profile.id,
+        DraftProfile::Telnet(profile) => &profile.id,
+    }
+}
+
+/// The server and account a password saved with `profile` is for; `None` for a protocol
+/// whose password is not saved.
+fn password_endpoint(profile: &DraftProfile) -> Option<Endpoint> {
+    match profile {
+        DraftProfile::Ssh(profile) => Some(Endpoint {
+            protocol: CredentialProtocol::Ssh,
+            host: profile.host.clone(),
+            port: profile.port,
+            username: profile.username.clone(),
+        }),
+        DraftProfile::Rdp(profile) => Some(Endpoint {
+            protocol: CredentialProtocol::Rdp,
+            host: profile.host.clone(),
+            port: profile.port,
+            username: profile
+                .username
+                .as_deref()
+                .map(|user| rdp_account(profile.domain.as_deref(), user)),
+        }),
+        DraftProfile::Vnc(profile) => Some(Endpoint {
+            protocol: CredentialProtocol::Vnc,
+            host: profile.host.clone(),
+            port: profile.port,
+            username: None,
+        }),
+        DraftProfile::WinRm(_) | DraftProfile::Telnet(_) => None,
     }
 }
