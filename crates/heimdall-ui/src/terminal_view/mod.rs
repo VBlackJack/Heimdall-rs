@@ -518,10 +518,13 @@ impl<M> TerminalView<'_, M> {
         run: &runs::TextRun,
     ) {
         let area = self.cells_rect(bounds, row, run.col, run.cells);
+        // A cell one more: at a size whose cell is a fraction of a pixel wide, the last glyph
+        // would end past the run's box and not be drawn.
+        let room = Size::new(area.width + self.metrics.width, area.height);
         renderer.fill_text(
             Text {
                 content: run.content.clone(),
-                bounds: area.size(),
+                bounds: room,
                 size: Pixels(self.metrics.font_size),
                 line_height: text::LineHeight::Absolute(Pixels(self.metrics.height)),
                 font: font(run.bold, run.italic),
