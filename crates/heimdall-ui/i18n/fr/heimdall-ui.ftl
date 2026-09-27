@@ -9,7 +9,6 @@ ui-sidebar-empty = Aucun profil enregistré.
 ui-sidebar-group-none = (Sans dossier)
 
 ui-home-welcome = Bienvenue dans Heimdall-rs.
-ui-home-hint = Choisissez un profil à gauche pour ouvrir une session SSH.
 
 ui-tab-close-button = Fermer
 ui-tab-bell-badge = cloche

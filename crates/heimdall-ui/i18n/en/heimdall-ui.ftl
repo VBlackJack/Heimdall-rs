@@ -79,8 +79,12 @@ ui-vault-problem-system = The vault file could not be used: { $detail }
 ui-vault-save-failed-title = The password could not be saved.
 ui-sidebar-group-none = (No Folder)
 
-ui-home-welcome = Welcome to Heimdall-rs.
-ui-home-hint = Pick a profile on the left to open an SSH session.
+ui-home-welcome = Welcome to Heimdall-rs
+ui-home-subtitle = Add a session or import your existing connections to get started.
+ui-home-add-button = Add Session
+ui-home-import-button = Import Connections
+ui-home-shortcuts = Ctrl+N to add a session, Ctrl+K to quick connect
+ui-home-select = Select a session or press Ctrl+K to connect
 
 ui-tab-close-button = Close
 ui-tab-bell-badge = bell

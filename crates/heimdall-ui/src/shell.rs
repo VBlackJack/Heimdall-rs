@@ -1350,6 +1350,36 @@ impl Shell {
         Some(entries)
     }
 
+    /// No session shown, as the C# window: with no session saved, a welcome and the ways
+    /// to add one; otherwise, how to open one.
+    fn home(&self) -> Element<'_, Message> {
+        if !self.app.profile_summaries().is_empty() {
+            return center(text(fl!("ui-home-select"))).into();
+        }
+        center(
+            column![
+                text(fl!("ui-home-welcome")).size(HEADING_SIZE),
+                text(fl!("ui-home-subtitle")),
+                row![
+                    button(text(fl!("ui-home-add-button")))
+                        .on_press(Message::App(AppMessage::NewProfile)),
+                    button(text(fl!("ui-home-import-button")))
+                        .style(button::secondary)
+                        .on_press_maybe(
+                            self.app
+                                .can_import()
+                                .then_some(Message::App(AppMessage::ImportLegacy)),
+                        ),
+                ]
+                .spacing(SPACING),
+                text(fl!("ui-home-shortcuts")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING)
+            .align_x(iced::Alignment::Center),
+        )
+        .into()
+    }
+
     fn sidebar(&self) -> Element<'_, Message> {
         // As in the C# Heimdall: "+" adds, "..." holds the rest; the vault and the local shell
         // keep their buttons until they find their C# place.
@@ -1815,14 +1845,7 @@ impl Shell {
             return self.settings_page();
         }
         let Some(tab) = self.app.active_tab() else {
-            return center(
-                column![
-                    text(fl!("ui-home-welcome")).size(HEADING_SIZE),
-                    text(fl!("ui-home-hint")),
-                ]
-                .spacing(SPACING),
-            )
-            .into();
+            return self.home();
         };
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();

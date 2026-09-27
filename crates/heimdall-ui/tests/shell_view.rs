@@ -1447,3 +1447,69 @@ fn ctrl_k_opens_quick_connect_which_finds_a_session_or_a_host_and_opens_it() {
         heimdall_app::ProfileKind::Ssh
     );
 }
+
+#[test]
+fn with_no_session_saved_the_window_welcomes_and_offers_to_add_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    snapshot(&shell, "home-empty.png");
+    let mut ui = simulator(&shell);
+    ui.find("Welcome to Heimdall-rs").expect("welcomes");
+    ui.find("Ctrl+N to add a session, Ctrl+K to quick connect")
+        .expect("the shortcuts");
+    assert!(
+        ui.find("Select a session or press Ctrl+K to connect")
+            .is_err(),
+        "no session to select"
+    );
+    ui.click("Import Connections").expect("shown");
+    ui.click("Add Session").expect("its button");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        matches!(messages.as_slice(), [Message::App(AppMessage::NewProfile)]),
+        "nothing to import from here: {messages:?}"
+    );
+
+    // With the C# Heimdall's sessions beside it, they are offered.
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir(&legacy).expect("dir");
+    std::fs::write(
+        legacy.join(heimdall_core::paths::LEGACY_SERVERS_FILE_NAME),
+        "[]",
+    )
+    .expect("written");
+    let shell = Shell::with_app(App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: Some(legacy),
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    }));
+    let mut ui = simulator(&shell);
+    ui.click("Import Connections").expect("its button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ImportLegacy)))
+    );
+}
+
+#[test]
+fn with_sessions_saved_the_window_says_how_to_open_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = Shell::with_app(app(dir.path()));
+    let mut ui = simulator(&shell);
+    ui.find("Select a session or press Ctrl+K to connect")
+        .expect("how to open one");
+    assert!(ui.find("Welcome to Heimdall-rs").is_err());
+    assert!(ui.find("Add Session").is_err());
+}
