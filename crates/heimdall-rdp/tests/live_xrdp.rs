@@ -57,6 +57,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         timeouts: Timeouts::default(),
         // The channel negotiated with a real server must not break the session.
         clipboard: true,
+        drives: Vec::new(),
     }
 }
 

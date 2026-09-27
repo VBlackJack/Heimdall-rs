@@ -341,6 +341,7 @@ ui-profile-options-rdp = RDP session options
 ui-profile-options-vnc = VNC Options
 ui-profile-options-telnet = Telnet Options
 ui-profile-toggle-clipboard = Redirect clipboard
+ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
 ui-profile-nla-off-hint = Without Network Level Authentication, a saved password is not sent: Heimdall asks for it.
 ui-profile-toggle-use-ssl = Use SSL

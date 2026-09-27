@@ -45,6 +45,7 @@ fn app(dir: &Path) -> App {
         allow_tls_only: false,
         gateway: None,
         redirect_clipboard: true,
+        redirect_drives: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

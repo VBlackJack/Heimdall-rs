@@ -56,6 +56,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
                 allow_tls_only: false,
                 gateway: None,
                 redirect_clipboard: true,
+                redirect_drives: false,
             },
             known_hosts: dir.path().join("known_rdp_hosts"),
             accepted: None,

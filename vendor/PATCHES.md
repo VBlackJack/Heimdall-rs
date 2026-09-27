@@ -55,3 +55,41 @@ published code, 1 with the patch).
 Remove when: a published `ironrdp-session` crops the decoded rows to the rectangle (or
 decodes to the rectangle's width). Then delete this directory and its `[patch.crates-io]`
 entry, and run the live test against the xrdp container.
+
+## ironrdp-rdpdr 0.7.0
+
+Source: `https://static.crates.io/crates/ironrdp-rdpdr/ironrdp-rdpdr-0.7.0.crate`,
+MIT or Apache-2.0 (its `LICENSE-MIT` and `LICENSE-APACHE` are kept here). `Cargo.lock` of
+the package removed; nothing else added.
+
+Changed, in `src/pdu/efs.rs` only:
+
+- `MajorFunction` gains `FlushBuffers`, `Shutdown`, `QuerySecurity`, `SetSecurity` and
+  `Unknown`; any value it did not know now reads as `Unknown` instead of an error.
+- `ServerDriveIoRequest` gains `Unsupported(DeviceIoRequest)`.
+- `ServerDriveIoRequest::decode` tries the original decoding, renamed `decode_known`, and
+  returns `Unsupported` with the request's header when it fails: an unhandled major
+  function, an information class the crate does not decode.
+- `DeviceAnnounceHeader::new_drive` puts the drive's name, its ASCII characters, in
+  `PreferredDosName`, where the crate wrote `ignored`.
+
+Why: the crate decodes a drive request inside the channel's `process`, and a decode error
+there ends the RDP session. A Windows server sends requests the crate does not decode
+(Explorer asks for a file's security descriptor when it shows its properties, an
+application flushes a file), so sharing a drive would close the session at the first one.
+With the patch the drive backend (`crates/heimdall-rdp/src/drives`) answers them
+"not supported" and the session goes on. The test
+`drives::tests::a_request_not_understood_is_answered_not_fatal` checks it.
+
+The name: xrdp names a shared drive by its `PreferredDosName` alone, and showed every one
+as `ignored` (its chansrv log, 2026-09-27); Windows reads the full name from `DeviceData`,
+which the crate already fills. The test `drives::tests::a_drive_is_announced_by_its_name`
+checks the encoded bytes.
+
+Remove when: a published `ironrdp-rdpdr` answers the requests it cannot decode rather
+than failing, and names a drive in `PreferredDosName`. Then delete this directory and its `[patch.crates-io]` entry, map its
+answer in `DriveBackend::answer`, and run the gates.
+
+Checked: `git diff --no-index` against the published package shows only `src/pdu/efs.rs`
+(39 lines added, 2 removed); builds for `x86_64-unknown-linux-gnu` and
+`x86_64-pc-windows-gnu`.

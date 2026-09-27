@@ -566,6 +566,22 @@ fn the_clipboard_is_shared_unless_the_csharp_profile_turned_it_off() {
 }
 
 #[test]
+fn drives_are_shared_only_when_the_csharp_profile_shared_them() {
+    let json = servers(
+        r#"{"id": "off", "remoteServer": "h", "connectionType": "RDP"},
+           {"id": "on", "remoteServer": "h", "connectionType": "RDP",
+            "rdpRedirectDrives": true}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let shared: Vec<(&str, bool)> = report
+        .rdp
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.redirect_drives))
+        .collect();
+    assert_eq!(shared, [("off", false), ("on", true)]);
+}
+
+#[test]
 fn a_winrm_profile_keeps_its_transport_and_account() {
     let json = servers(
         r#"{"id": "w", "displayName": "DC", "remoteServer": " dc.lab ", "connectionType": "WinRM",

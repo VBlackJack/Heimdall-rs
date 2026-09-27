@@ -935,6 +935,7 @@ mod tests {
             allow_tls_only: false,
             gateway: None,
             redirect_clipboard: false,
+            redirect_drives: false,
         })
     }
 

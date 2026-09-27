@@ -61,6 +61,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         allow_tls_only: false,
         gateway: None,
         redirect_clipboard: true,
+        redirect_drives: false,
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),

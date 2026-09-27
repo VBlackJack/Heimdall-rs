@@ -43,6 +43,7 @@ fn app(dir: &Path) -> App {
         allow_tls_only: false,
         gateway: None,
         redirect_clipboard: true,
+        redirect_drives: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -132,11 +133,34 @@ fn an_rdp_profile_is_edited_in_its_own_form_and_its_password_goes_to_its_domain_
     let saved = &app.rdp_profiles()[0];
     assert_eq!(saved.domain.as_deref(), Some("CORP"));
     assert!(!saved.redirect_clipboard);
+    assert!(!saved.redirect_drives);
     assert!(!saved.allow_tls_only);
     assert_eq!(
         answered(&mut app, "dc", rdp_question()).as_deref(),
         Some("rdp password"),
         "saved for CORP\\admin, the account the RDP question is for"
+    );
+}
+
+#[test]
+fn an_rdp_session_shares_its_drives_once_ticked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    app.update(Message::ProfileToggle {
+        toggle: ProfileToggle::RedirectDrives,
+        on: true,
+    });
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(app.rdp_profiles()[0].redirect_drives);
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert!(
+        draft.is_on(ProfileToggle::RedirectDrives),
+        "shown ticked again"
     );
 }
 

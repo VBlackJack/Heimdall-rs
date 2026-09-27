@@ -46,10 +46,13 @@ use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use ironrdp::cliprdr::CliprdrClient;
+use ironrdp::rdpdr::Rdpdr;
+use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
 use tokio::sync::mpsc;
 
 use crate::certificate::{Fingerprint, ServerCertificate};
 use crate::clipboard::{Offered, Request, TextBackend};
+use crate::drives::{DriveBackend, SharedDrive};
 use crate::known_hosts::{KnownRdpHosts, Verdict};
 use crate::tls;
 
@@ -151,6 +154,8 @@ pub struct RdpConfig {
     /// Share the clipboard with the server, text only: its copies reach this side, and this
     /// side's text is offered to it.
     pub clipboard: bool,
+    /// Drives of this computer the server may read and write; none when empty.
+    pub drives: Vec<SharedDrive>,
 }
 
 /// Why a connection did not open.
@@ -356,6 +361,15 @@ pub async fn connect_over(
             offered,
         }
     });
+    if !config.drives.is_empty() {
+        let drives = DriveBackend::new(&config.drives);
+        let devices = drives.devices();
+        // A server opens the drive channel only beside the sound one: sound is declined.
+        connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
+        connector.attach_static_channel(
+            Rdpdr::new(Box::new(drives), CLIENT_NAME.to_owned()).with_drives(Some(devices)),
+        );
+    }
     // Movable: its futures are `Send`, so a connection can run in a spawned task.
     let mut framed = MovableTokioFramed::new(stream);
     let should_upgrade = phase(

@@ -47,6 +47,7 @@ fn app(dir: &Path, gateway: Option<&str>, gateways: Vec<SshGateway>) -> App {
         allow_tls_only: false,
         gateway: gateway.map(ProfileId::new),
         redirect_clipboard: true,
+        redirect_drives: false,
     }]);
     store.merge_gateways(gateways);
     store.save().expect("save");

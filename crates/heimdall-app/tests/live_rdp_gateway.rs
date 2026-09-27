@@ -58,6 +58,7 @@ fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -
             allow_tls_only: true,
             gateway: None,
             redirect_clipboard: true,
+            redirect_drives: false,
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,

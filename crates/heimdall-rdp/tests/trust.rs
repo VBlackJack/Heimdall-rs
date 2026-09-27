@@ -167,6 +167,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
             logon: WAIT,
         },
         clipboard: false,
+        drives: Vec::new(),
     }
 }
 
