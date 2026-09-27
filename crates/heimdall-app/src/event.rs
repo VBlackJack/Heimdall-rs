@@ -24,9 +24,9 @@ use heimdall_ssh::{
     UsernameQuestion,
 };
 
+use heimdall_files::RemoteSession;
 use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
-use heimdall_sftp::SftpClient;
 use tokio::sync::{mpsc, watch};
 use zeroize::Zeroizing;
 
@@ -136,10 +136,10 @@ pub enum ConnectionEvent {
         /// Where input goes.
         input: Arc<dyn InputSink>,
     },
-    /// The SFTP session is open (a Files attempt).
+    /// The file session is open (a Files attempt).
     FilesReady {
         /// The session.
-        client: SftpClient,
+        client: RemoteSession,
     },
     /// Output from the shell.
     Output(Vec<u8>),

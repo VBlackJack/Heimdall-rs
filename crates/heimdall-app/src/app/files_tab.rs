@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use heimdall_sftp::{RemotePath, SftpClient};
+use heimdall_files::{RemotePath, RemoteSession};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Dialog, Effect, NameAction};
@@ -732,7 +732,7 @@ impl App {
 /// and whether the target exists. A refusal is recorded as a failed transfer.
 fn prepare(
     files: &mut FilesPane,
-    client: SftpClient,
+    client: RemoteSession,
     direction: Direction,
 ) -> Option<(TransferRequest, String, Option<u64>, bool)> {
     Some(match direction {

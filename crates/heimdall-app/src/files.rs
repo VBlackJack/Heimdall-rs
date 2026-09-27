@@ -25,12 +25,10 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
-use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
-use heimdall_sftp::path::display_bytes;
-use heimdall_sftp::protocol::{Attributes, StatusCode};
-use heimdall_sftp::transfer::{TransferConfig, TransferError, download, upload};
-use heimdall_sftp::tree::{TreeError, download_tree, remove_tree, upload_tree};
-use heimdall_sftp::{DirEntry, RemotePath, SftpClient, SftpError};
+use heimdall_files::{
+    ItemKind, LocalName, LocalNameError, Refusal, RemoteError, RemoteItem, RemotePath,
+    RemoteSession, Rules, display_bytes,
+};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -133,37 +131,26 @@ pub struct RemoteEntry {
     pub kind: EntryKind,
     /// Size in bytes.
     pub size: Option<u64>,
-    /// Modification time, seconds since the epoch.
-    pub modified: Option<u32>,
-    /// POSIX mode bits.
-    pub permissions: Option<u32>,
+    /// Modification time.
+    pub modified: Option<SystemTime>,
 }
 
 impl RemoteEntry {
-    /// The entry for a listed name.
+    /// The entry for a listed item.
     #[must_use]
-    pub fn from_listing(entry: DirEntry) -> Self {
-        let kind = kind_of(&entry.attributes);
+    pub fn from_listing(item: RemoteItem) -> Self {
         Self {
-            label: server_text(&display_bytes(&entry.name)),
-            name: entry.name,
-            kind,
-            size: entry.attributes.size,
-            modified: entry.attributes.times.map(|(_, modified)| modified),
-            permissions: entry.attributes.permissions,
+            label: server_text(&display_bytes(&item.name)),
+            name: item.name,
+            kind: match item.kind {
+                ItemKind::Directory => EntryKind::Directory,
+                ItemKind::File => EntryKind::File,
+                ItemKind::Link => EntryKind::Link,
+                ItemKind::Other => EntryKind::Other,
+            },
+            size: item.size,
+            modified: item.modified,
         }
-    }
-}
-
-fn kind_of(attributes: &Attributes) -> EntryKind {
-    if attributes.is_directory() {
-        EntryKind::Directory
-    } else if attributes.is_regular_file() {
-        EntryKind::File
-    } else if attributes.is_symlink() {
-        EntryKind::Link
-    } else {
-        EntryKind::Other
     }
 }
 
@@ -263,14 +250,14 @@ pub struct Transfer {
 /// Why a Files operation failed; shown in the user's language by the UI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum FilesError {
-    /// The server refused, with its status and message (made safe).
+    /// The server refused, with its own message (made safe).
     Server {
-        /// Status code.
-        code: StatusCode,
-        /// The server's message, made safe.
+        /// What was refused.
+        refusal: Refusal,
+        /// The server's message, made safe; may be empty.
         message: String,
     },
-    /// The SFTP session is over.
+    /// The session with the server is over.
     SessionClosed,
     /// The local file system failed.
     Local {
@@ -294,28 +281,20 @@ pub enum FilesError {
     Exists,
 }
 
-impl From<&SftpError> for FilesError {
-    fn from(error: &SftpError) -> Self {
+impl From<&RemoteError> for FilesError {
+    fn from(error: &RemoteError) -> Self {
         match error {
-            SftpError::Status { code, message } => Self::Server {
-                code: *code,
+            RemoteError::Refused { refusal, message } => Self::Server {
+                refusal: *refusal,
                 message: server_text(&String::from_utf8_lossy(message)),
             },
-            _ => Self::SessionClosed,
-        }
-    }
-}
-
-impl From<&TransferError> for FilesError {
-    fn from(error: &TransferError) -> Self {
-        match error {
-            TransferError::Sftp(error) => error.into(),
-            TransferError::Local { source, .. } => Self::Local {
-                detail: source.to_string(),
+            RemoteError::Local { detail } => Self::Local {
+                detail: detail.clone(),
             },
-            TransferError::NotARegularFile => Self::NotAFile,
+            RemoteError::NotAFile => Self::NotAFile,
+            RemoteError::TooLarge => Self::TooLarge,
             // A cancel is a state of the transfer, not a failure: callers handle it first.
-            TransferError::Cancelled { .. } => Self::SessionClosed,
+            RemoteError::SessionClosed | RemoteError::Cancelled => Self::SessionClosed,
         }
     }
 }
@@ -323,8 +302,8 @@ impl From<&TransferError> for FilesError {
 /// The Files tab's state.
 #[derive(Debug)]
 pub struct FilesPane {
-    /// The SFTP session, once open.
-    pub client: Option<SftpClient>,
+    /// The session with the server, once open.
+    pub client: Option<RemoteSession>,
     /// Server side.
     pub remote: RemotePane,
     /// Local side.
@@ -411,15 +390,15 @@ pub fn download_name(remote_name: &[u8]) -> Result<LocalName, FilesError> {
 ///
 /// [`FilesError`] from the server.
 pub async fn list_remote(
-    client: SftpClient,
+    client: RemoteSession,
     path: RemotePath,
 ) -> Result<(RemotePath, Vec<RemoteEntry>), FilesError> {
     let absolute = client
-        .realpath(&path)
+        .canonical(&path)
         .await
         .map_err(|e| FilesError::from(&e))?;
     let listed = client
-        .read_dir(&absolute)
+        .list(&absolute)
         .await
         .map_err(|e| FilesError::from(&e))?;
     let mut entries: Vec<RemoteEntry> = listed.into_iter().map(RemoteEntry::from_listing).collect();
@@ -491,7 +470,7 @@ pub enum TransferEvent {
 #[derive(Debug, Clone)]
 pub struct TransferRequest {
     /// Session.
-    pub client: SftpClient,
+    pub client: RemoteSession,
     /// Direction.
     pub direction: Direction,
     /// Remote file.
@@ -520,88 +499,74 @@ pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent
                 let _ = events.try_send(TransferEvent::Progress(bytes));
             }
         };
-        let config = TransferConfig::default();
-        if request.folder {
-            let state = run_folder(&request, &config, progress).await;
-            let _ = events.send(TransferEvent::Finished(state)).await;
-            return;
-        }
-        let result = match request.direction {
-            Direction::Download => download(
-                &request.client,
-                &request.remote,
-                &request.local,
-                &config,
-                &request.cancel,
-                progress,
-            )
-            .await
-            .map(|report| report.bytes),
-            Direction::Upload => upload(
-                &request.client,
-                &request.local,
-                &request.remote,
-                request.replace,
-                &config,
-                &request.cancel,
-                progress,
-            )
-            .await
-            .map(|report| report.bytes),
-        };
-        let state = match result {
-            Ok(bytes) => {
-                let _ = events.send(TransferEvent::Progress(bytes)).await;
-                TransferState::Done
+        let state = if request.folder {
+            match run_folder(&request, progress).await {
+                Ok(0) => TransferState::Done,
+                Ok(skipped) => TransferState::Incomplete { skipped },
+                Err(error) => failed(&error),
             }
-            Err(TransferError::Cancelled { .. }) => TransferState::Cancelled,
-            Err(TransferError::NotARegularFile) => TransferState::Failed(FilesError::NotAFile),
-            Err(error) => TransferState::Failed(FilesError::from(&error)),
+        } else {
+            let result = match request.direction {
+                Direction::Download => {
+                    request
+                        .client
+                        .download(&request.remote, &request.local, &request.cancel, progress)
+                        .await
+                }
+                Direction::Upload => {
+                    request
+                        .client
+                        .upload(
+                            &request.local,
+                            &request.remote,
+                            request.replace,
+                            &request.cancel,
+                            progress,
+                        )
+                        .await
+                }
+            };
+            match result {
+                Ok(bytes) => {
+                    let _ = events.send(TransferEvent::Progress(bytes)).await;
+                    TransferState::Done
+                }
+                Err(error) => failed(&error),
+            }
         };
         let _ = events.send(TransferEvent::Finished(state)).await;
     });
     ReceiverStream::new(receiver)
 }
 
-/// Runs a folder transfer; returns how it ended.
+/// How a transfer that did not complete ended: a cancel is a state, not a failure.
+fn failed(error: &RemoteError) -> TransferState {
+    match error {
+        RemoteError::Cancelled => TransferState::Cancelled,
+        other => TransferState::Failed(FilesError::from(other)),
+    }
+}
+
+/// Runs a folder transfer; returns how many entries it left out.
 async fn run_folder(
     request: &TransferRequest,
-    config: &TransferConfig,
     progress: impl FnMut(u64) + Send,
-) -> TransferState {
-    let result = match request.direction {
+) -> Result<usize, RemoteError> {
+    let report = match request.direction {
         Direction::Download => {
-            download_tree(
-                &request.client,
-                &request.remote,
-                &request.local,
-                config,
-                &request.cancel,
-                progress,
-            )
-            .await
+            request
+                .client
+                .download_folder(&request.remote, &request.local, &request.cancel, progress)
+                .await
         }
         Direction::Upload => {
-            upload_tree(
-                &request.client,
-                &request.local,
-                &request.remote,
-                config,
-                &request.cancel,
-                progress,
-            )
-            .await
+            request
+                .client
+                .upload_folder(&request.local, &request.remote, &request.cancel, progress)
+                .await
         }
-    };
-    match result {
-        Ok(report) if report.skipped.is_empty() => TransferState::Done,
-        Ok(report) => TransferState::Incomplete {
-            skipped: report.skipped.len(),
-        },
-        Err(TreeError::TooLarge) => TransferState::Failed(FilesError::TooLarge),
-        Err(TreeError::Transfer(TransferError::Cancelled { .. })) => TransferState::Cancelled,
-        Err(TreeError::Transfer(error)) => TransferState::Failed(FilesError::from(&error)),
-    }
+    }?;
+    Ok(report.skipped)
 }
 
 /// A change to a folder's entries.
@@ -610,14 +575,14 @@ pub enum FileOperation {
     /// Create a folder on the server.
     RemoteMakeFolder {
         /// Session.
-        client: SftpClient,
+        client: RemoteSession,
         /// Folder to create.
         path: RemotePath,
     },
     /// Rename on the server; an existing target makes it fail.
     RemoteRename {
         /// Session.
-        client: SftpClient,
+        client: RemoteSession,
         /// Current path.
         from: RemotePath,
         /// New path.
@@ -626,7 +591,7 @@ pub enum FileOperation {
     /// Delete on the server, a folder with everything in it, never following a link.
     RemoteRemove {
         /// Session.
-        client: SftpClient,
+        client: RemoteSession,
         /// What to delete.
         path: RemotePath,
     },
@@ -694,21 +659,15 @@ fn local_operation(operation: &FileOperation) -> Result<(), FilesError> {
 pub async fn file_operation(operation: FileOperation) -> Result<(), FilesError> {
     match operation {
         FileOperation::RemoteMakeFolder { client, path } => client
-            .mkdir(&path, Attributes::default())
+            .make_folder(&path)
             .await
             .map_err(|e| FilesError::from(&e)),
         FileOperation::RemoteRename { client, from, to } => client
-            .rename(&from, &to, false)
+            .rename(&from, &to)
             .await
             .map_err(|e| FilesError::from(&e)),
         FileOperation::RemoteRemove { client, path } => {
-            remove_tree(&client, &path, &CancellationToken::new())
-                .await
-                .map(|_| ())
-                .map_err(|error| match error {
-                    TreeError::TooLarge => FilesError::TooLarge,
-                    TreeError::Transfer(error) => FilesError::from(&error),
-                })
+            client.remove(&path).await.map_err(|e| FilesError::from(&e))
         }
         local => tokio::task::spawn_blocking(move || local_operation(&local))
             .await
@@ -750,29 +709,27 @@ pub fn typed_name(side: Side, typed: &str) -> Result<LocalName, FilesError> {
 
 #[cfg(test)]
 mod tests {
-    use heimdall_sftp::DirEntry;
-    use heimdall_sftp::protocol::Attributes;
+    use heimdall_files::{ItemKind, RemoteItem};
 
     use super::{EntryKind, RemoteEntry, sort_remote};
 
-    fn entry(name: &[u8], mode: u32) -> RemoteEntry {
-        RemoteEntry::from_listing(DirEntry {
+    fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {
+        RemoteEntry::from_listing(RemoteItem {
             name: name.to_vec(),
-            attributes: Attributes {
-                permissions: Some(mode),
-                ..Attributes::default()
-            },
+            kind,
+            size: None,
+            modified: None,
         })
     }
 
     #[test]
     fn folders_come_first_then_names_ignoring_case() {
         let mut entries = vec![
-            entry(b"b.txt", 0o100_644),
-            entry(b"Zeta", 0o040_755),
-            entry(b"a.txt", 0o100_644),
-            entry(b"alpha", 0o040_755),
-            entry(b"link", 0o120_777),
+            entry(b"b.txt", ItemKind::File),
+            entry(b"Zeta", ItemKind::Directory),
+            entry(b"a.txt", ItemKind::File),
+            entry(b"alpha", ItemKind::Directory),
+            entry(b"link", ItemKind::Link),
         ];
         sort_remote(&mut entries);
         let labels: Vec<&str> = entries.iter().map(|e| e.label.as_str()).collect();
@@ -782,7 +739,7 @@ mod tests {
 
     #[test]
     fn a_hostile_name_is_shown_escaped_and_safe() {
-        let shown = entry(b"caf\xE9\x1b[2J\xE2\x80\xAE.txt", 0o100_644);
+        let shown = entry(b"caf\xE9\x1b[2J\xE2\x80\xAE.txt", ItemKind::File);
         assert!(!shown.label.contains('\u{1b}'));
         assert!(!shown.label.contains('\u{202e}'));
         assert!(shown.label.contains("\\xE9"), "{}", shown.label);

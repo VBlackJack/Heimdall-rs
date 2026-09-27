@@ -19,6 +19,7 @@ publish = false
 [workspace.dependencies]
 heimdall-app = { path = "crates/heimdall-app" }
 heimdall-core = { path = "crates/heimdall-core" }
+heimdall-files = { path = "crates/heimdall-files" }
 heimdall-i18n = { path = "crates/heimdall-i18n" }
 heimdall-ssh = { path = "crates/heimdall-ssh" }
 heimdall-sftp = { path = "crates/heimdall-sftp" }

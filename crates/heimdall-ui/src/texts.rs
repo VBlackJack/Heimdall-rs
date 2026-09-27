@@ -25,8 +25,7 @@ use heimdall_app::{KeyProblem, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
 use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
-use heimdall_sftp::local_name::LocalNameError;
-use heimdall_sftp::protocol::StatusCode;
+use heimdall_files::{LocalNameError, Refusal};
 use heimdall_ssh::AuthMethod;
 
 use crate::i18n::fl;
@@ -183,9 +182,9 @@ pub fn draft_error(error: DraftError) -> String {
 /// Why a Files operation failed, in the user's language.
 pub fn files_error(error: &FilesError) -> String {
     match error {
-        FilesError::Server { code, message } => {
+        FilesError::Server { refusal, message } => {
             let message = if message.is_empty() {
-                status_text(*code)
+                refusal_text(*refusal)
             } else {
                 message.clone()
             };
@@ -205,12 +204,12 @@ pub fn files_error(error: &FilesError) -> String {
     }
 }
 
-fn status_text(code: StatusCode) -> String {
-    match code {
-        StatusCode::NoSuchFile => fl!("ui-files-error-no-such-file"),
-        StatusCode::PermissionDenied => fl!("ui-files-error-permission-denied"),
-        StatusCode::OpUnsupported => fl!("ui-files-error-unsupported"),
-        _ => fl!("ui-files-error-failure"),
+fn refusal_text(refusal: Refusal) -> String {
+    match refusal {
+        Refusal::NoSuchFile => fl!("ui-files-error-no-such-file"),
+        Refusal::PermissionDenied => fl!("ui-files-error-permission-denied"),
+        Refusal::Unsupported => fl!("ui-files-error-unsupported"),
+        Refusal::Failure => fl!("ui-files-error-failure"),
     }
 }
 
@@ -345,7 +344,7 @@ mod tests {
     fn a_refused_name_is_explained() {
         let text = super::files_error(&heimdall_app::files::FilesError::UnsafeName {
             name: "C:x".to_owned(),
-            reason: heimdall_sftp::local_name::LocalNameError::Forbidden(':'),
+            reason: heimdall_files::LocalNameError::Forbidden(':'),
         });
         assert!(text.contains("C:x") && text.contains("\":\""), "{text}");
     }

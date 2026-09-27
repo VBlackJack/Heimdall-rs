@@ -27,6 +27,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::AgentSource;
@@ -34,7 +35,7 @@ use heimdall_term::GridSize;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 /// A client whose server only answers the version exchange: enough for effects to carry.
-async fn idle_client() -> SftpClient {
+async fn idle_client() -> RemoteSession {
     let (client_end, mut server) = tokio::io::duplex(4096);
     tokio::spawn(async move {
         let mut length = [0; 4];
@@ -50,9 +51,11 @@ async fn idle_client() -> SftpClient {
         // Keep the pipe open for the life of the test.
         std::future::pending::<()>().await;
     });
-    SftpClient::start(client_end, ClientConfig::default())
-        .await
-        .expect("started")
+    RemoteSession::Sftp(
+        SftpClient::start(client_end, ClientConfig::default())
+            .await
+            .expect("started"),
+    )
 }
 
 fn app(dir: &Path) -> App {
@@ -122,7 +125,6 @@ fn remote_entry(name: &[u8], kind: EntryKind, size: u64) -> RemoteEntry {
         kind,
         size: Some(size),
         modified: None,
-        permissions: None,
     }
 }
 

@@ -413,9 +413,9 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
         /// Session.
-        client: heimdall_sftp::SftpClient,
+        client: heimdall_files::RemoteSession,
         /// Folder.
-        path: heimdall_sftp::RemotePath,
+        path: heimdall_files::RemotePath,
     },
     /// List a local folder, then send [`FilesMessage::LocalListed`].
     ListLocal {

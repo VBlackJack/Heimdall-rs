@@ -23,8 +23,8 @@ path = "src/lib.rs"
 [dependencies]
 heimdall-app.workspace = true
 heimdall-core.workspace = true
+heimdall-files.workspace = true
 heimdall-rdp.workspace = true
-heimdall-sftp.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
 i18n-embed.workspace = true
@@ -40,6 +40,8 @@ tokio.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# The fake SFTP server of the Files view tests.
+heimdall-sftp.workspace = true
 heimdall-i18n.workspace = true
 iced_test.workspace = true
 png.workspace = true

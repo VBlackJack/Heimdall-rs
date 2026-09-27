@@ -28,13 +28,14 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::RemoteSession;
 use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
-async fn idle_client() -> SftpClient {
+async fn idle_client() -> RemoteSession {
     let (client_end, mut server) = tokio::io::duplex(4096);
     tokio::spawn(async move {
         let mut length = [0; 4];
@@ -49,9 +50,11 @@ async fn idle_client() -> SftpClient {
         server.write_all(&version.encode()).await.expect("version");
         std::future::pending::<()>().await;
     });
-    SftpClient::start(client_end, ClientConfig::default())
-        .await
-        .expect("started")
+    RemoteSession::Sftp(
+        SftpClient::start(client_end, ClientConfig::default())
+            .await
+            .expect("started"),
+    )
 }
 
 /// A Files tab with `/srv` listed on the server and `dir` on this computer.
@@ -97,7 +100,6 @@ async fn tab(dir: &Path) -> (App, TabId) {
         kind,
         size: Some(4096),
         modified: None,
-        permissions: None,
     };
     let local = |name: &str, kind| LocalEntry {
         name: name.into(),
@@ -521,6 +523,7 @@ async fn remote_operations_against_openssh() {
     let Some((_server, client)) = common::start().await else {
         return;
     };
+    let client = RemoteSession::Sftp(client);
     let dir = tempfile::tempdir().expect("dir");
     let made = dir.path().join("made");
     common::step(file_operation(FileOperation::RemoteMakeFolder {
@@ -705,4 +708,89 @@ async fn a_pane_button_gives_its_pane_the_focus() {
     app.update(Message::DismissDialog);
     key(&mut app, tab, FilesKey::Next);
     assert_eq!(selected(&app, tab, Side::Local), Some(0));
+}
+
+/// A transfer's last count is its whole size whatever the throttle let through, and a cancel
+/// ends it as cancelled, not failed: a download cancelled can be started again and resumes.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_transfer_ends_on_its_full_count_and_a_cancel_is_not_a_failure() {
+    use heimdall_app::files::{TransferEvent, TransferRequest, TransferState, transfer_events};
+    use tokio_stream::StreamExt as _;
+    use tokio_util::sync::CancellationToken;
+
+    let Some((_server, client)) = common::start().await else {
+        return;
+    };
+    let client = RemoteSession::Sftp(client);
+    let dir = tempfile::tempdir().expect("dir");
+    let source = dir.path().join("large");
+    // Many chunks: the throttle drops most counts, the last among them.
+    let size = 8 * 1024 * 1024;
+    std::fs::write(&source, common::pattern(size)).expect("source");
+    let request = |target: &str, cancel: CancellationToken| TransferRequest {
+        client: client.clone(),
+        direction: Direction::Download,
+        remote: common::remote(&source),
+        local: dir.path().join(target),
+        replace: false,
+        folder: false,
+        cancel,
+    };
+
+    let events: Vec<TransferEvent> =
+        common::step(transfer_events(request("copy", CancellationToken::new())).collect()).await;
+    let (last, rest) = events.split_last().expect("events");
+    assert_eq!(*last, TransferEvent::Finished(TransferState::Done));
+    assert_eq!(
+        rest.last(),
+        Some(&TransferEvent::Progress(u64::try_from(size).expect("size")))
+    );
+
+    let cancelled = CancellationToken::new();
+    cancelled.cancel();
+    let events: Vec<TransferEvent> =
+        common::step(transfer_events(request("again", cancelled)).collect()).await;
+    assert_eq!(
+        events.last(),
+        Some(&TransferEvent::Finished(TransferState::Cancelled))
+    );
+}
+
+/// A folder sent with an entry left out ends incomplete, with the count, not done.
+#[cfg(unix)]
+#[tokio::test]
+async fn a_folder_with_a_link_ends_incomplete() {
+    use heimdall_app::files::{TransferEvent, TransferRequest, TransferState, transfer_events};
+    use tokio_stream::StreamExt as _;
+    use tokio_util::sync::CancellationToken;
+
+    let Some((_server, client)) = common::start().await else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let folder = dir.path().join("folder");
+    std::fs::create_dir(&folder).expect("folder");
+    std::fs::write(folder.join("kept"), b"kept").expect("file");
+    std::os::unix::fs::symlink("kept", folder.join("link")).expect("link");
+    let request = TransferRequest {
+        client: RemoteSession::Sftp(client),
+        direction: Direction::Download,
+        remote: common::remote(&folder),
+        local: dir.path().join("copy"),
+        replace: false,
+        folder: true,
+        cancel: CancellationToken::new(),
+    };
+    let events: Vec<TransferEvent> = common::step(transfer_events(request).collect()).await;
+    assert_eq!(
+        events.last(),
+        Some(&TransferEvent::Finished(TransferState::Incomplete {
+            skipped: 1
+        }))
+    );
+    assert_eq!(
+        std::fs::read(dir.path().join("copy").join("kept")).expect("copied"),
+        b"kept"
+    );
 }
