@@ -95,9 +95,10 @@ impl Drop for Pending {
     }
 }
 
-struct ChannelPrompter {
-    events: mpsc::Sender<ConnectionEvent>,
-    registry: AnswerRegistry,
+/// Answers SSH questions by asking the user through an attempt's events.
+pub(crate) struct ChannelPrompter {
+    pub(crate) events: mpsc::Sender<ConnectionEvent>,
+    pub(crate) registry: AnswerRegistry,
 }
 
 impl ChannelPrompter {
@@ -309,7 +310,11 @@ const SFTP_SUBSYSTEM: &str = "sftp";
 const SUBSYSTEM_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Reports how an attempt ended before its session opened.
-async fn report_failure(error: ConnectError, events: &mpsc::Sender<ConnectionEvent>, target: &str) {
+pub(crate) async fn report_failure(
+    error: ConnectError,
+    events: &mpsc::Sender<ConnectionEvent>,
+    target: &str,
+) {
     if let ConnectError::UnknownHostKey { host, port, key } = error {
         let fingerprint = fingerprint(&key);
         log::info!("{target} presented an unknown host key {fingerprint}");

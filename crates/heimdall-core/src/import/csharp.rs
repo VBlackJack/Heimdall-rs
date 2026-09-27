@@ -70,8 +70,6 @@ const GROUP_SEPARATOR: char = '/';
 pub enum SkipReason {
     /// A protocol not supported yet; carries its `connectionType`.
     NotSsh(String),
-    /// Reaches its server through an SSH gateway, not supported yet for this protocol.
-    NeedsJumpHost,
     /// Names an SSH gateway that is not in the file, or that was itself left out.
     MissingGateway,
     /// An SSH gateway reached through itself, by way of its parents.
@@ -264,7 +262,7 @@ pub fn import(
         {
             convert_local(&server).map(|profile| report.local.push(profile))
         } else if server.connection_type == RDP_CONNECTION_TYPE {
-            convert_rdp(&server).map(|profile| report.rdp.push(profile))
+            convert_rdp(&server, &known).map(|profile| report.rdp.push(profile))
         } else if server
             .connection_type
             .eq_ignore_ascii_case(TELNET_CONNECTION_TYPE)
@@ -485,7 +483,8 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
     })
 }
 
-fn convert_rdp(server: &LegacyServer) -> Result<RdpProfile, SkipReason> {
+/// An RDP profile, through its SSH gateway when it goes through one among `gateways`.
+fn convert_rdp(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<RdpProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
     }
@@ -494,9 +493,12 @@ fn convert_rdp(server: &LegacyServer) -> Result<RdpProfile, SkipReason> {
     }
     // As `ConnectionService` decides: through the SSH gateway unless the profile asks for a
     // direct connection or names no gateway.
-    if !server.use_direct_connection && !is_null_or_empty(server.ssh_gateway_id.as_ref()) {
-        return Err(SkipReason::NeedsJumpHost);
-    }
+    let gateway = match non_empty(server.ssh_gateway_id.as_ref()) {
+        Some(_) if server.use_direct_connection => None,
+        None => None,
+        Some(id) if gateways.contains(id.as_str()) => Some(ProfileId::new(id)),
+        Some(_) => return Err(SkipReason::MissingGateway),
+    };
     if server
         .rdp_gateway
         .as_ref()
@@ -524,6 +526,7 @@ fn convert_rdp(server: &LegacyServer) -> Result<RdpProfile, SkipReason> {
         username: non_empty(server.rdp_username.as_ref()),
         domain: non_empty(server.rdp_domain.as_ref()),
         allow_tls_only: server.rdp_nla == Some(false),
+        gateway,
     })
 }
 

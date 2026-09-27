@@ -18,8 +18,9 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::profile::{ProfileId, RdpProfile};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway};
 use heimdall_rdp::{Fingerprint, KnownRdpHosts};
+use heimdall_ssh::ConnectOptions;
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
@@ -69,19 +70,29 @@ impl App {
             .with_file_name(KNOWN_RDP_HOSTS_FILE_NAME)
     }
 
+    /// What connecting to `profile` needs, its SSH gateways included; an error when they
+    /// cannot be followed.
     fn rdp_request(
         &self,
         profile: &RdpProfile,
         accepted: Option<Fingerprint>,
         cancel: CancellationToken,
-    ) -> RdpRequest {
-        RdpRequest {
+    ) -> Result<RdpRequest, UiError> {
+        let route = self
+            .store
+            .route(profile.gateway.as_ref())
+            .map_err(UiError::Route)?;
+        let mut ssh = ConnectOptions::new(self.config.known_hosts.clone());
+        ssh.agent = self.config.agent.clone();
+        Ok(RdpRequest {
             profile: profile.clone(),
             known_hosts: self.known_rdp_hosts(),
             accepted,
             desktop: DEFAULT_DESKTOP,
+            route: route.iter().map(SshGateway::as_hop).collect(),
+            ssh,
             cancel,
-        }
+        })
     }
 
     /// Opens an RDP tab for a saved profile.
@@ -102,17 +113,28 @@ impl App {
             cancel,
         );
         tab.files = None;
+        let effects = match request {
+            Ok(request) => vec![Effect::ConnectRdp {
+                tab: tab_id,
+                attempt,
+                request: Box::new(request),
+            }],
+            Err(error) => {
+                tab.phase = Phase::Failed(error);
+                Vec::new()
+            }
+        };
         self.tabs.push(tab);
         self.active = Some(tab_id);
-        vec![Effect::ConnectRdp {
-            tab: tab_id,
-            attempt,
-            request: Box::new(request),
-        }]
+        effects
     }
 
     /// Connects `tab` again, with `accepted` as the key the user just agreed to.
-    fn reconnect_rdp(&mut self, tab_id: TabId, accepted: Option<Fingerprint>) -> Vec<Effect> {
+    pub(super) fn reconnect_rdp(
+        &mut self,
+        tab_id: TabId,
+        accepted: Option<Fingerprint>,
+    ) -> Vec<Effect> {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -125,12 +147,19 @@ impl App {
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
         tab.desktop = None;
-        let request = self.rdp_request(&profile, accepted, cancel);
-        vec![Effect::ConnectRdp {
-            tab: tab_id,
-            attempt,
-            request: Box::new(request),
-        }]
+        match self.rdp_request(&profile, accepted, cancel) {
+            Ok(request) => vec![Effect::ConnectRdp {
+                tab: tab_id,
+                attempt,
+                request: Box::new(request),
+            }],
+            Err(error) => {
+                if let Some(tab) = self.tab_mut(tab_id) {
+                    tab.phase = Phase::Failed(error);
+                }
+                Vec::new()
+            }
+        }
     }
 
     /// The user's answer to the certificate question of an RDP tab.
@@ -157,7 +186,8 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        let (Phase::Failed(UiError::HostKeyChanged { .. }), TabProfile::Rdp(profile)) =
+        // The RDP server's own key only: a gateway's changed SSH key is not this server's.
+        let (Phase::Failed(UiError::HostKeyChanged { target: None, .. }), TabProfile::Rdp(profile)) =
             (&tab.phase, &tab.profile)
         else {
             return Vec::new();
