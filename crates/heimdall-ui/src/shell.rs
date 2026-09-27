@@ -39,10 +39,10 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
     Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
     LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
-    Message as AppMessage, NameAction, Phase, Prompt, Purpose, QuestionId, QuestionKind, Retry,
-    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TreeRow, UiError,
-    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
-    master_password_problem, open_vault, server_text,
+    Message as AppMessage, NameAction, Phase, ProfileMenuMessage, Prompt, Purpose, QuestionId,
+    QuestionKind, Retry, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
+    TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -817,7 +817,10 @@ impl Shell {
     /// Opens `menu` at the pointer, or, for a sub-menu, where its menu was.
     fn open_tree_menu(&mut self, menu: TreeMenu) {
         let at = match (&menu, &self.menu) {
-            (TreeMenu::ConnectAs(_), Some((_, at))) => *at,
+            (
+                TreeMenu::ConnectAs(_) | TreeMenu::MoveFolder(_) | TreeMenu::MoveProfile(_),
+                Some((_, at)),
+            ) => *at,
             _ => self.cursor.get(),
         };
         // As in the C# tree: a right click selects the row it is on.
@@ -949,9 +952,12 @@ impl Shell {
     /// a form is refused; never again while the user types.
     fn focus_dialog(&mut self) -> Task<Message> {
         let (next, field) = match &self.app.dialog {
-            Some(Dialog::AskName { .. } | Dialog::RenameTab { .. } | Dialog::FolderName { .. }) => {
-                (Some(DialogFocus::Name), name_field_id())
-            }
+            Some(
+                Dialog::AskName { .. }
+                | Dialog::RenameTab { .. }
+                | Dialog::FolderName { .. }
+                | Dialog::RenameProfile { .. },
+            ) => (Some(DialogFocus::Name), name_field_id()),
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
             Some(Dialog::EditProfile { error, .. }) => {
                 match self.form_focus(DialogForm::Profile, *error, profile_field_id) {
@@ -1164,6 +1170,8 @@ impl Shell {
                     tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
                 } else if let TreeMenu::MoveFolder(path) = menu {
                     tree_view::move_folder_entries(path, &self.app.folder_targets(path))
+                } else if let TreeMenu::MoveProfile(id) = menu {
+                    tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
                 } else {
                     let profile = match menu {
                         TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => {
@@ -1173,7 +1181,8 @@ impl Shell {
                         | TreeMenu::More
                         | TreeMenu::Tab(_)
                         | TreeMenu::Folder(_)
-                        | TreeMenu::MoveFolder(_) => None,
+                        | TreeMenu::MoveFolder(_)
+                        | TreeMenu::MoveProfile(_) => None,
                     };
                     let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
                     let connect_as = profile
@@ -2638,7 +2647,33 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     .into()
 }
 
-/// The dialogs about folders: a name, a deletion, connecting all it holds.
+/// A new name for a profile, its present one written in.
+fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
+    column![
+        text(fl!("ui-tree-rename-title")).size(HEADING_SIZE),
+        text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .id(name_field_id())
+            .on_input(|value| {
+                Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::NameEdited(
+                    value,
+                )))
+            })
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-rename-confirm")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The dialogs about the tree: a folder's name, its deletion, connecting all it holds, a
+/// profile's name.
 fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let buttons = |action: String| {
         row![
@@ -2696,6 +2731,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             ),
             fl!("ui-folder-delete"),
         ),
+        Dialog::RenameProfile { value, .. } => return rename_profile_dialog(value),
         Dialog::ConfirmConnectFolder { count, .. } => (
             fl!("ui-folder-connect-all-title"),
             fl!("ui-folder-connect-all-body", count = (*count)),
@@ -2708,10 +2744,15 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
         .into()
 }
 
-/// The dialogs about closing or naming tabs.
+/// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::ConfirmPaste { lines, .. } => (
+            fl!("ui-dialog-paste-title"),
+            fl!("ui-dialog-paste-body", count = (*lines)),
+            fl!("ui-dialog-paste-confirm"),
+        ),
         Dialog::ConfirmCloseTabs { tabs, live } => (
             fl!("ui-dialog-close-tabs-title"),
             fl!(
@@ -3106,12 +3147,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     };
     let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
     match dialog {
-        Dialog::ConfirmCloseTab(_) | Dialog::ConfirmCloseTabs { .. } | Dialog::RenameTab { .. } => {
-            tab_dialog(dialog)
-        }
+        Dialog::ConfirmCloseTab(_)
+        | Dialog::ConfirmCloseTabs { .. }
+        | Dialog::RenameTab { .. }
+        | Dialog::ConfirmPaste { .. } => tab_dialog(dialog),
         Dialog::FolderName { .. }
         | Dialog::ConfirmDeleteFolder { .. }
-        | Dialog::ConfirmConnectFolder { .. } => folder_dialog(dialog),
+        | Dialog::ConfirmConnectFolder { .. }
+        | Dialog::RenameProfile { .. } => folder_dialog(dialog),
         Dialog::ConfirmExit { live } => question(
             fl!("ui-dialog-exit-title"),
             fl!("ui-dialog-exit-body", count = (*live)),
@@ -3147,12 +3190,6 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
                 fl!("ui-dialog-delete-file-body", name = name.as_str())
             },
             fl!("ui-dialog-delete-confirm"),
-        )
-        .into(),
-        Dialog::ConfirmPaste { lines, .. } => question(
-            fl!("ui-dialog-paste-title"),
-            fl!("ui-dialog-paste-body", count = (*lines)),
-            fl!("ui-dialog-paste-confirm"),
         )
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),

@@ -20,7 +20,8 @@
 use std::path::Path;
 
 use heimdall_app::{
-    App, AppConfig, Dialog, Effect, FolderMessage, FolderNaming, Message, NO_FOLDER, TreeRow,
+    App, AppConfig, Dialog, Effect, FolderMessage, FolderNaming, Message, NO_FOLDER,
+    ProfileMenuMessage, TreeRow,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::profile::{LocalArguments, LocalCommand, LocalProfile, ProfileId, SshProfile};
@@ -362,4 +363,55 @@ fn a_session_added_in_a_folder_has_it_written_in() {
     assert!(
         matches!(&app.dialog, Some(Dialog::EditProfile { draft, .. }) if draft.group.is_empty())
     );
+}
+
+#[test]
+fn a_profile_moves_to_a_folder_or_to_none_as_the_menu_lists_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let targets = app.profile_move_targets(&ProfileId::new("db"));
+    assert_eq!(targets.first(), Some(&(None, true)), "(No Folder) first");
+    assert!(
+        targets.contains(&(Some("Prod".to_owned()), false)),
+        "its own greyed"
+    );
+    assert!(targets.contains(&(Some("Prod/Web".to_owned()), true)));
+    assert_eq!(
+        app.profile_move_targets(&ProfileId::new("loose")).first(),
+        Some(&(None, false))
+    );
+    let moved = |to: Option<&str>| {
+        Message::ProfileMenu(ProfileMenuMessage::Move {
+            id: ProfileId::new("db"),
+            to: to.map(str::to_owned),
+        })
+    };
+    app.update(moved(Some(" dev ")));
+    assert_eq!(group_of(&app, "db").as_deref(), Some("dev"));
+    app.update(moved(None));
+    assert_eq!(group_of(&app, "db"), None);
+}
+
+#[test]
+fn a_profile_is_renamed_and_an_empty_name_leaves_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let name = |app: &App| app.profile_summary(&ProfileId::new("db")).expect("db").name;
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Rename(
+        ProfileId::new("db"),
+    )));
+    assert!(matches!(&app.dialog, Some(Dialog::RenameProfile { value, .. }) if value == "db"));
+    app.update(Message::ProfileMenu(ProfileMenuMessage::NameEdited(
+        "  Database  ".to_owned(),
+    )));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(name(&app), "Database");
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Rename(
+        ProfileId::new("db"),
+    )));
+    app.update(Message::ProfileMenu(ProfileMenuMessage::NameEdited(
+        " ".to_owned(),
+    )));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(name(&app), "Database", "unchanged");
 }

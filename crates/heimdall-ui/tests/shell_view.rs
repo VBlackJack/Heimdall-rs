@@ -1138,3 +1138,67 @@ fn a_folder_has_the_csharp_menu_and_its_name_dialog_says_why_a_name_is_refused()
     ui.find("A folder with this name already exists at the same level.")
         .expect("and says why");
 }
+
+#[test]
+fn a_profile_renames_and_moves_to_another_folder_from_its_menu() {
+    use heimdall_app::ProfileMenuMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("a");
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Rename").expect("rename");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::MenuChoice(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(renamed)))
+                if *renamed == id
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Move to folder").expect("move");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::MoveProfile(moved)) if *moved == id
+        )));
+    }
+    // The list alone: every label is unique there, the tree's own "(No Folder)" aside.
+    let targets = vec![
+        (None, true),
+        (Some("Production".to_owned()), false),
+        (Some("Lab".to_owned()), true),
+    ];
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    for (label, expected) in [
+        ("(No Folder)", Some(None)),
+        ("Production", None),
+        ("Lab", Some(Some("Lab".to_owned()))),
+    ] {
+        let mut ui = Simulator::with_size(
+            settings.clone(),
+            WINDOW,
+            heimdall_ui::tree_view::move_profile_entries(&id, &targets),
+        );
+        ui.click(label).expect(label);
+        let moved: Vec<Option<String>> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(AppMessage::ProfileMenu(ProfileMenuMessage::Move {
+                    to,
+                    ..
+                })) => Some(to),
+                _ => None,
+            })
+            .collect();
+        match expected {
+            Some(to) => assert_eq!(moved, [to], "{label}"),
+            None => assert!(moved.is_empty(), "{label} is its own folder: greyed"),
+        }
+    }
+}

@@ -436,3 +436,8 @@ ui-folder-delete-body = Delete folder "{ $name }"? Affected entries in this fold
 ui-folder-connect-all-title = Connect All
 ui-folder-connect-all-body = Connect to all { $count } sessions in this folder?
 ui-folder-connect-all-confirm = Connect
+
+## A profile's Rename and "Move to folder", as the C# tree menu's.
+ui-tree-rename = Rename
+ui-tree-rename-title = Rename Session
+ui-tree-move-to-folder = Move to folder

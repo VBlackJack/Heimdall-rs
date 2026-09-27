@@ -482,6 +482,47 @@ impl ProfileStore {
         Ok(to.to_owned())
     }
 
+    /// Puts profile `id`, of any protocol, in folder `group`, none for `None`; whether it is
+    /// saved.
+    pub fn set_group(&mut self, id: &ProfileId, group: Option<String>) -> bool {
+        let group = group
+            .map(|path| folder::normal(&path))
+            .filter(|path| !path.is_empty());
+        self.profile_fields_mut(id)
+            .map(|(_, current)| *current = group)
+            .is_some()
+    }
+
+    /// Names profile `id`, of any protocol, `name`, trimmed; whether it is saved and the
+    /// name is not empty.
+    pub fn rename_profile(&mut self, id: &ProfileId, name: &str) -> bool {
+        let name = name.trim();
+        if name.is_empty() {
+            return false;
+        }
+        self.profile_fields_mut(id)
+            .map(|(current, _)| name.clone_into(current))
+            .is_some()
+    }
+
+    /// The name and the folder of profile `id`, of any protocol, to change.
+    fn profile_fields_mut(&mut self, id: &ProfileId) -> Option<(&mut String, &mut Option<String>)> {
+        macro_rules! find {
+            ($list:expr) => {
+                if let Some(profile) = $list.iter_mut().find(|profile| profile.id == *id) {
+                    return Some((&mut profile.name, &mut profile.group));
+                }
+            };
+        }
+        find!(self.ssh);
+        find!(self.rdp);
+        find!(self.telnet);
+        find!(self.vnc);
+        find!(self.local);
+        find!(self.winrm);
+        None
+    }
+
     /// Deletes folder `path` and the folders in it; their profiles go to no folder, as the
     /// C# Heimdall moves them. How many profiles moved.
     pub fn delete_folder(&mut self, path: &str) -> usize {

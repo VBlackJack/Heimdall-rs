@@ -242,6 +242,7 @@ impl App {
                 Vec::new()
             }
             Message::Folder(message) => self.folder_menu(message),
+            Message::ProfileMenu(message) => self.profile_menu(message),
             Message::ConnectProfile(id) => self.connect_profile(&id),
             Message::DuplicateProfile { id, suffix } => {
                 self.duplicate_profile(&id, &suffix);

@@ -67,6 +67,7 @@ mod folder_menu;
 mod folders;
 mod gateways;
 mod local_tab;
+mod profile_menu;
 mod profiles;
 mod rdp_tab;
 mod reconnect;
@@ -84,6 +85,7 @@ use files_tab::{PendingOperation, PendingTransfer};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
+pub use profile_menu::ProfileMenuMessage;
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 use vault::VaultState;
@@ -368,6 +370,8 @@ pub enum Message {
     ToggleFolder(String),
     /// Something from a folder's menu.
     Folder(FolderMessage),
+    /// A profile's Rename or "Move to folder".
+    ProfileMenu(ProfileMenuMessage),
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
     /// Connect to a profile with its own protocol.
@@ -496,6 +500,7 @@ impl fmt::Debug for Message {
             Self::ChooseGateway(id) => write!(f, "ChooseGateway({id})"),
             Self::ToggleFolder(path) => write!(f, "ToggleFolder({path})"),
             Self::Folder(message) => write!(f, "Folder({message:?})"),
+            Self::ProfileMenu(message) => write!(f, "ProfileMenu({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
@@ -1059,6 +1064,13 @@ pub enum Dialog {
         /// Why the last name was refused, until the user types again.
         error: Option<heimdall_core::folder::FolderError>,
     },
+    /// A new name for a profile.
+    RenameProfile {
+        /// The profile.
+        id: ProfileId,
+        /// The name typed so far.
+        value: String,
+    },
     /// Delete a folder; its profiles go to no folder.
     ConfirmDeleteFolder {
         /// Its path.
@@ -1343,6 +1355,7 @@ impl App {
             message @ (Message::SelectProfile(_)
             | Message::ToggleFolder(_)
             | Message::Folder(_)
+            | Message::ProfileMenu(_)
             | Message::ConnectProfile(_)
             | Message::DuplicateProfile { .. }
             | Message::RequestDeleteProfile(_)
@@ -1962,6 +1975,10 @@ impl App {
             }
             Some(Dialog::FolderName { naming, value, .. }) => {
                 self.confirm_folder_name(naming, value);
+                Vec::new()
+            }
+            Some(Dialog::RenameProfile { id, value }) => {
+                self.confirm_rename_profile(&id, &value);
                 Vec::new()
             }
             Some(Dialog::ConfirmDeleteFolder { path, .. }) => {
