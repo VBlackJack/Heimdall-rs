@@ -47,7 +47,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::desktop::{DesktopInput, DesktopPane};
 use crate::driver::{ConnectRequest, Purpose};
-use crate::error::UiError;
+use crate::error::{ServerAddress, UiError};
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::gateway_draft::GatewayDraft;
@@ -65,6 +65,7 @@ mod gateways;
 mod local_tab;
 mod profiles;
 mod rdp_tab;
+mod reconnect;
 mod telnet_tab;
 mod tree;
 mod vault;
@@ -179,6 +180,8 @@ pub enum Message {
     },
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
+    /// Open the failed or ended session of a tab again, in its place.
+    ReconnectTab(TabId),
     /// Something in a Files tab.
     Files(FilesMessage),
     /// Show a tab.
@@ -382,6 +385,7 @@ impl fmt::Debug for Message {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
+            Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
@@ -705,6 +709,8 @@ pub struct Tab {
     /// The saved passwords given in an attempt, each once: the server's, and a gateway's on
     /// the way.
     auto_answered: Vec<(AttemptId, ProfileId)>,
+    /// How the tab opens again, for Reconnect.
+    reopen: reconnect::Reopen,
 }
 
 impl fmt::Debug for Tab {
@@ -745,6 +751,7 @@ impl Tab {
         Self {
             id,
             title: profile.name().to_owned(),
+            reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(grid, TerminalConfig::default()),
@@ -1086,25 +1093,20 @@ impl App {
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         match message {
-            Message::OpenProfile(id) => self.open_profile(&id, Purpose::Shell),
-            Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
-            Message::OpenRdp(id) => self.open_rdp(&id),
-            Message::OpenTelnet(id) => self.open_telnet(&id),
-            Message::OpenVnc(id) => self.open_vnc(&id),
-            Message::OpenLocal(shell) => self.open_local(shell),
-            Message::OpenLocalProfile(id) => self.open_local_profile(&id),
-            Message::OpenWinRm(id) => self.open_winrm(&id),
-            Message::DesktopResize { tab, width, height } => {
-                if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
-                    pane.resize(width, height);
-                }
+            message @ (Message::OpenProfile(_)
+            | Message::OpenFiles(_)
+            | Message::OpenRdp(_)
+            | Message::OpenTelnet(_)
+            | Message::OpenVnc(_)
+            | Message::OpenLocal(_)
+            | Message::OpenLocalProfile(_)
+            | Message::OpenWinRm(_)
+            | Message::ReconnectTab(_)
+            | Message::ForgetServer(_)) => self.open_message(message),
+            message @ (Message::DesktopResize { .. } | Message::DesktopInput { .. }) => {
+                self.desktop_message(message);
                 Vec::new()
             }
-            Message::DesktopInput { tab, inputs } => {
-                self.desktop_input(tab, &inputs);
-                Vec::new()
-            }
-            Message::ForgetServer(tab) => self.forget_server(tab),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => {
                 let Some(found) = self.tab_mut(tab) else {
@@ -1185,6 +1187,36 @@ impl App {
                 self.dismiss_dialog();
                 Vec::new()
             }),
+        }
+    }
+
+    /// Applies a message for a remote desktop.
+    fn desktop_message(&mut self, message: Message) {
+        match message {
+            Message::DesktopResize { tab, width, height } => {
+                if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
+                    pane.resize(width, height);
+                }
+            }
+            Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
+            _ => {}
+        }
+    }
+
+    /// Applies a message opening a session: a new tab, or a tab's session again.
+    fn open_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::OpenProfile(id) => self.open_profile(&id, Purpose::Shell),
+            Message::OpenFiles(id) => self.open_profile(&id, Purpose::Files),
+            Message::OpenRdp(id) => self.open_rdp(&id),
+            Message::OpenTelnet(id) => self.open_telnet(&id),
+            Message::OpenVnc(id) => self.open_vnc(&id),
+            Message::OpenLocal(shell) => self.open_local(shell),
+            Message::OpenLocalProfile(id) => self.open_local_profile(&id),
+            Message::OpenWinRm(id) => self.open_winrm(&id),
+            Message::ReconnectTab(tab) => self.reconnect_tab(tab),
+            Message::ForgetServer(tab) => self.forget_server(tab),
+            _ => Vec::new(),
         }
     }
 
@@ -1413,7 +1445,10 @@ impl App {
                     .learn(&host, port, &key)
                     .map_err(|error| UiError::from(&error)),
                 Verdict::Changed { recorded } => Err(UiError::HostKeyChanged {
-                    target: Some(heimdall_core::profile::display_address(&host, port)),
+                    target: Some(ServerAddress {
+                        host: host.clone(),
+                        port,
+                    }),
                     recorded: fingerprint(&recorded),
                     offered: fingerprint(&key),
                 }),

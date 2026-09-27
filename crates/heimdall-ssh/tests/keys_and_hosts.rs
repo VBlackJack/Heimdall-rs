@@ -208,3 +208,73 @@ fn the_verdict_table() {
         }
     );
 }
+
+#[test]
+fn a_host_is_forgotten_on_its_port_only_and_other_lines_stay() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let hosts = KnownHosts::new(dir.path().join("known_hosts"));
+    let key = host_public_key("host-ed25519");
+    hosts.learn("web.lab", 22, &key).expect("learn 22");
+    hosts.learn("web.lab", 2222, &key).expect("learn 2222");
+    hosts.learn("db.lab", 2222, &key).expect("learn db");
+    let comment = "# kept as it is";
+    let text = std::fs::read_to_string(hosts.path()).expect("file");
+    std::fs::write(hosts.path(), format!("{comment}\n{text}")).expect("comment");
+
+    assert!(hosts.forget("Web.Lab", 2222).expect("forget"));
+    assert!(hosts.recorded("web.lab", 2222).expect("read").is_empty());
+    assert!(
+        !hosts.recorded("web.lab", 22).expect("read").is_empty(),
+        "port 22 stays"
+    );
+    assert!(
+        !hosts.recorded("db.lab", 2222).expect("read").is_empty(),
+        "another host stays"
+    );
+    let text = std::fs::read_to_string(hosts.path()).expect("file");
+    assert!(text.starts_with(comment), "{text}");
+    assert!(
+        !hosts.forget("web.lab", 2222).expect("again"),
+        "nothing left to remove"
+    );
+    assert!(hosts.forget("web.lab", 22).expect("forget 22"));
+    assert!(hosts.recorded("web.lab", 22).expect("read").is_empty());
+
+    let missing = KnownHosts::new(dir.path().join("none"));
+    assert!(!missing.forget("web.lab", 22).expect("no file"));
+}
+
+#[test]
+fn a_shared_line_loses_the_host_only_and_a_hashed_entry_is_left_to_a_person() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let hosts = KnownHosts::new(dir.path().join("known_hosts"));
+    let key = host_public_key("host-ed25519");
+    hosts.learn("web.lab", 22, &key).expect("learn");
+    let text = std::fs::read_to_string(hosts.path()).expect("file");
+    std::fs::write(
+        hosts.path(),
+        text.replacen("web.lab ", "web.lab,db.lab ", 1),
+    )
+    .expect("share");
+
+    assert!(hosts.forget("web.lab", 22).expect("forget"));
+    assert!(hosts.recorded("web.lab", 22).expect("read").is_empty());
+    assert!(
+        !hosts.recorded("db.lab", 22).expect("read").is_empty(),
+        "the other host keeps it"
+    );
+
+    // web.lab as OpenSSH writes it with HashKnownHosts (HMAC-SHA1 of the name, salt 0..19):
+    // its name cannot be read back, so the line stays and the host is not said forgotten.
+    let hashed = "|1|AAECAwQFBgcICQoLDA0ODxAREhM=|wnuEyVNwLIbJJNdcuTFET3xTFkc=";
+    let openssh = key.to_openssh().expect("openssh");
+    std::fs::write(hosts.path(), format!("{hashed} {openssh}\n")).expect("hashed");
+    assert!(
+        !hosts.recorded("web.lab", 22).expect("read").is_empty(),
+        "the hashed line names web.lab"
+    );
+    assert!(matches!(
+        hosts.forget("web.lab", 22),
+        Err(KnownHostsError::NotForgotten { .. })
+    ));
+}

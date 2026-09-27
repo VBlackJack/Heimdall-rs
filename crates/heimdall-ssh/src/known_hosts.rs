@@ -59,6 +59,13 @@ pub enum KnownHostsError {
         /// File concerned.
         path: PathBuf,
     },
+    /// An entry still names the host after its own lines were removed: a hashed or
+    /// wildcard line, which only a person can tell apart from other hosts' entries.
+    #[error("{path}: an entry for this host is hashed or shared with others: edit the file")]
+    NotForgotten {
+        /// File concerned.
+        path: PathBuf,
+    },
 }
 
 /// What the recorded keys say about the key a server presents.
@@ -189,4 +196,85 @@ impl KnownHosts {
             }
         })
     }
+
+    /// Forgets the keys recorded for `host` on `port`, as they are written when learnt:
+    /// the host's own lines go, and its name leaves a line it shares with other hosts;
+    /// every other line stays as it is. Whether something was removed. The next connection
+    /// asks about the server again.
+    ///
+    /// # Errors
+    ///
+    /// [`KnownHostsError::NotForgotten`] when a hashed or wildcard entry still names the
+    /// host: the file is left for a person to edit rather than the host said forgotten.
+    /// Otherwise an unsafe host name, or a file that cannot be read or written.
+    pub fn forget(&self, host: &str, port: u16) -> Result<bool, KnownHostsError> {
+        let host = validate_host(host)?;
+        let wanted = if port == DEFAULT_SSH_PORT {
+            host.clone()
+        } else {
+            format!("[{host}]:{port}")
+        };
+        let text = match fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(source) => {
+                return Err(KnownHostsError::Unreadable {
+                    path: self.path.clone(),
+                    source,
+                });
+            }
+        };
+        let mut removed = false;
+        let mut kept = Vec::new();
+        for line in text.lines() {
+            match without_host(line, &wanted) {
+                Some(rest) if rest.is_empty() => removed = true,
+                Some(rest) => {
+                    removed = true;
+                    kept.push(rest);
+                }
+                None => kept.push(line.to_owned()),
+            }
+        }
+        if removed {
+            let mut rewritten = kept.join("\n");
+            if !rewritten.is_empty() {
+                rewritten.push('\n');
+            }
+            fs::write(&self.path, rewritten).map_err(|_| KnownHostsError::WriteFailed {
+                path: self.path.clone(),
+            })?;
+        }
+        if !self.recorded(&host, port)?.is_empty() {
+            return Err(KnownHostsError::NotForgotten {
+                path: self.path.clone(),
+            });
+        }
+        Ok(removed)
+    }
+}
+
+/// Port a `known_hosts` line leaves out of the host name.
+const DEFAULT_SSH_PORT: u16 = 22;
+
+/// `line` without the host pattern `wanted`: `None` when the line does not name it (a
+/// comment, a marked line, another host), else what is left, empty when nothing is.
+fn without_host(line: &str, wanted: &str) -> Option<String> {
+    let trimmed = line.trim_start();
+    // Comments and marked lines (`@cert-authority`, `@revoked`) are never touched.
+    if trimmed.starts_with('#') || trimmed.starts_with('@') {
+        return None;
+    }
+    let (patterns, rest) = trimmed.split_once(char::is_whitespace)?;
+    let others: Vec<&str> = patterns
+        .split(',')
+        .filter(|pattern| !pattern.eq_ignore_ascii_case(wanted))
+        .collect();
+    if others.len() == patterns.split(',').count() {
+        return None;
+    }
+    if others.is_empty() {
+        return Some(String::new());
+    }
+    Some(format!("{} {rest}", others.join(",")))
 }

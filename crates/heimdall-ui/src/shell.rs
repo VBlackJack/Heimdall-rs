@@ -1263,10 +1263,6 @@ impl Shell {
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();
         }
-        let close = || {
-            button(text(fl!("ui-session-close-button")))
-                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id)))
-        };
         match &tab.phase {
             Phase::Connecting => center(card(
                 column![
@@ -1295,10 +1291,13 @@ impl Shell {
                 _ => terminal(tab, self.app.dialog.is_none()),
             },
             // A remote desktop that ended leaves nothing to look at.
-            Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => center(
-                card(column![text(fl!("ui-session-closed")), close()].spacing(SPACING)),
-            )
-            .into(),
+            Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
+                center(card(
+                    column![text(fl!("ui-session-closed")), self.session_actions(tab)]
+                        .spacing(SPACING),
+                ))
+                .into()
+            }
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
                     || fl!("ui-session-closed"),
@@ -1306,7 +1305,7 @@ impl Shell {
                 );
                 column![
                     terminal(tab, self.app.dialog.is_none()),
-                    row![text(status), close()]
+                    row![text(status), self.session_actions(tab)]
                         .spacing(SPACING)
                         .padding(PADDING)
                         .align_y(iced::Alignment::Center),
@@ -1314,18 +1313,28 @@ impl Shell {
                 .into()
             }
             Phase::Failed(UiError::Cancelled) => center(card(
-                column![text(fl!("ui-session-cancelled")), close()].spacing(SPACING),
+                column![text(fl!("ui-session-cancelled")), self.session_actions(tab)]
+                    .spacing(SPACING),
             ))
             .into(),
             Phase::Failed(error) => {
-                let mut actions = row![close()].spacing(SPACING);
-                // A changed RDP certificate is routine (Windows renews its own every six
-                // months): the way out is deliberate, never part of the connection.
-                if tab.purpose == Purpose::Rdp
-                    && matches!(error, UiError::HostKeyChanged { target: None, .. })
-                {
+                let mut actions = self.session_actions(tab);
+                // A changed key's way out is deliberate, never part of the connection: the
+                // old key is forgotten, and the new one asked about as on a first contact.
+                // An RDP certificate is routine to change (Windows renews its own every six
+                // months); an SSH key, as the C# Heimdall warns, may be an interception.
+                let forget = match error {
+                    UiError::HostKeyChanged { target: None, .. } if tab.purpose == Purpose::Rdp => {
+                        Some(fl!("ui-session-forget-server-button"))
+                    }
+                    UiError::HostKeyChanged {
+                        target: Some(_), ..
+                    } => Some(fl!("ui-session-accept-new-key-button")),
+                    _ => None,
+                };
+                if let Some(label) = forget {
                     actions = actions.push(
-                        button(text(fl!("ui-session-forget-server-button")))
+                        button(text(label))
                             .style(button::danger)
                             .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
                     );
@@ -1341,6 +1350,23 @@ impl Shell {
                 .into()
             }
         }
+    }
+
+    /// What an ended or failed session offers: Reconnect when it can open again, as the C#
+    /// Heimdall's, then Close.
+    fn session_actions(&self, tab: &Tab) -> iced::widget::Row<'_, Message> {
+        let mut actions = row![].spacing(SPACING).align_y(iced::Alignment::Center);
+        if self.app.can_reconnect(tab) {
+            actions = actions.push(
+                button(text(fl!("ui-session-reconnect-button")))
+                    .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
+            );
+        }
+        actions.push(
+            button(text(fl!("ui-session-close-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+        )
     }
 
     fn field(
