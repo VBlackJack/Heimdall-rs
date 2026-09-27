@@ -17,11 +17,11 @@
 //! One local shell, reported as [`ConnectionEvent`]s like a remote session. There is nothing
 //! to reach and nothing to ask: the shell starts at once or fails to.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use heimdall_ssh::{SessionClosed, TerminalSize};
-use heimdall_term::local::{self, LocalConfig, LocalEvent, LocalInput};
+use heimdall_term::local::{self, LocalArguments, LocalConfig, LocalEvent, LocalInput};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
@@ -38,11 +38,11 @@ const EVENT_QUEUE_LENGTH: usize = 64;
 pub struct LocalShell {
     /// Name shown to the user.
     pub name: String,
-    /// The program; `None` for the user's default shell (the login shell on Unix,
-    /// `PowerShell` on Windows).
+    /// The program; `None` for the user's default shell (`$SHELL` on Unix, `PowerShell` on
+    /// Windows).
     pub program: Option<String>,
-    /// Its arguments; only used with a program.
-    pub args: Vec<String>,
+    /// Its arguments.
+    pub arguments: LocalArguments,
     /// Folder it starts in; `None` for the one Files tabs start in.
     pub working_directory: Option<PathBuf>,
 }
@@ -54,6 +54,9 @@ pub struct LocalRequest {
     pub shell: LocalShell,
     /// Terminal size.
     pub size: TerminalSize,
+    /// Where the shell starts when its folder is not there any more, as the C# Heimdall
+    /// falls back: the home folder.
+    pub fallback_directory: PathBuf,
     /// Hangs the shell up.
     pub cancel: CancellationToken,
 }
@@ -71,13 +74,14 @@ async fn run(request: LocalRequest, events: mpsc::Sender<ConnectionEvent>) {
     let LocalRequest {
         shell,
         size,
+        fallback_directory,
         cancel,
     } = request;
     let (columns, rows) = side_lengths(size);
     let config = LocalConfig {
         program: shell.program,
-        args: shell.args,
-        working_directory: shell.working_directory,
+        arguments: shell.arguments,
+        working_directory: Some(starting_folder(shell.working_directory, fallback_directory)),
         columns,
         rows,
     };
@@ -133,6 +137,23 @@ async fn run(request: LocalRequest, events: mpsc::Sender<ConnectionEvent>) {
         if last {
             return;
         }
+    }
+}
+
+/// `folder` when it is one, else `fallback`. Looked at only once the program is on its way:
+/// a folder on another machine is not reached before the user has agreed to run it.
+fn starting_folder(folder: Option<PathBuf>, fallback: PathBuf) -> PathBuf {
+    match folder {
+        Some(folder) if Path::is_dir(&folder) => folder,
+        Some(folder) => {
+            log::warn!(
+                "local shell folder {} is not there; starting in {}",
+                folder.display(),
+                fallback.display()
+            );
+            fallback
+        }
+        None => fallback,
     }
 }
 
