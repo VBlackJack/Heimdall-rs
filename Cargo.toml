@@ -20,6 +20,7 @@ publish = false
 heimdall-app = { path = "crates/heimdall-app" }
 heimdall-core = { path = "crates/heimdall-core" }
 heimdall-files = { path = "crates/heimdall-files" }
+heimdall-keyring = { path = "crates/heimdall-keyring" }
 heimdall-i18n = { path = "crates/heimdall-i18n" }
 heimdall-ssh = { path = "crates/heimdall-ssh" }
 heimdall-sftp = { path = "crates/heimdall-sftp" }
@@ -36,6 +37,11 @@ argon2 = { version = "0.6.0", default-features = false, features = ["alloc", "ze
 data-encoding = "2.11.1"
 directories = "6.0.0"
 fluent-syntax = "0.12.0"
+# keyring-core and its stores: saved passwords without a master password, in the system's own store (Windows
+# Credential Manager, Secret Service on Linux); approved by Julien on 2026-09-27.
+keyring-core = "1.0.0"
+windows-native-keyring-store = "1.1.0"
+zbus-secret-service-keyring-store = "1.0.1"
 i18n-embed = { version = "0.16.0", features = ["fluent-system", "desktop-requester"] }
 i18n-embed-fl = "0.10.1"
 # connector, session, graphics, input: the RDP client; TLS comes from tokio-rustls below.
