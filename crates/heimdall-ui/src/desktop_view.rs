@@ -426,7 +426,13 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             .map(|(_, handle)| handle.clone());
         let handle = current.unwrap_or_else(|| {
             let handle = self.pane.framebuffer.read(|width, height, pixels| {
-                image::Handle::from_rgba(u32::from(width), u32::from(height), pixels.to_vec())
+                // Opaque whatever alpha the decoder left, as the GPU path draws it: a new
+                // desktop is zeros, which would let the window show through.
+                let mut opaque = pixels.to_vec();
+                for pixel in opaque.chunks_exact_mut(4) {
+                    pixel[3] = u8::MAX;
+                }
+                image::Handle::from_rgba(u32::from(width), u32::from(height), opaque)
             });
             *picture = Some((self.pane.generation, handle.clone()));
             handle
