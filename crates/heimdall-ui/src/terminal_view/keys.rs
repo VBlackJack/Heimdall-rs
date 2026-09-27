@@ -174,13 +174,18 @@ pub fn key_input(
     modifiers: keyboard::Modifiers,
     text: Option<&str>,
 ) -> Option<KeyInput> {
-    let key = match key {
-        keyboard::Key::Named(name) => Key::Named(named(*name)?),
-        keyboard::Key::Character(c) => Key::Character(c.chars().next()?),
-        keyboard::Key::Unidentified => {
-            // Dead keys arrive here without text; a composed character arrives with it.
-            let character = text?.chars().next()?;
-            Key::Character(character)
+    let key = if let Some(typed) = keypad_text(location, text) {
+        // The key is named as if Num Lock were off (1 is End): what it typed is the text.
+        Key::Character(typed)
+    } else {
+        match key {
+            keyboard::Key::Named(name) => Key::Named(named(*name)?),
+            keyboard::Key::Character(c) => Key::Character(c.chars().next()?),
+            keyboard::Key::Unidentified => {
+                // Dead keys arrive here without text; a composed character arrives with it.
+                let character = text?.chars().next()?;
+                Key::Character(character)
+            }
         }
     };
     Some(KeyInput {
@@ -198,6 +203,19 @@ pub fn key_input(
             alt: modifiers.alt(),
         },
     })
+}
+
+/// The printable character a keypad key typed: a digit with Num Lock on, or an operator.
+/// `None` off the keypad, and for keys that type no character (Num Lock off, Enter).
+///
+/// The toolkit names a key by `key_without_modifiers`, which on Windows reads the keypad as if
+/// Num Lock were off: the 1 of the keypad arrives as End, with "1" as its text.
+fn keypad_text(location: Location, text: Option<&str>) -> Option<char> {
+    if location != Location::Numpad {
+        return None;
+    }
+    let typed = text?.chars().next()?;
+    (!typed.is_control()).then_some(typed)
 }
 
 /// Terminal input for text committed by an input method (a composed or converted string).
@@ -256,6 +274,58 @@ mod tests {
         .expect("types");
         assert_eq!(input.location, KeyLocation::Numpad);
         assert_eq!(input.physical_digit, None);
+    }
+
+    #[test]
+    fn a_keypad_digit_named_as_its_num_lock_off_key_types_the_digit() {
+        // Windows, Num Lock on: the key is End, the text is the digit.
+        let input = key_input(
+            &keyboard::Key::Named(Named::End),
+            Physical::Code(Code::Numpad1),
+            Location::Numpad,
+            Modifiers::empty(),
+            Some("1"),
+        )
+        .expect("types");
+        assert_eq!(input.key, Key::Character('1'));
+        assert_eq!(input.location, KeyLocation::Numpad);
+    }
+
+    #[test]
+    fn a_keypad_key_that_types_no_character_keeps_its_name() {
+        // Num Lock off: End, no text.
+        let end = key_input(
+            &keyboard::Key::Named(Named::End),
+            Physical::Code(Code::Numpad1),
+            Location::Numpad,
+            Modifiers::empty(),
+            None,
+        )
+        .expect("a key");
+        assert_eq!(end.key, Key::Named(NamedKey::End));
+        // Keypad Enter types a carriage return, a control character.
+        let enter = key_input(
+            &keyboard::Key::Named(Named::Enter),
+            Physical::Code(Code::NumpadEnter),
+            Location::Numpad,
+            Modifiers::empty(),
+            Some("\r"),
+        )
+        .expect("a key");
+        assert_eq!(enter.key, Key::Named(NamedKey::Enter));
+    }
+
+    #[test]
+    fn off_the_keypad_the_key_name_wins_over_its_text() {
+        let input = key_input(
+            &keyboard::Key::Named(Named::End),
+            Physical::Code(Code::End),
+            Location::Standard,
+            Modifiers::empty(),
+            Some("1"),
+        )
+        .expect("a key");
+        assert_eq!(input.key, Key::Named(NamedKey::End));
     }
 
     #[test]
