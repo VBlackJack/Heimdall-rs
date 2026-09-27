@@ -741,3 +741,42 @@ fn a_password_typed_in_the_form_survives_a_visit_to_the_gateway_dialog() {
     assert!(core.dialog.is_none(), "{:?}", core.dialog);
     assert_eq!(saved_answer(&mut core).as_deref(), Some("hunter2"));
 }
+
+#[test]
+fn the_tree_search_filters_the_profiles_and_says_when_none_match() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Search").expect("the search box");
+        ui.typewrite("b");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::Search(term) if term == "b"))
+        );
+    }
+    let _ = shell.update(Message::Search("B.LAB".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("server b").expect("found by its host");
+        assert!(ui.find("server a").is_err(), "filtered out");
+        assert!(ui.find("server c").is_err(), "filtered out");
+    }
+    let _ = shell.update(Message::Search("nowhere".to_owned()));
+    snapshot(&shell, "tree-search-empty.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("No sessions match your search.").expect("says so");
+        ui.click("Clear search").expect("a way back");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::Search(term) if term.is_empty()))
+        );
+    }
+    let _ = shell.update(Message::Search(String::new()));
+    let mut ui = simulator(&shell);
+    for name in ["server a", "server b", "server c"] {
+        ui.find(name).expect(name);
+    }
+    assert!(ui.find("No sessions match your search.").is_err());
+}
