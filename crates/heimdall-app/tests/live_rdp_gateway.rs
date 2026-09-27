@@ -1,0 +1,136 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! A remote desktop through a real OpenSSH gateway, opt-in.
+//!
+//! Runs when `HEIMDALL_LIVE_JUMP_KEYS` names the key folder of the Heimdall-TestEnv lab and
+//! `HEIMDALL_LIVE_RDP_USER` and `HEIMDALL_LIVE_RDP_PASSWORD` hold the account of its xrdp
+//! server. The gateway on `127.0.0.1:2222` opens a tunnel to `heimdall-rdp:3389`, a name
+//! only it resolves; the gateway's SSH key and the server's certificate are both accepted
+//! as the user would, and the desktop must come up.
+
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+use heimdall_app::rdp_driver::{DEFAULT_DESKTOP, RdpRequest, rdp_events};
+use heimdall_app::{Answer, AnswerRegistry, ConnectionEvent};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
+use heimdall_rdp::Fingerprint;
+use heimdall_ssh::{AgentSource, ConnectOptions, KnownHosts, Secret};
+use tokio_stream::StreamExt;
+use tokio_util::sync::CancellationToken;
+
+const KEYS_VARIABLE: &str = "HEIMDALL_LIVE_JUMP_KEYS";
+const USER_VARIABLE: &str = "HEIMDALL_LIVE_RDP_USER";
+const PASSWORD_VARIABLE: &str = "HEIMDALL_LIVE_RDP_PASSWORD";
+const STEP: Duration = Duration::from_secs(60);
+/// Attempts: the gateway's key, the server's certificate, then the desktop.
+const ATTEMPTS: usize = 3;
+
+fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -> RdpRequest {
+    let mut ssh = ConnectOptions::new(dir.join("known_hosts"));
+    ssh.agent = AgentSource::Disabled;
+    RdpRequest {
+        profile: RdpProfile {
+            id: ProfileId::new("rdp"),
+            name: "rdp".to_owned(),
+            group: None,
+            host: "heimdall-rdp".to_owned(),
+            port: 3389,
+            username: Some(user.to_owned()),
+            domain: None,
+            // The lab's xrdp offers TLS without Network Level Authentication.
+            allow_tls_only: true,
+            gateway: None,
+        },
+        known_hosts: dir.join("known_rdp_hosts"),
+        accepted,
+        desktop: DEFAULT_DESKTOP,
+        route: vec![SshProfile {
+            id: ProfileId::new("gw"),
+            name: "gw".to_owned(),
+            group: None,
+            host: "127.0.0.1".to_owned(),
+            port: 2222,
+            username: Some("gateway".to_owned()),
+            key_path: Some(keys.join("gateway")),
+            gateway: None,
+        }],
+        ssh,
+        cancel: CancellationToken::new(),
+    }
+}
+
+#[tokio::test]
+async fn a_desktop_comes_up_through_the_lab_gateway() {
+    let (Some(keys), Ok(user), Ok(password)) = (
+        std::env::var_os(KEYS_VARIABLE).map(PathBuf::from),
+        std::env::var(USER_VARIABLE),
+        std::env::var(PASSWORD_VARIABLE),
+    ) else {
+        eprintln!("{KEYS_VARIABLE}, {USER_VARIABLE} or {PASSWORD_VARIABLE} not set: skipped");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let mut accepted = None;
+    for _ in 0..ATTEMPTS {
+        let registry = AnswerRegistry::default();
+        let request = request(&keys, dir.path(), &user, accepted);
+        let cancel = request.cancel.clone();
+        let mut events = rdp_events(request, registry.clone());
+        loop {
+            let event = tokio::time::timeout(STEP, events.next())
+                .await
+                .expect("in time")
+                .expect("an event");
+            eprintln!("event: {event:?}");
+            match event {
+                ConnectionEvent::UnknownHostKey {
+                    host, port, key, ..
+                } => {
+                    assert_eq!(
+                        (host.as_str(), port),
+                        ("127.0.0.1", 2222),
+                        "the gateway's key"
+                    );
+                    KnownHosts::new(dir.path().join("known_hosts"))
+                        .learn(&host, port, &key)
+                        .expect("learnt");
+                    break;
+                }
+                ConnectionEvent::UnknownRdpCertificate {
+                    host, fingerprint, ..
+                } => {
+                    assert_eq!(host, "heimdall-rdp", "the server's own certificate");
+                    accepted = Some(fingerprint);
+                    break;
+                }
+                ConnectionEvent::Question { question, .. } => {
+                    assert!(registry.answer(
+                        question,
+                        Some(Answer::Secret(Secret::new(password.clone())))
+                    ));
+                }
+                ConnectionEvent::RdpReady { .. } => {
+                    cancel.cancel();
+                    return;
+                }
+                other => panic!("{other:?}"),
+            }
+        }
+    }
+    panic!("no desktop after {ATTEMPTS} attempts");
+}

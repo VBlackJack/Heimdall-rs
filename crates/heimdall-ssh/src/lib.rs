@@ -34,8 +34,8 @@ mod prompter;
 mod secret;
 mod session;
 
-pub use client::{connect, establish};
-pub use connection::{Connection, SubsystemStream};
+pub use client::{connect, establish, establish_via};
+pub use connection::{ChannelBytes, Connection, SubsystemStream, Tunnel};
 pub use error::{AuthMethod, ConnectError};
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
 pub use known_hosts::{KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict};

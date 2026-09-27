@@ -109,7 +109,6 @@ ui-dialog-store-body = Heimdall started with no profile; changes are saved besid
 ui-dialog-detail = Detail: { $detail }
 
 ui-import-skip-not-ssh = not an SSH profile ({ $kind })
-ui-import-skip-jump-host = goes through an SSH gateway, not supported yet
 ui-import-skip-rd-gateway = goes through a Remote Desktop Gateway, not supported yet
 ui-import-skip-missing-host = has no host
 ui-import-skip-missing-id = has no identifier
@@ -215,3 +214,9 @@ ui-dialog-local-body = The profile { $name } runs the command below. Heimdall ru
 ui-dialog-local-folder = Starts in: { $folder }
 ui-dialog-local-rereads = This program reads its command line again with its own rules: & | ^ < > and % in it are commands, not text.
 ui-dialog-local-confirm = Run
+ui-error-jump-refused = The SSH gateway would not connect onward to { $target }: forwarding is off on it, or that host cannot be reached from it.
+ui-import-skip-missing-gateway = goes through an SSH gateway that is not in the file, or that was left out
+ui-import-skip-gateway-loop = its SSH gateway is reached through itself, by way of its parents
+ui-error-hostkey-changed-at = The host key of { $target } is not the one recorded: the connection may be intercepted. Recorded: { $recorded }. Presented: { $offered }.
+ui-error-gateway-missing = The SSH gateway { $id } this profile goes through is not in the profiles.
+ui-error-gateway-loop = The SSH gateway { $id } is reached through itself, by way of its parents.

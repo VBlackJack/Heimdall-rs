@@ -50,6 +50,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         domain: None,
         allow_tls_only: false,
+        gateway: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -113,6 +114,7 @@ fn a_changed_key_offers_to_forget_the_server() {
         tab,
         attempt,
         ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: None,
             recorded: "SHA256:old".to_owned(),
             offered: "SHA256:new".to_owned(),
         }),

@@ -166,27 +166,62 @@ impl Connection {
         let channel = tokio::time::timeout(timeout, opening)
             .await
             .map_err(|_| ConnectError::Timeout)??;
-        Ok(SubsystemStream {
+        Ok(ChannelBytes {
+            stream: channel.into_stream(),
+            _connection: self.clone(),
+        })
+    }
+
+    /// Asks the server to connect onward to `host:port` and carry the bytes both ways: a TCP
+    /// connection made from the server, as a gateway makes one. The server resolves `host`
+    /// itself, so it may be a name only the server knows.
+    ///
+    /// # Errors
+    ///
+    /// [`ConnectError::JumpRefused`] when the server will not connect onward, or a protocol
+    /// error.
+    pub async fn open_tunnel(&self, host: &str, port: u16) -> Result<Tunnel, ConnectError> {
+        let channel = self
+            .handle()
+            .channel_open_direct_tcpip(host, u32::from(port), TUNNEL_ORIGINATOR, 0)
+            .await
+            .map_err(|error| match error {
+                russh::Error::ChannelOpenFailure(_) => ConnectError::JumpRefused {
+                    host: host.to_owned(),
+                    port,
+                },
+                other => ConnectError::Protocol(other),
+            })?;
+        Ok(ChannelBytes {
             stream: channel.into_stream(),
             _connection: self.clone(),
         })
     }
 }
 
-/// A subsystem's bytes, both ways. Keeps its connection alive; dropping it closes the
+/// Originator address reported with a tunnel: there is no address of this side to give.
+const TUNNEL_ORIGINATOR: &str = "127.0.0.1";
+
+/// A subsystem's bytes, both ways.
+pub type SubsystemStream = ChannelBytes;
+
+/// A tunnel's bytes, both ways.
+pub type Tunnel = ChannelBytes;
+
+/// The bytes of one channel, both ways. Keeps its connection alive; dropping it closes the
 /// channel. Drop it inside the tokio runtime: russh closes the channel from a task.
-pub struct SubsystemStream {
+pub struct ChannelBytes {
     stream: ChannelStream<Msg>,
     _connection: Connection,
 }
 
-impl std::fmt::Debug for SubsystemStream {
+impl std::fmt::Debug for ChannelBytes {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("SubsystemStream").finish_non_exhaustive()
+        f.debug_struct("ChannelBytes").finish_non_exhaustive()
     }
 }
 
-impl AsyncRead for SubsystemStream {
+impl AsyncRead for ChannelBytes {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -196,7 +231,7 @@ impl AsyncRead for SubsystemStream {
     }
 }
 
-impl AsyncWrite for SubsystemStream {
+impl AsyncWrite for ChannelBytes {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

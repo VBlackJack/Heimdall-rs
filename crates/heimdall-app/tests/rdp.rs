@@ -43,6 +43,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
+        gateway: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -254,6 +255,7 @@ fn a_changed_key_can_be_forgotten_and_the_question_comes_back() {
         tab,
         attempt,
         ConnectionEvent::Failed(UiError::HostKeyChanged {
+            target: None,
             recorded: KEY.to_owned(),
             offered: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA".to_owned(),
         }),

@@ -66,6 +66,7 @@ fn app(dir: &Path) -> App {
         port: 22,
         username: Some("admin".to_owned()),
         key_path: None,
+        gateway: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

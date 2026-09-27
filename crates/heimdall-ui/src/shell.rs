@@ -1036,7 +1036,9 @@ impl Shell {
                 let mut actions = row![close()].spacing(SPACING);
                 // A changed RDP certificate is routine (Windows renews its own every six
                 // months): the way out is deliberate, never part of the connection.
-                if tab.purpose == Purpose::Rdp && matches!(error, UiError::HostKeyChanged { .. }) {
+                if tab.purpose == Purpose::Rdp
+                    && matches!(error, UiError::HostKeyChanged { target: None, .. })
+                {
                     actions = actions.push(
                         button(text(fl!("ui-session-forget-server-button")))
                             .style(button::danger)

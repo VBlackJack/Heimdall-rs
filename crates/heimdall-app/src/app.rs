@@ -29,7 +29,7 @@ use std::time::Instant;
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{
-    LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
+    LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile,
 };
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
@@ -1006,22 +1006,29 @@ impl App {
         }
     }
 
+    /// What connecting to `profile` needs, its gateways included; an error when they cannot
+    /// be followed, which no attempt could get past.
     fn connect_request(
         &self,
         profile: &SshProfile,
         grid: GridSize,
         cancel: CancellationToken,
         purpose: Purpose,
-    ) -> ConnectRequest {
+    ) -> Result<ConnectRequest, UiError> {
+        let route = self
+            .store
+            .route(profile.gateway.as_ref())
+            .map_err(UiError::Route)?;
         let mut options = ConnectOptions::new(self.config.known_hosts.clone());
         options.agent = self.config.agent.clone();
         options.initial_size = terminal_size(grid, None);
-        ConnectRequest {
+        Ok(ConnectRequest {
             profile: profile.clone(),
+            route: route.iter().map(SshGateway::as_hop).collect(),
             purpose,
             options,
             cancel,
-        }
+        })
     }
 
     fn open_profile(&mut self, id: &ProfileId, purpose: Purpose) -> Vec<Effect> {
@@ -1043,13 +1050,21 @@ impl App {
         );
         tab.files = (purpose == Purpose::Files)
             .then(|| Box::new(FilesPane::new(self.config.files_start.clone())));
+        let effects = match request {
+            Ok(request) => vec![Effect::Connect {
+                tab: tab_id,
+                attempt,
+                request: Box::new(request),
+            }],
+            // Shown in its tab, as a failed attempt would be.
+            Err(error) => {
+                tab.phase = Phase::Failed(error);
+                Vec::new()
+            }
+        };
         self.tabs.push(tab);
         self.active = Some(tab_id);
-        vec![Effect::Connect {
-            tab: tab_id,
-            attempt,
-            request: Box::new(request),
-        }]
+        effects
     }
 
     fn connection(
@@ -1149,9 +1164,10 @@ impl App {
     }
 
     fn host_key_decision(&mut self, tab_id: TabId, accept: bool) -> Vec<Effect> {
+        // An RDP tab asks about the server's certificate, or, on the way, a gateway's SSH key.
         if self
             .tab(tab_id)
-            .is_some_and(|tab| tab.purpose == Purpose::Rdp)
+            .is_some_and(|tab| tab.purpose == Purpose::Rdp && tab.pending_rdp_key.is_some())
         {
             return self.rdp_certificate_decision(tab_id, accept);
         }
@@ -1176,6 +1192,7 @@ impl App {
                     .learn(&host, port, &key)
                     .map_err(|error| UiError::from(&error)),
                 Verdict::Changed { recorded } => Err(UiError::HostKeyChanged {
+                    target: Some(heimdall_core::profile::display_address(&host, port)),
                     recorded: fingerprint(&recorded),
                     offered: fingerprint(&key),
                 }),
@@ -1189,8 +1206,11 @@ impl App {
             tab.phase = Phase::Failed(error);
             return Vec::new();
         }
-        let TabProfile::Ssh(profile) = tab.profile.clone() else {
-            return Vec::new();
+        let profile = match tab.profile.clone() {
+            TabProfile::Ssh(profile) => profile,
+            // A gateway's key, learnt: the RDP connection starts again through it.
+            TabProfile::Rdp(_) => return self.reconnect_rdp(tab_id, None),
+            _ => return Vec::new(),
         };
         let grid = tab.terminal.size();
         let attempt = AttemptId::fresh();
@@ -1200,12 +1220,19 @@ impl App {
         tab.phase = Phase::Connecting;
         tab.connect_grid = grid;
         let purpose = tab.purpose;
-        let request = self.connect_request(&profile, grid, cancel, purpose);
-        vec![Effect::Connect {
-            tab: tab_id,
-            attempt,
-            request: Box::new(request),
-        }]
+        match self.connect_request(&profile, grid, cancel, purpose) {
+            Ok(request) => vec![Effect::Connect {
+                tab: tab_id,
+                attempt,
+                request: Box::new(request),
+            }],
+            Err(error) => {
+                if let Some(tab) = self.tab_mut(tab_id) {
+                    tab.phase = Phase::Failed(error);
+                }
+                Vec::new()
+            }
+        }
     }
 
     fn key(&mut self, tab_id: TabId, input: &KeyInput) -> Vec<Effect> {
@@ -1456,13 +1483,15 @@ impl App {
             let telnet = store.merge_telnet(report.telnet);
             let vnc = store.merge_vnc(report.vnc);
             let local = store.merge_local(report.local);
-            [ssh, rdp, telnet, vnc, local]
-                .into_iter()
-                .fold(MergeReport::default(), |total, one| MergeReport {
+            let gateways = store.merge_gateways(report.gateways);
+            [ssh, rdp, telnet, vnc, local, gateways].into_iter().fold(
+                MergeReport::default(),
+                |total, one| MergeReport {
                     added: total.added + one.added,
                     updated: total.updated + one.updated,
                     unchanged: total.unchanged + one.unchanged,
-                })
+                },
+            )
         }) {
             Ok(merged) => merged,
             Err(error) => {

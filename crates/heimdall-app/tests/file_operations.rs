@@ -66,6 +66,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         port: 22,
         username: Some("admin".to_owned()),
         key_path: None,
+        gateway: None,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

@@ -19,7 +19,7 @@ use std::path::PathBuf;
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
 use heimdall_core::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, LocalArguments,
-    SshProfile,
+    ProfileId, SshProfile,
 };
 
 /// Environment variable naming a directory that holds a real C# `servers.json`, and
@@ -98,7 +98,7 @@ fn an_rdp_profile_keeps_its_port_user_and_domain() {
 }
 
 #[test]
-fn an_rdp_profile_through_a_gateway_is_left_out_unless_direct() {
+fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
     let json = servers(
         r#"{"id": "tunnel", "remoteServer": "h", "connectionType": "RDP", "sshGatewayId": "g"},
            {"id": "direct", "remoteServer": "h", "connectionType": "RDP", "sshGatewayId": "g",
@@ -118,7 +118,8 @@ fn an_rdp_profile_through_a_gateway_is_left_out_unless_direct() {
     assert_eq!(
         reasons,
         vec![
-            ("tunnel".to_owned(), SkipReason::NeedsJumpHost),
+            // Its gateway is not in the settings, which this import has none of.
+            ("tunnel".to_owned(), SkipReason::MissingGateway),
             ("rdg".to_owned(), SkipReason::NeedsRdGateway),
             ("port".to_owned(), SkipReason::InvalidPort(0)),
         ]
@@ -146,7 +147,8 @@ fn every_skip_reason_is_reported() {
         reasons,
         vec![
             ("citrix".to_owned(), SkipReason::NotSsh("Citrix".to_owned())),
-            ("gw".to_owned(), SkipReason::NeedsJumpHost),
+            // Its gateway is not in the settings, which this import has none of.
+            ("gw".to_owned(), SkipReason::MissingGateway),
             ("nohost".to_owned(), SkipReason::MissingHost),
             (String::new(), SkipReason::MissingId),
             ("port0".to_owned(), SkipReason::InvalidPort(0)),
@@ -212,12 +214,77 @@ fn an_empty_string_in_a_deeper_group_stops_the_search_as_in_the_csharp() {
 }
 
 #[test]
-fn a_group_default_gateway_makes_the_profile_need_a_jump_host() {
+fn a_group_default_gateway_applies_to_the_profile() {
     let json =
         servers(r#"{"id": "a", "remoteServer": "h", "connectionType": "SSH", "group": "G"}"#);
-    let defaults = settings(r#""G": {"sshGatewayId": "gw-1"}"#);
-    let report = import(&json, Some(&defaults)).expect("valid JSON");
-    assert_eq!(report.skipped[0].reason, SkipReason::NeedsJumpHost);
+    let defaults = r#"{"groupDefaults": {"G": {"sshGatewayId": "gw-1"}},
+        "sshGateways": [{"id": "gw-1", "name": "Bastion", "host": "bastion.lab"}]}"#;
+    let profile = only_profile(&json, Some(defaults));
+    assert_eq!(profile.gateway, Some(ProfileId::new("gw-1")));
+}
+
+#[test]
+fn gateways_are_imported_with_their_parents_and_profiles_keep_theirs() {
+    let json = servers(
+        r#"{"id": "web", "remoteServer": "web.lab", "connectionType": "SSH", "sshGatewayId": "inner"},
+           {"id": "desk", "remoteServer": "desk.lab", "connectionType": "RDP", "sshGatewayId": "inner"}"#,
+    );
+    let gateways = r#"{"sshGateways": [
+        {"id": "inner", "name": "Inner", "host": " inner.lab ", "port": 2222, "user": "ops",
+         "keyPath": "C:\\keys\\ops", "parentGatewayId": "outer",
+         "sshPasswordEncrypted": "AQAAANCMnd8", "hostKeyFingerprint": "SHA256:x"},
+        {"id": "outer", "name": "", "host": "outer.example.org", "user": ""}]}"#;
+    let report = import(&json, Some(gateways)).expect("valid JSON");
+    let [inner, outer] = report.gateways.as_slice() else {
+        panic!("{:?}", report.gateways);
+    };
+    assert_eq!(
+        (inner.host.as_str(), inner.port, inner.username.as_deref()),
+        ("inner.lab", 2222, Some("ops"))
+    );
+    assert_eq!(inner.key_path, Some(PathBuf::from(r"C:\keys\ops")));
+    assert_eq!(inner.parent, Some(ProfileId::new("outer")));
+    assert_eq!(outer.name, "outer.example.org", "named after its host");
+    assert_eq!(outer.port, DEFAULT_SSH_PORT);
+    assert_eq!(outer.username, None);
+    assert_eq!(outer.parent, None);
+    assert_eq!(report.profiles[0].gateway, Some(ProfileId::new("inner")));
+    assert_eq!(report.rdp[0].gateway, Some(ProfileId::new("inner")));
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+}
+
+#[test]
+fn a_gateway_whose_parents_are_missing_or_loop_is_left_out_and_so_are_its_profiles() {
+    let json = servers(
+        r#"{"id": "a", "remoteServer": "a.lab", "connectionType": "SSH", "sshGatewayId": "orphan"},
+           {"id": "b", "remoteServer": "b.lab", "connectionType": "SSH", "sshGatewayId": "one"}"#,
+    );
+    let gateways = r#"{"sshGateways": [
+        {"id": "orphan", "host": "o.lab", "parentGatewayId": "nowhere"},
+        {"id": "one", "host": "1.lab", "parentGatewayId": "two"},
+        {"id": "two", "host": "2.lab", "parentGatewayId": "one"},
+        {"id": "", "host": "x.lab"},
+        {"id": "nohost", "host": " "}]}"#;
+    let report = import(&json, Some(gateways)).expect("valid JSON");
+    assert!(report.gateways.is_empty(), "{:?}", report.gateways);
+    assert!(report.profiles.is_empty());
+    let reasons: Vec<(&str, &SkipReason)> = report
+        .skipped
+        .iter()
+        .map(|skipped| (skipped.id.as_str(), &skipped.reason))
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            ("a", &SkipReason::MissingGateway),
+            ("b", &SkipReason::MissingGateway),
+            ("", &SkipReason::MissingId),
+            ("nohost", &SkipReason::MissingHost),
+            ("orphan", &SkipReason::MissingGateway),
+            ("one", &SkipReason::GatewayLoop),
+            ("two", &SkipReason::GatewayLoop),
+        ]
+    );
 }
 
 #[test]

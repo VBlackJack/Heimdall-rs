@@ -19,10 +19,12 @@ use std::path::PathBuf;
 
 use heimdall_core::paths::PROFILES_FILE_NAME;
 use heimdall_core::profile::{
-    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile,
-    TelnetProfile, VncProfile,
+    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshGateway,
+    SshProfile, TelnetProfile, VncProfile,
 };
-use heimdall_core::store::{MergeReport, PROFILE_FILE_VERSION, ProfileStore, StoreError};
+use heimdall_core::store::{
+    MergeReport, PROFILE_FILE_VERSION, ProfileStore, RouteError, StoreError,
+};
 
 fn profile(id: &str, host: &str) -> SshProfile {
     SshProfile {
@@ -33,6 +35,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         port: 22,
         username: Some("admin".to_owned()),
         key_path: Some(PathBuf::from("/keys/admin")),
+        gateway: None,
     }
 }
 
@@ -140,6 +143,7 @@ fn rdp(id: &str) -> RdpProfile {
         username: Some("admin".to_owned()),
         domain: Some("LAB".to_owned()),
         allow_tls_only: false,
+        gateway: None,
     }
 }
 
@@ -162,7 +166,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 5);
+    assert_eq!(PROFILE_FILE_VERSION, 6);
 }
 
 #[test]
@@ -336,4 +340,80 @@ fn a_reimport_keeps_the_approval_and_never_brings_one() {
     forged.approved = Some(approval_of(&forged));
     store.merge_local([forged]);
     assert_eq!(store.local_profiles()[1].approved, None);
+}
+
+fn gateway(id: &str, parent: Option<&str>) -> SshGateway {
+    SshGateway {
+        id: ProfileId::new(id),
+        name: id.to_uppercase(),
+        host: format!("{id}.lab"),
+        port: 22,
+        username: Some("ops".to_owned()),
+        key_path: None,
+        parent: parent.map(ProfileId::new),
+    }
+}
+
+#[test]
+fn a_route_runs_from_the_farthest_parent_to_the_profile_s_gateway() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_gateways([
+        gateway("inner", Some("middle")),
+        gateway("outer", None),
+        gateway("middle", Some("outer")),
+    ]);
+    store.save().expect("saves");
+    let store = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(store.gateways().len(), 3);
+    let route: Vec<String> = store
+        .route(Some(&ProfileId::new("inner")))
+        .expect("route")
+        .iter()
+        .map(|gateway| gateway.id.to_string())
+        .collect();
+    assert_eq!(
+        route,
+        ["outer", "middle", "inner"],
+        "nearest to this machine first"
+    );
+    assert!(store.route(None).expect("no gateway").is_empty());
+}
+
+#[test]
+fn a_route_through_a_missing_gateway_or_a_loop_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    store.merge_gateways([
+        gateway("orphan", Some("gone")),
+        gateway("one", Some("two")),
+        gateway("two", Some("one")),
+    ]);
+    assert_eq!(
+        store.route(Some(&ProfileId::new("orphan"))),
+        Err(RouteError::MissingGateway(ProfileId::new("gone")))
+    );
+    assert_eq!(
+        store.route(Some(&ProfileId::new("nobody"))),
+        Err(RouteError::MissingGateway(ProfileId::new("nobody")))
+    );
+    assert!(matches!(
+        store.route(Some(&ProfileId::new("one"))),
+        Err(RouteError::Loop(_))
+    ));
+}
+
+#[test]
+fn a_version_5_file_still_opens() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(
+        &path,
+        "version = 5\n\n[[ssh]]\nid = \"a\"\nname = \"A\"\nhost = \"h\"\nport = 22\n",
+    )
+    .expect("writes");
+    let store = ProfileStore::open(&path).expect("a version 5 file opens");
+    assert_eq!(store.ssh_profiles()[0].gateway, None);
+    assert!(store.gateways().is_empty());
 }

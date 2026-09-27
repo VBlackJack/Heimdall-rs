@@ -83,6 +83,52 @@ pub struct SshProfile {
     /// Private key file, OpenSSH or `PuTTY` format.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key_path: Option<PathBuf>,
+    /// The SSH gateway the server is reached through, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<ProfileId>,
+}
+
+/// An SSH gateway: a server that other connections go through, itself possibly reached
+/// through another one, its parent.
+///
+/// Holds no secret, and no host key: its key is checked against `known_hosts` like any
+/// server's.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SshGateway {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Login name; asked for when connecting if absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Private key file, OpenSSH or `PuTTY` format.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub key_path: Option<PathBuf>,
+    /// The gateway this one is reached through, if any.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent: Option<ProfileId>,
+}
+
+impl SshGateway {
+    /// The gateway as the one hop it is: a server to log in to, reached directly.
+    #[must_use]
+    pub fn as_hop(&self) -> SshProfile {
+        SshProfile {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            group: None,
+            host: self.host.clone(),
+            port: self.port,
+            username: self.username.clone(),
+            key_path: self.key_path.clone(),
+            gateway: None,
+        }
+    }
 }
 
 /// A saved RDP destination, reached directly.
@@ -111,6 +157,10 @@ pub struct RdpProfile {
     /// travels in the logon packet, inside TLS, once the server's key is trusted.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_tls_only: bool,
+    /// The SSH gateway the server is reached through, if any: the RDP connection then runs
+    /// in a tunnel the gateway opens to the server.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<ProfileId>,
 }
 
 /// A saved Telnet destination, reached directly.
