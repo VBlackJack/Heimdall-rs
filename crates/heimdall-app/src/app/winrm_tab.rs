@@ -69,6 +69,7 @@ impl App {
     fn open_refused(&mut self, name: String, error: UiError) {
         let tab_id = TabId::fresh();
         let mut tab = Tab::new(
+            self.terminal_palette(),
             tab_id,
             TabProfile::Local(LocalShell {
                 name,

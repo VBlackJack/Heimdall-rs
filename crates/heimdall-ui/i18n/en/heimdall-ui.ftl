@@ -486,3 +486,12 @@ ui-find-previous = ▲
 ui-find-next = ▼
 ui-find-close = ✕
 ui-find-nothing = No match
+
+## The terminal's appearance in the Settings page, as the C# one.
+ui-settings-terminal = Terminal Appearance
+ui-settings-color-scheme = Color scheme
+ui-scheme-default = Default
+ui-scheme-dracula = Dracula
+ui-scheme-solarized-dark = Solarized Dark
+ui-scheme-monokai = Monokai
+ui-scheme-nord = Nord

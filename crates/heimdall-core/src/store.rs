@@ -83,8 +83,8 @@ pub enum StoreError {
         #[source]
         source: toml::de::Error,
     },
-    /// The profiles could not be serialised.
-    #[error("profiles could not be serialised: {0}")]
+    /// The file's content could not be serialised.
+    #[error("could not be serialised: {0}")]
     Serialize(#[from] toml::ser::Error),
     /// The file was written by a newer or unknown format.
     #[error("{path}: format version {found}, expected {expected}")]
@@ -584,24 +584,29 @@ impl ProfileStore {
             winrm: self.winrm.clone(),
             folder: self.folders.clone(),
         })?;
-        let dir = self
-            .path
-            .parent()
-            .filter(|dir| !dir.as_os_str().is_empty())
-            .unwrap_or(Path::new("."));
-        let io_error = |path: &Path| {
-            let path = path.to_owned();
-            move |source| StoreError::Io { path, source }
-        };
-        fs::create_dir_all(dir).map_err(io_error(dir))?;
-        let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(io_error(dir))?;
-        temp.write_all(text.as_bytes())
-            .map_err(io_error(temp.path()))?;
-        temp.as_file().sync_all().map_err(io_error(temp.path()))?;
-        temp.persist(&self.path)
-            .map_err(|error| io_error(&self.path)(error.error))?;
-        Ok(())
+        write_atomic(&self.path, &text)
     }
+}
+
+/// Writes `text` to `path` through a temporary file beside it, so an interruption never
+/// leaves a truncated file behind.
+pub(crate) fn write_atomic(path: &Path, text: &str) -> Result<(), StoreError> {
+    let dir = path
+        .parent()
+        .filter(|dir| !dir.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let io_error = |path: &Path| {
+        let path = path.to_owned();
+        move |source| StoreError::Io { path, source }
+    };
+    fs::create_dir_all(dir).map_err(io_error(dir))?;
+    let mut temp = tempfile::NamedTempFile::new_in(dir).map_err(io_error(dir))?;
+    temp.write_all(text.as_bytes())
+        .map_err(io_error(temp.path()))?;
+    temp.as_file().sync_all().map_err(io_error(temp.path()))?;
+    temp.persist(path)
+        .map_err(|error| io_error(path)(error.error))?;
+    Ok(())
 }
 
 /// Adds or replaces `incoming` in `list` by identifier, keeping the order of `list`.

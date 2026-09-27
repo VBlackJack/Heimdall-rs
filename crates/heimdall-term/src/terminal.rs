@@ -454,6 +454,11 @@ impl Terminal {
         }
     }
 
+    /// Draws with `palette` from now on; the colours the server set itself stay its own.
+    pub fn set_palette(&mut self, palette: Palette) {
+        self.palette = palette;
+    }
+
     /// Modes the input encoders need.
     #[must_use]
     pub fn input_mode(&self) -> InputMode {

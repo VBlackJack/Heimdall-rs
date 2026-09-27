@@ -47,6 +47,7 @@ use heimdall_app::{
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
+use heimdall_core::settings::ColorScheme;
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -1683,10 +1684,33 @@ impl Shell {
                 text(fl!("ui-settings-title")).size(HEADING_SIZE),
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
                 vault_card,
+                text(fl!("ui-settings-terminal")).size(BODY_SIZE),
+                self.terminal_settings(),
             ]
             .spacing(SPACING)
             .padding(PADDING),
         )
+        .into()
+    }
+
+    /// The terminal's appearance: its colour scheme, as the C# Settings page offers it.
+    fn terminal_settings(&self) -> Element<'_, Message> {
+        container(
+            row![
+                text(fl!("ui-settings-color-scheme")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    ColorScheme::ALL.map(SchemeChoice).to_vec(),
+                    Some(SchemeChoice(self.app.settings().color_scheme)),
+                    |SchemeChoice(scheme)| Message::App(AppMessage::SetColorScheme(scheme)),
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
         .into()
     }
 
@@ -3455,6 +3479,22 @@ impl fmt::Display for DesktopMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
 
+/// A colour scheme in the Settings page's list, named as the C# Heimdall names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SchemeChoice(ColorScheme);
+
+impl fmt::Display for SchemeChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            ColorScheme::Standard => fl!("ui-scheme-default"),
+            ColorScheme::Dracula => fl!("ui-scheme-dracula"),
+            ColorScheme::SolarizedDark => fl!("ui-scheme-solarized-dark"),
+            ColorScheme::Monokai => fl!("ui-scheme-monokai"),
+            ColorScheme::Nord => fl!("ui-scheme-nord"),
+        })
+    }
+}
+
 impl fmt::Display for KeysChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&match self.0 {
@@ -3741,6 +3781,14 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn the_schemes_are_listed_by_their_csharp_names() {
+        assert_eq!(
+            ColorScheme::ALL.map(|scheme| SchemeChoice(scheme).to_string()),
+            ["Default", "Dracula", "Solarized Dark", "Monokai", "Nord"]
+        );
     }
 
     #[test]

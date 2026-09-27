@@ -1759,3 +1759,14 @@ fn a_session_still_connecting_has_no_search_bar() {
     }));
     assert!(simulator(&shell).find("\u{25b2}").is_err());
 }
+
+#[test]
+fn the_settings_page_has_the_terminal_appearance_section() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    snapshot(&shell, "settings-terminal.png");
+    let mut ui = simulator(&shell);
+    ui.find("Terminal Appearance").expect("its section");
+    ui.find("Color scheme").expect("its label");
+}

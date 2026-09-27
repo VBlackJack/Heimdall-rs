@@ -130,6 +130,7 @@ impl App {
         let cancel = CancellationToken::new();
         let request = self.rdp_request(&profile, None, cancel.clone());
         let mut tab = Tab::new(
+            self.terminal_palette(),
             tab_id,
             TabProfile::Rdp(profile),
             Purpose::Rdp,

@@ -32,6 +32,7 @@ use heimdall_core::profile::{
     LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile,
     WinRmProfile,
 };
+use heimdall_core::settings::{ColorScheme, Settings};
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
     AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
@@ -39,9 +40,9 @@ use heimdall_ssh::{
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
-    Modifiers, MotionFilter, MouseAction, MouseButton, MouseEvent, SelectionKind, Terminal,
-    TerminalConfig, TitleChange, encode_focus, encode_key, encode_mouse, encode_paste, is_reported,
-    wheel_as_arrows,
+    Modifiers, MotionFilter, MouseAction, MouseButton, MouseEvent, Palette, SelectionKind,
+    Terminal, TerminalConfig, TitleChange, encode_focus, encode_key, encode_mouse, encode_paste,
+    is_reported, wheel_as_arrows,
 };
 use tokio_util::sync::CancellationToken;
 
@@ -60,6 +61,7 @@ use crate::telnet_driver::TelnetRequest;
 use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
 
+mod appearance;
 mod auto_reconnect;
 mod connect_as;
 mod files_tab;
@@ -430,6 +432,8 @@ pub enum Message {
     VaultOpened(Result<OpenedVault, VaultProblem>),
     /// Close the vault.
     LockVault,
+    /// The terminals' colours, from the Settings page.
+    SetColorScheme(ColorScheme),
 }
 
 impl fmt::Debug for Message {
@@ -536,6 +540,7 @@ impl fmt::Debug for Message {
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
+            Self::SetColorScheme(scheme) => write!(f, "SetColorScheme({scheme:?})"),
         }
     }
 }
@@ -860,6 +865,7 @@ impl Tab {
     }
 
     fn new(
+        palette: Palette,
         id: TabId,
         profile: TabProfile,
         purpose: Purpose,
@@ -877,7 +883,13 @@ impl Tab {
             reopen: reconnect::Reopen::of(&profile),
             profile,
             phase: Phase::Connecting,
-            terminal: Terminal::new(grid, TerminalConfig::default()),
+            terminal: Terminal::new(
+                grid,
+                TerminalConfig {
+                    palette,
+                    ..TerminalConfig::default()
+                },
+            ),
             prompts: VecDeque::new(),
             bell: false,
             purpose,
@@ -1185,6 +1197,9 @@ pub struct App {
     pub selected_profile: Option<ProfileId>,
     /// The profiles selected together, when more than one is.
     selection: std::collections::BTreeSet<ProfileId>,
+    /// What the Settings page changes, and the file it is saved to.
+    settings: Settings,
+    settings_file: std::path::PathBuf,
     /// What was just done, and the session shown then with its state.
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
     viewport: GridSize,
@@ -1226,7 +1241,10 @@ impl App {
             ),
         };
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
+        let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
         let mut app = Self {
+            settings,
+            settings_file,
             viewport: config.initial_grid,
             config,
             store,
@@ -1374,7 +1392,8 @@ impl App {
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
-            | Message::ImportLegacy) => self.window_message(&message),
+            | Message::ImportLegacy
+            | Message::SetColorScheme(_)) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
             | Message::ProfileField { .. }
@@ -1525,6 +1544,7 @@ impl App {
         let cancel = CancellationToken::new();
         let request = self.connect_request(&profile, grid, cancel.clone(), purpose);
         let mut tab = Tab::new(
+            self.terminal_palette(),
             tab_id,
             TabProfile::Ssh(profile),
             purpose,
@@ -2089,7 +2109,8 @@ impl App {
         }
     }
 
-    /// The window's focus and its close, and the import from the C# Heimdall, asked from it.
+    /// The window's focus and its close, and what it asks of the application: the import
+    /// from the C# Heimdall, the terminals' colours.
     fn window_message(&mut self, message: &Message) -> Vec<Effect> {
         match message {
             Message::WindowFocus(focused) => self.window_focus(*focused),
@@ -2098,6 +2119,7 @@ impl App {
                 self.import_legacy();
                 Vec::new()
             }
+            Message::SetColorScheme(scheme) => self.set_color_scheme(*scheme),
             _ => Vec::new(),
         }
     }
