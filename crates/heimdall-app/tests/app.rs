@@ -892,3 +892,97 @@ fn messages_never_show_what_the_user_typed_or_read() {
         assert!(!shown.contains("hunter2"), "{shown}");
     }
 }
+
+/// What a pointer input asks of the window's clipboard.
+#[derive(Debug, PartialEq, Eq)]
+enum ClipboardAsk {
+    Write(String),
+    Read,
+}
+
+fn clipboard_asks(effects: &[Effect]) -> Vec<ClipboardAsk> {
+    effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::WriteClipboard(text) => Some(ClipboardAsk::Write(text.clone())),
+            Effect::ReadClipboard { .. } => Some(ClipboardAsk::Read),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn releasing_a_selection_copies_it_and_a_bare_click_copies_nothing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"hello world");
+
+    app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Press(MouseButton::Left), 0, 2),
+    });
+    let effects = app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Release(MouseButton::Left), 0, 2),
+    });
+    assert!(clipboard_asks(&effects).is_empty(), "a click is not a copy");
+
+    app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Press(MouseButton::Left), 0, 0),
+    });
+    let mut drag = pointer(
+        MouseAction::Motion {
+            held: Some(MouseButton::Left),
+        },
+        0,
+        4,
+    );
+    drag.at.right_half = true;
+    app.update(Message::Pointer { tab, input: drag });
+    let effects = app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Release(MouseButton::Left), 0, 4),
+    });
+    assert_eq!(
+        clipboard_asks(&effects),
+        [ClipboardAsk::Write("hello".to_owned())]
+    );
+
+    // A release with no selection under way (the press went to a dialog, or elsewhere)
+    // copies nothing, even with text still selected.
+    let effects = app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Release(MouseButton::Left), 0, 4),
+    });
+    assert!(clipboard_asks(&effects).is_empty());
+}
+
+#[test]
+fn a_right_click_pastes_unless_the_program_tracks_the_mouse() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, sink) = connected(&mut app, "a");
+    let effects = app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Press(MouseButton::Right), 1, 1),
+    });
+    assert_eq!(clipboard_asks(&effects), [ClipboardAsk::Read]);
+    assert!(
+        sink.written().is_empty(),
+        "the paste comes back as ClipboardText"
+    );
+
+    output(&mut app, tab, attempt, b"\x1b[?1000h\x1b[?1006h");
+    let effects = app.update(Message::Pointer {
+        tab,
+        input: pointer(MouseAction::Press(MouseButton::Right), 1, 1),
+    });
+    assert!(clipboard_asks(&effects).is_empty());
+    assert_eq!(
+        sink.written(),
+        b"\x1b[<2;2;2M",
+        "the program gets the click"
+    );
+}
