@@ -186,7 +186,7 @@ impl RemoteSession {
         }
     }
 
-    /// Gives `path` the permission bits `mode`.
+    /// Gives `path` the permission bits `mode`, set-user, set-group and sticky included.
     ///
     /// # Errors
     ///
@@ -197,7 +197,7 @@ impl RemoteSession {
                 .setstat(
                     path,
                     Attributes {
-                        permissions: Some(mode & PERMISSION_BITS),
+                        permissions: Some(mode),
                         ..Attributes::default()
                     },
                 )
