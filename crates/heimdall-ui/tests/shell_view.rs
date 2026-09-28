@@ -606,6 +606,9 @@ fn the_lock_hides_the_window_until_the_master_password_is_typed() {
             .expect("says how");
         assert!(ui.find("Profiles").is_err(), "the window is hidden");
         assert!(ui.find("Cancel").is_err(), "no way around it");
+        // Found is not enough: a dialog laid out in no room is found and cannot be typed in.
+        ui.click(iced::widget::Id::from("vault-field-0".to_owned()))
+            .expect("the master password's field takes a click");
     }
     let shown = shell.app().active;
     let _ = shell.update(Message::Shortcut(WindowShortcut::NextTab));

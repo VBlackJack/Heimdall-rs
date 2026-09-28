@@ -17,7 +17,10 @@
 //! The settings file, beside the profiles.
 
 use std::path::Path;
+use std::time::{Duration, SystemTime};
 
+use heimdall_core::lockout::{LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS};
+use heimdall_core::pin::PinHash;
 use heimdall_core::settings::{
     BroadcastScope, ColorScheme, SETTINGS_FILE_NAME, Settings, settings_path,
 };
@@ -261,5 +264,53 @@ language = \"{code}\"
 "
         );
         assert_eq!(written(dir.path(), &text).language, read, "{code}");
+    }
+}
+
+#[test]
+fn a_pin_and_its_wrong_tries_are_kept_across_runs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings {
+        pin: Some(PinHash::new("2468").expect("hash")),
+        ..Settings::default()
+    };
+    let later = SystemTime::now() + Duration::from_secs(600);
+    for _ in 0..MAX_FAILED_ATTEMPTS {
+        settings
+            .pin_unlock
+            .register_failure(later - LOCKOUT_DURATION);
+    }
+    settings.save(&path).expect("saved");
+    let read = Settings::load(&path).expect("read");
+    assert!(read.pin.as_ref().is_some_and(|pin| pin.verify("2468")));
+    assert_eq!(read.pin_unlock.failures(), MAX_FAILED_ATTEMPTS);
+    assert!(read.pin_unlock.until().is_some(), "still locked out");
+    assert_eq!(
+        read.vault_unlock.failures(),
+        0,
+        "the master password's are apart"
+    );
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(!text.contains("2468"), "{text}");
+}
+
+#[test]
+fn no_pin_writes_none_and_half_a_pin_takes_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    Settings::default().save(&path).expect("saved");
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(!text.contains("salt") && !text.contains("hash"), "{text}");
+    assert_eq!(Settings::load(&path).expect("read").pin, None);
+
+    let kept = PinHash::new("2468").expect("hash");
+    for half in [
+        format!("version = 1\n[pin]\nhash = \"{}\"\n", kept.hash()),
+        format!("version = 1\n[pin]\nsalt = \"{}\"\n", kept.salt()),
+    ] {
+        let read = written(dir.path(), &half);
+        let pin = read.pin.expect("a PIN is still set");
+        assert!(!pin.verify("2468"), "{half}");
     }
 }
