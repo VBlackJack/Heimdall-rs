@@ -211,6 +211,7 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::TooLarge => fl!("ui-files-error-too-large"),
         FilesError::InvalidName => fl!("ui-files-error-invalid-name"),
         FilesError::Exists => fl!("ui-files-error-exists"),
+        FilesError::InvalidPermissions => fl!("ui-files-error-invalid-permissions"),
     }
 }
 

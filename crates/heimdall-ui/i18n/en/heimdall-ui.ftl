@@ -548,3 +548,25 @@ ui-files-menu-delete = Delete
 ui-files-menu-copy-path = Copy path
 ui-files-menu-new-folder = New Folder
 ui-files-menu-refresh = Refresh
+
+## Permissions and properties of a server's entry, as the C# Files tab.
+ui-files-menu-permissions = Change permissions...
+ui-files-menu-properties = Properties
+ui-dialog-permissions-title = Change Permissions
+ui-dialog-permissions-label = Permissions (octal, e.g. 755):
+ui-dialog-permissions-placeholder = 755
+ui-dialog-permissions-confirm = Apply
+ui-files-error-invalid-permissions = Permissions are one to four octal digits, such as 755 or 4755.
+ui-files-properties-title = Properties - { $name }
+ui-files-properties-name = Name:
+ui-files-properties-type = Type:
+ui-files-properties-size = Size:
+ui-files-properties-modified = Modified:
+ui-files-properties-permissions = Permissions:
+ui-files-properties-owner = Owner:
+ui-files-properties-group = Group:
+ui-files-properties-path = Path:
+ui-files-type-file = File
+ui-files-type-directory = Directory
+ui-files-type-link = Symbolic link
+ui-files-type-other = Unknown type

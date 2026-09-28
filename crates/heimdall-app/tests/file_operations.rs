@@ -103,6 +103,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         modified: None,
         permissions: None,
         owner: None,
+        group: None,
     };
     let local = |name: &str, kind| LocalEntry {
         name: name.into(),
@@ -796,4 +797,109 @@ async fn a_folder_with_a_link_ends_incomplete() {
         std::fs::read(dir.path().join("copy").join("kept")).expect("copied"),
         b"kept"
     );
+}
+
+#[tokio::test]
+async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![RemoteEntry {
+                    name: b"run.sh".to_vec(),
+                    label: "run.sh".to_owned(),
+                    kind: EntryKind::File,
+                    size: Some(1),
+                    modified: None,
+                    permissions: Some(0o755),
+                    owner: Some(1000),
+                    group: Some(50),
+                }],
+            )),
+        },
+    );
+    let ask = |app: &mut App, side| files(app, FilesMessage::AskPermissions { tab, side });
+    assert!(ask(&mut app, Side::Remote).is_empty());
+    assert_eq!(app.dialog, None, "nothing selected");
+    select(&mut app, tab, Side::Remote, 0);
+    ask(&mut app, Side::Remote);
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::AskName { action: NameAction::Permissions, value, .. }) if value == "755"
+    ));
+    files(&mut app, FilesMessage::NameEdited(" 4750 ".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteSetPermissions { path, mode, .. } => {
+            assert_eq!(path.as_bytes(), b"/srv/run.sh");
+            assert_eq!(mode, 0o4750);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    ask(&mut app, Side::Remote);
+    files(&mut app, FilesMessage::NameEdited("rwx".to_owned()));
+    assert!(app.update(Message::ConfirmDialog).is_empty());
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::InvalidPermissions)
+    );
+
+    // Not on this computer's side, as in the C# tab.
+    select(&mut app, tab, Side::Local, 1);
+    ask(&mut app, Side::Local);
+    assert_eq!(app.dialog, None);
+}
+
+#[tokio::test]
+async fn a_servers_entry_shows_its_properties() {
+    use heimdall_app::files::FileProperties;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let show = |app: &mut App, side| files(app, FilesMessage::ShowProperties { tab, side });
+    show(&mut app, Side::Remote);
+    assert_eq!(app.dialog, None, "nothing selected");
+    select(&mut app, tab, Side::Remote, 1);
+    show(&mut app, Side::Remote);
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::FileProperties(Box::new(FileProperties {
+            name: "a.txt".to_owned(),
+            kind: EntryKind::File,
+            size: Some(4096),
+            modified: None,
+            permissions: None,
+            owner: None,
+            group: None,
+            path: "/srv/a.txt".to_owned(),
+        })))
+    );
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.dialog, None, "Enter closes it");
+    select(&mut app, tab, Side::Local, 1);
+    show(&mut app, Side::Local);
+    assert_eq!(app.dialog, None, "the server's entries only");
+}
+
+#[test]
+fn octal_permissions_are_one_to_four_octal_digits() {
+    use heimdall_app::files::octal_mode;
+
+    assert_eq!(octal_mode("755"), Ok(0o755));
+    assert_eq!(octal_mode(" 0644 "), Ok(0o644));
+    assert_eq!(octal_mode("7"), Ok(0o7));
+    assert_eq!(octal_mode("1777"), Ok(0o1777));
+    for refused in [
+        "", "  ", "8", "759", "12345", "rwx", "-755", "+755", "0x1ff",
+    ] {
+        assert_eq!(
+            octal_mode(refused),
+            Err(FilesError::InvalidPermissions),
+            "{refused:?}"
+        );
+    }
 }

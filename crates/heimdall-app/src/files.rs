@@ -137,6 +137,8 @@ pub struct RemoteEntry {
     pub permissions: Option<u32>,
     /// The owner's user number.
     pub owner: Option<u32>,
+    /// The group's number.
+    pub group: Option<u32>,
 }
 
 impl RemoteEntry {
@@ -156,6 +158,7 @@ impl RemoteEntry {
             modified: item.modified,
             permissions: item.permissions,
             owner: item.owner,
+            group: item.group,
         }
     }
 }
@@ -456,6 +459,8 @@ pub enum FilesError {
     InvalidName,
     /// An entry of that name exists already.
     Exists,
+    /// The permissions typed are not an octal mode, 755 or 4755.
+    InvalidPermissions,
 }
 
 impl From<&RemoteError> for FilesError {
@@ -783,6 +788,50 @@ pub enum FileOperation {
         /// What to delete.
         path: PathBuf,
     },
+    /// Give an entry on the server new permission bits.
+    RemoteSetPermissions {
+        /// Session.
+        client: RemoteSession,
+        /// The entry.
+        path: RemotePath,
+        /// The bits.
+        mode: u32,
+    },
+}
+
+/// The permission bits typed as the C# dialog asks for them, octal: 755, or 4755 with the
+/// set-user, set-group and sticky bits.
+///
+/// # Errors
+///
+/// [`FilesError::InvalidPermissions`] for anything but one to four octal digits.
+pub fn octal_mode(typed: &str) -> Result<u32, FilesError> {
+    let typed = typed.trim();
+    if typed.is_empty() || typed.len() > 4 || !typed.bytes().all(|b| (b'0'..=b'7').contains(&b)) {
+        return Err(FilesError::InvalidPermissions);
+    }
+    u32::from_str_radix(typed, 8).map_err(|_| FilesError::InvalidPermissions)
+}
+
+/// What an entry of the server's pane is, as the C# Properties dialog shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FileProperties {
+    /// Its name, made safe.
+    pub name: String,
+    /// Its kind.
+    pub kind: EntryKind,
+    /// Its size.
+    pub size: Option<u64>,
+    /// Its modification time.
+    pub modified: Option<SystemTime>,
+    /// Its permission bits.
+    pub permissions: Option<u32>,
+    /// Its owner's user number.
+    pub owner: Option<u32>,
+    /// Its group's number.
+    pub group: Option<u32>,
+    /// Its whole path, made safe.
+    pub path: String,
 }
 
 fn local_failure(error: &std::io::Error) -> FilesError {
@@ -840,6 +889,10 @@ pub async fn file_operation(operation: FileOperation) -> Result<(), FilesError> 
         FileOperation::RemoteRemove { client, path } => {
             client.remove(&path).await.map_err(|e| FilesError::from(&e))
         }
+        FileOperation::RemoteSetPermissions { client, path, mode } => client
+            .set_permissions(&path, mode)
+            .await
+            .map_err(|e| FilesError::from(&e)),
         local => tokio::task::spawn_blocking(move || local_operation(&local))
             .await
             .unwrap_or_else(|error| {
@@ -897,6 +950,7 @@ mod tests {
             modified: Some(UNIX_EPOCH + Duration::from_secs(at)),
             permissions: Some(mode),
             owner: Some(owner),
+            group: None,
         })
     }
 
@@ -1008,6 +1062,7 @@ mod tests {
             modified: None,
             permissions: None,
             owner: None,
+            group: None,
         })
     }
 

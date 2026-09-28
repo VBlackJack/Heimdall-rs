@@ -79,6 +79,8 @@ pub struct RemoteItem {
     pub permissions: Option<u32>,
     /// The owner's user number, when the server says.
     pub owner: Option<u32>,
+    /// The group's number, when the server says.
+    pub group: Option<u32>,
 }
 
 /// What a server refused, in terms the user can be told.
@@ -179,6 +181,26 @@ impl RemoteSession {
             // SFTP version 3 rename refuses an existing target.
             Self::Sftp(client) => client
                 .rename(from, to, false)
+                .await
+                .map_err(|e| sftp_error(&e)),
+        }
+    }
+
+    /// Gives `path` the permission bits `mode`.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn set_permissions(&self, path: &RemotePath, mode: u32) -> Result<(), RemoteError> {
+        match self {
+            Self::Sftp(client) => client
+                .setstat(
+                    path,
+                    Attributes {
+                        permissions: Some(mode & PERMISSION_BITS),
+                        ..Attributes::default()
+                    },
+                )
                 .await
                 .map_err(|e| sftp_error(&e)),
         }
@@ -339,6 +361,7 @@ fn sftp_item(entry: DirEntry) -> RemoteItem {
         // The permission bits alone: the file type is the kind.
         permissions: attributes.permissions.map(|mode| mode & PERMISSION_BITS),
         owner: attributes.uid_gid.map(|(uid, _)| uid),
+        group: attributes.uid_gid.map(|(_, gid)| gid),
         name: entry.name,
     }
 }
@@ -453,6 +476,7 @@ mod tests {
             },
         });
         assert_eq!(owned.owner, Some(1000));
+        assert_eq!(owned.group, Some(50));
         assert_eq!(owned.permissions, Some(0o4755), "set-user kept");
     }
 }

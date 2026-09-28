@@ -1036,6 +1036,8 @@ pub enum Dialog {
         /// The name typed so far.
         value: String,
     },
+    /// What an entry of the server is, as the C# Properties dialog shows it.
+    FileProperties(Box<crate::files::FileProperties>),
     /// Delete an entry, a folder with everything in it.
     ConfirmDelete {
         /// Tab.
@@ -1193,6 +1195,8 @@ pub enum NameAction {
     NewFolder,
     /// A new name for the selected entry.
     Rename,
+    /// New permission bits for the selected entry, typed in octal.
+    Permissions,
 }
 
 /// The application.
@@ -2153,6 +2157,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::FileProperties(_)
                 | Dialog::ImportFailed { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. },

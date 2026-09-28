@@ -23,8 +23,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::{App, Dialog, Effect, NameAction};
 use crate::files::{
-    Direction, EntryKind, FileOperation, FilesError, FilesKey, FilesPane, Side, SortColumn,
-    Transfer, TransferEvent, TransferId, TransferRequest, TransferState, download_name, typed_name,
+    Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey, FilesPane, Side,
+    SortColumn, Transfer, TransferEvent, TransferId, TransferRequest, TransferState, download_name,
+    octal_mode, typed_name,
 };
 use crate::ids::TabId;
 
@@ -146,6 +147,20 @@ pub enum FilesMessage {
         /// Pane.
         side: Side,
     },
+    /// Ask for new permission bits for the selected entry of the server.
+    AskPermissions {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// Show what the selected entry of the server is.
+    ShowProperties {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
     /// Ask to confirm deleting the selected entry.
     AskDelete {
         /// Tab.
@@ -186,7 +201,9 @@ impl FilesMessage {
             | Self::CopyPath { tab, side }
             | Self::AskNewFolder { tab, side }
             | Self::AskRename { tab, side }
-            | Self::AskDelete { tab, side } => Some((tab, side)),
+            | Self::AskDelete { tab, side }
+            | Self::AskPermissions { tab, side }
+            | Self::ShowProperties { tab, side } => Some((tab, side)),
             _ => None,
         }
     }
@@ -241,6 +258,12 @@ impl std::fmt::Debug for FilesMessage {
             }
             Self::AskRename { tab, side } => write!(f, "AskRename({}, {side:?})", tab.value()),
             Self::AskDelete { tab, side } => write!(f, "AskDelete({}, {side:?})", tab.value()),
+            Self::AskPermissions { tab, side } => {
+                write!(f, "AskPermissions({}, {side:?})", tab.value())
+            }
+            Self::ShowProperties { tab, side } => {
+                write!(f, "ShowProperties({}, {side:?})", tab.value())
+            }
             Self::NameEdited(_) => f.write_str("NameEdited(..)"),
             Self::OperationDone { tab, side, result } => write!(
                 f,
@@ -268,6 +291,8 @@ enum PendingKind {
     Rename { remote: RemotePath, local: PathBuf },
     /// The entry at this path to delete.
     Delete { remote: RemotePath, local: PathBuf },
+    /// The entry of the server at this path to give new permission bits.
+    Permissions { remote: RemotePath },
 }
 
 /// A transfer waiting for the user to confirm it replaces an existing file.
@@ -416,7 +441,9 @@ impl App {
             message @ (FilesMessage::PathEdited { .. }
             | FilesMessage::GoTo { .. }
             | FilesMessage::SortBy { .. }
-            | FilesMessage::CopyPath { .. }) => self.pane_message(message),
+            | FilesMessage::CopyPath { .. }
+            | FilesMessage::AskPermissions { .. }
+            | FilesMessage::ShowProperties { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -445,6 +472,13 @@ impl App {
             }
             FilesMessage::GoTo { tab, side } => self.go_to(tab, side),
             FilesMessage::CopyPath { tab, side } => self.copy_path(tab, side),
+            FilesMessage::AskPermissions { tab, side } => {
+                self.ask(tab, side, NameAction::Permissions)
+            }
+            FilesMessage::ShowProperties { tab, side } => {
+                self.show_properties(tab, side);
+                Vec::new()
+            }
             FilesMessage::SortBy { tab, side, column } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -752,9 +786,48 @@ impl App {
         }
     }
 
+    /// Shows what the selected entry of the server is.
+    fn show_properties(&mut self, tab: TabId, side: Side) {
+        let Some(files) = self.files_mut(tab).filter(|_| side == Side::Remote) else {
+            return;
+        };
+        let pane = &files.remote;
+        let Some(entry) = pane.selected.and_then(|index| pane.entries.get(index)) else {
+            return;
+        };
+        let properties = FileProperties {
+            name: entry.label.clone(),
+            kind: entry.kind,
+            size: entry.size,
+            modified: entry.modified,
+            permissions: entry.permissions,
+            owner: entry.owner,
+            group: entry.group,
+            path: crate::text::server_text(&pane.path.join(&entry.name).display()),
+        };
+        self.dialog = Some(Dialog::FileProperties(Box::new(properties)));
+    }
+
     fn ask(&mut self, tab: TabId, side: Side, action: NameAction) -> Vec<Effect> {
         let (kind, value) = match action {
             NameAction::NewFolder => (PendingKind::NewFolder, String::new()),
+            // The server's permissions only, as in the C# Files tab; the ones it has, to
+            // change from.
+            NameAction::Permissions => {
+                let Some(files) = self.files_mut(tab).filter(|_| side == Side::Remote) else {
+                    return Vec::new();
+                };
+                let pane = &files.remote;
+                let Some(entry) = pane.selected.and_then(|index| pane.entries.get(index)) else {
+                    return Vec::new();
+                };
+                let value = entry
+                    .permissions
+                    .map(|mode| format!("{mode:o}"))
+                    .unwrap_or_default();
+                let remote = pane.path.join(&entry.name);
+                (PendingKind::Permissions { remote }, value)
+            }
             NameAction::Rename => {
                 let Some((label, remote, local, _)) = self.selected(tab, side) else {
                     return Vec::new();
@@ -800,6 +873,27 @@ impl App {
             return Vec::new();
         };
         let client = files.client.clone();
+        if let PendingKind::Permissions { remote } = pending.kind {
+            let mode = match octal_mode(typed.unwrap_or_default()) {
+                Ok(mode) => mode,
+                Err(error) => {
+                    files.remote.error = Some(error);
+                    return Vec::new();
+                }
+            };
+            let Some(client) = client else {
+                return Vec::new();
+            };
+            return vec![Effect::FileOperation {
+                tab,
+                side,
+                operation: Box::new(FileOperation::RemoteSetPermissions {
+                    client,
+                    path: remote,
+                    mode,
+                }),
+            }];
+        }
         let name = match typed {
             Some(typed) => match typed_name(side, typed) {
                 Ok(name) => Some(name),

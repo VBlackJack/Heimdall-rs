@@ -27,8 +27,8 @@
 use std::time::SystemTime;
 
 use heimdall_app::files::{
-    Direction, EntryKind, FilesError, FilesKey, FilesPane, Listed, Side, Sort, SortColumn,
-    Transfer, TransferState, symbolic_mode,
+    Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
+    SortColumn, Transfer, TransferState, symbolic_mode,
 };
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use heimdall_core::utc::UtcTime;
@@ -67,6 +67,9 @@ const PERMISSIONS_WIDTH: f32 = 90.0;
 
 /// Width of the owner column, in logical pixels.
 const OWNER_WIDTH: f32 = 55.0;
+
+/// Width of a Properties dialog's labels, in logical pixels.
+const PROPERTY_LABEL_WIDTH: f32 = 100.0;
 
 /// The columns of the server's pane, as the C# Files tab's.
 const REMOTE_COLUMNS: &[SortColumn] = &[
@@ -161,6 +164,61 @@ fn column_width(column: SortColumn) -> Length {
         SortColumn::Permissions => Length::Fixed(PERMISSIONS_WIDTH),
         SortColumn::Owner => Length::Fixed(OWNER_WIDTH),
     }
+}
+
+/// What an entry of the server is, as the C# Properties dialog shows it, with `ok` to
+/// close it.
+pub fn properties<'a>(
+    properties: &FileProperties,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let kind = match properties.kind {
+        EntryKind::File => fl!("ui-files-type-file"),
+        EntryKind::Directory => fl!("ui-files-type-directory"),
+        EntryKind::Link => fl!("ui-files-type-link"),
+        EntryKind::Other => fl!("ui-files-type-other"),
+    };
+    let number = |value: Option<u32>| value.map(|n| n.to_string()).unwrap_or_default();
+    let lines = [
+        (fl!("ui-files-properties-name"), properties.name.clone()),
+        (fl!("ui-files-properties-type"), kind),
+        (
+            fl!("ui-files-properties-size"),
+            properties.size.map(texts::size).unwrap_or_default(),
+        ),
+        (
+            fl!("ui-files-properties-modified"),
+            properties.modified.map(modified_text).unwrap_or_default(),
+        ),
+        (
+            fl!("ui-files-properties-permissions"),
+            properties
+                .permissions
+                .map(|mode| format!("{} ({mode:o})", symbolic_mode(mode)))
+                .unwrap_or_default(),
+        ),
+        (fl!("ui-files-properties-owner"), number(properties.owner)),
+        (fl!("ui-files-properties-group"), number(properties.group)),
+        (fl!("ui-files-properties-path"), properties.path.clone()),
+    ];
+    let mut content = column![
+        text(fl!(
+            "ui-files-properties-title",
+            name = properties.name.as_str()
+        ))
+        .size(TITLE_SIZE)
+    ]
+    .spacing(SPACING);
+    for (label, value) in lines {
+        content = content.push(
+            row![
+                text(label).size(SMALL_SIZE).width(PROPERTY_LABEL_WIDTH),
+                text(value)
+            ]
+            .spacing(SPACING),
+        );
+    }
+    content.push(ok).into()
 }
 
 /// `time` as the C# column shows it, `2026-09-27 21:05`, in UTC.

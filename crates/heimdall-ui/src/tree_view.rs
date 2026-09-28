@@ -459,6 +459,7 @@ pub enum TranscriptEntry {
 /// what applies to the folder shown.
 pub fn files_entry_menu<'a>(tab: TabId, side: Side, index: usize) -> Element<'a, Message> {
     let files = |message| Some(AppMessage::Files(message));
+    let server = |entry: Element<'a, Message>| (side == Side::Remote).then_some(entry);
     let (send, direction) = match side {
         Side::Remote => (fl!("ui-files-menu-download"), Direction::Download),
         Side::Local => (fl!("ui-files-menu-upload"), Direction::Upload),
@@ -478,11 +479,20 @@ pub fn files_entry_menu<'a>(tab: TabId, side: Side, index: usize) -> Element<'a,
             fl!("ui-files-menu-delete"),
             files(FilesMessage::AskDelete { tab, side })
         ),
+        // The server's entries only, as in the C# Files tab.
+        server(entry(
+            fl!("ui-files-menu-permissions"),
+            files(FilesMessage::AskPermissions { tab, side })
+        )),
         separator(),
         entry(
             fl!("ui-files-menu-copy-path"),
             files(FilesMessage::CopyPath { tab, side })
         ),
+        server(entry(
+            fl!("ui-files-menu-properties"),
+            files(FilesMessage::ShowProperties { tab, side })
+        )),
         separator(),
         entry(
             fl!("ui-files-menu-new-folder"),

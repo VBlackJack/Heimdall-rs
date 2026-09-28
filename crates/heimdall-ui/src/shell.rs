@@ -3310,9 +3310,14 @@ fn profile_form<'a>(
     .into()
 }
 
-/// Asks for a name: Enter in the field confirms, like the button.
+/// Asks for a name, or for permission bits in octal: Enter in the field confirms, like the
+/// button.
 fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     let (title, confirm) = match action {
+        NameAction::Permissions => (
+            fl!("ui-dialog-permissions-title"),
+            fl!("ui-dialog-permissions-confirm"),
+        ),
         NameAction::NewFolder => (
             fl!("ui-dialog-new-folder-title"),
             fl!("ui-dialog-new-folder-confirm"),
@@ -3322,9 +3327,18 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
             fl!("ui-dialog-rename-confirm"),
         ),
     };
+    let (label, placeholder) = if action == NameAction::Permissions {
+        (
+            Some(text(fl!("ui-dialog-permissions-label"))),
+            fl!("ui-dialog-permissions-placeholder"),
+        )
+    } else {
+        (None, fl!("ui-dialog-name-placeholder"))
+    };
     column![
         text(title).size(HEADING_SIZE),
-        text_input(&fl!("ui-dialog-name-placeholder"), value)
+        column![].push(label),
+        text_input(&placeholder, value)
             .id(name_field_id())
             .on_input(|value| Message::App(AppMessage::Files(FilesMessage::NameEdited(value))))
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
@@ -3927,6 +3941,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ImportFailed { detail: technical } => column![
             heading(fl!("ui-dialog-import-failed-title")),
             detail(technical),

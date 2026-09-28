@@ -99,6 +99,7 @@ fn remote(name: &str, kind: EntryKind, size: u64) -> RemoteEntry {
         modified: None,
         permissions: None,
         owner: None,
+        group: None,
     }
 }
 
@@ -485,6 +486,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
                     modified: Some(UNIX_EPOCH + Duration::from_secs(1_790_536_503)),
                     permissions: Some(0o4755),
                     owner: Some(1000),
+                    group: None,
                 }],
             )),
         },
@@ -752,4 +754,97 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
             .collect();
         assert_eq!(chosen, [expected], "{label}");
     }
+}
+
+#[tokio::test]
+async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_show() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let settings = || Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let menu = |side| {
+        Simulator::with_size(
+            settings(),
+            WINDOW,
+            heimdall_ui::tree_view::files_entry_menu(tab, side, 0),
+        )
+    };
+    let mut remote = menu(Side::Remote);
+    remote.click("Change permissions...").expect("permissions");
+    assert!(remote.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Files(FilesMessage::AskPermissions {
+            side: Side::Remote,
+            ..
+        }))
+    )));
+    let mut remote = menu(Side::Remote);
+    remote.click("Properties").expect("properties");
+    assert!(remote.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Files(FilesMessage::ShowProperties { .. }))
+    )));
+    let mut local = menu(Side::Local);
+    assert!(
+        local.find("Change permissions...").is_err(),
+        "the server's only"
+    );
+    assert!(local.find("Properties").is_err());
+
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![RemoteEntry {
+                    name: b"run.sh".to_vec(),
+                    label: "run.sh".to_owned(),
+                    kind: EntryKind::File,
+                    size: Some(10),
+                    modified: None,
+                    permissions: Some(0o755),
+                    owner: Some(1000),
+                    group: Some(50),
+                }],
+            )),
+        },
+    )));
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Select {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    })));
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::ShowProperties {
+            tab,
+            side: Side::Remote,
+        },
+    )));
+    snapshot(&shell, "files-properties.png");
+    {
+        let mut ui = simulator(&shell);
+        for shown in [
+            "Properties - run.sh",
+            "rwxr-xr-x (755)",
+            "/srv/run.sh",
+            "50",
+            "File",
+        ] {
+            ui.find(shown).expect(shown);
+        }
+    }
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::AskPermissions {
+            tab,
+            side: Side::Remote,
+        },
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Change Permissions").expect("its title");
+    ui.find("Permissions (octal, e.g. 755):")
+        .expect("its label");
 }
