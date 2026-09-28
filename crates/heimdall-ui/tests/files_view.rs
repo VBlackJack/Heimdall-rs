@@ -969,6 +969,79 @@ async fn the_servers_pane_bookmarks_its_folder_and_lists_the_bookmarks() {
     );
 }
 
+/// The RGBA pixel at logical `(x, y)` of `view` drawn alone in the dark theme.
+fn pixel_of(view: iced::Element<'_, Message>, x: u32, y: u32) -> [u8; 4] {
+    /// Physical pixels per logical pixel in a simulator snapshot.
+    const SNAPSHOT_SCALE: u32 = 2;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    Simulator::with_size(settings, WINDOW, view)
+        .snapshot(&iced::Theme::Dark)
+        .expect("drawn")
+        .matches_image(dir.path().join("menu.png"))
+        .expect("written");
+    // iced names the file after its renderer.
+    let entry = std::fs::read_dir(dir.path())
+        .expect("listed")
+        .flatten()
+        .next()
+        .expect("one snapshot");
+    let decoder = png::Decoder::new(std::io::BufReader::new(
+        std::fs::File::open(entry.path()).expect("opened"),
+    ));
+    let mut reader = decoder.read_info().expect("header");
+    let mut bytes = vec![0; reader.output_buffer_size().expect("size")];
+    let info = reader.next_frame(&mut bytes).expect("frame");
+    let at = usize::try_from((y * SNAPSHOT_SCALE) * info.width * 4 + (x * SNAPSHOT_SCALE) * 4)
+        .expect("index");
+    [bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]]
+}
+
+#[tokio::test]
+async fn the_files_menus_are_drawn_on_a_card_that_hides_what_is_under_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    let window = pixel_of(iced::widget::space().into(), 2, 20);
+    // In the card's margin, left of the entries: the card's colour, not the window's, or
+    // the listing under the menu shows through its entries.
+    let entry_menu = pixel_of(
+        heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 0),
+        2,
+        20,
+    );
+    assert_ne!(entry_menu, window, "the entry menu has no card");
+    let bookmarks = pixel_of(
+        heimdall_ui::tree_view::files_bookmarks_menu(tab, &["/home/admin".to_owned()]),
+        2,
+        20,
+    );
+    assert_ne!(bookmarks, window, "the bookmarks menu has no card");
+}
+
+#[tokio::test]
+async fn a_narrow_window_wraps_the_servers_buttons_instead_of_cutting_them() {
+    // At this width one row of the server's buttons runs past the window's edge, as the
+    // hand test saw "Bookmarks" cut in half.
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, _) = files_tab(dir.path()).await;
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    let bookmark = ui.find("Bookmark this path").expect("shown").bounds();
+    let bookmarks = ui.find("Bookmarks").expect("shown").bounds();
+    assert!(
+        bookmarks.x + bookmarks.width <= WINDOW.width,
+        "whole in the window: {bookmarks:?}"
+    );
+    assert!(
+        bookmarks.y > bookmark.y,
+        "on the next line: {bookmark:?} then {bookmarks:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_pane_filters_its_entries_hides_dot_names_and_counts_them() {
     let dir = tempfile::tempdir().expect("dir");

@@ -31,7 +31,7 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
 use iced::widget::{
-    Column, button, column, container, mouse_area, row, rule, scrollable, text, tooltip,
+    Column, Container, button, column, container, mouse_area, row, rule, scrollable, text, tooltip,
 };
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
@@ -53,6 +53,9 @@ const CLOSED_MARKER: &str = "\u{25B8}";
 
 /// Width of a menu.
 const MENU_WIDTH: f32 = 230.0;
+
+/// Space between a menu's card and its entries.
+const MENU_PADDING: f32 = 4.0;
 
 /// Size of the protocol label before a profile's name.
 const PROTOCOL_SIZE: f32 = 11.0;
@@ -296,6 +299,13 @@ fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message>
         .into()
 }
 
+/// The card every menu is drawn on, so what is under it never shows through.
+fn menu_card<'a>(entries: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
+    container(entries)
+        .padding(MENU_PADDING)
+        .style(container::rounded_box)
+}
+
 fn separator<'a>() -> Element<'a, Message> {
     rule::horizontal(1).into()
 }
@@ -334,10 +344,7 @@ pub fn menu_entries<'a>(
         }
         _ => {}
     }
-    container(entries)
-        .padding(4.0)
-        .style(container::rounded_box)
-        .into()
+    menu_card(entries).into()
 }
 
 /// A profile's menu, in the C# order this version has: Connect, Connect as, Rename, Edit,
@@ -466,7 +473,7 @@ pub fn files_entry_menu<'a>(tab: TabId, side: Side, index: usize) -> Element<'a,
         Side::Remote => (fl!("ui-files-menu-download"), Direction::Download),
         Side::Local => (fl!("ui-files-menu-upload"), Direction::Upload),
     };
-    column![
+    let entries = column![
         entry(
             fl!("ui-files-menu-open"),
             files(FilesMessage::Open { tab, side, index })
@@ -506,8 +513,8 @@ pub fn files_entry_menu<'a>(tab: TabId, side: Side, index: usize) -> Element<'a,
         ),
     ]
     .spacing(0.0)
-    .width(MENU_WIDTH)
-    .into()
+    .width(MENU_WIDTH);
+    menu_card(entries).into()
 }
 
 /// The server's folders bookmarked in a Files tab, `bookmarks` as shown, each going
@@ -523,7 +530,7 @@ pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a,
             Some(AppMessage::Files(FilesMessage::OpenBookmark { tab, index })),
         ));
     }
-    entries.into()
+    menu_card(entries).into()
 }
 
 /// What a tab's menu offers, worked out by the window from the core.
@@ -642,10 +649,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             fl!("ui-tab-menu-close-right"),
             close(TabGroup::Right).filter(|_| state.right),
         ));
-    container(entries)
-        .padding(4.0)
-        .style(container::rounded_box)
-        .into()
+    menu_card(entries).into()
 }
 
 /// A folder's menu, in the C# order: Connect all, Add Session and New folder in it, then,
@@ -700,14 +704,12 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                     ))),
             );
     }
-    container(entries)
-        .padding(4.0)
-        .style(container::rounded_box)
-        .into()
+    menu_card(entries).into()
 }
 
 /// Which folder profile `id` can move to: "(No Folder)" first, then every folder, its own
 /// greyed, as the C# "Move to folder".
+#[must_use]
 pub fn move_profile_entries<'a>(
     id: &ProfileId,
     targets: &[(Option<String>, bool)],
@@ -727,10 +729,8 @@ pub fn move_profile_entries<'a>(
                 }),
             )
         }));
-    container(scrollable(entries).height(Length::Shrink))
+    menu_card(scrollable(entries).height(Length::Shrink))
         .max_height(MOVE_MENU_HEIGHT)
-        .padding(4.0)
-        .style(container::rounded_box)
         .into()
 }
 
@@ -769,10 +769,7 @@ pub fn selection_menu_entries<'a>(count: usize, connectable: usize) -> Element<'
                     SelectionMessage::RequestDelete,
                 ))),
         );
-    container(entries)
-        .padding(4.0)
-        .style(container::rounded_box)
-        .into()
+    menu_card(entries).into()
 }
 
 /// Which folder the profiles selected together can move to: "(No Folder)", then every
@@ -793,15 +790,14 @@ pub fn move_selection_entries<'a>(folders: &[String]) -> Element<'a, Message> {
                 )))),
             )
         }));
-    container(scrollable(entries).height(Length::Shrink))
+    menu_card(scrollable(entries).height(Length::Shrink))
         .max_height(MOVE_MENU_HEIGHT)
-        .padding(4.0)
-        .style(container::rounded_box)
         .into()
 }
 
 /// Where folder `path` can move: the top level first, then every folder but itself, those
 /// it holds and the one it is in, as the C# "Move to".
+#[must_use]
 pub fn move_folder_entries<'a>(path: &str, targets: &[String]) -> Element<'a, Message> {
     let entries = column![]
         .spacing(0.0)
@@ -820,10 +816,7 @@ pub fn move_folder_entries<'a>(path: &str, targets: &[String]) -> Element<'a, Me
                 })),
             )
         }));
-    container(entries)
-        .padding(4.0)
-        .style(container::rounded_box)
-        .into()
+    menu_card(entries).into()
 }
 
 /// Where the pointer last was in the window, recorded without a message per move.

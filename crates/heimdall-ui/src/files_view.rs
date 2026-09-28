@@ -323,13 +323,13 @@ fn entry_row<'a, E: Listed>(
 }
 
 /// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
-/// bookmarks, as in the C# tab.
+/// bookmarks, as in the C# tab. The row wraps: a narrow pane keeps every button whole.
 fn pane_tools<'a>(
     tab: TabId,
     side: Side,
     selected: Option<usize>,
     chosen: usize,
-) -> iced::widget::Row<'a, Message> {
+) -> Element<'a, Message> {
     let mut tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
             .style(button::secondary)
@@ -357,7 +357,7 @@ fn pane_tools<'a>(
                     .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
             );
     }
-    tools
+    tools.wrap().vertical_spacing(SPACING).into()
 }
 
 /// The C# filter and hidden-files toggle of a pane, lit while hidden names show.
