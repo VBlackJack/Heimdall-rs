@@ -37,10 +37,12 @@
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::SystemTime;
 
 use heimdall_core::credentials::{
     CredentialProtocol, Endpoint, SavedPassword, decode, encode, password_entry, rdp_account,
 };
+use heimdall_core::lockout::Lockout;
 use heimdall_core::profile::ProfileId;
 use heimdall_keyring::SystemKeyring;
 use heimdall_ssh::Secret;
@@ -134,6 +136,12 @@ pub enum VaultProblem {
     NoSystemStore,
     /// A vault appeared where one was to be created.
     AlreadyExists,
+    /// Too many wrong master passwords in a row: no try is taken until then, as the C#
+    /// unlock dialogs lock out.
+    LockedOut {
+        /// When tries are taken again.
+        until: SystemTime,
+    },
     /// The file could not be read or written, or no random bytes were given.
     System {
         /// Technical detail.
@@ -313,6 +321,9 @@ pub(super) struct VaultState {
     system: SystemCredentials,
     /// Profiles whose saved password a server refused in this session: the user is asked.
     refused: HashSet<ProfileId>,
+    /// Wrong master passwords in a row at the lock screen, for this run only, as the C#
+    /// overlay counts them; those at start are kept in the settings.
+    lock_screen: Lockout,
 }
 
 impl VaultState {
@@ -322,6 +333,7 @@ impl VaultState {
             open: None,
             system,
             refused: HashSet::new(),
+            lock_screen: Lockout::default(),
         }
     }
 
@@ -634,10 +646,21 @@ impl App {
         confirm: Option<&Secret>,
     ) -> Vec<Effect> {
         let system_available = self.vault.system.available();
+        let waiting = match &self.dialog {
+            Some(Dialog::Vault(dialog)) if !dialog.busy => Some(dialog.mode),
+            _ => None,
+        };
+        let locked_until = waiting
+            .and_then(|mode| self.unlock_lockout(mode))
+            .and_then(|lockout| lockout.locked_until(SystemTime::now()));
         let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() else {
             return Vec::new();
         };
         if dialog.busy {
+            return Vec::new();
+        }
+        if let Some(until) = locked_until {
+            dialog.problem = Some(VaultProblem::LockedOut { until });
             return Vec::new();
         }
         let (problem, job) = match dialog.mode {
@@ -687,6 +710,7 @@ impl App {
                 VaultMode::Disable => self.vault.move_out(&vault),
             }
         });
+        let done = self.count_unlock(mode, done);
         match done {
             Ok(()) => self.dialog = None,
             Err(problem) => {
@@ -696,6 +720,50 @@ impl App {
                 }
             }
         }
+    }
+
+    /// The count of wrong master passwords `mode` keeps: at start, kept across runs; at the
+    /// lock screen, for this run. `None` for the dialogs that are not unlocking.
+    fn unlock_lockout(&mut self, mode: VaultMode) -> Option<&mut Lockout> {
+        match mode {
+            VaultMode::Unlock => Some(&mut self.settings.vault_unlock),
+            VaultMode::Locked => Some(&mut self.vault.lock_screen),
+            VaultMode::Create | VaultMode::Change | VaultMode::Disable => None,
+        }
+    }
+
+    /// Counts the try `done` was, when `mode` unlocks: a right one starts the count again, a
+    /// wrong one adds to it and, the last allowed, locks the tries out, said instead of the
+    /// wrong password. The count at start is saved at once, as the C# gate saves it.
+    fn count_unlock(
+        &mut self,
+        mode: VaultMode,
+        done: Result<(), VaultProblem>,
+    ) -> Result<(), VaultProblem> {
+        let now = SystemTime::now();
+        let Some(lockout) = self.unlock_lockout(mode) else {
+            return done;
+        };
+        let done = match done {
+            Ok(()) => {
+                lockout.reset();
+                Ok(())
+            }
+            Err(VaultProblem::Unreadable) => {
+                lockout.register_failure(now);
+                Err(lockout
+                    .locked_until(now)
+                    .map_or(VaultProblem::Unreadable, |until| VaultProblem::LockedOut {
+                        until,
+                    }))
+            }
+            other => other,
+        };
+        if mode == VaultMode::Unlock {
+            // Not saved, the count still holds for this run: the unlock is not refused for it.
+            let _ = self.settings.save(&self.settings_file);
+        }
+        done
     }
 
     /// The entry of every profile and gateway that may have a saved password: the system's

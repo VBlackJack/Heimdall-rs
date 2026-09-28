@@ -19,9 +19,11 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use crate::lockout::Lockout;
 use crate::store::{StoreError, write_atomic};
 
 /// Name of the settings file, beside the profile file.
@@ -129,6 +131,9 @@ pub struct Settings {
     pub terminal_font_size: u16,
     /// The language chosen; `None` follows the desktop's.
     pub language: Option<Language>,
+    /// Wrong master passwords in a row when the application starts, kept across runs as
+    /// the C# startup gate keeps them: quitting does not give the tries back.
+    pub vault_unlock: Lockout,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -187,6 +192,7 @@ impl Default for Settings {
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             language: None,
+            vault_unlock: Lockout::default(),
         }
     }
 }
@@ -200,6 +206,17 @@ struct SettingsFile {
     session_log: SessionLogSection,
     #[serde(default)]
     general: GeneralSection,
+    #[serde(default)]
+    vault_unlock: VaultUnlockSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct VaultUnlockSection {
+    #[serde(default)]
+    failures: u32,
+    /// Seconds since 1970, UTC.
+    #[serde(default)]
+    locked_until: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -288,6 +305,13 @@ impl Settings {
                 .font_size
                 .filter(|size| terminal_font_size_accepted(*size))
                 .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
+            vault_unlock: Lockout::restored(
+                file.vault_unlock.failures,
+                file.vault_unlock
+                    .locked_until
+                    .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)),
+                SystemTime::now(),
+            ),
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -332,6 +356,14 @@ impl Settings {
             },
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),
+            },
+            vault_unlock: VaultUnlockSection {
+                failures: self.vault_unlock.failures(),
+                locked_until: self.vault_unlock.until().map(|until| {
+                    until
+                        .duration_since(SystemTime::UNIX_EPOCH)
+                        .map_or(0, |since| since.as_secs())
+                }),
             },
         })?;
         write_atomic(path, &text)
