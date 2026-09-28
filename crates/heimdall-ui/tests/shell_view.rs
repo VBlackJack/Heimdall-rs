@@ -20,6 +20,8 @@
 //! Strings are the fallback language's (English): the tests never select a language.
 //! Setting `HEIMDALL_SNAPSHOT_DIR` writes a PNG of each state there, for a visual pass.
 
+mod common;
+
 use std::path::Path;
 use std::sync::Arc;
 
@@ -152,8 +154,7 @@ fn the_sidebar_lists_profiles_by_group_and_a_click_opens_one() {
         production < ungrouped,
         "profiles without a folder come last"
     );
-    ui.click("server b").expect("profile");
-    ui.click("server b").expect("profile");
+    common::double_click(&mut ui, "server b");
     let connected: Vec<String> = ui
         .into_messages()
         .filter_map(|message| match message {

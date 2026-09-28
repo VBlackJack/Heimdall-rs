@@ -16,6 +16,8 @@
 
 //! VNC in the window, drawn headless: the profile in the sidebar opens a VNC tab.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{App, AppConfig, Message as AppMessage};
@@ -65,8 +67,7 @@ fn a_vnc_profile_is_listed_and_opens_a_vnc_tab() {
     let mut ui = Simulator::with_size(settings, WINDOW, shell.view());
     ui.find("VNC").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    ui.click("Lobby kiosk").expect("profile");
-    ui.click("Lobby kiosk").expect("profile");
+    common::double_click(&mut ui, "Lobby kiosk");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,
