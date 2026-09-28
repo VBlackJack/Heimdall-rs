@@ -127,6 +127,42 @@ pub struct Settings {
     /// Size of the terminals' text a new tab starts at, and Ctrl+0 comes back to, within
     /// [`TERMINAL_FONT_SIZE_MIN`] and [`TERMINAL_FONT_SIZE_MAX`].
     pub terminal_font_size: u16,
+    /// The language chosen; `None` follows the desktop's.
+    pub language: Option<Language>,
+}
+
+/// A language the application is written in, as the C# language list offers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Language {
+    /// English, the language every text is written in first.
+    English,
+    /// French.
+    French,
+    /// Spanish.
+    Spanish,
+}
+
+impl Language {
+    /// Every language, in the order of the C# list.
+    pub const ALL: [Self; 3] = [Self::English, Self::French, Self::Spanish];
+
+    /// Its code, as the C# `DefaultLocale` and the translation folders name it.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::French => "fr",
+            Self::Spanish => "es",
+        }
+    }
+
+    /// The language of `code`, whatever its case; `None` for one not offered.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.code().eq_ignore_ascii_case(code.trim()))
+    }
 }
 
 /// Size of the terminals' text unless chosen: the one this terminal was drawn at before.
@@ -150,6 +186,7 @@ impl Default for Settings {
             session_logging: false,
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
+            language: None,
         }
     }
 }
@@ -161,6 +198,16 @@ struct SettingsFile {
     terminal: TerminalSection,
     #[serde(default)]
     session_log: SessionLogSection,
+    #[serde(default)]
+    general: GeneralSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct GeneralSection {
+    /// Written only once chosen, as TOML leaves an absent value out: until then the
+    /// desktop's language is followed.
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -241,6 +288,12 @@ impl Settings {
                 .font_size
                 .filter(|size| terminal_font_size_accepted(*size))
                 .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
+            // A language not offered is not guessed: the desktop's is followed.
+            language: file
+                .general
+                .language
+                .as_deref()
+                .and_then(Language::from_code),
         })
     }
 
@@ -276,6 +329,9 @@ impl Settings {
             session_log: SessionLogSection {
                 enabled: self.session_logging,
                 directory: Some(self.session_log_directory.clone()),
+            },
+            general: GeneralSection {
+                language: self.language.map(|language| language.code().to_owned()),
             },
         })?;
         write_atomic(path, &text)

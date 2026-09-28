@@ -48,6 +48,7 @@ use heimdall_app::{
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
+use heimdall_core::settings::Language;
 use heimdall_core::settings::{BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
@@ -280,6 +281,8 @@ pub enum Message {
     ShowSettings,
     /// A search typed over a list of trusted keys on the Settings page.
     TrustedSearch(TrustedList, String),
+    /// A language chosen on the Settings page.
+    LanguageChosen(Language),
     /// F11: the window full screen, showing the session only, or back.
     ToggleFullscreen,
     /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
@@ -390,6 +393,7 @@ impl fmt::Debug for Message {
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
+            Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
@@ -613,7 +617,12 @@ impl Shell {
     /// The window, with the profiles on disk.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_config(config())
+        let shell = Self::with_config(config());
+        // The language chosen, once the settings are read; else the desktop's, set at start.
+        if let Some(language) = shell.app.settings().language {
+            crate::i18n::apply(Some(language));
+        }
+        shell
     }
 
     /// The window over `config`.
@@ -756,6 +765,7 @@ impl Shell {
             | Message::ToggleFullscreen
             | Message::ShowSettings
             | Message::TrustedSearch(..)
+            | Message::LanguageChosen(_)
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
             // Under a dialog, the tree is not there to search.
@@ -871,6 +881,13 @@ impl Shell {
                     .update(AppMessage::Settings(SettingsMessage::TrustedKeys(
                         TrustedKeysMessage::Refresh,
                     )));
+                Task::none()
+            }
+            Message::LanguageChosen(language) => {
+                crate::i18n::apply(Some(*language));
+                let _ = self
+                    .app
+                    .update(AppMessage::Settings(SettingsMessage::Language(*language)));
                 Task::none()
             }
             Message::TrustedSearch(list, typed) => {
@@ -1825,6 +1842,8 @@ impl Shell {
         scrollable(
             column![
                 text(fl!("ui-settings-title")).size(HEADING_SIZE),
+                text(fl!("ui-settings-appearance")).size(BODY_SIZE),
+                self.appearance_settings(),
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
                 vault_card,
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
@@ -1837,6 +1856,35 @@ impl Shell {
             .padding(PADDING),
         )
         .into()
+    }
+
+    /// The application's appearance, as the C# General tab's card: its language, applied at
+    /// once.
+    fn appearance_settings(&self) -> Element<'_, Message> {
+        let shown = self
+            .app
+            .settings()
+            .language
+            .unwrap_or_else(crate::i18n::current);
+        let card = column![
+            row![
+                text(fl!("ui-settings-language")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    Language::ALL.map(LanguageChoice).to_vec(),
+                    Some(LanguageChoice(shown)),
+                    |LanguageChoice(language)| Message::LanguageChosen(language),
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING);
+        container(card)
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
     }
 
     /// The keys trusted for servers, as the C# Host keys and Certificates pages list them.
@@ -3864,6 +3912,20 @@ fn fits_by_default(profile: &TabProfile) -> bool {
         TabProfile::Vnc(_) => true,
         TabProfile::Rdp(rdp) => rdp.options.scaled(),
         TabProfile::Ssh(_) | TabProfile::Telnet(_) | TabProfile::Local(_) => false,
+    }
+}
+
+/// A language as the list names it: in its own name, as the C# list does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LanguageChoice(Language);
+
+impl std::fmt::Display for LanguageChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            Language::English => fl!("ui-settings-language-en"),
+            Language::French => fl!("ui-settings-language-fr"),
+            Language::Spanish => fl!("ui-settings-language-es"),
+        })
     }
 }
 

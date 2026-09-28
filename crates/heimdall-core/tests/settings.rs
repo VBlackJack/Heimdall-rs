@@ -224,3 +224,42 @@ font_size = {size}
     settings.save(&path).expect("saved");
     assert_eq!(Settings::load(&path).expect("read").terminal_font_size, 20);
 }
+
+#[test]
+fn a_language_is_written_once_chosen_and_one_not_offered_follows_the_desktop() {
+    use heimdall_core::settings::Language;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    Settings::default().save(&path).expect("saved");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(
+        !text.contains("language"),
+        "not chosen, not written: {text}"
+    );
+    assert_eq!(Settings::load(&path).expect("read").language, None);
+    for language in Language::ALL {
+        let settings = Settings {
+            language: Some(language),
+            ..Settings::default()
+        };
+        settings.save(&path).expect("saved");
+        assert_eq!(
+            Settings::load(&path).expect("read").language,
+            Some(language)
+        );
+    }
+    for (code, read) in [
+        ("FR", Some(Language::French)),
+        (" es ", Some(Language::Spanish)),
+        ("de", None),
+    ] {
+        let text = format!(
+            "version = 1
+[general]
+language = \"{code}\"
+"
+        );
+        assert_eq!(written(dir.path(), &text).language, read, "{code}");
+    }
+}

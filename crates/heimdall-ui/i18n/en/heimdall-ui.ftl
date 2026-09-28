@@ -515,6 +515,12 @@ ui-find-nothing = No match
 ## The terminal's appearance in the Settings page, as the C# one.
 ui-settings-terminal = Terminal Appearance
 ui-settings-color-scheme = Color scheme
+ui-settings-appearance = Appearance
+ui-settings-language = Language
+# Each language in its own name, whatever the language shown, as the C# list.
+ui-settings-language-en = English
+ui-settings-language-fr = Français
+ui-settings-language-es = Español
 ui-settings-font-size = Font size
 ui-settings-font-size-unit = px
 ui-settings-font-size-refused = Terminal font size must be between { $min } and { $max }.

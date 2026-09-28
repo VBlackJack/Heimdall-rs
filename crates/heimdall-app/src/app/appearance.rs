@@ -19,7 +19,9 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::settings::{ColorScheme, Settings, settings_path, terminal_font_size_accepted};
+use heimdall_core::settings::{
+    ColorScheme, Language, Settings, settings_path, terminal_font_size_accepted,
+};
 use heimdall_term::Palette;
 
 use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION, TrustedKeysMessage};
@@ -37,6 +39,8 @@ pub enum SettingsMessage {
     TrustedKeys(TrustedKeysMessage),
     /// The size a new terminal's text starts at; one out of the accepted range is ignored.
     TerminalFontSize(u16),
+    /// The language chosen, once the window shows it.
+    Language(Language),
 }
 
 /// The colours of `scheme`.
@@ -104,6 +108,7 @@ impl App {
                 }
                 self.settings.terminal_font_size = *size;
             }
+            SettingsMessage::Language(language) => self.settings.language = Some(*language),
             SettingsMessage::TrustedKeys(_) => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {

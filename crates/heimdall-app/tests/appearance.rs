@@ -153,3 +153,19 @@ fn a_terminal_font_size_in_the_range_is_kept_for_the_next_run_and_another_ignore
     }
     assert_eq!(self::app(dir.path()).settings().terminal_font_size, 20);
 }
+
+#[test]
+fn a_language_chosen_is_kept_for_the_next_run() {
+    use heimdall_core::settings::Language;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    assert_eq!(app.settings().language, None, "the desktop's until chosen");
+    app.update(Message::Settings(SettingsMessage::Language(
+        Language::Spanish,
+    )));
+    assert_eq!(
+        self::app(dir.path()).settings().language,
+        Some(Language::Spanish)
+    );
+}
