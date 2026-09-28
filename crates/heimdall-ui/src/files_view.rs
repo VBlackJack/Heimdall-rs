@@ -321,6 +321,44 @@ fn entry_row<'a, E: Listed>(
         .into()
 }
 
+/// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
+/// bookmarks, as in the C# tab.
+fn pane_tools<'a>(
+    tab: TabId,
+    side: Side,
+    selected: Option<usize>,
+    chosen: usize,
+) -> iced::widget::Row<'a, Message> {
+    let mut tools = row![
+        button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(FilesMessage::AskNewFolder { tab, side })),
+        button(text(fl!("ui-files-rename-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            // One entry at a time, as in the C# tab.
+            .on_press_maybe((chosen == 1).then(|| files(FilesMessage::AskRename { tab, side })),),
+        button(text(fl!("ui-files-delete-button")).size(SMALL_SIZE))
+            .style(button::danger)
+            .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
+    ]
+    .spacing(SPACING);
+    // The server's folders only, as in the C# tab.
+    if side == Side::Remote {
+        tools = tools
+            .push(
+                button(text(fl!("ui-files-bookmark-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(files(FilesMessage::Bookmark { tab })),
+            )
+            .push(
+                button(text(fl!("ui-files-bookmarks-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
+            );
+    }
+    tools
+}
+
 /// What a pane is drawn from, shared by both sides.
 struct PaneParts<'p, E> {
     tab: TabId,
@@ -355,19 +393,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         focused,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
-    let tools = row![
-        button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
-            .style(button::secondary)
-            .on_press(files(FilesMessage::AskNewFolder { tab, side })),
-        button(text(fl!("ui-files-rename-button")).size(SMALL_SIZE))
-            .style(button::secondary)
-            // One entry at a time, as in the C# tab.
-            .on_press_maybe((chosen == 1).then(|| files(FilesMessage::AskRename { tab, side })),),
-        button(text(fl!("ui-files-delete-button")).size(SMALL_SIZE))
-            .style(button::danger)
-            .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
-    ]
-    .spacing(SPACING);
+    let tools = pane_tools(tab, side, selected, chosen);
     let header = row![
         button(text(fl!("ui-files-up-button")).size(SMALL_SIZE))
             .style(button::secondary)

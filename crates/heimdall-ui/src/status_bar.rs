@@ -58,6 +58,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-broadcast-on", scope = scope_label(*scope, targets))
             }
             Notice::BroadcastOff => fl!("ui-broadcast-off"),
+            Notice::Bookmarked(path) => fl!("ui-files-bookmark-added", path = path.as_str()),
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",

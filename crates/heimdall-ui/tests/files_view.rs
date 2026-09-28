@@ -900,3 +900,71 @@ async fn ctrl_and_shift_clicks_select_several_entries_and_the_pane_says_how_many
     click(&mut shell, 0);
     assert_eq!(chosen(&shell), [0, 1], "Shift takes the range");
 }
+
+#[tokio::test]
+async fn the_servers_pane_bookmarks_its_folder_and_lists_the_bookmarks() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        let found = ui.find("Bookmark this path").expect("shown");
+        assert!(
+            found.bounds().x > WINDOW.width / 2.0,
+            "the first found is the server's pane's, on the right: this computer's has none"
+        );
+        ui.click("Bookmark this path")
+            .expect("the server's pane only");
+        assert!(
+            files_messages(ui)
+                .iter()
+                .any(|message| matches!(message, FilesMessage::Bookmark { .. }))
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Bookmarks").expect("its list");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::OpenTreeMenu(TreeMenu::FilesBookmarks(opened)) if opened == tab
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab)));
+    simulator(&shell)
+        .find("No bookmarks saved")
+        .expect("none yet");
+    let _ = shell.update(Message::CloseTreeMenu);
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Bookmark {
+        tab,
+    })));
+    simulator(&shell)
+        .find("Bookmark added: /home/admin")
+        .expect("said");
+    // The menu alone: the path bar holds the same text.
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = Simulator::with_size(
+        settings,
+        WINDOW,
+        heimdall_ui::tree_view::files_bookmarks_menu(tab, &["/home/admin".to_owned()]),
+    );
+    assert!(ui.find("No bookmarks saved").is_err());
+    ui.click("/home/admin").expect("the bookmark");
+    let chosen: Vec<Message> = ui
+        .into_messages()
+        .filter(|message| matches!(message, Message::MenuChoice(_)))
+        .collect();
+    assert!(
+        matches!(
+            chosen.as_slice(),
+            [Message::MenuChoice(AppMessage::Files(
+                FilesMessage::OpenBookmark { index: 0, .. }
+            ))]
+        ),
+        "{chosen:?}"
+    );
+}

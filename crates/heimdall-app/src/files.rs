@@ -538,6 +538,9 @@ pub struct FilesPane {
     pub transfers: Vec<Transfer>,
     /// The pane keys act on: the last one clicked or chosen.
     pub focus: Side,
+    /// The server's folders bookmarked in this tab, in the order they were, as the C#
+    /// Files tab keeps them: for the session.
+    pub bookmarks: Vec<RemotePath>,
 }
 
 impl FilesPane {
@@ -550,6 +553,7 @@ impl FilesPane {
             local: Pane::new(local),
             transfers: Vec::new(),
             focus: Side::Local,
+            bookmarks: Vec::new(),
         }
     }
 

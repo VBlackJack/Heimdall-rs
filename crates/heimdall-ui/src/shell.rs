@@ -1460,6 +1460,14 @@ impl Shell {
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+        } else if let TreeMenu::FilesBookmarks(tab) = *menu {
+            let files = self.app.tab(tab)?.files.as_deref()?;
+            let shown: Vec<String> = files
+                .bookmarks
+                .iter()
+                .map(|path| heimdall_app::server_text(&path.display()))
+                .collect();
+            tree_view::files_bookmarks_menu(tab, &shown)
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
             // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
@@ -1497,7 +1505,8 @@ impl Shell {
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
-                | TreeMenu::FilesEntry { .. } => None,
+                | TreeMenu::FilesEntry { .. }
+                | TreeMenu::FilesBookmarks(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
             let connect_as = profile
@@ -1858,7 +1867,9 @@ impl Shell {
             }
             // A tab's menu is the tab bar's, an entry's the Files tab's: the keyboard stays
             // where it was.
-            Message::OpenTreeMenu(TreeMenu::Tab(_) | TreeMenu::FilesEntry { .. }) => {}
+            Message::OpenTreeMenu(
+                TreeMenu::Tab(_) | TreeMenu::FilesEntry { .. } | TreeMenu::FilesBookmarks(_),
+            ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
             | Message::TreeClick(_) => self.tree_focused = true,

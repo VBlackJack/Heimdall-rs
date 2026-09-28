@@ -107,6 +107,18 @@ pub enum FilesMessage {
         /// Column.
         column: SortColumn,
     },
+    /// Bookmark the server's folder shown.
+    Bookmark {
+        /// Tab.
+        tab: TabId,
+    },
+    /// Go to one of the server's folders bookmarked.
+    OpenBookmark {
+        /// Tab.
+        tab: TabId,
+        /// Which, in the order they were bookmarked.
+        index: usize,
+    },
     /// Copy the full path of a pane's selected entry, as the C# "Copy path".
     CopyPath {
         /// Tab.
@@ -257,6 +269,10 @@ impl std::fmt::Debug for FilesMessage {
             }
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
+            Self::Bookmark { tab } => write!(f, "Bookmark({})", tab.value()),
+            Self::OpenBookmark { tab, index } => {
+                write!(f, "OpenBookmark({}, {index})", tab.value())
+            }
             Self::Toggle { tab, side, index } => {
                 write!(f, "Toggle({}, {side:?}, {index})", tab.value())
             }
@@ -471,7 +487,9 @@ impl App {
             | FilesMessage::AskPermissions { .. }
             | FilesMessage::ShowProperties { .. }
             | FilesMessage::Toggle { .. }
-            | FilesMessage::Range { .. }) => self.pane_message(message),
+            | FilesMessage::Range { .. }
+            | FilesMessage::Bookmark { .. }
+            | FilesMessage::OpenBookmark { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -500,6 +518,11 @@ impl App {
             }
             FilesMessage::GoTo { tab, side } => self.go_to(tab, side),
             FilesMessage::CopyPath { tab, side } => self.copy_path(tab, side),
+            FilesMessage::Bookmark { tab } => {
+                self.bookmark(tab);
+                Vec::new()
+            }
+            FilesMessage::OpenBookmark { tab, index } => self.open_bookmark(tab, index),
             FilesMessage::Toggle { tab, side, index }
             | FilesMessage::Range { tab, side, index } => {
                 let toggle = matches!(message, FilesMessage::Toggle { .. });
@@ -531,6 +554,36 @@ impl App {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Bookmarks the server's folder shown, once, and says so.
+    fn bookmark(&mut self, tab: TabId) {
+        let Some(files) = self.files_mut(tab) else {
+            return;
+        };
+        let path = files.remote.path.clone();
+        if files.bookmarks.contains(&path) {
+            return;
+        }
+        let shown = crate::text::server_text(&path.display());
+        files.bookmarks.push(path);
+        self.tell(super::Notice::Bookmarked(shown));
+    }
+
+    /// Lists the server's folder bookmarked at `index`; the folder shown stays until the
+    /// listing comes back.
+    fn open_bookmark(&mut self, tab: TabId, index: usize) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let (Some(client), Some(path)) =
+            (files.client.clone(), files.bookmarks.get(index).cloned())
+        else {
+            return Vec::new();
+        };
+        files.focus = Side::Remote;
+        files.remote.loading = true;
+        vec![Effect::ListRemote { tab, client, path }]
     }
 
     /// Copies the full path of `side`'s selected entry, and says so.

@@ -629,3 +629,58 @@ async fn copy_path_copies_the_selected_entry_whole_and_says_so() {
         "{effects:?}"
     );
 }
+
+#[tokio::test]
+async fn the_servers_folder_is_bookmarked_once_and_gone_back_to() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let bookmarks = |app: &App| {
+        app.tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .bookmarks
+            .iter()
+            .map(RemotePath::display)
+            .collect::<Vec<_>>()
+    };
+    assert!(files(&mut app, FilesMessage::OpenBookmark { tab, index: 0 }).is_empty());
+    listed_remote(&mut app, tab, "/var/log", Vec::new());
+    files(&mut app, FilesMessage::Bookmark { tab });
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Bookmarked("/var/log".to_owned()))
+    );
+    files(&mut app, FilesMessage::Bookmark { tab });
+    listed_remote(&mut app, tab, "/etc", Vec::new());
+    files(&mut app, FilesMessage::Bookmark { tab });
+    assert_eq!(bookmarks(&app), ["/var/log", "/etc"], "once each, in order");
+    files(
+        &mut app,
+        FilesMessage::Refresh {
+            tab,
+            side: Side::Local,
+        },
+    );
+    let back = files(&mut app, FilesMessage::OpenBookmark { tab, index: 0 });
+    let shown = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(
+        shown.remote.path.display(),
+        "/etc",
+        "until the listing comes back"
+    );
+    assert_eq!(
+        shown.focus,
+        Side::Remote,
+        "the keys go to the server's pane"
+    );
+    assert!(
+        matches!(back.as_slice(), [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/var/log"),
+        "{back:?}"
+    );
+    assert!(files(&mut app, FilesMessage::OpenBookmark { tab, index: 2 }).is_empty());
+}

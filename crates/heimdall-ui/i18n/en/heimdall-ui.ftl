@@ -574,3 +574,9 @@ ui-files-type-other = Unknown type
 ## Several entries of the Files tab selected together, as the C# tab.
 ui-files-selected-count = { $count } selected
 ui-dialog-delete-many-body = Delete { $count } items? Folders are deleted with everything they contain. This cannot be undone.
+
+## Bookmarks of the server's folders, as the C# Files tab.
+ui-files-bookmark-button = Bookmark this path
+ui-files-bookmarks-button = Bookmarks
+ui-files-bookmarks-empty = No bookmarks saved
+ui-files-bookmark-added = Bookmark added: { $path }

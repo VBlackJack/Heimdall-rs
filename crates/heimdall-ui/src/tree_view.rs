@@ -83,6 +83,8 @@ pub enum TreeMenu {
     Selection,
     /// Which folder the profiles selected together can move to.
     MoveSelection,
+    /// The server's folders bookmarked in a Files tab.
+    FilesBookmarks(TabId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
     FilesEntry {
         /// The tab.
@@ -506,6 +508,22 @@ pub fn files_entry_menu<'a>(tab: TabId, side: Side, index: usize) -> Element<'a,
     .spacing(0.0)
     .width(MENU_WIDTH)
     .into()
+}
+
+/// The server's folders bookmarked in a Files tab, `bookmarks` as shown, each going
+/// there; a line saying there are none, as the C# menu.
+pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a, Message> {
+    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    if bookmarks.is_empty() {
+        entries = entries.push(entry(fl!("ui-files-bookmarks-empty"), None));
+    }
+    for (index, path) in bookmarks.iter().enumerate() {
+        entries = entries.push(entry(
+            path.clone(),
+            Some(AppMessage::Files(FilesMessage::OpenBookmark { tab, index })),
+        ));
+    }
+    entries.into()
 }
 
 /// What a tab's menu offers, worked out by the window from the core.
