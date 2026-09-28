@@ -529,3 +529,12 @@ ui-dialog-broadcast-confirm = Broadcast
 
 ## The Files tab's path bar, as the C# one.
 ui-files-go-button = Go
+
+## The Files tab's columns, as the C# ones.
+ui-files-column-name = Name
+ui-files-column-size = Size
+ui-files-column-modified = Modified
+ui-files-column-permissions = Permissions
+ui-files-column-owner = Owner
+ui-files-sorted-ascending = { $column } ▲
+ui-files-sorted-descending = { $column } ▼

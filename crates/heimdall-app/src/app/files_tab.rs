@@ -23,8 +23,8 @@ use tokio_util::sync::CancellationToken;
 
 use super::{App, Dialog, Effect, NameAction};
 use crate::files::{
-    Direction, EntryKind, FileOperation, FilesError, FilesKey, FilesPane, Side, Transfer,
-    TransferEvent, TransferId, TransferRequest, TransferState, download_name, typed_name,
+    Direction, EntryKind, FileOperation, FilesError, FilesKey, FilesPane, Side, SortColumn,
+    Transfer, TransferEvent, TransferId, TransferRequest, TransferState, download_name, typed_name,
 };
 use crate::ids::TabId;
 
@@ -78,6 +78,15 @@ pub enum FilesMessage {
         side: Side,
         /// What is typed.
         text: String,
+    },
+    /// Sort a pane by a column, or the other way when sorted by it already.
+    SortBy {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// Column.
+        column: SortColumn,
     },
     /// Go to the folder typed in a pane's path bar.
     GoTo {
@@ -166,6 +175,7 @@ impl FilesMessage {
             | Self::Up { tab, side }
             | Self::Refresh { tab, side }
             | Self::GoTo { tab, side }
+            | Self::SortBy { tab, side, .. }
             | Self::AskNewFolder { tab, side }
             | Self::AskRename { tab, side }
             | Self::AskDelete { tab, side } => Some((tab, side)),
@@ -201,6 +211,9 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "PathEdited({}, {side:?}, ..)", tab.value())
             }
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
+            Self::SortBy { tab, side, column } => {
+                write!(f, "SortBy({}, {side:?}, {column:?})", tab.value())
+            }
             Self::Transfer { tab, direction } => {
                 write!(f, "Transfer({}, {direction:?})", tab.value())
             }
@@ -333,8 +346,7 @@ impl App {
                     match result {
                         Ok((path, entries)) => {
                             pane.path = path;
-                            pane.entries = entries;
-                            pane.selected = None;
+                            pane.show(entries);
                             pane.error = None;
                         }
                         Err(error) => pane.error = Some(error),
@@ -349,8 +361,7 @@ impl App {
                     match result {
                         Ok((path, entries)) => {
                             pane.path = path;
-                            pane.entries = entries;
-                            pane.selected = None;
+                            pane.show(entries);
                             pane.error = None;
                         }
                         Err(error) => pane.error = Some(error),
@@ -393,16 +404,9 @@ impl App {
                 self.list(tab, side)
             }
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
-            FilesMessage::PathEdited { tab, side, text } => {
-                if let Some(files) = self.files_mut(tab) {
-                    match side {
-                        Side::Remote => files.remote.typed = Some(text),
-                        Side::Local => files.local.typed = Some(text),
-                    }
-                }
-                Vec::new()
-            }
-            FilesMessage::GoTo { tab, side } => self.go_to(tab, side),
+            message @ (FilesMessage::PathEdited { .. }
+            | FilesMessage::GoTo { .. }
+            | FilesMessage::SortBy { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -414,6 +418,32 @@ impl App {
                 }
                 Vec::new()
             }
+        }
+    }
+
+    /// A change to how a pane shows its folder: the path typed, gone to, the sort.
+    fn pane_message(&mut self, message: FilesMessage) -> Vec<Effect> {
+        match message {
+            FilesMessage::PathEdited { tab, side, text } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.typed = Some(text),
+                        Side::Local => files.local.typed = Some(text),
+                    }
+                }
+                Vec::new()
+            }
+            FilesMessage::GoTo { tab, side } => self.go_to(tab, side),
+            FilesMessage::SortBy { tab, side, column } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.sort_by(files.remote.sort.clicked(column)),
+                        Side::Local => files.local.sort_by(files.local.sort.clicked(column)),
+                    }
+                }
+                Vec::new()
+            }
+            _ => Vec::new(),
         }
     }
 

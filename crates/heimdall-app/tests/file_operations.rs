@@ -101,6 +101,8 @@ async fn tab(dir: &Path) -> (App, TabId) {
         kind,
         size: Some(4096),
         modified: None,
+        permissions: None,
+        owner: None,
     };
     let local = |name: &str, kind| LocalEntry {
         name: name.into(),

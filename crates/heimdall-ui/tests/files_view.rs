@@ -97,6 +97,8 @@ fn remote(name: &str, kind: EntryKind, size: u64) -> RemoteEntry {
         kind,
         size: Some(size),
         modified: None,
+        permissions: None,
+        owner: None,
     }
 }
 
@@ -459,4 +461,90 @@ async fn the_path_bar_is_typed_over_and_enter_goes_there() {
             ..
         }
     )));
+}
+
+#[tokio::test]
+async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_column() {
+    use heimdall_app::files::SortColumn;
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![RemoteEntry {
+                    name: b"run.sh".to_vec(),
+                    label: "run.sh".to_owned(),
+                    kind: EntryKind::File,
+                    size: Some(10),
+                    // 2026-09-27 19:15:03 UTC.
+                    modified: Some(UNIX_EPOCH + Duration::from_secs(1_790_536_503)),
+                    permissions: Some(0o4755),
+                    owner: Some(1000),
+                }],
+            )),
+        },
+    )));
+    snapshot(&shell, "files-columns.png");
+    {
+        // Narrow: the last columns give way, the name stays readable.
+        let mut ui = simulator(&shell);
+        ui.click("run.sh").expect("the name, clickable");
+        assert!(ui.find("Owner").is_err(), "given way");
+    }
+    {
+        let settings = Settings {
+            fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(settings, Size::new(1800.0, 800.0), shell.view());
+        for shown in [
+            "2026-09-27 19:15",
+            "rwsr-xr-x",
+            "1000",
+            "Permissions",
+            "Owner",
+        ] {
+            ui.find(shown).expect(shown);
+        }
+        ui.find("Name \u{25b2}")
+            .expect("sorted by name, the smallest first");
+        ui.click("Permissions").expect("the header");
+        let messages = files_messages(ui);
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                FilesMessage::SortBy {
+                    side: Side::Remote,
+                    column: SortColumn::Permissions,
+                    ..
+                }
+            )),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::SortBy {
+        tab,
+        side: Side::Remote,
+        column: SortColumn::Permissions,
+    })));
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::SortBy {
+        tab,
+        side: Side::Remote,
+        column: SortColumn::Permissions,
+    })));
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = Simulator::with_size(settings, Size::new(1800.0, 800.0), shell.view());
+    ui.find("Permissions \u{25bc}").expect("the other way");
+    assert!(
+        ui.find("Name \u{25b2}").is_ok(),
+        "this computer's pane keeps its own sort"
+    );
 }

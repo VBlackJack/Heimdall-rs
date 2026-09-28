@@ -41,6 +41,9 @@ pub use heimdall_sftp::RemotePath;
 pub use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 pub use heimdall_sftp::path::display_bytes;
 
+/// The permission bits of a mode, set-user, set-group and sticky included.
+const PERMISSION_BITS: u32 = 0o7777;
+
 /// An open session with a server's file system.
 #[derive(Debug, Clone)]
 pub enum RemoteSession {
@@ -72,6 +75,10 @@ pub struct RemoteItem {
     pub size: Option<u64>,
     /// Modification time, when the server says.
     pub modified: Option<SystemTime>,
+    /// Permission bits, when the server says.
+    pub permissions: Option<u32>,
+    /// The owner's user number, when the server says.
+    pub owner: Option<u32>,
 }
 
 /// What a server refused, in terms the user can be told.
@@ -329,6 +336,9 @@ fn sftp_item(entry: DirEntry) -> RemoteItem {
         modified: attributes
             .times
             .map(|(_, modified)| UNIX_EPOCH + Duration::from_secs(u64::from(modified))),
+        // The permission bits alone: the file type is the kind.
+        permissions: attributes.permissions.map(|mode| mode & PERMISSION_BITS),
+        owner: attributes.uid_gid.map(|(uid, _)| uid),
         name: entry.name,
     }
 }
@@ -432,5 +442,17 @@ mod tests {
         assert_eq!(item.kind, ItemKind::Directory);
         assert_eq!(item.size, Some(7));
         assert_eq!(item.modified, Some(UNIX_EPOCH + Duration::from_secs(60)));
+        assert_eq!(item.permissions, Some(0o755), "without the file type");
+        assert_eq!(item.owner, None, "not said");
+        let owned = sftp_item(DirEntry {
+            name: b"f".to_vec(),
+            attributes: Attributes {
+                uid_gid: Some((1000, 50)),
+                permissions: Some(0o104_755),
+                ..Attributes::default()
+            },
+        });
+        assert_eq!(owned.owner, Some(1000));
+        assert_eq!(owned.permissions, Some(0o4755), "set-user kept");
     }
 }

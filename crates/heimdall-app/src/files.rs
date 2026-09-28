@@ -133,6 +133,10 @@ pub struct RemoteEntry {
     pub size: Option<u64>,
     /// Modification time.
     pub modified: Option<SystemTime>,
+    /// Permission bits.
+    pub permissions: Option<u32>,
+    /// The owner's user number.
+    pub owner: Option<u32>,
 }
 
 impl RemoteEntry {
@@ -150,6 +154,8 @@ impl RemoteEntry {
             },
             size: item.size,
             modified: item.modified,
+            permissions: item.permissions,
+            owner: item.owner,
         }
     }
 }
@@ -169,6 +175,151 @@ pub struct LocalEntry {
     pub modified: Option<SystemTime>,
 }
 
+/// A column a pane's entries are sorted by, as the C# Files tab's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SortColumn {
+    /// The name, whatever its case.
+    #[default]
+    Name,
+    /// The size.
+    Size,
+    /// The modification time.
+    Modified,
+    /// The permission bits.
+    Permissions,
+    /// The owner.
+    Owner,
+}
+
+/// How a pane's entries are sorted: folders first always, then by a column.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct Sort {
+    /// The column.
+    pub column: SortColumn,
+    /// Largest, latest or last first.
+    pub descending: bool,
+}
+
+impl Sort {
+    /// The sort a click on `column`'s header asks for: the other way on the column
+    /// sorted by, else that column from the smallest, as the C# header does.
+    #[must_use]
+    pub fn clicked(self, column: SortColumn) -> Self {
+        Self {
+            column,
+            descending: self.column == column && !self.descending,
+        }
+    }
+}
+
+/// What a pane's entries are sorted by.
+pub trait Listed {
+    /// Kind.
+    fn kind(&self) -> EntryKind;
+    /// Text shown.
+    fn label(&self) -> &str;
+    /// Size.
+    fn size(&self) -> Option<u64>;
+    /// Modification time.
+    fn modified(&self) -> Option<SystemTime>;
+    /// Permission bits.
+    fn permissions(&self) -> Option<u32> {
+        None
+    }
+    /// Owner.
+    fn owner(&self) -> Option<u32> {
+        None
+    }
+}
+
+impl Listed for RemoteEntry {
+    fn kind(&self) -> EntryKind {
+        self.kind
+    }
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn size(&self) -> Option<u64> {
+        self.size
+    }
+    fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+    fn permissions(&self) -> Option<u32> {
+        self.permissions
+    }
+    fn owner(&self) -> Option<u32> {
+        self.owner
+    }
+}
+
+impl Listed for LocalEntry {
+    fn kind(&self) -> EntryKind {
+        self.kind
+    }
+    fn label(&self) -> &str {
+        &self.label
+    }
+    fn size(&self) -> Option<u64> {
+        self.size
+    }
+    fn modified(&self) -> Option<SystemTime> {
+        self.modified
+    }
+}
+
+/// Sorts `entries` by `sort`, folders first always; entries equal by the column keep the
+/// order of their names.
+pub fn sort_entries<E: Listed>(entries: &mut [E], sort: Sort) {
+    entries.sort_by(|a, b| {
+        let folders = (a.kind() != EntryKind::Directory).cmp(&(b.kind() != EntryKind::Directory));
+        let by_column = match sort.column {
+            SortColumn::Name => a.label().to_lowercase().cmp(&b.label().to_lowercase()),
+            SortColumn::Size => a.size().cmp(&b.size()),
+            SortColumn::Modified => a.modified().cmp(&b.modified()),
+            SortColumn::Permissions => a.permissions().cmp(&b.permissions()),
+            SortColumn::Owner => a.owner().cmp(&b.owner()),
+        };
+        let by_column = if sort.descending {
+            by_column.reverse()
+        } else {
+            by_column
+        };
+        folders
+            .then(by_column)
+            .then_with(|| a.label().to_lowercase().cmp(&b.label().to_lowercase()))
+    });
+}
+
+/// `mode`'s permission bits as the C# column shows them, `rwxr-xr-x`, the set-user,
+/// set-group and sticky bits in place of the execute ones.
+#[must_use]
+pub fn symbolic_mode(mode: u32) -> String {
+    let bit = |mask: u32, set: char| if mode & mask == 0 { '-' } else { set };
+    let special = |execute: u32, flag: u32, lower: char, upper: char| match (
+        mode & execute != 0,
+        mode & flag != 0,
+    ) {
+        (true, true) => lower,
+        (false, true) => upper,
+        (true, false) => 'x',
+        (false, false) => '-',
+    };
+    [
+        bit(0o400, 'r'),
+        bit(0o200, 'w'),
+        special(0o100, 0o4000, 's', 'S'),
+        bit(0o040, 'r'),
+        bit(0o020, 'w'),
+        special(0o010, 0o2000, 's', 'S'),
+        bit(0o004, 'r'),
+        bit(0o002, 'w'),
+        special(0o001, 0o1000, 't', 'T'),
+    ]
+    .into_iter()
+    .collect()
+}
+
 /// A pane: where it is, what it lists, what is selected.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Pane<P, E> {
@@ -184,6 +335,8 @@ pub struct Pane<P, E> {
     pub error: Option<FilesError>,
     /// A folder typed in its path bar, not gone to yet.
     pub typed: Option<String>,
+    /// How its entries are sorted.
+    pub sort: Sort,
 }
 
 impl<P, E> Pane<P, E> {
@@ -195,7 +348,28 @@ impl<P, E> Pane<P, E> {
             loading: true,
             error: None,
             typed: None,
+            sort: Sort::default(),
         }
+    }
+}
+
+impl<P, E: Listed + PartialEq + Clone> Pane<P, E> {
+    /// Shows `entries`, sorted as the pane sorts.
+    pub fn show(&mut self, entries: Vec<E>) {
+        self.entries = entries;
+        sort_entries(&mut self.entries, self.sort);
+        self.selected = None;
+    }
+
+    /// Sorts the entries by `sort`; the entry selected stays selected.
+    pub fn sort_by(&mut self, sort: Sort) {
+        let chosen = self
+            .selected
+            .and_then(|index| self.entries.get(index))
+            .cloned();
+        self.sort = sort;
+        sort_entries(&mut self.entries, sort);
+        self.selected = chosen.and_then(|chosen| self.entries.iter().position(|e| *e == chosen));
     }
 }
 
@@ -359,18 +533,12 @@ impl FilesPane {
 
 /// Folders first, then by name, ignoring case.
 pub fn sort_remote(entries: &mut [RemoteEntry]) {
-    entries.sort_by(|a, b| {
-        (a.kind != EntryKind::Directory, a.label.to_lowercase())
-            .cmp(&(b.kind != EntryKind::Directory, b.label.to_lowercase()))
-    });
+    sort_entries(entries, Sort::default());
 }
 
 /// Folders first, then by name, ignoring case.
 pub fn sort_local(entries: &mut [LocalEntry]) {
-    entries.sort_by(|a, b| {
-        (a.kind != EntryKind::Directory, a.label.to_lowercase())
-            .cmp(&(b.kind != EntryKind::Directory, b.label.to_lowercase()))
-    });
+    sort_entries(entries, Sort::default());
 }
 
 /// The local name a download of `remote_name` gets.
@@ -714,7 +882,123 @@ pub fn typed_name(side: Side, typed: &str) -> Result<LocalName, FilesError> {
 mod tests {
     use heimdall_files::{ItemKind, RemoteItem};
 
-    use super::{EntryKind, RemoteEntry, sort_remote};
+    use std::time::{Duration, UNIX_EPOCH};
+
+    use super::{
+        EntryKind, Pane, RemoteEntry, Sort, SortColumn, sort_entries, sort_remote, symbolic_mode,
+    };
+
+    /// A file listed with its size, time, mode and owner.
+    fn file(name: &str, size: u64, at: u64, mode: u32, owner: u32) -> RemoteEntry {
+        RemoteEntry::from_listing(RemoteItem {
+            name: name.as_bytes().to_vec(),
+            kind: ItemKind::File,
+            size: Some(size),
+            modified: Some(UNIX_EPOCH + Duration::from_secs(at)),
+            permissions: Some(mode),
+            owner: Some(owner),
+        })
+    }
+
+    fn labels(entries: &[RemoteEntry]) -> Vec<&str> {
+        entries.iter().map(|e| e.label.as_str()).collect()
+    }
+
+    #[test]
+    fn a_mode_is_shown_as_the_csharp_column_shows_it() {
+        assert_eq!(symbolic_mode(0o755), "rwxr-xr-x");
+        assert_eq!(symbolic_mode(0o640), "rw-r-----");
+        assert_eq!(symbolic_mode(0), "---------");
+        assert_eq!(symbolic_mode(0o4755), "rwsr-xr-x");
+        assert_eq!(symbolic_mode(0o4644), "rwSr--r--");
+        assert_eq!(symbolic_mode(0o2711), "rwx--s--x");
+        assert_eq!(symbolic_mode(0o2600), "rw---S---");
+        assert_eq!(symbolic_mode(0o1777), "rwxrwxrwt");
+        assert_eq!(symbolic_mode(0o1776), "rwxrwxrwT");
+    }
+
+    #[test]
+    fn a_header_clicked_sorts_by_it_then_the_other_way() {
+        let name = Sort::default();
+        assert_eq!(
+            name.clicked(SortColumn::Name),
+            Sort {
+                column: SortColumn::Name,
+                descending: true
+            }
+        );
+        let size = name.clicked(SortColumn::Size);
+        assert_eq!(
+            size,
+            Sort {
+                column: SortColumn::Size,
+                descending: false
+            },
+            "another column: from the smallest"
+        );
+        assert!(size.clicked(SortColumn::Size).descending);
+        assert!(
+            !size
+                .clicked(SortColumn::Size)
+                .clicked(SortColumn::Size)
+                .descending
+        );
+    }
+
+    #[test]
+    fn each_column_sorts_after_the_folders_and_equal_ones_by_name() {
+        let mut entries = vec![
+            file("b", 30, 100, 0o644, 1000),
+            file("a", 10, 300, 0o600, 0),
+            entry(b"dir", ItemKind::Directory),
+            file("C", 20, 200, 0o755, 33),
+            file("d", 20, 200, 0o644, 1000),
+        ];
+        let by = |entries: &mut Vec<RemoteEntry>, column, descending| {
+            sort_entries(entries, Sort { column, descending });
+            labels(entries).join(" ")
+        };
+        assert_eq!(by(&mut entries, SortColumn::Name, false), "dir a b C d");
+        assert_eq!(by(&mut entries, SortColumn::Name, true), "dir d C b a");
+        assert_eq!(
+            by(&mut entries, SortColumn::Size, false),
+            "dir a C d b",
+            "20 and 20 by name"
+        );
+        assert_eq!(by(&mut entries, SortColumn::Size, true), "dir b C d a");
+        assert_eq!(by(&mut entries, SortColumn::Modified, false), "dir b C d a");
+        assert_eq!(by(&mut entries, SortColumn::Modified, true), "dir a C d b");
+        assert_eq!(
+            by(&mut entries, SortColumn::Permissions, false),
+            "dir a b d C"
+        );
+        assert_eq!(by(&mut entries, SortColumn::Owner, false), "dir a C b d");
+        assert_eq!(
+            by(&mut entries, SortColumn::Owner, true),
+            "dir b d C a",
+            "the folder first, the other way too"
+        );
+    }
+
+    #[test]
+    fn a_resort_keeps_the_entry_selected_and_a_new_listing_its_sort() {
+        let mut pane: Pane<(), RemoteEntry> = Pane::new(());
+        pane.show(vec![
+            file("big", 90, 0, 0o644, 0),
+            file("small", 1, 0, 0o644, 0),
+        ]);
+        assert_eq!(labels(&pane.entries), ["big", "small"]);
+        pane.selected = Some(0);
+        pane.sort_by(Sort {
+            column: SortColumn::Size,
+            descending: false,
+        });
+        assert_eq!(labels(&pane.entries), ["small", "big"]);
+        assert_eq!(pane.selected, Some(1), "big, still");
+        pane.show(vec![file("x", 50, 0, 0o644, 0), file("y", 5, 0, 0o644, 0)]);
+        assert_eq!(labels(&pane.entries), ["y", "x"], "listed again, by size");
+        assert_eq!(pane.selected, None);
+    }
 
     fn entry(name: &[u8], kind: ItemKind) -> RemoteEntry {
         RemoteEntry::from_listing(RemoteItem {
@@ -722,6 +1006,8 @@ mod tests {
             kind,
             size: None,
             modified: None,
+            permissions: None,
+            owner: None,
         })
     }
 

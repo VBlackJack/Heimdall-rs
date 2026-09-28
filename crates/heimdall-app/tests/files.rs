@@ -126,6 +126,8 @@ fn remote_entry(name: &[u8], kind: EntryKind, size: u64) -> RemoteEntry {
         kind,
         size: Some(size),
         modified: None,
+        permissions: None,
+        owner: None,
     }
 }
 
@@ -523,4 +525,47 @@ async fn a_folder_typed_in_the_path_bar_is_listed_from_the_one_shown() {
         matches!(absolute.as_slice(), [Effect::ListLocal { path, .. }] if path == elsewhere.path()),
         "{absolute:?}"
     );
+}
+
+#[tokio::test]
+async fn a_header_click_sorts_its_own_pane_only() {
+    use heimdall_app::files::SortColumn;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            remote_entry(b"big", EntryKind::File, 90),
+            remote_entry(b"small", EntryKind::File, 1),
+        ],
+    );
+    let sort = |app: &mut App, side, column| {
+        files(app, FilesMessage::SortBy { tab, side, column });
+    };
+    let remote = |app: &App| {
+        let files = app.tab(tab).expect("tab").files.as_ref().expect("files");
+        files
+            .remote
+            .entries
+            .iter()
+            .map(|entry| entry.label.clone())
+            .collect::<Vec<_>>()
+    };
+    sort(&mut app, Side::Remote, SortColumn::Size);
+    assert_eq!(remote(&app), ["small", "big"]);
+    sort(&mut app, Side::Remote, SortColumn::Size);
+    assert_eq!(remote(&app), ["big", "small"], "the other way");
+    sort(&mut app, Side::Local, SortColumn::Size);
+    assert_eq!(
+        remote(&app),
+        ["big", "small"],
+        "the other pane's sort is its own"
+    );
+    let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(files_pane.local.sort.column, SortColumn::Size);
+    assert!(files_pane.remote.sort.descending);
 }
