@@ -48,7 +48,7 @@ use zeroize::Zeroizing;
 
 use ironrdp::cliprdr::CliprdrClient;
 use ironrdp::rdpdr::Rdpdr;
-use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd};
+use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use tokio::sync::mpsc;
 
 use crate::certificate::{Fingerprint, ServerCertificate};
@@ -338,6 +338,29 @@ async fn connect_in_place(
     .await
 }
 
+/// Attaches the sound channel and the shared drives' one. The sound is played here when the
+/// profile asks and this computer can; the channel is also there, declining sound, beside the
+/// drives: a server opens the drive channel only beside the sound one.
+fn attach_sound_and_drives(connector: &mut ClientConnector, config: &RdpConfig) {
+    let speakers = (config.options.audio == AudioPlayback::Local)
+        .then(crate::audio::local_speakers)
+        .flatten();
+    if speakers.is_some() || !config.drives.is_empty() {
+        let sound: Box<dyn RdpsndClientHandler> = match speakers {
+            Some(backend) => Box::new(backend),
+            None => Box::new(NoopRdpsndBackend),
+        };
+        connector.attach_static_channel(Rdpsnd::new(sound));
+    }
+    if !config.drives.is_empty() {
+        let drives = DriveBackend::new(&config.drives);
+        let devices = drives.devices();
+        connector.attach_static_channel(
+            Rdpdr::new(Box::new(drives), CLIENT_NAME.to_owned()).with_drives(Some(devices)),
+        );
+    }
+}
+
 /// Opens a connection over `stream`, already connected to the server.
 ///
 /// # Errors
@@ -368,15 +391,7 @@ pub async fn connect_over(
             offered,
         }
     });
-    if !config.drives.is_empty() {
-        let drives = DriveBackend::new(&config.drives);
-        let devices = drives.devices();
-        // A server opens the drive channel only beside the sound one: sound is declined.
-        connector.attach_static_channel(Rdpsnd::new(Box::new(NoopRdpsndBackend)));
-        connector.attach_static_channel(
-            Rdpdr::new(Box::new(drives), CLIENT_NAME.to_owned()).with_drives(Some(devices)),
-        );
-    }
+    attach_sound_and_drives(&mut connector, config);
     // Movable: its futures are `Send`, so a connection can run in a spawned task.
     let mut framed = MovableTokioFramed::new(stream);
     let should_upgrade = phase(
@@ -525,8 +540,8 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         enable_server_pointer: false,
         request_data: Some(NegoRequestData::cookie(NEGOTIATION_COOKIE.to_owned())),
         autologon: false,
-        // The sound is never played here: kept on the server, or not played at all.
-        enable_audio_playback: false,
+        // Played here when the profile asks; else kept on the server, or not played at all.
+        enable_audio_playback: config.options.audio == AudioPlayback::Local,
         remote_console_audio: config.options.audio == AudioPlayback::OnServer,
         console_session: config.options.admin_session,
         compression_type: None,

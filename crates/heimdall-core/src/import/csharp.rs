@@ -316,16 +316,18 @@ impl RdpChoices {
         }
     }
 
-    /// The C# audio mode this version plays: sound played here is not, so it is not played.
+    /// The C# audio mode: not played, played here, or played on the server.
     fn audio(&self) -> AudioPlayback {
-        if self.audio_mode == CSHARP_AUDIO_ON_SERVER {
-            AudioPlayback::OnServer
-        } else {
-            AudioPlayback::Off
+        match self.audio_mode {
+            CSHARP_AUDIO_LOCAL => AudioPlayback::Local,
+            CSHARP_AUDIO_ON_SERVER => AudioPlayback::OnServer,
+            _ => AudioPlayback::Off,
         }
     }
 }
 
+/// The C# audio mode "Local playback".
+const CSHARP_AUDIO_LOCAL: i64 = 1;
 /// The C# audio mode "Remote playback".
 const CSHARP_AUDIO_ON_SERVER: i64 = 2;
 

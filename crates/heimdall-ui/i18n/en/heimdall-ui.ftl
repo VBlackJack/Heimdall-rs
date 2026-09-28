@@ -359,6 +359,7 @@ ui-profile-toggle-admin = Run as administrator session (/admin)
 # An RDP profile's sound and colours, as the C# Display & Audio card.
 ui-profile-audio = Audio mode
 ui-profile-audio-off = Disabled
+ui-profile-audio-local = Local playback
 ui-profile-audio-on-server = Remote playback
 ui-profile-color-depth = Color depth
 ui-profile-color-16 = 16-bit

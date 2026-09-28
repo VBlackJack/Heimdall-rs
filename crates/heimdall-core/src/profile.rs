@@ -412,20 +412,22 @@ impl TryFrom<u32> for ColorDepth {
     }
 }
 
-/// Where an RDP server's sound goes, as the C# Heimdall's audio modes this version plays.
+/// Where an RDP server's sound goes, as the C# Heimdall's audio modes.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum AudioPlayback {
     /// Not played: the C# default.
     #[default]
     Off,
+    /// Played on this computer.
+    Local,
     /// Played on the server's own speakers.
     OnServer,
 }
 
 impl AudioPlayback {
     /// Every mode, in the order the C# list shows them.
-    pub const ALL: [Self; 2] = [Self::Off, Self::OnServer];
+    pub const ALL: [Self; 3] = [Self::Off, Self::Local, Self::OnServer];
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,

@@ -276,6 +276,18 @@ async fn sound_kept_on_the_server_is_asked_for_and_never_played_here() {
 }
 
 #[tokio::test]
+async fn sound_played_here_is_asked_for_and_not_kept_on_the_server() {
+    let sent = sent_with(RdpOptions {
+        audio: AudioPlayback::Local,
+        ..RdpOptions::default()
+    })
+    .await;
+    let flags = sent.info.client_info.flags;
+    assert!(!flags.contains(ClientInfoFlags::NO_AUDIO_PLAYBACK));
+    assert!(!flags.contains(ClientInfoFlags::REMOTE_CONSOLE_AUDIO));
+}
+
+#[tokio::test]
 async fn the_administrative_session_asks_for_session_0_as_mstsc_admin() {
     let sent = sent_with(RdpOptions {
         admin_session: true,

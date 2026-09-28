@@ -20,6 +20,7 @@
 //! the key of its certificate as SSH trusts host keys: recorded on first use with the
 //! user's agreement, refused if it changes. [`session::start`] then runs it.
 
+pub mod audio;
 pub mod certificate;
 mod clipboard;
 pub mod connect;
