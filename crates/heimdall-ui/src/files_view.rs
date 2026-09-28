@@ -37,6 +37,7 @@ use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
     Column, button, column, container, mouse_area, responsive, row, scrollable, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Element, Length, Theme};
 
@@ -359,6 +360,58 @@ fn pane_tools<'a>(
     tools
 }
 
+/// The C# filter and hidden-files toggle of a pane, lit while hidden names show.
+fn pane_narrowing<'a>(
+    tab: TabId,
+    side: Side,
+    filter: &str,
+    show_hidden: bool,
+) -> iced::widget::Row<'a, Message> {
+    row![
+        text_input(&fl!("ui-files-filter-placeholder"), filter)
+            .size(SMALL_SIZE)
+            .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
+            .width(Length::Fill),
+        tooltip(
+            button(text(fl!("ui-files-hidden-toggle")).size(SMALL_SIZE))
+                .style(if show_hidden {
+                    button::primary
+                } else {
+                    button::secondary
+                })
+                .on_press(files(FilesMessage::ToggleHidden { tab, side })),
+            text(fl!("ui-files-hidden-tooltip")).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center)
+}
+
+/// A pane's title, how many entries it lists and shows as the C# tab counts them, and how
+/// many are selected past one.
+fn pane_heading<'a>(
+    title: String,
+    shown: usize,
+    total: usize,
+    chosen: usize,
+) -> iced::widget::Row<'a, Message> {
+    let count = if shown == total {
+        fl!("ui-files-item-count", count = total)
+    } else {
+        fl!("ui-files-item-count-filtered", shown = shown, count = total)
+    };
+    let mut heading = row![text(title).size(TITLE_SIZE), text(count).size(SMALL_SIZE)]
+        .spacing(SPACING)
+        .align_y(Alignment::Center);
+    if chosen > 1 {
+        heading =
+            heading.push(text(fl!("ui-files-selected-count", count = chosen)).size(SMALL_SIZE));
+    }
+    heading
+}
+
 /// What a pane is drawn from, shared by both sides.
 struct PaneParts<'p, E> {
     tab: TabId,
@@ -371,6 +424,9 @@ struct PaneParts<'p, E> {
     sort: Sort,
     selected: Option<usize>,
     marked: &'p BTreeSet<usize>,
+    filter: &'p str,
+    show_hidden: bool,
+    total: usize,
     loading: bool,
     error: Option<&'p FilesError>,
     focused: bool,
@@ -388,6 +444,9 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         sort,
         selected,
         marked,
+        filter,
+        show_hidden,
+        total,
         loading,
         error,
         focused,
@@ -413,6 +472,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
+    let narrowing = pane_narrowing(tab, side, filter, show_hidden);
     let failed = error.is_some();
     // The columns that fit beside a name still readable, laid out for the pane's width.
     let listing = responsive(move |size| {
@@ -435,14 +495,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         .spacing(SPACING)
         .into()
     });
-    let mut heading = row![text(title).size(TITLE_SIZE)]
-        .spacing(SPACING)
-        .align_y(Alignment::Center);
-    if chosen > 1 {
-        heading =
-            heading.push(text(fl!("ui-files-selected-count", count = chosen)).size(SMALL_SIZE));
-    }
-    let mut content = column![heading, header, tools].spacing(SPACING);
+    let heading = pane_heading(title, entries.len(), total, chosen);
+    let mut content = column![heading, header, tools, narrowing].spacing(SPACING);
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
     }
@@ -524,6 +578,9 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         sort: files_pane.local.sort,
         selected: files_pane.local.selected,
         marked: &files_pane.local.marked,
+        filter: &files_pane.local.filter,
+        show_hidden: files_pane.local.show_hidden,
+        total: files_pane.local.listing.len(),
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
         focused: files_pane.focus == Side::Local,
@@ -539,6 +596,9 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         sort: files_pane.remote.sort,
         selected: files_pane.remote.selected,
         marked: &files_pane.remote.marked,
+        filter: &files_pane.remote.filter,
+        show_hidden: files_pane.remote.show_hidden,
+        total: files_pane.remote.listing.len(),
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
         focused: files_pane.focus == Side::Remote,

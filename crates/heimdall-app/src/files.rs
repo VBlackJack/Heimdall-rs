@@ -329,8 +329,14 @@ pub fn symbolic_mode(mode: u32) -> String {
 pub struct Pane<P, E> {
     /// Folder shown.
     pub path: P,
-    /// Entries, folders first, then by name.
+    /// Every entry listed, sorted.
+    pub listing: Vec<E>,
+    /// The entries shown: those the filter and the hidden-files toggle keep, sorted.
     pub entries: Vec<E>,
+    /// Text a name must hold to be shown, whatever its case, as the C# filter.
+    pub filter: String,
+    /// Names starting with a dot are shown, as by default in the C# tab.
+    pub show_hidden: bool,
     /// Selected entry: the one a key or a single entry's action applies to.
     pub selected: Option<usize>,
     /// The entries selected with it, with Ctrl or Shift, as in the C# Files tab.
@@ -349,7 +355,10 @@ impl<P, E> Pane<P, E> {
     fn new(path: P) -> Self {
         Self {
             path,
+            listing: Vec::new(),
             entries: Vec::new(),
+            filter: String::new(),
+            show_hidden: true,
             selected: None,
             marked: BTreeSet::new(),
             loading: true,
@@ -400,23 +409,60 @@ impl<P, E> Pane<P, E> {
 }
 
 impl<P, E: Listed + PartialEq + Clone> Pane<P, E> {
-    /// Shows `entries`, sorted as the pane sorts.
+    /// Shows `entries`, a new listing, sorted and filtered as the pane is.
     pub fn show(&mut self, entries: Vec<E>) {
-        self.entries = entries;
-        sort_entries(&mut self.entries, self.sort);
+        self.listing = entries;
+        sort_entries(&mut self.listing, self.sort);
         self.select_only(None);
+        self.refresh();
     }
 
     /// Sorts the entries by `sort`; the entries selected stay selected.
     pub fn sort_by(&mut self, sort: Sort) {
+        self.sort = sort;
+        sort_entries(&mut self.listing, sort);
+        self.refresh();
+    }
+
+    /// Shows only the entries whose name holds `text`, whatever its case.
+    pub fn filter_by(&mut self, text: String) {
+        self.filter = text;
+        self.refresh();
+    }
+
+    /// Shows the names starting with a dot, or no longer.
+    pub fn toggle_hidden(&mut self) {
+        self.show_hidden = !self.show_hidden;
+        self.refresh();
+    }
+
+    /// Whether `entry` is shown.
+    fn shows(&self, entry: &E) -> bool {
+        let wanted = self.filter.trim().to_lowercase();
+        (self.show_hidden || !entry.label().starts_with('.'))
+            && entry.label().to_lowercase().contains(&wanted)
+    }
+
+    /// The entries shown again from the listing; those selected and still shown stay
+    /// selected.
+    fn refresh(&mut self) {
         let entry = |index: &usize| self.entries.get(*index).cloned();
         let chosen = self.selected.as_ref().and_then(entry);
         let marked: Vec<E> = self.marked.iter().filter_map(entry).collect();
-        self.sort = sort;
-        sort_entries(&mut self.entries, sort);
+        let shown: Vec<E> = self
+            .listing
+            .iter()
+            .filter(|entry| self.shows(entry))
+            .cloned()
+            .collect();
+        self.entries = shown;
         let place = |wanted: &E| self.entries.iter().position(|e| e == wanted);
         self.selected = chosen.as_ref().and_then(place);
         self.marked = marked.iter().filter_map(place).collect();
+        if self.selected.is_none() {
+            // The one selected hidden: another selected takes its place.
+            self.selected = self.marked.pop_first();
+        }
     }
 }
 
@@ -1130,6 +1176,47 @@ mod tests {
         assert_eq!((pane.selected, pane.chosen()), (Some(4), vec![4]));
         pane.select_only(Some(2));
         assert_eq!(pane.chosen(), [2], "a plain selection alone");
+    }
+
+    #[test]
+    fn the_filter_and_the_hidden_toggle_narrow_what_is_shown_not_what_is_listed() {
+        let mut pane = pane(&[".profile", "Makefile", "main.rs", ".git"]);
+        assert_eq!(
+            labels(&pane.entries),
+            [".git", ".profile", "main.rs", "Makefile"],
+            "hidden names shown by default, as the C# tab"
+        );
+        pane.select_only(Some(2));
+        pane.toggle(3);
+        pane.filter_by(" MA ".to_owned());
+        assert_eq!(
+            labels(&pane.entries),
+            ["main.rs", "Makefile"],
+            "whatever the case"
+        );
+        assert_eq!(pane.chosen(), [0, 1], "still selected");
+        pane.filter_by("main".to_owned());
+        assert_eq!(labels(&pane.entries), ["main.rs"]);
+        assert_eq!(
+            (pane.selected, pane.chosen()),
+            (Some(0), vec![0]),
+            "the one selected no longer shown: the other takes its place"
+        );
+        pane.filter_by(String::new());
+        pane.toggle_hidden();
+        assert_eq!(labels(&pane.entries), ["main.rs", "Makefile"]);
+        assert_eq!(pane.listing.len(), 4, "every entry still listed");
+        pane.show(vec![
+            file(".env", 1, 0, 0o600, 0),
+            file("x", 1, 0, 0o644, 0),
+        ]);
+        assert_eq!(
+            labels(&pane.entries),
+            ["x"],
+            "a new listing, narrowed the same"
+        );
+        pane.toggle_hidden();
+        assert_eq!(labels(&pane.entries), [".env", "x"]);
     }
 
     #[test]

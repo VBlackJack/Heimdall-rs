@@ -968,3 +968,40 @@ async fn the_servers_pane_bookmarks_its_folder_and_lists_the_bookmarks() {
         "{chosen:?}"
     );
 }
+
+#[tokio::test]
+async fn a_pane_filters_its_entries_hides_dot_names_and_counts_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("2 items").expect("counted");
+        ui.click("Filter files...").expect("the filter");
+        ui.typewrite("x");
+        assert!(files_messages(ui).iter().any(|message| matches!(
+            message,
+            FilesMessage::Filter { side: Side::Local, text, .. } if text == "x"
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click(".*").expect("the toggle");
+        assert!(files_messages(ui).iter().any(|message| matches!(
+            message,
+            FilesMessage::ToggleHidden {
+                side: Side::Local,
+                ..
+            }
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Filter {
+        tab,
+        side: Side::Remote,
+        text: "LOG".to_owned(),
+    })));
+    let mut ui = simulator(&shell);
+    ui.find("1/2 items").expect("shown of listed");
+    assert!(ui.find("backup.tar.gz").is_err(), "filtered out");
+    ui.find("logs/").expect("kept");
+}

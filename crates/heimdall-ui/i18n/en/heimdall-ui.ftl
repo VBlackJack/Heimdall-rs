@@ -580,3 +580,10 @@ ui-files-bookmark-button = Bookmark this path
 ui-files-bookmarks-button = Bookmarks
 ui-files-bookmarks-empty = No bookmarks saved
 ui-files-bookmark-added = Bookmark added: { $path }
+
+## Narrowing a Files pane down, as the C# tab.
+ui-files-filter-placeholder = Filter files...
+ui-files-hidden-toggle = .*
+ui-files-hidden-tooltip = Show hidden files
+ui-files-item-count = { $count } items
+ui-files-item-count-filtered = { $shown }/{ $count } items

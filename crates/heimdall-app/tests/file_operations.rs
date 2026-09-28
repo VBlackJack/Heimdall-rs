@@ -1069,3 +1069,50 @@ async fn replacements_are_asked_one_after_the_other_and_cancel_drops_the_rest() 
     assert!(matches!(next.as_slice(), [Effect::Transfer { .. }]));
     assert_eq!(asked(&app), None, "the one cancelled is not asked again");
 }
+
+#[tokio::test]
+async fn an_upload_over_a_hidden_or_filtered_name_is_still_asked_about() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // The server holds b.txt, filtered out of sight.
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![RemoteEntry {
+                    name: b"b.txt".to_vec(),
+                    label: "b.txt".to_owned(),
+                    kind: EntryKind::File,
+                    size: Some(1),
+                    modified: None,
+                    permissions: None,
+                    owner: None,
+                    group: None,
+                }],
+            )),
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::Filter {
+            tab,
+            side: Side::Remote,
+            text: "nothing".to_owned(),
+        },
+    );
+    select(&mut app, tab, Side::Local, 1);
+    let started = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert!(started.is_empty(), "asked first");
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmOverwrite { name, .. }) if name == "b.txt"
+    ));
+}

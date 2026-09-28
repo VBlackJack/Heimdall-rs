@@ -107,6 +107,22 @@ pub enum FilesMessage {
         /// Column.
         column: SortColumn,
     },
+    /// The filter of a pane changed.
+    Filter {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// What is typed.
+        text: String,
+    },
+    /// Show a pane's hidden entries, or no longer.
+    ToggleHidden {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
     /// Bookmark the server's folder shown.
     Bookmark {
         /// Tab.
@@ -230,6 +246,8 @@ impl FilesMessage {
             | Self::SortBy { tab, side, .. }
             | Self::Toggle { tab, side, .. }
             | Self::Range { tab, side, .. }
+            | Self::Filter { tab, side, .. }
+            | Self::ToggleHidden { tab, side }
             | Self::CopyPath { tab, side }
             | Self::AskNewFolder { tab, side }
             | Self::AskRename { tab, side }
@@ -270,6 +288,10 @@ impl std::fmt::Debug for FilesMessage {
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Bookmark { tab } => write!(f, "Bookmark({})", tab.value()),
+            Self::Filter { tab, side, .. } => write!(f, "Filter({}, {side:?}, ..)", tab.value()),
+            Self::ToggleHidden { tab, side } => {
+                write!(f, "ToggleHidden({}, {side:?})", tab.value())
+            }
             Self::OpenBookmark { tab, index } => {
                 write!(f, "OpenBookmark({}, {index})", tab.value())
             }
@@ -489,7 +511,9 @@ impl App {
             | FilesMessage::Toggle { .. }
             | FilesMessage::Range { .. }
             | FilesMessage::Bookmark { .. }
-            | FilesMessage::OpenBookmark { .. }) => self.pane_message(message),
+            | FilesMessage::OpenBookmark { .. }
+            | FilesMessage::Filter { .. }
+            | FilesMessage::ToggleHidden { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -523,6 +547,24 @@ impl App {
                 Vec::new()
             }
             FilesMessage::OpenBookmark { tab, index } => self.open_bookmark(tab, index),
+            FilesMessage::Filter { tab, side, text } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.filter_by(text),
+                        Side::Local => files.local.filter_by(text),
+                    }
+                }
+                Vec::new()
+            }
+            FilesMessage::ToggleHidden { tab, side } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.toggle_hidden(),
+                        Side::Local => files.local.toggle_hidden(),
+                    }
+                }
+                Vec::new()
+            }
             FilesMessage::Toggle { tab, side, index }
             | FilesMessage::Range { tab, side, index } => {
                 let toggle = matches!(message, FilesMessage::Toggle { .. });
@@ -1192,9 +1234,10 @@ fn prepare(
                 return None;
             }
             let name = name_bytes(&entry.name);
+            // Against every entry listed: a hidden or filtered one still exists.
             let exists = files
                 .remote
-                .entries
+                .listing
                 .iter()
                 .any(|remote| remote.name == name);
             (
