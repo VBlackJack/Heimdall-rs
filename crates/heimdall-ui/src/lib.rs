@@ -19,6 +19,7 @@
 mod desktop_texture;
 pub mod desktop_view;
 mod files_view;
+pub mod finder;
 mod i18n;
 pub mod keysym;
 mod logging;
@@ -28,6 +29,7 @@ pub mod shell;
 pub mod status_bar;
 pub mod terminal_view;
 mod texts;
+pub mod transcript_lines;
 pub mod tree_view;
 
 use heimdall_core::paths;

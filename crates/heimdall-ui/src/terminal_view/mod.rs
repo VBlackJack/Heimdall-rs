@@ -47,7 +47,9 @@ use iced::{
     alignment,
 };
 
-use crate::terminal_view::keys::{Shortcut, committed_text, key_input, shortcut, window_shortcut};
+use crate::terminal_view::keys::{
+    Shortcut, Zoom, committed_text, key_input, shortcut, window_shortcut,
+};
 use crate::terminal_view::metrics::{CellMetrics, as_f32};
 
 /// Family name of the embedded terminal font.
@@ -110,6 +112,7 @@ pub struct TerminalView<'a, M> {
     metrics: CellMetrics,
     wrap: fn(AppMessage) -> M,
     interactive: bool,
+    on_zoom: Option<fn(Zoom) -> M>,
 }
 
 impl<'a, M> TerminalView<'a, M> {
@@ -122,7 +125,23 @@ impl<'a, M> TerminalView<'a, M> {
             metrics: CellMetrics::default(),
             wrap,
             interactive: true,
+            on_zoom: None,
         }
+    }
+
+    /// The terminal's text at `font_size`.
+    #[must_use]
+    pub fn font_size(mut self, font_size: f32) -> Self {
+        self.metrics = CellMetrics::for_size(font_size);
+        self
+    }
+
+    /// The wheel with Ctrl held asks for its text larger or smaller with `on_zoom`, as in
+    /// the C# Heimdall, instead of scrolling.
+    #[must_use]
+    pub fn on_zoom(mut self, on_zoom: fn(Zoom) -> M) -> Self {
+        self.on_zoom = Some(on_zoom);
+        self
     }
 
     /// Whether the terminal takes keyboard and mouse input. A dialog over it turns it
@@ -284,6 +303,17 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 let Some(position) = cursor.position_over(bounds) else {
                     return;
                 };
+                if let Some(on_zoom) = self.on_zoom.filter(|_| state.modifiers.control()) {
+                    let up = match delta {
+                        mouse::ScrollDelta::Lines { y, .. }
+                        | mouse::ScrollDelta::Pixels { y, .. } => *y,
+                    };
+                    if up != 0.0 {
+                        shell.publish(on_zoom(if up > 0.0 { Zoom::In } else { Zoom::Out }));
+                    }
+                    shell.capture_event();
+                    return;
+                }
                 state.wheel += match delta {
                     mouse::ScrollDelta::Lines { y, .. } => *y,
                     mouse::ScrollDelta::Pixels { y, .. } => *y / self.metrics.height,
@@ -488,10 +518,13 @@ impl<M> TerminalView<'_, M> {
         run: &runs::TextRun,
     ) {
         let area = self.cells_rect(bounds, row, run.col, run.cells);
+        // A cell one more: at a size whose cell is a fraction of a pixel wide, the last glyph
+        // would end past the run's box and not be drawn.
+        let room = Size::new(area.width + self.metrics.width, area.height);
         renderer.fill_text(
             Text {
                 content: run.content.clone(),
-                bounds: area.size(),
+                bounds: room,
                 size: Pixels(self.metrics.font_size),
                 line_height: text::LineHeight::Absolute(Pixels(self.metrics.height)),
                 font: font(run.bold, run.italic),

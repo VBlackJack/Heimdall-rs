@@ -18,6 +18,8 @@
 //! from it each time rather than kept; and a notice of what was just done, shown while
 //! the same session is shown in the same state.
 
+use heimdall_core::settings::BroadcastScope;
+
 use super::{App, Phase, Tab};
 use crate::ids::TabId;
 
@@ -45,6 +47,18 @@ pub enum Notice {
     Copied(String),
     /// This folder was created.
     FolderCreated(String),
+    /// A transcript was started, in this file.
+    TranscriptStarted(String),
+    /// A transcript was stopped.
+    TranscriptStopped,
+    /// A transcript could not be written, for this reason, and stopped.
+    TranscriptFailed(String),
+    /// Broadcast input is on, reaching this scope.
+    BroadcastOn(BroadcastScope),
+    /// Broadcast input is off.
+    BroadcastOff,
+    /// Broadcast input will reach this scope when on.
+    BroadcastScope(BroadcastScope),
 }
 
 /// The state of `tab`, named by its title.

@@ -18,6 +18,7 @@
 //! the session shown, or what was just done; on the right how many sessions the tree holds.
 
 use heimdall_app::{Notice, SessionStatus};
+use heimdall_core::settings::BroadcastScope;
 use iced::widget::{container, row, space, text};
 use iced::{Element, Length};
 
@@ -30,13 +31,39 @@ const TEXT_SIZE: f32 = 12.0;
 /// Room around the bar's text.
 const PADDING: [f32; 2] = [2.0, 8.0];
 
-/// What the left of the bar says.
+/// The name of broadcast input's `scope`, `targets` the tabs marked.
 #[must_use]
-pub fn status_text(status: &SessionStatus, notice: Option<&Notice>) -> String {
+pub fn scope_label(scope: BroadcastScope, targets: usize) -> String {
+    match scope {
+        BroadcastScope::AllTabs => fl!("ui-broadcast-scope-all"),
+        BroadcastScope::SelectedTabs => fl!("ui-broadcast-scope-selected", count = targets),
+    }
+}
+
+/// What the left of the bar says; `targets` the tabs marked for broadcast input.
+#[must_use]
+pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usize) -> String {
     if let Some(notice) = notice {
         return match notice {
             Notice::Copied(copied) => fl!("ui-status-copied", text = copied.as_str()),
             Notice::FolderCreated(path) => fl!("ui-status-folder-created", path = path.as_str()),
+            Notice::TranscriptStarted(path) => {
+                fl!("ui-status-transcript-started", path = path.as_str())
+            }
+            Notice::TranscriptStopped => fl!("ui-status-transcript-stopped"),
+            Notice::TranscriptFailed(reason) => {
+                fl!("ui-status-transcript-failed", reason = reason.as_str())
+            }
+            Notice::BroadcastOn(scope) => {
+                fl!("ui-broadcast-on", scope = scope_label(*scope, targets))
+            }
+            Notice::BroadcastOff => fl!("ui-broadcast-off"),
+            Notice::BroadcastScope(scope) => {
+                fl!(
+                    "ui-broadcast-scope-status",
+                    scope = scope_label(*scope, targets)
+                )
+            }
         };
     }
     let (name, state) = match status {
@@ -63,14 +90,17 @@ pub fn count_text(shown: usize, total: usize, filtering: bool) -> String {
     }
 }
 
-/// The bar.
-pub fn view<'a>(left: String, right: String) -> Element<'a, Message> {
+/// The bar; `controls` beside the count, broadcast input's.
+pub fn view(left: String, right: String, controls: Element<'_, Message>) -> Element<'_, Message> {
     container(
         row![
             text(left).size(TEXT_SIZE),
             space::horizontal(),
+            controls,
             text(right).size(TEXT_SIZE),
         ]
+        .spacing(PADDING[1])
+        .align_y(iced::Alignment::Center)
         .width(Length::Fill),
     )
     .padding(PADDING)
@@ -90,11 +120,11 @@ mod tests {
     #[test]
     fn the_left_says_the_csharp_sentences() {
         assert_eq!(
-            status_text(&SessionStatus::Ready, None),
+            status_text(&SessionStatus::Ready, None, 0),
             "Ready. Select a session to get started."
         );
         assert_eq!(
-            status_text(&SessionStatus::Connected(named("web")), None),
+            status_text(&SessionStatus::Connected(named("web")), None, 0),
             "Connected to: web"
         );
         for (status, said) in [
@@ -112,18 +142,39 @@ mod tests {
             ),
             (SessionStatus::Error(named("web")), "web: Error"),
         ] {
-            assert_eq!(status_text(&status, None), said);
+            assert_eq!(status_text(&status, None, 0), said);
         }
         let status = SessionStatus::Connected(named("web"));
         assert_eq!(
-            status_text(&status, Some(&Notice::Copied(named("web.lab")))),
+            status_text(&status, Some(&Notice::Copied(named("web.lab"))), 0),
             "Copied to clipboard: web.lab",
             "a notice first"
         );
         assert_eq!(
-            status_text(&status, Some(&Notice::FolderCreated(named("Prod/Archive")))),
+            status_text(
+                &status,
+                Some(&Notice::FolderCreated(named("Prod/Archive"))),
+                0
+            ),
             "Folder \"Prod/Archive\" created."
         );
+        for (notice, said) in [
+            (
+                Notice::BroadcastOn(BroadcastScope::AllTabs),
+                "Broadcast mode ON - All tabs",
+            ),
+            (
+                Notice::BroadcastOn(BroadcastScope::SelectedTabs),
+                "Broadcast mode ON - Selected tabs (2)",
+            ),
+            (Notice::BroadcastOff, "Broadcast mode OFF"),
+            (
+                Notice::BroadcastScope(BroadcastScope::SelectedTabs),
+                "Broadcast scope: Selected tabs (2)",
+            ),
+        ] {
+            assert_eq!(status_text(&status, Some(&notice), 2), said);
+        }
     }
 
     #[test]

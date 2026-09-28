@@ -35,17 +35,18 @@ pub mod rdp_driver;
 mod sink;
 pub mod telnet_driver;
 mod text;
+pub mod transcript;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, ConnectAs, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
-    GatewayBadge, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
-    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice,
-    OpenedVault, Phase, PointerInput, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
-    Prompt, QuickResult, RDP_MAX_ATTEMPTS, Retry, SelectionMessage, SessionStatus,
-    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow, VAULT_FILE_NAME,
-    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
-    master_password_problem, open_vault,
+    App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, FilesMessage, FolderMessage,
+    FolderNaming, GatewayBadge, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER,
+    NameAction, Notice, OpenedVault, Phase, PointerInput, ProfileCopy, ProfileKind,
+    ProfileMenuMessage, ProfileSummary, Prompt, QuickResult, RDP_MAX_ATTEMPTS, Retry,
+    SelectionMessage, SessionStatus, SettingsMessage, SystemCredentials, Tab, TabGroup,
+    TabMenuMessage, TabProfile, TreeRow, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

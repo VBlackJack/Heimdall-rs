@@ -1547,3 +1547,449 @@ fn the_status_bar_says_the_session_shown_and_counts_the_sessions() {
         .find("Copied to clipboard: b.lab")
         .expect("what was just done");
 }
+
+#[test]
+fn ctrl_plus_and_minus_zoom_the_terminal_shown_within_the_csharp_bounds() {
+    use heimdall_term::MouseAction;
+    use heimdall_ui::terminal_view::keys::Zoom;
+    use iced::{Point, keyboard, mouse};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let columns = |shell: &Shell| {
+        let mut ui = simulator(shell);
+        // Any event: the terminal reports its size on the first it gets.
+        let _ = ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::empty(),
+        ))]);
+        ui.into_messages()
+            .find_map(|message| match message {
+                Message::App(AppMessage::Resize { grid, .. }) => Some(grid.cols),
+                _ => None,
+            })
+            .expect("a size reported")
+    };
+    let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
+    let normal = columns(&shell);
+    assert!(same(shell.font_size(tab), 15.0));
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
+    assert!(same(shell.font_size(tab), 16.0));
+    assert!(columns(&shell) < normal, "larger text, fewer columns");
+    for _ in 0..20 {
+        let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
+    }
+    assert!(same(shell.font_size(tab), 28.0), "no larger than 28");
+    for _ in 0..30 {
+        let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Out)));
+    }
+    assert!(same(shell.font_size(tab), 8.0), "no smaller than 8");
+    assert!(columns(&shell) > normal);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)));
+    assert!(same(shell.font_size(tab), 15.0));
+    assert_eq!(columns(&shell), normal);
+
+    // The wheel with Ctrl held zooms instead of scrolling; without it, it scrolls.
+    let wheel = |ctrl: bool| {
+        let mut ui = simulator(&shell);
+        ui.point_at(Point::new(700.0, 400.0));
+        let modifiers = if ctrl {
+            keyboard::Modifiers::CTRL
+        } else {
+            keyboard::Modifiers::empty()
+        };
+        let _ = ui.simulate([
+            iced::Event::Mouse(mouse::Event::CursorMoved {
+                position: Point::new(700.0, 400.0),
+            }),
+            iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)),
+            iced::Event::Mouse(mouse::Event::WheelScrolled {
+                delta: mouse::ScrollDelta::Lines { x: 0.0, y: -1.0 },
+            }),
+        ]);
+        ui.into_messages().collect::<Vec<_>>()
+    };
+    let zoomed = wheel(true);
+    assert!(
+        zoomed
+            .iter()
+            .any(|message| matches!(message, Message::Shortcut(WindowShortcut::Zoom(Zoom::Out)))),
+        "{zoomed:?}"
+    );
+    assert!(
+        !zoomed.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Pointer { input, .. })
+                if matches!(input.action, MouseAction::WheelUp | MouseAction::WheelDown)
+        )),
+        "and does not scroll"
+    );
+    let scrolled = wheel(false);
+    assert!(
+        !scrolled
+            .iter()
+            .any(|message| matches!(message, Message::Shortcut(WindowShortcut::Zoom(_)))),
+        "{scrolled:?}"
+    );
+    assert!(
+        scrolled.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Pointer { input, .. })
+                if matches!(input.action, MouseAction::WheelUp | MouseAction::WheelDown)
+        )),
+        "it scrolls: {scrolled:?}"
+    );
+}
+
+#[test]
+fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
+    use heimdall_term::FindDirection;
+    use iced::keyboard;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let output: String = (0..60)
+        .map(|n| {
+            if n == 10 {
+                "an error here\r\n".to_owned()
+            } else {
+                format!("line {n}\r\n")
+            }
+        })
+        .collect();
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(output.into_bytes()),
+    }));
+    let bar_shown = |shell: &Shell| simulator(shell).find("\u{25b2}").is_ok();
+    assert!(!bar_shown(&shell));
+
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    assert!(bar_shown(&shell));
+    snapshot(&shell, "terminal-find.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.typewrite("x");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+            "under the bar, the terminal takes no keys"
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Search...").expect("its field");
+        ui.typewrite("e");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::FinderQuery(query) if query == "e"))
+        );
+    }
+    let _ = shell.update(Message::FinderQuery("ERROR".to_owned()));
+    let _ = shell.update(Message::FinderFind(FindDirection::Up));
+    assert_eq!(
+        shell.app().tabs[0].terminal.selected_text().as_deref(),
+        Some("error"),
+        "found, whatever the case"
+    );
+    assert!(simulator(&shell).find("No match").is_err());
+
+    let _ = shell.update(Message::FinderQuery("absent".to_owned()));
+    let _ = shell.update(Message::FinderFind(FindDirection::Down));
+    simulator(&shell).find("No match").expect("said");
+    let _ = shell.update(Message::FinderQuery("absen".to_owned()));
+    assert!(
+        simulator(&shell).find("No match").is_err(),
+        "not for a text not yet looked for"
+    );
+
+    // Enter looks down; with Shift, up.
+    let _ = shell.update(Message::FinderQuery(String::new()));
+    for (modifiers, direction) in [
+        (keyboard::Modifiers::empty(), FindDirection::Down),
+        (keyboard::Modifiers::SHIFT, FindDirection::Up),
+    ] {
+        let _ = shell.update(Message::Modifiers(modifiers));
+        let mut ui = simulator(&shell);
+        ui.click("Search...").expect("its field");
+        let _ = ui.tap_key(keyboard_named(Named::Enter));
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::FinderFind(d) if d == direction)),
+            "{direction:?}"
+        );
+    }
+    let _ = shell.update(Message::Modifiers(keyboard::Modifiers::empty()));
+
+    // Escape closes it, then the terminal takes keys again; Ctrl+Shift+F toggles it.
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(!bar_shown(&shell));
+    {
+        let mut ui = simulator(&shell);
+        ui.typewrite("x");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+        );
+    }
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    assert!(!bar_shown(&shell), "the shortcut again closes it");
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    let _ = shell.update(Message::FinderClose);
+    assert!(!bar_shown(&shell));
+}
+
+#[test]
+fn a_session_still_connecting_has_no_search_bar() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    assert!(simulator(&shell).find("\u{25b2}").is_err());
+    // Nor once it is connected: the shortcut asked for none then.
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    }));
+    assert!(simulator(&shell).find("\u{25b2}").is_err());
+}
+
+#[test]
+fn the_settings_page_has_the_terminal_appearance_section() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    snapshot(&shell, "settings-terminal.png");
+    let mut ui = simulator(&shell);
+    ui.find("Terminal Appearance").expect("its section");
+    ui.find("Color scheme").expect("its label");
+}
+
+#[test]
+fn a_transcript_starts_from_the_tab_menu_and_its_tab_says_rec() {
+    use heimdall_app::TabMenuMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let chosen = |shell: &Shell, entry: &str| {
+        let mut ui = simulator(shell);
+        ui.click(entry).expect(entry);
+        ui.into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(chosen) => Some(format!("{chosen:?}")),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert!(simulator(&shell).find("REC").is_err());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert_eq!(
+        chosen(&shell, "Start Transcript"),
+        [format!(
+            "{:?}",
+            AppMessage::TabMenu(TabMenuMessage::StartTranscript(tab))
+        )]
+    );
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        TabMenuMessage::StartTranscript(tab),
+    )));
+    snapshot(&shell, "tab-recording.png");
+    let path = shell.app().tabs[0]
+        .transcript
+        .as_ref()
+        .map(|transcript| transcript.path().to_owned())
+        .expect("kept");
+    assert!(path.starts_with(dir.path()), "beside the profiles");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("REC").expect("the badge");
+        ui.find(format!("Transcript started: {}", path.display()).as_str())
+            .expect("the status says where");
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    assert!(simulator(&shell).find("Start Transcript").is_err());
+    assert_eq!(
+        chosen(&shell, "Stop Transcript"),
+        [format!(
+            "{:?}",
+            AppMessage::TabMenu(TabMenuMessage::StopTranscript(tab))
+        )]
+    );
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        TabMenuMessage::StopTranscript(tab),
+    )));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("REC").is_err());
+    ui.find("Transcript stopped").expect("said");
+}
+
+#[test]
+fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Session Logging").expect("its section");
+        ui.click("Enable session logging").expect("its box");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(true)))
+        )));
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("logs/sessions").expect("its folder");
+        ui.typewrite("x");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::LogDirectoryEdited(_)))
+        );
+    }
+    let _ = shell.update(Message::LogDirectoryEdited("records".to_owned()));
+    assert_eq!(
+        shell.app().settings().session_log_directory,
+        "logs/sessions",
+        "typed, not yet applied"
+    );
+    let _ = shell.update(Message::LogDirectoryApply);
+    assert_eq!(shell.app().settings().session_log_directory, "records");
+    let _ = shell.update(Message::LogDirectoryApply);
+    assert_eq!(
+        shell.app().settings().session_log_directory,
+        "records",
+        "nothing typed since: nothing changes"
+    );
+}
+
+#[test]
+fn the_status_bar_turns_broadcast_on_and_marks_tabs_in_the_selected_scope() {
+    use heimdall_app::{BroadcastMessage, Dialog};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let broadcast = |message| Message::App(AppMessage::Broadcast(message));
+    let clicked = |shell: &Shell, label: &str| {
+        let mut ui = simulator(shell);
+        ui.click(label).expect(label);
+        ui.into_messages()
+            .filter_map(|message| match message {
+                Message::App(AppMessage::Broadcast(message)) => Some(message),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(clicked(&shell, "BROADCAST"), [BroadcastMessage::Toggle]);
+    assert_eq!(clicked(&shell, "All tabs"), [BroadcastMessage::Scope]);
+    assert!(
+        simulator(&shell).find("\u{25cb}").is_err(),
+        "no marks while off"
+    );
+
+    let _ = shell.update(broadcast(BroadcastMessage::Toggle));
+    assert_eq!(shell.app().dialog, Some(Dialog::ConfirmBroadcast));
+    snapshot(&shell, "broadcast-confirm.png");
+    simulator(&shell)
+        .find("Broadcast to all tabs?")
+        .expect("asked");
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Broadcast mode ON - All tabs").expect("said");
+        assert!(
+            ui.find("\u{25cb}").is_err(),
+            "every tab is reached: no marks"
+        );
+    }
+
+    let _ = shell.update(broadcast(BroadcastMessage::Scope));
+    snapshot(&shell, "broadcast-selected.png");
+    simulator(&shell)
+        .find("Selected tabs (0)")
+        .expect("its scope");
+    assert_eq!(
+        clicked(&shell, "\u{25cb}"),
+        [BroadcastMessage::Target(tab)],
+        "the tab's mark"
+    );
+    let _ = shell.update(broadcast(BroadcastMessage::Target(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("\u{25c9}").expect("marked");
+        ui.find("Selected tabs (1)").expect("counted");
+    }
+    let _ = shell.update(broadcast(BroadcastMessage::Toggle));
+    assert!(
+        simulator(&shell).find("\u{25c9}").is_err(),
+        "off: no marks, whatever the scope"
+    );
+}
+
+#[test]
+fn ctrl_alt_b_typed_in_a_terminal_is_left_to_the_window() {
+    use iced::keyboard::{self, Location, key};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let pressed = |c: &str| {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: keyboard::Key::Character(c.into()),
+            modified_key: keyboard::Key::Character(c.into()),
+            physical_key: key::Physical::Code(key::Code::KeyB),
+            location: Location::Standard,
+            modifiers: keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT,
+            text: None,
+            repeat: false,
+        })
+    };
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([pressed("b")]);
+    assert_eq!(statuses, [event::Status::Ignored], "the window's");
+    let statuses = ui.simulate([pressed("{")]);
+    assert_eq!(
+        statuses,
+        [event::Status::Captured],
+        "AltGr+B typing a brace is the session's"
+    );
+    let keys = ui
+        .into_messages()
+        .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+        .count();
+    assert_eq!(keys, 1, "only the brace reached the terminal");
+}
+
+#[test]
+fn a_tab_menu_leaves_the_keyboard_to_the_session() {
+    use heimdall_app::TabMenuMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    // A profile selected in the tree: Enter there would open it.
+    let _ = shell.update(Message::App(AppMessage::SelectProfile(ProfileId::new("a"))));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        TabMenuMessage::StartTranscript(tab),
+    )));
+    let mut ui = simulator(&shell);
+    ui.typewrite("ls");
+    assert_eq!(
+        ui.into_messages()
+            .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+            .count(),
+        2,
+        "typed into the session"
+    );
+    // Enter is the session's too: it opens nothing from the tree.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert_eq!(shell.app().tabs.len(), 1);
+}

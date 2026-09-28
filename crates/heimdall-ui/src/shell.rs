@@ -36,19 +36,21 @@ use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, AttemptId, ConnectionEvent, DesktopPane, Dialog,
-    Effect, FilesMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
-    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
-    Message as AppMessage, NameAction, Phase, ProfileMenuMessage, Prompt, Purpose, QuestionId,
-    QuestionKind, Retry, SelectionMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, TreeRow, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    connection_events, master_password_problem, open_vault, server_text,
+    Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
+    DesktopPane, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
+    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, ProfileMenuMessage,
+    Prompt, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
+    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TreeRow, UiError,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
+    master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
+use heimdall_core::settings::{BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
 use heimdall_ssh::{AgentSource, Secret};
-use heimdall_term::GridSize;
+use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
 use iced::keyboard::key::Named;
 use iced::task::Handle;
@@ -62,15 +64,17 @@ use zeroize::Zeroizing;
 
 use crate::desktop_view::DesktopView;
 use crate::files_view;
+use crate::finder::Finder;
 use crate::i18n::fl;
 use crate::palette::Palette;
 use crate::report;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
-    WindowShortcut, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
+    WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
+use crate::terminal_view::metrics::DEFAULT_FONT_SIZE;
 use crate::texts;
-use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TreeMenu};
+use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TranscriptEntry, TreeMenu};
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -110,6 +114,10 @@ const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
+const MIN_FONT_SIZE: f32 = 8.0;
+const MAX_FONT_SIZE: f32 = 28.0;
 
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
@@ -323,6 +331,16 @@ pub enum Message {
     PaletteChoose(usize),
     /// Close Quick Connect.
     PaletteClose,
+    /// The terminal search bar's text changed.
+    FinderQuery(String),
+    /// Look for the search bar's text, that way.
+    FinderFind(FindDirection),
+    /// Close the terminal's search bar.
+    FinderClose,
+    /// The transcripts' folder typed in the Settings page.
+    LogDirectoryEdited(String),
+    /// Apply the folder typed.
+    LogDirectoryApply,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -379,6 +397,11 @@ impl fmt::Debug for Message {
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
+            Self::FinderQuery(_) => f.write_str("FinderQuery(..)"),
+            Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
+            Self::FinderClose => f.write_str("FinderClose"),
+            Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
+            Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
         }
     }
 }
@@ -483,6 +506,8 @@ pub struct Shell {
     /// What is typed into each open question, zeroed when dropped. iced keeps its own
     /// transient copies of a field's text, which this cannot reach.
     drafts: HashMap<QuestionId, Vec<Zeroizing<String>>>,
+    /// The terminals' text sizes changed by a zoom, by tab; for this run only, as the C#.
+    font_sizes: HashMap<TabId, f32>,
     /// The question whose first field was last given focus.
     focused: Option<QuestionId>,
     /// Which field of the open dialog was last given focus, so it is given once.
@@ -507,8 +532,13 @@ pub struct Shell {
     tree_focused: bool,
     /// Quick Connect, while open.
     palette: Option<Palette>,
-    /// Quick Connect just opened: its field gets the keyboard.
-    palette_opened: bool,
+    /// The terminal's search bar, while open.
+    finder: Option<Finder>,
+    /// The transcripts' folder as typed in the Settings page, until applied.
+    log_directory: Option<String>,
+    /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
+    /// search bar's, just opened.
+    focus_next: Option<iced::widget::Id>,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
     desktop_fit: HashMap<TabId, bool>,
     /// What the tree's search holds: the profiles it finds are shown.
@@ -565,12 +595,14 @@ impl Shell {
 
     /// The window over an application core already in some state.
     #[must_use]
-    pub fn with_app(app: App) -> Self {
+    pub fn with_app(mut app: App) -> Self {
+        app.set_transcript_lines(crate::transcript_lines::lines());
         Self {
             app,
             registry: AnswerRegistry::default(),
             connections: HashMap::new(),
             drafts: HashMap::new(),
+            font_sizes: HashMap::new(),
             focused: None,
             dialog_focus: None,
             vault_fields: Default::default(),
@@ -583,7 +615,9 @@ impl Shell {
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
             palette: None,
-            palette_opened: false,
+            finder: None,
+            focus_next: None,
+            log_directory: None,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -719,14 +753,20 @@ impl Shell {
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
             | Message::PaletteClose) => self.palette_message(message),
+            message @ (Message::FinderQuery(_) | Message::FinderFind(_) | Message::FinderClose) => {
+                self.finder_message(message)
+            }
+            message @ (Message::LogDirectoryEdited(_) | Message::LogDirectoryApply) => {
+                self.log_directory_message(message)
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         self.forget_finished();
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
-        if std::mem::take(&mut self.palette_opened) {
-            tasks.push(operation::focus(crate::palette::field_id()));
+        if let Some(field) = self.focus_next.take() {
+            tasks.push(operation::focus(field));
         }
         if reveal {
             tasks.push(self.reveal_selection());
@@ -889,6 +929,15 @@ impl Shell {
         let count = self.app.tabs.len();
         let index = self.app.tabs.iter().position(|tab| tab.id == active);
         let message = match (shortcut, index) {
+            (WindowShortcut::Zoom(zoom), _) => {
+                self.zoom(active, zoom);
+                return Vec::new();
+            }
+            (WindowShortcut::Broadcast, _) => AppMessage::Broadcast(BroadcastMessage::Toggle),
+            (WindowShortcut::Find, _) => {
+                self.toggle_finder(active);
+                return Vec::new();
+            }
             (WindowShortcut::CloseTab, _) => AppMessage::RequestCloseTab(active),
             (WindowShortcut::NextTab, Some(index)) => {
                 AppMessage::SelectTab(self.app.tabs[(index + 1) % count].id)
@@ -899,6 +948,85 @@ impl Shell {
             (_, None) => return Vec::new(),
         };
         self.app.update(message)
+    }
+
+    /// Opens the search bar over `tab`'s terminal, or closes it when open; only a tab
+    /// showing a terminal has one.
+    fn toggle_finder(&mut self, tab: TabId) {
+        if self.finder.take().is_some() {
+            return;
+        }
+        if self.app.tab(tab).is_some_and(shows_terminal) {
+            self.finder = Some(Finder::new(tab));
+            self.focus_next = Some(crate::finder::field_id());
+        }
+    }
+
+    /// A change in the terminal's search bar: its text, a search, closed.
+    fn finder_message(&mut self, message: Message) -> Vec<Effect> {
+        let Some(finder) = self.finder.as_mut() else {
+            return Vec::new();
+        };
+        match message {
+            Message::FinderQuery(query) => finder.query = query,
+            Message::FinderFind(direction) => {
+                finder.searched = Some(finder.query.clone());
+                let (tab, query) = (finder.tab, finder.query.clone());
+                return self.app.update(AppMessage::FindInTerminal {
+                    tab,
+                    query,
+                    direction,
+                });
+            }
+            _ => self.finder = None,
+        }
+        Vec::new()
+    }
+
+    /// The search bar over the terminal of `tab`, when open there.
+    fn finder_of(&self, tab: &Tab) -> Option<&Finder> {
+        self.finder.as_ref().filter(|finder| finder.tab == tab.id)
+    }
+
+    /// `tab`'s terminal, with its search bar over it when open. Under the bar the terminal
+    /// takes no keys: Escape and what is typed are the bar's.
+    fn searchable_terminal<'a>(&'a self, tab: &'a Tab, interactive: bool) -> Element<'a, Message> {
+        let finder = self.finder_of(tab);
+        let shown = terminal(tab, interactive && finder.is_none(), self.font_size(tab.id));
+        match finder {
+            Some(finder) => stack![
+                shown,
+                crate::finder::view(finder, tab.find_missed, self.modifiers.shift())
+            ]
+            .into(),
+            None => shown,
+        }
+    }
+
+    /// The text size of `tab`'s terminal.
+    #[must_use]
+    pub fn font_size(&self, tab: TabId) -> f32 {
+        self.font_sizes
+            .get(&tab)
+            .copied()
+            .unwrap_or(DEFAULT_FONT_SIZE)
+    }
+
+    /// Makes `tab`'s terminal text a point larger or smaller, within the C# bounds, or
+    /// back to its size.
+    fn zoom(&mut self, tab: TabId, zoom: Zoom) {
+        // Tabs closed since leave their sizes behind no longer.
+        self.font_sizes.retain(|id, _| self.app.tab(*id).is_some());
+        let size = match zoom {
+            Zoom::Reset => {
+                self.font_sizes.remove(&tab);
+                return;
+            }
+            Zoom::In => self.font_size(tab) + 1.0,
+            Zoom::Out => self.font_size(tab) - 1.0,
+        };
+        self.font_sizes
+            .insert(tab, size.clamp(MIN_FONT_SIZE, MAX_FONT_SIZE));
     }
 
     /// Opens `menu` at the pointer, or, for a sub-menu, where its menu was.
@@ -932,6 +1060,10 @@ impl Shell {
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
         if !confirm && self.palette.take().is_some() {
             // Escape closes Quick Connect first.
+            return Vec::new();
+        }
+        if !confirm && self.finder.take().is_some() {
+            // Then the terminal's search bar.
             return Vec::new();
         }
         if !confirm && self.menu.take().is_some() {
@@ -1391,10 +1523,44 @@ impl Shell {
             .iter()
             .filter(|profile| profile.matches(&self.search))
             .count();
+        let targets = self.app.broadcast_target_count();
         crate::status_bar::view(
-            crate::status_bar::status_text(&self.app.session_status(), self.app.notice()),
+            crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
+            self.broadcast_controls(targets),
         )
+    }
+
+    /// Broadcast input's toggle and scope, as the C# bar's: lit while on.
+    fn broadcast_controls(&self, targets: usize) -> Element<'_, Message> {
+        let on = self.app.broadcasting();
+        let scope = crate::status_bar::scope_label(self.app.settings().broadcast_scope, targets);
+        let broadcast = |message| Message::App(AppMessage::Broadcast(message));
+        row![
+            tooltip(
+                button(text(fl!("ui-broadcast-button")).size(SMALL_SIZE))
+                    .style(if on { button::primary } else { button::text })
+                    .on_press(broadcast(BroadcastMessage::Toggle)),
+                text(if on {
+                    fl!("ui-broadcast-on", scope = scope.as_str())
+                } else {
+                    fl!("ui-broadcast-toggle-tooltip")
+                })
+                .size(SMALL_SIZE),
+                tooltip::Position::Top,
+            )
+            .style(container::rounded_box),
+            tooltip(
+                button(text(scope.clone()).size(SMALL_SIZE))
+                    .style(button::text)
+                    .on_press(broadcast(BroadcastMessage::Scope)),
+                text(fl!("ui-broadcast-scope-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Top,
+            )
+            .style(container::rounded_box),
+        ]
+        .align_y(iced::Alignment::Center)
+        .into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
@@ -1567,10 +1733,89 @@ impl Shell {
                 text(fl!("ui-settings-title")).size(HEADING_SIZE),
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
                 vault_card,
+                text(fl!("ui-settings-terminal")).size(BODY_SIZE),
+                self.terminal_settings(),
+                text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
+                self.session_log_settings(),
             ]
             .spacing(SPACING)
             .padding(PADDING),
         )
+        .into()
+    }
+
+    /// Session logging, as the C# Settings page offers it: on or off, and the folder the
+    /// transcripts go to, applied with Enter.
+    fn session_log_settings(&self) -> Element<'_, Message> {
+        let settings = self.app.settings();
+        let typed = self
+            .log_directory
+            .as_deref()
+            .unwrap_or(&settings.session_log_directory);
+        container(
+            column![
+                checkbox(settings.session_logging)
+                    .label(fl!("ui-settings-session-logging-enabled"))
+                    .on_toggle(|on| {
+                        Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(on)))
+                    }),
+                row![
+                    text(fl!("ui-settings-session-log-directory")),
+                    text_input(DEFAULT_SESSION_LOG_DIRECTORY, typed)
+                        .on_input(Message::LogDirectoryEdited)
+                        .on_submit(Message::LogDirectoryApply),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+                text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
+    }
+
+    /// The transcripts' folder typed, or applied.
+    fn log_directory_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::LogDirectoryEdited(typed) => {
+                self.log_directory = Some(typed);
+                Vec::new()
+            }
+            _ => match self.log_directory.take() {
+                Some(typed) => {
+                    self.app
+                        .update(AppMessage::Settings(SettingsMessage::SessionLogDirectory(
+                            typed,
+                        )))
+                }
+                None => Vec::new(),
+            },
+        }
+    }
+
+    /// The terminal's appearance: its colour scheme, as the C# Settings page offers it.
+    fn terminal_settings(&self) -> Element<'_, Message> {
+        container(
+            row![
+                text(fl!("ui-settings-color-scheme")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    ColorScheme::ALL.map(SchemeChoice).to_vec(),
+                    Some(SchemeChoice(self.app.settings().color_scheme)),
+                    |SchemeChoice(scheme)| Message::App(AppMessage::Settings(
+                        SettingsMessage::ColorScheme(scheme)
+                    )),
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
         .into()
     }
 
@@ -1582,6 +1827,8 @@ impl Shell {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
+            // A tab's menu is the tab bar's: the keyboard stays where it was.
+            Message::OpenTreeMenu(TreeMenu::Tab(_)) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
             | Message::TreeClick(_) => self.tree_focused = true,
@@ -1672,7 +1919,7 @@ impl Shell {
             TreeShortcut::QuickConnect => {
                 self.menu = None;
                 self.palette = Some(Palette::default());
-                self.palette_opened = true;
+                self.focus_next = Some(crate::palette::field_id());
                 Vec::new()
             }
             TreeShortcut::Edit => match self.app.selected_profile.clone() {
@@ -1812,6 +2059,13 @@ impl Shell {
             profile,
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
+            transcript: if tab.transcript.is_some() {
+                TranscriptEntry::Stop
+            } else if shows_terminal(tab) {
+                TranscriptEntry::Start(self.app.can_start_transcript(tab))
+            } else {
+                TranscriptEntry::Absent
+            },
         })
     }
 
@@ -1834,6 +2088,42 @@ impl Shell {
             .align_y(iced::Alignment::Center);
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+            }
+            let marked = self.app.broadcasting()
+                && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
+                && shows_terminal(tab);
+            if marked {
+                // A target of broadcast input, or not, as the C# tab's marker.
+                let target = self.app.is_broadcast_target(tab.id);
+                tabs = tabs.push(
+                    tooltip(
+                        button(
+                            text(if target {
+                                fl!("ui-broadcast-target-on")
+                            } else {
+                                fl!("ui-broadcast-target-off")
+                            })
+                            .size(SMALL_SIZE),
+                        )
+                        .style(button::text)
+                        .on_press(Message::App(AppMessage::Broadcast(
+                            BroadcastMessage::Target(tab.id),
+                        ))),
+                        text(fl!("ui-broadcast-target-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Bottom,
+                    )
+                    .style(container::rounded_box),
+                );
+            }
+            if tab.transcript.is_some() {
+                label = label.push(
+                    tooltip(
+                        text(fl!("ui-tab-recording")).size(SMALL_SIZE),
+                        text(fl!("ui-tab-recording-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Bottom,
+                    )
+                    .style(container::rounded_box),
+                );
             }
             tabs = tabs.push(
                 row![
@@ -1899,7 +2189,7 @@ impl Shell {
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => crate::files_view::view(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
-                _ => terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
+                _ => self.searchable_terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
             },
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
@@ -1918,7 +2208,7 @@ impl Shell {
                     |status| fl!("ui-session-closed-status", status = status.to_string()),
                 );
                 column![
-                    terminal(tab, self.app.dialog.is_none()),
+                    self.searchable_terminal(tab, self.app.dialog.is_none()),
                     row![text(status), self.session_actions(tab)]
                         .spacing(SPACING)
                         .padding(PADDING)
@@ -2212,10 +2502,23 @@ impl Default for Shell {
     }
 }
 
-fn terminal(tab: &Tab, interactive: bool) -> Element<'_, Message> {
-    container(TerminalView::new(&tab.terminal, tab.id, Message::App).interactive(interactive))
-        .padding(TERMINAL_MARGIN)
-        .into()
+/// Whether `tab` shows a terminal: a session of text, connected or ended.
+fn shows_terminal(tab: &Tab) -> bool {
+    tab.files.is_none()
+        && tab.desktop.is_none()
+        && !matches!(tab.purpose, Purpose::Files | Purpose::Rdp | Purpose::Vnc)
+        && matches!(tab.phase, Phase::Connected | Phase::Closed { .. })
+}
+
+fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message> {
+    container(
+        TerminalView::new(&tab.terminal, tab.id, Message::App)
+            .interactive(interactive)
+            .font_size(font_size)
+            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom))),
+    )
+    .padding(TERMINAL_MARGIN)
+    .into()
 }
 
 /// The question about an unknown server key.
@@ -3326,6 +3629,22 @@ impl fmt::Display for DesktopMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
 
+/// A colour scheme in the Settings page's list, named as the C# Heimdall names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SchemeChoice(ColorScheme);
+
+impl fmt::Display for SchemeChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            ColorScheme::Standard => fl!("ui-scheme-default"),
+            ColorScheme::Dracula => fl!("ui-scheme-dracula"),
+            ColorScheme::SolarizedDark => fl!("ui-scheme-solarized-dark"),
+            ColorScheme::Monokai => fl!("ui-scheme-monokai"),
+            ColorScheme::Nord => fl!("ui-scheme-nord"),
+        })
+    }
+}
+
 impl fmt::Display for KeysChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&match self.0 {
@@ -3491,6 +3810,23 @@ fn vault_problem(problem: &VaultProblem) -> String {
     }
 }
 
+/// The title, text and action of a question about the whole window: leaving it with
+/// sessions live, broadcasting input to every tab.
+fn window_question(dialog: &Dialog) -> (String, String, String) {
+    match dialog {
+        Dialog::ConfirmExit { live } => (
+            fl!("ui-dialog-exit-title"),
+            fl!("ui-dialog-exit-body", count = (*live)),
+            fl!("ui-dialog-exit-confirm"),
+        ),
+        _ => (
+            fl!("ui-dialog-broadcast-title"),
+            fl!("ui-dialog-broadcast-body"),
+            fl!("ui-dialog-broadcast-confirm"),
+        ),
+    }
+}
+
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
     let confirm = |label: String| {
         button(text(label))
@@ -3525,12 +3861,10 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmConnectFolder { .. }
         | Dialog::RenameProfile { .. }
         | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
-        Dialog::ConfirmExit { live } => question(
-            fl!("ui-dialog-exit-title"),
-            fl!("ui-dialog-exit-body", count = (*live)),
-            fl!("ui-dialog-exit-confirm"),
-        )
-        .into(),
+        Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } => {
+            let (title, body, action) = window_question(dialog);
+            question(title, body, action).into()
+        }
         Dialog::ConfirmOverwrite {
             direction, name, ..
         } => question(
@@ -3612,6 +3946,14 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn the_schemes_are_listed_by_their_csharp_names() {
+        assert_eq!(
+            ColorScheme::ALL.map(|scheme| SchemeChoice(scheme).to_string()),
+            ["Default", "Dracula", "Solarized Dark", "Monokai", "Nord"]
+        );
     }
 
     #[test]

@@ -90,6 +90,119 @@ impl Palette {
         }
     }
 
+    /// The terminal's own colours, xterm.js's when no theme is given, as the C# Heimdall's
+    /// "Default" scheme: white on black, the Tango palette.
+    #[must_use]
+    pub const fn standard() -> Self {
+        Self {
+            foreground: rgb(0x00FF_FFFF),
+            background: rgb(0x0000_0000),
+            cursor: rgb(0x00FF_FFFF),
+            ansi: [
+                rgb(0x002E_3436),
+                rgb(0x00CC_0000),
+                rgb(0x004E_9A06),
+                rgb(0x00C4_A000),
+                rgb(0x0034_65A4),
+                rgb(0x0075_507B),
+                rgb(0x0006_989A),
+                rgb(0x00D3_D7CF),
+                rgb(0x0055_5753),
+                rgb(0x00EF_2929),
+                rgb(0x008A_E234),
+                rgb(0x00FC_E94F),
+                rgb(0x0072_9FCF),
+                rgb(0x00AD_7FA8),
+                rgb(0x0034_E2E2),
+                rgb(0x00EE_EEEC),
+            ],
+        }
+    }
+
+    /// Solarized Dark, as the C# Heimdall's.
+    #[must_use]
+    pub const fn solarized_dark() -> Self {
+        Self {
+            foreground: rgb(0x0083_9496),
+            background: rgb(0x0000_2B36),
+            cursor: rgb(0x0093_A1A1),
+            ansi: [
+                rgb(0x0007_3642),
+                rgb(0x00DC_322F),
+                rgb(0x0085_9900),
+                rgb(0x00B5_8900),
+                rgb(0x0026_8BD2),
+                rgb(0x00D3_3682),
+                rgb(0x002A_A198),
+                rgb(0x00EE_E8D5),
+                rgb(0x0058_6E75),
+                rgb(0x00CB_4B16),
+                rgb(0x0058_6E75),
+                rgb(0x0065_7B83),
+                rgb(0x0083_9496),
+                rgb(0x006C_71C4),
+                rgb(0x0093_A1A1),
+                rgb(0x00FD_F6E3),
+            ],
+        }
+    }
+
+    /// Monokai, as the C# Heimdall's.
+    #[must_use]
+    pub const fn monokai() -> Self {
+        Self {
+            foreground: rgb(0x00F8_F8F2),
+            background: rgb(0x0027_2822),
+            cursor: rgb(0x00F8_F8F0),
+            ansi: [
+                rgb(0x0027_2822),
+                rgb(0x00F9_2672),
+                rgb(0x00A6_E22E),
+                rgb(0x00F4_BF75),
+                rgb(0x0066_D9EF),
+                rgb(0x00AE_81FF),
+                rgb(0x00A1_EFE4),
+                rgb(0x00F8_F8F2),
+                rgb(0x0075_715E),
+                rgb(0x00F9_2672),
+                rgb(0x00A6_E22E),
+                rgb(0x00F4_BF75),
+                rgb(0x0066_D9EF),
+                rgb(0x00AE_81FF),
+                rgb(0x00A1_EFE4),
+                rgb(0x00F9_F8F5),
+            ],
+        }
+    }
+
+    /// Nord, as the C# Heimdall's.
+    #[must_use]
+    pub const fn nord() -> Self {
+        Self {
+            foreground: rgb(0x00D8_DEE9),
+            background: rgb(0x002E_3440),
+            cursor: rgb(0x00D8_DEE9),
+            ansi: [
+                rgb(0x003B_4252),
+                rgb(0x00BF_616A),
+                rgb(0x00A3_BE8C),
+                rgb(0x00EB_CB8B),
+                rgb(0x0081_A1C1),
+                rgb(0x00B4_8EAD),
+                rgb(0x0088_C0D0),
+                rgb(0x00E5_E9F0),
+                rgb(0x004C_566A),
+                rgb(0x00BF_616A),
+                rgb(0x00A3_BE8C),
+                rgb(0x00EB_CB8B),
+                rgb(0x0081_A1C1),
+                rgb(0x00B4_8EAD),
+                rgb(0x008F_BCBB),
+                rgb(0x00EC_EFF4),
+            ],
+        }
+    }
+
     /// Colour of entry `index` of the 256-colour table: the theme for 0 to 15, the xterm
     /// cube for 16 to 231, the grey ramp for 232 to 255.
     #[must_use]

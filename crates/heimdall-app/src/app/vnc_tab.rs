@@ -45,6 +45,7 @@ impl App {
             cancel: cancel.clone(),
         };
         let mut tab = Tab::new(
+            self.terminal_palette(),
             tab_id,
             TabProfile::Vnc(profile),
             Purpose::Vnc,

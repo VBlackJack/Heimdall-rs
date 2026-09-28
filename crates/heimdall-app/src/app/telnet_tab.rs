@@ -45,6 +45,7 @@ impl App {
             cancel: cancel.clone(),
         };
         self.tabs.push(Tab::new(
+            self.terminal_palette(),
             tab_id,
             TabProfile::Telnet(profile),
             Purpose::Shell,
