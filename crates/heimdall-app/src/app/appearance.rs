@@ -19,10 +19,12 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::settings::{ColorScheme, Settings, settings_path};
+use heimdall_core::settings::{
+    ColorScheme, Language, Settings, settings_path, terminal_font_size_accepted,
+};
 use heimdall_term::Palette;
 
-use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION};
+use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION, TrustedKeysMessage};
 
 /// A change from the Settings page.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +35,12 @@ pub enum SettingsMessage {
     SessionLogging(bool),
     /// The folder transcripts go to.
     SessionLogDirectory(String),
+    /// The lists of keys trusted for servers.
+    TrustedKeys(TrustedKeysMessage),
+    /// The size a new terminal's text starts at; one out of the accepted range is ignored.
+    TerminalFontSize(u16),
+    /// The language chosen, once the window shows it.
+    Language(Language),
 }
 
 /// The colours of `scheme`.
@@ -82,6 +90,9 @@ impl App {
     /// Applies `message` and saves the settings; one that cannot be saved is said and not
     /// applied. A colour scheme colours the terminals open too.
     pub(super) fn settings_message(&mut self, message: &SettingsMessage) -> Vec<Effect> {
+        if let SettingsMessage::TrustedKeys(message) = message {
+            return self.trusted_keys_message(message);
+        }
         let before = self.settings.clone();
         match message {
             SettingsMessage::ColorScheme(scheme) => self.settings.color_scheme = *scheme,
@@ -91,6 +102,14 @@ impl App {
                     .trim()
                     .clone_into(&mut self.settings.session_log_directory);
             }
+            SettingsMessage::TerminalFontSize(size) => {
+                if !terminal_font_size_accepted(*size) {
+                    return Vec::new();
+                }
+                self.settings.terminal_font_size = *size;
+            }
+            SettingsMessage::Language(language) => self.settings.language = Some(*language),
+            SettingsMessage::TrustedKeys(_) => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;

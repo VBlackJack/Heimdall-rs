@@ -83,6 +83,7 @@ mod tab_menu;
 mod telnet_tab;
 mod transcripts;
 mod tree;
+mod trusted_keys;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
@@ -103,6 +104,7 @@ pub use selection::SelectionMessage;
 pub use status::{Notice, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
+pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 use vault::VaultState;
 pub use vault::{
     LONG_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
@@ -1093,6 +1095,8 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// Forget a key trusted for a server?
+    ForgetTrustedKey(TrustedKey),
     /// Add or edit an SSH gateway.
     EditGateway {
         /// What is typed.
@@ -1230,6 +1234,8 @@ pub struct App {
     broadcast: broadcast::Broadcast,
     /// What was just done, and the session shown then with its state.
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
+    /// The keys trusted for servers, as the Settings page last read them.
+    trusted_keys: TrustedKeys,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
     /// Transfers waiting, one after the other, for the user to confirm they replace a file.
@@ -1285,6 +1291,7 @@ impl App {
             selected_profile: None,
             selection: std::collections::BTreeSet::new(),
             notice: None,
+            trusted_keys: TrustedKeys::default(),
             pending_paste: None,
             pending_transfers: std::collections::VecDeque::new(),
             pending_operation: None,
@@ -2136,6 +2143,10 @@ impl App {
             Some(Dialog::ConfirmConnectFolder { path, .. }) => self.confirm_connect_folder(&path),
             Some(Dialog::ConfirmBroadcast) => {
                 self.confirm_broadcast();
+                Vec::new()
+            }
+            Some(Dialog::ForgetTrustedKey(key)) => {
+                self.forget_trusted_key(&key);
                 Vec::new()
             }
             Some(Dialog::ConfirmExit { .. }) => {

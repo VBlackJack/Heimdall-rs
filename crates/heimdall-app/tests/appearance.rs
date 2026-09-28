@@ -138,3 +138,34 @@ fn a_scheme_that_cannot_be_saved_is_said_and_not_applied() {
     assert_eq!(app.settings().color_scheme, ColorScheme::Dracula);
     assert_eq!(backgrounds(&app), [Palette::dracula().background]);
 }
+
+#[test]
+fn a_terminal_font_size_in_the_range_is_kept_for_the_next_run_and_another_ignored() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(SettingsMessage::TerminalFontSize(20)));
+    assert_eq!(app.settings().terminal_font_size, 20);
+    for refused in [7, 73] {
+        app.update(Message::Settings(SettingsMessage::TerminalFontSize(
+            refused,
+        )));
+        assert_eq!(app.settings().terminal_font_size, 20, "{refused} ignored");
+    }
+    assert_eq!(self::app(dir.path()).settings().terminal_font_size, 20);
+}
+
+#[test]
+fn a_language_chosen_is_kept_for_the_next_run() {
+    use heimdall_core::settings::Language;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    assert_eq!(app.settings().language, None, "the desktop's until chosen");
+    app.update(Message::Settings(SettingsMessage::Language(
+        Language::Spanish,
+    )));
+    assert_eq!(
+        self::app(dir.path()).settings().language,
+        Some(Language::Spanish)
+    );
+}

@@ -42,12 +42,13 @@ use heimdall_app::{
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, ProfileMenuMessage,
     Prompt, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
     SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
-    UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
-    master_password_problem, open_vault, server_text,
+    TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
+use heimdall_core::settings::Language;
 use heimdall_core::settings::{BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
@@ -72,9 +73,9 @@ use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
-use crate::terminal_view::metrics::DEFAULT_FONT_SIZE;
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TranscriptEntry, TreeMenu};
+use crate::trusted_keys_view::TrustedList;
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -118,6 +119,8 @@ const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 /// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 28.0;
+/// Width of the font size field, as the C# one's.
+const FONT_SIZE_FIELD_WIDTH: f32 = 80.0;
 
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
@@ -276,6 +279,10 @@ pub enum Message {
     LockKey,
     /// Show the settings.
     ShowSettings,
+    /// A search typed over a list of trusted keys on the Settings page.
+    TrustedSearch(TrustedList, String),
+    /// A language chosen on the Settings page.
+    LanguageChosen(Language),
     /// F11: the window full screen, showing the session only, or back.
     ToggleFullscreen,
     /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
@@ -349,6 +356,10 @@ pub enum Message {
     LogDirectoryEdited(String),
     /// Apply the folder typed.
     LogDirectoryApply,
+    /// The terminals' font size typed in the Settings page.
+    FontSizeEdited(String),
+    /// Apply the font size typed.
+    FontSizeApply,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -381,6 +392,8 @@ impl fmt::Debug for Message {
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
+            Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
+            Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
@@ -412,6 +425,8 @@ impl fmt::Debug for Message {
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
+            Self::FontSizeEdited(typed) => write!(f, "FontSizeEdited({typed:?})"),
+            Self::FontSizeApply => f.write_str("FontSizeApply"),
         }
     }
 }
@@ -546,6 +561,12 @@ pub struct Shell {
     finder: Option<Finder>,
     /// The transcripts' folder as typed in the Settings page, until applied.
     log_directory: Option<String>,
+    /// The terminals' font size as typed in the Settings page, until applied.
+    font_size_typed: Option<String>,
+    /// The search typed over the trusted SSH host keys.
+    host_key_search: String,
+    /// The search typed over the trusted RDP certificates.
+    certificate_search: String,
     /// Files are dragged over the window.
     files_hovered: bool,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
@@ -596,7 +617,12 @@ impl Shell {
     /// The window, with the profiles on disk.
     #[must_use]
     pub fn new() -> Self {
-        Self::with_config(config())
+        let shell = Self::with_config(config());
+        // The language chosen, once the settings are read; else the desktop's, set at start.
+        if let Some(language) = shell.app.settings().language {
+            crate::i18n::apply(Some(language));
+        }
+        shell
     }
 
     /// The window over `config`.
@@ -630,6 +656,9 @@ impl Shell {
             finder: None,
             focus_next: None,
             log_directory: None,
+            font_size_typed: None,
+            host_key_search: String::new(),
+            certificate_search: String::new(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
@@ -735,6 +764,8 @@ impl Shell {
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
             | Message::ShowSettings
+            | Message::TrustedSearch(..)
+            | Message::LanguageChosen(_)
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
             // Under a dialog, the tree is not there to search.
@@ -770,9 +801,10 @@ impl Shell {
             message @ (Message::FinderQuery(_) | Message::FinderFind(_) | Message::FinderClose) => {
                 self.finder_message(message)
             }
-            message @ (Message::LogDirectoryEdited(_) | Message::LogDirectoryApply) => {
-                self.log_directory_message(message)
-            }
+            message @ (Message::LogDirectoryEdited(_)
+            | Message::LogDirectoryApply
+            | Message::FontSizeEdited(_)
+            | Message::FontSizeApply) => self.settings_field_message(message),
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
@@ -843,6 +875,26 @@ impl Shell {
                 self.page = Page::Settings {
                     over: self.app.active,
                 };
+                // The trusted keys as they are now: another program may have changed them.
+                let _ = self
+                    .app
+                    .update(AppMessage::Settings(SettingsMessage::TrustedKeys(
+                        TrustedKeysMessage::Refresh,
+                    )));
+                Task::none()
+            }
+            Message::LanguageChosen(language) => {
+                crate::i18n::apply(Some(*language));
+                let _ = self
+                    .app
+                    .update(AppMessage::Settings(SettingsMessage::Language(*language)));
+                Task::none()
+            }
+            Message::TrustedSearch(list, typed) => {
+                match list {
+                    TrustedList::HostKeys => typed.clone_into(&mut self.host_key_search),
+                    TrustedList::Certificates => typed.clone_into(&mut self.certificate_search),
+                }
                 Task::none()
             }
             _ => Task::none(),
@@ -1020,13 +1072,15 @@ impl Shell {
         }
     }
 
-    /// The text size of `tab`'s terminal.
+    /// The text size of `tab`'s terminal: zoomed, or the one the settings give, drawn within
+    /// the bounds the C# terminal draws at.
     #[must_use]
     pub fn font_size(&self, tab: TabId) -> f32 {
         self.font_sizes
             .get(&tab)
             .copied()
-            .unwrap_or(DEFAULT_FONT_SIZE)
+            .unwrap_or_else(|| f32::from(self.app.settings().terminal_font_size))
+            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
     }
 
     /// Makes `tab`'s terminal text a point larger or smaller, within the C# bounds, or
@@ -1788,17 +1842,64 @@ impl Shell {
         scrollable(
             column![
                 text(fl!("ui-settings-title")).size(HEADING_SIZE),
+                text(fl!("ui-settings-appearance")).size(BODY_SIZE),
+                self.appearance_settings(),
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
                 vault_card,
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
                 self.session_log_settings(),
+                self.trusted_keys_settings(),
             ]
             .spacing(SPACING)
             .padding(PADDING),
         )
         .into()
+    }
+
+    /// The application's appearance, as the C# General tab's card: its language, applied at
+    /// once.
+    fn appearance_settings(&self) -> Element<'_, Message> {
+        let shown = self
+            .app
+            .settings()
+            .language
+            .unwrap_or_else(crate::i18n::current);
+        let card = column![
+            row![
+                text(fl!("ui-settings-language")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    Language::ALL.map(LanguageChoice).to_vec(),
+                    Some(LanguageChoice(shown)),
+                    |LanguageChoice(language)| Message::LanguageChosen(language),
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING);
+        container(card)
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
+    }
+
+    /// The keys trusted for servers, as the C# Host keys and Certificates pages list them.
+    fn trusted_keys_settings(&self) -> Element<'_, Message> {
+        let keys = self.app.trusted_keys();
+        let mut lists = column![
+            crate::trusted_keys_view::host_keys(keys, &self.host_key_search),
+            crate::trusted_keys_view::certificates(keys, &self.certificate_search),
+        ]
+        .spacing(SPACING)
+        .max_width(SETTINGS_WIDTH);
+        if let Some(unreadable) = crate::trusted_keys_view::unreadable(keys) {
+            lists = lists.push(unreadable);
+        }
+        lists.into()
     }
 
     /// Session logging, as the C# Settings page offers it: on or off, and the folder the
@@ -1882,11 +1983,29 @@ impl Shell {
     }
 
     /// The transcripts' folder typed, or applied.
-    fn log_directory_message(&mut self, message: Message) -> Vec<Effect> {
+    fn settings_field_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::LogDirectoryEdited(typed) => {
                 self.log_directory = Some(typed);
                 Vec::new()
+            }
+            Message::FontSizeEdited(typed) => {
+                self.font_size_typed = Some(typed);
+                Vec::new()
+            }
+            Message::FontSizeApply => {
+                // A size out of the range stays typed, the C# message under it.
+                let Some(size) = self
+                    .typed_font_size()
+                    .filter(|size| heimdall_core::settings::terminal_font_size_accepted(*size))
+                else {
+                    return Vec::new();
+                };
+                self.font_size_typed = None;
+                self.app
+                    .update(AppMessage::Settings(SettingsMessage::TerminalFontSize(
+                        size,
+                    )))
             }
             _ => match self.log_directory.take() {
                 Some(typed) => {
@@ -1900,15 +2019,53 @@ impl Shell {
         }
     }
 
-    /// The terminal's appearance: its colour scheme, as the C# Settings page offers it.
+    /// The font size typed, as a number; `None` when nothing is typed or it is not one.
+    fn typed_font_size(&self) -> Option<u16> {
+        self.font_size_typed.as_deref()?.trim().parse().ok()
+    }
+
+    /// The terminal's appearance, as the C# Settings page offers it: its font size, applied
+    /// with Enter, and its colour scheme.
     fn terminal_settings(&self) -> Element<'_, Message> {
-        container(
+        let settings = self.app.settings();
+        let shown = settings.terminal_font_size.to_string();
+        let typed = self.font_size_typed.as_deref().unwrap_or(&shown);
+        let refused = self.font_size_typed.is_some()
+            && !self
+                .typed_font_size()
+                .is_some_and(heimdall_core::settings::terminal_font_size_accepted);
+        let mut card = column![
+            row![
+                text(fl!("ui-settings-font-size")),
+                iced::widget::space::horizontal(),
+                text_input("", typed)
+                    .width(FONT_SIZE_FIELD_WIDTH)
+                    .on_input(Message::FontSizeEdited)
+                    .on_submit(Message::FontSizeApply),
+                text(fl!("ui-settings-font-size-unit")),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING);
+        if refused {
+            card = card.push(
+                text(fl!(
+                    "ui-settings-font-size-refused",
+                    min = heimdall_core::settings::TERMINAL_FONT_SIZE_MIN,
+                    max = heimdall_core::settings::TERMINAL_FONT_SIZE_MAX
+                ))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            );
+        }
+        card = card.push(
             row![
                 text(fl!("ui-settings-color-scheme")),
                 iced::widget::space::horizontal(),
                 pick_list(
                     ColorScheme::ALL.map(SchemeChoice).to_vec(),
-                    Some(SchemeChoice(self.app.settings().color_scheme)),
+                    Some(SchemeChoice(settings.color_scheme)),
                     |SchemeChoice(scheme)| Message::App(AppMessage::Settings(
                         SettingsMessage::ColorScheme(scheme)
                     )),
@@ -1916,11 +2073,12 @@ impl Shell {
             ]
             .spacing(SPACING)
             .align_y(iced::Alignment::Center),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
+        );
+        container(card)
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
     }
 
     /// Where the keyboard goes after `message`: to the tree after a click in it, back to the
@@ -3757,6 +3915,20 @@ fn fits_by_default(profile: &TabProfile) -> bool {
     }
 }
 
+/// A language as the list names it: in its own name, as the C# list does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LanguageChoice(Language);
+
+impl std::fmt::Display for LanguageChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            Language::English => fl!("ui-settings-language-en"),
+            Language::French => fl!("ui-settings-language-fr"),
+            Language::Spanish => fl!("ui-settings-language-es"),
+        })
+    }
+}
+
 /// How a remote desktop is shown, as the C# Heimdall's resolution menu names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DesktopMode {
@@ -4060,6 +4232,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         )
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
+        Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ImportFailed { detail: technical } => column![

@@ -20,7 +20,7 @@ mod desktop_texture;
 pub mod desktop_view;
 mod files_view;
 pub mod finder;
-mod i18n;
+pub mod i18n;
 pub mod keysym;
 mod logging;
 pub mod palette;
@@ -32,6 +32,7 @@ pub mod terminal_view;
 mod texts;
 pub mod transcript_lines;
 pub mod tree_view;
+pub mod trusted_keys_view;
 
 use heimdall_core::paths;
 use iced::{Font, Size, window};

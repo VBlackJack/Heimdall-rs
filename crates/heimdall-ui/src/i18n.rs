@@ -18,6 +18,7 @@
 
 use std::sync::LazyLock;
 
+use heimdall_core::settings::Language;
 use i18n_embed::fluent::{FluentLanguageLoader, fluent_language_loader};
 use i18n_embed::unic_langid::LanguageIdentifier;
 use i18n_embed::{DesktopLanguageRequester, LanguageLoader};
@@ -49,6 +50,32 @@ pub(crate) use fl;
 /// Switches to the best language the desktop asks for.
 pub fn init() {
     select(&LOADER, &DesktopLanguageRequester::requested_languages());
+}
+
+/// Switches to `language`, or to the desktop's when none is chosen. Every language offered
+/// is embedded at build time, so none can fail to load as a C# language file can; a test
+/// switches to each.
+pub fn apply(language: Option<Language>) {
+    match language {
+        Some(language) => select(&LOADER, &[language_id(language)]),
+        None => init(),
+    }
+}
+
+/// The identifier of `language`, as its folder of texts is named.
+fn language_id(language: Language) -> LanguageIdentifier {
+    LanguageIdentifier::from_bytes(language.code().as_bytes())
+        .expect("a two-letter code is a language identifier")
+}
+
+/// The language shown now, among those the Settings page offers.
+#[must_use]
+pub fn current() -> Language {
+    LOADER
+        .current_languages()
+        .first()
+        .and_then(|shown| Language::from_code(shown.language.as_str()))
+        .unwrap_or(Language::English)
 }
 
 /// Switches `loader` to the best of `requested`. Selecting builds new bundles, which start

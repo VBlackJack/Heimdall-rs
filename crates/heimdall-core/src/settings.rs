@@ -124,6 +124,58 @@ pub struct Settings {
     pub session_logging: bool,
     /// Where transcripts go: a folder, or one relative to the settings file's.
     pub session_log_directory: String,
+    /// Size of the terminals' text a new tab starts at, and Ctrl+0 comes back to, within
+    /// [`TERMINAL_FONT_SIZE_MIN`] and [`TERMINAL_FONT_SIZE_MAX`].
+    pub terminal_font_size: u16,
+    /// The language chosen; `None` follows the desktop's.
+    pub language: Option<Language>,
+}
+
+/// A language the application is written in, as the C# language list offers them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Language {
+    /// English, the language every text is written in first.
+    English,
+    /// French.
+    French,
+    /// Spanish.
+    Spanish,
+}
+
+impl Language {
+    /// Every language, in the order of the C# list.
+    pub const ALL: [Self; 3] = [Self::English, Self::French, Self::Spanish];
+
+    /// Its code, as the C# `DefaultLocale` and the translation folders name it.
+    #[must_use]
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::English => "en",
+            Self::French => "fr",
+            Self::Spanish => "es",
+        }
+    }
+
+    /// The language of `code`, whatever its case; `None` for one not offered.
+    #[must_use]
+    pub fn from_code(code: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|language| language.code().eq_ignore_ascii_case(code.trim()))
+    }
+}
+
+/// Size of the terminals' text unless chosen: the one this terminal was drawn at before.
+pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 15;
+/// Smallest terminal font size accepted, as the C# setting's range.
+pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
+/// Largest terminal font size accepted, as the C# setting's range.
+pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
+
+/// Whether `size` is a terminal font size the settings accept.
+#[must_use]
+pub fn terminal_font_size_accepted(size: u16) -> bool {
+    (TERMINAL_FONT_SIZE_MIN..=TERMINAL_FONT_SIZE_MAX).contains(&size)
 }
 
 impl Default for Settings {
@@ -133,6 +185,8 @@ impl Default for Settings {
             broadcast_scope: BroadcastScope::default(),
             session_logging: false,
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
+            terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
+            language: None,
         }
     }
 }
@@ -144,6 +198,16 @@ struct SettingsFile {
     terminal: TerminalSection,
     #[serde(default)]
     session_log: SessionLogSection,
+    #[serde(default)]
+    general: GeneralSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct GeneralSection {
+    /// Written only once chosen, as TOML leaves an absent value out: until then the
+    /// desktop's language is followed.
+    #[serde(default)]
+    language: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -160,6 +224,8 @@ struct TerminalSection {
     color_scheme: Option<String>,
     #[serde(default)]
     broadcast_scope: Option<String>,
+    #[serde(default)]
+    font_size: Option<u16>,
 }
 
 /// The settings file of the profile file `profiles_file`: beside it.
@@ -216,6 +282,18 @@ impl Settings {
                 .directory
                 .filter(|directory| !directory.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_SESSION_LOG_DIRECTORY.to_owned()),
+            // Out of the range, as the C# load warns and keeps the default.
+            terminal_font_size: file
+                .terminal
+                .font_size
+                .filter(|size| terminal_font_size_accepted(*size))
+                .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
+            // A language not offered is not guessed: the desktop's is followed.
+            language: file
+                .general
+                .language
+                .as_deref()
+                .and_then(Language::from_code),
         })
     }
 
@@ -246,10 +324,14 @@ impl Settings {
             terminal: TerminalSection {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
                 broadcast_scope: Some(self.broadcast_scope.name().to_owned()),
+                font_size: Some(self.terminal_font_size),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,
                 directory: Some(self.session_log_directory.clone()),
+            },
+            general: GeneralSection {
+                language: self.language.map(|language| language.code().to_owned()),
             },
         })?;
         write_atomic(path, &text)
