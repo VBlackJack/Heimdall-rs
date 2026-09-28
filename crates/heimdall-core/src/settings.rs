@@ -23,6 +23,7 @@ use std::time::{Duration, SystemTime};
 
 use serde::{Deserialize, Serialize};
 
+use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
 use crate::lockout::Lockout;
 use crate::pin::PinHash;
 use crate::store::{StoreError, write_atomic};
@@ -139,6 +140,8 @@ pub struct Settings {
     pub pin: Option<PinHash>,
     /// Wrong PINs in a row, kept across runs as the master password's are.
     pub pin_unlock: Lockout,
+    /// The external credential provider.
+    pub credential_provider: ProviderSettings,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -200,6 +203,7 @@ impl Default for Settings {
             vault_unlock: Lockout::default(),
             pin: None,
             pin_unlock: Lockout::default(),
+            credential_provider: ProviderSettings::default(),
         }
     }
 }
@@ -217,6 +221,67 @@ struct SettingsFile {
     vault_unlock: VaultUnlockSection,
     #[serde(default)]
     pin: PinSection,
+    #[serde(default)]
+    credential_provider: ProviderSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct ProviderSection {
+    #[serde(default)]
+    enabled: bool,
+    /// The C# name of the kind.
+    #[serde(default)]
+    kind: Option<String>,
+    #[serde(default)]
+    command: String,
+    #[serde(default)]
+    username_command: String,
+    #[serde(default)]
+    database: String,
+    #[serde(default)]
+    key_file: String,
+    #[serde(default)]
+    first_line_only: bool,
+    #[serde(default)]
+    timeout_ms: Option<u64>,
+}
+
+impl ProviderSection {
+    fn settings(self) -> ProviderSettings {
+        let defaults = ProviderSettings::default();
+        ProviderSettings {
+            enabled: self.enabled,
+            kind: self
+                .kind
+                .as_deref()
+                .map(ProviderKind::named)
+                .unwrap_or_default(),
+            command: self.command,
+            username_command: self.username_command,
+            database: self.database,
+            key_file: self.key_file,
+            first_line_only: self.first_line_only,
+            // Out of the range, as the C# load keeps the default.
+            timeout: self
+                .timeout_ms
+                .map(Duration::from_millis)
+                .filter(|timeout| (MIN_TIMEOUT..=MAX_TIMEOUT).contains(timeout))
+                .unwrap_or(defaults.timeout),
+        }
+    }
+
+    fn of(settings: &ProviderSettings) -> Self {
+        Self {
+            enabled: settings.enabled,
+            kind: Some(settings.kind.name().to_owned()),
+            command: settings.command.clone(),
+            username_command: settings.username_command.clone(),
+            database: settings.database.clone(),
+            key_file: settings.key_file.clone(),
+            first_line_only: settings.first_line_only,
+            timeout_ms: Some(u64::try_from(settings.timeout.as_millis()).unwrap_or(u64::MAX)),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -359,6 +424,7 @@ impl Settings {
                 file.pin.locked_until.map(from_epoch),
                 SystemTime::now(),
             ),
+            credential_provider: file.credential_provider.settings(),
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -414,6 +480,7 @@ impl Settings {
                 failures: self.pin_unlock.failures(),
                 locked_until: self.pin_unlock.until().map(to_epoch),
             },
+            credential_provider: ProviderSection::of(&self.credential_provider),
         })?;
         write_atomic(path, &text)
     }

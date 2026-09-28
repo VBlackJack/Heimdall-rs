@@ -75,6 +75,7 @@ mod local_tab;
 mod pin;
 mod profile_menu;
 mod profiles;
+mod provider;
 mod quick_connect;
 mod rdp_tab;
 mod reconnect;
@@ -101,6 +102,7 @@ pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use profile_menu::ProfileMenuMessage;
+pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use quick_connect::QuickResult;
 pub use selection::SelectionMessage;
 pub use status::{Notice, SessionStatus};
@@ -447,6 +449,8 @@ pub enum Message {
     LockVault,
     /// The application PIN.
     Pin(PinMessage),
+    /// The external credential provider's settings.
+    CredentialProvider(ProviderMessage),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A change of broadcast input.
@@ -558,6 +562,7 @@ impl fmt::Debug for Message {
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
             Self::Pin(message) => write!(f, "Pin({message:?})"),
+            Self::CredentialProvider(message) => write!(f, "CredentialProvider({message:?})"),
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
@@ -677,6 +682,14 @@ pub enum Effect {
         /// What to do.
         job: VaultJob,
     },
+    /// Run the external credential provider's password command with test values; then send
+    /// [`ProviderMessage::Tested`].
+    TestCredentialProvider {
+        /// The provider's settings as they are.
+        settings: heimdall_core::credential_provider::ProviderSettings,
+        /// The unlock secret, when one is kept and can be read.
+        unlock: Option<Secret>,
+    },
     /// Quit the application.
     /// Wake the core at `deadline` with [`Message::AutoReconnect`].
     RetryAt {
@@ -732,6 +745,7 @@ impl fmt::Debug for Effect {
                 request.direction
             ),
             Self::OpenVault { job, .. } => write!(f, "OpenVault({})", job.name()),
+            Self::TestCredentialProvider { .. } => f.write_str("TestCredentialProvider"),
             Self::RetryAt { tab, attempt, .. } => {
                 write!(f, "RetryAt({}, {})", tab.value(), attempt.value())
             }
@@ -1244,6 +1258,8 @@ pub struct App {
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
     /// The keys trusted for servers, as the Settings page last read them.
     trusted_keys: TrustedKeys,
+    /// What the Settings page's provider Test found.
+    provider_test: Option<crate::credential_provider::ProviderTest>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
     /// Transfers waiting, one after the other, for the user to confirm they replace a file.
@@ -1300,6 +1316,7 @@ impl App {
             selection: std::collections::BTreeSet::new(),
             notice: None,
             trusted_keys: TrustedKeys::default(),
+            provider_test: None,
             pending_paste: None,
             pending_transfers: std::collections::VecDeque::new(),
             pending_operation: None,
@@ -1477,6 +1494,7 @@ impl App {
             | Message::VaultOpened(_)
             | Message::LockVault) => self.vault_message(message),
             Message::Pin(message) => self.pin_message(message),
+            Message::CredentialProvider(message) => self.provider_message(message),
             Message::DismissDialog => self
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())

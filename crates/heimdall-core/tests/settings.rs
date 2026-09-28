@@ -314,3 +314,64 @@ fn no_pin_writes_none_and_half_a_pin_takes_nothing() {
         assert!(!pin.verify("2468"), "{half}");
     }
 }
+
+#[test]
+fn the_credential_provider_is_kept_by_its_csharp_names() {
+    use heimdall_core::credential_provider::{DEFAULT_TIMEOUT, ProviderKind, ProviderSettings};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let provider = ProviderSettings {
+        enabled: true,
+        kind: ProviderKind::WindowsCredentialManager,
+        command: "keepassxc-cli show -s \"{Title}\"".to_owned(),
+        username_command: "get-user {Title}".to_owned(),
+        database: "/vaults/team.kdbx".to_owned(),
+        key_file: "/keys/team.keyx".to_owned(),
+        first_line_only: true,
+        timeout: Duration::from_secs(30),
+    };
+    Settings {
+        credential_provider: provider.clone(),
+        ..Settings::default()
+    }
+    .save(&path)
+    .expect("saved");
+    assert_eq!(
+        Settings::load(&path).expect("read").credential_provider,
+        provider
+    );
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(
+        text.contains("kind = \"WindowsCredentialManager\""),
+        "{text}"
+    );
+    assert!(text.contains("timeout_ms = 30000"), "{text}");
+
+    // Out of the C# range, the default; nothing written, the provider off.
+    for timeout in [999, 120_001] {
+        let read = written(
+            dir.path(),
+            &format!("version = 1\n[credential_provider]\ntimeout_ms = {timeout}\n"),
+        );
+        assert_eq!(
+            read.credential_provider.timeout, DEFAULT_TIMEOUT,
+            "{timeout}"
+        );
+    }
+    for timeout in [1000, 120_000] {
+        let read = written(
+            dir.path(),
+            &format!("version = 1\n[credential_provider]\ntimeout_ms = {timeout}\n"),
+        );
+        assert_eq!(
+            read.credential_provider.timeout,
+            Duration::from_millis(timeout),
+            "{timeout} is in the range"
+        );
+    }
+    assert_eq!(
+        written(dir.path(), "version = 1\n").credential_provider,
+        ProviderSettings::default()
+    );
+}

@@ -353,7 +353,7 @@ impl VaultState {
     }
 
     /// The entry `name`; nothing when it cannot be read (a closed vault, a failing store).
-    fn read(&self, name: &str) -> Option<Zeroizing<Vec<u8>>> {
+    pub(super) fn read(&self, name: &str) -> Option<Zeroizing<Vec<u8>>> {
         if self.exists() {
             return self
                 .open
@@ -369,7 +369,7 @@ impl VaultState {
     }
 
     /// Writes entry `name`, or removes it for `None`.
-    fn write(&mut self, name: &str, bytes: Option<&[u8]>) -> Result<(), String> {
+    pub(super) fn write(&mut self, name: &str, bytes: Option<&[u8]>) -> Result<(), String> {
         if !self.exists() {
             return match bytes {
                 Some(bytes) => self.system.set(name, bytes),

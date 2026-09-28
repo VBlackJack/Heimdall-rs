@@ -24,6 +24,7 @@ pub mod i18n;
 pub mod keysym;
 mod logging;
 pub mod palette;
+mod provider_view;
 pub mod rdp_options;
 mod report;
 pub mod shell;
