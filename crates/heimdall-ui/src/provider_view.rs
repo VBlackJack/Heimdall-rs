@@ -152,6 +152,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
 
 fn boxed(card: Column<'_, Message>) -> Element<'_, Message> {
     container(card)
+        .width(Length::Fill)
         .padding(PADDING)
         .style(container::bordered_box)
         .into()
