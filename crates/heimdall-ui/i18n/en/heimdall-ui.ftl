@@ -570,3 +570,7 @@ ui-files-type-file = File
 ui-files-type-directory = Directory
 ui-files-type-link = Symbolic link
 ui-files-type-other = Unknown type
+
+## Several entries of the Files tab selected together, as the C# tab.
+ui-files-selected-count = { $count } selected
+ui-dialog-delete-many-body = Delete { $count } items? Folders are deleted with everything they contain. This cannot be undone.

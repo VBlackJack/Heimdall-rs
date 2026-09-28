@@ -24,6 +24,7 @@
 //! pane, F2 renames, Delete deletes and F5 lists again. Tab and Enter reach the tab through
 //! the window, as they act on a dialog first.
 
+use std::collections::BTreeSet;
 use std::time::SystemTime;
 
 use heimdall_app::files::{
@@ -331,6 +332,7 @@ struct PaneParts<'p, E> {
     columns: &'p [SortColumn],
     sort: Sort,
     selected: Option<usize>,
+    marked: &'p BTreeSet<usize>,
     loading: bool,
     error: Option<&'p FilesError>,
     focused: bool,
@@ -347,17 +349,20 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         columns,
         sort,
         selected,
+        marked,
         loading,
         error,
         focused,
     } = parts;
+    let chosen = marked.len() + usize::from(selected.is_some());
     let tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::AskNewFolder { tab, side })),
         button(text(fl!("ui-files-rename-button")).size(SMALL_SIZE))
             .style(button::secondary)
-            .on_press_maybe(selected.map(|_| files(FilesMessage::AskRename { tab, side }))),
+            // One entry at a time, as in the C# tab.
+            .on_press_maybe((chosen == 1).then(|| files(FilesMessage::AskRename { tab, side })),),
         button(text(fl!("ui-files-delete-button")).size(SMALL_SIZE))
             .style(button::danger)
             .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
@@ -394,7 +399,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         }
         for (index, entry) in entries.iter().enumerate() {
             let place = (tab, side, index);
-            list = list.push(entry_row(entry, &shown, selected == Some(index), place));
+            let picked = selected == Some(index) || marked.contains(&index);
+            list = list.push(entry_row(entry, &shown, picked, place));
         }
         column![
             headers(tab, side, &shown, sort),
@@ -403,7 +409,14 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         .spacing(SPACING)
         .into()
     });
-    let mut content = column![text(title).size(TITLE_SIZE), header, tools].spacing(SPACING);
+    let mut heading = row![text(title).size(TITLE_SIZE)]
+        .spacing(SPACING)
+        .align_y(Alignment::Center);
+    if chosen > 1 {
+        heading =
+            heading.push(text(fl!("ui-files-selected-count", count = chosen)).size(SMALL_SIZE));
+    }
+    let mut content = column![heading, header, tools].spacing(SPACING);
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
     }
@@ -484,6 +497,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         columns: LOCAL_COLUMNS,
         sort: files_pane.local.sort,
         selected: files_pane.local.selected,
+        marked: &files_pane.local.marked,
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
         focused: files_pane.focus == Side::Local,
@@ -498,6 +512,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         columns: REMOTE_COLUMNS,
         sort: files_pane.remote.sort,
         selected: files_pane.remote.selected,
+        marked: &files_pane.remote.marked,
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
         focused: files_pane.focus == Side::Remote,

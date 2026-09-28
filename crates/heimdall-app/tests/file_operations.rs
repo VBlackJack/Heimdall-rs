@@ -903,3 +903,169 @@ fn octal_permissions_are_one_to_four_octal_digits() {
         );
     }
 }
+
+fn toggle(app: &mut App, tab: TabId, side: Side, index: usize) {
+    files(app, FilesMessage::Toggle { tab, side, index });
+}
+
+#[tokio::test]
+async fn entries_selected_together_go_together() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // Server: logs/, a.txt.
+    toggle(&mut app, tab, Side::Remote, 0);
+    toggle(&mut app, tab, Side::Remote, 1);
+    let effects = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    );
+    let sent: Vec<&[u8]> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Transfer { request, .. } => Some(request.remote.as_bytes()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, [&b"/srv/logs"[..], b"/srv/a.txt"]);
+
+    // Renaming is for one entry.
+    files(
+        &mut app,
+        FilesMessage::AskRename {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert_eq!(app.dialog, None);
+
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete { count: 2, folder: true, name, .. }) if name == "logs"
+    ));
+    let removed: Vec<Vec<u8>> = app
+        .update(Message::ConfirmDialog)
+        .iter()
+        .map(|effect| match effect {
+            Effect::FileOperation { operation, .. } => match &**operation {
+                FileOperation::RemoteRemove { path, .. } => path.as_bytes().to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(removed, [b"/srv/logs".to_vec(), b"/srv/a.txt".to_vec()]);
+
+    files(
+        &mut app,
+        FilesMessage::AskPermissions {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    files(&mut app, FilesMessage::NameEdited("700".to_owned()));
+    let changed = app.update(Message::ConfirmDialog);
+    assert_eq!(changed.len(), 2, "both, the same bits");
+
+    // A plain click leaves one selected.
+    select(&mut app, tab, Side::Remote, 1);
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete {
+            count: 1,
+            folder: false,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn replacements_are_asked_one_after_the_other_and_cancel_drops_the_rest() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // Both local entries (docs/, b.txt) exist on the server too.
+    let remote = |name: &str, kind| RemoteEntry {
+        name: name.as_bytes().to_vec(),
+        label: name.to_owned(),
+        kind,
+        size: Some(1),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+    };
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![
+                    remote("docs", EntryKind::Directory),
+                    remote("b.txt", EntryKind::File),
+                ],
+            )),
+        },
+    );
+    let asked = |app: &App| match &app.dialog {
+        Some(Dialog::ConfirmOverwrite { name, .. }) => Some(name.clone()),
+        _ => None,
+    };
+    toggle(&mut app, tab, Side::Local, 0);
+    toggle(&mut app, tab, Side::Local, 1);
+    let started = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert!(
+        started.is_empty(),
+        "each would replace: none starts before asking"
+    );
+    assert_eq!(asked(&app).as_deref(), Some("docs"));
+    let first = app.update(Message::ConfirmDialog);
+    assert!(matches!(first.as_slice(), [Effect::Transfer { request, .. }] if request.replace));
+    assert_eq!(asked(&app).as_deref(), Some("b.txt"), "then the next");
+    app.update(Message::DismissDialog);
+    assert_eq!(asked(&app), None);
+    assert!(
+        app.update(Message::ConfirmDialog).is_empty(),
+        "nothing left waiting"
+    );
+    // Nor asked again with the next transfer, which replaces nothing.
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv"), Vec::new())),
+        },
+    );
+    select(&mut app, tab, Side::Local, 1);
+    let next = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert!(matches!(next.as_slice(), [Effect::Transfer { .. }]));
+    assert_eq!(asked(&app), None, "the one cancelled is not asked again");
+}

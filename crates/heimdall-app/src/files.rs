@@ -20,6 +20,7 @@
 //! folder, running a transfer) is in the functions at the end, which the UI layer runs for
 //! the effects the application asks for.
 
+use std::collections::BTreeSet;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -330,8 +331,10 @@ pub struct Pane<P, E> {
     pub path: P,
     /// Entries, folders first, then by name.
     pub entries: Vec<E>,
-    /// Selected entry.
+    /// Selected entry: the one a key or a single entry's action applies to.
     pub selected: Option<usize>,
+    /// The entries selected with it, with Ctrl or Shift, as in the C# Files tab.
+    pub marked: BTreeSet<usize>,
     /// A listing is on its way.
     pub loading: bool,
     /// Why the last listing failed.
@@ -348,11 +351,51 @@ impl<P, E> Pane<P, E> {
             path,
             entries: Vec::new(),
             selected: None,
+            marked: BTreeSet::new(),
             loading: true,
             error: None,
             typed: None,
             sort: Sort::default(),
         }
+    }
+
+    /// Selects `index` alone, or nothing.
+    pub fn select_only(&mut self, index: Option<usize>) {
+        self.selected = index;
+        self.marked.clear();
+    }
+
+    /// The entries selected, the one selected and those with it, in their order.
+    #[must_use]
+    pub fn chosen(&self) -> Vec<usize> {
+        let mut chosen: BTreeSet<usize> = self.marked.clone();
+        chosen.extend(self.selected);
+        chosen
+            .into_iter()
+            .filter(|index| *index < self.entries.len())
+            .collect()
+    }
+
+    /// Ctrl+click on `index`: selected with the others, or no longer.
+    pub fn toggle(&mut self, index: usize) {
+        if self.selected == Some(index) {
+            self.selected = self.marked.pop_first();
+        } else if !self.marked.remove(&index) {
+            self.marked.extend(self.selected);
+            self.selected = Some(index);
+        }
+    }
+
+    /// Shift+click on `index`: every entry from the one selected to it, the one selected
+    /// staying where the range started.
+    pub fn extend_to(&mut self, index: usize) {
+        let Some(anchor) = self.selected else {
+            self.select_only(Some(index));
+            return;
+        };
+        self.marked = (anchor.min(index)..=anchor.max(index))
+            .filter(|at| *at != anchor)
+            .collect();
     }
 }
 
@@ -361,18 +404,19 @@ impl<P, E: Listed + PartialEq + Clone> Pane<P, E> {
     pub fn show(&mut self, entries: Vec<E>) {
         self.entries = entries;
         sort_entries(&mut self.entries, self.sort);
-        self.selected = None;
+        self.select_only(None);
     }
 
-    /// Sorts the entries by `sort`; the entry selected stays selected.
+    /// Sorts the entries by `sort`; the entries selected stay selected.
     pub fn sort_by(&mut self, sort: Sort) {
-        let chosen = self
-            .selected
-            .and_then(|index| self.entries.get(index))
-            .cloned();
+        let entry = |index: &usize| self.entries.get(*index).cloned();
+        let chosen = self.selected.as_ref().and_then(entry);
+        let marked: Vec<E> = self.marked.iter().filter_map(entry).collect();
         self.sort = sort;
         sort_entries(&mut self.entries, sort);
-        self.selected = chosen.and_then(|chosen| self.entries.iter().position(|e| *e == chosen));
+        let place = |wanted: &E| self.entries.iter().position(|e| e == wanted);
+        self.selected = chosen.as_ref().and_then(place);
+        self.marked = marked.iter().filter_map(place).collect();
     }
 }
 
@@ -1032,6 +1076,79 @@ mod tests {
             "dir b d C a",
             "the folder first, the other way too"
         );
+    }
+
+    fn pane(names: &[&str]) -> Pane<(), RemoteEntry> {
+        let mut pane = Pane::new(());
+        pane.show(
+            names
+                .iter()
+                .enumerate()
+                .map(|(size, name)| file(name, size as u64, 0, 0o644, 0))
+                .collect(),
+        );
+        pane
+    }
+
+    #[test]
+    fn ctrl_adds_and_removes_and_shift_takes_a_range_from_the_one_selected() {
+        let mut pane = pane(&["a", "b", "c", "d", "e"]);
+        pane.toggle(1);
+        assert_eq!(pane.chosen(), [1], "nothing before: selected alone");
+        pane.toggle(3);
+        assert_eq!((pane.selected, pane.chosen()), (Some(3), vec![1, 3]));
+        pane.toggle(1);
+        assert_eq!(pane.chosen(), [3], "unmarked");
+        pane.toggle(0);
+        pane.toggle(0);
+        assert_eq!(
+            (pane.selected, pane.chosen()),
+            (Some(3), vec![3]),
+            "the one selected unselected: another takes its place"
+        );
+        pane.toggle(3);
+        assert_eq!((pane.selected, pane.chosen()), (None, vec![]));
+
+        pane.select_only(Some(1));
+        pane.extend_to(3);
+        assert_eq!((pane.selected, pane.chosen()), (Some(1), vec![1, 2, 3]));
+        pane.extend_to(0);
+        assert_eq!(pane.chosen(), [0, 1], "the range from where it started");
+        pane.extend_to(3);
+        pane.toggle(1);
+        assert_eq!(
+            pane.chosen(),
+            [2, 3],
+            "where it started, unselected with Ctrl, leaves the rest"
+        );
+        pane.select_only(None);
+        pane.extend_to(4);
+        assert_eq!((pane.selected, pane.chosen()), (Some(4), vec![4]));
+        pane.select_only(Some(2));
+        assert_eq!(pane.chosen(), [2], "a plain selection alone");
+    }
+
+    #[test]
+    fn marks_follow_their_entries_through_a_resort_and_a_listing_clears_them() {
+        let mut pane = pane(&["a", "b", "c"]);
+        pane.select_only(Some(0));
+        pane.toggle(2);
+        pane.sort_by(Sort {
+            column: SortColumn::Name,
+            descending: true,
+        });
+        assert_eq!(labels(&pane.entries), ["c", "b", "a"]);
+        assert_eq!(
+            (pane.selected, pane.chosen()),
+            (Some(0), vec![0, 2]),
+            "c, the one clicked, selected; a marked; both moved"
+        );
+        pane.toggle(1);
+        assert_eq!(pane.marked.len(), 2);
+        pane.show(vec![file("x", 1, 0, 0o644, 0)]);
+        assert_eq!((pane.selected, pane.chosen()), (None, vec![]));
+        pane.marked.insert(5);
+        assert!(pane.chosen().is_empty(), "no mark beyond what is listed");
     }
 
     #[test]

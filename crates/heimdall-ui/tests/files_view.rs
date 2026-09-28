@@ -848,3 +848,55 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
     ui.find("Permissions (octal, e.g. 755):")
         .expect("its label");
 }
+
+#[tokio::test]
+async fn ctrl_and_shift_clicks_select_several_entries_and_the_pane_says_how_many() {
+    use iced::keyboard::Modifiers;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let click = |shell: &mut Shell, index| {
+        let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Select {
+            tab,
+            side: Side::Local,
+            index,
+        })));
+    };
+    let chosen = |shell: &Shell| {
+        shell
+            .app()
+            .tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .local
+            .chosen()
+    };
+    click(&mut shell, 1);
+    let _ = shell.update(Message::Modifiers(Modifiers::CTRL));
+    click(&mut shell, 0);
+    assert_eq!(chosen(&shell), [0, 1], "Ctrl adds");
+    snapshot(&shell, "files-several.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("2 selected").expect("counted");
+        ui.click("Rename").expect("the button");
+        assert!(
+            files_messages(ui).is_empty(),
+            "renaming is for one entry: greyed out"
+        );
+    }
+    let _ = shell.update(Message::Modifiers(Modifiers::empty()));
+    click(&mut shell, 1);
+    assert_eq!(chosen(&shell), [1], "a plain click, one again");
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("2 selected").is_err());
+        assert!(ui.find("1 selected").is_err(), "one is not counted");
+    }
+    let _ = shell.update(Message::Modifiers(Modifiers::SHIFT));
+    click(&mut shell, 0);
+    assert_eq!(chosen(&shell), [0, 1], "Shift takes the range");
+}

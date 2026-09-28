@@ -685,6 +685,7 @@ impl Shell {
         if self.app.is_locked() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
             return Task::none();
         }
+        let message = self.files_click(message);
         self.note_focus(&message);
         let reveal = matches!(
             message,
@@ -2017,6 +2018,23 @@ impl Shell {
 
     /// A click on profile `id` in the tree, as the C# tree takes it: alone, with Ctrl added or
     /// taken, with Shift all from the last one clicked in the order shown.
+    /// A click on an entry of a Files tab holding Ctrl selects it with the others, holding
+    /// Shift every entry up to it, as in the C# tab.
+    fn files_click(&self, message: Message) -> Message {
+        let Message::App(AppMessage::Files(FilesMessage::Select { tab, side, index })) = message
+        else {
+            return message;
+        };
+        let files = if self.modifiers.command() {
+            FilesMessage::Toggle { tab, side, index }
+        } else if self.modifiers.shift() {
+            FilesMessage::Range { tab, side, index }
+        } else {
+            FilesMessage::Select { tab, side, index }
+        };
+        Message::App(AppMessage::Files(files))
+    }
+
     fn tree_click(&mut self, id: ProfileId) -> Vec<Effect> {
         let message = if self.modifiers.command() {
             SelectionMessage::Toggle(id)
@@ -3853,6 +3871,18 @@ fn vault_problem(problem: &VaultProblem) -> String {
     }
 }
 
+/// What deleting `count` entries of a Files tab asks, the first named `name`; `folder`
+/// when a folder is among them.
+fn delete_question(name: &str, folder: bool, count: usize) -> String {
+    if count > 1 {
+        fl!("ui-dialog-delete-many-body", count = count)
+    } else if folder {
+        fl!("ui-dialog-delete-folder-body", name = name)
+    } else {
+        fl!("ui-dialog-delete-file-body", name = name)
+    }
+}
+
 /// The title, text and action of a question about the whole window: leaving it with
 /// sessions live, broadcasting input to every tab.
 fn window_question(dialog: &Dialog) -> (String, String, String) {
@@ -3929,13 +3959,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             fl!("ui-dialog-delete-profile-confirm"),
         )
         .into(),
-        Dialog::ConfirmDelete { name, folder, .. } => question(
+        Dialog::ConfirmDelete {
+            name,
+            folder,
+            count,
+            ..
+        } => question(
             fl!("ui-dialog-delete-title"),
-            if *folder {
-                fl!("ui-dialog-delete-folder-body", name = name.as_str())
-            } else {
-                fl!("ui-dialog-delete-file-body", name = name.as_str())
-            },
+            delete_question(name, *folder, *count),
             fl!("ui-dialog-delete-confirm"),
         )
         .into(),
