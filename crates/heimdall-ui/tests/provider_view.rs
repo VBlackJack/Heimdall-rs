@@ -170,6 +170,8 @@ fn test_asks_the_core_and_shows_what_it_found() {
         "{messages:?}"
     );
     simulator(&shell).find("Testing...").expect("running");
+    let again = click(&mut shell, "Test");
+    assert!(again.is_empty(), "not pressed again while it runs: {again:?}");
     for (outcome, said) in [
         (
             ProviderTest::Success,

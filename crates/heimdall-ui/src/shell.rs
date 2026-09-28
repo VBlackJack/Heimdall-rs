@@ -1969,12 +1969,14 @@ impl Shell {
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
                 pin_card,
                 vault_card,
-                crate::provider_view::card(&self.app, &self.provider_unlock),
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
                 self.session_log_settings(),
                 self.trusted_keys_settings(),
+                // Last: a long card, which would push the everyday settings down.
+                container(crate::provider_view::card(&self.app, &self.provider_unlock))
+                    .max_width(SETTINGS_WIDTH),
             ]
             .spacing(SPACING)
             .padding(PADDING),
