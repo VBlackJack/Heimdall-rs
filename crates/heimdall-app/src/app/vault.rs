@@ -327,6 +327,11 @@ pub(super) struct VaultState {
 }
 
 impl VaultState {
+    /// Whether a server refused `profile`'s password in this session.
+    pub(super) fn is_refused(&self, profile: &ProfileId) -> bool {
+        self.refused.contains(profile)
+    }
+
     pub(super) fn beside(profiles_file: &std::path::Path, system: SystemCredentials) -> Self {
         Self {
             path: profiles_file.with_file_name(VAULT_FILE_NAME),
@@ -975,7 +980,7 @@ impl App {
 /// The endpoint a password for `kind` is given to, when there is one: never an
 /// RDP server reached without Network Level Authentication, where a desktop shown proves
 /// nothing about the password and a wrong one is never refused.
-fn usable_endpoint(tab: &Tab, kind: &QuestionKind) -> Option<(ProfileId, Endpoint)> {
+pub(super) fn usable_endpoint(tab: &Tab, kind: &QuestionKind) -> Option<(ProfileId, Endpoint)> {
     if let TabProfile::Rdp(profile) = &tab.profile
         && profile.allow_tls_only
     {

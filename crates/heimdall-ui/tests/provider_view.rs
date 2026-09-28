@@ -236,3 +236,33 @@ fn the_timeout_said_is_the_one_set() {
         .find("Command timed out (30s). Check that the CLI tool is installed and responsive.")
         .expect("30 seconds");
 }
+
+#[test]
+fn the_status_bar_says_why_the_provider_gave_nothing() {
+    use heimdall_app::{Notice, SessionStatus};
+    use heimdall_ui::status_bar::status_text;
+
+    for (notice, said) in [
+        (
+            Notice::ProviderNoPassword("Web server".to_owned()),
+            "The external credential provider returned no password for \"Web server\". \
+             Check the command configuration in Settings > Security.",
+        ),
+        (
+            Notice::ProviderFailed("not found".to_owned()),
+            "External credential provider failed: not found",
+        ),
+        (
+            Notice::ProviderTimedOut,
+            "External credential provider timed out.",
+        ),
+    ] {
+        let text = status_text(&SessionStatus::Ready, Some(&notice), 0);
+        // Fluent marks the placed values with isolation characters.
+        let text: String = text
+            .chars()
+            .filter(|c| !matches!(c, '\u{2068}' | '\u{2069}'))
+            .collect();
+        assert_eq!(text, said);
+    }
+}

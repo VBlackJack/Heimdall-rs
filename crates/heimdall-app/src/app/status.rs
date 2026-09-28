@@ -67,6 +67,13 @@ pub enum Notice {
     HostKeyRemoved(String),
     /// This server's RDP certificate was forgotten.
     CertificateForgotten(String),
+    /// The external credential provider gave no password for this session: the user is
+    /// asked.
+    ProviderNoPassword(String),
+    /// The external credential provider could not run, for this reason.
+    ProviderFailed(String),
+    /// The external credential provider took too long.
+    ProviderTimedOut,
 }
 
 /// The state of `tab`, named by its title.
