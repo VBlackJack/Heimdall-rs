@@ -46,6 +46,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.merge_winrm([WinRmProfile {
         id: ProfileId::new("w"),

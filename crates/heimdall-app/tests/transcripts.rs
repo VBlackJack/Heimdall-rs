@@ -44,6 +44,7 @@ fn app(dir: &Path) -> App {
         username: None,
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.merge_telnet([TelnetProfile {
         id: ProfileId::new("switch"),

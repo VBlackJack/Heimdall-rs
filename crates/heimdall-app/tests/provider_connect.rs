@@ -42,6 +42,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -317,4 +318,143 @@ async fn the_request_runs_the_command_with_the_profile_s_name() {
     let answered = request.expect("asked").run().await;
     let provided = answered.result.expect("given");
     assert_eq!(provided.password.expose(), "Web server-pw");
+}
+
+/// Types `value` into `field` of profile `a`'s form and saves it.
+fn edit_and_save(app: &mut App, field: heimdall_app::profile_draft::ProfileField, value: &str) {
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::ProfileField {
+        field,
+        value: value.to_owned(),
+    });
+    app.update(Message::SaveProfile { password: None });
+}
+
+#[test]
+fn the_vault_entry_name_is_the_title_and_a_blank_one_is_the_name() {
+    use heimdall_app::profile_draft::ProfileField;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = with_provider(dir.path(), "get {Title}");
+    edit_and_save(&mut app, ProfileField::VaultEntry, "  Servers/Web  ");
+    assert_eq!(app.dialog, None, "saved");
+    assert_eq!(
+        app.profiles()[0].vault_entry.as_deref(),
+        Some("Servers/Web")
+    );
+    let (tab, attempt) = open(&mut app);
+    let (_, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
+    assert_eq!(request.expect("asked").lookup.title, "Servers/Web");
+
+    edit_and_save(&mut app, ProfileField::VaultEntry, "   ");
+    assert_eq!(app.profiles()[0].vault_entry, None, "blank is none");
+    let (tab, attempt) = open(&mut app);
+    let (_, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
+    assert_eq!(request.expect("asked").lookup.title, "Web server");
+}
+
+#[test]
+fn renamed_in_its_form_a_profile_keeps_its_entry_under_the_old_name() {
+    use heimdall_app::profile_draft::ProfileField;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = with_provider(dir.path(), "get {Title}");
+    edit_and_save(&mut app, ProfileField::Name, "Front end");
+    assert_eq!(app.profiles()[0].name, "Front end");
+    assert_eq!(app.profiles()[0].vault_entry.as_deref(), Some("Web server"));
+    let (tab, attempt) = open(&mut app);
+    let (_, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
+    assert_eq!(request.expect("asked").lookup.title, "Web server");
+    // Saved again under the same name, nothing more changes.
+    edit_and_save(&mut app, ProfileField::VaultEntry, "Other");
+    assert_eq!(app.profiles()[0].vault_entry.as_deref(), Some("Other"));
+}
+
+#[test]
+fn a_control_character_in_the_vault_entry_name_is_refused() {
+    use heimdall_app::profile_draft::{DraftError, ProfileField};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = with_provider(dir.path(), "get {Title}");
+    edit_and_save(&mut app, ProfileField::VaultEntry, "a\u{7}b");
+    assert!(
+        matches!(
+            &app.dialog,
+            Some(heimdall_app::Dialog::EditProfile {
+                error: Some(DraftError::ControlCharacter),
+                ..
+            })
+        ),
+        "{:?}",
+        app.dialog
+    );
+}
+
+#[test]
+fn the_vault_entry_name_is_offered_where_the_provider_gives_the_password() {
+    use heimdall_app::profile_draft::{DraftProtocol, ProfileField};
+
+    for (protocol, shown) in [
+        (DraftProtocol::Ssh, true),
+        (DraftProtocol::Rdp, true),
+        (DraftProtocol::Vnc, true),
+        (DraftProtocol::WinRm, false),
+        (DraftProtocol::Telnet, false),
+    ] {
+        assert_eq!(
+            protocol.shows(ProfileField::VaultEntry),
+            shown,
+            "{protocol:?}"
+        );
+    }
+}
+
+#[test]
+fn edited_for_something_else_a_profile_keeps_its_vault_entry_name() {
+    use heimdall_app::profile_draft::ProfileField;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = with_provider(dir.path(), "get {Title}");
+    edit_and_save(&mut app, ProfileField::VaultEntry, "Servers/Web");
+    edit_and_save(&mut app, ProfileField::Host, "b.lab");
+    assert_eq!(app.profiles()[0].host, "b.lab");
+    assert_eq!(
+        app.profiles()[0].vault_entry.as_deref(),
+        Some("Servers/Web")
+    );
+}
+
+#[test]
+fn a_blank_vault_entry_name_written_in_the_file_is_the_name() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([SshProfile {
+        id: ProfileId::new("a"),
+        name: "Web server".to_owned(),
+        group: None,
+        host: "a.lab".to_owned(),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: None,
+        vault_entry: Some("   ".to_owned()),
+    }]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: SystemCredentials::memory(),
+    });
+    app.update(Message::CredentialProvider(ProviderMessage::Enabled(true)));
+    app.update(Message::CredentialProvider(ProviderMessage::Command(
+        "get {Title}".to_owned(),
+    )));
+    let (tab, attempt) = open(&mut app);
+    let (_, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
+    assert_eq!(request.expect("asked").lookup.title, "Web server");
 }

@@ -494,15 +494,38 @@ impl ProfileStore {
     }
 
     /// Names profile `id`, of any protocol, `name`, trimmed; whether it is saved and the
-    /// name is not empty.
+    /// name is not empty. A profile the password manager knows by its name keeps being
+    /// found: its old name becomes its vault entry name, as the C# rename freezes it.
     pub fn rename_profile(&mut self, id: &ProfileId, name: &str) -> bool {
         let name = name.trim();
         if name.is_empty() {
             return false;
         }
-        self.profile_fields_mut(id)
-            .map(|(current, _)| name.clone_into(current))
-            .is_some()
+        let Some((current, _)) = self.profile_fields_mut(id) else {
+            return false;
+        };
+        let old = std::mem::replace(current, name.to_owned());
+        if old != name {
+            self.freeze_vault_entry(id, &old);
+        }
+        true
+    }
+
+    /// Makes `old_name` the vault entry name of profile `id` when it has none: the password
+    /// manager's entry keeps the name the profile had.
+    pub fn freeze_vault_entry(&mut self, id: &ProfileId, old_name: &str) {
+        let entry = if let Some(profile) = self.ssh.iter_mut().find(|p| p.id == *id) {
+            &mut profile.vault_entry
+        } else if let Some(profile) = self.rdp.iter_mut().find(|p| p.id == *id) {
+            &mut profile.vault_entry
+        } else if let Some(profile) = self.vnc.iter_mut().find(|p| p.id == *id) {
+            &mut profile.vault_entry
+        } else {
+            return;
+        };
+        if entry.as_deref().is_none_or(|entry| entry.trim().is_empty()) {
+            *entry = Some(old_name.to_owned());
+        }
     }
 
     /// The name and the folder of profile `id`, of any protocol, to change.

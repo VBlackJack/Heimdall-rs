@@ -36,6 +36,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: Some(PathBuf::from("/keys/admin")),
         gateway: None,
+        vault_entry: None,
     }
 }
 
@@ -147,6 +148,7 @@ fn rdp(id: &str) -> RdpProfile {
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }
 }
 
@@ -249,6 +251,7 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
         port: 5901,
         view_only: true,
         allow_no_password: false,
+        vault_entry: None,
     };
     assert_eq!(store.merge_vnc([watch.clone()]).added, 1);
     store.save().expect("saves");
@@ -585,4 +588,71 @@ fn a_version_6_file_opens_without_winrm_profiles() {
     let store = ProfileStore::open(&path).expect("a version 6 file opens");
     assert_eq!(store.ssh_profiles().len(), 1);
     assert!(store.winrm_profiles().is_empty());
+}
+
+#[test]
+fn a_vault_entry_name_is_written_only_when_set_and_read_back() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([
+        SshProfile {
+            vault_entry: Some("Servers/Web".to_owned()),
+            ..profile("a", "h1")
+        },
+        profile("b", "h2"),
+    ]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    assert_eq!(text.matches("vault_entry").count(), 1, "{text}");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(
+        reopened.ssh_profiles()[0].vault_entry.as_deref(),
+        Some("Servers/Web")
+    );
+    assert_eq!(reopened.ssh_profiles()[1].vault_entry, None);
+}
+
+#[test]
+fn a_renamed_profile_keeps_its_old_name_as_its_vault_entry_as_the_csharp_rename_freezes_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    store.merge([profile("a", "h1")]);
+    store.merge_rdp([rdp("r")]);
+    store.merge_vnc([VncProfile {
+        id: ProfileId::new("v"),
+        name: "Kiosk".to_owned(),
+        group: None,
+        host: "kiosk.lab".to_owned(),
+        port: 5901,
+        view_only: false,
+        allow_no_password: false,
+        vault_entry: None,
+    }]);
+    store.merge_telnet([telnet("t")]);
+    for id in ["a", "r", "v", "t"] {
+        assert!(store.rename_profile(&ProfileId::new(id), "  Renamed  "));
+    }
+    assert_eq!(store.ssh_profiles()[0].name, "Renamed");
+    assert_eq!(store.ssh_profiles()[0].vault_entry.as_deref(), Some("A"));
+    assert_eq!(store.rdp_profiles()[0].vault_entry.as_deref(), Some("R"));
+    assert_eq!(
+        store.vnc_profiles()[0].vault_entry.as_deref(),
+        Some("Kiosk")
+    );
+    assert_eq!(
+        store.telnet_profiles()[0].name,
+        "Renamed",
+        "renamed all the same"
+    );
+
+    // Renamed again, the entry set stays; the same name freezes nothing.
+    assert!(store.rename_profile(&ProfileId::new("a"), "Again"));
+    assert_eq!(store.ssh_profiles()[0].vault_entry.as_deref(), Some("A"));
+    let mut fresh = ProfileStore::open(dir.path().join("other.toml")).expect("opens");
+    fresh.merge([profile("b", "h2")]);
+    assert!(fresh.rename_profile(&ProfileId::new("b"), "B"));
+    assert_eq!(fresh.ssh_profiles()[0].vault_entry, None, "not renamed");
+    assert!(!fresh.rename_profile(&ProfileId::new("b"), "  "));
+    assert!(!fresh.rename_profile(&ProfileId::new("none"), "X"));
 }

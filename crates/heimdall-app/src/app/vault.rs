@@ -1010,6 +1010,7 @@ mod tests {
             redirect_clipboard: false,
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
+            vault_entry: None,
         })
     }
 

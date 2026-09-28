@@ -48,6 +48,7 @@ fn app(dir: &Path) -> App {
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }]);
     // The same port on another server.
     store.merge_rdp([RdpProfile {
@@ -63,6 +64,7 @@ fn app(dir: &Path) -> App {
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

@@ -44,6 +44,7 @@ fn profile(id: &str, host: &str, username: Option<&str>) -> SshProfile {
         username: username.map(str::to_owned),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }
 }
 
@@ -632,6 +633,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
         redirect_clipboard: false,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     };
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
     store.merge_rdp([rdp("nla", false), rdp("tls", true)]);

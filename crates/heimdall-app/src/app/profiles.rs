@@ -153,6 +153,13 @@ impl App {
             }
         };
         let id = saved_id(&profile).clone();
+        // Renamed, it keeps its password manager's entry under the old name, as in C#.
+        let old_name = draft
+            .editing
+            .as_ref()
+            .and_then(|editing| self.profile_summary(editing))
+            .map(|summary| summary.name.clone())
+            .filter(|old| *old != draft.name.trim());
         let result = self.store.apply(|store| {
             match profile {
                 DraftProfile::Ssh(profile) => store.merge([profile]),
@@ -161,6 +168,9 @@ impl App {
                 DraftProfile::WinRm(profile) => store.merge_winrm([profile]),
                 DraftProfile::Telnet(profile) => store.merge_telnet([profile]),
             };
+            if let Some(old_name) = &old_name {
+                store.freeze_vault_entry(&id, old_name);
+            }
         });
         if let Err(error) = result {
             self.dialog = Some(Dialog::StoreError {

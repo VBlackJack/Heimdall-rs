@@ -384,6 +384,7 @@ mod tests {
             redirect_clipboard: true,
             redirect_drives: false,
             options,
+            vault_entry: None,
         }));
         assert_eq!(config.options, options);
     }

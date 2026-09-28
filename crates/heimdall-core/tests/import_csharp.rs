@@ -895,3 +895,23 @@ fn a_winrm_profile_that_cannot_be_connected_is_skipped_with_its_reason() {
         ]
     );
 }
+
+#[test]
+fn the_vault_entry_name_is_kept_for_the_credential_provider() {
+    let json = servers(
+        r#"{"id": "s", "remoteServer": "web.lab", "connectionType": "SSH", "vaultEntryName": "Servers/Web"},
+           {"id": "r", "remoteServer": "dc.lab", "connectionType": "RDP", "vaultEntryName": "Windows/DC"},
+           {"id": "v", "remoteServer": "kiosk.lab", "connectionType": "VNC", "vaultEntryName": "Kiosk"},
+           {"id": "e", "remoteServer": "empty.lab", "connectionType": "SSH", "vaultEntryName": ""}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let ssh: Vec<_> = report
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.vault_entry.as_deref()))
+        .collect();
+    assert_eq!(ssh, [("s", Some("Servers/Web")), ("e", None)]);
+    assert_eq!(report.rdp[0].vault_entry.as_deref(), Some("Windows/DC"));
+    assert_eq!(report.vnc[0].vault_entry.as_deref(), Some("Kiosk"));
+}

@@ -3222,6 +3222,10 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
         ProfileField::FixedWidth => (fl!("ui-profile-resolution-width"), String::new()),
         ProfileField::FixedHeight => (fl!("ui-profile-resolution-height"), String::new()),
+        ProfileField::VaultEntry => (
+            fl!("ui-profile-field-vault-entry"),
+            fl!("ui-profile-vault-entry-placeholder"),
+        ),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -3671,6 +3675,12 @@ fn profile_form<'a>(
     form = form
         .push(section(fl!("ui-profile-section-organization"), None))
         .push(form_field(draft, ProfileField::Group));
+    // With the C# metadata: the password manager's entry, for the protocols it serves.
+    if draft.shows(ProfileField::VaultEntry) {
+        form = form
+            .push(form_field(draft, ProfileField::VaultEntry))
+            .push(text(fl!("ui-profile-vault-entry-help")).size(SMALL_SIZE));
+    }
     // The fields scroll; the error and the buttons stay in view under them, as the C#
     // dialog's footer does.
     let mut footer = Column::new().spacing(SPACING);
@@ -4526,6 +4536,7 @@ mod tests {
             port: 5900,
             view_only: false,
             allow_no_password: false,
+            vault_entry: None,
         };
         assert!(fits_by_default(&TabProfile::Vnc(vnc)));
         let rdp = |options| {
@@ -4542,6 +4553,7 @@ mod tests {
                 redirect_clipboard: true,
                 redirect_drives: false,
                 options,
+                vault_entry: None,
             })
         };
         let fixed = RdpOptions {
