@@ -772,8 +772,7 @@ fn a_csharp_colour_depth_is_brought_to_one_the_session_can_have_and_sound_played
         taken,
         [
             ("8", ColorDepth::Bpp16, AudioPlayback::Off),
-            // Played on this computer: this version does not, so it is not played.
-            ("16", ColorDepth::Bpp16, AudioPlayback::Off),
+            ("16", ColorDepth::Bpp16, AudioPlayback::Local),
             ("17", ColorDepth::Bpp24, AudioPlayback::OnServer),
             ("24", ColorDepth::Bpp24, AudioPlayback::Off),
             ("25", ColorDepth::Bpp32, AudioPlayback::Off),

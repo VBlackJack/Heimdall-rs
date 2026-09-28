@@ -53,6 +53,7 @@ impl std::fmt::Display for AudioChoice {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&match self.0 {
             AudioPlayback::Off => fl!("ui-profile-audio-off"),
+            AudioPlayback::Local => fl!("ui-profile-audio-local"),
             AudioPlayback::OnServer => fl!("ui-profile-audio-on-server"),
         })
     }
