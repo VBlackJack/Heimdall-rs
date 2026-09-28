@@ -23,7 +23,8 @@ heimdall-ssh.workspace = true
 heimdall-term.workspace = true
 sealvault.workspace = true
 log.workspace = true
-tokio.workspace = true
+# process: the external credential provider's commands.
+tokio = { workspace = true, features = ["process"] }
 tokio-stream.workspace = true
 tokio-util.workspace = true
 zeroize.workspace = true

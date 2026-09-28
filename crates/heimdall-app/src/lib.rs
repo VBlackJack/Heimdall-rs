@@ -22,6 +22,7 @@
 //! calling `update`.
 
 mod app;
+pub mod credential_provider;
 mod desktop;
 mod driver;
 mod error;
@@ -44,10 +45,11 @@ pub use app::{
     LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER,
     NameAction, Notice, OpenedVault, Phase, PinDialog, PinFailure, PinMessage, PinMode,
     PointerInput, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, Prompt,
-    QuickResult, RDP_MAX_ATTEMPTS, Retry, SelectionMessage, SessionStatus, SettingsMessage,
-    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow, TrustedKey, TrustedKeys,
-    TrustedKeysMessage, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    ProviderMessage, QuickResult, RDP_MAX_ATTEMPTS, Retry, SelectionMessage, SessionStatus,
+    SettingsMessage, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow,
+    TrustedKey, TrustedKeys, TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog,
+    VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem,
+    open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

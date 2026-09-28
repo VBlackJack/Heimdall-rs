@@ -40,11 +40,11 @@ use heimdall_app::{
     DesktopPane, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
-    PinMessage, PinMode, ProfileMenuMessage, Prompt, Purpose, QuestionId, QuestionKind, Retry,
-    SelectionMessage, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, UiError, VaultDialog, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault,
-    server_text,
+    PinMessage, PinMode, ProfileMenuMessage, Prompt, ProviderMessage, Purpose, QuestionId,
+    QuestionKind, Retry, SelectionMessage, SettingsMessage, SpecialKeys, SystemCredentials, Tab,
+    TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, UiError, VaultDialog,
+    VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem,
+    open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -313,6 +313,10 @@ pub enum Message {
     SubmitPin,
     /// Remove the PIN, the current one typed.
     RemovePin,
+    /// The external credential provider's unlock secret typed.
+    ProviderUnlock(String),
+    /// Save the unlock secret typed.
+    SaveProviderUnlock,
     /// The password field of the profile form changed.
     ProfilePassword(String),
     /// Save the profile form, with the password typed into it.
@@ -409,6 +413,8 @@ impl fmt::Debug for Message {
             Self::SubmitVault => f.write_str("SubmitVault"),
             Self::SubmitPin => f.write_str("SubmitPin"),
             Self::RemovePin => f.write_str("RemovePin"),
+            Self::ProviderUnlock(_) => f.write_str("ProviderUnlock(..)"),
+            Self::SaveProviderUnlock => f.write_str("SaveProviderUnlock"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
@@ -550,6 +556,8 @@ pub struct Shell {
     vault_fields: [Zeroizing<String>; 3],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
+    /// The credential provider's unlock secret typed, not saved yet.
+    provider_unlock: Zeroizing<String>,
     /// What is typed into the password field of the gateway dialog.
     gateway_password: Zeroizing<String>,
     /// Where the pointer is, for a menu to open there.
@@ -656,6 +664,7 @@ impl Shell {
             dialog_focus: None,
             vault_fields: Default::default(),
             profile_password: Zeroizing::default(),
+            provider_unlock: Zeroizing::default(),
             gateway_password: Zeroizing::default(),
             cursor: CursorSpot::default(),
             menu: None,
@@ -764,6 +773,7 @@ impl Shell {
             | Message::FocusField { .. }
             | Message::VaultField { .. }
             | Message::FocusVaultField(_)
+            | Message::ProviderUnlock(_)
             | Message::Search(_)
             | Message::ProfilePassword(_)
             | Message::GatewayPassword(_)) => return self.input_message(message),
@@ -802,6 +812,7 @@ impl Shell {
             Message::SubmitVault => self.submit_vault(),
             Message::SubmitPin => self.submit_pin(),
             Message::RemovePin => self.remove_pin(),
+            Message::SaveProviderUnlock => self.save_provider_unlock(),
             Message::SaveProfileForm => self.save_profile_form(),
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::OpenTreeMenu(menu) => {
@@ -870,6 +881,7 @@ impl Shell {
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::Search(term) => self.search = term,
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
+            Message::ProviderUnlock(value) => self.provider_unlock = Zeroizing::new(value),
             Message::GatewayPassword(value) => self.gateway_password = Zeroizing::new(value),
             _ => {}
         }
@@ -1049,6 +1061,15 @@ impl Shell {
         let current = Secret::new(std::mem::take(&mut *current));
         self.app
             .update(AppMessage::Pin(PinMessage::Remove(current)))
+    }
+
+    /// Hands the credential provider's unlock secret typed to the core; the field empties.
+    fn save_provider_unlock(&mut self) -> Vec<Effect> {
+        let mut typed = std::mem::take(&mut self.provider_unlock);
+        let secret = Secret::new(std::mem::take(&mut *typed));
+        self.app.update(AppMessage::CredentialProvider(
+            ProviderMessage::SaveUnlockSecret(secret),
+        ))
     }
 
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
@@ -1507,6 +1528,14 @@ impl Shell {
                 password,
                 job,
             } => open_vault_task(path, password, job),
+            Effect::TestCredentialProvider { settings, unlock } => Task::perform(
+                heimdall_app::credential_provider::test(settings, unlock),
+                |outcome| {
+                    Message::App(AppMessage::CredentialProvider(ProviderMessage::Tested(
+                        outcome,
+                    )))
+                },
+            ),
             Effect::Exit => iced::exit(),
         }
     }
@@ -1940,6 +1969,7 @@ impl Shell {
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
                 pin_card,
                 vault_card,
+                crate::provider_view::card(&self.app, &self.provider_unlock),
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
