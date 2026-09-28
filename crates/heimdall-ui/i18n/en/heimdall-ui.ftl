@@ -515,6 +515,9 @@ ui-find-nothing = No match
 ## The terminal's appearance in the Settings page, as the C# one.
 ui-settings-terminal = Terminal Appearance
 ui-settings-color-scheme = Color scheme
+ui-settings-font-size = Font size
+ui-settings-font-size-unit = px
+ui-settings-font-size-refused = Terminal font size must be between { $min } and { $max }.
 ui-scheme-default = Default
 ui-scheme-dracula = Dracula
 ui-scheme-solarized-dark = Solarized Dark

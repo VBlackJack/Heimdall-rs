@@ -72,7 +72,6 @@ use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
-use crate::terminal_view::metrics::DEFAULT_FONT_SIZE;
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TranscriptEntry, TreeMenu};
 use crate::trusted_keys_view::TrustedList;
@@ -119,6 +118,8 @@ const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 /// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 28.0;
+/// Width of the font size field, as the C# one's.
+const FONT_SIZE_FIELD_WIDTH: f32 = 80.0;
 
 /// Room above Quick Connect.
 const PALETTE_TOP: f32 = 80.0;
@@ -352,6 +353,10 @@ pub enum Message {
     LogDirectoryEdited(String),
     /// Apply the folder typed.
     LogDirectoryApply,
+    /// The terminals' font size typed in the Settings page.
+    FontSizeEdited(String),
+    /// Apply the font size typed.
+    FontSizeApply,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -416,6 +421,8 @@ impl fmt::Debug for Message {
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
+            Self::FontSizeEdited(typed) => write!(f, "FontSizeEdited({typed:?})"),
+            Self::FontSizeApply => f.write_str("FontSizeApply"),
         }
     }
 }
@@ -550,6 +557,8 @@ pub struct Shell {
     finder: Option<Finder>,
     /// The transcripts' folder as typed in the Settings page, until applied.
     log_directory: Option<String>,
+    /// The terminals' font size as typed in the Settings page, until applied.
+    font_size_typed: Option<String>,
     /// The search typed over the trusted SSH host keys.
     host_key_search: String,
     /// The search typed over the trusted RDP certificates.
@@ -638,6 +647,7 @@ impl Shell {
             finder: None,
             focus_next: None,
             log_directory: None,
+            font_size_typed: None,
             host_key_search: String::new(),
             certificate_search: String::new(),
             files_hovered: false,
@@ -781,9 +791,10 @@ impl Shell {
             message @ (Message::FinderQuery(_) | Message::FinderFind(_) | Message::FinderClose) => {
                 self.finder_message(message)
             }
-            message @ (Message::LogDirectoryEdited(_) | Message::LogDirectoryApply) => {
-                self.log_directory_message(message)
-            }
+            message @ (Message::LogDirectoryEdited(_)
+            | Message::LogDirectoryApply
+            | Message::FontSizeEdited(_)
+            | Message::FontSizeApply) => self.settings_field_message(message),
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
@@ -1044,13 +1055,15 @@ impl Shell {
         }
     }
 
-    /// The text size of `tab`'s terminal.
+    /// The text size of `tab`'s terminal: zoomed, or the one the settings give, drawn within
+    /// the bounds the C# terminal draws at.
     #[must_use]
     pub fn font_size(&self, tab: TabId) -> f32 {
         self.font_sizes
             .get(&tab)
             .copied()
-            .unwrap_or(DEFAULT_FONT_SIZE)
+            .unwrap_or_else(|| f32::from(self.app.settings().terminal_font_size))
+            .clamp(MIN_FONT_SIZE, MAX_FONT_SIZE)
     }
 
     /// Makes `tab`'s terminal text a point larger or smaller, within the C# bounds, or
@@ -1922,11 +1935,29 @@ impl Shell {
     }
 
     /// The transcripts' folder typed, or applied.
-    fn log_directory_message(&mut self, message: Message) -> Vec<Effect> {
+    fn settings_field_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::LogDirectoryEdited(typed) => {
                 self.log_directory = Some(typed);
                 Vec::new()
+            }
+            Message::FontSizeEdited(typed) => {
+                self.font_size_typed = Some(typed);
+                Vec::new()
+            }
+            Message::FontSizeApply => {
+                // A size out of the range stays typed, the C# message under it.
+                let Some(size) = self
+                    .typed_font_size()
+                    .filter(|size| heimdall_core::settings::terminal_font_size_accepted(*size))
+                else {
+                    return Vec::new();
+                };
+                self.font_size_typed = None;
+                self.app
+                    .update(AppMessage::Settings(SettingsMessage::TerminalFontSize(
+                        size,
+                    )))
             }
             _ => match self.log_directory.take() {
                 Some(typed) => {
@@ -1940,15 +1971,53 @@ impl Shell {
         }
     }
 
-    /// The terminal's appearance: its colour scheme, as the C# Settings page offers it.
+    /// The font size typed, as a number; `None` when nothing is typed or it is not one.
+    fn typed_font_size(&self) -> Option<u16> {
+        self.font_size_typed.as_deref()?.trim().parse().ok()
+    }
+
+    /// The terminal's appearance, as the C# Settings page offers it: its font size, applied
+    /// with Enter, and its colour scheme.
     fn terminal_settings(&self) -> Element<'_, Message> {
-        container(
+        let settings = self.app.settings();
+        let shown = settings.terminal_font_size.to_string();
+        let typed = self.font_size_typed.as_deref().unwrap_or(&shown);
+        let refused = self.font_size_typed.is_some()
+            && !self
+                .typed_font_size()
+                .is_some_and(heimdall_core::settings::terminal_font_size_accepted);
+        let mut card = column![
+            row![
+                text(fl!("ui-settings-font-size")),
+                iced::widget::space::horizontal(),
+                text_input("", typed)
+                    .width(FONT_SIZE_FIELD_WIDTH)
+                    .on_input(Message::FontSizeEdited)
+                    .on_submit(Message::FontSizeApply),
+                text(fl!("ui-settings-font-size-unit")),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING);
+        if refused {
+            card = card.push(
+                text(fl!(
+                    "ui-settings-font-size-refused",
+                    min = heimdall_core::settings::TERMINAL_FONT_SIZE_MIN,
+                    max = heimdall_core::settings::TERMINAL_FONT_SIZE_MAX
+                ))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            );
+        }
+        card = card.push(
             row![
                 text(fl!("ui-settings-color-scheme")),
                 iced::widget::space::horizontal(),
                 pick_list(
                     ColorScheme::ALL.map(SchemeChoice).to_vec(),
-                    Some(SchemeChoice(self.app.settings().color_scheme)),
+                    Some(SchemeChoice(settings.color_scheme)),
                     |SchemeChoice(scheme)| Message::App(AppMessage::Settings(
                         SettingsMessage::ColorScheme(scheme)
                     )),
@@ -1956,11 +2025,12 @@ impl Shell {
             ]
             .spacing(SPACING)
             .align_y(iced::Alignment::Center),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
+        );
+        container(card)
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
     }
 
     /// Where the keyboard goes after `message`: to the tree after a click in it, back to the

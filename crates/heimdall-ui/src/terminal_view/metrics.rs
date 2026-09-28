@@ -137,6 +137,17 @@ mod tests {
     use super::{CellMetrics, DEFAULT_FONT_SIZE};
 
     #[test]
+    fn the_default_size_is_the_one_the_settings_start_at() {
+        // Two constants, one decision: a terminal drawn before the settings are read, and one
+        // drawn from them, look the same.
+        assert!(
+            (DEFAULT_FONT_SIZE - f32::from(heimdall_core::settings::TERMINAL_FONT_SIZE_DEFAULT))
+                .abs()
+                < f32::EPSILON
+        );
+    }
+
+    #[test]
     fn the_default_cell_is_nine_by_nineteen() {
         let metrics = CellMetrics::for_size(DEFAULT_FONT_SIZE);
         assert!((metrics.width - 9.0).abs() < 1e-4);

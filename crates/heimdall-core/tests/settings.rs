@@ -181,3 +181,46 @@ fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
     );
     assert_eq!(BroadcastScope::named("CurrentTab"), BroadcastScope::AllTabs);
 }
+
+#[test]
+fn the_terminal_font_size_is_kept_within_the_csharp_range_and_else_the_default() {
+    use heimdall_core::settings::{
+        TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MIN,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(
+        written(
+            dir.path(),
+            "version = 1
+"
+        )
+        .terminal_font_size,
+        TERMINAL_FONT_SIZE_DEFAULT
+    );
+    for (size, read) in [
+        (TERMINAL_FONT_SIZE_MIN, TERMINAL_FONT_SIZE_MIN),
+        (TERMINAL_FONT_SIZE_MAX, TERMINAL_FONT_SIZE_MAX),
+        (TERMINAL_FONT_SIZE_MIN - 1, TERMINAL_FONT_SIZE_DEFAULT),
+        (TERMINAL_FONT_SIZE_MAX + 1, TERMINAL_FONT_SIZE_DEFAULT),
+    ] {
+        let text = format!(
+            "version = 1
+[terminal]
+font_size = {size}
+"
+        );
+        assert_eq!(
+            written(dir.path(), &text).terminal_font_size,
+            read,
+            "{size}"
+        );
+    }
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        terminal_font_size: 20,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("saved");
+    assert_eq!(Settings::load(&path).expect("read").terminal_font_size, 20);
+}

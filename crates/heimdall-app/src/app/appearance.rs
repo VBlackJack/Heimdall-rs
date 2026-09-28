@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::settings::{ColorScheme, Settings, settings_path};
+use heimdall_core::settings::{ColorScheme, Settings, settings_path, terminal_font_size_accepted};
 use heimdall_term::Palette;
 
 use super::{App, AppConfig, Dialog, Effect, RECOVERY_EXTENSION, TrustedKeysMessage};
@@ -35,6 +35,8 @@ pub enum SettingsMessage {
     SessionLogDirectory(String),
     /// The lists of keys trusted for servers.
     TrustedKeys(TrustedKeysMessage),
+    /// The size a new terminal's text starts at; one out of the accepted range is ignored.
+    TerminalFontSize(u16),
 }
 
 /// The colours of `scheme`.
@@ -95,6 +97,12 @@ impl App {
                 directory
                     .trim()
                     .clone_into(&mut self.settings.session_log_directory);
+            }
+            SettingsMessage::TerminalFontSize(size) => {
+                if !terminal_font_size_accepted(*size) {
+                    return Vec::new();
+                }
+                self.settings.terminal_font_size = *size;
             }
             SettingsMessage::TrustedKeys(_) => {}
         }

@@ -1993,3 +1993,45 @@ fn a_tab_menu_leaves_the_keyboard_to_the_session() {
     let _ = shell.update(Message::DialogKey { confirm: true });
     assert_eq!(shell.app().tabs.len(), 1);
 }
+
+#[test]
+fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
+    use heimdall_ui::terminal_view::keys::Zoom;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
+    let _ = shell.update(Message::ShowSettings);
+    for (typed, refused) in [("7", true), ("big", true), ("73", true), (" 20 ", false)] {
+        let _ = shell.update(Message::FontSizeEdited(typed.to_owned()));
+        let _ = shell.update(Message::FontSizeApply);
+        let mut ui = simulator(&shell);
+        assert_eq!(
+            ui.find("Terminal font size must be between 8 and 72.")
+                .is_ok(),
+            refused,
+            "{typed}"
+        );
+    }
+    assert_eq!(shell.app().settings().terminal_font_size, 20);
+    assert!(same(shell.font_size(tab), 20.0), "a terminal not zoomed");
+    // Applied, the text typed is gone: Enter on the field later never brings it back over a
+    // size set since.
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::TerminalFontSize(12),
+    )));
+    let _ = shell.update(Message::FontSizeApply);
+    assert_eq!(shell.app().settings().terminal_font_size, 12);
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::TerminalFontSize(20),
+    )));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::In)));
+    assert!(same(shell.font_size(tab), 21.0));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Zoom(Zoom::Reset)));
+    assert!(same(shell.font_size(tab), 20.0), "back to the size set");
+    // Kept as set, drawn no larger than the C# terminal draws.
+    let _ = shell.update(Message::FontSizeEdited("72".to_owned()));
+    let _ = shell.update(Message::FontSizeApply);
+    assert_eq!(shell.app().settings().terminal_font_size, 72);
+    assert!(same(shell.font_size(tab), 28.0));
+}

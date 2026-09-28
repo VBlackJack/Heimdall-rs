@@ -124,6 +124,22 @@ pub struct Settings {
     pub session_logging: bool,
     /// Where transcripts go: a folder, or one relative to the settings file's.
     pub session_log_directory: String,
+    /// Size of the terminals' text a new tab starts at, and Ctrl+0 comes back to, within
+    /// [`TERMINAL_FONT_SIZE_MIN`] and [`TERMINAL_FONT_SIZE_MAX`].
+    pub terminal_font_size: u16,
+}
+
+/// Size of the terminals' text unless chosen: the one this terminal was drawn at before.
+pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 15;
+/// Smallest terminal font size accepted, as the C# setting's range.
+pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
+/// Largest terminal font size accepted, as the C# setting's range.
+pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
+
+/// Whether `size` is a terminal font size the settings accept.
+#[must_use]
+pub fn terminal_font_size_accepted(size: u16) -> bool {
+    (TERMINAL_FONT_SIZE_MIN..=TERMINAL_FONT_SIZE_MAX).contains(&size)
 }
 
 impl Default for Settings {
@@ -133,6 +149,7 @@ impl Default for Settings {
             broadcast_scope: BroadcastScope::default(),
             session_logging: false,
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
+            terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
         }
     }
 }
@@ -160,6 +177,8 @@ struct TerminalSection {
     color_scheme: Option<String>,
     #[serde(default)]
     broadcast_scope: Option<String>,
+    #[serde(default)]
+    font_size: Option<u16>,
 }
 
 /// The settings file of the profile file `profiles_file`: beside it.
@@ -216,6 +235,12 @@ impl Settings {
                 .directory
                 .filter(|directory| !directory.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_SESSION_LOG_DIRECTORY.to_owned()),
+            // Out of the range, as the C# load warns and keeps the default.
+            terminal_font_size: file
+                .terminal
+                .font_size
+                .filter(|size| terminal_font_size_accepted(*size))
+                .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
         })
     }
 
@@ -246,6 +271,7 @@ impl Settings {
             terminal: TerminalSection {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
                 broadcast_scope: Some(self.broadcast_scope.name().to_owned()),
+                font_size: Some(self.terminal_font_size),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,
