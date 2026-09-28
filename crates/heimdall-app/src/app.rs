@@ -72,6 +72,7 @@ mod folder_menu;
 mod folders;
 mod gateways;
 mod local_tab;
+mod pin;
 mod profile_menu;
 mod profiles;
 mod quick_connect;
@@ -98,6 +99,7 @@ use files_tab::{PendingOperation, PendingTransfer};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
+pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use profile_menu::ProfileMenuMessage;
 pub use quick_connect::QuickResult;
 pub use selection::SelectionMessage;
@@ -443,6 +445,8 @@ pub enum Message {
     VaultOpened(Result<OpenedVault, VaultProblem>),
     /// Close the vault.
     LockVault,
+    /// The application PIN.
+    Pin(PinMessage),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A change of broadcast input.
@@ -450,6 +454,7 @@ pub enum Message {
 }
 
 impl fmt::Debug for Message {
+    #[allow(clippy::too_many_lines, reason = "one arm per message")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Input, output, answers and clipboard text are never shown: they carry what the
         // user typed or read, passwords included.
@@ -552,6 +557,7 @@ impl fmt::Debug for Message {
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
+            Self::Pin(message) => write!(f, "Pin({message:?})"),
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
@@ -1108,6 +1114,8 @@ pub enum Dialog {
     },
     /// Unlock or create the vault.
     Vault(VaultDialog),
+    /// The application PIN: asked at start, or set, changed or removed.
+    Pin(PinDialog),
     /// A password could not be saved.
     PasswordSaveFailed {
         /// Technical detail.
@@ -1173,10 +1181,10 @@ impl Dialog {
     /// appears, meant for whatever had the focus, must not be taken for agreement.
     #[must_use]
     pub fn confirms_on_enter(&self) -> bool {
-        // The vault's password fields submit themselves.
+        // The vault's and the PIN's fields submit themselves.
         !matches!(
             self,
-            Self::ConfirmLocalCommand(_) | Self::Vault(_) | Self::EditGateway { .. }
+            Self::ConfirmLocalCommand(_) | Self::Vault(_) | Self::Pin(_) | Self::EditGateway { .. }
         )
     }
 }
@@ -1300,10 +1308,9 @@ impl App {
             rdp_run_trust: Vec::new(),
             closed_folders: std::collections::HashSet::new(),
         };
-        // A vault on disk is offered to unlock at start: its passwords are then ready.
-        if app.dialog.is_none() {
-            app.show_vault_if_locked();
-        }
+        // The PIN when one is set, then a vault on disk is offered to unlock: its passwords
+        // are then ready.
+        app.show_start_gates();
         app
     }
 
@@ -1469,10 +1476,14 @@ impl App {
             | Message::SubmitVault { .. }
             | Message::VaultOpened(_)
             | Message::LockVault) => self.vault_message(message),
-            Message::DismissDialog => self.dismiss_vault().unwrap_or_else(|| {
-                self.dismiss_dialog();
-                Vec::new()
-            }),
+            Message::Pin(message) => self.pin_message(message),
+            Message::DismissDialog => self
+                .dismiss_vault()
+                .or_else(|| self.dismiss_pin())
+                .unwrap_or_else(|| {
+                    self.dismiss_dialog();
+                    Vec::new()
+                }),
         }
     }
 
@@ -2173,7 +2184,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
-            Some(dialog @ (Dialog::Vault(_) | Dialog::EditGateway { .. })) => {
+            Some(dialog @ (Dialog::Vault(_) | Dialog::Pin(_) | Dialog::EditGateway { .. })) => {
                 self.dialog = Some(dialog);
                 Vec::new()
             }

@@ -39,14 +39,16 @@ use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
     DesktopPane, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, ProfileMenuMessage,
-    Prompt, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
-    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
-    TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    connection_events, master_password_problem, open_vault, server_text,
+    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
+    PinMessage, PinMode, ProfileMenuMessage, Prompt, Purpose, QuestionId, QuestionKind, Retry,
+    SelectionMessage, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
+    TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, UiError, VaultDialog, VaultJob,
+    VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault,
+    server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
+use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
@@ -307,6 +309,10 @@ pub enum Message {
     FocusVaultField(usize),
     /// Try the master password typed.
     SubmitVault,
+    /// Hand over what the PIN dialog holds: the PIN at start, or the new one.
+    SubmitPin,
+    /// Remove the PIN, the current one typed.
+    RemovePin,
     /// The password field of the profile form changed.
     ProfilePassword(String),
     /// Save the profile form, with the password typed into it.
@@ -401,6 +407,8 @@ impl fmt::Debug for Message {
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
             Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
             Self::SubmitVault => f.write_str("SubmitVault"),
+            Self::SubmitPin => f.write_str("SubmitPin"),
+            Self::RemovePin => f.write_str("RemovePin"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
@@ -537,7 +545,8 @@ pub struct Shell {
     focused: Option<QuestionId>,
     /// Which field of the open dialog was last given focus, so it is given once.
     dialog_focus: Option<DialogFocus>,
-    /// What is typed into the vault dialog, in the order it shows its fields.
+    /// What is typed into the vault dialog or the PIN dialog, in the order it shows its
+    /// fields.
     vault_fields: [Zeroizing<String>; 3],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
@@ -602,6 +611,8 @@ enum DialogFocus {
     FormError(DialogForm, DraftError),
     /// The vault's master password.
     Vault,
+    /// The PIN's first field.
+    Pin,
 }
 
 /// A dialog made of fields, focused on its name when it opens.
@@ -711,13 +722,18 @@ impl Shell {
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen_with(window_event);
         // A countdown shown: a tab's next attempt, or the minutes before a master password
-        // is taken again.
+        // or a PIN is taken again.
         let locked_out = matches!(
             &self.app.dialog,
-            Some(Dialog::Vault(VaultDialog {
-                problem: Some(VaultProblem::LockedOut { .. }),
-                ..
-            }))
+            Some(
+                Dialog::Vault(VaultDialog {
+                    problem: Some(VaultProblem::LockedOut { .. }),
+                    ..
+                }) | Dialog::Pin(PinDialog {
+                    problem: Some(PinFailure::LockedOut { .. }),
+                    ..
+                })
+            )
         );
         if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
             Subscription::batch([
@@ -733,7 +749,7 @@ impl Shell {
     pub fn update(&mut self, message: Message) -> Task<Message> {
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
-        if self.app.is_locked() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
+        if self.gated() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
             return Task::none();
         }
         let message = self.files_click(message);
@@ -784,6 +800,8 @@ impl Shell {
                     .chain(operation::select_all(search_field_id()));
             }
             Message::SubmitVault => self.submit_vault(),
+            Message::SubmitPin => self.submit_pin(),
+            Message::RemovePin => self.remove_pin(),
             Message::SaveProfileForm => self.save_profile_form(),
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::OpenTreeMenu(menu) => {
@@ -998,6 +1016,45 @@ impl Shell {
             new,
             confirm,
         })
+    }
+
+    /// Hands what the PIN dialog holds to the core; the fields are emptied either way, as
+    /// the C# dialog empties them after each try.
+    fn submit_pin(&mut self) -> Vec<Effect> {
+        let Some(Dialog::Pin(dialog)) = &self.app.dialog else {
+            return Vec::new();
+        };
+        let mode = dialog.mode.clone();
+        let [first, second, third] = std::mem::take(&mut self.vault_fields);
+        let secret = |mut text: Zeroizing<String>| Secret::new(std::mem::take(&mut *text));
+        let message = match mode {
+            PinMode::Start { .. } => PinMessage::Submit(secret(first)),
+            PinMode::Setup { current: true } => PinMessage::Save {
+                current: secret(first),
+                new: secret(second),
+                confirm: secret(third),
+            },
+            PinMode::Setup { current: false } => PinMessage::Save {
+                current: Secret::new(String::new()),
+                new: secret(first),
+                confirm: secret(second),
+            },
+        };
+        self.app.update(AppMessage::Pin(message))
+    }
+
+    /// Hands the current PIN typed to remove it; only its field is emptied, as in C#.
+    fn remove_pin(&mut self) -> Vec<Effect> {
+        let mut current = std::mem::take(&mut self.vault_fields[0]);
+        let current = Secret::new(std::mem::take(&mut *current));
+        self.app
+            .update(AppMessage::Pin(PinMessage::Remove(current)))
+    }
+
+    /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
+    /// Nothing of it is drawn, and its keys do nothing.
+    fn gated(&self) -> bool {
+        self.app.is_locked() || self.app.pin_asked()
     }
 
     fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
@@ -1241,7 +1298,7 @@ impl Shell {
     /// Drops the tasks of closed tabs and the drafts of questions no longer asked.
     fn forget_finished(&mut self) {
         let app = &self.app;
-        if !matches!(app.dialog, Some(Dialog::Vault(_))) {
+        if !matches!(app.dialog, Some(Dialog::Vault(_) | Dialog::Pin(_))) {
             self.vault_fields = Default::default();
         }
         // A session's form waiting under the gateway dialog keeps what was typed into it.
@@ -1296,6 +1353,7 @@ impl Shell {
                 | Dialog::RenameProfile { .. },
             ) => (Some(DialogFocus::Name), name_field_id()),
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
+            Some(Dialog::Pin(_)) => (Some(DialogFocus::Pin), vault_field_id(0)),
             Some(Dialog::EditProfile { error, .. }) => {
                 match self.form_focus(DialogForm::Profile, *error, profile_field_id) {
                     Some(focus) => focus,
@@ -1456,11 +1514,15 @@ impl Shell {
     /// Draws the window.
     #[must_use]
     pub fn view(&self) -> Element<'_, Message> {
-        let locked = self.app.is_locked();
+        let locked = self.gated();
         // Locked, the window is not drawn: nothing of it shows, and no hidden field takes
         // what is typed. Its sessions go on.
         let body: Element<'_, Message> = if locked {
-            iced::widget::space().into()
+            // The whole window: the stack takes its size from it, and the dialog its own.
+            iced::widget::space()
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into()
         } else if self.fullscreen {
             // Full screen is the session's: no tree, no tabs.
             self.content()
@@ -1848,12 +1910,35 @@ impl Shell {
         .padding(PADDING)
         .max_width(SETTINGS_WIDTH)
         .style(container::bordered_box);
+        let pin_card = container(
+            column![
+                text(fl!("ui-settings-pin-title")).size(BODY_SIZE),
+                row![
+                    text(if self.app.settings().pin.is_some() {
+                        fl!("ui-settings-pin-enabled")
+                    } else {
+                        fl!("ui-settings-pin-disabled")
+                    }),
+                    iced::widget::space::horizontal(),
+                    button(text(fl!("ui-settings-pin-configure")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::Pin(PinMessage::Configure))),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box);
         scrollable(
             column![
                 text(fl!("ui-settings-title")).size(HEADING_SIZE),
                 text(fl!("ui-settings-appearance")).size(BODY_SIZE),
                 self.appearance_settings(),
                 text(fl!("ui-settings-security")).size(BODY_SIZE),
+                pin_card,
                 vault_card,
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
@@ -2185,7 +2270,7 @@ impl Shell {
     /// A tree shortcut holding Ctrl: Ctrl+E edits the profile selected when the tree has
     /// the keyboard; Ctrl+N opens a new session's form.
     fn tree_shortcut(&mut self, shortcut: TreeShortcut) -> Vec<Effect> {
-        if self.app.dialog.is_some() || self.app.is_locked() {
+        if self.app.dialog.is_some() || self.gated() {
             return Vec::new();
         }
         match shortcut {
@@ -4108,6 +4193,88 @@ fn vault_dialog<'a>(
     form.push(buttons).into()
 }
 
+/// The PIN's dialogs, as the C# Heimdall's: the PIN asked at start, and the one setting,
+/// changing or removing it.
+fn pin_dialog<'a>(
+    dialog: &'a PinDialog,
+    fields: &'a [Zeroizing<String>; 3],
+) -> Element<'a, Message> {
+    let (title, labels, action) = match dialog.mode {
+        PinMode::Start { .. } => (
+            fl!("ui-pin-enter-title"),
+            vec![fl!("ui-pin-field-pin")],
+            fl!("ui-pin-unlock-button"),
+        ),
+        PinMode::Setup { current } => {
+            let mut labels = Vec::new();
+            if current {
+                labels.push(fl!("ui-pin-field-current"));
+            }
+            labels.push(fl!("ui-pin-field-new"));
+            labels.push(fl!("ui-pin-field-confirm"));
+            (fl!("ui-pin-setup-title"), labels, fl!("ui-pin-save-button"))
+        }
+    };
+    let count = labels.len();
+    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    for (index, label) in labels.into_iter().enumerate() {
+        let input = text_input("", fields[index].as_str())
+            .id(vault_field_id(index))
+            .secure(true)
+            .on_input(move |value| Message::VaultField { index, value })
+            .on_submit(if index + 1 < count {
+                Message::FocusVaultField(index + 1)
+            } else {
+                Message::SubmitPin
+            });
+        form = form.push(column![text(label).size(SMALL_SIZE), input].spacing(SPACING / 2.0));
+    }
+    if let Some(problem) = &dialog.problem {
+        form = form.push(text(pin_problem_text(problem)).style(text::danger));
+    }
+    // Locked out, no try is taken until the minutes said are over.
+    let open = !matches!(
+        dialog.problem,
+        Some(PinFailure::LockedOut { until }) if until > std::time::SystemTime::now()
+    );
+    let mut buttons = row![iced::widget::space::horizontal()].spacing(SPACING);
+    if dialog.mode == (PinMode::Setup { current: true }) {
+        buttons = buttons.push(
+            button(text(fl!("ui-pin-remove-button")))
+                .style(button::secondary)
+                .on_press_maybe(open.then_some(Message::RemovePin)),
+        );
+    }
+    buttons = buttons
+        .push(
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+        )
+        .push(button(text(action)).on_press_maybe(open.then_some(Message::SubmitPin)));
+    form.push(buttons).into()
+}
+
+fn pin_problem_text(problem: &PinFailure) -> String {
+    match problem {
+        PinFailure::Wrong { remaining } => fl!("ui-pin-problem-wrong", remaining = remaining),
+        PinFailure::LockedOut { until } => fl!(
+            "ui-pin-problem-locked-out",
+            minutes = heimdall_core::lockout::minutes_left(*until, std::time::SystemTime::now())
+        ),
+        PinFailure::WrongCurrent => fl!("ui-pin-problem-wrong-current"),
+        PinFailure::Refused(PinProblem::TooShort) => {
+            fl!("ui-pin-problem-too-short", min = MIN_PIN_DIGITS)
+        }
+        PinFailure::Refused(PinProblem::TooLong) => {
+            fl!("ui-pin-problem-too-long", max = MAX_PIN_DIGITS)
+        }
+        PinFailure::Refused(PinProblem::NotDigits) => fl!("ui-pin-problem-not-digits"),
+        PinFailure::Mismatch => fl!("ui-pin-problem-mismatch"),
+        PinFailure::System { detail } => fl!("ui-pin-problem-system", detail = detail.as_str()),
+    }
+}
+
 /// What the dialog says of a new master password as it is typed, by the core's own rule.
 fn policy_line(password: &str) -> String {
     if password.is_empty() {
@@ -4269,6 +4436,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         .spacing(SPACING)
         .into(),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
+        Dialog::Pin(pin) => pin_dialog(pin, forms.vault),
         Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),
         Dialog::PasswordSaveFailed { detail: technical } => column![
             heading(fl!("ui-vault-save-failed-title")),

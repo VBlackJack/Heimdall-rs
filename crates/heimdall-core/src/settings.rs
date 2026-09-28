@@ -24,6 +24,7 @@ use std::time::{Duration, SystemTime};
 use serde::{Deserialize, Serialize};
 
 use crate::lockout::Lockout;
+use crate::pin::PinHash;
 use crate::store::{StoreError, write_atomic};
 
 /// Name of the settings file, beside the profile file.
@@ -134,6 +135,10 @@ pub struct Settings {
     /// Wrong master passwords in a row when the application starts, kept across runs as
     /// the C# startup gate keeps them: quitting does not give the tries back.
     pub vault_unlock: Lockout,
+    /// The application PIN asked at start, as the C# one; `None` when none is set.
+    pub pin: Option<PinHash>,
+    /// Wrong PINs in a row, kept across runs as the master password's are.
+    pub pin_unlock: Lockout,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -193,6 +198,8 @@ impl Default for Settings {
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             language: None,
             vault_unlock: Lockout::default(),
+            pin: None,
+            pin_unlock: Lockout::default(),
         }
     }
 }
@@ -208,6 +215,23 @@ struct SettingsFile {
     general: GeneralSection,
     #[serde(default)]
     vault_unlock: VaultUnlockSection,
+    #[serde(default)]
+    pin: PinSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct PinSection {
+    /// Base64; with the hash, a PIN is set.
+    #[serde(default)]
+    salt: Option<String>,
+    /// Base64 of the Argon2id hash.
+    #[serde(default)]
+    hash: Option<String>,
+    #[serde(default)]
+    failures: u32,
+    /// Seconds since 1970, UTC.
+    #[serde(default)]
+    locked_until: Option<u64>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -243,6 +267,18 @@ struct TerminalSection {
     broadcast_scope: Option<String>,
     #[serde(default)]
     font_size: Option<u16>,
+}
+
+/// The instant `seconds` after 1970, UTC.
+fn from_epoch(seconds: u64) -> SystemTime {
+    SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)
+}
+
+/// Seconds from 1970, UTC, to `instant`; 0 for an instant before.
+fn to_epoch(instant: SystemTime) -> u64 {
+    instant
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .map_or(0, |since| since.as_secs())
 }
 
 /// The settings file of the profile file `profiles_file`: beside it.
@@ -307,9 +343,20 @@ impl Settings {
                 .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
             vault_unlock: Lockout::restored(
                 file.vault_unlock.failures,
-                file.vault_unlock
-                    .locked_until
-                    .map(|seconds| SystemTime::UNIX_EPOCH + Duration::from_secs(seconds)),
+                file.vault_unlock.locked_until.map(from_epoch),
+                SystemTime::now(),
+            ),
+            // Half a PIN is still one: it takes nothing, and the application stays closed.
+            pin: match (file.pin.salt, file.pin.hash) {
+                (None, None) => None,
+                (salt, hash) => Some(PinHash::saved(
+                    salt.unwrap_or_default(),
+                    hash.unwrap_or_default(),
+                )),
+            },
+            pin_unlock: Lockout::restored(
+                file.pin.failures,
+                file.pin.locked_until.map(from_epoch),
                 SystemTime::now(),
             ),
             // A language not offered is not guessed: the desktop's is followed.
@@ -359,11 +406,13 @@ impl Settings {
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),
-                locked_until: self.vault_unlock.until().map(|until| {
-                    until
-                        .duration_since(SystemTime::UNIX_EPOCH)
-                        .map_or(0, |since| since.as_secs())
-                }),
+                locked_until: self.vault_unlock.until().map(to_epoch),
+            },
+            pin: PinSection {
+                salt: self.pin.as_ref().map(|pin| pin.salt().to_owned()),
+                hash: self.pin.as_ref().map(|pin| pin.hash().to_owned()),
+                failures: self.pin_unlock.failures(),
+                locked_until: self.pin_unlock.until().map(to_epoch),
             },
         })?;
         write_atomic(path, &text)
