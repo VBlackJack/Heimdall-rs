@@ -338,27 +338,37 @@ async fn connect_in_place(
     .await
 }
 
-/// Attaches the sound channel and the shared drives' one. The sound is played here when the
-/// profile asks and this computer can; the channel is also there, declining sound, beside the
-/// drives: a server opens the drive channel only beside the sound one.
+/// Attaches the sound channel and the device one, always together: a Windows server opens
+/// the device channel only beside the sound one, and starts the sound only through the
+/// device one. The sound is played here when the profile asks and this computer can; else
+/// the channel declines it. The device channel announces the shared drives, maybe none.
 fn attach_sound_and_drives(connector: &mut ClientConnector, config: &RdpConfig) {
     let speakers = (config.options.audio == AudioPlayback::Local)
         .then(crate::audio::local_speakers)
-        .flatten();
-    if speakers.is_some() || !config.drives.is_empty() {
-        let sound: Box<dyn RdpsndClientHandler> = match speakers {
-            Some(backend) => Box::new(backend),
-            None => Box::new(NoopRdpsndBackend),
-        };
-        connector.attach_static_channel(Rdpsnd::new(sound));
+        .flatten()
+        .map(|backend| Box::new(backend) as Box<dyn RdpsndClientHandler>);
+    if let Some((sound, devices)) = sound_and_devices(speakers, &config.drives) {
+        connector.attach_static_channel(sound);
+        connector.attach_static_channel(devices);
     }
-    if !config.drives.is_empty() {
-        let drives = DriveBackend::new(&config.drives);
-        let devices = drives.devices();
-        connector.attach_static_channel(
-            Rdpdr::new(Box::new(drives), CLIENT_NAME.to_owned()).with_drives(Some(devices)),
-        );
+}
+
+/// The sound and device channels, as a pair or not at all: none when there is neither
+/// sound to play here nor drive to share.
+fn sound_and_devices(
+    speakers: Option<Box<dyn RdpsndClientHandler>>,
+    drives: &[SharedDrive],
+) -> Option<(Rdpsnd, Rdpdr)> {
+    if speakers.is_none() && drives.is_empty() {
+        return None;
     }
+    let sound = Rdpsnd::new(speakers.unwrap_or_else(|| Box::new(NoopRdpsndBackend)));
+    let backend = DriveBackend::new(drives);
+    let devices = backend.devices();
+    Some((
+        sound,
+        Rdpdr::new(Box::new(backend), CLIENT_NAME.to_owned()).with_drives(Some(devices)),
+    ))
 }
 
 /// Opens a connection over `stream`, already connected to the server.
@@ -603,5 +613,30 @@ impl NetworkClient for NoNetwork {
             "network requests are not supported: Kerberos is not offered",
             ConnectorErrorKind::General,
         )))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sound_played_here_brings_the_device_channel_without_any_drive() {
+        // A Windows server starts the sound only through the device channel.
+        assert!(sound_and_devices(Some(Box::new(NoopRdpsndBackend)), &[]).is_some());
+    }
+
+    #[test]
+    fn a_shared_drive_brings_the_sound_channel_without_sound_played_here() {
+        let drive = SharedDrive {
+            name: "C".to_owned(),
+            root: std::env::temp_dir(),
+        };
+        assert!(sound_and_devices(None, &[drive]).is_some());
+    }
+
+    #[test]
+    fn neither_sound_nor_drive_opens_neither_channel() {
+        assert!(sound_and_devices(None, &[]).is_none());
     }
 }
