@@ -27,7 +27,7 @@ use heimdall_ssh::Secret;
 
 use super::vault::usable_endpoint;
 use super::{App, Effect, Notice, TabProfile};
-use crate::credential_provider::{Provided, ProviderFailure, ask};
+use crate::credential_provider::{Provided, ProviderFailure, ask, from_credential_manager};
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::ids::{AttemptId, QuestionId, TabId};
 
@@ -68,7 +68,12 @@ pub struct ProviderAnswer {
 impl ProviderRequest {
     /// Asks the provider: for a task of the UI layer.
     pub async fn run(self) -> ProviderAnswer {
-        let result = ask(&self.settings, &self.lookup, self.unlock.as_ref()).await;
+        let result = match self.settings.kind {
+            ProviderKind::Command => ask(&self.settings, &self.lookup, self.unlock.as_ref()).await,
+            ProviderKind::WindowsCredentialManager => {
+                from_credential_manager(self.lookup.title.clone()).await
+            }
+        };
         ProviderAnswer {
             tab: self.tab,
             attempt: self.attempt,
@@ -106,10 +111,12 @@ impl App {
         kind: &QuestionKind,
     ) -> Option<Effect> {
         let settings = &self.settings.credential_provider;
-        if !settings.enabled
-            || settings.kind != ProviderKind::Command
-            || settings.command.trim().is_empty()
-        {
+        // Windows Credential Manager needs nothing more than the entry's name.
+        let ready = match settings.kind {
+            ProviderKind::Command => !settings.command.trim().is_empty(),
+            ProviderKind::WindowsCredentialManager => true,
+        };
+        if !settings.enabled || !ready {
             return None;
         }
         let tab = self.tab(tab_id)?;

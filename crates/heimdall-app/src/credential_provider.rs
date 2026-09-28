@@ -158,6 +158,28 @@ pub async fn ask(
     })
 }
 
+/// The generic credential of Windows Credential Manager named `target`, as the C#
+/// `WindowsCredentialManagerProvider` reads it: its password, and its user name for a
+/// profile without one. Read away from the application's thread.
+///
+/// # Errors
+///
+/// [`ProviderFailure::Empty`] when there is no such credential, or its password is empty;
+/// [`ProviderFailure::Launch`] when the store cannot be read, or away from Windows.
+pub async fn from_credential_manager(target: String) -> Result<Provided, ProviderFailure> {
+    let read = tokio::task::spawn_blocking(move || heimdall_keyring::read_generic(&target))
+        .await
+        .map_err(|error| ProviderFailure::Launch(error.to_string()))?;
+    match read {
+        Ok(Some(credential)) => Ok(Provided {
+            password: Secret::new(String::clone(&credential.password)),
+            username: credential.username,
+        }),
+        Ok(None) => Err(ProviderFailure::Empty),
+        Err(error) => Err(ProviderFailure::Launch(error.to_string())),
+    }
+}
+
 /// What the Settings page's Test button found.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ProviderTest {
