@@ -963,3 +963,135 @@ async fn cancelling_the_master_password_at_start_quits() {
         [Effect::Exit]
     ));
 }
+
+/// A wrong master password tried in the dialog shown, its job answered as a wrong one is
+/// without deriving the key; whether it was taken.
+fn wrong_try(app: &mut App) -> bool {
+    let effects = app.update(Message::SubmitVault {
+        password: Secret::new("not the master".to_owned()),
+        new: None,
+        confirm: None,
+    });
+    if effects.is_empty() {
+        return false;
+    }
+    app.update(Message::VaultOpened(Err(VaultProblem::Unreadable)));
+    true
+}
+
+fn locked_out(app: &App) -> bool {
+    matches!(vault_problem(app), Some(VaultProblem::LockedOut { .. }))
+}
+
+#[tokio::test]
+async fn five_wrong_master_passwords_at_start_lock_the_tries_out_even_after_a_restart() {
+    use heimdall_core::lockout::{LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS};
+    use heimdall_core::settings::{SETTINGS_FILE_NAME, Settings};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    unlock(&mut app, MASTER).await;
+    drop(app);
+
+    let mut app = self::app(dir.path(), "a.lab", &system);
+    app.update(Message::ShowVault);
+    for attempt in 1..MAX_FAILED_ATTEMPTS {
+        assert!(wrong_try(&mut app), "try {attempt} taken");
+        assert_eq!(vault_problem(&app), Some(VaultProblem::Unreadable));
+    }
+    let before = std::time::SystemTime::now();
+    assert!(wrong_try(&mut app), "the last one allowed");
+    let Some(VaultProblem::LockedOut { until }) = vault_problem(&app) else {
+        panic!("{:?}", vault_problem(&app));
+    };
+    assert!(until >= before + LOCKOUT_DURATION - std::time::Duration::from_secs(1));
+    assert!(!wrong_try(&mut app), "no try taken while locked out");
+    assert!(locked_out(&app));
+
+    // Quitting does not give the tries back.
+    drop(app);
+    let saved = Settings::load(&dir.path().join(SETTINGS_FILE_NAME)).expect("settings");
+    assert!(saved.vault_unlock.until().is_some());
+    let mut app = self::app(dir.path(), "a.lab", &system);
+    app.update(Message::ShowVault);
+    assert!(!wrong_try(&mut app), "still locked out after a restart");
+    assert!(locked_out(&app));
+}
+
+#[tokio::test]
+async fn a_right_master_password_starts_the_count_again() {
+    use heimdall_core::lockout::MAX_FAILED_ATTEMPTS;
+    use heimdall_core::settings::{SETTINGS_FILE_NAME, Settings};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    unlock(&mut app, MASTER).await;
+    drop(app);
+    let mut app = self::app(dir.path(), "a.lab", &system);
+    app.update(Message::ShowVault);
+    for _ in 1..MAX_FAILED_ATTEMPTS {
+        assert!(wrong_try(&mut app));
+    }
+    let effects = app.update(Message::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        new: None,
+        confirm: None,
+    });
+    run_vault_job(&mut app, effects).await;
+    assert_eq!(app.vault_status(), VaultStatus::Open);
+    let saved = Settings::load(&dir.path().join(SETTINGS_FILE_NAME)).expect("settings");
+    assert_eq!(saved.vault_unlock.failures(), 0);
+}
+
+#[tokio::test]
+async fn the_lock_screen_counts_its_own_tries_for_this_run_only() {
+    use heimdall_core::lockout::MAX_FAILED_ATTEMPTS;
+    use heimdall_core::settings::{SETTINGS_FILE_NAME, Settings};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    unlock(&mut app, MASTER).await;
+    app.update(Message::LockVault);
+    for _ in 0..MAX_FAILED_ATTEMPTS {
+        assert!(wrong_try(&mut app));
+    }
+    assert!(locked_out(&app));
+    assert!(!wrong_try(&mut app));
+    assert!(app.is_locked(), "still the lock screen");
+    // Another setting saved meanwhile writes the start's count, which the lock screen never
+    // touched.
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::TerminalFontSize(16),
+    ));
+    let saved = Settings::load(&dir.path().join(SETTINGS_FILE_NAME)).unwrap_or_default();
+    assert_eq!(
+        (saved.vault_unlock.failures(), saved.vault_unlock.until()),
+        (0, None),
+        "not the start's count"
+    );
+}
+
+#[tokio::test]
+async fn the_wrong_tries_at_start_add_up_across_restarts() {
+    use heimdall_core::lockout::MAX_FAILED_ATTEMPTS;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    unlock(&mut app, MASTER).await;
+    drop(app);
+    let mut app = self::app(dir.path(), "a.lab", &system);
+    app.update(Message::ShowVault);
+    for _ in 1..MAX_FAILED_ATTEMPTS {
+        assert!(wrong_try(&mut app));
+    }
+    drop(app);
+    // Quitting before the last try allowed does not start the count again.
+    let mut app = self::app(dir.path(), "a.lab", &system);
+    app.update(Message::ShowVault);
+    assert!(wrong_try(&mut app));
+    assert!(locked_out(&app));
+}

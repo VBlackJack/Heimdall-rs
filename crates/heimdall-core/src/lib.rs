@@ -20,6 +20,7 @@
 pub mod credentials;
 pub mod folder;
 pub mod import;
+pub mod lockout;
 pub mod paths;
 pub mod profile;
 pub mod settings;

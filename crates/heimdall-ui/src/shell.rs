@@ -710,7 +710,16 @@ impl Shell {
     /// Window events and shortcuts.
     pub fn subscription(&self) -> Subscription<Message> {
         let events = event::listen_with(window_event);
-        if self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
+        // A countdown shown: a tab's next attempt, or the minutes before a master password
+        // is taken again.
+        let locked_out = matches!(
+            &self.app.dialog,
+            Some(Dialog::Vault(VaultDialog {
+                problem: Some(VaultProblem::LockedOut { .. }),
+                ..
+            }))
+        );
+        if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
             Subscription::batch([
                 events,
                 iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick),
@@ -4087,10 +4096,15 @@ fn vault_dialog<'a>(
                 .on_press(Message::App(AppMessage::DismissDialog)),
         );
     }
-    buttons = buttons.push(
-        button(text(action))
-            .on_press_maybe((!dialog.busy && ready).then_some(Message::SubmitVault)),
+    // Locked out, no try is taken until the minutes said are over.
+    let locked_out = matches!(
+        dialog.problem,
+        Some(VaultProblem::LockedOut { until }) if until > std::time::SystemTime::now()
     );
+    buttons = buttons
+        .push(button(text(action)).on_press_maybe(
+            (!dialog.busy && ready && !locked_out).then_some(Message::SubmitVault),
+        ));
     form.push(buttons).into()
 }
 
@@ -4115,6 +4129,10 @@ fn policy_line(password: &str) -> String {
 fn vault_problem(problem: &VaultProblem) -> String {
     match problem {
         VaultProblem::Unreadable => fl!("ui-vault-problem-unreadable"),
+        VaultProblem::LockedOut { until } => fl!(
+            "ui-vault-problem-locked-out",
+            minutes = heimdall_core::lockout::minutes_left(*until, std::time::SystemTime::now())
+        ),
         VaultProblem::Mismatch => fl!("ui-vault-problem-mismatch"),
         VaultProblem::TooShort => {
             fl!("ui-vault-policy-too-short", min = MIN_MASTER_PASSWORD_CHARS)

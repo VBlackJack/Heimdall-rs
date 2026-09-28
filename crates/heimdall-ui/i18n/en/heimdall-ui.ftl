@@ -516,6 +516,7 @@ ui-find-nothing = No match
 ui-settings-terminal = Terminal Appearance
 ui-settings-color-scheme = Color scheme
 ui-settings-appearance = Appearance
+ui-vault-problem-locked-out = Too many incorrect attempts. Try again in { $minutes } minute(s).
 ui-settings-language = Language
 # Each language in its own name, whatever the language shown, as the C# list.
 ui-settings-language-en = English
