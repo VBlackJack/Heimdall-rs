@@ -1036,16 +1036,20 @@ pub enum Dialog {
         /// The name typed so far.
         value: String,
     },
+    /// What an entry of the server is, as the C# Properties dialog shows it.
+    FileProperties(Box<crate::files::FileProperties>),
     /// Delete an entry, a folder with everything in it.
     ConfirmDelete {
         /// Tab.
         tab: TabId,
         /// Pane.
         side: Side,
-        /// The entry's name, made safe.
+        /// The entry's name, made safe; the first one's when several go.
         name: String,
-        /// A folder.
+        /// A folder, or one among them.
         folder: bool,
+        /// How many entries go.
+        count: usize,
     },
     /// Replace an existing file with a transfer.
     ConfirmOverwrite {
@@ -1193,6 +1197,8 @@ pub enum NameAction {
     NewFolder,
     /// A new name for the selected entry.
     Rename,
+    /// New permission bits for the selected entry, typed in octal.
+    Permissions,
 }
 
 /// The application.
@@ -1221,7 +1227,8 @@ pub struct App {
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
-    pending_transfer: Option<PendingTransfer>,
+    /// Transfers waiting, one after the other, for the user to confirm they replace a file.
+    pending_transfers: std::collections::VecDeque<PendingTransfer>,
     pending_operation: Option<PendingOperation>,
     vault: VaultState,
     /// SSH keys trusted for this run only, shared with every connection.
@@ -1274,7 +1281,7 @@ impl App {
             selection: std::collections::BTreeSet::new(),
             notice: None,
             pending_paste: None,
-            pending_transfer: None,
+            pending_transfers: std::collections::VecDeque::new(),
             pending_operation: None,
             vault,
             run_trust: RunTrust::default(),
@@ -1518,7 +1525,7 @@ impl App {
         }
         self.dialog = None;
         self.pending_paste = None;
-        self.pending_transfer = None;
+        self.pending_transfers.clear();
         self.pending_operation = None;
     }
 
@@ -2153,6 +2160,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::FileProperties(_)
                 | Dialog::ImportFailed { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. },

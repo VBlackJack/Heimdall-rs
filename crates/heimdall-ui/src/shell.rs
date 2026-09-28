@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
+    Direction, FilesKey, Side, file_operation, list_local, list_remote, transfer_events,
 };
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::{LocalShell, local_events};
@@ -165,6 +165,10 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
         }
+        // Files dragged from Explorer over the window, and dropped on it.
+        iced::Event::Window(window::Event::FileHovered(_)) => Some(Message::FilesHovered(true)),
+        iced::Event::Window(window::Event::FilesHoveredLeft) => Some(Message::FilesHovered(false)),
+        iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
         iced::Event::Window(window::Event::Unfocused) => {
             Some(Message::App(AppMessage::WindowFocus(false)))
         }
@@ -337,6 +341,10 @@ pub enum Message {
     FinderFind(FindDirection),
     /// Close the terminal's search bar.
     FinderClose,
+    /// Files are dragged over the window, or no longer.
+    FilesHovered(bool),
+    /// A file or folder dropped on the window.
+    FileDropped(std::path::PathBuf),
     /// The transcripts' folder typed in the Settings page.
     LogDirectoryEdited(String),
     /// Apply the folder typed.
@@ -401,6 +409,8 @@ impl fmt::Debug for Message {
             Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
             Self::FinderClose => f.write_str("FinderClose"),
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
+            Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
+            Self::FileDropped(_) => f.write_str("FileDropped(..)"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
         }
     }
@@ -536,6 +546,8 @@ pub struct Shell {
     finder: Option<Finder>,
     /// The transcripts' folder as typed in the Settings page, until applied.
     log_directory: Option<String>,
+    /// Files are dragged over the window.
+    files_hovered: bool,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
     /// search bar's, just opened.
     focus_next: Option<iced::widget::Id>,
@@ -618,6 +630,7 @@ impl Shell {
             finder: None,
             focus_next: None,
             log_directory: None,
+            files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -685,6 +698,7 @@ impl Shell {
         if self.app.is_locked() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
             return Task::none();
         }
+        let message = self.files_click(message);
         self.note_focus(&message);
         let reveal = matches!(
             message,
@@ -758,6 +772,9 @@ impl Shell {
             }
             message @ (Message::LogDirectoryEdited(_) | Message::LogDirectoryApply) => {
                 self.log_directory_message(message)
+            }
+            message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
+                self.drop_message(message)
             }
         };
         let mut tasks: Vec<Task<Message>> =
@@ -1051,6 +1068,22 @@ impl Shell {
         // As in the C# tree: a right click selects the row it is on.
         if let TreeMenu::Profile(id) = &menu {
             let _ = self.app.update(AppMessage::SelectProfile(id.clone()));
+        }
+        // And in the C# Files tab; a folder already selected stays closed.
+        if let TreeMenu::FilesEntry { tab, side, index } = menu {
+            let selected = self
+                .app
+                .tab(tab)
+                .and_then(|found| found.files.as_deref())
+                .and_then(|files| match side {
+                    Side::Remote => files.remote.selected,
+                    Side::Local => files.local.selected,
+                });
+            if selected != Some(index) {
+                let _ =
+                    self.app
+                        .update(AppMessage::Files(FilesMessage::Select { tab, side, index }));
+            }
         }
         self.menu = Some((menu, at));
     }
@@ -1422,6 +1455,9 @@ impl Shell {
                 .on_press(Message::PaletteClose),
             ));
         }
+        if let Some(overlay) = self.drop_overlay() {
+            layers = layers.push(overlay);
+        }
         if let Some((entries, at)) = open_menu {
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
@@ -1443,6 +1479,25 @@ impl Shell {
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+        } else if let TreeMenu::FilesBookmarks(tab) = *menu {
+            let files = self.app.tab(tab)?.files.as_deref()?;
+            let shown: Vec<String> = files
+                .bookmarks
+                .iter()
+                .map(|path| heimdall_app::server_text(&path.display()))
+                .collect();
+            tree_view::files_bookmarks_menu(tab, &shown)
+        } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
+            // Only while the entry is still listed.
+            let files = self.app.tab(tab)?.files.as_deref()?;
+            let listed = match side {
+                Side::Remote => files.remote.entries.len(),
+                Side::Local => files.local.entries.len(),
+            };
+            if index >= listed {
+                return None;
+            }
+            tree_view::files_entry_menu(tab, side, index)
         } else if let TreeMenu::Folder(path) = menu {
             tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
         } else if let TreeMenu::MoveFolder(path) = menu {
@@ -1468,7 +1523,9 @@ impl Shell {
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::Selection
-                | TreeMenu::MoveSelection => None,
+                | TreeMenu::MoveSelection
+                | TreeMenu::FilesEntry { .. }
+                | TreeMenu::FilesBookmarks(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
             let connect_as = profile
@@ -1777,6 +1834,53 @@ impl Shell {
         .into()
     }
 
+    /// The Files tab shown with its session open, the one files dropped on the window go to.
+    fn drop_target(&self) -> Option<TabId> {
+        self.app
+            .active_tab()
+            .filter(|tab| !self.settings_shown() && tab.phase == Phase::Connected)
+            .filter(|tab| {
+                tab.files
+                    .as_ref()
+                    .is_some_and(|files| files.client.is_some())
+            })
+            .map(|tab| tab.id)
+    }
+
+    /// Files dragged over the window, or dropped: sent to the server's folder of the Files
+    /// tab shown, as the C# tab takes what Explorer drops on it.
+    fn drop_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::FilesHovered(over) => {
+                self.files_hovered = over;
+                Vec::new()
+            }
+            Message::FileDropped(path) => {
+                self.files_hovered = false;
+                match self.drop_target() {
+                    Some(tab) => self
+                        .app
+                        .update(AppMessage::Files(FilesMessage::Dropped { tab, path })),
+                    None => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// "Drop files to upload" over the Files tab shown while files are dragged over it.
+    fn drop_overlay(&self) -> Option<Element<'_, Message>> {
+        self.drop_target().filter(|_| self.files_hovered)?;
+        Some(opaque(
+            container(
+                container(text(fl!("ui-files-drop-overlay")).size(HEADING_SIZE))
+                    .padding(PADDING)
+                    .style(container::bordered_box),
+            )
+            .center(Length::Fill),
+        ))
+    }
+
     /// The transcripts' folder typed, or applied.
     fn log_directory_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
@@ -1827,8 +1931,11 @@ impl Shell {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
-            // A tab's menu is the tab bar's: the keyboard stays where it was.
-            Message::OpenTreeMenu(TreeMenu::Tab(_)) => {}
+            // A tab's menu is the tab bar's, an entry's the Files tab's: the keyboard stays
+            // where it was.
+            Message::OpenTreeMenu(
+                TreeMenu::Tab(_) | TreeMenu::FilesEntry { .. } | TreeMenu::FilesBookmarks(_),
+            ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
             | Message::TreeClick(_) => self.tree_focused = true,
@@ -1988,6 +2095,23 @@ impl Shell {
 
     /// A click on profile `id` in the tree, as the C# tree takes it: alone, with Ctrl added or
     /// taken, with Shift all from the last one clicked in the order shown.
+    /// A click on an entry of a Files tab holding Ctrl selects it with the others, holding
+    /// Shift every entry up to it, as in the C# tab.
+    fn files_click(&self, message: Message) -> Message {
+        let Message::App(AppMessage::Files(FilesMessage::Select { tab, side, index })) = message
+        else {
+            return message;
+        };
+        let files = if self.modifiers.command() {
+            FilesMessage::Toggle { tab, side, index }
+        } else if self.modifiers.shift() {
+            FilesMessage::Range { tab, side, index }
+        } else {
+            FilesMessage::Select { tab, side, index }
+        };
+        Message::App(AppMessage::Files(files))
+    }
+
     fn tree_click(&mut self, id: ProfileId) -> Vec<Effect> {
         let message = if self.modifiers.command() {
             SelectionMessage::Toggle(id)
@@ -3281,9 +3405,14 @@ fn profile_form<'a>(
     .into()
 }
 
-/// Asks for a name: Enter in the field confirms, like the button.
+/// Asks for a name, or for permission bits in octal: Enter in the field confirms, like the
+/// button.
 fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
     let (title, confirm) = match action {
+        NameAction::Permissions => (
+            fl!("ui-dialog-permissions-title"),
+            fl!("ui-dialog-permissions-confirm"),
+        ),
         NameAction::NewFolder => (
             fl!("ui-dialog-new-folder-title"),
             fl!("ui-dialog-new-folder-confirm"),
@@ -3293,9 +3422,18 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
             fl!("ui-dialog-rename-confirm"),
         ),
     };
+    let (label, placeholder) = if action == NameAction::Permissions {
+        (
+            Some(text(fl!("ui-dialog-permissions-label"))),
+            fl!("ui-dialog-permissions-placeholder"),
+        )
+    } else {
+        (None, fl!("ui-dialog-name-placeholder"))
+    };
     column![
         text(title).size(HEADING_SIZE),
-        text_input(&fl!("ui-dialog-name-placeholder"), value)
+        column![].push(label),
+        text_input(&placeholder, value)
             .id(name_field_id())
             .on_input(|value| Message::App(AppMessage::Files(FilesMessage::NameEdited(value))))
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
@@ -3810,6 +3948,18 @@ fn vault_problem(problem: &VaultProblem) -> String {
     }
 }
 
+/// What deleting `count` entries of a Files tab asks, the first named `name`; `folder`
+/// when a folder is among them.
+fn delete_question(name: &str, folder: bool, count: usize) -> String {
+    if count > 1 {
+        fl!("ui-dialog-delete-many-body", count = count)
+    } else if folder {
+        fl!("ui-dialog-delete-folder-body", name = name)
+    } else {
+        fl!("ui-dialog-delete-file-body", name = name)
+    }
+}
+
 /// The title, text and action of a question about the whole window: leaving it with
 /// sessions live, broadcasting input to every tab.
 fn window_question(dialog: &Dialog) -> (String, String, String) {
@@ -3886,18 +4036,20 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             fl!("ui-dialog-delete-profile-confirm"),
         )
         .into(),
-        Dialog::ConfirmDelete { name, folder, .. } => question(
+        Dialog::ConfirmDelete {
+            name,
+            folder,
+            count,
+            ..
+        } => question(
             fl!("ui-dialog-delete-title"),
-            if *folder {
-                fl!("ui-dialog-delete-folder-body", name = name.as_str())
-            } else {
-                fl!("ui-dialog-delete-file-body", name = name.as_str())
-            },
+            delete_question(name, *folder, *count),
             fl!("ui-dialog-delete-confirm"),
         )
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ImportFailed { detail: technical } => column![
             heading(fl!("ui-dialog-import-failed-title")),
             detail(technical),
@@ -4076,6 +4228,30 @@ mod tests {
         assert!(!matches!(
             routed("x", Modifiers::CTRL, event::Status::Ignored),
             Some(Message::TreeShortcut(_))
+        ));
+    }
+
+    #[test]
+    fn files_dragged_from_explorer_reach_the_window() {
+        let path = std::path::PathBuf::from("report.pdf");
+        let routed = |event| {
+            window_event(
+                iced::Event::Window(event),
+                event::Status::Ignored,
+                window::Id::unique(),
+            )
+        };
+        assert!(matches!(
+            routed(window::Event::FileHovered(path.clone())),
+            Some(Message::FilesHovered(true))
+        ));
+        assert!(matches!(
+            routed(window::Event::FilesHoveredLeft),
+            Some(Message::FilesHovered(false))
+        ));
+        assert!(matches!(
+            routed(window::Event::FileDropped(path.clone())),
+            Some(Message::FileDropped(dropped)) if dropped == path
         ));
     }
 

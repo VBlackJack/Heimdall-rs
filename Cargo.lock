@@ -2136,6 +2136,8 @@ name = "heimdall-files"
 version = "0.1.0"
 dependencies = [
  "heimdall-sftp",
+ "tempfile",
+ "tokio",
  "tokio-util",
 ]
 

@@ -526,3 +526,67 @@ ui-broadcast-target-tooltip = Send broadcast input to this session (broadcast ta
 ui-dialog-broadcast-title = Broadcast to all tabs?
 ui-dialog-broadcast-body = Input you type will be sent to terminal panes in every open tab, including tabs running in the background. Continue?
 ui-dialog-broadcast-confirm = Broadcast
+
+## The Files tab's path bar, as the C# one.
+ui-files-go-button = Go
+
+## The Files tab's columns, as the C# ones.
+ui-files-column-name = Name
+ui-files-column-size = Size
+ui-files-column-modified = Modified
+ui-files-column-permissions = Permissions
+ui-files-column-owner = Owner
+ui-files-sorted-ascending = { $column } ▲
+ui-files-sorted-descending = { $column } ▼
+
+## The menu of an entry of the Files tab, as the C# one.
+ui-files-menu-open = Open
+ui-files-menu-download = Download
+ui-files-menu-upload = Upload
+ui-files-menu-rename = Rename
+ui-files-menu-delete = Delete
+ui-files-menu-copy-path = Copy path
+ui-files-menu-new-folder = New Folder
+ui-files-menu-refresh = Refresh
+
+## Permissions and properties of a server's entry, as the C# Files tab.
+ui-files-menu-permissions = Change permissions...
+ui-files-menu-properties = Properties
+ui-dialog-permissions-title = Change Permissions
+ui-dialog-permissions-label = Permissions (octal, e.g. 755):
+ui-dialog-permissions-placeholder = 755
+ui-dialog-permissions-confirm = Apply
+ui-files-error-invalid-permissions = Permissions are one to four octal digits, such as 755 or 4755.
+ui-files-properties-title = Properties - { $name }
+ui-files-properties-name = Name:
+ui-files-properties-type = Type:
+ui-files-properties-size = Size:
+ui-files-properties-modified = Modified:
+ui-files-properties-permissions = Permissions:
+ui-files-properties-owner = Owner:
+ui-files-properties-group = Group:
+ui-files-properties-path = Path:
+ui-files-type-file = File
+ui-files-type-directory = Directory
+ui-files-type-link = Symbolic link
+ui-files-type-other = Unknown type
+
+## Several entries of the Files tab selected together, as the C# tab.
+ui-files-selected-count = { $count } selected
+ui-dialog-delete-many-body = Delete { $count } items? Folders are deleted with everything they contain. This cannot be undone.
+
+## Bookmarks of the server's folders, as the C# Files tab.
+ui-files-bookmark-button = Bookmark this path
+ui-files-bookmarks-button = Bookmarks
+ui-files-bookmarks-empty = No bookmarks saved
+ui-files-bookmark-added = Bookmark added: { $path }
+
+## Narrowing a Files pane down, as the C# tab.
+ui-files-filter-placeholder = Filter files...
+ui-files-hidden-toggle = .*
+ui-files-hidden-tooltip = Show hidden files
+ui-files-item-count = { $count } items
+ui-files-item-count-filtered = { $shown }/{ $count } items
+
+## Files dropped from Explorer on a Files tab, as the C# one.
+ui-files-drop-overlay = Drop files to upload

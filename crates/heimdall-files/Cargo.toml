@@ -16,5 +16,10 @@ publish.workspace = true
 heimdall-sftp.workspace = true
 tokio-util.workspace = true
 
+[dev-dependencies]
+tempfile.workspace = true
+# process: OpenSSH's sftp-server run as a child in the tests.
+tokio = { workspace = true, features = ["process"] }
+
 [lints]
 workspace = true

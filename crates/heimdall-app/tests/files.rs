@@ -126,6 +126,9 @@ fn remote_entry(name: &[u8], kind: EntryKind, size: u64) -> RemoteEntry {
         kind,
         size: Some(size),
         modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
     }
 }
 
@@ -447,4 +450,237 @@ async fn a_host_key_question_keeps_the_tab_a_files_tab() {
             if request.purpose == Purpose::Files),
         "{reconnect:?}"
     );
+}
+
+#[tokio::test]
+async fn a_folder_typed_in_the_path_bar_is_listed_from_the_one_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    let go = |app: &mut App, side: Side, text: &str| {
+        files(
+            app,
+            FilesMessage::PathEdited {
+                tab,
+                side,
+                text: text.to_owned(),
+            },
+        );
+        files(app, FilesMessage::GoTo { tab, side })
+    };
+    let remote_path = |effects: &[Effect]| match effects {
+        [Effect::ListRemote { path, .. }] => path.display(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        remote_path(&go(&mut app, Side::Remote, " /var/log ")),
+        "/var/log"
+    );
+    assert_eq!(
+        app.tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .remote
+            .path
+            .display(),
+        "/home/admin",
+        "the folder shown stays until the listing comes back"
+    );
+    assert_eq!(
+        remote_path(&go(&mut app, Side::Remote, "logs")),
+        "/home/admin/logs",
+        "relative to the folder shown"
+    );
+    assert!(
+        files(
+            &mut app,
+            FilesMessage::GoTo {
+                tab,
+                side: Side::Remote
+            }
+        )
+        .is_empty(),
+        "gone to already: nothing typed since"
+    );
+    assert!(
+        go(&mut app, Side::Remote, "   ").is_empty(),
+        "nothing typed"
+    );
+    assert!(go(&mut app, Side::Local, "  ").is_empty(), "nor here");
+
+    let local = go(&mut app, Side::Local, "sub");
+    assert!(
+        matches!(local.as_slice(), [Effect::ListLocal { path, .. }] if *path == dir.path().join("sub")),
+        "{local:?}"
+    );
+    let elsewhere = tempfile::tempdir().expect("dir");
+    let absolute = go(
+        &mut app,
+        Side::Local,
+        &elsewhere.path().display().to_string(),
+    );
+    assert!(
+        matches!(absolute.as_slice(), [Effect::ListLocal { path, .. }] if path == elsewhere.path()),
+        "{absolute:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_header_click_sorts_its_own_pane_only() {
+    use heimdall_app::files::SortColumn;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            remote_entry(b"big", EntryKind::File, 90),
+            remote_entry(b"small", EntryKind::File, 1),
+        ],
+    );
+    let sort = |app: &mut App, side, column| {
+        files(app, FilesMessage::SortBy { tab, side, column });
+    };
+    let remote = |app: &App| {
+        let files = app.tab(tab).expect("tab").files.as_ref().expect("files");
+        files
+            .remote
+            .entries
+            .iter()
+            .map(|entry| entry.label.clone())
+            .collect::<Vec<_>>()
+    };
+    sort(&mut app, Side::Remote, SortColumn::Size);
+    assert_eq!(remote(&app), ["small", "big"]);
+    sort(&mut app, Side::Remote, SortColumn::Size);
+    assert_eq!(remote(&app), ["big", "small"], "the other way");
+    sort(&mut app, Side::Local, SortColumn::Size);
+    assert_eq!(
+        remote(&app),
+        ["big", "small"],
+        "the other pane's sort is its own"
+    );
+    let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(files_pane.local.sort.column, SortColumn::Size);
+    assert!(files_pane.remote.sort.descending);
+}
+
+#[tokio::test]
+async fn copy_path_copies_the_selected_entry_whole_and_says_so() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![remote_entry(b"run.sh", EntryKind::File, 1)],
+    );
+    let copy = |app: &mut App, side| files(app, FilesMessage::CopyPath { tab, side });
+    assert!(copy(&mut app, Side::Remote).is_empty(), "nothing selected");
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    let effects = copy(&mut app, Side::Remote);
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == "/srv/run.sh"),
+        "{effects:?}"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Copied("/srv/run.sh".to_owned()))
+    );
+
+    files(
+        &mut app,
+        FilesMessage::LocalListed {
+            tab,
+            result: Ok((
+                dir.path().to_owned(),
+                vec![local_entry("notes.md", EntryKind::File)],
+            )),
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Local,
+            index: 0,
+        },
+    );
+    let local = dir.path().join("notes.md").display().to_string();
+    let effects = copy(&mut app, Side::Local);
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if *text == local),
+        "{effects:?}"
+    );
+}
+
+#[tokio::test]
+async fn the_servers_folder_is_bookmarked_once_and_gone_back_to() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let bookmarks = |app: &App| {
+        app.tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .bookmarks
+            .iter()
+            .map(RemotePath::display)
+            .collect::<Vec<_>>()
+    };
+    assert!(files(&mut app, FilesMessage::OpenBookmark { tab, index: 0 }).is_empty());
+    listed_remote(&mut app, tab, "/var/log", Vec::new());
+    files(&mut app, FilesMessage::Bookmark { tab });
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Bookmarked("/var/log".to_owned()))
+    );
+    files(&mut app, FilesMessage::Bookmark { tab });
+    listed_remote(&mut app, tab, "/etc", Vec::new());
+    files(&mut app, FilesMessage::Bookmark { tab });
+    assert_eq!(bookmarks(&app), ["/var/log", "/etc"], "once each, in order");
+    files(
+        &mut app,
+        FilesMessage::Refresh {
+            tab,
+            side: Side::Local,
+        },
+    );
+    let back = files(&mut app, FilesMessage::OpenBookmark { tab, index: 0 });
+    let shown = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(
+        shown.remote.path.display(),
+        "/etc",
+        "until the listing comes back"
+    );
+    assert_eq!(
+        shown.focus,
+        Side::Remote,
+        "the keys go to the server's pane"
+    );
+    assert!(
+        matches!(back.as_slice(), [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/var/log"),
+        "{back:?}"
+    );
+    assert!(files(&mut app, FilesMessage::OpenBookmark { tab, index: 2 }).is_empty());
 }

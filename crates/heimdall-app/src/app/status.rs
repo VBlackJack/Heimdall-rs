@@ -53,6 +53,8 @@ pub enum Notice {
     TranscriptStopped,
     /// A transcript could not be written, for this reason, and stopped.
     TranscriptFailed(String),
+    /// The server's folder at this path was bookmarked.
+    Bookmarked(String),
     /// Broadcast input is on, reaching this scope.
     BroadcastOn(BroadcastScope),
     /// Broadcast input is off.

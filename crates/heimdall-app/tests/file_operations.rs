@@ -101,6 +101,9 @@ async fn tab(dir: &Path) -> (App, TabId) {
         kind,
         size: Some(4096),
         modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
     };
     let local = |name: &str, kind| LocalEntry {
         name: name.into(),
@@ -794,4 +797,383 @@ async fn a_folder_with_a_link_ends_incomplete() {
         std::fs::read(dir.path().join("copy").join("kept")).expect("copied"),
         b"kept"
     );
+}
+
+#[tokio::test]
+async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![RemoteEntry {
+                    name: b"run.sh".to_vec(),
+                    label: "run.sh".to_owned(),
+                    kind: EntryKind::File,
+                    size: Some(1),
+                    modified: None,
+                    permissions: Some(0o755),
+                    owner: Some(1000),
+                    group: Some(50),
+                }],
+            )),
+        },
+    );
+    let ask = |app: &mut App, side| files(app, FilesMessage::AskPermissions { tab, side });
+    assert!(ask(&mut app, Side::Remote).is_empty());
+    assert_eq!(app.dialog, None, "nothing selected");
+    select(&mut app, tab, Side::Remote, 0);
+    ask(&mut app, Side::Remote);
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::AskName { action: NameAction::Permissions, value, .. }) if value == "755"
+    ));
+    files(&mut app, FilesMessage::NameEdited(" 4750 ".to_owned()));
+    match operation(&app.update(Message::ConfirmDialog)) {
+        FileOperation::RemoteSetPermissions { path, mode, .. } => {
+            assert_eq!(path.as_bytes(), b"/srv/run.sh");
+            assert_eq!(mode, 0o4750);
+        }
+        other => panic!("{other:?}"),
+    }
+
+    ask(&mut app, Side::Remote);
+    files(&mut app, FilesMessage::NameEdited("rwx".to_owned()));
+    assert!(app.update(Message::ConfirmDialog).is_empty());
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::InvalidPermissions)
+    );
+
+    // Not on this computer's side, as in the C# tab.
+    select(&mut app, tab, Side::Local, 1);
+    ask(&mut app, Side::Local);
+    assert_eq!(app.dialog, None);
+}
+
+#[tokio::test]
+async fn a_servers_entry_shows_its_properties() {
+    use heimdall_app::files::FileProperties;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let show = |app: &mut App, side| files(app, FilesMessage::ShowProperties { tab, side });
+    show(&mut app, Side::Remote);
+    assert_eq!(app.dialog, None, "nothing selected");
+    select(&mut app, tab, Side::Remote, 1);
+    show(&mut app, Side::Remote);
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::FileProperties(Box::new(FileProperties {
+            name: "a.txt".to_owned(),
+            kind: EntryKind::File,
+            size: Some(4096),
+            modified: None,
+            permissions: None,
+            owner: None,
+            group: None,
+            path: "/srv/a.txt".to_owned(),
+        })))
+    );
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.dialog, None, "Enter closes it");
+    select(&mut app, tab, Side::Local, 1);
+    show(&mut app, Side::Local);
+    assert_eq!(app.dialog, None, "the server's entries only");
+}
+
+#[test]
+fn octal_permissions_are_one_to_four_octal_digits() {
+    use heimdall_app::files::octal_mode;
+
+    assert_eq!(octal_mode("755"), Ok(0o755));
+    assert_eq!(octal_mode(" 0644 "), Ok(0o644));
+    assert_eq!(octal_mode("7"), Ok(0o7));
+    assert_eq!(octal_mode("1777"), Ok(0o1777));
+    for refused in [
+        "", "  ", "8", "759", "12345", "rwx", "-755", "+755", "0x1ff",
+    ] {
+        assert_eq!(
+            octal_mode(refused),
+            Err(FilesError::InvalidPermissions),
+            "{refused:?}"
+        );
+    }
+}
+
+fn toggle(app: &mut App, tab: TabId, side: Side, index: usize) {
+    files(app, FilesMessage::Toggle { tab, side, index });
+}
+
+#[tokio::test]
+async fn entries_selected_together_go_together() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // Server: logs/, a.txt.
+    toggle(&mut app, tab, Side::Remote, 0);
+    toggle(&mut app, tab, Side::Remote, 1);
+    let effects = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    );
+    let sent: Vec<&[u8]> = effects
+        .iter()
+        .filter_map(|effect| match effect {
+            Effect::Transfer { request, .. } => Some(request.remote.as_bytes()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, [&b"/srv/logs"[..], b"/srv/a.txt"]);
+
+    // Renaming is for one entry.
+    files(
+        &mut app,
+        FilesMessage::AskRename {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert_eq!(app.dialog, None);
+
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete { count: 2, folder: true, name, .. }) if name == "logs"
+    ));
+    let removed: Vec<Vec<u8>> = app
+        .update(Message::ConfirmDialog)
+        .iter()
+        .map(|effect| match effect {
+            Effect::FileOperation { operation, .. } => match &**operation {
+                FileOperation::RemoteRemove { path, .. } => path.as_bytes().to_vec(),
+                other => panic!("{other:?}"),
+            },
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(removed, [b"/srv/logs".to_vec(), b"/srv/a.txt".to_vec()]);
+
+    files(
+        &mut app,
+        FilesMessage::AskPermissions {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    files(&mut app, FilesMessage::NameEdited("700".to_owned()));
+    let changed = app.update(Message::ConfirmDialog);
+    assert_eq!(changed.len(), 2, "both, the same bits");
+
+    // A plain click leaves one selected.
+    select(&mut app, tab, Side::Remote, 1);
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDelete {
+            count: 1,
+            folder: false,
+            ..
+        })
+    ));
+}
+
+#[tokio::test]
+async fn replacements_are_asked_one_after_the_other_and_cancel_drops_the_rest() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // Both local entries (docs/, b.txt) exist on the server too.
+    let remote = |name: &str, kind| RemoteEntry {
+        name: name.as_bytes().to_vec(),
+        label: name.to_owned(),
+        kind,
+        size: Some(1),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+    };
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![
+                    remote("docs", EntryKind::Directory),
+                    remote("b.txt", EntryKind::File),
+                ],
+            )),
+        },
+    );
+    let asked = |app: &App| match &app.dialog {
+        Some(Dialog::ConfirmOverwrite { name, .. }) => Some(name.clone()),
+        _ => None,
+    };
+    toggle(&mut app, tab, Side::Local, 0);
+    toggle(&mut app, tab, Side::Local, 1);
+    let started = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert!(
+        started.is_empty(),
+        "each would replace: none starts before asking"
+    );
+    assert_eq!(asked(&app).as_deref(), Some("docs"));
+    let first = app.update(Message::ConfirmDialog);
+    assert!(matches!(first.as_slice(), [Effect::Transfer { request, .. }] if request.replace));
+    assert_eq!(asked(&app).as_deref(), Some("b.txt"), "then the next");
+    app.update(Message::DismissDialog);
+    assert_eq!(asked(&app), None);
+    assert!(
+        app.update(Message::ConfirmDialog).is_empty(),
+        "nothing left waiting"
+    );
+    // Nor asked again with the next transfer, which replaces nothing.
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv"), Vec::new())),
+        },
+    );
+    select(&mut app, tab, Side::Local, 1);
+    let next = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert!(matches!(next.as_slice(), [Effect::Transfer { .. }]));
+    assert_eq!(asked(&app), None, "the one cancelled is not asked again");
+}
+
+#[tokio::test]
+async fn an_upload_over_a_hidden_or_filtered_name_is_still_asked_about() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // The server holds b.txt, filtered out of sight.
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![RemoteEntry {
+                    name: b"b.txt".to_vec(),
+                    label: "b.txt".to_owned(),
+                    kind: EntryKind::File,
+                    size: Some(1),
+                    modified: None,
+                    permissions: None,
+                    owner: None,
+                    group: None,
+                }],
+            )),
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::Filter {
+            tab,
+            side: Side::Remote,
+            text: "nothing".to_owned(),
+        },
+    );
+    select(&mut app, tab, Side::Local, 1);
+    let started = files(
+        &mut app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Upload,
+        },
+    );
+    assert!(started.is_empty(), "asked first");
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmOverwrite { name, .. }) if name == "b.txt"
+    ));
+}
+
+#[tokio::test]
+async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let outside = tempfile::tempdir().expect("dir");
+    let file = outside.path().join("report.pdf");
+    std::fs::write(&file, b"12345").expect("written");
+    let folder = outside.path().join("photos");
+    std::fs::create_dir(&folder).expect("folder");
+    let drop = |app: &mut App, path: &Path| {
+        files(
+            app,
+            FilesMessage::Dropped {
+                tab,
+                path: path.to_owned(),
+            },
+        )
+    };
+    let sent = drop(&mut app, &file);
+    assert!(
+        matches!(sent.as_slice(), [Effect::Transfer { request, .. }]
+            if request.remote.as_bytes() == b"/srv/report.pdf"
+                && request.local == file
+                && !request.folder
+                && !request.replace),
+        "{sent:?}"
+    );
+    let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(files_pane.transfers.last().map(|t| t.total), Some(Some(5)));
+
+    let sent = drop(&mut app, &folder);
+    assert!(
+        matches!(sent.as_slice(), [Effect::Transfer { request, .. }] if request.folder),
+        "{sent:?}"
+    );
+    assert!(
+        drop(&mut app, &outside.path().join("gone")).is_empty(),
+        "nothing there"
+    );
+    let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert!(matches!(
+        files_pane.transfers.last().map(|t| &t.state),
+        Some(heimdall_app::files::TransferState::Failed(
+            FilesError::NotAFile
+        ))
+    ));
+
+    // A name the server's folder lists already: asked first.
+    let taken = outside.path().join("a.txt");
+    std::fs::write(&taken, b"x").expect("written");
+    assert!(drop(&mut app, &taken).is_empty());
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmOverwrite { name, .. }) if name == "a.txt"
+    ));
+    assert!(matches!(
+        app.update(Message::ConfirmDialog).as_slice(),
+        [Effect::Transfer { request, .. }] if request.replace
+    ));
 }

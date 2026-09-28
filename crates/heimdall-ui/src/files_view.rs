@@ -24,18 +24,27 @@
 //! pane, F2 renames, Delete deletes and F5 lists again. Tab and Enter reach the tab through
 //! the window, as they act on a dialog first.
 
+use std::collections::BTreeSet;
+use std::time::SystemTime;
+
 use heimdall_app::files::{
-    Direction, EntryKind, FilesError, FilesKey, FilesPane, Side, Transfer, TransferState,
+    Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
+    SortColumn, Transfer, TransferState, symbolic_mode,
 };
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
+use heimdall_core::utc::UtcTime;
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
-use iced::widget::{Column, button, column, container, row, scrollable, text};
+use iced::widget::{
+    Column, button, column, container, mouse_area, responsive, row, scrollable, text, text_input,
+    tooltip,
+};
 use iced::{Alignment, Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::texts;
+use crate::tree_view::TreeMenu;
 
 /// Gap between elements, in logical pixels.
 const SPACING: f32 = 8.0;
@@ -51,6 +60,30 @@ const TITLE_SIZE: f32 = 16.0;
 
 /// Width of the size column, in logical pixels.
 const SIZE_WIDTH: f32 = 90.0;
+
+/// Width of the modification time column, in logical pixels.
+const MODIFIED_WIDTH: f32 = 130.0;
+
+/// Width of the permissions column, in logical pixels.
+const PERMISSIONS_WIDTH: f32 = 90.0;
+
+/// Width of the owner column, in logical pixels.
+const OWNER_WIDTH: f32 = 55.0;
+
+/// Width of a Properties dialog's labels, in logical pixels.
+const PROPERTY_LABEL_WIDTH: f32 = 100.0;
+
+/// The columns of the server's pane, as the C# Files tab's.
+const REMOTE_COLUMNS: &[SortColumn] = &[
+    SortColumn::Name,
+    SortColumn::Size,
+    SortColumn::Modified,
+    SortColumn::Permissions,
+    SortColumn::Owner,
+];
+
+/// The columns of this computer's pane.
+const LOCAL_COLUMNS: &[SortColumn] = &[SortColumn::Name, SortColumn::Size, SortColumn::Modified];
 
 /// Tallest the transfer list grows before it scrolls, in logical pixels.
 const TRANSFERS_HEIGHT: f32 = 160.0;
@@ -102,96 +135,372 @@ fn files(message: FilesMessage) -> Message {
     Message::App(AppMessage::Files(message))
 }
 
-/// One row of a pane.
-struct Row<'a> {
-    label: &'a str,
-    kind: EntryKind,
-    size: Option<u64>,
+/// Narrowest a name is left before a column gives way, in logical pixels.
+const NAME_MIN_WIDTH: f32 = 160.0;
+
+/// The first of `columns` that fit in `width` beside a name at least
+/// [`NAME_MIN_WIDTH`] wide: the last ones give way first, the name and the size never.
+fn fitting_columns(columns: &[SortColumn], width: f32) -> Vec<SortColumn> {
+    let mut shown = columns.to_vec();
+    let needed = |shown: &[SortColumn]| {
+        shown
+            .iter()
+            .map(|column| match column_width(*column) {
+                Length::Fixed(fixed) => fixed + SPACING,
+                _ => NAME_MIN_WIDTH,
+            })
+            .sum::<f32>()
+    };
+    while shown.len() > 2 && needed(&shown) > width {
+        shown.pop();
+    }
+    shown
 }
 
-fn entry_row<'a>(entry: &Row<'a>, selected: bool, on_press: Message) -> Element<'a, Message> {
-    let mark = match entry.kind {
-        EntryKind::Directory => FOLDER_MARK,
-        EntryKind::Link => LINK_MARK,
-        EntryKind::File | EntryKind::Other => "",
+/// The width of `column`.
+fn column_width(column: SortColumn) -> Length {
+    match column {
+        SortColumn::Name => Length::Fill,
+        SortColumn::Size => Length::Fixed(SIZE_WIDTH),
+        SortColumn::Modified => Length::Fixed(MODIFIED_WIDTH),
+        SortColumn::Permissions => Length::Fixed(PERMISSIONS_WIDTH),
+        SortColumn::Owner => Length::Fixed(OWNER_WIDTH),
+    }
+}
+
+/// What an entry of the server is, as the C# Properties dialog shows it, with `ok` to
+/// close it.
+pub fn properties<'a>(
+    properties: &FileProperties,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let kind = match properties.kind {
+        EntryKind::File => fl!("ui-files-type-file"),
+        EntryKind::Directory => fl!("ui-files-type-directory"),
+        EntryKind::Link => fl!("ui-files-type-link"),
+        EntryKind::Other => fl!("ui-files-type-other"),
     };
-    let size = match (entry.kind, entry.size) {
-        (EntryKind::File, Some(bytes)) => texts::size(bytes),
-        _ => String::new(),
-    };
-    button(
-        row![
-            text(format!("{}{mark}", entry.label)).width(Length::Fill),
-            text(size)
-                .size(SMALL_SIZE)
-                .width(SIZE_WIDTH)
-                .align_x(iced::alignment::Horizontal::Right),
-        ]
-        .spacing(SPACING),
+    let number = |value: Option<u32>| value.map(|n| n.to_string()).unwrap_or_default();
+    let lines = [
+        (fl!("ui-files-properties-name"), properties.name.clone()),
+        (fl!("ui-files-properties-type"), kind),
+        (
+            fl!("ui-files-properties-size"),
+            properties.size.map(texts::size).unwrap_or_default(),
+        ),
+        (
+            fl!("ui-files-properties-modified"),
+            properties.modified.map(modified_text).unwrap_or_default(),
+        ),
+        (
+            fl!("ui-files-properties-permissions"),
+            properties
+                .permissions
+                .map(|mode| format!("{} ({mode:o})", symbolic_mode(mode)))
+                .unwrap_or_default(),
+        ),
+        (fl!("ui-files-properties-owner"), number(properties.owner)),
+        (fl!("ui-files-properties-group"), number(properties.group)),
+        (fl!("ui-files-properties-path"), properties.path.clone()),
+    ];
+    let mut content = column![
+        text(fl!(
+            "ui-files-properties-title",
+            name = properties.name.as_str()
+        ))
+        .size(TITLE_SIZE)
+    ]
+    .spacing(SPACING);
+    for (label, value) in lines {
+        content = content.push(
+            row![
+                text(label).size(SMALL_SIZE).width(PROPERTY_LABEL_WIDTH),
+                text(value)
+            ]
+            .spacing(SPACING),
+        );
+    }
+    content.push(ok).into()
+}
+
+/// `time` as the C# column shows it, `2026-09-27 21:05`, in UTC.
+fn modified_text(time: SystemTime) -> String {
+    let at = UtcTime::of(time);
+    format!(
+        "{:04}-{:02}-{:02} {:02}:{:02}",
+        at.year, at.month, at.day, at.hour, at.minute
     )
-    .width(Length::Fill)
-    .style(if selected {
-        button::primary
-    } else {
-        button::text
-    })
-    .on_press(on_press)
-    .into()
 }
 
-#[allow(
-    clippy::too_many_arguments,
-    reason = "a pane is drawn from its parts, shared by both sides"
-)]
-fn pane<'a>(
+/// What `entry` shows in `column`.
+fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
+    match column {
+        SortColumn::Name => {
+            let mark = match entry.kind() {
+                EntryKind::Directory => FOLDER_MARK,
+                EntryKind::Link => LINK_MARK,
+                EntryKind::File | EntryKind::Other => "",
+            };
+            format!("{}{mark}", entry.label())
+        }
+        SortColumn::Size => match (entry.kind(), entry.size()) {
+            (EntryKind::File, Some(bytes)) => texts::size(bytes),
+            _ => String::new(),
+        },
+        SortColumn::Modified => entry.modified().map(modified_text).unwrap_or_default(),
+        SortColumn::Permissions => entry.permissions().map(symbolic_mode).unwrap_or_default(),
+        SortColumn::Owner => entry.owner().map(|uid| uid.to_string()).unwrap_or_default(),
+    }
+}
+
+/// The header of `column`, marked when the pane is sorted by it.
+fn column_title(column: SortColumn, sort: Sort) -> String {
+    let title = match column {
+        SortColumn::Name => fl!("ui-files-column-name"),
+        SortColumn::Size => fl!("ui-files-column-size"),
+        SortColumn::Modified => fl!("ui-files-column-modified"),
+        SortColumn::Permissions => fl!("ui-files-column-permissions"),
+        SortColumn::Owner => fl!("ui-files-column-owner"),
+    };
+    match (sort.column == column, sort.descending) {
+        (false, _) => title,
+        (true, false) => fl!("ui-files-sorted-ascending", column = title),
+        (true, true) => fl!("ui-files-sorted-descending", column = title),
+    }
+}
+
+/// The headers of `columns`, a click sorting by one.
+fn headers<'a>(tab: TabId, side: Side, columns: &[SortColumn], sort: Sort) -> Element<'a, Message> {
+    let mut line = row![].spacing(SPACING);
+    for column in columns {
+        line = line.push(
+            button(text(column_title(*column, sort)).size(SMALL_SIZE))
+                .style(button::text)
+                .padding(0)
+                .width(column_width(*column))
+                .on_press(files(FilesMessage::SortBy {
+                    tab,
+                    side,
+                    column: *column,
+                })),
+        );
+    }
+    line.into()
+}
+
+fn entry_row<'a, E: Listed>(
+    entry: &E,
+    columns: &[SortColumn],
+    selected: bool,
+    (tab, side, index): (TabId, Side, usize),
+) -> Element<'a, Message> {
+    let on_press = files(FilesMessage::Select { tab, side, index });
+    let mut cells = row![].spacing(SPACING);
+    for column in columns {
+        let cell = text(cell_text(entry, *column)).width(column_width(*column));
+        cells = cells.push(if *column == SortColumn::Name {
+            cell
+        } else {
+            cell.size(SMALL_SIZE)
+        });
+    }
+    let line = button(cells)
+        .width(Length::Fill)
+        .style(if selected {
+            button::primary
+        } else {
+            button::text
+        })
+        .on_press(on_press);
+    // A right click opens its menu, as in the C# Files tab.
+    mouse_area(line)
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab,
+            side,
+            index,
+        }))
+        .into()
+}
+
+/// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
+/// bookmarks, as in the C# tab. The row wraps: a narrow pane keeps every button whole.
+fn pane_tools<'a>(
     tab: TabId,
     side: Side,
-    title: String,
-    location: String,
-    rows: &[Row<'a>],
     selected: Option<usize>,
-    loading: bool,
-    error: Option<&FilesError>,
-    focused: bool,
+    chosen: usize,
 ) -> Element<'a, Message> {
-    let tools = row![
+    let mut tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::AskNewFolder { tab, side })),
         button(text(fl!("ui-files-rename-button")).size(SMALL_SIZE))
             .style(button::secondary)
-            .on_press_maybe(selected.map(|_| files(FilesMessage::AskRename { tab, side }))),
+            // One entry at a time, as in the C# tab.
+            .on_press_maybe((chosen == 1).then(|| files(FilesMessage::AskRename { tab, side })),),
         button(text(fl!("ui-files-delete-button")).size(SMALL_SIZE))
             .style(button::danger)
             .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
     ]
     .spacing(SPACING);
+    // The server's folders only, as in the C# tab.
+    if side == Side::Remote {
+        tools = tools
+            .push(
+                button(text(fl!("ui-files-bookmark-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(files(FilesMessage::Bookmark { tab })),
+            )
+            .push(
+                button(text(fl!("ui-files-bookmarks-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
+            );
+    }
+    tools.wrap().vertical_spacing(SPACING).into()
+}
+
+/// The C# filter and hidden-files toggle of a pane, lit while hidden names show.
+fn pane_narrowing<'a>(
+    tab: TabId,
+    side: Side,
+    filter: &str,
+    show_hidden: bool,
+) -> iced::widget::Row<'a, Message> {
+    row![
+        text_input(&fl!("ui-files-filter-placeholder"), filter)
+            .size(SMALL_SIZE)
+            .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
+            .width(Length::Fill),
+        tooltip(
+            button(text(fl!("ui-files-hidden-toggle")).size(SMALL_SIZE))
+                .style(if show_hidden {
+                    button::primary
+                } else {
+                    button::secondary
+                })
+                .on_press(files(FilesMessage::ToggleHidden { tab, side })),
+            text(fl!("ui-files-hidden-tooltip")).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center)
+}
+
+/// A pane's title, how many entries it lists and shows as the C# tab counts them, and how
+/// many are selected past one.
+fn pane_heading<'a>(
+    title: String,
+    shown: usize,
+    total: usize,
+    chosen: usize,
+) -> iced::widget::Row<'a, Message> {
+    let count = if shown == total {
+        fl!("ui-files-item-count", count = total)
+    } else {
+        fl!("ui-files-item-count-filtered", shown = shown, count = total)
+    };
+    let mut heading = row![text(title).size(TITLE_SIZE), text(count).size(SMALL_SIZE)]
+        .spacing(SPACING)
+        .align_y(Alignment::Center);
+    if chosen > 1 {
+        heading =
+            heading.push(text(fl!("ui-files-selected-count", count = chosen)).size(SMALL_SIZE));
+    }
+    heading
+}
+
+/// What a pane is drawn from, shared by both sides.
+struct PaneParts<'p, E> {
+    tab: TabId,
+    side: Side,
+    title: String,
+    location: String,
+    typed: Option<&'p str>,
+    entries: &'p [E],
+    columns: &'p [SortColumn],
+    sort: Sort,
+    selected: Option<usize>,
+    marked: &'p BTreeSet<usize>,
+    filter: &'p str,
+    show_hidden: bool,
+    total: usize,
+    loading: bool,
+    error: Option<&'p FilesError>,
+    focused: bool,
+}
+
+fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
+    let PaneParts {
+        tab,
+        side,
+        title,
+        location,
+        typed,
+        entries,
+        columns,
+        sort,
+        selected,
+        marked,
+        filter,
+        show_hidden,
+        total,
+        loading,
+        error,
+        focused,
+    } = parts;
+    let chosen = marked.len() + usize::from(selected.is_some());
+    let tools = pane_tools(tab, side, selected, chosen);
     let header = row![
         button(text(fl!("ui-files-up-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::Up { tab, side })),
-        text(location).size(SMALL_SIZE).width(Length::Fill),
+        // The folder shown, typed over to go elsewhere, as the C# path bar.
+        text_input(&location, typed.unwrap_or(&location))
+            .size(SMALL_SIZE)
+            .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
+            .on_submit(files(FilesMessage::GoTo { tab, side }))
+            .width(Length::Fill),
+        button(text(fl!("ui-files-go-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press_maybe(typed.map(|_| files(FilesMessage::GoTo { tab, side }))),
         button(text(fl!("ui-files-refresh-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::Refresh { tab, side })),
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
-    let mut list = Column::new().spacing(2.0);
-    if loading {
-        list = list.push(text(fl!("ui-files-loading")).size(SMALL_SIZE));
-    } else if rows.is_empty() && error.is_none() {
-        list = list.push(text(fl!("ui-files-empty")).size(SMALL_SIZE));
-    }
-    for (index, entry) in rows.iter().enumerate() {
-        let on_press = files(FilesMessage::Select { tab, side, index });
-        list = list.push(entry_row(entry, selected == Some(index), on_press));
-    }
-    let mut content = column![text(title).size(TITLE_SIZE), header, tools].spacing(SPACING);
+    let narrowing = pane_narrowing(tab, side, filter, show_hidden);
+    let failed = error.is_some();
+    // The columns that fit beside a name still readable, laid out for the pane's width.
+    let listing = responsive(move |size| {
+        let shown = fitting_columns(columns, size.width);
+        let mut list = Column::new().spacing(2.0);
+        if loading {
+            list = list.push(text(fl!("ui-files-loading")).size(SMALL_SIZE));
+        } else if entries.is_empty() && !failed {
+            list = list.push(text(fl!("ui-files-empty")).size(SMALL_SIZE));
+        }
+        for (index, entry) in entries.iter().enumerate() {
+            let place = (tab, side, index);
+            let picked = selected == Some(index) || marked.contains(&index);
+            list = list.push(entry_row(entry, &shown, picked, place));
+        }
+        column![
+            headers(tab, side, &shown, sort),
+            scrollable(list).id(list_id(side)).height(Length::Fill)
+        ]
+        .spacing(SPACING)
+        .into()
+    });
+    let heading = pane_heading(title, entries.len(), total, chosen);
+    let mut content = column![heading, header, tools, narrowing].spacing(SPACING);
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
     }
-    container(content.push(scrollable(list).id(list_id(side)).height(Length::Fill)))
+    container(content.push(listing))
         .padding(PADDING)
         .width(Length::FillPortion(1))
         .height(Length::Fill)
@@ -256,48 +565,44 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
 /// The Files tab.
 #[must_use]
 pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
-    let local_rows: Vec<Row<'_>> = files_pane
-        .local
-        .entries
-        .iter()
-        .map(|entry| Row {
-            label: &entry.label,
-            kind: entry.kind,
-            size: entry.size,
-        })
-        .collect();
-    let remote_rows: Vec<Row<'_>> = files_pane
-        .remote
-        .entries
-        .iter()
-        .map(|entry| Row {
-            label: &entry.label,
-            kind: entry.kind,
-            size: entry.size,
-        })
-        .collect();
-    let local = pane(
+    let local_location = files_pane.local.path.display().to_string();
+    let remote_location = files_pane.remote.path.display();
+    let local = pane(PaneParts {
         tab,
-        Side::Local,
-        fl!("ui-files-local-title"),
-        files_pane.local.path.display().to_string(),
-        &local_rows,
-        files_pane.local.selected,
-        files_pane.local.loading,
-        files_pane.local.error.as_ref(),
-        files_pane.focus == Side::Local,
-    );
-    let remote = pane(
+        side: Side::Local,
+        title: fl!("ui-files-local-title"),
+        location: local_location,
+        typed: files_pane.local.typed.as_deref(),
+        entries: &files_pane.local.entries,
+        columns: LOCAL_COLUMNS,
+        sort: files_pane.local.sort,
+        selected: files_pane.local.selected,
+        marked: &files_pane.local.marked,
+        filter: &files_pane.local.filter,
+        show_hidden: files_pane.local.show_hidden,
+        total: files_pane.local.listing.len(),
+        loading: files_pane.local.loading,
+        error: files_pane.local.error.as_ref(),
+        focused: files_pane.focus == Side::Local,
+    });
+    let remote = pane(PaneParts {
         tab,
-        Side::Remote,
-        fl!("ui-files-remote-title"),
-        files_pane.remote.path.display(),
-        &remote_rows,
-        files_pane.remote.selected,
-        files_pane.remote.loading,
-        files_pane.remote.error.as_ref(),
-        files_pane.focus == Side::Remote,
-    );
+        side: Side::Remote,
+        title: fl!("ui-files-remote-title"),
+        location: remote_location,
+        typed: files_pane.remote.typed.as_deref(),
+        entries: &files_pane.remote.entries,
+        columns: REMOTE_COLUMNS,
+        sort: files_pane.remote.sort,
+        selected: files_pane.remote.selected,
+        marked: &files_pane.remote.marked,
+        filter: &files_pane.remote.filter,
+        show_hidden: files_pane.remote.show_hidden,
+        total: files_pane.remote.listing.len(),
+        loading: files_pane.remote.loading,
+        error: files_pane.remote.error.as_ref(),
+        focused: files_pane.focus == Side::Remote,
+    });
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();
     let actions = column![
@@ -341,6 +646,24 @@ mod tests {
 
     fn named(key: Named) -> keyboard::Key {
         keyboard::Key::Named(key)
+    }
+
+    #[test]
+    fn the_last_columns_give_way_to_a_readable_name_but_never_the_size() {
+        use SortColumn::{Modified, Name, Permissions, Size};
+        assert_eq!(fitting_columns(REMOTE_COLUMNS, 2000.0), REMOTE_COLUMNS);
+        // Name 160 + size 98 + modified 138 + permissions 98 + owner 63 = 557.
+        assert_eq!(fitting_columns(REMOTE_COLUMNS, 557.0), REMOTE_COLUMNS);
+        assert_eq!(
+            fitting_columns(REMOTE_COLUMNS, 556.0),
+            [Name, Size, Modified, Permissions]
+        );
+        assert_eq!(fitting_columns(REMOTE_COLUMNS, 300.0), [Name, Size]);
+        assert_eq!(
+            fitting_columns(REMOTE_COLUMNS, 10.0),
+            [Name, Size],
+            "never fewer"
+        );
     }
 
     #[test]
