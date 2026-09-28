@@ -23,7 +23,7 @@ use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
-use heimdall_core::profile::display_address;
+use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
 use heimdall_ssh::AuthMethod;
@@ -185,6 +185,16 @@ pub fn draft_error(error: DraftError) -> String {
         DraftError::UsernameForPassword => fl!("ui-profile-error-username-for-password"),
         DraftError::UsernameMissing => fl!("ui-profile-error-username-missing"),
         DraftError::DomainInvalid => fl!("ui-profile-error-domain-invalid"),
+        DraftError::FixedWidthInvalid => fl!(
+            "ui-profile-error-fixed-width",
+            min = FIXED_SIDE_MIN,
+            max = FIXED_WIDTH_MAX
+        ),
+        DraftError::FixedHeightInvalid => fl!(
+            "ui-profile-error-fixed-height",
+            min = FIXED_SIDE_MIN,
+            max = FIXED_HEIGHT_MAX
+        ),
         DraftError::GatewayLoop => fl!("ui-gateway-error-loop"),
     }
 }

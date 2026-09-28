@@ -190,6 +190,7 @@ fn an_rdp_session_keeps_its_colours_sound_and_administrative_session() {
         color_depth: ColorDepth::Bpp16,
         audio: AudioPlayback::OnServer,
         admin_session: true,
+        ..RdpOptions::default()
     };
     assert_eq!(app.rdp_profiles()[0].options, chosen);
     app.update(Message::EditProfile(ProfileId::new("dc")));
@@ -218,6 +219,90 @@ fn an_rdp_session_keeps_its_colours_sound_and_administrative_session() {
     });
     save(&mut app, None);
     assert_eq!(app.rdp_profiles()[0].options, RdpOptions::default());
+}
+
+#[test]
+fn an_rdp_session_keeps_a_fixed_size_typed_or_picked_within_the_csharp_limits() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let error = |app: &App| match &app.dialog {
+        Some(Dialog::EditProfile { error, .. }) => *error,
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    // Hidden, the size is never checked.
+    field(&mut app, ProfileField::FixedWidth, "wide");
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert_eq!(app.rdp_profiles()[0].options, RdpOptions::default());
+
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    app.update(Message::ProfileChoice(ProfileChoice::Resolution(
+        Resolution::Fixed,
+    )));
+    app.update(Message::ProfileChoice(ProfileChoice::Preset(2560, 1440)));
+    app.update(Message::ProfileChoice(ProfileChoice::ScaleFixed(false)));
+    app.update(Message::ProfileChoice(ProfileChoice::DynamicResolution(
+        false,
+    )));
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let options = app.rdp_profiles()[0].options;
+    assert_eq!(
+        (
+            options.resolution,
+            options.fixed_width,
+            options.fixed_height,
+            options.scale_fixed,
+            options.dynamic_resolution
+        ),
+        (Resolution::Fixed, 2560, 1440, false, false)
+    );
+
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        (draft.fixed_width.as_str(), draft.fixed_height.as_str()),
+        ("2560", "1440")
+    );
+    for (width, height, refused) in [
+        ("199", "720", Some(DraftError::FixedWidthInvalid)),
+        ("7681", "720", Some(DraftError::FixedWidthInvalid)),
+        ("wide", "720", Some(DraftError::FixedWidthInvalid)),
+        ("1280", "199", Some(DraftError::FixedHeightInvalid)),
+        ("1280", "4321", Some(DraftError::FixedHeightInvalid)),
+    ] {
+        field(&mut app, ProfileField::FixedWidth, width);
+        field(&mut app, ProfileField::FixedHeight, height);
+        save(&mut app, None);
+        assert_eq!(error(&app), refused, "{width}x{height}");
+    }
+    assert_eq!(
+        DraftError::FixedWidthInvalid.field(),
+        ProfileField::FixedWidth
+    );
+    assert_eq!(
+        DraftError::FixedHeightInvalid.field(),
+        ProfileField::FixedHeight
+    );
+    // The limits themselves, and a width brought down to a multiple of 4.
+    field(&mut app, ProfileField::FixedWidth, " 7679 ");
+    field(&mut app, ProfileField::FixedHeight, "4320");
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let options = app.rdp_profiles()[0].options;
+    assert_eq!((options.fixed_width, options.fixed_height), (7676, 4320));
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    field(&mut app, ProfileField::FixedWidth, "200");
+    field(&mut app, ProfileField::FixedHeight, "200");
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let options = app.rdp_profiles()[0].options;
+    assert_eq!((options.fixed_width, options.fixed_height), (200, 200));
 }
 
 #[test]

@@ -15,12 +15,12 @@
  */
 
 //! The display and sound choices of an RDP profile's form, as the C# "Display & Audio"
-//! card: the audio mode beside the colour depth.
+//! card: the audio mode beside the colour depth, then how the desktop is sized.
 
 use heimdall_app::Message as AppMessage;
-use heimdall_app::profile_draft::ProfileChoice;
-use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions};
-use iced::widget::{column, pick_list, row, text};
+use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField};
+use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
+use iced::widget::{checkbox, column, pick_list, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -87,4 +87,109 @@ pub fn view<'a>(options: RdpOptions) -> Element<'a, Message> {
     .spacing(SPACING / 2.0)
     .width(Length::Fill);
     row![audio, depth].spacing(SPACING).into()
+}
+
+/// A resolution mode as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ResolutionChoice(Resolution);
+
+impl std::fmt::Display for ResolutionChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            Resolution::FitWindow => fl!("ui-profile-resolution-fit-window"),
+            Resolution::Fixed => fl!("ui-profile-resolution-fixed"),
+            Resolution::SmartSizing => fl!("ui-profile-resolution-smart-sizing"),
+        })
+    }
+}
+
+/// The common sizes the C# dialog offers for a fixed desktop.
+const PRESETS: [(u16, u16); 5] = [
+    (1280, 720),
+    (1366, 768),
+    (1920, 1080),
+    (2560, 1440),
+    (3840, 2160),
+];
+
+/// A common size as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PresetChoice(u16, u16);
+
+impl std::fmt::Display for PresetChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&fl!(
+            "ui-profile-resolution-preset",
+            width = self.0,
+            height = self.1
+        ))
+    }
+}
+
+fn choice(choice: ProfileChoice) -> Message {
+    Message::App(AppMessage::ProfileChoice(choice))
+}
+
+/// The C# "Resolution profile" card of `draft`: the mode, and in the fixed mode its common
+/// sizes, the width and height drawn by `field`, and whether it is scaled; then whether the
+/// desktop follows the tab.
+pub fn resolution<'a>(
+    draft: &'a ProfileDraft,
+    field: impl Fn(ProfileField) -> Element<'a, Message>,
+) -> Element<'a, Message> {
+    let options = draft.rdp_options;
+    let mut card = column![
+        text(fl!("ui-profile-resolution-title")),
+        text(fl!("ui-profile-resolution-desc")).size(LABEL_SIZE),
+        text(fl!("ui-profile-resolution-mode")).size(LABEL_SIZE),
+        pick_list(
+            Resolution::ALL.map(ResolutionChoice),
+            Some(ResolutionChoice(options.resolution)),
+            |picked: ResolutionChoice| choice(ProfileChoice::Resolution(picked.0)),
+        )
+        .width(Length::Fill),
+    ]
+    .spacing(SPACING / 2.0);
+    if draft.shows(ProfileField::FixedWidth) {
+        // The size typed, when it is one of the list's.
+        let typed = (
+            draft.fixed_width.trim().parse(),
+            draft.fixed_height.trim().parse(),
+        );
+        let current = match typed {
+            (Ok(width), Ok(height)) => PRESETS
+                .contains(&(width, height))
+                .then_some(PresetChoice(width, height)),
+            _ => None,
+        };
+        card = card
+            .push(text(fl!("ui-profile-resolution-presets")).size(LABEL_SIZE))
+            .push(
+                pick_list(
+                    PRESETS.map(|(width, height)| PresetChoice(width, height)),
+                    current,
+                    |PresetChoice(width, height)| choice(ProfileChoice::Preset(width, height)),
+                )
+                .placeholder(fl!("ui-profile-resolution-custom"))
+                .width(Length::Fill),
+            )
+            .push(
+                row![
+                    field(ProfileField::FixedWidth),
+                    field(ProfileField::FixedHeight)
+                ]
+                .spacing(SPACING),
+            )
+            .push(
+                checkbox(options.scale_fixed)
+                    .label(fl!("ui-profile-resolution-scale-fixed"))
+                    .on_toggle(|on| choice(ProfileChoice::ScaleFixed(on))),
+            );
+    }
+    card.push(
+        checkbox(options.dynamic_resolution)
+            .label(fl!("ui-profile-resolution-dynamic"))
+            .on_toggle(|on| choice(ProfileChoice::DynamicResolution(on))),
+    )
+    .into()
 }

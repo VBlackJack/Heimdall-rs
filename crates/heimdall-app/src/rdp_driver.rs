@@ -369,6 +369,7 @@ mod tests {
             color_depth: ColorDepth::Bpp24,
             audio: AudioPlayback::OnServer,
             admin_session: true,
+            ..RdpOptions::default()
         };
         let config = rdp_config(&request(RdpProfile {
             id: ProfileId::new("dc"),

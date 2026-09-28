@@ -22,15 +22,15 @@
 //! click makes.
 
 use heimdall_app::Message as AppMessage;
-use heimdall_app::profile_draft::ProfileChoice;
-use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions};
+use heimdall_app::profile_draft::{DraftProtocol, ProfileChoice, ProfileDraft, ProfileField};
+use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
 use heimdall_ui::shell::Message;
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Point, Settings, Size, mouse};
 use iced_test::simulator::Simulator;
 
 /// Size of the simulated form.
-const WINDOW: Size = Size::new(600.0, 400.0);
+const WINDOW: Size = Size::new(600.0, 520.0);
 /// From a label's bottom to a point inside its list.
 const INTO_LIST: f32 = 14.0;
 /// Step between the points tried below an open list.
@@ -55,20 +55,19 @@ fn click(ui: &mut Simulator<'_, Message>, at: Point) {
     ]);
 }
 
-/// A point inside the list under `label`.
-fn list_under(label: &str) -> Point {
-    let mut ui = simulator(RdpOptions::default());
-    let bounds = ui.find(label).expect(label).bounds();
-    Point::new(bounds.x + INTO_LIST, bounds.y + bounds.height + INTO_LIST)
-}
-
 /// The choices the list under `label` offers, top to bottom, as the messages they send.
 fn choices(label: &str) -> Vec<String> {
-    let list = list_under(label);
+    choices_in(label, &|| simulator(RdpOptions::default()))
+}
+
+/// The choices the list under `label` offers in what `make` draws.
+fn choices_in<'a>(label: &str, make: &dyn Fn() -> Simulator<'a, Message>) -> Vec<String> {
+    let bounds = make().find(label).expect(label).bounds();
+    let list = Point::new(bounds.x + INTO_LIST, bounds.y + bounds.height + INTO_LIST);
     let mut found: Vec<String> = Vec::new();
     let mut y = list.y;
     while y < WINDOW.height {
-        let mut ui = simulator(RdpOptions::default());
+        let mut ui = make();
         click(&mut ui, list);
         click(&mut ui, Point::new(list.x, y));
         for message in ui.into_messages() {
@@ -83,6 +82,102 @@ fn choices(label: &str) -> Vec<String> {
         y += STEP;
     }
     found
+}
+
+/// The resolution card of `draft`, its size fields as plain boxes.
+fn resolution(draft: &ProfileDraft) -> Simulator<'_, Message> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    Simulator::with_size(
+        settings,
+        WINDOW,
+        heimdall_ui::rdp_options::resolution(draft, |field| {
+            iced::widget::text_input("", draft.value(field)).into()
+        }),
+    )
+}
+
+/// The fields the resolution card of `draft` asks the form to draw.
+fn fields_asked(draft: &ProfileDraft) -> Vec<ProfileField> {
+    let asked = std::cell::RefCell::new(Vec::new());
+    let _ = heimdall_ui::rdp_options::resolution(draft, |field| {
+        asked.borrow_mut().push(field);
+        iced::widget::text("").into()
+    });
+    asked.into_inner()
+}
+
+#[test]
+fn the_resolution_modes_are_offered_in_the_csharp_order_without_multi_monitor() {
+    let draft = ProfileDraft::new_for(DraftProtocol::Rdp);
+    let expected: Vec<String> = Resolution::ALL
+        .iter()
+        .map(|mode| {
+            format!(
+                "{:?}",
+                AppMessage::ProfileChoice(ProfileChoice::Resolution(*mode))
+            )
+        })
+        .collect();
+    assert_eq!(
+        choices_in("Resolution mode", &|| resolution(&draft)),
+        expected
+    );
+}
+
+#[test]
+fn the_fixed_mode_offers_the_csharp_sizes_and_its_own_fields_only_there() {
+    let mut draft = ProfileDraft::new_for(DraftProtocol::Rdp);
+    assert_eq!(fields_asked(&draft), [], "fitting the window");
+    {
+        let mut ui = resolution(&draft);
+        assert!(ui.find("Common resolutions").is_err(), "fitting the window");
+        assert!(
+            ui.find("Scale fixed resolution to fit the pane").is_err(),
+            "fitting the window"
+        );
+        ui.click("Allow dynamic resolution updates")
+            .expect("always there");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileChoice(ProfileChoice::DynamicResolution(
+                false
+            )))
+        )));
+    }
+    draft.choose(ProfileChoice::Resolution(Resolution::Fixed));
+    let expected: Vec<String> = [
+        (1280, 720),
+        (1366, 768),
+        (1920, 1080),
+        (2560, 1440),
+        (3840, 2160),
+    ]
+    .iter()
+    .map(|(width, height)| {
+        format!(
+            "{:?}",
+            AppMessage::ProfileChoice(ProfileChoice::Preset(*width, *height))
+        )
+    })
+    .collect();
+    assert_eq!(
+        choices_in("Common resolutions", &|| resolution(&draft)),
+        expected
+    );
+    assert_eq!(
+        fields_asked(&draft),
+        [ProfileField::FixedWidth, ProfileField::FixedHeight]
+    );
+    let mut ui = resolution(&draft);
+    ui.click("Scale fixed resolution to fit the pane")
+        .expect("the box");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::ProfileChoice(ProfileChoice::ScaleFixed(false)))
+    )));
 }
 
 #[test]

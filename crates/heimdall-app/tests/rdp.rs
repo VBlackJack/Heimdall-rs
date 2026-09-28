@@ -18,6 +18,7 @@
 
 use std::path::Path;
 
+use heimdall_app::rdp_driver::DEFAULT_DESKTOP;
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, DesktopInput, Effect, Message, Phase, Purpose,
     TabId, TabProfile, UiError,
@@ -396,6 +397,101 @@ fn the_size_the_tab_shows_its_desktop_at_reaches_the_session() {
         height: 900,
     });
     assert_eq!(*wanted.borrow(), Some((1600, 900)));
+}
+
+#[test]
+fn the_profile_decides_the_desktop_asked_and_which_tab_sizes_reach_the_server() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let fixed = RdpOptions {
+        resolution: Resolution::Fixed,
+        fixed_width: 1366,
+        fixed_height: 768,
+        ..RdpOptions::default()
+    };
+    let once = RdpOptions {
+        dynamic_resolution: false,
+        ..RdpOptions::default()
+    };
+    // Asked when connecting, then what reaches the server of two sizes reported in turn.
+    for (options, asked, reached) in [
+        (
+            RdpOptions::default(),
+            DEFAULT_DESKTOP,
+            [Some((1600, 900)), Some((1024, 700))],
+        ),
+        (
+            once,
+            DEFAULT_DESKTOP,
+            [Some((1600, 900)), Some((1600, 900))],
+        ),
+        // Brought down to a multiple of 4, as the C# resolver does.
+        (fixed, (1364, 768), [None, None]),
+        (
+            RdpOptions {
+                resolution: Resolution::SmartSizing,
+                ..RdpOptions::default()
+            },
+            DEFAULT_DESKTOP,
+            [Some((1600, 900)), Some((1024, 700))],
+        ),
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut profile = app(dir.path()).rdp_profiles()[0].clone();
+        profile.options = options;
+        let profiles_file = dir.path().join("profiles.toml");
+        let mut store = ProfileStore::open(&profiles_file).expect("store");
+        store.merge_rdp([profile]);
+        store.save().expect("save");
+        let mut app = App::new(AppConfig {
+            profiles_file,
+            known_hosts: dir.path().join("known_hosts"),
+            legacy_dir: None,
+            agent: AgentSource::Disabled,
+            initial_grid: GridSize { cols: 80, rows: 24 },
+            files_start: dir.path().to_owned(),
+            system_credentials: heimdall_app::SystemCredentials::memory(),
+        });
+        let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+        let [
+            Effect::ConnectRdp {
+                tab,
+                attempt,
+                request,
+            },
+        ] = effects.as_slice()
+        else {
+            panic!("{effects:?}");
+        };
+        assert_eq!(request.desktop, asked, "{options:?}");
+        let (tab, attempt) = (*tab, *attempt);
+        let (input, _received) = mpsc::unbounded_channel();
+        let (size, wanted) = tokio::sync::watch::channel(None);
+        event(
+            &mut app,
+            tab,
+            attempt,
+            ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(64, 48),
+                input,
+                size,
+                clipboard: None,
+            },
+        );
+        let pane = app.tabs[0].desktop.as_ref().expect("pane");
+        assert_eq!(
+            pane.wants_first_size(),
+            options == once,
+            "asks the tab's size while scaled: {options:?}"
+        );
+        assert_eq!(pane.has_fixed_size(), options == fixed, "{options:?}");
+        for ((width, height), expected) in [(1600, 900), (1024, 700)].into_iter().zip(reached) {
+            app.update(Message::DesktopResize { tab, width, height });
+            assert_eq!(*wanted.borrow(), expected, "{options:?}");
+        }
+        let pane = app.tabs[0].desktop.as_ref().expect("pane");
+        assert!(!pane.wants_first_size(), "had it: {options:?}");
+    }
 }
 
 #[test]

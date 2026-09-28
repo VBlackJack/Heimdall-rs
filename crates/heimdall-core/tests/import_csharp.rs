@@ -660,6 +660,89 @@ fn the_global_defaults_left_unset_are_the_csharp_ones() {
 }
 
 #[test]
+fn a_csharp_resolution_mode_is_read_as_its_embedded_session_sizes_the_desktop() {
+    use heimdall_core::profile::Resolution;
+
+    let entry = |id: &str, extra: &str| {
+        format!(r#"{{"id": "{id}", "remoteServer": "h", "connectionType": "RDP"{extra}}}"#)
+    };
+    let json = servers(
+        &[
+            entry("absent", ""),
+            entry(
+                "fixed",
+                r#", "rdpResolutionMode": "Fixed", "rdpFixedResolutionWidth": 1366,
+                   "rdpFixedResolutionHeight": 768, "rdpInitialSmartSizing": false"#,
+            ),
+            entry(
+                "sized-without-mode",
+                r#", "rdpFixedResolutionWidth": 1280, "rdpFixedResolutionHeight": 720"#,
+            ),
+            entry(
+                "legacy-names",
+                r#", "rdpDefaultResolutionWidth": 1024, "rdpDefaultResolutionHeight": 768"#,
+            ),
+            entry(
+                "fixed-without-size",
+                r#", "rdpResolutionMode": "Fixed", "rdpFixedResolutionWidth": 0"#,
+            ),
+            entry("one-side", r#", "rdpFixedResolutionWidth": 1280"#),
+            entry("smart", r#", "rdpResolutionMode": "SmartSizing""#),
+            entry(
+                "multimon",
+                r#", "rdpResolutionMode": "Multimon", "rdpFixedResolutionWidth": 1280,
+                   "rdpFixedResolutionHeight": 720"#,
+            ),
+            entry(
+                "auto",
+                r#", "rdpResolutionMode": "Auto", "rdpDynamicResolution": false"#,
+            ),
+            entry(
+                "too-large",
+                r#", "rdpResolutionMode": "fixed", "rdpFixedResolutionWidth": 99999,
+                   "rdpFixedResolutionHeight": 99999"#,
+            ),
+        ]
+        .join(","),
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let taken: Vec<_> = report
+        .rdp
+        .iter()
+        .map(|p| {
+            let o = p.options;
+            (
+                p.id.as_str(),
+                o.resolution,
+                (o.fixed_width, o.fixed_height),
+                o.scale_fixed,
+                o.dynamic_resolution,
+            )
+        })
+        .collect();
+    let fit = Resolution::FitWindow;
+    let fixed = Resolution::Fixed;
+    assert_eq!(
+        taken,
+        [
+            ("absent", fit, (1920, 1080), true, true),
+            ("fixed", fixed, (1364, 768), false, true),
+            ("sized-without-mode", fixed, (1280, 720), true, true),
+            ("legacy-names", fixed, (1024, 768), true, true),
+            // Without its size, the C# session follows the pane.
+            ("fixed-without-size", fit, (1920, 1080), true, true),
+            // Both sides are needed, as the C# migration asks.
+            ("one-side", fit, (1920, 1080), true, true),
+            ("smart", Resolution::SmartSizing, (1920, 1080), true, true),
+            // Neither has sense in a tab.
+            ("multimon", fit, (1280, 720), true, true),
+            ("auto", fit, (1920, 1080), true, false),
+            ("too-large", fixed, (7680, 4320), true, true),
+        ]
+    );
+}
+
+#[test]
 fn a_csharp_colour_depth_is_brought_to_one_the_session_can_have_and_sound_played_here_is_not() {
     use heimdall_core::profile::{AudioPlayback, ColorDepth};
 

@@ -39,6 +39,11 @@ const WINDOW: Size = Size::new(1200.0, 720.0);
 const SNAPSHOT_SCALE: u32 = 2;
 
 fn app(dir: &Path) -> App {
+    app_with(dir, heimdall_core::profile::RdpOptions::default())
+}
+
+/// The application with one RDP profile, given `options`.
+fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_rdp([RdpProfile {
@@ -53,7 +58,7 @@ fn app(dir: &Path) -> App {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
-        options: heimdall_core::profile::RdpOptions::default(),
+        options,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -77,7 +82,15 @@ fn simulator(shell: &Shell) -> Simulator<'_, Message> {
 
 /// A shell with the RDP tab open; the tab and its attempt.
 fn opened(dir: &Path) -> (Shell, TabId, AttemptId) {
-    let mut core = app(dir);
+    opened_with(dir, heimdall_core::profile::RdpOptions::default())
+}
+
+/// A shell with the RDP tab of a profile given `options` open; the tab and its attempt.
+fn opened_with(
+    dir: &Path,
+    options: heimdall_core::profile::RdpOptions,
+) -> (Shell, TabId, AttemptId) {
+    let mut core = app_with(dir, options);
     let (tab, attempt) = match core
         .update(AppMessage::OpenRdp(ProfileId::new("dc")))
         .as_slice()
@@ -510,6 +523,83 @@ fn a_desktop_smaller_than_its_tab_is_drawn_in_its_middle() {
     assert_eq!(middle, [0, 0, 0, 255], "drawn by {renderer}");
     let (corner, renderer) = pixel_at(&shell, 300, 130);
     assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
+}
+
+/// The sizes the view reports when drawn.
+fn sizes_reported(shell: &Shell) -> Vec<(u16, u16)> {
+    let mut ui = simulator(shell);
+    let _ = ui.snapshot(&Theme::Dark).expect("drawn");
+    ui.into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopResize { width, height, .. }) => Some((width, height)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// A 200x100 black desktop connected for a profile given `options`.
+fn small_desktop(dir: &Path, options: heimdall_core::profile::RdpOptions) -> (Shell, TabId) {
+    let (mut shell, tab, attempt) = opened_with(dir, options);
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(200, 100),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    (shell, tab)
+}
+
+#[test]
+fn without_dynamic_resolution_the_desktop_is_scaled_and_asks_the_tab_size_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = small_desktop(
+        dir.path(),
+        heimdall_core::profile::RdpOptions {
+            dynamic_resolution: false,
+            ..heimdall_core::profile::RdpOptions::default()
+        },
+    );
+    // Fitted, as the C# session scales it: centred, the tab's corner is background.
+    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
+    let (middle, renderer) = pixel_at(&shell, 730, 420);
+    assert_eq!(middle, [0, 0, 0, 255], "drawn by {renderer}");
+    let first = sizes_reported(&shell);
+    let [(width, height)] = first.as_slice() else {
+        panic!("one report while scaled, got {first:?}");
+    };
+    let _ = shell.update(Message::App(AppMessage::DesktopResize {
+        tab,
+        width: *width,
+        height: *height,
+    }));
+    assert_eq!(sizes_reported(&shell), [], "once only");
+}
+
+#[test]
+fn a_fixed_desktop_shown_pixel_for_pixel_is_centred_and_asks_no_size() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _) = small_desktop(
+        dir.path(),
+        RdpOptions {
+            resolution: Resolution::Fixed,
+            scale_fixed: false,
+            ..RdpOptions::default()
+        },
+    );
+    assert_eq!(sizes_reported(&shell), [], "its own size");
+    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
+    let (middle, renderer) = pixel_at(&shell, 730, 420);
+    assert_eq!(middle, [0, 0, 0, 255], "centred: drawn by {renderer}");
 }
 
 #[test]

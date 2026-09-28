@@ -180,9 +180,9 @@ pub struct RdpProfile {
     pub options: RdpOptions,
 }
 
-/// How an RDP session is given: colour depth, sound, administrative session. Each is
+/// How an RDP session is given: colour depth, sound, administrative session, size. Each is
 /// written down only when it differs from the C# Heimdall's default.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RdpOptions {
     /// Colours of the desktop.
     #[serde(default, skip_serializing_if = "ColorDepth::is_default")]
@@ -193,6 +193,159 @@ pub struct RdpOptions {
     /// Open the server's administrative session, as `mstsc /admin`.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub admin_session: bool,
+    /// How the desktop is sized.
+    #[serde(default, skip_serializing_if = "Resolution::is_default")]
+    pub resolution: Resolution,
+    /// Width asked in [`Resolution::Fixed`], as typed; see [`fixed_desktop`].
+    #[serde(
+        default = "default_fixed_width",
+        skip_serializing_if = "is_default_fixed_width"
+    )]
+    pub fixed_width: u16,
+    /// Height asked in [`Resolution::Fixed`], as typed; see [`fixed_desktop`].
+    #[serde(
+        default = "default_fixed_height",
+        skip_serializing_if = "is_default_fixed_height"
+    )]
+    pub fixed_height: u16,
+    /// A fixed desktop is scaled into the tab, as the C# "Scale fixed resolution to fit the
+    /// pane", on by default; off, it is drawn pixel for pixel, centred.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub scale_fixed: bool,
+    /// The desktop follows the tab's size, as the C# "Allow dynamic resolution updates", on
+    /// by default; off, it gets the tab's size once and is then scaled.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub dynamic_resolution: bool,
+}
+
+impl Default for RdpOptions {
+    fn default() -> Self {
+        Self {
+            color_depth: ColorDepth::default(),
+            audio: AudioPlayback::default(),
+            admin_session: false,
+            resolution: Resolution::default(),
+            fixed_width: DEFAULT_FIXED_SIZE.0,
+            fixed_height: DEFAULT_FIXED_SIZE.1,
+            scale_fixed: true,
+            dynamic_resolution: true,
+        }
+    }
+}
+
+impl RdpOptions {
+    /// How the desktop's size is decided while the session runs.
+    #[must_use]
+    pub fn sizing(&self) -> DesktopSizing {
+        match self.resolution {
+            Resolution::Fixed => {
+                let (width, height) = fixed_desktop(self.fixed_width, self.fixed_height);
+                DesktopSizing::Fixed { width, height }
+            }
+            Resolution::FitWindow | Resolution::SmartSizing if self.dynamic_resolution => {
+                DesktopSizing::FollowsTab
+            }
+            Resolution::FitWindow | Resolution::SmartSizing => DesktopSizing::TabSizeOnce,
+        }
+    }
+
+    /// Whether the desktop is first shown scaled into its tab, rather than pixel for pixel.
+    #[must_use]
+    pub fn scaled(&self) -> bool {
+        match self.sizing() {
+            DesktopSizing::FollowsTab => false,
+            DesktopSizing::TabSizeOnce => true,
+            DesktopSizing::Fixed { .. } => self.scale_fixed,
+        }
+    }
+}
+
+/// How an RDP desktop is sized, the C# Heimdall's resolution modes an embedded session has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Resolution {
+    /// The tab's size: the C# default.
+    #[default]
+    FitWindow,
+    /// A size of its own, never changed.
+    Fixed,
+    /// The tab's size, scaled: in an embedded C# session, the same as fitting the window.
+    SmartSizing,
+}
+
+impl Resolution {
+    /// Every mode, in the order the C# list shows them; multi-monitor has no sense in a tab.
+    pub const ALL: [Self; 3] = [Self::FitWindow, Self::Fixed, Self::SmartSizing];
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// How an RDP desktop's size is decided while the session runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopSizing {
+    /// Asked of the server each time the tab's size changes.
+    FollowsTab,
+    /// The tab's size asked once, then kept.
+    TabSizeOnce,
+    /// This size, asked when connecting and never changed.
+    Fixed {
+        /// Width, in pixels.
+        width: u16,
+        /// Height, in pixels.
+        height: u16,
+    },
+}
+
+/// Fixed size of a new profile, as the C# dialog's.
+pub const DEFAULT_FIXED_SIZE: (u16, u16) = (1920, 1080);
+/// Smallest side of a fixed desktop, as the C# `RdpDisplayLimits`.
+pub const FIXED_SIDE_MIN: u16 = 200;
+/// Largest width of a fixed desktop.
+pub const FIXED_WIDTH_MAX: u16 = 7680;
+/// Largest height of a fixed desktop.
+pub const FIXED_HEIGHT_MAX: u16 = 4320;
+/// Widths are multiples of this, as the C# resolver snaps them.
+const WIDTH_STEP: u16 = 4;
+
+/// The fixed size a session is given for `width` by `height` as typed: each side within the
+/// C# limits, the width brought down to a multiple of 4.
+#[must_use]
+pub fn fixed_desktop(width: u16, height: u16) -> (u16, u16) {
+    let width = width.clamp(FIXED_SIDE_MIN, FIXED_WIDTH_MAX);
+    (
+        width - width % WIDTH_STEP,
+        height.clamp(FIXED_SIDE_MIN, FIXED_HEIGHT_MAX),
+    )
+}
+
+fn default_fixed_width() -> u16 {
+    DEFAULT_FIXED_SIZE.0
+}
+
+fn default_fixed_height() -> u16 {
+    DEFAULT_FIXED_SIZE.1
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_default_fixed_width(width: &u16) -> bool {
+    *width == DEFAULT_FIXED_SIZE.0
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_default_fixed_height(height: &u16) -> bool {
+    *height == DEFAULT_FIXED_SIZE.1
 }
 
 /// Bits per pixel of an RDP desktop: the three the C# Heimdall offers.

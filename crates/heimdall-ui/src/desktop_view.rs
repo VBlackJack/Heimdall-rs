@@ -191,19 +191,49 @@ impl<'a, M> DesktopView<'a, M> {
             .pane
             .framebuffer
             .read(|width, height, _| (width, height));
-        desktop_point(bounds, (width, height), self.fit, position)
+        desktop_point(bounds, (width, height), self.placement(), position)
+    }
+
+    /// How the desktop is placed in its tab: fitted, or pixel for pixel, centred when it
+    /// keeps a size of its own as the C# letterbox is.
+    fn placement(&self) -> Placement {
+        if self.fit {
+            Placement::Fitted
+        } else if self.pane.has_fixed_size() {
+            Placement::Centred
+        } else {
+            Placement::Corner
+        }
     }
 }
 
-/// Where a desktop of `size` is drawn in `bounds`, and at what scale: fitted, or pixel for
-/// pixel from the corner.
+/// Where a desktop is drawn in its tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// As large as the tab allows with its proportions, never larger than itself, centred.
+    Fitted,
+    /// Pixel for pixel from the tab's corner.
+    Corner,
+    /// Pixel for pixel, centred; from the corner on a side larger than the tab, the rest
+    /// cut.
+    Centred,
+}
+
+/// Where a desktop of `size` is drawn in `bounds`, and at what scale.
 #[must_use]
-pub fn placed(bounds: Rectangle, size: (u16, u16), fit: bool) -> (Rectangle, f32) {
-    if fit {
-        return fitted(bounds, size);
-    }
+pub fn placed(bounds: Rectangle, size: (u16, u16), placement: Placement) -> (Rectangle, f32) {
     let native = Size::new(f32::from(size.0), f32::from(size.1));
-    (Rectangle::new(bounds.position(), native), 1.0)
+    match placement {
+        Placement::Fitted => fitted(bounds, size),
+        Placement::Corner => (Rectangle::new(bounds.position(), native), 1.0),
+        Placement::Centred => {
+            let origin = iced::Point::new(
+                bounds.x + ((bounds.width - native.width) / 2.0).max(0.0),
+                bounds.y + ((bounds.height - native.height) / 2.0).max(0.0),
+            );
+            (Rectangle::new(origin, native), 1.0)
+        }
+    }
 }
 
 /// Where a desktop of `size` is drawn in `bounds`: as large as fits with its proportions,
@@ -226,10 +256,10 @@ pub fn fitted(bounds: Rectangle, (width, height): (u16, u16)) -> (Rectangle, f32
 pub fn desktop_point(
     bounds: Rectangle,
     size: (u16, u16),
-    fit: bool,
+    placement: Placement,
     position: iced::Point,
 ) -> (u16, u16) {
-    let (area, scale) = placed(bounds, size, fit);
+    let (area, scale) = placed(bounds, size, placement);
     let clamp = |offset: f32, extent: u16| {
         // Truncation to a pixel is intended; the value is clamped to the desktop first.
         #[allow(
@@ -298,8 +328,9 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             };
         }
         let bounds = layout.bounds();
-        // Fitted, the server keeps its own size.
-        if !self.fit {
+        // Fitted, the server keeps its own size, once it has had the tab's when its profile
+        // asks for it once; a desktop of a size of its own is never asked another.
+        if self.pane.asks_tab_size() && (!self.fit || self.pane.wants_first_size()) {
             self.report_size(state, shell, bounds);
         }
         if !self.interactive {
@@ -407,7 +438,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
             .pane
             .framebuffer
             .read(|width, height, _| (width, height));
-        let (area, _) = placed(bounds, size, self.fit);
+        let (area, _) = placed(bounds, size, self.placement());
         // The GPU renderer keeps the desktop in a texture it rewrites; see `desktop_texture`.
         if matches!(renderer, fallback::Renderer::Primary(_)) {
             let desktop = Desktop {
@@ -609,18 +640,55 @@ mod tests {
         // The middle of what is drawn is the middle of the desktop.
         let middle = iced::Point::new(area.x + area.width / 2.0, area.y + area.height / 2.0);
         assert_eq!(
-            desktop_point(bounds, (1920, 1080), true, middle),
+            desktop_point(bounds, (1920, 1080), Placement::Fitted, middle),
             (960, 540)
         );
         // Beside the picture, the pointer is clamped to its edge.
         assert_eq!(
-            desktop_point(bounds, (1920, 1080), true, iced::Point::new(12.0, 21.0)),
+            desktop_point(
+                bounds,
+                (1920, 1080),
+                Placement::Fitted,
+                iced::Point::new(12.0, 21.0)
+            ),
             (4, 0)
         );
         // Matched, the same point is the desktop's pixel under it, from the corner.
         assert_eq!(
-            desktop_point(bounds, (1920, 1080), false, middle),
+            desktop_point(bounds, (1920, 1080), Placement::Corner, middle),
             (400, 300)
+        );
+    }
+
+    #[test]
+    fn a_fixed_desktop_shown_pixel_for_pixel_is_centred_and_cut_where_larger() {
+        let bounds = Rectangle::new(iced::Point::new(10.0, 20.0), Size::new(800.0, 600.0));
+        // Narrower and shorter: centred both ways, unscaled.
+        let (area, scale) = placed(bounds, (400, 300), Placement::Centred);
+        assert!((scale - 1.0).abs() < f32::EPSILON);
+        assert!(
+            (area.x - 210.0).abs() < 0.01 && (area.y - 170.0).abs() < 0.01,
+            "{area:?}"
+        );
+        // Wider than the tab, shorter: from the left edge, centred up and down.
+        let (area, _) = placed(bounds, (1024, 300), Placement::Centred);
+        assert!(
+            (area.x - 10.0).abs() < 0.01 && (area.y - 170.0).abs() < 0.01,
+            "{area:?}"
+        );
+        assert!(
+            (area.width - 1024.0).abs() < 0.01,
+            "unscaled, cut: {area:?}"
+        );
+        // The pointer lands where the desktop is drawn.
+        assert_eq!(
+            desktop_point(
+                bounds,
+                (400, 300),
+                Placement::Centred,
+                iced::Point::new(210.0, 170.0)
+            ),
+            (0, 0)
         );
     }
 
@@ -637,12 +705,12 @@ mod tests {
             desktop_point(
                 bounds,
                 (1024, 768),
-                true,
+                Placement::Fitted,
                 iced::Point::new(288.0 + 100.0, 66.0 + 50.0)
             ),
             (100, 50)
         );
-        let (area, scale) = placed(bounds, (1024, 768), false);
+        let (area, scale) = placed(bounds, (1024, 768), Placement::Corner);
         assert!((scale - 1.0).abs() < f32::EPSILON);
         assert_eq!(
             area.position(),

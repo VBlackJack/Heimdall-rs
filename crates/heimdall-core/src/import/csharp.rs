@@ -35,10 +35,10 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::profile::{
-    AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT,
-    DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, LocalArguments,
-    LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile, SshGateway, SshProfile,
-    TelnetProfile, VncProfile, WinRmProfile,
+    AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_RDP_PORT, DEFAULT_SSH_PORT,
+    DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
+    LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile, Resolution,
+    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -201,6 +201,21 @@ struct LegacyServer {
     rdp_audio_mode: i64,
     #[serde(default)]
     rdp_admin_mode: bool,
+    /// `FitWindow`, `Fixed`, `SmartSizing`, `Multimon` or `Auto`; absent, derived as
+    /// `RdpResolutionProfileMigration` does.
+    rdp_resolution_mode: Option<String>,
+    #[serde(rename = "rdpFixedResolutionWidth")]
+    rdp_fixed_width: Option<i64>,
+    #[serde(rename = "rdpFixedResolutionHeight")]
+    rdp_fixed_height: Option<i64>,
+    /// Older name of the fixed width, read when the current one is absent.
+    rdp_default_resolution_width: Option<i64>,
+    /// Older name of the fixed height.
+    rdp_default_resolution_height: Option<i64>,
+    /// Absent means the C# default: a fixed desktop is scaled into the pane.
+    rdp_initial_smart_sizing: Option<bool>,
+    /// Absent means the C# default: the desktop follows the pane.
+    rdp_dynamic_resolution: Option<bool>,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
     /// Zero or less means the default port, as `VncHandler` reads it.
@@ -313,6 +328,38 @@ impl RdpChoices {
 
 /// The C# audio mode "Remote playback".
 const CSHARP_AUDIO_ON_SERVER: i64 = 2;
+
+/// How the C# embedded session sizes the desktop of `server`: its resolution settings are
+/// always the profile's own, never global defaults.
+fn resolution_of(server: &LegacyServer) -> (Resolution, (u16, u16)) {
+    let width = server
+        .rdp_fixed_width
+        .or(server.rdp_default_resolution_width)
+        .unwrap_or(0);
+    let height = server
+        .rdp_fixed_height
+        .or(server.rdp_default_resolution_height)
+        .unwrap_or(0);
+    let sized = width > 0 && height > 0;
+    let mode = match server.rdp_resolution_mode.as_deref() {
+        Some(mode) if mode.eq_ignore_ascii_case("Fixed") => Resolution::Fixed,
+        Some(mode) if mode.eq_ignore_ascii_case("SmartSizing") => Resolution::SmartSizing,
+        None if sized => Resolution::Fixed,
+        // Multi-monitor and Auto have no sense in a tab: Auto windowed fits the window.
+        Some(_) | None => Resolution::FitWindow,
+    };
+    if !sized {
+        // A fixed mode without its size follows the pane in the C# Heimdall.
+        let mode = if mode == Resolution::Fixed {
+            Resolution::FitWindow
+        } else {
+            mode
+        };
+        return (mode, DEFAULT_FIXED_SIZE);
+    }
+    let side = |value: i64| u16::try_from(value).unwrap_or(u16::MAX);
+    (mode, fixed_desktop(side(width), side(height)))
+}
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -632,6 +679,7 @@ fn convert_rdp(
         },
     };
     let choices = RdpChoices::of(server, defaults);
+    let (resolution, (fixed_width, fixed_height)) = resolution_of(server);
     Ok(RdpProfile {
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
@@ -655,6 +703,11 @@ fn convert_rdp(
             audio: choices.audio(),
             // Not one of the global defaults in the C# Heimdall: always the profile's.
             admin_session: server.rdp_admin_mode,
+            resolution,
+            fixed_width,
+            fixed_height,
+            scale_fixed: server.rdp_initial_smart_sizing.unwrap_or(true),
+            dynamic_resolution: server.rdp_dynamic_resolution.unwrap_or(true),
         },
     })
 }

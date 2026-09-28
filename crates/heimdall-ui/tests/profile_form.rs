@@ -302,6 +302,35 @@ fn the_rdp_form_offers_the_sound_colours_and_administrative_session() {
 }
 
 #[test]
+fn the_rdp_form_shows_the_resolution_card_and_the_fixed_size_fields_in_its_mode() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_core::profile::Resolution;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Resolution profile",
+            "Resolution mode",
+            "Allow dynamic resolution updates",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("Width").is_err(), "fitting the window");
+    }
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::Resolution(
+        Resolution::Fixed,
+    ))));
+    let mut ui = tall_simulator(&shell);
+    for label in ["Common resolutions", "Width", "Height"] {
+        ui.find(label).expect(label);
+    }
+}
+
+#[test]
 fn a_gateway_is_added_from_the_form_and_the_tree_says_via_it() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());

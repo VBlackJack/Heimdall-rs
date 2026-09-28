@@ -20,6 +20,7 @@
 use std::fmt;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
+use heimdall_core::profile::DesktopSizing;
 use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 use heimdall_remote::vnc::VncInput;
 use tokio::sync::{mpsc, watch};
@@ -195,6 +196,8 @@ enum DesktopSink {
     Rdp {
         input: mpsc::UnboundedSender<Vec<Operation>>,
         size: watch::Sender<Option<(u16, u16)>>,
+        /// Which of the tab's sizes the server is asked for.
+        sizing: DesktopSizing,
     },
     Vnc(VncSink),
 }
@@ -235,23 +238,67 @@ impl DesktopPane {
     pub(crate) fn rdp(
         framebuffer: heimdall_rdp::Framebuffer,
         input: mpsc::UnboundedSender<Vec<Operation>>,
-        size: watch::Sender<Option<(u16, u16)>>,
+        (size, sizing): (watch::Sender<Option<(u16, u16)>>, DesktopSizing),
         clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
     ) -> Self {
         Self {
             framebuffer: DesktopFramebuffer::Rdp(framebuffer),
             generation: 0,
-            sink: DesktopSink::Rdp { input, size },
+            sink: DesktopSink::Rdp {
+                input,
+                size,
+                sizing,
+            },
             clipboard,
         }
     }
 
     /// The size the tab shows the desktop at, in pixels: the RDP session asks the server for
-    /// it once it settles. VNC keeps the server's size.
+    /// it once it settles, as its profile's sizing allows. VNC keeps the server's size.
     pub(crate) fn resize(&self, width: u16, height: u16) {
-        if let DesktopSink::Rdp { size, .. } = &self.sink {
+        if self.asks_tab_size()
+            && let DesktopSink::Rdp { size, .. } = &self.sink
+        {
             size.send_replace(Some((width, height)));
         }
+    }
+
+    /// Whether the tab's size is still to be asked of the server even while the desktop is
+    /// shown scaled: a profile without dynamic resolution gets it once.
+    #[must_use]
+    pub fn wants_first_size(&self) -> bool {
+        matches!(
+            &self.sink,
+            DesktopSink::Rdp { size, sizing: DesktopSizing::TabSizeOnce, .. }
+                if size.borrow().is_none()
+        )
+    }
+
+    /// Whether a size the tab reports is asked of the server now: never for a fixed RDP
+    /// desktop nor a VNC one, which keep their own.
+    #[must_use]
+    pub fn asks_tab_size(&self) -> bool {
+        match &self.sink {
+            DesktopSink::Rdp { sizing, .. } => match sizing {
+                DesktopSizing::FollowsTab => true,
+                DesktopSizing::TabSizeOnce => self.wants_first_size(),
+                DesktopSizing::Fixed { .. } => false,
+            },
+            DesktopSink::Vnc(_) => false,
+        }
+    }
+
+    /// Whether the desktop keeps a size of its own the tab does not change: drawn centred
+    /// when shown pixel for pixel.
+    #[must_use]
+    pub fn has_fixed_size(&self) -> bool {
+        matches!(
+            &self.sink,
+            DesktopSink::Rdp {
+                sizing: DesktopSizing::Fixed { .. },
+                ..
+            }
+        )
     }
 
     /// Whether this desktop shares the clipboard with its server by itself: this side's

@@ -463,7 +463,7 @@ fn the_drives_setting_is_written_only_when_turned_on() {
 
 #[test]
 fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
-    use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions};
+    use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
 
     let dir = tempfile::tempdir().expect("temp dir");
     let path = dir.path().join(PROFILES_FILE_NAME);
@@ -473,16 +473,31 @@ fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
         color_depth: ColorDepth::Bpp16,
         audio: AudioPlayback::OnServer,
         admin_session: true,
+        resolution: Resolution::Fixed,
+        fixed_width: 1280,
+        fixed_height: 720,
+        scale_fixed: false,
+        dynamic_resolution: false,
     };
     store.merge_rdp([rdp("defaults"), chosen.clone()]);
     store.save().expect("saves");
     let text = fs::read_to_string(&path).expect("reads");
-    for (key, line) in [
-        ("color_depth", "color_depth = 16"),
-        ("audio", "audio = \"on-server\""),
-        ("admin_session", "admin_session = true"),
+    for line in [
+        "color_depth = 16",
+        "audio = \"on-server\"",
+        "admin_session = true",
+        "resolution = \"fixed\"",
+        "fixed_width = 1280",
+        "fixed_height = 720",
+        "scale_fixed = false",
+        "dynamic_resolution = false",
     ] {
-        assert_eq!(text.matches(key).count(), 1, "{key}: {text}");
+        let key = format!(
+            "
+{}",
+            &line[..=line.find(' ').expect("a key")]
+        );
+        assert_eq!(text.matches(&key).count(), 1, "{key}: {text}");
         assert!(text.contains(line), "{line}: {text}");
     }
     let reopened = ProfileStore::open(&path).expect("reopens");
@@ -498,6 +513,11 @@ fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
             color_depth: ColorDepth::Bpp32,
             audio: AudioPlayback::Off,
             admin_session: false,
+            resolution: Resolution::FitWindow,
+            fixed_width: 1920,
+            fixed_height: 1080,
+            scale_fixed: true,
+            dynamic_resolution: true,
         },
         "the C# defaults"
     );
