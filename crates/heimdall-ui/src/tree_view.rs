@@ -20,10 +20,11 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
-    ConnectAs, FolderMessage, GatewayBadge, Message as AppMessage, NO_FOLDER, ProfileCopy,
-    ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, TabGroup, TabId,
-    TabMenuMessage,
+    ConnectAs, FilesMessage, FolderMessage, GatewayBadge, Message as AppMessage, NO_FOLDER,
+    ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, TabGroup,
+    TabId, TabMenuMessage,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -82,6 +83,15 @@ pub enum TreeMenu {
     Selection,
     /// Which folder the profiles selected together can move to.
     MoveSelection,
+    /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
+    FilesEntry {
+        /// The tab.
+        tab: TabId,
+        /// The pane.
+        side: Side,
+        /// The entry.
+        index: usize,
+    },
 }
 
 /// How far a row moves right for each folder it is in.
@@ -442,6 +452,50 @@ pub enum TranscriptEntry {
     Start(bool),
     /// Stop Transcript.
     Stop,
+}
+
+/// The menu of an entry of a Files tab's pane, in the C# order, limited to what this
+/// version does: open it, send it to the other pane, rename, delete, copy its path; then
+/// what applies to the folder shown.
+pub fn files_entry_menu<'a>(tab: TabId, side: Side, index: usize) -> Element<'a, Message> {
+    let files = |message| Some(AppMessage::Files(message));
+    let (send, direction) = match side {
+        Side::Remote => (fl!("ui-files-menu-download"), Direction::Download),
+        Side::Local => (fl!("ui-files-menu-upload"), Direction::Upload),
+    };
+    column![
+        entry(
+            fl!("ui-files-menu-open"),
+            files(FilesMessage::Open { tab, side, index })
+        ),
+        entry(send, files(FilesMessage::Transfer { tab, direction })),
+        separator(),
+        entry(
+            fl!("ui-files-menu-rename"),
+            files(FilesMessage::AskRename { tab, side })
+        ),
+        entry(
+            fl!("ui-files-menu-delete"),
+            files(FilesMessage::AskDelete { tab, side })
+        ),
+        separator(),
+        entry(
+            fl!("ui-files-menu-copy-path"),
+            files(FilesMessage::CopyPath { tab, side })
+        ),
+        separator(),
+        entry(
+            fl!("ui-files-menu-new-folder"),
+            files(FilesMessage::AskNewFolder { tab, side })
+        ),
+        entry(
+            fl!("ui-files-menu-refresh"),
+            files(FilesMessage::Refresh { tab, side })
+        ),
+    ]
+    .spacing(0.0)
+    .width(MENU_WIDTH)
+    .into()
 }
 
 /// What a tab's menu offers, worked out by the window from the core.

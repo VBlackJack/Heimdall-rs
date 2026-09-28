@@ -88,6 +88,13 @@ pub enum FilesMessage {
         /// Column.
         column: SortColumn,
     },
+    /// Copy the full path of a pane's selected entry, as the C# "Copy path".
+    CopyPath {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
     /// Go to the folder typed in a pane's path bar.
     GoTo {
         /// Tab.
@@ -176,6 +183,7 @@ impl FilesMessage {
             | Self::Refresh { tab, side }
             | Self::GoTo { tab, side }
             | Self::SortBy { tab, side, .. }
+            | Self::CopyPath { tab, side }
             | Self::AskNewFolder { tab, side }
             | Self::AskRename { tab, side }
             | Self::AskDelete { tab, side } => Some((tab, side)),
@@ -211,6 +219,7 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "PathEdited({}, {side:?}, ..)", tab.value())
             }
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
+            Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::SortBy { tab, side, column } => {
                 write!(f, "SortBy({}, {side:?}, {column:?})", tab.value())
             }
@@ -406,7 +415,8 @@ impl App {
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
             message @ (FilesMessage::PathEdited { .. }
             | FilesMessage::GoTo { .. }
-            | FilesMessage::SortBy { .. }) => self.pane_message(message),
+            | FilesMessage::SortBy { .. }
+            | FilesMessage::CopyPath { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -434,6 +444,7 @@ impl App {
                 Vec::new()
             }
             FilesMessage::GoTo { tab, side } => self.go_to(tab, side),
+            FilesMessage::CopyPath { tab, side } => self.copy_path(tab, side),
             FilesMessage::SortBy { tab, side, column } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -445,6 +456,30 @@ impl App {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Copies the full path of `side`'s selected entry, and says so.
+    fn copy_path(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let path = match side {
+            Side::Remote => files
+                .remote
+                .selected
+                .and_then(|index| files.remote.entries.get(index))
+                .map(|entry| files.remote.path.join(&entry.name).display()),
+            Side::Local => files
+                .local
+                .selected
+                .and_then(|index| files.local.entries.get(index))
+                .map(|entry| files.local.path.join(&entry.name).display().to_string()),
+        };
+        let Some(path) = path else {
+            return Vec::new();
+        };
+        self.tell(super::Notice::Copied(path.clone()));
+        vec![Effect::WriteClipboard(path)]
     }
 
     /// Lists the folder typed in `side`'s path bar, from the folder shown when relative; the

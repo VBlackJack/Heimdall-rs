@@ -548,3 +548,208 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
         "this computer's pane keeps its own sort"
     );
 }
+
+#[tokio::test]
+async fn a_right_click_selects_an_entry_and_opens_the_csharp_menu() {
+    use heimdall_ui::tree_view::TreeMenu;
+    use iced::mouse;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let entry = TreeMenu::FilesEntry {
+        tab,
+        side: Side::Remote,
+        index: 1,
+    };
+    {
+        let mut ui = simulator(&shell);
+        let name = ui.find("backup.tar.gz").expect("the file");
+        ui.point_at(name.bounds().center());
+        ui.simulate([
+            iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Right)),
+            iced::Event::Mouse(mouse::Event::ButtonReleased(mouse::Button::Right)),
+        ]);
+        assert!(
+            ui.into_messages().any(
+                |message| matches!(message, Message::OpenTreeMenu(ref menu) if *menu == entry)
+            )
+        );
+    }
+    let _ = shell.update(Message::OpenTreeMenu(entry.clone()));
+    let selected = |shell: &Shell| {
+        shell
+            .app()
+            .tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .remote
+            .selected
+    };
+    assert_eq!(selected(&shell), Some(1), "selected, as in the C# tab");
+    snapshot(&shell, "files-menu.png");
+    // A right click on a folder already selected leaves it closed.
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Select {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    })));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    }));
+    assert_eq!(selected(&shell), Some(0));
+    let path = shell
+        .app()
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote
+        .path
+        .display();
+    assert_eq!(path, "/home/admin", "not opened");
+    // Nor for an entry no longer listed.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+        tab,
+        side: Side::Remote,
+        index: 9,
+    }));
+    assert!(simulator(&shell).find("Copy path").is_err());
+}
+
+#[tokio::test]
+async fn this_computers_menu_uploads_what_the_servers_downloads() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = Simulator::with_size(
+        settings,
+        WINDOW,
+        heimdall_ui::tree_view::files_entry_menu(tab, Side::Local, 0),
+    );
+    assert!(ui.find("Download").is_err());
+    ui.click("Upload").expect("Upload");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Files(FilesMessage::Transfer {
+            direction: Direction::Upload,
+            ..
+        }))
+    )));
+}
+
+#[tokio::test]
+async fn after_an_entrys_menu_the_arrows_still_move_through_the_files() {
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    }));
+    let _ = shell.update(Message::CloseTreeMenu);
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let files = shell
+        .app()
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files");
+    assert_eq!(
+        files.remote.selected,
+        Some(1),
+        "the Files tab's, not the tree's"
+    );
+}
+
+#[tokio::test]
+async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    for (label, expected) in [
+        (
+            "Open",
+            format!(
+                "{:?}",
+                FilesMessage::Open {
+                    tab,
+                    side: Side::Remote,
+                    index: 1
+                }
+            ),
+        ),
+        (
+            "Download",
+            format!(
+                "{:?}",
+                FilesMessage::Transfer {
+                    tab,
+                    direction: Direction::Download
+                }
+            ),
+        ),
+        (
+            "Rename",
+            format!(
+                "{:?}",
+                FilesMessage::AskRename {
+                    tab,
+                    side: Side::Remote
+                }
+            ),
+        ),
+        (
+            "Copy path",
+            format!(
+                "{:?}",
+                FilesMessage::CopyPath {
+                    tab,
+                    side: Side::Remote
+                }
+            ),
+        ),
+        (
+            "New Folder",
+            format!(
+                "{:?}",
+                FilesMessage::AskNewFolder {
+                    tab,
+                    side: Side::Remote
+                }
+            ),
+        ),
+    ] {
+        // The menu alone: the pane has buttons named as some of its entries.
+        let settings = Settings {
+            fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+            ..Settings::default()
+        };
+        let mut ui = Simulator::with_size(
+            settings,
+            WINDOW,
+            heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 1),
+        );
+        ui.click(label).expect(label);
+        let chosen: Vec<String> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(AppMessage::Files(files)) => Some(format!("{files:?}")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chosen, [expected], "{label}");
+    }
+}

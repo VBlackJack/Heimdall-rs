@@ -569,3 +569,62 @@ async fn a_header_click_sorts_its_own_pane_only() {
     assert_eq!(files_pane.local.sort.column, SortColumn::Size);
     assert!(files_pane.remote.sort.descending);
 }
+
+#[tokio::test]
+async fn copy_path_copies_the_selected_entry_whole_and_says_so() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![remote_entry(b"run.sh", EntryKind::File, 1)],
+    );
+    let copy = |app: &mut App, side| files(app, FilesMessage::CopyPath { tab, side });
+    assert!(copy(&mut app, Side::Remote).is_empty(), "nothing selected");
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    let effects = copy(&mut app, Side::Remote);
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == "/srv/run.sh"),
+        "{effects:?}"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Copied("/srv/run.sh".to_owned()))
+    );
+
+    files(
+        &mut app,
+        FilesMessage::LocalListed {
+            tab,
+            result: Ok((
+                dir.path().to_owned(),
+                vec![local_entry("notes.md", EntryKind::File)],
+            )),
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Local,
+            index: 0,
+        },
+    );
+    let local = dir.path().join("notes.md").display().to_string();
+    let effects = copy(&mut app, Side::Local);
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if *text == local),
+        "{effects:?}"
+    );
+}

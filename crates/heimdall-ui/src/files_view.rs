@@ -35,13 +35,14 @@ use heimdall_core::utc::UtcTime;
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
-    Column, button, column, container, responsive, row, scrollable, text, text_input,
+    Column, button, column, container, mouse_area, responsive, row, scrollable, text, text_input,
 };
 use iced::{Alignment, Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::texts;
+use crate::tree_view::TreeMenu;
 
 /// Gap between elements, in logical pixels.
 const SPACING: f32 = 8.0;
@@ -231,8 +232,9 @@ fn entry_row<'a, E: Listed>(
     entry: &E,
     columns: &[SortColumn],
     selected: bool,
-    on_press: Message,
+    (tab, side, index): (TabId, Side, usize),
 ) -> Element<'a, Message> {
+    let on_press = files(FilesMessage::Select { tab, side, index });
     let mut cells = row![].spacing(SPACING);
     for column in columns {
         let cell = text(cell_text(entry, *column)).width(column_width(*column));
@@ -242,14 +244,21 @@ fn entry_row<'a, E: Listed>(
             cell.size(SMALL_SIZE)
         });
     }
-    button(cells)
+    let line = button(cells)
         .width(Length::Fill)
         .style(if selected {
             button::primary
         } else {
             button::text
         })
-        .on_press(on_press)
+        .on_press(on_press);
+    // A right click opens its menu, as in the C# Files tab.
+    mouse_area(line)
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab,
+            side,
+            index,
+        }))
         .into()
 }
 
@@ -326,8 +335,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             list = list.push(text(fl!("ui-files-empty")).size(SMALL_SIZE));
         }
         for (index, entry) in entries.iter().enumerate() {
-            let on_press = files(FilesMessage::Select { tab, side, index });
-            list = list.push(entry_row(entry, &shown, selected == Some(index), on_press));
+            let place = (tab, side, index);
+            list = list.push(entry_row(entry, &shown, selected == Some(index), place));
         }
         column![
             headers(tab, side, &shown, sort),

@@ -538,3 +538,13 @@ ui-files-column-permissions = Permissions
 ui-files-column-owner = Owner
 ui-files-sorted-ascending = { $column } ▲
 ui-files-sorted-descending = { $column } ▼
+
+## The menu of an entry of the Files tab, as the C# one.
+ui-files-menu-open = Open
+ui-files-menu-download = Download
+ui-files-menu-upload = Upload
+ui-files-menu-rename = Rename
+ui-files-menu-delete = Delete
+ui-files-menu-copy-path = Copy path
+ui-files-menu-new-folder = New Folder
+ui-files-menu-refresh = Refresh

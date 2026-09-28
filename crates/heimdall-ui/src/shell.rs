@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    Direction, FilesKey, file_operation, list_local, list_remote, transfer_events,
+    Direction, FilesKey, Side, file_operation, list_local, list_remote, transfer_events,
 };
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::{LocalShell, local_events};
@@ -1052,6 +1052,22 @@ impl Shell {
         if let TreeMenu::Profile(id) = &menu {
             let _ = self.app.update(AppMessage::SelectProfile(id.clone()));
         }
+        // And in the C# Files tab; a folder already selected stays closed.
+        if let TreeMenu::FilesEntry { tab, side, index } = menu {
+            let selected = self
+                .app
+                .tab(tab)
+                .and_then(|found| found.files.as_deref())
+                .and_then(|files| match side {
+                    Side::Remote => files.remote.selected,
+                    Side::Local => files.local.selected,
+                });
+            if selected != Some(index) {
+                let _ =
+                    self.app
+                        .update(AppMessage::Files(FilesMessage::Select { tab, side, index }));
+            }
+        }
         self.menu = Some((menu, at));
     }
 
@@ -1443,6 +1459,17 @@ impl Shell {
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+        } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
+            // Only while the entry is still listed.
+            let files = self.app.tab(tab)?.files.as_deref()?;
+            let listed = match side {
+                Side::Remote => files.remote.entries.len(),
+                Side::Local => files.local.entries.len(),
+            };
+            if index >= listed {
+                return None;
+            }
+            tree_view::files_entry_menu(tab, side, index)
         } else if let TreeMenu::Folder(path) = menu {
             tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
         } else if let TreeMenu::MoveFolder(path) = menu {
@@ -1468,7 +1495,8 @@ impl Shell {
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::Selection
-                | TreeMenu::MoveSelection => None,
+                | TreeMenu::MoveSelection
+                | TreeMenu::FilesEntry { .. } => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
             let connect_as = profile
@@ -1827,8 +1855,9 @@ impl Shell {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
-            // A tab's menu is the tab bar's: the keyboard stays where it was.
-            Message::OpenTreeMenu(TreeMenu::Tab(_)) => {}
+            // A tab's menu is the tab bar's, an entry's the Files tab's: the keyboard stays
+            // where it was.
+            Message::OpenTreeMenu(TreeMenu::Tab(_) | TreeMenu::FilesEntry { .. }) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
             | Message::TreeClick(_) => self.tree_focused = true,
