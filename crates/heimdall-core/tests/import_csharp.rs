@@ -348,8 +348,10 @@ fn a_real_legacy_file_imports_without_error() {
 fn an_rdp_profile_without_nla_allows_plain_tls_and_the_default_does_not() {
     let json = servers(
         r#"{"id": "nla", "remoteServer": "h", "connectionType": "RDP"},
-           {"id": "tls", "remoteServer": "h", "connectionType": "RDP", "rdpNla": false},
-           {"id": "explicit", "remoteServer": "h", "connectionType": "RDP", "rdpNla": true}"#,
+           {"id": "tls", "remoteServer": "h", "connectionType": "RDP", "rdpNla": false,
+            "rdpUseGlobalDefaults": false},
+           {"id": "explicit", "remoteServer": "h", "connectionType": "RDP", "rdpNla": true,
+            "rdpUseGlobalDefaults": false}"#,
     );
     let report = import(&json, None).expect("valid JSON");
     let allowed: Vec<(&str, bool)> = report
@@ -554,7 +556,7 @@ fn the_clipboard_is_shared_unless_the_csharp_profile_turned_it_off() {
     let json = servers(
         r#"{"id": "on", "remoteServer": "h", "connectionType": "RDP"},
            {"id": "off", "remoteServer": "h", "connectionType": "RDP",
-            "rdpRedirectClipboard": false}"#,
+            "rdpRedirectClipboard": false, "rdpUseGlobalDefaults": false}"#,
     );
     let report = import(&json, None).expect("valid JSON");
     let shared: Vec<(&str, bool)> = report
@@ -570,7 +572,7 @@ fn drives_are_shared_only_when_the_csharp_profile_shared_them() {
     let json = servers(
         r#"{"id": "off", "remoteServer": "h", "connectionType": "RDP"},
            {"id": "on", "remoteServer": "h", "connectionType": "RDP",
-            "rdpRedirectDrives": true}"#,
+            "rdpRedirectDrives": true, "rdpUseGlobalDefaults": false}"#,
     );
     let report = import(&json, None).expect("valid JSON");
     let shared: Vec<(&str, bool)> = report
@@ -579,6 +581,204 @@ fn drives_are_shared_only_when_the_csharp_profile_shared_them() {
         .map(|profile| (profile.id.as_str(), profile.redirect_drives))
         .collect();
     assert_eq!(shared, [("off", false), ("on", true)]);
+}
+
+#[test]
+fn an_rdp_profile_on_the_global_defaults_takes_the_settings_not_its_own_choices() {
+    use heimdall_core::profile::{AudioPlayback, ColorDepth};
+
+    // Its own choices say the opposite of the settings: only the settings may show.
+    let own = r#""rdpRedirectClipboard": true, "rdpRedirectDrives": false, "rdpNla": true,
+                  "rdpColorDepth": 32, "rdpAudioMode": 0, "rdpAdminMode": true"#;
+    let json = servers(&format!(
+        r#"{{"id": "global", "remoteServer": "h", "connectionType": "RDP", {own}}},
+           {{"id": "said", "remoteServer": "h", "connectionType": "RDP", {own},
+             "rdpUseGlobalDefaults": true}},
+           {{"id": "own", "remoteServer": "h", "connectionType": "RDP", {own},
+             "rdpUseGlobalDefaults": false}}"#
+    ));
+    let settings = r#"{"rdpDefaultRedirectClipboard": false, "rdpDefaultRedirectDrives": true,
+                       "rdpDefaultNla": false, "rdpDefaultColorDepth": 16,
+                       "rdpDefaultAudioMode": 2}"#;
+    let report = import(&json, Some(settings)).expect("valid JSON");
+    let taken: Vec<_> = report
+        .rdp
+        .iter()
+        .map(|p| {
+            (
+                p.id.as_str(),
+                p.redirect_clipboard,
+                p.redirect_drives,
+                p.allow_tls_only,
+                p.options.color_depth,
+                p.options.audio,
+                p.options.admin_session,
+            )
+        })
+        .collect();
+    let global = (
+        false,
+        true,
+        true,
+        ColorDepth::Bpp16,
+        AudioPlayback::OnServer,
+        true,
+    );
+    let own = (
+        true,
+        false,
+        false,
+        ColorDepth::Bpp32,
+        AudioPlayback::Off,
+        true,
+    );
+    let with = |id, v: (bool, bool, bool, ColorDepth, AudioPlayback, bool)| {
+        (id, v.0, v.1, v.2, v.3, v.4, v.5)
+    };
+    assert_eq!(
+        taken,
+        [
+            with("global", global),
+            with("said", global),
+            with("own", own)
+        ],
+        "the administrative session is never a global default"
+    );
+}
+
+#[test]
+fn the_global_defaults_left_unset_are_the_csharp_ones() {
+    use heimdall_core::profile::RdpOptions;
+
+    let json = servers(r#"{"id": "a", "remoteServer": "h", "connectionType": "RDP"}"#);
+    let report = import(&json, Some("{}")).expect("valid JSON");
+    let profile = &report.rdp[0];
+    assert!(profile.redirect_clipboard);
+    assert!(!profile.redirect_drives);
+    assert!(!profile.allow_tls_only);
+    assert_eq!(profile.options, RdpOptions::default());
+}
+
+#[test]
+fn a_csharp_resolution_mode_is_read_as_its_embedded_session_sizes_the_desktop() {
+    use heimdall_core::profile::Resolution;
+
+    let entry = |id: &str, extra: &str| {
+        format!(r#"{{"id": "{id}", "remoteServer": "h", "connectionType": "RDP"{extra}}}"#)
+    };
+    let json = servers(
+        &[
+            entry("absent", ""),
+            entry(
+                "fixed",
+                r#", "rdpResolutionMode": "Fixed", "rdpFixedResolutionWidth": 1366,
+                   "rdpFixedResolutionHeight": 768, "rdpInitialSmartSizing": false"#,
+            ),
+            entry(
+                "sized-without-mode",
+                r#", "rdpFixedResolutionWidth": 1280, "rdpFixedResolutionHeight": 720"#,
+            ),
+            entry(
+                "legacy-names",
+                r#", "rdpDefaultResolutionWidth": 1024, "rdpDefaultResolutionHeight": 768"#,
+            ),
+            entry(
+                "fixed-without-size",
+                r#", "rdpResolutionMode": "Fixed", "rdpFixedResolutionWidth": 0"#,
+            ),
+            entry("one-side", r#", "rdpFixedResolutionWidth": 1280"#),
+            entry("smart", r#", "rdpResolutionMode": "SmartSizing""#),
+            entry(
+                "multimon",
+                r#", "rdpResolutionMode": "Multimon", "rdpFixedResolutionWidth": 1280,
+                   "rdpFixedResolutionHeight": 720"#,
+            ),
+            entry(
+                "auto",
+                r#", "rdpResolutionMode": "Auto", "rdpDynamicResolution": false"#,
+            ),
+            entry(
+                "too-large",
+                r#", "rdpResolutionMode": "fixed", "rdpFixedResolutionWidth": 99999,
+                   "rdpFixedResolutionHeight": 99999"#,
+            ),
+        ]
+        .join(","),
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let taken: Vec<_> = report
+        .rdp
+        .iter()
+        .map(|p| {
+            let o = p.options;
+            (
+                p.id.as_str(),
+                o.resolution,
+                (o.fixed_width, o.fixed_height),
+                o.scale_fixed,
+                o.dynamic_resolution,
+            )
+        })
+        .collect();
+    let fit = Resolution::FitWindow;
+    let fixed = Resolution::Fixed;
+    assert_eq!(
+        taken,
+        [
+            ("absent", fit, (1920, 1080), true, true),
+            ("fixed", fixed, (1364, 768), false, true),
+            ("sized-without-mode", fixed, (1280, 720), true, true),
+            ("legacy-names", fixed, (1024, 768), true, true),
+            // Without its size, the C# session follows the pane.
+            ("fixed-without-size", fit, (1920, 1080), true, true),
+            // Both sides are needed, as the C# migration asks.
+            ("one-side", fit, (1920, 1080), true, true),
+            ("smart", Resolution::SmartSizing, (1920, 1080), true, true),
+            // Neither has sense in a tab.
+            ("multimon", fit, (1280, 720), true, true),
+            ("auto", fit, (1920, 1080), true, false),
+            ("too-large", fixed, (7680, 4320), true, true),
+        ]
+    );
+}
+
+#[test]
+fn a_csharp_colour_depth_is_brought_to_one_the_session_can_have_and_sound_played_here_is_not() {
+    use heimdall_core::profile::{AudioPlayback, ColorDepth};
+
+    let entry = |id: &str, depth: i64, audio: i64| {
+        format!(
+            r#"{{"id": "{id}", "remoteServer": "h", "connectionType": "RDP",
+                "rdpUseGlobalDefaults": false, "rdpColorDepth": {depth}, "rdpAudioMode": {audio}}}"#
+        )
+    };
+    let json = servers(
+        &[
+            entry("8", 8, 0),
+            entry("16", 16, 1),
+            entry("17", 17, 2),
+            entry("24", 24, 3),
+            entry("25", 25, 0),
+        ]
+        .join(","),
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let taken: Vec<_> = report
+        .rdp
+        .iter()
+        .map(|p| (p.id.as_str(), p.options.color_depth, p.options.audio))
+        .collect();
+    assert_eq!(
+        taken,
+        [
+            ("8", ColorDepth::Bpp16, AudioPlayback::Off),
+            // Played on this computer: this version does not, so it is not played.
+            ("16", ColorDepth::Bpp16, AudioPlayback::Off),
+            ("17", ColorDepth::Bpp24, AudioPlayback::OnServer),
+            ("24", ColorDepth::Bpp24, AudioPlayback::Off),
+            ("25", ColorDepth::Bpp32, AudioPlayback::Off),
+        ]
+    );
 }
 
 #[test]

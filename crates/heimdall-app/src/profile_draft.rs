@@ -21,9 +21,10 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use heimdall_core::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT,
-    DEFAULT_WINRM_HTTPS_PORT, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
-    WinRmProfile,
+    AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
+    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN,
+    FIXED_WIDTH_MAX, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile, TelnetProfile,
+    VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// Port when the field is left empty.
@@ -49,11 +50,15 @@ pub enum ProfileField {
     KeyPath,
     /// Windows domain of an RDP account.
     Domain,
+    /// Width of a fixed RDP desktop.
+    FixedWidth,
+    /// Height of a fixed RDP desktop.
+    FixedHeight,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 9] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -61,6 +66,8 @@ impl ProfileField {
         Self::Username,
         Self::Domain,
         Self::KeyPath,
+        Self::FixedWidth,
+        Self::FixedHeight,
     ];
 }
 
@@ -92,7 +99,9 @@ impl DraftProtocol {
                 true
             }
             ProfileField::Username => matches!(self, Self::Ssh | Self::Rdp | Self::WinRm),
-            ProfileField::Domain => self == Self::Rdp,
+            ProfileField::Domain | ProfileField::FixedWidth | ProfileField::FixedHeight => {
+                self == Self::Rdp
+            }
             ProfileField::KeyPath => self == Self::Ssh,
         }
     }
@@ -140,6 +149,9 @@ pub enum ProfileToggle {
     /// SSH, RDP: connect directly, not through the gateway chosen, as the C# "Connect
     /// directly without an SSH gateway" box.
     DirectConnection,
+    /// RDP: open the server's administrative session, as the C# "Run as administrator
+    /// session (/admin)" box.
+    AdminSession,
 }
 
 impl ProfileToggle {
@@ -147,7 +159,12 @@ impl ProfileToggle {
     #[must_use]
     pub fn of(protocol: DraftProtocol) -> &'static [Self] {
         match protocol {
-            DraftProtocol::Rdp => &[Self::RedirectClipboard, Self::RedirectDrives, Self::Nla],
+            DraftProtocol::Rdp => &[
+                Self::RedirectClipboard,
+                Self::RedirectDrives,
+                Self::Nla,
+                Self::AdminSession,
+            ],
             DraftProtocol::WinRm => &[
                 Self::StoredCredential,
                 Self::UseSsl,
@@ -157,6 +174,23 @@ impl ProfileToggle {
             DraftProtocol::Ssh | DraftProtocol::Telnet => &[],
         }
     }
+}
+
+/// A value chosen from a list of an RDP profile's form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileChoice {
+    /// The colour depth.
+    ColorDepth(ColorDepth),
+    /// Where the sound goes.
+    Audio(AudioPlayback),
+    /// How the desktop is sized.
+    Resolution(Resolution),
+    /// A common size, written into the width and height.
+    Preset(u16, u16),
+    /// Whether a fixed desktop is scaled into the tab.
+    ScaleFixed(bool),
+    /// Whether the desktop follows the tab's size.
+    DynamicResolution(bool),
 }
 
 /// The profile a form saves, of its protocol.
@@ -206,6 +240,13 @@ pub struct ProfileDraft {
     pub password_saved: bool,
     /// The saved password is to be removed when the form is saved.
     pub clear_password: bool,
+    /// RDP: the options chosen from lists and boxes of their own; the administrative session
+    /// is a toggle, the fixed size is typed in `fixed_width` and `fixed_height`.
+    pub rdp_options: RdpOptions,
+    /// RDP: width of a fixed desktop, as typed.
+    pub fixed_width: String,
+    /// RDP: height of a fixed desktop, as typed.
+    pub fixed_height: String,
 }
 
 /// Why a form cannot be saved yet.
@@ -233,6 +274,10 @@ pub enum DraftError {
     UsernameMissing,
     /// The domain holds a space or a double quote.
     DomainInvalid,
+    /// A fixed width is not a number from 200 to 7680.
+    FixedWidthInvalid,
+    /// A fixed height is not a number from 200 to 4320.
+    FixedHeightInvalid,
     /// A gateway's parents lead back to it.
     GatewayLoop,
 }
@@ -251,6 +296,8 @@ impl DraftError {
                 ProfileField::Username
             }
             Self::DomainInvalid => ProfileField::Domain,
+            Self::FixedWidthInvalid => ProfileField::FixedWidth,
+            Self::FixedHeightInvalid => ProfileField::FixedHeight,
         }
     }
 }
@@ -291,6 +338,9 @@ impl ProfileDraft {
         if !profile.allow_tls_only {
             toggles.push(ProfileToggle::Nla);
         }
+        if profile.options.admin_session {
+            toggles.push(ProfileToggle::AdminSession);
+        }
         Self {
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
@@ -303,6 +353,9 @@ impl ProfileDraft {
             protocol: DraftProtocol::Rdp,
             protocol_chosen: true,
             toggles,
+            rdp_options: profile.options,
+            fixed_width: profile.options.fixed_width.to_string(),
+            fixed_height: profile.options.fixed_height.to_string(),
             ..Self::default()
         }
     }
@@ -376,6 +429,7 @@ impl ProfileDraft {
     /// in, and for RDP the clipboard shared and Network Level Authentication required.
     #[must_use]
     pub fn new_for(protocol: DraftProtocol) -> Self {
+        let options = RdpOptions::default();
         let mut draft = Self {
             protocol,
             protocol_chosen: true,
@@ -383,6 +437,9 @@ impl ProfileDraft {
                 DraftProtocol::Rdp => vec![ProfileToggle::RedirectClipboard, ProfileToggle::Nla],
                 _ => Vec::new(),
             },
+            rdp_options: options,
+            fixed_width: options.fixed_width.to_string(),
+            fixed_height: options.fixed_height.to_string(),
             ..Self::default()
         };
         draft.port = draft.default_port().to_string();
@@ -409,13 +466,67 @@ impl ProfileDraft {
         }
     }
 
-    /// Whether `field` is shown now: the `WinRM` account only for a stored credential.
+    /// Takes `choice` from an RDP list.
+    pub fn choose(&mut self, choice: ProfileChoice) {
+        match choice {
+            ProfileChoice::ColorDepth(depth) => self.rdp_options.color_depth = depth,
+            ProfileChoice::Audio(audio) => self.rdp_options.audio = audio,
+            ProfileChoice::Resolution(resolution) => self.rdp_options.resolution = resolution,
+            ProfileChoice::Preset(width, height) => {
+                self.fixed_width = width.to_string();
+                self.fixed_height = height.to_string();
+            }
+            ProfileChoice::ScaleFixed(on) => self.rdp_options.scale_fixed = on,
+            ProfileChoice::DynamicResolution(on) => self.rdp_options.dynamic_resolution = on,
+        }
+    }
+
+    /// The RDP options saved: the lists' choices, the administrative session ticked and, in
+    /// the fixed mode, the size typed, brought within the limits as the C# dialog does.
+    ///
+    /// # Errors
+    ///
+    /// A fixed size that is not a number within the C# limits; checked in the fixed mode
+    /// only, where it is shown.
+    fn saved_rdp_options(&self) -> Result<RdpOptions, DraftError> {
+        let mut options = RdpOptions {
+            admin_session: self.is_on(ProfileToggle::AdminSession),
+            ..self.rdp_options
+        };
+        if options.resolution == Resolution::Fixed {
+            let side = |typed: &str, max: u16, error: DraftError| {
+                typed
+                    .trim()
+                    .parse::<u16>()
+                    .ok()
+                    .filter(|side| (FIXED_SIDE_MIN..=max).contains(side))
+                    .ok_or(error)
+            };
+            let width = side(
+                &self.fixed_width,
+                FIXED_WIDTH_MAX,
+                DraftError::FixedWidthInvalid,
+            )?;
+            let height = side(
+                &self.fixed_height,
+                FIXED_HEIGHT_MAX,
+                DraftError::FixedHeightInvalid,
+            )?;
+            (options.fixed_width, options.fixed_height) = fixed_desktop(width, height);
+        }
+        Ok(options)
+    }
+
+    /// Whether `field` is shown now: the `WinRM` account only for a stored credential, an RDP
+    /// fixed size only in the fixed mode.
     #[must_use]
     pub fn shows(&self, field: ProfileField) -> bool {
+        let fixed_size = matches!(field, ProfileField::FixedWidth | ProfileField::FixedHeight);
         self.protocol.shows(field)
             && !(self.protocol == DraftProtocol::WinRm
                 && field == ProfileField::Username
                 && !self.is_on(ProfileToggle::StoredCredential))
+            && !(fixed_size && self.rdp_options.resolution != Resolution::Fixed)
     }
 
     /// Whether `toggle` is shown now: skipping certificate checks only over HTTPS.
@@ -518,6 +629,7 @@ impl ProfileDraft {
                 gateway: self.routed_gateway(),
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
+                options: self.saved_rdp_options()?,
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -567,6 +679,8 @@ impl ProfileDraft {
             ProfileField::Username => &self.username,
             ProfileField::KeyPath => &self.key_path,
             ProfileField::Domain => &self.domain,
+            ProfileField::FixedWidth => &self.fixed_width,
+            ProfileField::FixedHeight => &self.fixed_height,
         }
     }
 
@@ -580,6 +694,8 @@ impl ProfileDraft {
             ProfileField::Username => &mut self.username,
             ProfileField::KeyPath => &mut self.key_path,
             ProfileField::Domain => &mut self.domain,
+            ProfileField::FixedWidth => &mut self.fixed_width,
+            ProfileField::FixedHeight => &mut self.fixed_height,
         } = value;
     }
 
@@ -793,12 +909,18 @@ mod tests {
             "drives kept unless shared"
         );
         assert!(rdp.is_on(ProfileToggle::Nla), "NLA required unless cleared");
+        assert!(
+            !rdp.is_on(ProfileToggle::AdminSession),
+            "the ordinary session unless asked"
+        );
+        assert_eq!(rdp.rdp_options, RdpOptions::default());
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
             [
                 ProfileToggle::RedirectClipboard,
                 ProfileToggle::RedirectDrives,
-                ProfileToggle::Nla
+                ProfileToggle::Nla,
+                ProfileToggle::AdminSession
             ],
             "in the C# dialog's order"
         );
@@ -826,6 +948,7 @@ mod tests {
             gateway: Some(ProfileId::new("gw")),
             redirect_clipboard: false,
             redirect_drives: false,
+            options: heimdall_core::profile::RdpOptions::default(),
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),
@@ -835,6 +958,7 @@ mod tests {
             allow_tls_only: false,
             redirect_clipboard: true,
             redirect_drives: false,
+            options: heimdall_core::profile::RdpOptions::default(),
             ..rdp
         };
         assert_eq!(

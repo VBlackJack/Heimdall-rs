@@ -175,6 +175,265 @@ pub struct RdpProfile {
     /// as in the C# Heimdall: written down only when on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub redirect_drives: bool,
+    /// How the session looks, sounds and which session it opens.
+    #[serde(flatten)]
+    pub options: RdpOptions,
+}
+
+/// How an RDP session is given: colour depth, sound, administrative session, size. Each is
+/// written down only when it differs from the C# Heimdall's default.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RdpOptions {
+    /// Colours of the desktop.
+    #[serde(default, skip_serializing_if = "ColorDepth::is_default")]
+    pub color_depth: ColorDepth,
+    /// Where the server's sound goes.
+    #[serde(default, skip_serializing_if = "AudioPlayback::is_default")]
+    pub audio: AudioPlayback,
+    /// Open the server's administrative session, as `mstsc /admin`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admin_session: bool,
+    /// How the desktop is sized.
+    #[serde(default, skip_serializing_if = "Resolution::is_default")]
+    pub resolution: Resolution,
+    /// Width asked in [`Resolution::Fixed`], as typed; see [`fixed_desktop`].
+    #[serde(
+        default = "default_fixed_width",
+        skip_serializing_if = "is_default_fixed_width"
+    )]
+    pub fixed_width: u16,
+    /// Height asked in [`Resolution::Fixed`], as typed; see [`fixed_desktop`].
+    #[serde(
+        default = "default_fixed_height",
+        skip_serializing_if = "is_default_fixed_height"
+    )]
+    pub fixed_height: u16,
+    /// A fixed desktop is scaled into the tab, as the C# "Scale fixed resolution to fit the
+    /// pane", on by default; off, it is drawn pixel for pixel, centred.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub scale_fixed: bool,
+    /// The desktop follows the tab's size, as the C# "Allow dynamic resolution updates", on
+    /// by default; off, it gets the tab's size once and is then scaled.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub dynamic_resolution: bool,
+}
+
+impl Default for RdpOptions {
+    fn default() -> Self {
+        Self {
+            color_depth: ColorDepth::default(),
+            audio: AudioPlayback::default(),
+            admin_session: false,
+            resolution: Resolution::default(),
+            fixed_width: DEFAULT_FIXED_SIZE.0,
+            fixed_height: DEFAULT_FIXED_SIZE.1,
+            scale_fixed: true,
+            dynamic_resolution: true,
+        }
+    }
+}
+
+impl RdpOptions {
+    /// How the desktop's size is decided while the session runs.
+    #[must_use]
+    pub fn sizing(&self) -> DesktopSizing {
+        match self.resolution {
+            Resolution::Fixed => {
+                let (width, height) = fixed_desktop(self.fixed_width, self.fixed_height);
+                DesktopSizing::Fixed { width, height }
+            }
+            Resolution::FitWindow | Resolution::SmartSizing if self.dynamic_resolution => {
+                DesktopSizing::FollowsTab
+            }
+            Resolution::FitWindow | Resolution::SmartSizing => DesktopSizing::TabSizeOnce,
+        }
+    }
+
+    /// Whether the desktop is first shown scaled into its tab, rather than pixel for pixel.
+    #[must_use]
+    pub fn scaled(&self) -> bool {
+        match self.sizing() {
+            DesktopSizing::FollowsTab => false,
+            DesktopSizing::TabSizeOnce => true,
+            DesktopSizing::Fixed { .. } => self.scale_fixed,
+        }
+    }
+}
+
+/// How an RDP desktop is sized, the C# Heimdall's resolution modes an embedded session has.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Resolution {
+    /// The tab's size: the C# default.
+    #[default]
+    FitWindow,
+    /// A size of its own, never changed.
+    Fixed,
+    /// The tab's size, scaled: in an embedded C# session, the same as fitting the window.
+    SmartSizing,
+}
+
+impl Resolution {
+    /// Every mode, in the order the C# list shows them; multi-monitor has no sense in a tab.
+    pub const ALL: [Self; 3] = [Self::FitWindow, Self::Fixed, Self::SmartSizing];
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// How an RDP desktop's size is decided while the session runs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DesktopSizing {
+    /// Asked of the server each time the tab's size changes.
+    FollowsTab,
+    /// The tab's size asked once, then kept.
+    TabSizeOnce,
+    /// This size, asked when connecting and never changed.
+    Fixed {
+        /// Width, in pixels.
+        width: u16,
+        /// Height, in pixels.
+        height: u16,
+    },
+}
+
+/// Fixed size of a new profile, as the C# dialog's.
+pub const DEFAULT_FIXED_SIZE: (u16, u16) = (1920, 1080);
+/// Smallest side of a fixed desktop, as the C# `RdpDisplayLimits`.
+pub const FIXED_SIDE_MIN: u16 = 200;
+/// Largest width of a fixed desktop.
+pub const FIXED_WIDTH_MAX: u16 = 7680;
+/// Largest height of a fixed desktop.
+pub const FIXED_HEIGHT_MAX: u16 = 4320;
+/// Widths are multiples of this, as the C# resolver snaps them.
+const WIDTH_STEP: u16 = 4;
+
+/// The fixed size a session is given for `width` by `height` as typed: each side within the
+/// C# limits, the width brought down to a multiple of 4.
+#[must_use]
+pub fn fixed_desktop(width: u16, height: u16) -> (u16, u16) {
+    let width = width.clamp(FIXED_SIDE_MIN, FIXED_WIDTH_MAX);
+    (
+        width - width % WIDTH_STEP,
+        height.clamp(FIXED_SIDE_MIN, FIXED_HEIGHT_MAX),
+    )
+}
+
+fn default_fixed_width() -> u16 {
+    DEFAULT_FIXED_SIZE.0
+}
+
+fn default_fixed_height() -> u16 {
+    DEFAULT_FIXED_SIZE.1
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_default_fixed_width(width: &u16) -> bool {
+    *width == DEFAULT_FIXED_SIZE.0
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_default_fixed_height(height: &u16) -> bool {
+    *height == DEFAULT_FIXED_SIZE.1
+}
+
+/// Bits per pixel of an RDP desktop: the three the C# Heimdall offers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub enum ColorDepth {
+    /// High colour, 16 bits.
+    Bpp16,
+    /// True colour, 24 bits.
+    Bpp24,
+    /// True colour with alpha, 32 bits: the C# default.
+    #[default]
+    Bpp32,
+}
+
+impl ColorDepth {
+    /// Every depth, in the order the C# list shows them.
+    pub const ALL: [Self; 3] = [Self::Bpp16, Self::Bpp24, Self::Bpp32];
+
+    /// Bits per pixel.
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        match self {
+            Self::Bpp16 => 16,
+            Self::Bpp24 => 24,
+            Self::Bpp32 => 32,
+        }
+    }
+
+    /// The depth a session is given for `bits`, as the C# `NormalizeColorDepth`: 16 or less
+    /// is 16, up to 24 is 24, more is 32.
+    #[must_use]
+    pub fn nearest(bits: i64) -> Self {
+        match bits {
+            ..=16 => Self::Bpp16,
+            17..=24 => Self::Bpp24,
+            _ => Self::Bpp32,
+        }
+    }
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl From<ColorDepth> for u32 {
+    fn from(depth: ColorDepth) -> Self {
+        depth.bits()
+    }
+}
+
+impl TryFrom<u32> for ColorDepth {
+    type Error = String;
+
+    fn try_from(bits: u32) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|depth| depth.bits() == bits)
+            .ok_or_else(|| format!("colour depth {bits} is not 16, 24 or 32"))
+    }
+}
+
+/// Where an RDP server's sound goes, as the C# Heimdall's audio modes this version plays.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioPlayback {
+    /// Not played: the C# default.
+    #[default]
+    Off,
+    /// Played on the server's own speakers.
+    OnServer,
+}
+
+impl AudioPlayback {
+    /// Every mode, in the order the C# list shows them.
+    pub const ALL: [Self; 2] = [Self::Off, Self::OnServer];
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The clipboard is shared unless a profile says otherwise.

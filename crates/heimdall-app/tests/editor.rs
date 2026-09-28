@@ -19,7 +19,9 @@
 
 use std::path::Path;
 
-use heimdall_app::profile_draft::{DraftError, DraftProtocol, ProfileField, ProfileToggle};
+use heimdall_app::profile_draft::{
+    DraftError, DraftProtocol, ProfileChoice, ProfileField, ProfileToggle,
+};
 use heimdall_app::{
     Answer, App, AppConfig, ConnectionEvent, Dialog, Effect, Message, QuestionId, QuestionKind,
     ServerPasswordQuestion, SystemCredentials,
@@ -44,6 +46,7 @@ fn app(dir: &Path) -> App {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -162,6 +165,144 @@ fn an_rdp_session_shares_its_drives_once_ticked() {
         draft.is_on(ProfileToggle::RedirectDrives),
         "shown ticked again"
     );
+}
+
+#[test]
+fn an_rdp_session_keeps_its_colours_sound_and_administrative_session() {
+    use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    app.update(Message::ProfileChoice(ProfileChoice::ColorDepth(
+        ColorDepth::Bpp16,
+    )));
+    app.update(Message::ProfileChoice(ProfileChoice::Audio(
+        AudioPlayback::OnServer,
+    )));
+    app.update(Message::ProfileToggle {
+        toggle: ProfileToggle::AdminSession,
+        on: true,
+    });
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let chosen = RdpOptions {
+        color_depth: ColorDepth::Bpp16,
+        audio: AudioPlayback::OnServer,
+        admin_session: true,
+        ..RdpOptions::default()
+    };
+    assert_eq!(app.rdp_profiles()[0].options, chosen);
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        (draft.rdp_options.color_depth, draft.rdp_options.audio),
+        (ColorDepth::Bpp16, AudioPlayback::OnServer),
+        "shown chosen again"
+    );
+    assert!(
+        draft.is_on(ProfileToggle::AdminSession),
+        "shown ticked again"
+    );
+    // Cleared, and saved again: back to the defaults.
+    app.update(Message::ProfileChoice(ProfileChoice::ColorDepth(
+        ColorDepth::Bpp32,
+    )));
+    app.update(Message::ProfileChoice(ProfileChoice::Audio(
+        AudioPlayback::Off,
+    )));
+    app.update(Message::ProfileToggle {
+        toggle: ProfileToggle::AdminSession,
+        on: false,
+    });
+    save(&mut app, None);
+    assert_eq!(app.rdp_profiles()[0].options, RdpOptions::default());
+}
+
+#[test]
+fn an_rdp_session_keeps_a_fixed_size_typed_or_picked_within_the_csharp_limits() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let error = |app: &App| match &app.dialog {
+        Some(Dialog::EditProfile { error, .. }) => *error,
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    // Hidden, the size is never checked.
+    field(&mut app, ProfileField::FixedWidth, "wide");
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert_eq!(app.rdp_profiles()[0].options, RdpOptions::default());
+
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    app.update(Message::ProfileChoice(ProfileChoice::Resolution(
+        Resolution::Fixed,
+    )));
+    app.update(Message::ProfileChoice(ProfileChoice::Preset(2560, 1440)));
+    app.update(Message::ProfileChoice(ProfileChoice::ScaleFixed(false)));
+    app.update(Message::ProfileChoice(ProfileChoice::DynamicResolution(
+        false,
+    )));
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let options = app.rdp_profiles()[0].options;
+    assert_eq!(
+        (
+            options.resolution,
+            options.fixed_width,
+            options.fixed_height,
+            options.scale_fixed,
+            options.dynamic_resolution
+        ),
+        (Resolution::Fixed, 2560, 1440, false, false)
+    );
+
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        (draft.fixed_width.as_str(), draft.fixed_height.as_str()),
+        ("2560", "1440")
+    );
+    for (width, height, refused) in [
+        ("199", "720", Some(DraftError::FixedWidthInvalid)),
+        ("7681", "720", Some(DraftError::FixedWidthInvalid)),
+        ("wide", "720", Some(DraftError::FixedWidthInvalid)),
+        ("1280", "199", Some(DraftError::FixedHeightInvalid)),
+        ("1280", "4321", Some(DraftError::FixedHeightInvalid)),
+    ] {
+        field(&mut app, ProfileField::FixedWidth, width);
+        field(&mut app, ProfileField::FixedHeight, height);
+        save(&mut app, None);
+        assert_eq!(error(&app), refused, "{width}x{height}");
+    }
+    assert_eq!(
+        DraftError::FixedWidthInvalid.field(),
+        ProfileField::FixedWidth
+    );
+    assert_eq!(
+        DraftError::FixedHeightInvalid.field(),
+        ProfileField::FixedHeight
+    );
+    // The limits themselves, and a width brought down to a multiple of 4.
+    field(&mut app, ProfileField::FixedWidth, " 7679 ");
+    field(&mut app, ProfileField::FixedHeight, "4320");
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let options = app.rdp_profiles()[0].options;
+    assert_eq!((options.fixed_width, options.fixed_height), (7676, 4320));
+    app.update(Message::EditProfile(ProfileId::new("dc")));
+    field(&mut app, ProfileField::FixedWidth, "200");
+    field(&mut app, ProfileField::FixedHeight, "200");
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let options = app.rdp_profiles()[0].options;
+    assert_eq!((options.fixed_width, options.fixed_height), (200, 200));
 }
 
 #[test]

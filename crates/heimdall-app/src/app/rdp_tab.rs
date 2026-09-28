@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway};
+use heimdall_core::profile::{DesktopSizing, ProfileId, RdpProfile, SshGateway};
 use heimdall_rdp::{Fingerprint, KnownRdpHosts};
 use heimdall_ssh::ConnectOptions;
 use tokio_util::sync::CancellationToken;
@@ -60,10 +60,14 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             // Back: the attempts stop.
             tab.retry = None;
             tab.phase = Phase::Connected;
+            let sizing = match &tab.profile {
+                TabProfile::Rdp(profile) => profile.options.sizing(),
+                _ => DesktopSizing::FollowsTab,
+            };
             tab.desktop = Some(Box::new(DesktopPane::rdp(
                 framebuffer,
                 input,
-                size,
+                (size, sizing),
                 clipboard,
             )));
         }
@@ -108,7 +112,11 @@ impl App {
                 .filter(|(host, port, _)| *host == profile.host && *port == profile.port)
                 .map(|(_, _, key)| *key)
                 .collect(),
-            desktop: DEFAULT_DESKTOP,
+            desktop: match profile.options.sizing() {
+                DesktopSizing::Fixed { width, height } => (width, height),
+                // Replaced by the tab's size as soon as it is shown.
+                DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => DEFAULT_DESKTOP,
+            },
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,

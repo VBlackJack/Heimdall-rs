@@ -169,6 +169,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
         clipboard: false,
         drives: Vec::new(),
         trusted_for_run: Vec::new(),
+        options: heimdall_core::profile::RdpOptions::default(),
     }
 }
 

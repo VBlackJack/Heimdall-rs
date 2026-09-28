@@ -41,8 +41,8 @@ use heimdall_app::{
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, ProfileMenuMessage,
     Prompt, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
-    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TreeRow, UiError,
-    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
+    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
+    UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
     master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
@@ -2453,13 +2453,12 @@ impl Shell {
     }
 
     /// The remote desktop of a connected tab.
-    /// Whether `tab`'s desktop is fitted to the tab: as chosen, else as its protocol needs.
-    /// An RDP server matches the tab's size; a VNC server keeps its own, and is fitted.
+    /// Whether `tab`'s desktop is fitted to the tab: as chosen, else as its profile asks.
     fn fits(&self, tab: &Tab) -> bool {
         self.desktop_fit
             .get(&tab.id)
             .copied()
-            .unwrap_or_else(|| fits_by_default(tab.purpose))
+            .unwrap_or_else(|| fits_by_default(&tab.profile))
     }
 
     /// A remote desktop under its bar, as the C# session's: the keys this computer keeps for
@@ -2934,6 +2933,8 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-domain-placeholder"),
         ),
         ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
+        ProfileField::FixedWidth => (fl!("ui-profile-resolution-width"), String::new()),
+        ProfileField::FixedHeight => (fl!("ui-profile-resolution-height"), String::new()),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -2969,6 +2970,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::ViewOnly => fl!("ui-profile-toggle-view-only"),
         ProfileToggle::AllowNoPassword => fl!("ui-profile-toggle-no-password"),
         ProfileToggle::DirectConnection => fl!("ui-profile-direct-connect"),
+        ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
     }
 }
 
@@ -3300,6 +3302,11 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
     };
     if let Some(options) = options {
         form = form.push(section(options, None));
+    }
+    if draft.protocol == DraftProtocol::Rdp {
+        form = form.push(crate::rdp_options::view(draft.rdp_options)).push(
+            crate::rdp_options::resolution(draft, |field| form_field(draft, field)),
+        );
     }
     for toggle in ProfileToggle::of(draft.protocol) {
         if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
@@ -3739,10 +3746,15 @@ fn open_vault_task(path: PathBuf, password: Secret, job: VaultJob) -> Task<Messa
     })
 }
 
-/// Whether a desktop of purpose is fitted to its tab unless the user chose otherwise: a
-/// VNC server keeps its own size, an RDP server is asked for the tab's.
-fn fits_by_default(purpose: Purpose) -> bool {
-    purpose == Purpose::Vnc
+/// Whether a desktop is fitted to its tab unless the user chose otherwise: a VNC server
+/// keeps its own size; an RDP server is asked for the tab's, unless its profile keeps a
+/// size of its own and scales it, or asks the tab's size only once.
+fn fits_by_default(profile: &TabProfile) -> bool {
+    match profile {
+        TabProfile::Vnc(_) => true,
+        TabProfile::Rdp(rdp) => rdp.options.scaled(),
+        TabProfile::Ssh(_) | TabProfile::Telnet(_) | TabProfile::Local(_) => false,
+    }
 }
 
 /// How a remote desktop is shown, as the C# Heimdall's resolution menu names it.
@@ -4109,9 +4121,59 @@ mod tests {
     }
 
     #[test]
-    fn a_vnc_desktop_is_fitted_and_an_rdp_one_matched_unless_chosen() {
-        assert!(fits_by_default(Purpose::Vnc));
-        assert!(!fits_by_default(Purpose::Rdp));
+    fn a_vnc_desktop_is_fitted_and_an_rdp_one_as_its_profile_asks_unless_chosen() {
+        use heimdall_core::profile::{ProfileId, RdpOptions, RdpProfile, Resolution, VncProfile};
+
+        let vnc = VncProfile {
+            id: ProfileId::new("v"),
+            name: "v".to_owned(),
+            group: None,
+            host: "h".to_owned(),
+            port: 5900,
+            view_only: false,
+            allow_no_password: false,
+        };
+        assert!(fits_by_default(&TabProfile::Vnc(vnc)));
+        let rdp = |options| {
+            TabProfile::Rdp(RdpProfile {
+                id: ProfileId::new("r"),
+                name: "r".to_owned(),
+                group: None,
+                host: "h".to_owned(),
+                port: 3389,
+                username: None,
+                domain: None,
+                allow_tls_only: false,
+                gateway: None,
+                redirect_clipboard: true,
+                redirect_drives: false,
+                options,
+            })
+        };
+        let fixed = RdpOptions {
+            resolution: Resolution::Fixed,
+            ..RdpOptions::default()
+        };
+        for (options, fitted) in [
+            (RdpOptions::default(), false),
+            (
+                RdpOptions {
+                    dynamic_resolution: false,
+                    ..RdpOptions::default()
+                },
+                true,
+            ),
+            (fixed, true),
+            (
+                RdpOptions {
+                    scale_fixed: false,
+                    ..fixed
+                },
+                false,
+            ),
+        ] {
+            assert_eq!(fits_by_default(&rdp(options)), fitted, "{options:?}");
+        }
     }
 
     #[test]

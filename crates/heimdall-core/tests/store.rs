@@ -146,6 +146,7 @@ fn rdp(id: &str) -> RdpProfile {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
     }
 }
 
@@ -458,6 +459,83 @@ fn the_drives_setting_is_written_only_when_turned_on() {
         .map(|profile| profile.redirect_drives)
         .collect();
     assert_eq!(shared, [false, true]);
+}
+
+#[test]
+fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
+    use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let mut chosen = rdp("chosen");
+    chosen.options = RdpOptions {
+        color_depth: ColorDepth::Bpp16,
+        audio: AudioPlayback::OnServer,
+        admin_session: true,
+        resolution: Resolution::Fixed,
+        fixed_width: 1280,
+        fixed_height: 720,
+        scale_fixed: false,
+        dynamic_resolution: false,
+    };
+    store.merge_rdp([rdp("defaults"), chosen.clone()]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    for line in [
+        "color_depth = 16",
+        "audio = \"on-server\"",
+        "admin_session = true",
+        "resolution = \"fixed\"",
+        "fixed_width = 1280",
+        "fixed_height = 720",
+        "scale_fixed = false",
+        "dynamic_resolution = false",
+    ] {
+        let key = format!(
+            "
+{}",
+            &line[..=line.find(' ').expect("a key")]
+        );
+        assert_eq!(text.matches(&key).count(), 1, "{key}: {text}");
+        assert!(text.contains(line), "{line}: {text}");
+    }
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    let options: Vec<RdpOptions> = reopened
+        .rdp_profiles()
+        .iter()
+        .map(|profile| profile.options)
+        .collect();
+    assert_eq!(options, [RdpOptions::default(), chosen.options]);
+    assert_eq!(
+        RdpOptions::default(),
+        RdpOptions {
+            color_depth: ColorDepth::Bpp32,
+            audio: AudioPlayback::Off,
+            admin_session: false,
+            resolution: Resolution::FitWindow,
+            fixed_width: 1920,
+            fixed_height: 1080,
+            scale_fixed: true,
+            dynamic_resolution: true,
+        },
+        "the C# defaults"
+    );
+}
+
+#[test]
+fn a_colour_depth_the_session_cannot_have_is_refused() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_rdp([rdp("one")]);
+    store.save().expect("saves");
+    let text = fs::read_to_string(&path).expect("reads");
+    let edited = text.replace("[[rdp]]\n", "[[rdp]]\ncolor_depth = 8\n");
+    assert_ne!(edited, text, "the depth landed");
+    fs::write(&path, edited).expect("writes");
+    let error = ProfileStore::open(&path).expect_err("refused").to_string();
+    assert!(error.contains("colour depth 8"), "{error}");
 }
 
 fn winrm(id: &str) -> WinRmProfile {

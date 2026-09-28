@@ -26,16 +26,17 @@ use std::net::SocketAddr;
 use std::pin::Pin;
 use std::time::Duration;
 
+use heimdall_core::profile::{AudioPlayback, RdpOptions};
 use ironrdp::connector::sspi::generator::NetworkRequest;
 use ironrdp::connector::{
-    self, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind, ConnectorResult,
-    DesktopSize,
+    self, BitmapConfig, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind,
+    ConnectorResult, DesktopSize,
 };
 use ironrdp::displaycontrol::client::DisplayControlClient;
 use ironrdp::dvc::DrdynvcClient;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
-use ironrdp::pdu::rdp::capability_sets::MajorPlatformType;
+use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabilities};
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
 use ironrdp_tokio::{MovableTokioFramed, NetworkClient};
 use tokio::io::{AsyncRead, AsyncWrite};
@@ -159,6 +160,8 @@ pub struct RdpConfig {
     /// Keys the user trusted for this server for this run only, as the C# Heimdall's "Just
     /// this once": accepted, never recorded.
     pub trusted_for_run: Vec<Fingerprint>,
+    /// Colour depth, sound and administrative session asked for.
+    pub options: RdpOptions,
 }
 
 /// Why a connection did not open.
@@ -505,7 +508,12 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         ime_file_name: String::new(),
         dig_product_id: String::new(),
         desktop_size: DesktopSize { width, height },
-        bitmap: None,
+        // What `None` gives, the colour depth aside.
+        bitmap: Some(BitmapConfig {
+            lossy_compression: false,
+            color_depth: config.options.color_depth.bits(),
+            codecs: client_codecs_capabilities(&[]).expect("no codec named, none unknown"),
+        }),
         client_build: 0,
         client_name: CLIENT_NAME.to_owned(),
         client_dir: String::new(),
@@ -517,7 +525,10 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         enable_server_pointer: false,
         request_data: Some(NegoRequestData::cookie(NEGOTIATION_COOKIE.to_owned())),
         autologon: false,
+        // The sound is never played here: kept on the server, or not played at all.
         enable_audio_playback: false,
+        remote_console_audio: config.options.audio == AudioPlayback::OnServer,
+        console_session: config.options.admin_session,
         compression_type: None,
         pointer_software_rendering: true,
         multitransport_flags: None,

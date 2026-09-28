@@ -218,17 +218,10 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
     }
 }
 
-/// Opens the RDP connection, over TCP or through the tunnel `request.route` leads to. An
-/// SSH failure on the way lands in `failure`.
-async fn open(
-    request: &RdpRequest,
-    registry: &AnswerRegistry,
-    events: &mpsc::Sender<ConnectionEvent>,
-    ask_credentials: AskCredentials,
-    failure: &TunnelFailure,
-) -> Result<RdpConnection, RdpError> {
+/// What `request` asks of the RDP connection.
+fn rdp_config(request: &RdpRequest) -> RdpConfig {
     let profile = &request.profile;
-    let config = RdpConfig {
+    RdpConfig {
         host: profile.host.clone(),
         port: profile.port,
         domain: profile.domain.clone(),
@@ -249,7 +242,20 @@ async fn open(
             Vec::new()
         },
         trusted_for_run: request.trusted_for_run.clone(),
-    };
+        options: profile.options,
+    }
+}
+
+/// Opens the RDP connection, over TCP or through the tunnel `request.route` leads to. An
+/// SSH failure on the way lands in `failure`.
+async fn open(
+    request: &RdpRequest,
+    registry: &AnswerRegistry,
+    events: &mpsc::Sender<ConnectionEvent>,
+    ask_credentials: AskCredentials,
+    failure: &TunnelFailure,
+) -> Result<RdpConnection, RdpError> {
+    let config = rdp_config(request);
     if request.route.is_empty() {
         connect(config, ask_credentials, request.cancel.clone()).await
     } else {
@@ -335,5 +341,50 @@ fn ui_error(error: RdpError) -> UiError {
         other => UiError::RdpProtocol {
             detail: other.to_string(),
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use heimdall_core::profile::{AudioPlayback, ColorDepth, ProfileId, RdpOptions};
+
+    use super::*;
+
+    fn request(profile: RdpProfile) -> RdpRequest {
+        RdpRequest {
+            profile,
+            known_hosts: PathBuf::from("known_rdp_hosts"),
+            accepted: None,
+            trusted_for_run: Vec::new(),
+            desktop: (1024, 768),
+            route: Vec::new(),
+            ssh: ConnectOptions::new(PathBuf::from("known_hosts")),
+            cancel: CancellationToken::new(),
+        }
+    }
+
+    #[test]
+    fn the_connection_is_given_the_profile_s_display_and_session_options() {
+        let options = RdpOptions {
+            color_depth: ColorDepth::Bpp24,
+            audio: AudioPlayback::OnServer,
+            admin_session: true,
+            ..RdpOptions::default()
+        };
+        let config = rdp_config(&request(RdpProfile {
+            id: ProfileId::new("dc"),
+            name: "dc".to_owned(),
+            group: None,
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            username: None,
+            domain: None,
+            allow_tls_only: false,
+            gateway: None,
+            redirect_clipboard: true,
+            redirect_drives: false,
+            options,
+        }));
+        assert_eq!(config.options, options);
     }
 }

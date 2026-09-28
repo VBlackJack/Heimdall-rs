@@ -35,9 +35,10 @@ use serde::Deserialize;
 use thiserror::Error;
 
 use crate::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
-    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, LocalArguments, LocalCommand, LocalProfile,
-    ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_RDP_PORT, DEFAULT_SSH_PORT,
+    DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
+    LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile, Resolution,
+    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -190,6 +191,31 @@ struct LegacyServer {
     /// Absent means the C# default: no drive is shared.
     #[serde(default)]
     rdp_redirect_drives: bool,
+    /// Absent means the C# default: the RDP choices of `settings.json` apply, not the
+    /// profile's own.
+    rdp_use_global_defaults: Option<bool>,
+    /// Absent means the C# default, 32 bits.
+    rdp_color_depth: Option<i64>,
+    /// 0 not played (the C# default), 1 played here, 2 played on the server.
+    #[serde(default)]
+    rdp_audio_mode: i64,
+    #[serde(default)]
+    rdp_admin_mode: bool,
+    /// `FitWindow`, `Fixed`, `SmartSizing`, `Multimon` or `Auto`; absent, derived as
+    /// `RdpResolutionProfileMigration` does.
+    rdp_resolution_mode: Option<String>,
+    #[serde(rename = "rdpFixedResolutionWidth")]
+    rdp_fixed_width: Option<i64>,
+    #[serde(rename = "rdpFixedResolutionHeight")]
+    rdp_fixed_height: Option<i64>,
+    /// Older name of the fixed width, read when the current one is absent.
+    rdp_default_resolution_width: Option<i64>,
+    /// Older name of the fixed height.
+    rdp_default_resolution_height: Option<i64>,
+    /// Absent means the C# default: a fixed desktop is scaled into the pane.
+    rdp_initial_smart_sizing: Option<bool>,
+    /// Absent means the C# default: the desktop follows the pane.
+    rdp_dynamic_resolution: Option<bool>,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
     /// Zero or less means the default port, as `VncHandler` reads it.
@@ -239,6 +265,100 @@ struct LegacySettings {
     group_defaults: HashMap<String, LegacyGroupDefaults>,
     #[serde(default)]
     ssh_gateways: Vec<LegacyGateway>,
+    #[serde(flatten)]
+    rdp_defaults: LegacyRdpDefaults,
+}
+
+/// The RDP choices of `settings.json`, which a profile on the global defaults takes, as
+/// `RdpProfileResolver` does. Absent keys are the C# `AppSettings` defaults.
+#[derive(Debug, Default, Deserialize)]
+struct LegacyRdpDefaults {
+    #[serde(rename = "rdpDefaultRedirectClipboard")]
+    clipboard: Option<bool>,
+    #[serde(default, rename = "rdpDefaultRedirectDrives")]
+    drives: bool,
+    #[serde(rename = "rdpDefaultNla")]
+    nla: Option<bool>,
+    #[serde(rename = "rdpDefaultColorDepth")]
+    color_depth: Option<i64>,
+    #[serde(default, rename = "rdpDefaultAudioMode")]
+    audio_mode: i64,
+}
+
+/// What an RDP profile is given, from its own choices or from the global defaults.
+struct RdpChoices {
+    clipboard: bool,
+    drives: bool,
+    nla: bool,
+    color_depth: Option<i64>,
+    audio_mode: i64,
+}
+
+impl RdpChoices {
+    /// As `RdpProfileResolver`: the global defaults unless the profile turned them off.
+    fn of(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Self {
+        if server.rdp_use_global_defaults.unwrap_or(true) {
+            Self {
+                clipboard: defaults.clipboard.unwrap_or(true),
+                drives: defaults.drives,
+                nla: defaults.nla.unwrap_or(true),
+                color_depth: defaults.color_depth,
+                audio_mode: defaults.audio_mode,
+            }
+        } else {
+            Self {
+                clipboard: server.rdp_redirect_clipboard.unwrap_or(true),
+                drives: server.rdp_redirect_drives,
+                nla: server.rdp_nla.unwrap_or(true),
+                color_depth: server.rdp_color_depth,
+                audio_mode: server.rdp_audio_mode,
+            }
+        }
+    }
+
+    /// The C# audio mode this version plays: sound played here is not, so it is not played.
+    fn audio(&self) -> AudioPlayback {
+        if self.audio_mode == CSHARP_AUDIO_ON_SERVER {
+            AudioPlayback::OnServer
+        } else {
+            AudioPlayback::Off
+        }
+    }
+}
+
+/// The C# audio mode "Remote playback".
+const CSHARP_AUDIO_ON_SERVER: i64 = 2;
+
+/// How the C# embedded session sizes the desktop of `server`: its resolution settings are
+/// always the profile's own, never global defaults.
+fn resolution_of(server: &LegacyServer) -> (Resolution, (u16, u16)) {
+    let width = server
+        .rdp_fixed_width
+        .or(server.rdp_default_resolution_width)
+        .unwrap_or(0);
+    let height = server
+        .rdp_fixed_height
+        .or(server.rdp_default_resolution_height)
+        .unwrap_or(0);
+    let sized = width > 0 && height > 0;
+    let mode = match server.rdp_resolution_mode.as_deref() {
+        Some(mode) if mode.eq_ignore_ascii_case("Fixed") => Resolution::Fixed,
+        Some(mode) if mode.eq_ignore_ascii_case("SmartSizing") => Resolution::SmartSizing,
+        None if sized => Resolution::Fixed,
+        // Multi-monitor and Auto have no sense in a tab: Auto windowed fits the window.
+        Some(_) | None => Resolution::FitWindow,
+    };
+    if !sized {
+        // A fixed mode without its size follows the pane in the C# Heimdall.
+        let mode = if mode == Resolution::Fixed {
+            Resolution::FitWindow
+        } else {
+            mode
+        };
+        return (mode, DEFAULT_FIXED_SIZE);
+    }
+    let side = |value: i64| u16::try_from(value).unwrap_or(u16::MAX);
+    (mode, fixed_desktop(side(width), side(height)))
 }
 
 #[derive(Debug, Deserialize)]
@@ -302,7 +422,8 @@ pub fn import(
         {
             convert_winrm(&server).map(|profile| report.winrm.push(profile))
         } else if server.connection_type == RDP_CONNECTION_TYPE {
-            convert_rdp(&server, &known).map(|profile| report.rdp.push(profile))
+            convert_rdp(&server, &known, &settings.rdp_defaults)
+                .map(|profile| report.rdp.push(profile))
         } else if server
             .connection_type
             .eq_ignore_ascii_case(TELNET_CONNECTION_TYPE)
@@ -524,7 +645,11 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
 }
 
 /// An RDP profile, through its SSH gateway when it goes through one among `gateways`.
-fn convert_rdp(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<RdpProfile, SkipReason> {
+fn convert_rdp(
+    server: &LegacyServer,
+    gateways: &HashSet<&str>,
+    defaults: &LegacyRdpDefaults,
+) -> Result<RdpProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
     }
@@ -553,6 +678,8 @@ fn convert_rdp(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<RdpPro
             _ => return Err(SkipReason::InvalidPort(value)),
         },
     };
+    let choices = RdpChoices::of(server, defaults);
+    let (resolution, (fixed_width, fixed_height)) = resolution_of(server);
     Ok(RdpProfile {
         id: ProfileId::new(server.id.clone()),
         name: if server.display_name.is_empty() {
@@ -565,10 +692,23 @@ fn convert_rdp(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<RdpPro
         port,
         username: non_empty(server.rdp_username.as_ref()),
         domain: non_empty(server.rdp_domain.as_ref()),
-        allow_tls_only: server.rdp_nla == Some(false),
+        allow_tls_only: !choices.nla,
         gateway,
-        redirect_clipboard: server.rdp_redirect_clipboard.unwrap_or(true),
-        redirect_drives: server.rdp_redirect_drives,
+        redirect_clipboard: choices.clipboard,
+        redirect_drives: choices.drives,
+        options: RdpOptions {
+            color_depth: choices
+                .color_depth
+                .map_or_else(ColorDepth::default, ColorDepth::nearest),
+            audio: choices.audio(),
+            // Not one of the global defaults in the C# Heimdall: always the profile's.
+            admin_session: server.rdp_admin_mode,
+            resolution,
+            fixed_width,
+            fixed_height,
+            scale_fixed: server.rdp_initial_smart_sizing.unwrap_or(true),
+            dynamic_resolution: server.rdp_dynamic_resolution.unwrap_or(true),
+        },
     })
 }
 

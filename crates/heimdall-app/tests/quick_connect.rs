@@ -56,6 +56,7 @@ fn app_with(dir: &Path, profiles: Vec<SshProfile>) -> App {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
     }]);
     store.save().expect("save");
     App::new(AppConfig {

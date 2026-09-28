@@ -62,6 +62,11 @@ impl App {
                     *error = None;
                 }
             }
+            Message::ProfileChoice(choice) => {
+                if let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut() {
+                    draft.choose(choice);
+                }
+            }
             // The gateway dialog opens from a session's form and returns to it.
             other => self.gateway_message(other),
         }

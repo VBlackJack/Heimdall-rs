@@ -54,7 +54,9 @@ use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, Transf
 use crate::gateway_draft::GatewayDraft;
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::local_driver::{LocalRequest, LocalShell};
-use crate::profile_draft::{DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle};
+use crate::profile_draft::{
+    DraftError, DraftProtocol, ProfileChoice, ProfileDraft, ProfileField, ProfileToggle,
+};
 use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
 use crate::telnet_driver::TelnetRequest;
@@ -368,6 +370,8 @@ pub enum Message {
         /// Ticked.
         on: bool,
     },
+    /// In an RDP profile's form, choose from one of its lists.
+    ProfileChoice(ProfileChoice),
     /// Open the gateway dialog for a new gateway.
     NewGateway,
     /// Open the gateway dialog for a saved gateway.
@@ -523,6 +527,7 @@ impl fmt::Debug for Message {
             Self::ClearPassword => f.write_str("ClearPassword"),
             Self::ChooseProtocol(protocol) => write!(f, "ChooseProtocol({protocol:?})"),
             Self::ProfileToggle { toggle, on } => write!(f, "ProfileToggle({toggle:?}, {on})"),
+            Self::ProfileChoice(choice) => write!(f, "ProfileChoice({choice:?})"),
             Self::NewGateway => f.write_str("NewGateway"),
             Self::EditGateway(id) => write!(f, "EditGateway({id})"),
             Self::GatewayField { field, .. } => write!(f, "GatewayField({field:?}, ..)"),
@@ -1356,6 +1361,16 @@ impl App {
         self.tabs.iter_mut().find(|tab| tab.id == id)
     }
 
+    /// Shows `tab`: its bell is heard, and a desktop's server gets what was copied meanwhile.
+    fn select_tab(&mut self, tab: TabId) -> Vec<Effect> {
+        let Some(found) = self.tab_mut(tab) else {
+            return Vec::new();
+        };
+        found.bell = false;
+        self.active = Some(tab);
+        self.tab(tab).map(clipboard_offer).unwrap_or_default()
+    }
+
     /// Applies a message.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         self.forget_stale_notice();
@@ -1379,15 +1394,7 @@ impl App {
                 Vec::new()
             }
             Message::Files(message) => self.files(message),
-            Message::SelectTab(tab) => {
-                let Some(found) = self.tab_mut(tab) else {
-                    return Vec::new();
-                };
-                found.bell = false;
-                self.active = Some(tab);
-                // Back to a desktop: its server gets what was copied meanwhile.
-                self.tab(tab).map(clipboard_offer).unwrap_or_default()
-            }
+            Message::SelectTab(tab) => self.select_tab(tab),
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::TabMenu(message) => self.tab_menu(message),
             message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
@@ -1428,6 +1435,7 @@ impl App {
             | Message::ClearPassword
             | Message::ChooseProtocol(_)
             | Message::ProfileToggle { .. }
+            | Message::ProfileChoice(_)
             | Message::NewGateway
             | Message::EditGateway(_)
             | Message::GatewayField { .. }

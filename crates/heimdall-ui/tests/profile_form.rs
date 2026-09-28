@@ -30,6 +30,8 @@ use iced::{Settings, Size};
 use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
+/// Height of a window showing the whole RDP form.
+const TALL_HEIGHT: f32 = 1100.0;
 
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
@@ -51,6 +53,15 @@ fn simulator(shell: &Shell) -> Simulator<'_, Message> {
         ..Settings::default()
     };
     Simulator::with_size(settings, WINDOW, shell.view())
+}
+
+/// A window tall enough for the whole RDP form: in [`WINDOW`] its last options scroll.
+fn tall_simulator(shell: &Shell) -> Simulator<'_, Message> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    Simulator::with_size(settings, Size::new(WINDOW.width, TALL_HEIGHT), shell.view())
 }
 
 fn snapshot(shell: &Shell, name: &str) {
@@ -205,7 +216,7 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
     snapshot(&shell, "profile-rdp.png");
     {
-        let mut ui = simulator(&shell);
+        let mut ui = tall_simulator(&shell);
         for label in [
             "Remote Desktop",
             "Remote RDP port",
@@ -248,6 +259,7 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
         for label in ["WinRM port", "WinRM credentials", "Identity", "Use SSL"] {
             ui.find(label).expect(label);
         }
+        assert!(ui.find("Audio mode").is_err(), "an RDP list");
         assert!(
             ui.find("Username").is_err(),
             "the current identity names no account"
@@ -261,6 +273,61 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
     let mut ui = simulator(&shell);
     ui.find("Username")
         .expect("a stored credential names its account");
+}
+
+#[test]
+fn the_rdp_form_offers_the_sound_colours_and_administrative_session() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let mut ui = tall_simulator(&shell);
+    // The lists themselves are tested in `rdp_options`: their value is not a text to find.
+    for label in [
+        "Audio mode",
+        "Color depth",
+        "Run as administrator session (/admin)",
+    ] {
+        ui.find(label).expect(label);
+    }
+    ui.click("Run as administrator session (/admin)")
+        .expect("admin box");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::ProfileToggle {
+            toggle: ProfileToggle::AdminSession,
+            on: true
+        })
+    )));
+}
+
+#[test]
+fn the_rdp_form_shows_the_resolution_card_and_the_fixed_size_fields_in_its_mode() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_core::profile::Resolution;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Resolution profile",
+            "Resolution mode",
+            "Allow dynamic resolution updates",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("Width").is_err(), "fitting the window");
+    }
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::Resolution(
+        Resolution::Fixed,
+    ))));
+    let mut ui = tall_simulator(&shell);
+    for label in ["Common resolutions", "Width", "Height"] {
+        ui.find(label).expect(label);
+    }
 }
 
 #[test]

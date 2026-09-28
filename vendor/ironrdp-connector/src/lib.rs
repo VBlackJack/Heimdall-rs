@@ -226,6 +226,10 @@ pub struct Config {
     pub autologon: bool,
     /// If true, the INFO_NOAUDIOPLAYBACK flag is set in the [`ClientInfoPdu`](ironrdp_pdu::rdp::ClientInfoPdu)
     pub enable_audio_playback: bool,
+    /// If true, the INFO_REMOTECONSOLEAUDIO flag is set: the server plays its sound itself.
+    pub remote_console_audio: bool,
+    /// If true, the Client Cluster Data asks for session 0, as `mstsc /admin`.
+    pub console_session: bool,
     pub performance_flags: PerformanceFlags,
 
     pub license_cache: Option<Arc<dyn LicenseCache>>,
