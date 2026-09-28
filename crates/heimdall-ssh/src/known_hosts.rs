@@ -254,6 +254,79 @@ impl KnownHosts {
     }
 }
 
+/// A key the file trusts for a server, as the C# Heimdall's list of trusted host keys shows
+/// it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct KnownHostEntry {
+    /// Host, as written in the file.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// Key algorithm, `ssh-ed25519` for one.
+    pub algorithm: String,
+    /// SHA-256 fingerprint, `SHA256:...`.
+    pub fingerprint: String,
+}
+
+impl KnownHosts {
+    /// The keys the file trusts, one per host named plainly, in the order of the file. A
+    /// hashed or wildcard pattern names no host that can be shown, and a line whose key
+    /// cannot be read trusts nothing: both are left out.
+    ///
+    /// # Errors
+    ///
+    /// The file exists and cannot be read.
+    pub fn entries(&self) -> Result<Vec<KnownHostEntry>, KnownHostsError> {
+        let text = match fs::read_to_string(&self.path) {
+            Ok(text) => text,
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(source) => {
+                return Err(KnownHostsError::Unreadable {
+                    path: self.path.clone(),
+                    source,
+                });
+            }
+        };
+        let mut entries = Vec::new();
+        for line in text.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') || line.starts_with('@') {
+                continue;
+            }
+            let Some((patterns, key)) = line.split_once(char::is_whitespace) else {
+                continue;
+            };
+            let Ok(key) = PublicKey::from_openssh(key.trim()) else {
+                continue;
+            };
+            for (host, port) in patterns.split(',').filter_map(plain_host) {
+                entries.push(KnownHostEntry {
+                    host,
+                    port,
+                    algorithm: key.algorithm().to_string(),
+                    fingerprint: fingerprint(&key),
+                });
+            }
+        }
+        Ok(entries)
+    }
+}
+
+/// The host and port a pattern names plainly: `host`, or `[host]:port`. `None` for a hashed
+/// pattern, a wildcard or a negation.
+fn plain_host(pattern: &str) -> Option<(String, u16)> {
+    if pattern.is_empty() || pattern.starts_with(['|', '!']) || pattern.contains(['*', '?']) {
+        return None;
+    }
+    match pattern.strip_prefix('[') {
+        Some(bracketed) => {
+            let (host, port) = bracketed.split_once("]:")?;
+            Some((host.to_owned(), port.parse().ok()?))
+        }
+        None => Some((pattern.to_owned(), DEFAULT_SSH_PORT)),
+    }
+}
+
 /// Port a `known_hosts` line leaves out of the host name.
 const DEFAULT_SSH_PORT: u16 = 22;
 

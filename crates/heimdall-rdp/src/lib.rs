@@ -36,5 +36,5 @@ pub use connect::{
     Transport, connect, connect_over, connect_through, given,
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
-pub use known_hosts::{KnownRdpHosts, Verdict};
+pub use known_hosts::{KnownRdpHost, KnownRdpHosts, Verdict};
 pub use session::{CloseReason, Framebuffer, RdpEvent, RdpSession};

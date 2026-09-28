@@ -45,8 +45,9 @@ pub use app::{
     NameAction, Notice, OpenedVault, Phase, PointerInput, ProfileCopy, ProfileKind,
     ProfileMenuMessage, ProfileSummary, Prompt, QuickResult, RDP_MAX_ATTEMPTS, Retry,
     SelectionMessage, SessionStatus, SettingsMessage, SystemCredentials, Tab, TabGroup,
-    TabMenuMessage, TabProfile, TreeRow, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
-    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    TabMenuMessage, TabProfile, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage,
+    VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

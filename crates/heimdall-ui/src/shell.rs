@@ -42,8 +42,8 @@ use heimdall_app::{
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, ProfileMenuMessage,
     Prompt, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
     SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
-    UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events,
-    master_password_problem, open_vault, server_text,
+    TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -75,6 +75,7 @@ use crate::terminal_view::keys::{
 use crate::terminal_view::metrics::DEFAULT_FONT_SIZE;
 use crate::texts;
 use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TranscriptEntry, TreeMenu};
+use crate::trusted_keys_view::TrustedList;
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -276,6 +277,8 @@ pub enum Message {
     LockKey,
     /// Show the settings.
     ShowSettings,
+    /// A search typed over a list of trusted keys on the Settings page.
+    TrustedSearch(TrustedList, String),
     /// F11: the window full screen, showing the session only, or back.
     ToggleFullscreen,
     /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
@@ -381,6 +384,7 @@ impl fmt::Debug for Message {
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
+            Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
@@ -546,6 +550,10 @@ pub struct Shell {
     finder: Option<Finder>,
     /// The transcripts' folder as typed in the Settings page, until applied.
     log_directory: Option<String>,
+    /// The search typed over the trusted SSH host keys.
+    host_key_search: String,
+    /// The search typed over the trusted RDP certificates.
+    certificate_search: String,
     /// Files are dragged over the window.
     files_hovered: bool,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
@@ -630,6 +638,8 @@ impl Shell {
             finder: None,
             focus_next: None,
             log_directory: None,
+            host_key_search: String::new(),
+            certificate_search: String::new(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
@@ -735,6 +745,7 @@ impl Shell {
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
             | Message::ShowSettings
+            | Message::TrustedSearch(..)
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
             // Under a dialog, the tree is not there to search.
@@ -843,6 +854,19 @@ impl Shell {
                 self.page = Page::Settings {
                     over: self.app.active,
                 };
+                // The trusted keys as they are now: another program may have changed them.
+                let _ = self
+                    .app
+                    .update(AppMessage::Settings(SettingsMessage::TrustedKeys(
+                        TrustedKeysMessage::Refresh,
+                    )));
+                Task::none()
+            }
+            Message::TrustedSearch(list, typed) => {
+                match list {
+                    TrustedList::HostKeys => typed.clone_into(&mut self.host_key_search),
+                    TrustedList::Certificates => typed.clone_into(&mut self.certificate_search),
+                }
                 Task::none()
             }
             _ => Task::none(),
@@ -1794,11 +1818,27 @@ impl Shell {
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
                 self.session_log_settings(),
+                self.trusted_keys_settings(),
             ]
             .spacing(SPACING)
             .padding(PADDING),
         )
         .into()
+    }
+
+    /// The keys trusted for servers, as the C# Host keys and Certificates pages list them.
+    fn trusted_keys_settings(&self) -> Element<'_, Message> {
+        let keys = self.app.trusted_keys();
+        let mut lists = column![
+            crate::trusted_keys_view::host_keys(keys, &self.host_key_search),
+            crate::trusted_keys_view::certificates(keys, &self.certificate_search),
+        ]
+        .spacing(SPACING)
+        .max_width(SETTINGS_WIDTH);
+        if let Some(unreadable) = crate::trusted_keys_view::unreadable(keys) {
+            lists = lists.push(unreadable);
+        }
+        lists.into()
     }
 
     /// Session logging, as the C# Settings page offers it: on or off, and the folder the
@@ -4060,6 +4100,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         )
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
+        Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ImportFailed { detail: technical } => column![

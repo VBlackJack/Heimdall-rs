@@ -81,7 +81,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
 }
 
 impl App {
-    fn known_rdp_hosts(&self) -> PathBuf {
+    pub(super) fn known_rdp_hosts(&self) -> PathBuf {
         self.config
             .known_hosts
             .with_file_name(KNOWN_RDP_HOSTS_FILE_NAME)

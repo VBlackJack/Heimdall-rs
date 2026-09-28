@@ -615,3 +615,36 @@ ui-files-item-count-filtered = { $shown }/{ $count } items
 
 ## Files dropped from Explorer on a Files tab, as the C# one.
 ui-files-drop-overlay = Drop files to upload
+
+## The keys trusted for servers, on the Settings page, as the C# Host keys and Certificates pages.
+ui-trusted-host-keys-title = Trusted host keys
+ui-trusted-host-keys-hint = Review the SSH host keys Heimdall trusts for future connections.
+ui-trusted-host-keys-search = Search trusted hosts
+ui-trusted-host-keys-host = Host:Port
+ui-trusted-host-keys-algorithm = Algorithm
+ui-trusted-host-keys-fingerprint = Fingerprint
+ui-trusted-host-keys-copy = Copy fingerprint
+ui-trusted-host-keys-remove = Remove
+ui-trusted-host-keys-empty-title = No trusted host keys
+ui-trusted-host-keys-empty-body = Connect to a server first: its key is asked about, then listed here.
+ui-trusted-certificates-title = Trusted RDP certificates
+ui-trusted-certificates-hint = Certificates you accepted for a remote desktop, kept across restarts. Forgetting one removes that certificate from the trust list of its server.
+ui-trusted-certificates-search = Search by server or fingerprint
+ui-trusted-certificates-server = Server
+ui-trusted-certificates-fingerprint = Fingerprint
+ui-trusted-certificates-forget = Forget
+ui-trusted-certificates-empty-title = No trusted RDP certificates
+ui-trusted-certificates-empty-body = Certificates you accept when connecting to a remote desktop are listed here, and can be revoked from here.
+ui-trusted-keys-unreadable = The trusted keys could not all be read: { $detail }
+ui-dialog-forget-host-key-title = Remove trusted host key
+ui-dialog-forget-host-key-body = Remove the trusted host key for { $server }?
+ui-dialog-forget-host-key-fingerprint = Fingerprint: { $fingerprint }
+ui-dialog-forget-host-key-consequence = Removing this trusted host key will require re-verification on the next connection to { $server }.
+ui-dialog-forget-host-key-confirm = Remove
+ui-dialog-forget-certificate-title = Forget this certificate?
+ui-dialog-forget-certificate-body = Heimdall will forget the certificate { $fingerprint } for { $server }. Only that certificate is affected; any other certificate trusted for the same server stays trusted.
+ui-dialog-forget-certificate-keep = Keep
+ui-dialog-forget-certificate-confirm = Forget
+ui-status-fingerprint-copied = Copied full fingerprint for { $server }.
+ui-status-host-key-removed = Removed trusted host key for { $server }.
+ui-status-certificate-forgotten = Certificate forgotten for { $server }.

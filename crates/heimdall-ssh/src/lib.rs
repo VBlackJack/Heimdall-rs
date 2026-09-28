@@ -39,7 +39,9 @@ pub use client::{connect, establish, establish_via};
 pub use connection::{ChannelBytes, Connection, SubsystemStream, Tunnel};
 pub use error::{AuthMethod, ConnectError};
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
-pub use known_hosts::{KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict};
+pub use known_hosts::{
+    KnownHostEntry, KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
+};
 pub use options::{AgentSource, ConnectOptions, TerminalSize};
 pub use prompter::{
     KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PassphraseQuestion, PasswordQuestion,

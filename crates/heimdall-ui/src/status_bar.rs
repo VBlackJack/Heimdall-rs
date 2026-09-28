@@ -59,6 +59,15 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             }
             Notice::BroadcastOff => fl!("ui-broadcast-off"),
             Notice::Bookmarked(path) => fl!("ui-files-bookmark-added", path = path.as_str()),
+            Notice::FingerprintCopied(server) => {
+                fl!("ui-status-fingerprint-copied", server = server.as_str())
+            }
+            Notice::HostKeyRemoved(server) => {
+                fl!("ui-status-host-key-removed", server = server.as_str())
+            }
+            Notice::CertificateForgotten(server) => {
+                fl!("ui-status-certificate-forgotten", server = server.as_str())
+            }
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",

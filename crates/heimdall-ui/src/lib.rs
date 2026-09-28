@@ -32,6 +32,7 @@ pub mod terminal_view;
 mod texts;
 pub mod transcript_lines;
 pub mod tree_view;
+pub mod trusted_keys_view;
 
 use heimdall_core::paths;
 use iced::{Font, Size, window};

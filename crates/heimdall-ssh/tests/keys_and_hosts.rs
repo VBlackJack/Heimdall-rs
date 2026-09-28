@@ -278,3 +278,46 @@ fn a_shared_line_loses_the_host_only_and_a_hashed_entry_is_left_to_a_person() {
         Err(KnownHostsError::NotForgotten { .. })
     ));
 }
+
+#[test]
+fn the_keys_trusted_are_listed_per_host_and_port_in_the_order_of_the_file() {
+    use heimdall_ssh::{KnownHostEntry, fingerprint};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let hosts = KnownHosts::new(dir.path().join("known_hosts"));
+    assert_eq!(hosts.entries().expect("no file"), [], "nothing trusted yet");
+    let ed25519 = host_public_key("host-ed25519");
+    let ecdsa = host_public_key("host-ecdsa");
+    hosts.learn("web.lab", 22, &ed25519).expect("learn");
+    hosts.learn("db.lab", 2222, &ecdsa).expect("learn");
+    let text = std::fs::read_to_string(hosts.path()).expect("file");
+    let openssh = ed25519.to_openssh().expect("openssh");
+    // A comment, a marked line, a hashed and a wildcard pattern, a line whose key cannot be
+    // read, and a line shared by two hosts.
+    std::fs::write(
+        hosts.path(),
+        format!(
+            "# a comment\n{text}@cert-authority *.lab {openssh}\n\
+             |1|AAECAwQFBgcICQoLDA0ODxAREhM=|wnuEyVNwLIbJJNdcuTFET3xTFkc= {openssh}\n\
+             *.corp {openssh}\nbroken.lab ssh-ed25519 not-base64\n\
+             a.lab,[b.lab]:2200 {openssh}\n"
+        ),
+    )
+    .expect("write");
+    let entry = |host: &str, port, key: &PublicKey| KnownHostEntry {
+        host: host.to_owned(),
+        port,
+        algorithm: key.algorithm().to_string(),
+        fingerprint: fingerprint(key),
+    };
+    assert_eq!(
+        hosts.entries().expect("read"),
+        [
+            entry("web.lab", 22, &ed25519),
+            entry("db.lab", 2222, &ecdsa),
+            entry("a.lab", 22, &ed25519),
+            entry("b.lab", 2200, &ed25519),
+        ]
+    );
+    assert_eq!(entry("web.lab", 22, &ed25519).algorithm, "ssh-ed25519");
+}
