@@ -48,7 +48,7 @@ pub enum ProviderFailure {
 }
 
 /// What the provider gave.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Provided {
     /// The password.
     pub password: Secret,

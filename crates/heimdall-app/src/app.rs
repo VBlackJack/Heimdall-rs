@@ -76,6 +76,7 @@ mod pin;
 mod profile_menu;
 mod profiles;
 mod provider;
+mod provider_connect;
 mod quick_connect;
 mod rdp_tab;
 mod reconnect;
@@ -103,6 +104,7 @@ pub use local_tab::LocalConfirmation;
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use profile_menu::ProfileMenuMessage;
 pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
+pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::QuickResult;
 pub use selection::SelectionMessage;
 pub use status::{Notice, SessionStatus};
@@ -451,6 +453,8 @@ pub enum Message {
     Pin(PinMessage),
     /// The external credential provider's settings.
     CredentialProvider(ProviderMessage),
+    /// The external credential provider answered a tab's question, or could not.
+    CredentialProvided(Box<ProviderAnswer>),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A change of broadcast input.
@@ -563,6 +567,14 @@ impl fmt::Debug for Message {
             Self::LockVault => f.write_str("LockVault"),
             Self::Pin(message) => write!(f, "Pin({message:?})"),
             Self::CredentialProvider(message) => write!(f, "CredentialProvider({message:?})"),
+            Self::CredentialProvided(answer) => {
+                write!(
+                    f,
+                    "CredentialProvided({}, {})",
+                    answer.tab.value(),
+                    answer.result.is_ok()
+                )
+            }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
@@ -690,6 +702,9 @@ pub enum Effect {
         /// The unlock secret, when one is kept and can be read.
         unlock: Option<Secret>,
     },
+    /// Ask the external credential provider for a tab's password; then send
+    /// [`Message::CredentialProvided`].
+    AskCredentialProvider(Box<ProviderRequest>),
     /// Quit the application.
     /// Wake the core at `deadline` with [`Message::AutoReconnect`].
     RetryAt {
@@ -746,6 +761,9 @@ impl fmt::Debug for Effect {
             ),
             Self::OpenVault { job, .. } => write!(f, "OpenVault({})", job.name()),
             Self::TestCredentialProvider { .. } => f.write_str("TestCredentialProvider"),
+            Self::AskCredentialProvider(request) => {
+                write!(f, "AskCredentialProvider({})", request.tab.value())
+            }
             Self::RetryAt { tab, attempt, .. } => {
                 write!(f, "RetryAt({}, {})", tab.value(), attempt.value())
             }
@@ -1495,6 +1513,7 @@ impl App {
             | Message::LockVault) => self.vault_message(message),
             Message::Pin(message) => self.pin_message(message),
             Message::CredentialProvider(message) => self.provider_message(message),
+            Message::CredentialProvided(answer) => self.provider_answered(*answer),
             Message::DismissDialog => self
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())
@@ -1678,6 +1697,12 @@ impl App {
                 question: *question,
                 answer: Some(answer),
             }];
+        }
+        // No password saved: the external credential provider, when it is to be asked.
+        if let ConnectionEvent::Question { question, kind } = &event
+            && let Some(request) = self.provider_request(tab_id, *question, kind)
+        {
+            return vec![request];
         }
         if matches!(event, ConnectionEvent::Failed(_)) {
             self.credentials_failed(tab_id);

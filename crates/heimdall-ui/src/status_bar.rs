@@ -68,6 +68,13 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::CertificateForgotten(server) => {
                 fl!("ui-status-certificate-forgotten", server = server.as_str())
             }
+            Notice::ProviderNoPassword(name) => {
+                fl!("ui-status-provider-no-password", name = name.as_str())
+            }
+            Notice::ProviderFailed(detail) => {
+                fl!("ui-status-provider-failed", detail = detail.as_str())
+            }
+            Notice::ProviderTimedOut => fl!("ui-status-provider-timed-out"),
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",

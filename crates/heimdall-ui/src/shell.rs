@@ -1528,6 +1528,9 @@ impl Shell {
                 password,
                 job,
             } => open_vault_task(path, password, job),
+            Effect::AskCredentialProvider(request) => Task::perform(request.run(), |answer| {
+                Message::App(AppMessage::CredentialProvided(Box::new(answer)))
+            }),
             Effect::TestCredentialProvider { settings, unlock } => Task::perform(
                 heimdall_app::credential_provider::test(settings, unlock),
                 |outcome| {
