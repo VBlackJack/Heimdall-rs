@@ -875,7 +875,13 @@ fn create_gcc_blocks<'a>(
             Some(ClientNetworkData { channels })
         },
         // TODO(#139): support for Some(ClientClusterData { flags: RedirectionFlags::REDIRECTION_SUPPORTED, redirection_version: RedirectionVersion::V4, redirected_session_id: 0, }),
-        cluster: None,
+        // The administrative session, as FreeRDP's /admin: session 0 named as valid, redirection
+        // version 5 as FreeRDP writes it without multitransport.
+        cluster: config.console_session.then(|| gcc::ClientClusterData {
+            flags: gcc::RedirectionFlags::REDIRECTION_SUPPORTED | gcc::RedirectionFlags::REDIRECTED_SESSION_FIELD_VALID,
+            redirection_version: gcc::RedirectionVersion::V5,
+            redirected_session_id: 0,
+        }),
         monitor: None,
         // Request the MCS message channel, which carries network auto-detect
         // ([MS-RDPBCGR] 2.2.14) and the multitransport / heartbeat PDUs. The
@@ -921,6 +927,10 @@ fn create_client_info_pdu(config: &Config, client_addr: &SocketAddr) -> rdp::Cli
 
     if !config.enable_audio_playback {
         flags |= ClientInfoFlags::NO_AUDIO_PLAYBACK;
+    }
+
+    if config.remote_console_audio {
+        flags |= ClientInfoFlags::REMOTE_CONSOLE_AUDIO;
     }
 
     // Advertise bulk compression support if configured

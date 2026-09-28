@@ -355,6 +355,15 @@ ui-profile-options-telnet = Telnet Options
 ui-profile-toggle-clipboard = Redirect clipboard
 ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
+ui-profile-toggle-admin = Run as administrator session (/admin)
+# An RDP profile's sound and colours, as the C# Display & Audio card.
+ui-profile-audio = Audio mode
+ui-profile-audio-off = Disabled
+ui-profile-audio-on-server = Remote playback
+ui-profile-color-depth = Color depth
+ui-profile-color-16 = 16-bit
+ui-profile-color-24 = 24-bit
+ui-profile-color-32 = 32-bit
 ui-profile-nla-off-hint = Without Network Level Authentication, a saved password is not sent: Heimdall asks for it.
 ui-profile-toggle-use-ssl = Use SSL
 ui-profile-toggle-skip-cert = Skip certificate validation (insecure)

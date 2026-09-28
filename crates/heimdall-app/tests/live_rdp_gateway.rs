@@ -59,6 +59,7 @@ fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -
             gateway: None,
             redirect_clipboard: true,
             redirect_drives: false,
+            options: heimdall_core::profile::RdpOptions::default(),
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,

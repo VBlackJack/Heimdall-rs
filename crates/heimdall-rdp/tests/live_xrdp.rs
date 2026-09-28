@@ -27,6 +27,7 @@
 
 use std::time::Duration;
 
+use heimdall_core::profile::{ColorDepth, RdpOptions};
 use heimdall_rdp::session::{self, CloseReason, RdpEvent};
 use heimdall_rdp::{
     KnownRdpHosts, MouseButton, MousePosition, Operation, RdpConfig, RdpError, Security, Timeouts,
@@ -59,6 +60,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         clipboard: true,
         drives: Vec::new(),
         trusted_for_run: Vec::new(),
+        options: RdpOptions::default(),
     }
 }
 
@@ -168,6 +170,101 @@ async fn a_trusted_server_draws_its_login_screen() {
         });
     }
     cancel.cancel();
+}
+
+/// Whether a pixel is white, give or take what 16 bits per pixel lose.
+fn near_white(pixel: [u8; 4]) -> bool {
+    pixel[..3].iter().all(|channel| *channel >= NEAR_WHITE)
+}
+
+/// Lowest channel value counted as white: 31 on 5 bits is 248 once shifted.
+const NEAR_WHITE: u8 = 240;
+
+/// Values a 5-bit red channel can take.
+const RED_VALUES_AT_16_BITS: usize = 32;
+
+#[tokio::test]
+async fn each_colour_depth_draws_the_login_screen() {
+    let Some(port) = live_port() else {
+        eprintln!("{PORT_VARIABLE} is not set; skipped");
+        return;
+    };
+    for depth in [ColorDepth::Bpp16, ColorDepth::Bpp24] {
+        let dir = tempfile::tempdir().expect("dir");
+        let mut config = config(port, &dir.path().join("known"), Security::NlaOrTls);
+        config.options = RdpOptions {
+            color_depth: depth,
+            ..RdpOptions::default()
+        };
+        let password = Zeroizing::new(String::new());
+        let cancel = CancellationToken::new();
+        let outcome = connect(
+            config.clone(),
+            given("nobody".to_owned(), password.clone()),
+            cancel.clone(),
+        )
+        .await;
+        let Err(RdpError::UnknownCertificate(certificate)) = outcome else {
+            panic!("{depth:?}: {:?}", outcome.map(|_| ()));
+        };
+        config.accepted = Some(certificate.fingerprint);
+        let connection = connect(config, given("nobody".to_owned(), password), cancel.clone())
+            .await
+            .expect("connected");
+        let mut session = session::start(connection, cancel.clone());
+        tokio::time::timeout(FIRST_PICTURE, async {
+            while let Some(event) = session.events.recv().await {
+                if let RdpEvent::Closed(reason) = event {
+                    panic!("{depth:?} closed: {reason:?}");
+                }
+                let drawn = session.framebuffer.read(|_, _, pixels| {
+                    pixels
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .any(|pixel| near_white(*pixel))
+                });
+                if drawn {
+                    return;
+                }
+            }
+        })
+        .await
+        .expect("a picture in time");
+        tokio::time::sleep(Duration::from_secs(2)).await;
+        // As at 32 bits: the white areas of the login window have one straight left edge.
+        let columns: Vec<usize> = session.framebuffer.read(|width, height, pixels| {
+            let (width, height) = (usize::from(width), usize::from(height));
+            let mut columns: Vec<usize> = (height / 3..2 * height / 3)
+                .filter_map(|y| {
+                    pixels[y * width * 4..(y + 1) * width * 4]
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
+                        .position(|pixel| near_white(*pixel))
+                })
+                .collect();
+            columns.sort_unstable();
+            columns.dedup();
+            columns
+        });
+        assert_eq!(columns.len(), 1, "{depth:?}: ragged left edge {columns:?}");
+        // The server drew at the depth asked: in 5-6-5, red takes at most 32 values.
+        let reds = session.framebuffer.read(|_, _, pixels| {
+            let mut reds: Vec<u8> = pixels.as_chunks::<4>().0.iter().map(|p| p[0]).collect();
+            reds.sort_unstable();
+            reds.dedup();
+            reds.len()
+        });
+        eprintln!("{depth:?}: {reds} red values");
+        if depth == ColorDepth::Bpp16 {
+            assert!(
+                reds <= RED_VALUES_AT_16_BITS,
+                "{reds} red values at 16 bits"
+            );
+        }
+        cancel.cancel();
+    }
 }
 
 #[tokio::test]

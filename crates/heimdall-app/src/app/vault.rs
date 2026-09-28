@@ -936,6 +936,7 @@ mod tests {
             gateway: None,
             redirect_clipboard: false,
             redirect_drives: false,
+            options: heimdall_core::profile::RdpOptions::default(),
         })
     }
 

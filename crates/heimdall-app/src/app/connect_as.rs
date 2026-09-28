@@ -166,6 +166,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 gateway: None,
                 redirect_clipboard: true,
                 redirect_drives: false,
+                options: heimdall_core::profile::RdpOptions::default(),
             }),
             Purpose::Rdp,
         ),

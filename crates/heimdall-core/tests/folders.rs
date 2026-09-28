@@ -48,6 +48,7 @@ fn rdp(id: &str, group: Option<&str>) -> RdpProfile {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
     }
 }
 

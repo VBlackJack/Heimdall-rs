@@ -62,6 +62,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         gateway: None,
         redirect_clipboard: true,
         redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),

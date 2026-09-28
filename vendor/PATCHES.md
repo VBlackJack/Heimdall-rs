@@ -23,11 +23,29 @@ GHSA-p8qx-h547-fjw9, GHSA-w3jg-pjxf-73p4 and GHSA-g9hv-x236-4qp3. sspi 0.22 and 
 rc.26 use the final releases; ironrdp-connector 0.10.0, the latest published, and the
 IronRDP `master` branch of 2026-09-22 still ask for sspi 0.21.
 
-Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later. Then delete
-this directory and the `[patch.crates-io]` entry, and run the gates.
+Also changed, for an RDP profile's session options:
 
-Checked: `git diff --no-index` against the published package shows only the three lines
-above; builds for `x86_64-unknown-linux-gnu` and `x86_64-pc-windows-gnu`.
+- `src/lib.rs`, `Config`: two fields, `remote_console_audio` and `console_session`.
+- `src/connection.rs`, the Client Info PDU: `remote_console_audio` sets
+  `INFO_REMOTECONSOLEAUDIO`, the server then plays its sound itself (the C# "Remote
+  playback"), as FreeRDP's play-on-server audio mode sets `RemoteConsoleAudio`.
+  `NO_AUDIO_PLAYBACK` is left as `enable_audio_playback` decides: off here, as no sound is
+  played on this side.
+- `src/connection.rs`, the GCC blocks: `console_session` sends the Client Cluster Data the
+  crate left as a `TODO(#139)`: redirection supported, version 5, session 0 named as valid,
+  as FreeRDP's `gcc_write_client_cluster_data` writes it for `/admin` without
+  multitransport (the C# "Run as administrator session").
+
+Why: the published `Config` cannot ask for either, and both are read by the server before
+any channel opens, so they cannot be added from outside.
+
+Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later and its `Config`
+can ask for the administrative session and for sound kept on the server. Then delete this
+directory and the `[patch.crates-io]` entry, map the two options to its fields, and run the
+gates, `crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
+
+Checked: `git diff --no-index` against the published package shows only the lines above;
+builds for `x86_64-unknown-linux-gnu` and `x86_64-pc-windows-gnu`.
 
 ## ironrdp-session 0.11.0
 

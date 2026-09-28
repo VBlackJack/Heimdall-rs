@@ -175,6 +175,112 @@ pub struct RdpProfile {
     /// as in the C# Heimdall: written down only when on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub redirect_drives: bool,
+    /// How the session looks, sounds and which session it opens.
+    #[serde(flatten)]
+    pub options: RdpOptions,
+}
+
+/// How an RDP session is given: colour depth, sound, administrative session. Each is
+/// written down only when it differs from the C# Heimdall's default.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RdpOptions {
+    /// Colours of the desktop.
+    #[serde(default, skip_serializing_if = "ColorDepth::is_default")]
+    pub color_depth: ColorDepth,
+    /// Where the server's sound goes.
+    #[serde(default, skip_serializing_if = "AudioPlayback::is_default")]
+    pub audio: AudioPlayback,
+    /// Open the server's administrative session, as `mstsc /admin`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub admin_session: bool,
+}
+
+/// Bits per pixel of an RDP desktop: the three the C# Heimdall offers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u32", into = "u32")]
+pub enum ColorDepth {
+    /// High colour, 16 bits.
+    Bpp16,
+    /// True colour, 24 bits.
+    Bpp24,
+    /// True colour with alpha, 32 bits: the C# default.
+    #[default]
+    Bpp32,
+}
+
+impl ColorDepth {
+    /// Every depth, in the order the C# list shows them.
+    pub const ALL: [Self; 3] = [Self::Bpp16, Self::Bpp24, Self::Bpp32];
+
+    /// Bits per pixel.
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        match self {
+            Self::Bpp16 => 16,
+            Self::Bpp24 => 24,
+            Self::Bpp32 => 32,
+        }
+    }
+
+    /// The depth a session is given for `bits`, as the C# `NormalizeColorDepth`: 16 or less
+    /// is 16, up to 24 is 24, more is 32.
+    #[must_use]
+    pub fn nearest(bits: i64) -> Self {
+        match bits {
+            ..=16 => Self::Bpp16,
+            17..=24 => Self::Bpp24,
+            _ => Self::Bpp32,
+        }
+    }
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl From<ColorDepth> for u32 {
+    fn from(depth: ColorDepth) -> Self {
+        depth.bits()
+    }
+}
+
+impl TryFrom<u32> for ColorDepth {
+    type Error = String;
+
+    fn try_from(bits: u32) -> Result<Self, Self::Error> {
+        Self::ALL
+            .into_iter()
+            .find(|depth| depth.bits() == bits)
+            .ok_or_else(|| format!("colour depth {bits} is not 16, 24 or 32"))
+    }
+}
+
+/// Where an RDP server's sound goes, as the C# Heimdall's audio modes this version plays.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum AudioPlayback {
+    /// Not played: the C# default.
+    #[default]
+    Off,
+    /// Played on the server's own speakers.
+    OnServer,
+}
+
+impl AudioPlayback {
+    /// Every mode, in the order the C# list shows them.
+    pub const ALL: [Self; 2] = [Self::Off, Self::OnServer];
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// The clipboard is shared unless a profile says otherwise.

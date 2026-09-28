@@ -45,6 +45,7 @@ fn app(dir: &Path) -> App {
         gateway: None,
         redirect_clipboard: false,
         redirect_drives: false,
+        options: heimdall_core::profile::RdpOptions::default(),
     }]);
     store.merge([SshProfile {
         id: ProfileId::new("web"),

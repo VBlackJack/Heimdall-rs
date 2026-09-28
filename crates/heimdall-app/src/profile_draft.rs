@@ -21,9 +21,9 @@ use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use heimdall_core::profile::{
-    DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT,
-    DEFAULT_WINRM_HTTPS_PORT, ProfileId, RdpProfile, SshProfile, TelnetProfile, VncProfile,
-    WinRmProfile,
+    AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
+    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, ProfileId, RdpOptions, RdpProfile,
+    SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 
 /// Port when the field is left empty.
@@ -140,6 +140,9 @@ pub enum ProfileToggle {
     /// SSH, RDP: connect directly, not through the gateway chosen, as the C# "Connect
     /// directly without an SSH gateway" box.
     DirectConnection,
+    /// RDP: open the server's administrative session, as the C# "Run as administrator
+    /// session (/admin)" box.
+    AdminSession,
 }
 
 impl ProfileToggle {
@@ -147,7 +150,12 @@ impl ProfileToggle {
     #[must_use]
     pub fn of(protocol: DraftProtocol) -> &'static [Self] {
         match protocol {
-            DraftProtocol::Rdp => &[Self::RedirectClipboard, Self::RedirectDrives, Self::Nla],
+            DraftProtocol::Rdp => &[
+                Self::RedirectClipboard,
+                Self::RedirectDrives,
+                Self::Nla,
+                Self::AdminSession,
+            ],
             DraftProtocol::WinRm => &[
                 Self::StoredCredential,
                 Self::UseSsl,
@@ -157,6 +165,15 @@ impl ProfileToggle {
             DraftProtocol::Ssh | DraftProtocol::Telnet => &[],
         }
     }
+}
+
+/// A value chosen from a list of an RDP profile's form.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProfileChoice {
+    /// The colour depth.
+    ColorDepth(ColorDepth),
+    /// Where the sound goes.
+    Audio(AudioPlayback),
 }
 
 /// The profile a form saves, of its protocol.
@@ -206,6 +223,8 @@ pub struct ProfileDraft {
     pub password_saved: bool,
     /// The saved password is to be removed when the form is saved.
     pub clear_password: bool,
+    /// RDP: colour depth and sound chosen; the administrative session is a toggle.
+    pub rdp_options: RdpOptions,
 }
 
 /// Why a form cannot be saved yet.
@@ -291,6 +310,9 @@ impl ProfileDraft {
         if !profile.allow_tls_only {
             toggles.push(ProfileToggle::Nla);
         }
+        if profile.options.admin_session {
+            toggles.push(ProfileToggle::AdminSession);
+        }
         Self {
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
@@ -303,6 +325,7 @@ impl ProfileDraft {
             protocol: DraftProtocol::Rdp,
             protocol_chosen: true,
             toggles,
+            rdp_options: profile.options,
             ..Self::default()
         }
     }
@@ -406,6 +429,22 @@ impl ProfileDraft {
         let port = self.port.trim();
         if toggle == ProfileToggle::UseSsl && (port.is_empty() || port == before.to_string()) {
             self.port = self.default_port().to_string();
+        }
+    }
+
+    /// Takes `choice` from an RDP list.
+    pub fn choose(&mut self, choice: ProfileChoice) {
+        match choice {
+            ProfileChoice::ColorDepth(depth) => self.rdp_options.color_depth = depth,
+            ProfileChoice::Audio(audio) => self.rdp_options.audio = audio,
+        }
+    }
+
+    /// The RDP options saved: the lists' choices, and the administrative session ticked.
+    fn saved_rdp_options(&self) -> RdpOptions {
+        RdpOptions {
+            admin_session: self.is_on(ProfileToggle::AdminSession),
+            ..self.rdp_options
         }
     }
 
@@ -518,6 +557,7 @@ impl ProfileDraft {
                 gateway: self.routed_gateway(),
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
+                options: self.saved_rdp_options(),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -793,12 +833,18 @@ mod tests {
             "drives kept unless shared"
         );
         assert!(rdp.is_on(ProfileToggle::Nla), "NLA required unless cleared");
+        assert!(
+            !rdp.is_on(ProfileToggle::AdminSession),
+            "the ordinary session unless asked"
+        );
+        assert_eq!(rdp.rdp_options, RdpOptions::default());
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
             [
                 ProfileToggle::RedirectClipboard,
                 ProfileToggle::RedirectDrives,
-                ProfileToggle::Nla
+                ProfileToggle::Nla,
+                ProfileToggle::AdminSession
             ],
             "in the C# dialog's order"
         );
@@ -826,6 +872,7 @@ mod tests {
             gateway: Some(ProfileId::new("gw")),
             redirect_clipboard: false,
             redirect_drives: false,
+            options: heimdall_core::profile::RdpOptions::default(),
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),
@@ -835,6 +882,7 @@ mod tests {
             allow_tls_only: false,
             redirect_clipboard: true,
             redirect_drives: false,
+            options: heimdall_core::profile::RdpOptions::default(),
             ..rdp
         };
         assert_eq!(

@@ -2969,6 +2969,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::ViewOnly => fl!("ui-profile-toggle-view-only"),
         ProfileToggle::AllowNoPassword => fl!("ui-profile-toggle-no-password"),
         ProfileToggle::DirectConnection => fl!("ui-profile-direct-connect"),
+        ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
     }
 }
 
@@ -3300,6 +3301,9 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
     };
     if let Some(options) = options {
         form = form.push(section(options, None));
+    }
+    if draft.protocol == DraftProtocol::Rdp {
+        form = form.push(crate::rdp_options::view(draft.rdp_options));
     }
     for toggle in ProfileToggle::of(draft.protocol) {
         if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
