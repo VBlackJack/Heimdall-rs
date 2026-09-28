@@ -17,6 +17,8 @@
 //! Local shells from the window, drawn headless: the sidebar button opens the user's own
 //! shell, and a saved local profile shows what it runs before it runs it.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{App, AppConfig, Dialog, Message as AppMessage};
@@ -100,8 +102,7 @@ fn a_saved_local_profile_is_listed_and_opens_by_its_id() {
     let mut ui = Simulator::with_size(settings(), WINDOW, shell.view());
     ui.find("Local").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    ui.click("Build tool").expect("profile");
-    ui.click("Build tool").expect("profile");
+    common::double_click(&mut ui, "Build tool");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,

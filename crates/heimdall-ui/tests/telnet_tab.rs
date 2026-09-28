@@ -16,6 +16,8 @@
 
 //! Telnet in the window, drawn headless: the profile in the sidebar opens a Telnet tab.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{App, AppConfig, Message as AppMessage};
@@ -63,8 +65,7 @@ fn a_telnet_profile_is_listed_and_opens_a_telnet_tab() {
     let mut ui = Simulator::with_size(settings, WINDOW, shell.view());
     ui.find("Telnet").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    ui.click("Core switch").expect("profile");
-    ui.click("Core switch").expect("profile");
+    common::double_click(&mut ui, "Core switch");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,

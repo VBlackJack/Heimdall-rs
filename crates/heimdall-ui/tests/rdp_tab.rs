@@ -17,6 +17,8 @@
 //! RDP in the window, drawn headless: the profile in the sidebar, the way out of a changed
 //! key, and the desktop taking the mouse.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{
@@ -116,8 +118,7 @@ fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
     let mut ui = simulator(&shell);
     ui.find("RDP").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    ui.click("Domain controller").expect("profile");
-    ui.click("Domain controller").expect("profile");
+    common::double_click(&mut ui, "Domain controller");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(messages.iter().any(|message| matches!(
         message,
