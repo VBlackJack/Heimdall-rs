@@ -448,3 +448,79 @@ async fn a_host_key_question_keeps_the_tab_a_files_tab() {
         "{reconnect:?}"
     );
 }
+
+#[tokio::test]
+async fn a_folder_typed_in_the_path_bar_is_listed_from_the_one_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    let go = |app: &mut App, side: Side, text: &str| {
+        files(
+            app,
+            FilesMessage::PathEdited {
+                tab,
+                side,
+                text: text.to_owned(),
+            },
+        );
+        files(app, FilesMessage::GoTo { tab, side })
+    };
+    let remote_path = |effects: &[Effect]| match effects {
+        [Effect::ListRemote { path, .. }] => path.display(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(
+        remote_path(&go(&mut app, Side::Remote, " /var/log ")),
+        "/var/log"
+    );
+    assert_eq!(
+        app.tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .remote
+            .path
+            .display(),
+        "/home/admin",
+        "the folder shown stays until the listing comes back"
+    );
+    assert_eq!(
+        remote_path(&go(&mut app, Side::Remote, "logs")),
+        "/home/admin/logs",
+        "relative to the folder shown"
+    );
+    assert!(
+        files(
+            &mut app,
+            FilesMessage::GoTo {
+                tab,
+                side: Side::Remote
+            }
+        )
+        .is_empty(),
+        "gone to already: nothing typed since"
+    );
+    assert!(
+        go(&mut app, Side::Remote, "   ").is_empty(),
+        "nothing typed"
+    );
+    assert!(go(&mut app, Side::Local, "  ").is_empty(), "nor here");
+
+    let local = go(&mut app, Side::Local, "sub");
+    assert!(
+        matches!(local.as_slice(), [Effect::ListLocal { path, .. }] if *path == dir.path().join("sub")),
+        "{local:?}"
+    );
+    let elsewhere = tempfile::tempdir().expect("dir");
+    let absolute = go(
+        &mut app,
+        Side::Local,
+        &elsewhere.path().display().to_string(),
+    );
+    assert!(
+        matches!(absolute.as_slice(), [Effect::ListLocal { path, .. }] if path == elsewhere.path()),
+        "{absolute:?}"
+    );
+}

@@ -413,3 +413,50 @@ async fn no_widget_of_the_files_tab_takes_its_keys() {
         );
     }
 }
+
+#[tokio::test]
+async fn the_path_bar_is_typed_over_and_enter_goes_there() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        ui.click("/home/admin").expect("the remote path bar");
+        ui.typewrite("/x");
+        let _ = ui.tap_key(iced::keyboard::key::Named::Enter);
+        let messages = files_messages(ui);
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                FilesMessage::PathEdited { tab: t, side: Side::Remote, text } if *t == tab && text.ends_with("/x")
+            )),
+            "{messages:?}"
+        );
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                FilesMessage::GoTo { tab: t, side: Side::Remote } if *t == tab
+            )),
+            "{messages:?}"
+        );
+    }
+    // What is typed shows until gone to, and Go is offered only then.
+    let mut ui = simulator(&shell);
+    ui.click("Go").expect("Go");
+    assert!(files_messages(ui).is_empty(), "nothing typed: greyed out");
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::PathEdited {
+        tab,
+        side: Side::Local,
+        text: "elsewhere".to_owned(),
+    })));
+    let mut ui = simulator(&shell);
+    ui.find("elsewhere").expect("typed, shown");
+    ui.click("Go").expect("Go");
+    assert!(files_messages(ui).iter().any(|message| matches!(
+        message,
+        FilesMessage::GoTo {
+            side: Side::Local,
+            ..
+        }
+    )));
+}

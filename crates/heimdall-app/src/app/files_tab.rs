@@ -70,6 +70,22 @@ pub enum FilesMessage {
         /// Pane.
         side: Side,
     },
+    /// The folder typed in a pane's path bar changed.
+    PathEdited {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// What is typed.
+        text: String,
+    },
+    /// Go to the folder typed in a pane's path bar.
+    GoTo {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
     /// List the folder again.
     Refresh {
         /// Tab.
@@ -149,6 +165,7 @@ impl FilesMessage {
             | Self::Open { tab, side, .. }
             | Self::Up { tab, side }
             | Self::Refresh { tab, side }
+            | Self::GoTo { tab, side }
             | Self::AskNewFolder { tab, side }
             | Self::AskRename { tab, side }
             | Self::AskDelete { tab, side } => Some((tab, side)),
@@ -180,6 +197,10 @@ impl std::fmt::Debug for FilesMessage {
             }
             Self::Up { tab, side } => write!(f, "Up({}, {side:?})", tab.value()),
             Self::Refresh { tab, side } => write!(f, "Refresh({}, {side:?})", tab.value()),
+            Self::PathEdited { tab, side, .. } => {
+                write!(f, "PathEdited({}, {side:?}, ..)", tab.value())
+            }
+            Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
             Self::Transfer { tab, direction } => {
                 write!(f, "Transfer({}, {direction:?})", tab.value())
             }
@@ -372,6 +393,16 @@ impl App {
                 self.list(tab, side)
             }
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
+            FilesMessage::PathEdited { tab, side, text } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.typed = Some(text),
+                        Side::Local => files.local.typed = Some(text),
+                    }
+                }
+                Vec::new()
+            }
+            FilesMessage::GoTo { tab, side } => self.go_to(tab, side),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -382,6 +413,46 @@ impl App {
                     transfer.cancel.cancel();
                 }
                 Vec::new()
+            }
+        }
+    }
+
+    /// Lists the folder typed in `side`'s path bar, from the folder shown when relative; the
+    /// folder shown stays until the listing comes back.
+    fn go_to(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        match side {
+            Side::Remote => {
+                let Some(typed) = files.remote.typed.take() else {
+                    return Vec::new();
+                };
+                let typed = typed.trim();
+                let Some(client) = files.client.clone().filter(|_| !typed.is_empty()) else {
+                    return Vec::new();
+                };
+                let typed = RemotePath::from(typed);
+                let path = if typed.is_absolute() {
+                    typed
+                } else {
+                    files.remote.path.join(typed.as_bytes())
+                };
+                files.remote.loading = true;
+                vec![Effect::ListRemote { tab, client, path }]
+            }
+            Side::Local => {
+                let Some(typed) = files.local.typed.take() else {
+                    return Vec::new();
+                };
+                let typed = typed.trim();
+                if typed.is_empty() {
+                    return Vec::new();
+                }
+                // Joining an absolute path gives that path.
+                let path = files.local.path.join(typed);
+                files.local.loading = true;
+                vec![Effect::ListLocal { tab, path }]
             }
         }
     }

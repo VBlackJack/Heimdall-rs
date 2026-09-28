@@ -526,3 +526,6 @@ ui-broadcast-target-tooltip = Send broadcast input to this session (broadcast ta
 ui-dialog-broadcast-title = Broadcast to all tabs?
 ui-dialog-broadcast-body = Input you type will be sent to terminal panes in every open tab, including tabs running in the background. Continue?
 ui-dialog-broadcast-confirm = Broadcast
+
+## The Files tab's path bar, as the C# one.
+ui-files-go-button = Go

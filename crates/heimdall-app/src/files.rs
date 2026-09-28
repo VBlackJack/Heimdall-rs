@@ -182,6 +182,8 @@ pub struct Pane<P, E> {
     pub loading: bool,
     /// Why the last listing failed.
     pub error: Option<FilesError>,
+    /// A folder typed in its path bar, not gone to yet.
+    pub typed: Option<String>,
 }
 
 impl<P, E> Pane<P, E> {
@@ -192,6 +194,7 @@ impl<P, E> Pane<P, E> {
             selected: None,
             loading: true,
             error: None,
+            typed: None,
         }
     }
 }

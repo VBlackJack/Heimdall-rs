@@ -30,7 +30,7 @@ use heimdall_app::files::{
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
-use iced::widget::{Column, button, column, container, row, scrollable, text};
+use iced::widget::{Column, button, column, container, row, scrollable, text, text_input};
 use iced::{Alignment, Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -147,7 +147,8 @@ fn pane<'a>(
     tab: TabId,
     side: Side,
     title: String,
-    location: String,
+    location: &str,
+    typed: Option<&str>,
     rows: &[Row<'a>],
     selected: Option<usize>,
     loading: bool,
@@ -170,7 +171,15 @@ fn pane<'a>(
         button(text(fl!("ui-files-up-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::Up { tab, side })),
-        text(location).size(SMALL_SIZE).width(Length::Fill),
+        // The folder shown, typed over to go elsewhere, as the C# path bar.
+        text_input(location, typed.unwrap_or(location))
+            .size(SMALL_SIZE)
+            .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
+            .on_submit(files(FilesMessage::GoTo { tab, side }))
+            .width(Length::Fill),
+        button(text(fl!("ui-files-go-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press_maybe(typed.map(|_| files(FilesMessage::GoTo { tab, side }))),
         button(text(fl!("ui-files-refresh-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::Refresh { tab, side })),
@@ -280,7 +289,8 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         tab,
         Side::Local,
         fl!("ui-files-local-title"),
-        files_pane.local.path.display().to_string(),
+        &files_pane.local.path.display().to_string(),
+        files_pane.local.typed.as_deref(),
         &local_rows,
         files_pane.local.selected,
         files_pane.local.loading,
@@ -291,7 +301,8 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         tab,
         Side::Remote,
         fl!("ui-files-remote-title"),
-        files_pane.remote.path.display(),
+        &files_pane.remote.path.display(),
+        files_pane.remote.typed.as_deref(),
         &remote_rows,
         files_pane.remote.selected,
         files_pane.remote.loading,
