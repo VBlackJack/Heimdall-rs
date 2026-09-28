@@ -119,8 +119,13 @@ fn session_logging_is_off_by_default_and_its_folder_beside_the_settings() {
     let settings = Settings::load(&path).expect("defaults");
     assert!(!settings.session_logging, "as the C# default");
     assert_eq!(
-        settings.session_log_folder(&path),
-        dir.path().join("logs").join("sessions")
+        settings.session_log_folder(&path).display().to_string(),
+        dir.path()
+            .join("logs")
+            .join("sessions")
+            .display()
+            .to_string(),
+        "written with the platform's separator"
     );
 
     let chosen = Settings {

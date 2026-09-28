@@ -223,13 +223,16 @@ impl Settings {
     /// `settings_file`.
     #[must_use]
     pub fn session_log_folder(&self, settings_file: &Path) -> PathBuf {
-        let chosen = Path::new(self.session_log_directory.trim());
+        // Rebuilt from its parts: the default "logs/sessions" takes the platform's separator.
+        let chosen: PathBuf = Path::new(self.session_log_directory.trim())
+            .components()
+            .collect();
         if chosen.is_absolute() {
-            return chosen.to_owned();
+            return chosen;
         }
         settings_file
             .parent()
-            .map_or_else(|| chosen.to_owned(), |base| base.join(chosen))
+            .map_or_else(|| chosen.clone(), |base| base.join(&chosen))
     }
 
     /// Writes the settings to `path`, through a temporary file.
