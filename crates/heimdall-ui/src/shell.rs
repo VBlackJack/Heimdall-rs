@@ -165,6 +165,10 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
         }
+        // Files dragged from Explorer over the window, and dropped on it.
+        iced::Event::Window(window::Event::FileHovered(_)) => Some(Message::FilesHovered(true)),
+        iced::Event::Window(window::Event::FilesHoveredLeft) => Some(Message::FilesHovered(false)),
+        iced::Event::Window(window::Event::FileDropped(path)) => Some(Message::FileDropped(path)),
         iced::Event::Window(window::Event::Unfocused) => {
             Some(Message::App(AppMessage::WindowFocus(false)))
         }
@@ -337,6 +341,10 @@ pub enum Message {
     FinderFind(FindDirection),
     /// Close the terminal's search bar.
     FinderClose,
+    /// Files are dragged over the window, or no longer.
+    FilesHovered(bool),
+    /// A file or folder dropped on the window.
+    FileDropped(std::path::PathBuf),
     /// The transcripts' folder typed in the Settings page.
     LogDirectoryEdited(String),
     /// Apply the folder typed.
@@ -401,6 +409,8 @@ impl fmt::Debug for Message {
             Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
             Self::FinderClose => f.write_str("FinderClose"),
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
+            Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
+            Self::FileDropped(_) => f.write_str("FileDropped(..)"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
         }
     }
@@ -536,6 +546,8 @@ pub struct Shell {
     finder: Option<Finder>,
     /// The transcripts' folder as typed in the Settings page, until applied.
     log_directory: Option<String>,
+    /// Files are dragged over the window.
+    files_hovered: bool,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
     /// search bar's, just opened.
     focus_next: Option<iced::widget::Id>,
@@ -618,6 +630,7 @@ impl Shell {
             finder: None,
             focus_next: None,
             log_directory: None,
+            files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
         }
@@ -759,6 +772,9 @@ impl Shell {
             }
             message @ (Message::LogDirectoryEdited(_) | Message::LogDirectoryApply) => {
                 self.log_directory_message(message)
+            }
+            message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
+                self.drop_message(message)
             }
         };
         let mut tasks: Vec<Task<Message>> =
@@ -1439,6 +1455,9 @@ impl Shell {
                 .on_press(Message::PaletteClose),
             ));
         }
+        if let Some(overlay) = self.drop_overlay() {
+            layers = layers.push(overlay);
+        }
         if let Some((entries, at)) = open_menu {
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
@@ -1813,6 +1832,53 @@ impl Shell {
         .max_width(SETTINGS_WIDTH)
         .style(container::bordered_box)
         .into()
+    }
+
+    /// The Files tab shown with its session open, the one files dropped on the window go to.
+    fn drop_target(&self) -> Option<TabId> {
+        self.app
+            .active_tab()
+            .filter(|tab| !self.settings_shown() && tab.phase == Phase::Connected)
+            .filter(|tab| {
+                tab.files
+                    .as_ref()
+                    .is_some_and(|files| files.client.is_some())
+            })
+            .map(|tab| tab.id)
+    }
+
+    /// Files dragged over the window, or dropped: sent to the server's folder of the Files
+    /// tab shown, as the C# tab takes what Explorer drops on it.
+    fn drop_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::FilesHovered(over) => {
+                self.files_hovered = over;
+                Vec::new()
+            }
+            Message::FileDropped(path) => {
+                self.files_hovered = false;
+                match self.drop_target() {
+                    Some(tab) => self
+                        .app
+                        .update(AppMessage::Files(FilesMessage::Dropped { tab, path })),
+                    None => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// "Drop files to upload" over the Files tab shown while files are dragged over it.
+    fn drop_overlay(&self) -> Option<Element<'_, Message>> {
+        self.drop_target().filter(|_| self.files_hovered)?;
+        Some(opaque(
+            container(
+                container(text(fl!("ui-files-drop-overlay")).size(HEADING_SIZE))
+                    .padding(PADDING)
+                    .style(container::bordered_box),
+            )
+            .center(Length::Fill),
+        ))
     }
 
     /// The transcripts' folder typed, or applied.
@@ -4162,6 +4228,30 @@ mod tests {
         assert!(!matches!(
             routed("x", Modifiers::CTRL, event::Status::Ignored),
             Some(Message::TreeShortcut(_))
+        ));
+    }
+
+    #[test]
+    fn files_dragged_from_explorer_reach_the_window() {
+        let path = std::path::PathBuf::from("report.pdf");
+        let routed = |event| {
+            window_event(
+                iced::Event::Window(event),
+                event::Status::Ignored,
+                window::Id::unique(),
+            )
+        };
+        assert!(matches!(
+            routed(window::Event::FileHovered(path.clone())),
+            Some(Message::FilesHovered(true))
+        ));
+        assert!(matches!(
+            routed(window::Event::FilesHoveredLeft),
+            Some(Message::FilesHovered(false))
+        ));
+        assert!(matches!(
+            routed(window::Event::FileDropped(path.clone())),
+            Some(Message::FileDropped(dropped)) if dropped == path
         ));
     }
 

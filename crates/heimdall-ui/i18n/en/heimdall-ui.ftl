@@ -587,3 +587,6 @@ ui-files-hidden-toggle = .*
 ui-files-hidden-tooltip = Show hidden files
 ui-files-item-count = { $count } items
 ui-files-item-count-filtered = { $shown }/{ $count } items
+
+## Files dropped from Explorer on a Files tab, as the C# one.
+ui-files-drop-overlay = Drop files to upload

@@ -1116,3 +1116,64 @@ async fn an_upload_over_a_hidden_or_filtered_name_is_still_asked_about() {
         Some(Dialog::ConfirmOverwrite { name, .. }) if name == "b.txt"
     ));
 }
+
+#[tokio::test]
+async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let outside = tempfile::tempdir().expect("dir");
+    let file = outside.path().join("report.pdf");
+    std::fs::write(&file, b"12345").expect("written");
+    let folder = outside.path().join("photos");
+    std::fs::create_dir(&folder).expect("folder");
+    let drop = |app: &mut App, path: &Path| {
+        files(
+            app,
+            FilesMessage::Dropped {
+                tab,
+                path: path.to_owned(),
+            },
+        )
+    };
+    let sent = drop(&mut app, &file);
+    assert!(
+        matches!(sent.as_slice(), [Effect::Transfer { request, .. }]
+            if request.remote.as_bytes() == b"/srv/report.pdf"
+                && request.local == file
+                && !request.folder
+                && !request.replace),
+        "{sent:?}"
+    );
+    let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(files_pane.transfers.last().map(|t| t.total), Some(Some(5)));
+
+    let sent = drop(&mut app, &folder);
+    assert!(
+        matches!(sent.as_slice(), [Effect::Transfer { request, .. }] if request.folder),
+        "{sent:?}"
+    );
+    assert!(
+        drop(&mut app, &outside.path().join("gone")).is_empty(),
+        "nothing there"
+    );
+    let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert!(matches!(
+        files_pane.transfers.last().map(|t| &t.state),
+        Some(heimdall_app::files::TransferState::Failed(
+            FilesError::NotAFile
+        ))
+    ));
+
+    // A name the server's folder lists already: asked first.
+    let taken = outside.path().join("a.txt");
+    std::fs::write(&taken, b"x").expect("written");
+    assert!(drop(&mut app, &taken).is_empty());
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmOverwrite { name, .. }) if name == "a.txt"
+    ));
+    assert!(matches!(
+        app.update(Message::ConfirmDialog).as_slice(),
+        [Effect::Transfer { request, .. }] if request.replace
+    ));
+}

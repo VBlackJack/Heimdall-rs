@@ -16,7 +16,7 @@
 
 //! What the application decides in a Files tab.
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heimdall_files::{RemotePath, RemoteSession};
 use tokio_util::sync::CancellationToken;
@@ -122,6 +122,14 @@ pub enum FilesMessage {
         tab: TabId,
         /// Pane.
         side: Side,
+    },
+    /// A file or folder of this computer dropped on the tab: sent to the server's folder
+    /// shown, as the C# tab does with what Explorer drops on it.
+    Dropped {
+        /// Tab.
+        tab: TabId,
+        /// What was dropped.
+        path: PathBuf,
     },
     /// Bookmark the server's folder shown.
     Bookmark {
@@ -288,6 +296,7 @@ impl std::fmt::Debug for FilesMessage {
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Bookmark { tab } => write!(f, "Bookmark({})", tab.value()),
+            Self::Dropped { tab, .. } => write!(f, "Dropped({}, ..)", tab.value()),
             Self::Filter { tab, side, .. } => write!(f, "Filter({}, {side:?}, ..)", tab.value()),
             Self::ToggleHidden { tab, side } => {
                 write!(f, "ToggleHidden({}, {side:?})", tab.value())
@@ -513,7 +522,8 @@ impl App {
             | FilesMessage::Bookmark { .. }
             | FilesMessage::OpenBookmark { .. }
             | FilesMessage::Filter { .. }
-            | FilesMessage::ToggleHidden { .. }) => self.pane_message(message),
+            | FilesMessage::ToggleHidden { .. }
+            | FilesMessage::Dropped { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -547,6 +557,7 @@ impl App {
                 Vec::new()
             }
             FilesMessage::OpenBookmark { tab, index } => self.open_bookmark(tab, index),
+            FilesMessage::Dropped { tab, path } => self.upload_dropped(tab, &path),
             FilesMessage::Filter { tab, side, text } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -596,6 +607,51 @@ impl App {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// Sends `path`, dropped on the tab, to the server's folder shown; asked first when it
+    /// would replace a name listed there.
+    fn upload_dropped(&mut self, tab: TabId, path: &Path) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let (Some(client), Some(name)) = (files.client.clone(), path.file_name()) else {
+            return Vec::new();
+        };
+        let folder = path.is_dir();
+        if !folder && !path.is_file() {
+            let label = name.to_string_lossy().into_owned();
+            files
+                .transfers
+                .push(failed(Direction::Upload, label, FilesError::NotAFile));
+            return Vec::new();
+        }
+        let bytes = name_bytes(name);
+        let exists = files.remote.listing.iter().any(|entry| entry.name == bytes);
+        let label = name.to_string_lossy().into_owned();
+        let size = (!folder)
+            .then(|| path.metadata().map(|meta| meta.len()).ok())
+            .flatten();
+        let request = TransferRequest {
+            client,
+            direction: Direction::Upload,
+            remote: files.remote.path.join(&bytes),
+            local: path.to_owned(),
+            replace: exists,
+            folder,
+            cancel: CancellationToken::new(),
+        };
+        if exists {
+            self.pending_transfers.push_back(PendingTransfer {
+                tab,
+                request,
+                label,
+                total: size,
+            });
+            self.ask_next_overwrite();
+            return Vec::new();
+        }
+        self.launch(tab, request, label, size)
     }
 
     /// Bookmarks the server's folder shown, once, and says so.

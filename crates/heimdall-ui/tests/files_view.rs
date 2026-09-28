@@ -1005,3 +1005,51 @@ async fn a_pane_filters_its_entries_hides_dot_names_and_counts_them() {
     assert!(ui.find("backup.tar.gz").is_err(), "filtered out");
     ui.find("logs/").expect("kept");
 }
+
+#[tokio::test]
+async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    assert!(simulator(&shell).find("Drop files to upload").is_err());
+    let _ = shell.update(Message::FilesHovered(true));
+    snapshot(&shell, "files-drop.png");
+    simulator(&shell)
+        .find("Drop files to upload")
+        .expect("said while dragged");
+    let _ = shell.update(Message::FilesHovered(false));
+    assert!(simulator(&shell).find("Drop files to upload").is_err());
+
+    let dropped = dir.path().join("dropped.txt");
+    std::fs::write(&dropped, b"x").expect("written");
+    let _ = shell.update(Message::FilesHovered(true));
+    let _ = shell.update(Message::FileDropped(dropped));
+    let files = shell
+        .app()
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files");
+    assert_eq!(files.transfers.len(), 1, "sent");
+    assert!(
+        simulator(&shell).find("Drop files to upload").is_err(),
+        "dropped: no longer said"
+    );
+
+    // Not while the Settings page shows.
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::FilesHovered(true));
+    assert!(simulator(&shell).find("Drop files to upload").is_err());
+    let again = dir.path().join("again.txt");
+    std::fs::write(&again, b"x").expect("written");
+    let _ = shell.update(Message::FileDropped(again));
+    let files = shell
+        .app()
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files");
+    assert_eq!(files.transfers.len(), 1, "nothing more");
+}
