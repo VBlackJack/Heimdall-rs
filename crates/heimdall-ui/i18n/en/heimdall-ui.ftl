@@ -229,7 +229,7 @@ ui-dialog-close-tab-body = The session is still open. Closing the tab disconnect
 ui-dialog-close-tab-confirm = Close
 ui-dialog-exit-title = Quit Heimdall?
 ui-dialog-exit-body = { $count ->
-    [one] One session is still open and will be disconnected.
+    [one] { $count } session is still open and will be disconnected.
    *[other] { $count } sessions are still open and will be disconnected.
 }
 ui-dialog-exit-confirm = Quit
@@ -248,7 +248,7 @@ ui-dialog-delete-folder-body = The folder { $name } and everything in it will be
 ui-dialog-delete-confirm = Delete
 ui-dialog-paste-title = Paste several lines?
 ui-dialog-paste-body = { $count ->
-    [one] The text holds one line. The shell may run it as a command as soon as it arrives.
+    [one] The text holds { $count } line. The shell may run it as a command as soon as it arrives.
    *[other] The text holds { $count } lines. The shell may run each one as a command as soon as it arrives.
 }
 ui-dialog-paste-confirm = Paste
@@ -288,7 +288,7 @@ ui-files-state-running = { $done } of { $total }
 ui-files-state-running-unknown = { $done }
 ui-files-state-done = Done
 ui-files-state-incomplete = Done, { $count ->
-    [one] 1 entry left out (a link, an unusable name or a failure)
+    [one] { $count } entry left out (a link, an unusable name or a failure)
    *[other] { $count } entries left out (links, unusable names or failures)
 }
 ui-files-state-cancelled = Cancelled; start it again to resume
@@ -385,12 +385,60 @@ ui-tree-import-sessions = Import Sessions
 ui-tree-export-sessions = Export Sessions
 ui-dialog-export-title = Export Sessions
 ui-dialog-export-done = { $count ->
-    [one] 1 session exported successfully.
+    [one] { $count } session exported successfully.
    *[other] { $count } sessions exported successfully.
 }
 ui-dialog-export-credentials = Credentials were not included in the export file.
 ui-dialog-export-failed = Export failed: { $detail }
 ui-export-filter-json = JSON Files
+ui-tree-import-openssh = Import OpenSSH config...
+ui-openssh-title = Import OpenSSH config
+ui-openssh-summary = { $total ->
+    [one] { $total } candidate
+   *[other] { $total } candidates
+} - { $new } new, { $duplicate ->
+    [one] { $duplicate } duplicate
+   *[other] { $duplicate } duplicates
+}
+ui-openssh-hint = ProxyJump entries are imported as SSH gateway chains.
+ui-openssh-choose-all = Import all
+ui-openssh-column-alias = Alias
+ui-openssh-column-host = HostName
+ui-openssh-column-port = Port
+ui-openssh-column-user = User
+ui-openssh-column-key = IdentityFile
+ui-openssh-column-chain = Gateway chain
+ui-openssh-column-status = Status
+ui-openssh-status-new = New
+ui-openssh-status-duplicate = Duplicate
+ui-openssh-reusing = reusing existing gateway "{ $name }"
+ui-openssh-diagnostics = Diagnostics ({ $count })
+ui-openssh-diag-line = Line { $line }: { $said }
+ui-openssh-diag-match = Match block not read
+ui-openssh-diag-include = Include directive not followed: { $value }
+ui-openssh-diag-wildcard = Wildcard alias ignored: { $value }
+ui-openssh-diag-unknown = Unknown directive ignored: { $value }
+ui-openssh-diag-port = Invalid port { $value }; falling back to 22
+ui-openssh-diag-duplicate = Duplicate alias within file ignored: { $value }
+ui-openssh-diag-proxycommand = ProxyCommand is not supported; Heimdall only supports native TCP jumps via ProxyJump: { $value }
+ui-openssh-diag-mixed = ProxyJump and ProxyCommand combined; use only ProxyJump for Heimdall import: { $value }
+ui-openssh-diag-jump-token = ProxyJump with OpenSSH tokens (%h/%p/%r) is not supported: { $value }
+ui-openssh-diag-cycle = ProxyJump cycle detected in chain for Host { $value }
+ui-openssh-diag-syntax = Unrecognised ProxyJump syntax: { $value }
+ui-openssh-diag-tilde = IdentityFile ~ expanded to the home folder: { $value }
+ui-openssh-diag-fallback = HostName missing; falling back to alias: { $value }
+ui-openssh-diag-host-token = HostName uses an OpenSSH token Heimdall cannot expand (only %h is supported); host skipped: { $value }
+ui-openssh-import-button = Import
+ui-openssh-done = { $imported } imported, { $duplicates } skipped (duplicates), { $warnings ->
+    [one] { $warnings } warning
+   *[other] { $warnings } warnings
+}
+ui-openssh-done-gateways = { $count ->
+    [one] { $count } SSH gateway created for the ProxyJump chains.
+   *[other] { $count } SSH gateways created for the ProxyJump chains.
+}
+ui-openssh-unreadable = Unable to read the selected file: { $detail }
+ui-openssh-empty = The selected file contains no importable entries.
 ui-tree-add-tooltip = Add session
 ui-tree-more-tooltip = More actions
 ui-tree-tooltip-host = Host: { $host }
@@ -642,11 +690,11 @@ ui-status-error = Error
 ui-status-copied = Copied to clipboard: { $text }
 ui-status-folder-created = Folder "{ $path }" created.
 ui-status-sessions = { $count ->
-    [one] 1 session
+    [one] { $count } session
    *[other] { $count } sessions
 }
 ui-status-sessions-filtered = { $shown } of { $count ->
-    [one] 1 session
+    [one] { $count } session
    *[other] { $count } sessions
 }
 

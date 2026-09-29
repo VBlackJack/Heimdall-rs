@@ -38,3 +38,16 @@ fn no_language_holds_a_key_english_lacks_or_other_variables() {
         eprintln!("translations still to do: {missing}");
     }
 }
+
+/// French puts 0 in the `one` plural: a variant reading "1 session" would say it of none. So
+/// every `one` variant, in every language, names its number.
+#[test]
+fn every_one_variant_names_its_number() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+        let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+        let source = std::fs::read_to_string(&path).expect("readable");
+        let fixed = heimdall_i18n::fixed_one_variants(&source).expect("parses");
+        assert!(fixed.is_empty(), "{language}: {fixed:?}");
+    }
+}

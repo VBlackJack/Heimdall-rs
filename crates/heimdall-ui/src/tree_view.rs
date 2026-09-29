@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, Message as AppMessage,
-    NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage,
-    SessionState, TabGroup, TabId, TabMenuMessage, TreeFilter,
+    NO_FOLDER, OpenSshMessage, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
+    SelectionMessage, SessionState, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -105,6 +105,9 @@ pub enum TreeMenu {
 /// Width of the protocol column: every name starts at the same place, as beside the C#
 /// tree's icons.
 const PROTOCOL_WIDTH: f32 = 38.0;
+
+/// Widest a gateway badge grows beside a name.
+const BADGE_MAX_WIDTH: f32 = 110.0;
 
 /// Size of a session's state dot, as the C# tree's and tabs'.
 const DOT_SIZE: f32 = 7.0;
@@ -272,26 +275,33 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
         GatewayBadge::Via(name) => fl!("ui-tree-gateway-via", name = name.as_str()),
         GatewayBadge::Missing => fl!("ui-tree-gateway-missing"),
     };
-    container(text(label).size(PROTOCOL_SIZE))
-        .padding([0.0, 4.0])
-        .style(move |theme: &Theme| {
-            let palette = theme.extended_palette();
-            let colour = if missing {
-                palette.danger.base.color
-            } else {
-                palette.primary.base.color
-            };
-            container::Style {
-                text_color: Some(colour),
-                border: iced::Border {
-                    color: colour,
-                    width: 1.0,
-                    radius: 6.0.into(),
-                },
-                ..container::Style::default()
-            }
-        })
-        .into()
+    // On one line, cut at its edge: a long gateway name must not fold the row.
+    container(
+        text(label)
+            .size(PROTOCOL_SIZE)
+            .wrapping(text::Wrapping::None),
+    )
+    .max_width(BADGE_MAX_WIDTH)
+    .clip(true)
+    .padding([0.0, 4.0])
+    .style(move |theme: &Theme| {
+        let palette = theme.extended_palette();
+        let colour = if missing {
+            palette.danger.base.color
+        } else {
+            palette.primary.base.color
+        };
+        container::Style {
+            text_color: Some(colour),
+            border: iced::Border {
+                color: colour,
+                width: 1.0,
+                radius: 6.0.into(),
+            },
+            ..container::Style::default()
+        }
+    })
+    .into()
 }
 
 fn row_style(theme: &Theme, selected: bool) -> container::Style {
@@ -422,6 +432,10 @@ pub fn menu_entries<'a>(
                 .push(entry(
                     fl!("ui-tree-import-sessions"),
                     can_import.then_some(AppMessage::ImportLegacy),
+                ))
+                .push(entry(
+                    fl!("ui-tree-import-openssh"),
+                    Some(AppMessage::OpenSsh(OpenSshMessage::Start)),
                 ))
                 .push(entry(
                     fl!("ui-tree-export-sessions"),

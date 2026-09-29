@@ -25,6 +25,7 @@ pub mod i18n;
 pub mod keysym;
 pub mod local_form;
 mod logging;
+pub mod openssh_view;
 pub mod palette;
 pub mod post_connect_form;
 mod provider_view;

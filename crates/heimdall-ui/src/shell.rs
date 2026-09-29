@@ -98,6 +98,9 @@ const TERMINAL_MARGIN: f32 = 6.0;
 /// Width of a question or dialog card, in logical pixels.
 const CARD_WIDTH: f32 = 520.0;
 
+/// Widest a dialog holding a table grows.
+const WIDE_CARD_WIDTH: f32 = 1000.0;
+
 /// The filter button's mark, a funnel as the C# one's icon.
 const FILTER_GLYPH: &str = "\u{25BD}";
 
@@ -1536,6 +1539,7 @@ impl Shell {
             | Effect::FileOperation { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
+            Effect::PickOpenSshConfig => pick_openssh(),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
             Effect::RetryAt {
@@ -1609,7 +1613,14 @@ impl Shell {
             // Built for the window's height: a long form scrolls above its buttons.
             layers = layers.push(opaque(
                 container(responsive(move |size| {
-                    center(card(dialog_view(dialog, &self.forms(size.height)))).into()
+                    let content = dialog_view(dialog, &self.forms(size.height));
+                    // The OpenSSH preview is a table: wider than a form, as the C# one.
+                    let card = if matches!(dialog, Dialog::OpenSshPreview(_)) {
+                        wide_card(content)
+                    } else {
+                        card(content)
+                    };
+                    center(card).into()
                 }))
                 .style(move |theme: &Theme| container::Style {
                     background: Some(if locked {
@@ -3128,7 +3139,39 @@ fn action_label<'a>(label: String) -> iced::widget::Text<'a> {
     text(label).wrapping(text::Wrapping::None)
 }
 
+/// A card for a table, wider than a form's.
+fn wide_card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
+    container(content)
+        .padding(PADDING)
+        .max_width(WIDE_CARD_WIDTH)
+        .style(container::bordered_box)
+        .into()
+}
+
 /// The report of an import: counts, and the profiles left out with their reason.
+/// The open dialog of the OpenSSH import, held by the window, then the file read; nothing
+/// when no file is picked.
+fn pick_openssh() -> Task<Message> {
+    let title = fl!("ui-openssh-title");
+    window::latest().then(move |id| {
+        let title = title.clone();
+        let pick = match id {
+            Some(id) => window::run(id, move |window| {
+                crate::openssh_view::pick(title, Some(window))
+            }),
+            None => Task::done(crate::openssh_view::pick(title, None)),
+        };
+        pick.then(|pick| {
+            Task::future(crate::openssh_view::read(pick)).then(|read| match read {
+                Some(read) => Task::done(Message::App(AppMessage::OpenSsh(
+                    heimdall_app::OpenSshMessage::Read(read),
+                ))),
+                None => Task::none(),
+            })
+        })
+    })
+}
+
 /// The save dialog of an export, held by the window, then the file written.
 fn save_export(document: String, count: usize) -> Task<Message> {
     let (title, filter) = (fl!("ui-dialog-export-title"), fl!("ui-export-filter-json"));
@@ -3176,7 +3219,14 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::PasswordSaveFailed { detail: technical } => {
             (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
         }
-        _ => (String::new(), Vec::new()),
+        other => (
+            fl!("ui-openssh-title"),
+            crate::openssh_view::report_lines(other)
+                .unwrap_or_default()
+                .into_iter()
+                .map(text)
+                .collect(),
+        ),
     };
     column![text(title).size(HEADING_SIZE)]
         .extend(lines.into_iter().map(Element::from))
@@ -4801,7 +4851,11 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ExportDone { .. }
         | Dialog::ExportFailed { .. }
         | Dialog::ImportFailed { .. }
+        | Dialog::OpenSshUnreadable { .. }
+        | Dialog::OpenSshEmpty
+        | Dialog::OpenSshDone { .. }
         | Dialog::PasswordSaveFailed { .. } => report(dialog, ok()),
+        Dialog::OpenSshPreview(preview) => crate::openssh_view::preview(preview),
         Dialog::StoreError { detail: technical } => column![
             heading(fl!("ui-dialog-store-title")),
             text(fl!("ui-dialog-store-body")),
