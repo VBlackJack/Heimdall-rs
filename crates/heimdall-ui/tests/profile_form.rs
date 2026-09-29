@@ -141,6 +141,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         ui.find("Choose a protocol").expect("picker");
         ui.find("Windows remote desktop session").expect("RDP card");
         ui.find("Secure file transfer over SSH").expect("SFTP card");
+        ui.find("Local terminal session").expect("Local card");
         ui.click("Secure shell terminal").expect("SSH card");
         assert!(ui.into_messages().any(|message| matches!(
             message,
@@ -612,6 +613,37 @@ fn an_sftp_form_is_the_ssh_one_without_what_a_shell_needs() {
         ui.find(label).expect(label);
     }
     for absent in ["Forward SSH agent", "Post-connect sequence"] {
+        assert!(ui.find(absent).is_err(), "{absent}");
+    }
+}
+
+#[test]
+fn a_local_form_asks_for_a_program_and_its_folder_not_a_server() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Local)));
+    snapshot(&shell, "profile-local.png");
+    let mut ui = tall_simulator(&shell);
+    for label in [
+        "Local Shell",
+        "Local shell",
+        "Executable",
+        "The default shell",
+        "Arguments",
+        "Advanced shell options",
+        "Working directory",
+    ] {
+        ui.find(label).expect(label);
+    }
+    ui.find("Name the session as the tree lists it.")
+        .expect("its own basics");
+    for absent in [
+        "Server *",
+        "Password",
+        "Gateway routing",
+        "Set the destination host and the service port Heimdall should open.",
+    ] {
         assert!(ui.find(absent).is_err(), "{absent}");
     }
 }

@@ -2189,6 +2189,7 @@ dependencies = [
  "heimdall-term",
  "log",
  "sealvault",
+ "shlex",
  "tempfile",
  "tokio",
  "tokio-stream",
