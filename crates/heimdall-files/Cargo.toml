@@ -14,10 +14,20 @@ publish.workspace = true
 
 [dependencies]
 heimdall-sftp.workspace = true
+log.workspace = true
+suppaftp.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
 tokio-util.workspace = true
+thiserror.workspace = true
 
 [dev-dependencies]
+# An FTP server the FTP tests run against, on disk.
+libunftp.workspace = true
+# The FTPS test server's certificate.
+rcgen = { workspace = true, features = ["pem"] }
 tempfile.workspace = true
+unftp-sbe-fs.workspace = true
 # process: OpenSSH's sftp-server run as a child in the tests.
 tokio = { workspace = true, features = ["process"] }
 

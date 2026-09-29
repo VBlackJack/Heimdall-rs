@@ -56,6 +56,9 @@ iced = "0.14.0"
 iced_renderer = "0.14.0"
 iced_test = "0.14.0"
 log = { version = "0.4.34", features = ["std"] }
+# libunftp, unftp-sbe-fs: an FTP server in the Files tests only; ring, as the workspace.
+libunftp = { version = "0.23.1", default-features = false, features = ["ring"] }
+unftp-sbe-fs = "0.4.0"
 # rcgen: test certificates only.
 rcgen = { version = "0.14.5", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17.14"
@@ -66,6 +69,8 @@ serde_json = "1.0.151"
 # shlex: a local shell's argument line split as a POSIX shell does (Unix); already in the
 # tree through the build of a dependency.
 shlex = "2.0.1"
+# suppaftp: FTP and explicit FTPS for the Files tab; tokio and rustls on ring, as the workspace.
+suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
 tempfile = "3.27.0"
 # des: VNC Authentication only, a DES challenge the protocol mandates.
 des = "0.9.0"

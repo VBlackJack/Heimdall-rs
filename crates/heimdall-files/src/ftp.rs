@@ -1,0 +1,914 @@
+/*
+ * Copyright 2026 Julien Bombled
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+//! FTP and explicit FTPS for the Files tab, as the C# Heimdall's FTP profiles: one control
+//! connection, passive data connections, binary transfers.
+//!
+//! FTP runs one command at a time on its control connection: the client holds it behind a
+//! lock, and every operation takes it for its whole length, a folder walk included.
+//!
+//! The Files guarantees, the FTP way:
+//! - a rename never replaces: the target is looked up first and an existing one refused.
+//!   FTP has no atomic form of this; the window between the look and the rename is the
+//!   same as the C# client's.
+//! - a delete never follows a link: a link, which a listing shows as such, is deleted with
+//!   `DELE`, never walked.
+//! - a download reads only a regular file, into `<name>.heimdall-part`, renamed once
+//!   complete. A later attempt resumes with `REST` when the remote file has the same size
+//!   and date as when it started, recorded beside the part file; otherwise it starts over.
+//! - an upload goes to a hidden temporary file beside the target, renamed onto it once
+//!   complete: nobody sees a partial file under the real name.
+
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::{Duration, UNIX_EPOCH};
+
+use heimdall_sftp::RemotePath;
+use heimdall_sftp::local_name::{FolderNames, LocalName, Rules};
+use suppaftp::list::{File as Listed, ListParser};
+use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream};
+use suppaftp::types::{FileType, Mode};
+use suppaftp::{FtpError, Status};
+use tokio::fs::OpenOptions;
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
+use tokio::sync::Mutex;
+use tokio_util::sync::CancellationToken;
+
+use crate::{FolderReport, ItemKind, Refusal, RemoteError, RemoteItem};
+
+/// Suffix of a file being downloaded, as for SFTP.
+const PART_SUFFIX: &str = ".heimdall-part";
+
+/// Suffix of the record beside a part file that says what it was downloaded from.
+const RESUME_SUFFIX: &str = ".heimdall-part.ftp-resume";
+
+/// First line of a resume record, with its format version.
+const RESUME_HEADER: &str = "heimdall-ftp-resume 1";
+
+/// Prefix of an upload's temporary name: hidden, beside the target.
+const UPLOAD_PREFIX: &str = ".heimdall-upload-";
+
+/// Bytes moved at a time, and between two progress reports.
+const CHUNK: usize = 64 * 1024;
+
+/// Folders a walk goes into at most, as the SFTP one.
+const MAX_DEPTH: usize = heimdall_sftp::tree::MAX_DEPTH;
+
+/// Entries a walk reads at most, as the SFTP one.
+const MAX_ENTRIES: usize = heimdall_sftp::tree::MAX_ENTRIES;
+
+/// The feature a server lists when it has the machine listing (`MLSD`).
+const MLSD_FEATURE: &str = "MLST";
+
+/// How a connection is secured.
+#[derive(Clone)]
+pub enum FtpSecurity {
+    /// None: plain FTP, everything in clear, as a C# profile without "Enable SSL/TLS".
+    Plain,
+    /// Explicit FTPS (`AUTH TLS`) with `connector`, checking the certificate for `domain`.
+    Explicit {
+        /// What checks the server's certificate.
+        connector: tokio_rustls::TlsConnector,
+        /// The name the certificate must hold.
+        domain: String,
+    },
+}
+
+impl std::fmt::Debug for FtpSecurity {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Plain => f.write_str("Plain"),
+            Self::Explicit { domain, .. } => {
+                f.debug_struct("Explicit").field("domain", domain).finish()
+            }
+        }
+    }
+}
+
+/// Where an FTP session goes and as whom.
+#[derive(Debug, Clone)]
+pub struct FtpTarget {
+    /// Host name or address.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// Account; `None` logs in as `anonymous`, as the C# `FluentFTP` does with no name.
+    pub username: Option<String>,
+    /// Password.
+    pub password: String,
+    /// Passive data connections, as the C# default; active otherwise.
+    pub passive: bool,
+    /// Plain or explicit FTPS.
+    pub security: FtpSecurity,
+    /// Longest wait for the server to answer the connection.
+    pub timeout: Duration,
+}
+
+/// The account FTP logs in as with no name.
+const ANONYMOUS: &str = "anonymous";
+
+/// Why an FTP session could not be opened.
+#[derive(Debug, thiserror::Error)]
+pub enum FtpConnectError {
+    /// The network connection failed.
+    #[error("network: {0}")]
+    Network(#[source] std::io::Error),
+    /// The server did not answer in time.
+    #[error("the server did not answer in time")]
+    Timeout,
+    /// The server refused the account or its password.
+    #[error("the server refused the login")]
+    LoginRefused,
+    /// Explicit FTPS failed: the server refused `AUTH TLS`, or its certificate.
+    #[error("TLS: {0}")]
+    Tls(String),
+    /// Anything else the server said or did.
+    #[error("ftp: {0}")]
+    Protocol(String),
+}
+
+/// An open FTP session.
+#[derive(Clone)]
+pub struct FtpClient {
+    control: Arc<Mutex<AsyncRustlsFtpStream>>,
+    /// Whether the server has the machine listing, learnt from `FEAT` at login.
+    machine_listing: bool,
+}
+
+impl std::fmt::Debug for FtpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FtpClient")
+            .field("machine_listing", &self.machine_listing)
+            .finish_non_exhaustive()
+    }
+}
+
+impl FtpClient {
+    /// Connects to `target`, secures the connection when asked, logs in and sets binary
+    /// transfers.
+    ///
+    /// # Errors
+    ///
+    /// [`FtpConnectError`].
+    pub async fn connect(target: &FtpTarget) -> Result<Self, FtpConnectError> {
+        let address = (target.host.as_str(), target.port);
+        let mut stream =
+            tokio::time::timeout(target.timeout, AsyncRustlsFtpStream::connect(address))
+                .await
+                .map_err(|_| FtpConnectError::Timeout)?
+                .map_err(|error| match error {
+                    FtpError::ConnectionError(source) => FtpConnectError::Network(source),
+                    other => FtpConnectError::Protocol(other.to_string()),
+                })?;
+        if let FtpSecurity::Explicit { connector, domain } = &target.security {
+            stream = stream
+                .into_secure(AsyncRustlsConnector::from(connector.clone()), domain)
+                .await
+                .map_err(|error| FtpConnectError::Tls(error.to_string()))?;
+        }
+        let user = target.username.as_deref().unwrap_or(ANONYMOUS);
+        stream
+            .login(user, &target.password)
+            .await
+            .map_err(|error| match error {
+                FtpError::UnexpectedResponse(response)
+                    if response.status == Status::NotLoggedIn =>
+                {
+                    FtpConnectError::LoginRefused
+                }
+                other => FtpConnectError::Protocol(other.to_string()),
+            })?;
+        stream.set_mode(if target.passive {
+            Mode::Passive
+        } else {
+            Mode::Active
+        });
+        stream
+            .transfer_type(FileType::Binary)
+            .await
+            .map_err(|error| FtpConnectError::Protocol(error.to_string()))?;
+        // A server without FEAT is listed with LIST.
+        let machine_listing = stream
+            .feat()
+            .await
+            .is_ok_and(|features| features.contains_key(MLSD_FEATURE));
+        Ok(Self {
+            control: Arc::new(Mutex::new(stream)),
+            machine_listing,
+        })
+    }
+
+    /// The absolute form of `path`: the server's current folder for a relative one.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn canonical(&self, path: &RemotePath) -> Result<RemotePath, RemoteError> {
+        let mut control = self.control.lock().await;
+        if path.is_absolute() {
+            return Ok(path.clone());
+        }
+        let current = control.pwd().await.map_err(|e| ftp_error(&e))?;
+        let base = RemotePath::from(current.as_str());
+        Ok(match text(path).as_str() {
+            "" | "." => base,
+            _ => base.join(path.as_bytes()),
+        })
+    }
+
+    /// The entries of folder `path`, `.` and `..` left out.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn list(&self, path: &RemotePath) -> Result<Vec<RemoteItem>, RemoteError> {
+        let mut control = self.control.lock().await;
+        self.list_locked(&mut control, path).await
+    }
+
+    async fn list_locked(
+        &self,
+        control: &mut AsyncRustlsFtpStream,
+        path: &RemotePath,
+    ) -> Result<Vec<RemoteItem>, RemoteError> {
+        let folder = text(path);
+        let lines = if self.machine_listing {
+            control.mlsd(Some(&folder)).await
+        } else {
+            control.list(Some(&folder)).await
+        }
+        .map_err(|e| ftp_error(&e))?;
+        Ok(items(&lines, self.machine_listing))
+    }
+
+    /// The entry at `path`, looked up in its folder's listing; `None` when there is none.
+    async fn entry_locked(
+        &self,
+        control: &mut AsyncRustlsFtpStream,
+        path: &RemotePath,
+    ) -> Result<Option<RemoteItem>, RemoteError> {
+        let Some(name) = path.file_name() else {
+            return Ok(None);
+        };
+        let name = name.to_vec();
+        Ok(self
+            .list_locked(control, &path.parent())
+            .await?
+            .into_iter()
+            .find(|entry| entry.name == name))
+    }
+
+    /// Creates folder `path`.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server.
+    pub async fn make_folder(&self, path: &RemotePath) -> Result<(), RemoteError> {
+        self.control
+            .lock()
+            .await
+            .mkdir(text(path))
+            .await
+            .map_err(|e| ftp_error(&e))
+    }
+
+    /// Renames `from` to `to`; an existing `to` is refused, never replaced.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server; [`Refusal::Failure`] when `to` exists.
+    pub async fn rename(&self, from: &RemotePath, to: &RemotePath) -> Result<(), RemoteError> {
+        let mut control = self.control.lock().await;
+        if self.entry_locked(&mut control, to).await?.is_some() {
+            return Err(exists());
+        }
+        control
+            .rename(text(from), text(to))
+            .await
+            .map_err(|e| ftp_error(&e))
+    }
+
+    /// Gives `path` the permission bits `mode`, with `SITE CHMOD` as most servers take it.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server; [`Refusal::Unsupported`] from one without it.
+    pub async fn set_permissions(&self, path: &RemotePath, mode: u32) -> Result<(), RemoteError> {
+        self.control
+            .lock()
+            .await
+            .site(format!("CHMOD {mode:o} {}", text(path)))
+            .await
+            .map(|_| ())
+            .map_err(|e| ftp_error(&e))
+    }
+
+    /// Deletes `path`, a folder with everything in it, never following a link.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server; [`RemoteError::TooLarge`] for a tree too large.
+    pub async fn remove(&self, path: &RemotePath) -> Result<(), RemoteError> {
+        let mut control = self.control.lock().await;
+        let kind = self
+            .entry_locked(&mut control, path)
+            .await?
+            .map_or(ItemKind::File, |entry| entry.kind);
+        if !walks(kind) {
+            return control.rm(text(path)).await.map_err(|e| ftp_error(&e));
+        }
+        // Depth first: a folder is removed once everything in it is.
+        let mut visited = 0usize;
+        let mut pending = vec![(path.clone(), false)];
+        while let Some((folder, emptied)) = pending.pop() {
+            if emptied {
+                control
+                    .rmdir(text(&folder))
+                    .await
+                    .map_err(|e| ftp_error(&e))?;
+                continue;
+            }
+            pending.push((folder.clone(), true));
+            for entry in self.list_locked(&mut control, &folder).await? {
+                visited += 1;
+                if visited > MAX_ENTRIES {
+                    return Err(RemoteError::TooLarge);
+                }
+                let child = folder.join(&entry.name);
+                if walks(entry.kind) {
+                    pending.push((child, false));
+                } else {
+                    // A link is deleted itself, never what it points to.
+                    control.rm(text(&child)).await.map_err(|e| ftp_error(&e))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Downloads regular file `remote` to `local`, resuming an earlier attempt when the
+    /// remote file is unchanged; returns its size.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`]; [`RemoteError::NotAFile`] for anything but a regular file;
+    /// [`RemoteError::Cancelled`] when `cancel` fired, the part file kept for a resume.
+    pub async fn download(
+        &self,
+        remote: &RemotePath,
+        local: &Path,
+        cancel: &CancellationToken,
+        progress: impl FnMut(u64) + Send,
+    ) -> Result<u64, RemoteError> {
+        let mut control = self.control.lock().await;
+        download_locked(self, &mut control, remote, local, cancel, progress).await
+    }
+
+    /// Uploads `local` to `remote` through a hidden temporary file renamed onto it; an
+    /// existing `remote` is replaced only with `replace`. Returns the bytes sent.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`]; [`RemoteError::Cancelled`] when `cancel` fired. The temporary file
+    /// is removed whatever stopped the upload.
+    pub async fn upload(
+        &self,
+        local: &Path,
+        remote: &RemotePath,
+        replace: bool,
+        cancel: &CancellationToken,
+        progress: impl FnMut(u64) + Send,
+    ) -> Result<u64, RemoteError> {
+        let mut control = self.control.lock().await;
+        upload_locked(self, &mut control, local, remote, replace, cancel, progress).await
+    }
+
+    /// Downloads folder `remote` with everything in it into `local`, never following a
+    /// link, the names checked as the SFTP walk checks them.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] when the session ends, the walk is cancelled, or the tree is too
+    /// large; a file that fails alone is counted as skipped.
+    pub async fn download_folder(
+        &self,
+        remote: &RemotePath,
+        local: &Path,
+        cancel: &CancellationToken,
+        mut progress: impl FnMut(u64) + Send,
+    ) -> Result<FolderReport, RemoteError> {
+        let mut control = self.control.lock().await;
+        let mut skipped = 0usize;
+        let mut done = 0u64;
+        let mut visited = 0usize;
+        let mut pending = vec![(remote.clone(), local.to_owned(), 0usize)];
+        while let Some((remote_dir, local_dir, depth)) = pending.pop() {
+            if cancel.is_cancelled() {
+                return Err(RemoteError::Cancelled);
+            }
+            tokio::fs::create_dir_all(&local_dir)
+                .await
+                .map_err(|e| local_error(&e))?;
+            let mut names = FolderNames::new(Rules::native());
+            for entry in self.list_locked(&mut control, &remote_dir).await? {
+                visited += 1;
+                if visited > MAX_ENTRIES {
+                    return Err(RemoteError::TooLarge);
+                }
+                let Ok(name) = LocalName::from_remote(&entry.name, Rules::native()) else {
+                    skipped += 1;
+                    continue;
+                };
+                if names.claim(&name).is_err() {
+                    skipped += 1;
+                    continue;
+                }
+                let child = remote_dir.join(&entry.name);
+                let target = local_dir.join(&name.name);
+                match entry.kind {
+                    ItemKind::Directory if depth < MAX_DEPTH => {
+                        pending.push((child, target, depth + 1));
+                    }
+                    ItemKind::File => {
+                        let before = done;
+                        let copied =
+                            download_locked(self, &mut control, &child, &target, cancel, |bytes| {
+                                progress(before + bytes);
+                            })
+                            .await;
+                        match copied {
+                            Ok(bytes) => done += bytes,
+                            Err(error) if fatal(&error) => return Err(error),
+                            Err(_) => skipped += 1,
+                        }
+                    }
+                    // Too deep, a link, anything else: left out.
+                    _ => skipped += 1,
+                }
+            }
+        }
+        Ok(FolderReport { skipped })
+    }
+
+    /// Uploads folder `local` with everything in it into `remote`, never following a local
+    /// link; files already there are replaced.
+    ///
+    /// # Errors
+    ///
+    /// As [`FtpClient::download_folder`].
+    pub async fn upload_folder(
+        &self,
+        local: &Path,
+        remote: &RemotePath,
+        cancel: &CancellationToken,
+        mut progress: impl FnMut(u64) + Send,
+    ) -> Result<FolderReport, RemoteError> {
+        let mut control = self.control.lock().await;
+        let mut skipped = 0usize;
+        let mut done = 0u64;
+        let mut visited = 0usize;
+        let mut pending = vec![(local.to_owned(), remote.clone(), 0usize)];
+        while let Some((local_dir, remote_dir, depth)) = pending.pop() {
+            if cancel.is_cancelled() {
+                return Err(RemoteError::Cancelled);
+            }
+            ensure_folder(self, &mut control, &remote_dir).await?;
+            let mut entries = tokio::fs::read_dir(&local_dir)
+                .await
+                .map_err(|e| local_error(&e))?;
+            while let Some(entry) = entries.next_entry().await.map_err(|e| local_error(&e))? {
+                visited += 1;
+                if visited > MAX_ENTRIES {
+                    return Err(RemoteError::TooLarge);
+                }
+                // Not followed: the link itself.
+                let kind = entry.file_type().await.map_err(|e| local_error(&e))?;
+                let name = entry.file_name().to_string_lossy().into_owned();
+                let child = remote_dir.join(name.as_bytes());
+                if kind.is_dir() && depth < MAX_DEPTH {
+                    pending.push((entry.path(), child, depth + 1));
+                } else if kind.is_file() {
+                    let before = done;
+                    let sent = upload_locked(
+                        self,
+                        &mut control,
+                        &entry.path(),
+                        &child,
+                        true,
+                        cancel,
+                        |bytes| {
+                            progress(before + bytes);
+                        },
+                    )
+                    .await;
+                    match sent {
+                        Ok(bytes) => done += bytes,
+                        Err(error) if fatal(&error) => return Err(error),
+                        Err(_) => skipped += 1,
+                    }
+                } else {
+                    skipped += 1;
+                }
+            }
+        }
+        Ok(FolderReport { skipped })
+    }
+}
+
+/// Downloads with the control connection held.
+async fn download_locked(
+    client: &FtpClient,
+    control: &mut AsyncRustlsFtpStream,
+    remote: &RemotePath,
+    local: &Path,
+    cancel: &CancellationToken,
+    mut progress: impl FnMut(u64) + Send,
+) -> Result<u64, RemoteError> {
+    let entry = client
+        .entry_locked(control, remote)
+        .await?
+        .ok_or_else(|| refused(Refusal::NoSuchFile))?;
+    if entry.kind != ItemKind::File {
+        return Err(RemoteError::NotAFile);
+    }
+    let path = text(remote);
+    let size = control
+        .size(&path)
+        .await
+        .ok()
+        .and_then(|size| u64::try_from(size).ok())
+        .or(entry.size);
+    let modified = control
+        .mdtm(&path)
+        .await
+        .ok()
+        .map(|date| date.and_utc().timestamp());
+    let part = with_suffix(local, PART_SUFFIX);
+    let record = with_suffix(local, RESUME_SUFFIX);
+    let signature = format!("{RESUME_HEADER}\n{size:?}\n{modified:?}\n");
+    let resumable = size.is_some()
+        && modified.is_some()
+        && tokio::fs::read_to_string(&record).await.ok().as_deref() == Some(signature.as_str());
+    let kept = if resumable {
+        tokio::fs::metadata(&part)
+            .await
+            .map_or(0, |meta| meta.len())
+    } else {
+        0
+    };
+    tokio::fs::write(&record, &signature)
+        .await
+        .map_err(|e| local_error(&e))?;
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .append(kept > 0)
+        .truncate(kept == 0)
+        .open(&part)
+        .await
+        .map_err(|e| local_error(&e))?;
+    if kept > 0 {
+        control
+            .resume_transfer(usize::try_from(kept).unwrap_or(usize::MAX))
+            .await
+            .map_err(|e| ftp_error(&e))?;
+    }
+    let mut data = control
+        .retr_as_stream(&path)
+        .await
+        .map_err(|e| ftp_error(&e))?;
+    let copied = copy(&mut data, &mut file, kept, cancel, &mut progress).await;
+    let finished = data.finish().await;
+    let total = copied?;
+    finished.map_err(|e| ftp_error(&e))?;
+    file.flush().await.map_err(|e| local_error(&e))?;
+    drop(file);
+    tokio::fs::rename(&part, local)
+        .await
+        .map_err(|e| local_error(&e))?;
+    let _ = tokio::fs::remove_file(&record).await;
+    Ok(total)
+}
+
+/// Uploads with the control connection held.
+async fn upload_locked(
+    client: &FtpClient,
+    control: &mut AsyncRustlsFtpStream,
+    local: &Path,
+    remote: &RemotePath,
+    replace: bool,
+    cancel: &CancellationToken,
+    mut progress: impl FnMut(u64) + Send,
+) -> Result<u64, RemoteError> {
+    let existing = client.entry_locked(control, remote).await?;
+    if existing.is_some() && !replace {
+        return Err(exists());
+    }
+    let name = remote.file_name().unwrap_or_default();
+    let mut temporary_name = UPLOAD_PREFIX.as_bytes().to_vec();
+    temporary_name.extend_from_slice(name);
+    let temporary = remote.parent().join(&temporary_name);
+    let mut source = tokio::fs::File::open(local)
+        .await
+        .map_err(|e| local_error(&e))?;
+    let sent = async {
+        let mut data = control
+            .put_with_stream(text(&temporary))
+            .await
+            .map_err(|e| ftp_error(&e))?;
+        let copied = copy(&mut source, &mut data, 0, cancel, &mut progress).await;
+        let finished = data.finish().await;
+        let total = copied?;
+        finished.map_err(|e| ftp_error(&e))?;
+        if existing.is_some() {
+            // FTP has no atomic replace: the old file goes just before the new one lands.
+            control.rm(text(remote)).await.map_err(|e| ftp_error(&e))?;
+        }
+        control
+            .rename(text(&temporary), text(remote))
+            .await
+            .map_err(|e| ftp_error(&e))?;
+        Ok(total)
+    }
+    .await;
+    if sent.is_err() {
+        let _ = control.rm(text(&temporary)).await;
+    }
+    sent
+}
+
+/// Creates remote folder `path`, accepting one already there as a folder.
+async fn ensure_folder(
+    client: &FtpClient,
+    control: &mut AsyncRustlsFtpStream,
+    path: &RemotePath,
+) -> Result<(), RemoteError> {
+    match control.mkdir(text(path)).await {
+        Ok(()) => Ok(()),
+        Err(error) => match client.entry_locked(control, path).await? {
+            Some(entry) if entry.kind == ItemKind::Directory => Ok(()),
+            _ => Err(ftp_error(&error)),
+        },
+    }
+}
+
+/// Copies `from` into `to`, `already` bytes being there, reporting the running total.
+async fn copy(
+    from: &mut (impl AsyncRead + Unpin),
+    to: &mut (impl AsyncWrite + Unpin),
+    already: u64,
+    cancel: &CancellationToken,
+    progress: &mut (impl FnMut(u64) + Send),
+) -> Result<u64, RemoteError> {
+    let mut buffer = vec![0; CHUNK];
+    let mut total = already;
+    loop {
+        let read = tokio::select! {
+            // A stop is seen before the next bytes, even when both are ready.
+            biased;
+            () = cancel.cancelled() => return Err(RemoteError::Cancelled),
+            read = from.read(&mut buffer) => read.map_err(|e| transfer_io(&e))?,
+        };
+        if read == 0 {
+            to.flush().await.map_err(|e| transfer_io(&e))?;
+            return Ok(total);
+        }
+        to.write_all(&buffer[..read])
+            .await
+            .map_err(|e| transfer_io(&e))?;
+        total += read as u64;
+        progress(total);
+    }
+}
+
+/// Whether a failure ends a folder walk: the session is gone, or the user stopped it.
+fn fatal(error: &RemoteError) -> bool {
+    matches!(
+        error,
+        RemoteError::SessionClosed | RemoteError::Cancelled | RemoteError::TooLarge
+    )
+}
+
+/// `path` as FTP commands take it: its bytes, read as UTF-8 as servers now do.
+fn text(path: &RemotePath) -> String {
+    String::from_utf8_lossy(path.as_bytes()).into_owned()
+}
+
+fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(suffix);
+    PathBuf::from(name)
+}
+
+/// The entries a listing's `lines` describe: machine lines (`MLSD`) or human ones (`LIST`,
+/// UNIX or DOS format); `.` and `..`, and lines that do not read, left out.
+fn items(lines: &[String], machine: bool) -> Vec<RemoteItem> {
+    lines
+        .iter()
+        .filter_map(|line| {
+            if machine {
+                ListParser::parse_mlsd(line).ok()
+            } else {
+                ListParser::parse_posix(line)
+                    .or_else(|_| ListParser::parse_dos(line))
+                    .ok()
+            }
+        })
+        .filter(|listed| !matches!(listed.name(), "." | ".."))
+        .map(|listed| item(&listed))
+        .collect()
+}
+
+/// Whether a delete goes into an entry of `kind` rather than deleting it: only a folder. A
+/// link is deleted itself, never what it points to.
+fn walks(kind: ItemKind) -> bool {
+    kind == ItemKind::Directory
+}
+
+fn item(listed: &Listed) -> RemoteItem {
+    use suppaftp::list::PosixPexQuery;
+
+    let kind = if listed.is_directory() {
+        ItemKind::Directory
+    } else if listed.is_symlink() {
+        ItemKind::Link
+    } else if listed.is_file() {
+        ItemKind::File
+    } else {
+        ItemKind::Other
+    };
+    let mut mode = 0u32;
+    for (shift, who) in [
+        (6, PosixPexQuery::Owner),
+        (3, PosixPexQuery::Group),
+        (0, PosixPexQuery::Others),
+    ] {
+        let bits = u32::from(listed.can_read(who)) << 2
+            | u32::from(listed.can_write(who)) << 1
+            | u32::from(listed.can_execute(who));
+        mode |= bits << shift;
+    }
+    let modified = listed.modified();
+    RemoteItem {
+        name: listed.name().as_bytes().to_vec(),
+        kind,
+        size: u64::try_from(listed.size()).ok(),
+        // A listing without a date gives the epoch: none said.
+        modified: (modified > UNIX_EPOCH).then_some(modified),
+        permissions: Some(mode),
+        owner: listed.uid(),
+        group: listed.gid(),
+    }
+}
+
+fn exists() -> RemoteError {
+    RemoteError::Refused {
+        refusal: Refusal::Failure,
+        message: b"already exists".to_vec(),
+    }
+}
+
+fn refused(refusal: Refusal) -> RemoteError {
+    RemoteError::Refused {
+        refusal,
+        message: Vec::new(),
+    }
+}
+
+fn local_error(error: &std::io::Error) -> RemoteError {
+    RemoteError::Local {
+        detail: error.to_string(),
+    }
+}
+
+/// A failure while bytes move: the data connection, or the local file.
+fn transfer_io(error: &std::io::Error) -> RemoteError {
+    RemoteError::Local {
+        detail: error.to_string(),
+    }
+}
+
+/// The refusal an FTP reply stands for, its text kept as the server's words.
+fn ftp_error(error: &FtpError) -> RemoteError {
+    match error {
+        FtpError::UnexpectedResponse(response) => RemoteError::Refused {
+            refusal: match response.status.code() {
+                // 550: not found, or not allowed; FTP does not tell them apart.
+                550 | 450 => Refusal::NoSuchFile,
+                530 | 532 => Refusal::PermissionDenied,
+                500..=504 => Refusal::Unsupported,
+                _ => Refusal::Failure,
+            },
+            message: response.body.clone(),
+        },
+        FtpError::BadResponse => refused(Refusal::Failure),
+        _ => RemoteError::SessionClosed,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use suppaftp::types::Response;
+    use suppaftp::{FtpError, Status};
+
+    use super::{ftp_error, items, walks};
+    use crate::{ItemKind, Refusal, RemoteError};
+
+    fn kinds(lines: &[&str], machine: bool) -> Vec<(String, ItemKind)> {
+        let lines: Vec<String> = lines.iter().map(|line| (*line).to_owned()).collect();
+        items(&lines, machine)
+            .into_iter()
+            .map(|item| (String::from_utf8_lossy(&item.name).into_owned(), item.kind))
+            .collect()
+    }
+
+    #[test]
+    fn a_unix_listing_tells_folders_files_and_links_and_leaves_the_dots_out() {
+        let listed = kinds(
+            &[
+                "drwxr-xr-x    2 ftp      ftp          4096 Sep 29 10:00 .",
+                "drwxr-xr-x    5 ftp      ftp          4096 Sep 29 10:00 ..",
+                "drwxr-xr-x    2 ftp      ftp          4096 Sep 29 10:00 logs",
+                "-rw-r--r--    1 ftp      ftp            12 Sep 29 10:00 notes.txt",
+                "lrwxrwxrwx    1 ftp      ftp             4 Sep 29 10:00 link -> logs",
+                "total 3",
+            ],
+            false,
+        );
+        assert_eq!(
+            listed,
+            [
+                ("logs".to_owned(), ItemKind::Directory),
+                ("notes.txt".to_owned(), ItemKind::File),
+                ("link".to_owned(), ItemKind::Link),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_machine_listing_leaves_the_current_and_parent_folders_out() {
+        let listed = kinds(
+            &[
+                "type=cdir;modify=20260929100000; .",
+                "type=pdir;modify=20260929100000; ..",
+                "type=dir;modify=20260929100000; logs",
+                "type=file;size=12;modify=20260929100000; notes.txt",
+            ],
+            true,
+        );
+        assert_eq!(
+            listed,
+            [
+                ("logs".to_owned(), ItemKind::Directory),
+                ("notes.txt".to_owned(), ItemKind::File),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_delete_goes_into_a_folder_only_never_a_link() {
+        assert!(walks(ItemKind::Directory));
+        for kind in [ItemKind::Link, ItemKind::File, ItemKind::Other] {
+            assert!(!walks(kind), "{kind:?}");
+        }
+    }
+
+    fn reply(status: Status) -> RemoteError {
+        ftp_error(&FtpError::UnexpectedResponse(Response::new(
+            status,
+            b"why".to_vec(),
+        )))
+    }
+
+    #[test]
+    fn every_ftp_reply_keeps_the_refusal_the_user_is_told() {
+        let refusal = |status| match reply(status) {
+            RemoteError::Refused { refusal, message } => {
+                assert_eq!(message, b"why");
+                refusal
+            }
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(refusal(Status::FileUnavailable), Refusal::NoSuchFile);
+        assert_eq!(refusal(Status::NotLoggedIn), Refusal::PermissionDenied);
+        assert_eq!(refusal(Status::NotImplemented), Refusal::Unsupported);
+        assert_eq!(refusal(Status::BadFilename), Refusal::Failure);
+        assert_eq!(
+            ftp_error(&FtpError::ConnectionError(std::io::Error::other("gone"))),
+            RemoteError::SessionClosed
+        );
+    }
+}
