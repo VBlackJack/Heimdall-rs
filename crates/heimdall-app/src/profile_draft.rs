@@ -24,11 +24,15 @@ use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
     AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN,
-    FIXED_WIDTH_MAX, Forwards, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile,
-    TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    FIXED_WIDTH_MAX, Forwards, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile,
+    Resolution, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
+use crate::local_draft;
 use crate::steps_draft::StepsDraft;
+
+/// The port of a local shell, which has none.
+const NO_PORT: u16 = 0;
 
 /// Port when the field is left empty.
 pub const DEFAULT_SSH_PORT: u16 = 22;
@@ -65,11 +69,17 @@ pub enum ProfileField {
     RemoteBindPort,
     /// The local port of the remote forward.
     RemoteLocalPort,
+    /// The program a local shell runs; empty is the default shell.
+    LocalProgram,
+    /// Its arguments, as one line.
+    LocalArguments,
+    /// The folder it starts in; empty is the current one.
+    WorkingDirectory,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 16] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -83,6 +93,9 @@ impl ProfileField {
         Self::SocksPort,
         Self::RemoteBindPort,
         Self::RemoteLocalPort,
+        Self::LocalProgram,
+        Self::LocalArguments,
+        Self::WorkingDirectory,
     ];
 }
 
@@ -92,6 +105,8 @@ pub enum DraftProtocol {
     /// SSH, with SFTP for its files.
     #[default]
     Ssh,
+    /// SFTP: the SSH fields, opening the files.
+    Sftp,
     /// Remote desktop.
     Rdp,
     /// VNC desktop.
@@ -100,24 +115,45 @@ pub enum DraftProtocol {
     WinRm,
     /// Telnet terminal.
     Telnet,
+    /// A shell on this computer.
+    Local,
 }
 
 impl DraftProtocol {
     /// Every protocol, in the order the picker shows them.
-    pub const ALL: [Self; 5] = [Self::Rdp, Self::Ssh, Self::WinRm, Self::Vnc, Self::Telnet];
+    pub const ALL: [Self; 7] = [
+        Self::Rdp,
+        Self::Ssh,
+        Self::WinRm,
+        Self::Sftp,
+        Self::Vnc,
+        Self::Telnet,
+        Self::Local,
+    ];
+
+    /// Whether it is SSH or SFTP: the same fields, the same profile.
+    #[must_use]
+    pub fn is_ssh_family(self) -> bool {
+        matches!(self, Self::Ssh | Self::Sftp)
+    }
 
     /// Whether a form for this protocol shows `field`.
     #[must_use]
     pub fn shows(self, field: ProfileField) -> bool {
         match field {
-            ProfileField::Name | ProfileField::Group | ProfileField::Host | ProfileField::Port => {
-                true
+            ProfileField::Name | ProfileField::Group => true,
+            // A local shell has no server.
+            ProfileField::Host | ProfileField::Port => self != Self::Local,
+            ProfileField::LocalProgram
+            | ProfileField::LocalArguments
+            | ProfileField::WorkingDirectory => self == Self::Local,
+            ProfileField::Username => {
+                matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm)
             }
-            ProfileField::Username => matches!(self, Self::Ssh | Self::Rdp | Self::WinRm),
             ProfileField::Domain | ProfileField::FixedWidth | ProfileField::FixedHeight => {
                 self == Self::Rdp
             }
-            ProfileField::KeyPath => self == Self::Ssh,
+            ProfileField::KeyPath => self.is_ssh_family(),
             // The protocols whose password the external credential provider gives.
             ProfileField::VaultEntry => self.saves_password(),
             ProfileField::SocksPort
@@ -130,19 +166,19 @@ impl DraftProtocol {
     /// typed into `PowerShell`, which asks for it.
     #[must_use]
     pub fn saves_password(self) -> bool {
-        matches!(self, Self::Ssh | Self::Rdp | Self::Vnc)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::Vnc)
     }
 
     /// Whether this protocol's sessions can go through an SSH gateway.
     #[must_use]
     pub fn routes_through_gateway(self) -> bool {
-        matches!(self, Self::Ssh | Self::Rdp)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
     }
 
     /// Whether a saved password belongs to an account, which the form must then name.
     #[must_use]
     pub fn password_needs_username(self) -> bool {
-        matches!(self, Self::Ssh | Self::Rdp)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
     }
 }
 
@@ -196,7 +232,9 @@ impl ProfileToggle {
             ],
             DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
             DraftProtocol::Ssh => &[Self::Compression, Self::ForwardAgent],
-            DraftProtocol::Telnet => &[],
+            // No shell to forward the agent to.
+            DraftProtocol::Sftp => &[Self::Compression],
+            DraftProtocol::Telnet | DraftProtocol::Local => &[],
         }
     }
 }
@@ -231,6 +269,8 @@ pub enum DraftProfile {
     WinRm(WinRmProfile),
     /// Telnet.
     Telnet(TelnetProfile),
+    /// A local shell.
+    Local(LocalProfile),
 }
 
 /// What the form holds, as typed.
@@ -282,6 +322,12 @@ pub struct ProfileDraft {
     pub remote_local_port: String,
     /// SSH: the post-connect steps and the one selected.
     pub post_connect: StepsDraft,
+    /// Local: the program, as typed.
+    pub local_program: String,
+    /// Local: the arguments, as one line.
+    pub local_arguments: String,
+    /// Local: the folder it starts in, as typed.
+    pub working_directory: String,
 }
 
 /// Why a form cannot be saved yet.
@@ -321,6 +367,8 @@ pub enum DraftError {
     RemoteBindPortInvalid,
     /// The remote forward's local port is not a number from 0 to 65535.
     RemoteLocalPortInvalid,
+    /// A local shell's arguments leave a quote open.
+    ArgumentsInvalid,
 }
 
 impl DraftError {
@@ -342,6 +390,7 @@ impl DraftError {
             Self::SocksPortInvalid => ProfileField::SocksPort,
             Self::RemoteBindPortInvalid => ProfileField::RemoteBindPort,
             Self::RemoteLocalPortInvalid => ProfileField::RemoteLocalPort,
+            Self::ArgumentsInvalid => ProfileField::LocalArguments,
         }
     }
 }
@@ -375,10 +424,63 @@ impl ProfileDraft {
             .into_iter()
             .filter_map(|(on, toggle)| on.then_some(toggle))
             .collect(),
-            protocol: DraftProtocol::Ssh,
+            protocol: if profile.sftp {
+                DraftProtocol::Sftp
+            } else {
+                DraftProtocol::Ssh
+            },
             protocol_chosen: true,
             ..Self::default()
         }
+    }
+
+    /// A form filled from a saved local shell profile.
+    #[must_use]
+    pub fn from_local(profile: &LocalProfile) -> Self {
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            local_program: profile.command.program.clone().unwrap_or_default(),
+            local_arguments: local_draft::line_of(&profile.command.arguments),
+            working_directory: profile
+                .command
+                .working_directory
+                .as_ref()
+                .map(|folder| folder.display().to_string())
+                .unwrap_or_default(),
+            protocol: DraftProtocol::Local,
+            protocol_chosen: true,
+            ..Self::default()
+        }
+    }
+
+    /// The local shell profile this form describes, under `id`: never approved here; saving
+    /// from the form approves it, the program found where it is now.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::ArgumentsInvalid`] for a quote left open.
+    fn saved_local(
+        &self,
+        id: ProfileId,
+        name: String,
+        group: Option<String>,
+    ) -> Result<DraftProfile, DraftError> {
+        let optional = |text: &str| Some(text.trim().to_owned()).filter(|text| !text.is_empty());
+        let arguments =
+            local_draft::arguments_of(&self.local_arguments).ok_or(DraftError::ArgumentsInvalid)?;
+        Ok(DraftProfile::Local(LocalProfile {
+            id,
+            name,
+            group,
+            command: LocalCommand {
+                program: optional(&self.local_program),
+                arguments,
+                working_directory: optional(&self.working_directory).map(PathBuf::from),
+            },
+            approved: None,
+        }))
     }
 
     /// A form filled from a saved RDP profile.
@@ -657,6 +759,24 @@ impl ProfileDraft {
         Ok(username)
     }
 
+    /// Whether a text of the form, trimmed as it is saved, or a step's command holds a control
+    /// character.
+    fn has_control_character(&self) -> bool {
+        [
+            &self.name,
+            &self.group,
+            &self.key_path,
+            &self.domain,
+            &self.vault_entry,
+            &self.local_program,
+            &self.local_arguments,
+            &self.working_directory,
+        ]
+        .iter()
+        .any(|text| text.trim().chars().any(char::is_control))
+            || self.post_connect_has_control()
+    }
+
     /// Whether a step's command holds a control character, which a line typed into a shell
     /// cannot carry.
     fn post_connect_has_control(&self) -> bool {
@@ -701,12 +821,13 @@ impl ProfileDraft {
     #[must_use]
     pub fn default_port(&self) -> u16 {
         match self.protocol {
-            DraftProtocol::Ssh => DEFAULT_SSH_PORT,
+            DraftProtocol::Ssh | DraftProtocol::Sftp => DEFAULT_SSH_PORT,
             DraftProtocol::Rdp => DEFAULT_RDP_PORT,
             DraftProtocol::Vnc => DEFAULT_VNC_PORT,
             DraftProtocol::Telnet => DEFAULT_TELNET_PORT,
             DraftProtocol::WinRm if self.is_on(ProfileToggle::UseSsl) => DEFAULT_WINRM_HTTPS_PORT,
             DraftProtocol::WinRm => DEFAULT_WINRM_HTTP_PORT,
+            DraftProtocol::Local => NO_PORT,
         }
     }
 
@@ -724,15 +845,17 @@ impl ProfileDraft {
         let key_path = self.key_path.trim();
         let domain = self.domain.trim();
         let vault_entry = self.vault_entry.trim();
-        if [name, group, key_path, domain, vault_entry]
-            .iter()
-            .any(|text| text.chars().any(char::is_control))
-            || self.post_connect_has_control()
-        {
+        if self.has_control_character() {
             return Err(DraftError::ControlCharacter);
         }
-        let host = host(&self.host)?;
-        let port = self.typed_port()?;
+        // A local shell has no server.
+        let local = self.protocol == DraftProtocol::Local;
+        let host = if local {
+            String::new()
+        } else {
+            host(&self.host)?
+        };
+        let port = if local { NO_PORT } else { self.typed_port()? };
         let username = self.checked_username()?;
         if domain.chars().any(|c| c.is_whitespace() || c == '"') {
             return Err(DraftError::DomainInvalid);
@@ -741,7 +864,7 @@ impl ProfileDraft {
         let group = optional(group);
         let name = name.to_owned();
         Ok(match self.protocol {
-            DraftProtocol::Ssh => DraftProfile::Ssh(SshProfile {
+            DraftProtocol::Ssh | DraftProtocol::Sftp => DraftProfile::Ssh(SshProfile {
                 id,
                 name,
                 group,
@@ -753,8 +876,10 @@ impl ProfileDraft {
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
                 post_connect: self.saved_post_connect(),
-                forward_agent: self.is_on(ProfileToggle::ForwardAgent),
+                forward_agent: self.protocol == DraftProtocol::Ssh
+                    && self.is_on(ProfileToggle::ForwardAgent),
                 compression: self.is_on(ProfileToggle::Compression),
+                sftp: self.protocol == DraftProtocol::Sftp,
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -800,6 +925,7 @@ impl ProfileDraft {
                     username: stored.then(|| username.to_owned()),
                 })
             }
+            DraftProtocol::Local => self.saved_local(id, name, group)?,
             DraftProtocol::Telnet => DraftProfile::Telnet(TelnetProfile {
                 id,
                 name,
@@ -827,6 +953,9 @@ impl ProfileDraft {
             ProfileField::SocksPort => &self.socks_port,
             ProfileField::RemoteBindPort => &self.remote_bind_port,
             ProfileField::RemoteLocalPort => &self.remote_local_port,
+            ProfileField::LocalProgram => &self.local_program,
+            ProfileField::LocalArguments => &self.local_arguments,
+            ProfileField::WorkingDirectory => &self.working_directory,
         }
     }
 
@@ -846,6 +975,9 @@ impl ProfileDraft {
             ProfileField::SocksPort => &mut self.socks_port,
             ProfileField::RemoteBindPort => &mut self.remote_bind_port,
             ProfileField::RemoteLocalPort => &mut self.remote_local_port,
+            ProfileField::LocalProgram => &mut self.local_program,
+            ProfileField::LocalArguments => &mut self.local_arguments,
+            ProfileField::WorkingDirectory => &mut self.working_directory,
         } = value;
     }
 
@@ -898,6 +1030,7 @@ impl ProfileDraft {
             post_connect: self.saved_post_connect(),
             forward_agent: self.is_on(ProfileToggle::ForwardAgent),
             compression: self.is_on(ProfileToggle::Compression),
+            sftp: false,
         })
     }
 }
@@ -1059,6 +1192,7 @@ mod tests {
             post_connect: heimdall_core::post_connect::PostConnect::default(),
             forward_agent: false,
             compression: false,
+            sftp: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1148,6 +1282,140 @@ mod tests {
             !telnet.shows(ProfileField::SocksPort),
             "never through a gateway"
         );
+    }
+
+    #[test]
+    fn a_local_form_has_no_server_and_saves_its_command() {
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Local);
+        for field in [
+            ProfileField::Name,
+            ProfileField::Group,
+            ProfileField::LocalProgram,
+            ProfileField::LocalArguments,
+            ProfileField::WorkingDirectory,
+        ] {
+            assert!(draft.shows(field), "{field:?}");
+        }
+        for field in [
+            ProfileField::Host,
+            ProfileField::Port,
+            ProfileField::Username,
+            ProfileField::VaultEntry,
+        ] {
+            assert!(!draft.shows(field), "{field:?}");
+        }
+        assert!(!DraftProtocol::Ssh.shows(ProfileField::LocalProgram));
+        draft.set(ProfileField::Name, "Tool".to_owned());
+        draft.set(ProfileField::Group, "Admin".to_owned());
+        draft.set(ProfileField::LocalProgram, " bash ".to_owned());
+        draft.set(ProfileField::WorkingDirectory, "/srv".to_owned());
+        let Ok(DraftProfile::Local(profile)) = draft.to_saved(id()) else {
+            panic!("a local profile");
+        };
+        assert_eq!(profile.command.program.as_deref(), Some("bash"));
+        assert_eq!(
+            profile.command.working_directory,
+            Some(PathBuf::from("/srv"))
+        );
+        assert_eq!(profile.group.as_deref(), Some("Admin"));
+        assert!(
+            profile.approved.is_none(),
+            "approved by the store, not here"
+        );
+        let reread = ProfileDraft::from_local(&profile);
+        assert_eq!(
+            (
+                reread.protocol,
+                reread.local_program.as_str(),
+                reread.working_directory.as_str()
+            ),
+            (DraftProtocol::Local, "bash", "/srv")
+        );
+        // Empty: the default shell, in the current folder.
+        draft.set(ProfileField::LocalProgram, String::new());
+        draft.set(ProfileField::WorkingDirectory, String::new());
+        let Ok(DraftProfile::Local(profile)) = draft.to_saved(id()) else {
+            panic!("a local profile");
+        };
+        assert!(profile.command.is_default());
+        draft.set(ProfileField::LocalProgram, "ba\u{7}sh".to_owned());
+        assert_eq!(draft.to_saved(id()), Err(DraftError::ControlCharacter));
+        assert_eq!(
+            DraftError::ArgumentsInvalid.field(),
+            ProfileField::LocalArguments
+        );
+    }
+
+    #[cfg(not(windows))]
+    #[test]
+    fn a_local_argument_line_with_a_quote_left_open_is_refused() {
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Local);
+        draft.set(ProfileField::Name, "Tool".to_owned());
+        draft.set(ProfileField::LocalArguments, "-c 'echo".to_owned());
+        assert_eq!(draft.to_saved(id()), Err(DraftError::ArgumentsInvalid));
+        draft.set(ProfileField::LocalArguments, "-c 'echo a'".to_owned());
+        let Ok(DraftProfile::Local(profile)) = draft.to_saved(id()) else {
+            panic!("a local profile");
+        };
+        assert_eq!(
+            profile.command.arguments,
+            heimdall_core::profile::LocalArguments::List(vec![
+                "-c".to_owned(),
+                "echo a".to_owned()
+            ])
+        );
+    }
+
+    #[test]
+    fn an_sftp_form_saves_an_ssh_profile_that_opens_its_files() {
+        assert_eq!(
+            DraftProtocol::ALL,
+            [
+                DraftProtocol::Rdp,
+                DraftProtocol::Ssh,
+                DraftProtocol::WinRm,
+                DraftProtocol::Sftp,
+                DraftProtocol::Vnc,
+                DraftProtocol::Telnet,
+                DraftProtocol::Local,
+            ],
+            "the C# picker's order, FTP and Citrix aside"
+        );
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Sftp);
+        assert_eq!(draft.port, "22");
+        for field in [
+            ProfileField::Username,
+            ProfileField::KeyPath,
+            ProfileField::VaultEntry,
+        ] {
+            assert!(draft.shows(field), "{field:?}");
+        }
+        assert_eq!(
+            ProfileToggle::of(DraftProtocol::Sftp),
+            [ProfileToggle::Compression],
+            "no shell to forward the agent to"
+        );
+        assert!(DraftProtocol::Sftp.routes_through_gateway());
+        draft.set(ProfileField::Name, "files".to_owned());
+        draft.set(ProfileField::Host, "files.lab".to_owned());
+        draft.set(ProfileField::Username, "ops".to_owned());
+        draft.toggle(ProfileToggle::Compression, true);
+        draft.toggle(ProfileToggle::ForwardAgent, true);
+        let Ok(DraftProfile::Ssh(profile)) = draft.to_saved(id()) else {
+            panic!("an SSH profile");
+        };
+        assert!(profile.sftp && profile.compression);
+        assert!(!profile.forward_agent, "never for SFTP, even ticked");
+        let reread = ProfileDraft::from_profile(&profile);
+        assert_eq!(reread.protocol, DraftProtocol::Sftp);
+        assert!(reread.is_on(ProfileToggle::Compression));
+        let mut shell = ProfileDraft::new_for(DraftProtocol::Ssh);
+        shell.set(ProfileField::Name, "web".to_owned());
+        shell.set(ProfileField::Host, "web.lab".to_owned());
+        let Ok(DraftProfile::Ssh(profile)) = shell.to_saved(id()) else {
+            panic!("an SSH profile");
+        };
+        assert!(!profile.sftp);
     }
 
     #[test]

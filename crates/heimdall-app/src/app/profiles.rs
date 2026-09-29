@@ -20,8 +20,9 @@
 //! fails leaves the list as its file is.
 
 use heimdall_core::credentials::{CredentialProtocol, Endpoint, rdp_account};
-use heimdall_core::profile::ProfileId;
+use heimdall_core::profile::{LocalApproval, ProfileId};
 use heimdall_ssh::Secret;
+use heimdall_term::local;
 
 use super::{App, Dialog, Message};
 use crate::profile_draft::{DraftError, DraftProfile, ProfileDraft, ProfileField};
@@ -98,6 +99,8 @@ impl App {
             ProfileDraft::from_winrm(profile)
         } else if let Some(profile) = self.telnet_profiles().iter().find(|p| p.id == *id) {
             ProfileDraft::from_telnet(profile)
+        } else if let Some(profile) = self.local_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_local(profile)
         } else {
             return;
         };
@@ -181,6 +184,23 @@ impl App {
                 DraftProfile::Vnc(profile) => store.merge_vnc([profile]),
                 DraftProfile::WinRm(profile) => store.merge_winrm([profile]),
                 DraftProfile::Telnet(profile) => store.merge_telnet([profile]),
+                // Written in the form: approved by the one who wrote it, the program as it is
+                // found now, as the C# dialog confirms it when it saves. A program found
+                // nowhere is saved unapproved; opening it says why it cannot run.
+                DraftProfile::Local(profile) => {
+                    let approval = local::program_path(profile.command.program.as_deref())
+                        .ok()
+                        .map(|program_path| LocalApproval {
+                            command: profile.command.clone(),
+                            program_path,
+                        });
+                    let saved = profile.id.clone();
+                    let report = store.merge_local([profile]);
+                    if let Some(approval) = approval {
+                        store.approve_local(&saved, approval);
+                    }
+                    report
+                }
             };
             if let Some(old_name) = &old_name {
                 store.freeze_vault_entry(&id, old_name);
@@ -219,6 +239,7 @@ fn saved_id(profile: &DraftProfile) -> &ProfileId {
         DraftProfile::Vnc(profile) => &profile.id,
         DraftProfile::WinRm(profile) => &profile.id,
         DraftProfile::Telnet(profile) => &profile.id,
+        DraftProfile::Local(profile) => &profile.id,
     }
 }
 
@@ -247,6 +268,6 @@ fn password_endpoint(profile: &DraftProfile) -> Option<Endpoint> {
             port: profile.port,
             username: None,
         }),
-        DraftProfile::WinRm(_) | DraftProfile::Telnet(_) => None,
+        DraftProfile::WinRm(_) | DraftProfile::Telnet(_) | DraftProfile::Local(_) => None,
     }
 }

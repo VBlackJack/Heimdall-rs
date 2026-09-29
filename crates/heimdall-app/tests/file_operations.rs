@@ -75,6 +75,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

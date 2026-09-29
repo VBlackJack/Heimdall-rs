@@ -45,6 +45,9 @@ use crate::profile::{
 /// `connectionType` of an SSH profile.
 const SSH_CONNECTION_TYPE: &str = "SSH";
 
+/// `connectionType` of an SFTP profile: the SSH fields, opening its files.
+const SFTP_CONNECTION_TYPE: &str = "SFTP";
+
 /// `connectionType` of an RDP profile.
 const RDP_CONNECTION_TYPE: &str = "RDP";
 
@@ -616,9 +619,10 @@ fn non_empty(value: Option<&String>) -> Option<String> {
     value.filter(|value| !value.is_empty()).cloned()
 }
 
-/// An SSH profile, through its gateway when it names one among `gateways`.
+/// An SSH or SFTP profile, through its gateway when it names one among `gateways`.
 fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile, SkipReason> {
-    if server.connection_type != SSH_CONNECTION_TYPE {
+    let sftp = server.connection_type == SFTP_CONNECTION_TYPE;
+    if server.connection_type != SSH_CONNECTION_TYPE && !sftp {
         return Err(SkipReason::NotSsh(server.connection_type.clone()));
     }
     if server.id.is_empty() {
@@ -660,6 +664,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         },
         forward_agent: server.ssh_agent_forwarding,
         compression: server.ssh_compression,
+        sftp,
     })
 }
 

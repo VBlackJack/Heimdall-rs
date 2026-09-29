@@ -49,6 +49,7 @@ fn profile(id: &str, host: &str, username: Option<&str>) -> SshProfile {
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }
 }
 

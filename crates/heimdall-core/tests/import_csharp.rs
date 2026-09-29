@@ -1072,3 +1072,24 @@ fn forwarding_the_agent_is_imported_off_unless_the_csharp_profile_turned_it_on()
         ]
     );
 }
+
+#[test]
+fn an_sftp_profile_is_imported_as_an_ssh_profile_that_opens_its_files() {
+    let json = servers(
+        r#"{"id": "files", "remoteServer": "a.lab", "connectionType": "SFTP", "sshUsername": "ops", "sshPort": 2222},
+           {"id": "shell", "remoteServer": "b.lab", "connectionType": "SSH"},
+           {"id": "lower", "remoteServer": "c.lab", "connectionType": "sftp"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let kinds: Vec<_> = report
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.sftp))
+        .collect();
+    assert_eq!(kinds, [("files", true), ("shell", false)]);
+    let files = &report.profiles[0];
+    assert_eq!((files.username.as_deref(), files.port), (Some("ops"), 2222));
+    // The C# compares the type as written, as for SSH.
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].id, "lower");
+}
