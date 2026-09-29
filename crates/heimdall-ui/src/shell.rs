@@ -3140,9 +3140,11 @@ fn protocol_name(protocol: DraftProtocol) -> String {
     match protocol {
         DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-name"),
         DraftProtocol::Ssh => fl!("ui-profile-protocol-ssh-name"),
+        DraftProtocol::Sftp => fl!("ui-profile-protocol-sftp-name"),
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-name"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
+        DraftProtocol::Local => fl!("ui-profile-protocol-local-name"),
     }
 }
 
@@ -3150,9 +3152,11 @@ fn protocol_description(protocol: DraftProtocol) -> String {
     match protocol {
         DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-desc"),
         DraftProtocol::Ssh => fl!("ui-profile-protocol-ssh-desc"),
+        DraftProtocol::Sftp => fl!("ui-profile-protocol-sftp-desc"),
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-desc"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
+        DraftProtocol::Local => fl!("ui-profile-protocol-local-desc"),
     }
 }
 
@@ -3209,10 +3213,11 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::Port => (
             match draft.protocol {
                 DraftProtocol::Rdp => fl!("ui-profile-port-rdp"),
-                DraftProtocol::Ssh => fl!("ui-profile-port-ssh"),
+                DraftProtocol::Ssh | DraftProtocol::Sftp => fl!("ui-profile-port-ssh"),
                 DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
                 DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
-                DraftProtocol::Telnet => fl!("ui-profile-port-telnet"),
+                // Not shown: a local shell has no port.
+                DraftProtocol::Telnet | DraftProtocol::Local => fl!("ui-profile-port-telnet"),
             },
             draft.default_port().to_string(),
         ),
@@ -3240,6 +3245,15 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::RemoteLocalPort => {
             (fl!("ui-profile-remote-local-port"), PORT_OFF.to_string())
         }
+        ProfileField::LocalProgram => (
+            fl!("ui-profile-local-executable"),
+            fl!("ui-profile-local-default-shell"),
+        ),
+        ProfileField::LocalArguments => (fl!("ui-profile-local-arguments"), String::new()),
+        ProfileField::WorkingDirectory => (
+            fl!("ui-profile-local-working-directory"),
+            fl!("ui-profile-optional"),
+        ),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -3595,7 +3609,7 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             fl!("ui-profile-credentials-rdp"),
             Some(fl!("ui-profile-credentials-rdp-desc")),
         )),
-        DraftProtocol::Ssh => Some((
+        DraftProtocol::Ssh | DraftProtocol::Sftp => Some((
             fl!("ui-profile-credentials-ssh"),
             Some(fl!("ui-profile-credentials-ssh-desc")),
         )),
@@ -3604,7 +3618,7 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             Some(fl!("ui-profile-credentials-winrm-desc")),
         )),
         DraftProtocol::Vnc => Some((fl!("ui-profile-credentials-vnc"), None)),
-        DraftProtocol::Telnet => None,
+        DraftProtocol::Telnet | DraftProtocol::Local => None,
     };
     if let Some((title, description)) = credentials {
         form = form.push(section(title, description));
@@ -3658,8 +3672,8 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
         DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
         DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
-        DraftProtocol::Ssh => Some(fl!("ui-profile-options-ssh")),
-        DraftProtocol::WinRm => None,
+        DraftProtocol::Ssh | DraftProtocol::Sftp => Some(fl!("ui-profile-options-ssh")),
+        DraftProtocol::WinRm | DraftProtocol::Local => None,
     };
     if let Some(options) = options {
         form = form.push(section(options, None));
@@ -3683,6 +3697,11 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
     }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(crate::post_connect_form::view(&draft.post_connect));
+    }
+    if draft.protocol == DraftProtocol::Local {
+        form = form.push(crate::local_form::view(draft, |field| {
+            form_field(draft, field)
+        }));
     }
     if draft.protocol == DraftProtocol::Telnet {
         form = form.push(
@@ -3725,16 +3744,25 @@ fn profile_form<'a>(
         .align_y(iced::Alignment::Center),
         section(
             fl!("ui-profile-section-basics"),
-            Some(fl!("ui-profile-section-basics-desc"))
+            Some(if draft.protocol == DraftProtocol::Local {
+                fl!("ui-profile-section-basics-local-desc")
+            } else {
+                fl!("ui-profile-section-basics-desc")
+            })
         ),
         form_field(draft, ProfileField::Name),
-        row![
-            container(form_field(draft, ProfileField::Host)).width(Length::Fill),
-            container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
-        ]
-        .spacing(SPACING),
     ]
     .spacing(SPACING);
+    // A local shell has no server.
+    if draft.shows(ProfileField::Host) {
+        form = form.push(
+            row![
+                container(form_field(draft, ProfileField::Host)).width(Length::Fill),
+                container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
+            ]
+            .spacing(SPACING),
+        );
+    }
 
     form = form
         .push(credentials_section(draft, forms))

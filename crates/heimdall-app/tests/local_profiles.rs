@@ -219,3 +219,75 @@ fn a_program_found_nowhere_opens_a_tab_that_fails_rather_than_asking() {
         Some("heimdall-no-such-program".to_owned())
     );
 }
+
+/// Fills a new local shell form and saves it.
+fn save_new(app: &mut App, program: &str, arguments: &str) {
+    use heimdall_app::profile_draft::{DraftProtocol, ProfileField};
+
+    app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Local));
+    for (field, value) in [
+        (ProfileField::Name, "Written"),
+        (ProfileField::LocalProgram, program),
+        (ProfileField::LocalArguments, arguments),
+    ] {
+        app.update(Message::ProfileField {
+            field,
+            value: value.to_owned(),
+        });
+    }
+    app.update(Message::SaveProfile { password: None });
+}
+
+/// The saved local profile named "Written".
+fn written(dir: &Path) -> LocalProfile {
+    ProfileStore::open(profiles_file(dir))
+        .expect("store")
+        .local_profiles()
+        .iter()
+        .find(|profile| profile.name == "Written")
+        .cloned()
+        .expect("saved")
+}
+
+#[test]
+fn a_command_written_in_the_form_is_saved_approved_and_runs_without_asking() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[]);
+    save_new(&mut app, PROGRAM, "");
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let saved = written(dir.path());
+    assert_eq!(saved.command.program.as_deref(), Some(PROGRAM));
+    assert!(
+        saved.may_run(Path::new(PROGRAM)),
+        "approved as written, where the program is"
+    );
+    let effects = app.update(Message::OpenLocalProfile(saved.id.clone()));
+    assert_eq!(program(&effects).as_deref(), Some(PROGRAM));
+    // The form reads it back.
+    app.update(Message::EditProfile(saved.id));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(draft.local_program, PROGRAM);
+}
+
+#[test]
+fn a_program_found_nowhere_is_saved_but_not_approved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[]);
+    save_new(&mut app, "heimdall-no-such-program", "");
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(written(dir.path()).approved.is_none());
+}
+
+#[test]
+fn an_imported_command_edited_and_saved_from_its_form_is_approved_as_the_csharp_dialog_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[profile(command("-x"), None)]);
+    app.update(Message::EditProfile(ProfileId::new("tool")));
+    app.update(Message::SaveProfile { password: None });
+    let effects = open(&mut app);
+    assert!(app.dialog.is_none(), "no question once saved from the form");
+    assert_eq!(program(&effects).as_deref(), Some(PROGRAM));
+}
