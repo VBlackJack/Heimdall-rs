@@ -15,7 +15,8 @@
  */
 
 //! The connection driver through a real OpenSSH gateway, opt-in: a shell and a Files session
-//! on a server that only the gateway can reach, and the SOCKS proxy a profile opens there.
+//! on a server that only the gateway can reach, and the SOCKS proxy and remote forward a
+//! profile opens there.
 //!
 //! Runs when `HEIMDALL_LIVE_JUMP_KEYS` names the key folder of the Heimdall-TestEnv lab: its
 //! gateway listens on `127.0.0.1:2222` for the `gateway` account and reaches `linux-a:22`,
@@ -141,6 +142,16 @@ async fn a_shell_and_a_files_session_open_through_the_lab_gateway() {
     );
 }
 
+/// The gateway's port of the remote forward: unprivileged, and nothing on the lab's gateway
+/// listens there.
+const REMOTE_PORT: u16 = 47_000;
+
+/// A port an unprivileged account on the gateway cannot listen on.
+const PRIVILEGED_PORT: u16 = 22;
+
+/// What the local end of the remote forward says.
+const REMOTE_GREETING: &[u8] = b"heimdall-remote-forward";
+
 /// A port nothing listens on now.
 fn free_port() -> u16 {
     std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
@@ -174,7 +185,7 @@ async fn through_socks(proxy: u16, host: &str, port: u16) -> Vec<u8> {
 }
 
 #[tokio::test]
-async fn a_socks_proxy_reaches_through_the_lab_gateway_while_the_shell_runs() {
+async fn the_forwards_of_a_profile_run_through_the_lab_gateway_while_the_shell_runs() {
     let Some(keys) = std::env::var_os(KEYS_VARIABLE).map(PathBuf::from) else {
         eprintln!("{KEYS_VARIABLE} not set: skipped");
         return;
@@ -195,6 +206,7 @@ async fn a_socks_proxy_reaches_through_the_lab_gateway_while_the_shell_runs() {
     let mut taken = request(&keys, &known_hosts, Purpose::Shell);
     taken.profile.forwards = Forwards {
         socks_port: Some(held),
+        ..Forwards::default()
     };
     let mut events = connection_events(taken, AnswerRegistry::default());
     let event = tokio::time::timeout(STEP_TIMEOUT, events.next())
@@ -207,10 +219,38 @@ async fn a_socks_proxy_reaches_through_the_lab_gateway_while_the_shell_runs() {
     );
     drop(holder);
 
+    // A port the gateway cannot listen on, privileged: the attempt fails and says which.
+    let mut privileged = request(&keys, &known_hosts, Purpose::Shell);
+    privileged.profile.forwards = Forwards {
+        remote_bind_port: Some(PRIVILEGED_PORT),
+        ..Forwards::default()
+    };
+    let mut events = connection_events(privileged, AnswerRegistry::default());
+    let event = tokio::time::timeout(STEP_TIMEOUT, events.next())
+        .await
+        .expect("in time")
+        .expect("an event");
+    assert!(
+        matches!(event, ConnectionEvent::Failed(UiError::RemoteForwardRefused { port }) if port == PRIVILEGED_PORT),
+        "{event:?}"
+    );
+
+    // What the gateway takes on its port comes back to a local one here.
+    let local = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("local");
+    let local_port = local.local_addr().expect("address").port();
+    tokio::spawn(async move {
+        if let Ok((mut taken, _)) = local.accept().await {
+            let _ = taken.write_all(REMOTE_GREETING).await;
+        }
+    });
     let port = free_port();
     let mut with_proxy = request(&keys, &known_hosts, Purpose::Shell);
     with_proxy.profile.forwards = Forwards {
         socks_port: Some(port),
+        remote_bind_port: Some(REMOTE_PORT),
+        remote_local_port: Some(local_port),
     };
     let mut events = connection_events(with_proxy, AnswerRegistry::default());
     let event = tokio::time::timeout(STEP_TIMEOUT, events.next())
@@ -226,6 +266,14 @@ async fn a_socks_proxy_reaches_through_the_lab_gateway_while_the_shell_runs() {
         banner.starts_with(b"SSH-2.0-"),
         "{}",
         String::from_utf8_lossy(&banner)
+    );
+    // The gateway's own loopback port, reached through the proxy, leads back here.
+    let greeting = through_socks(port, "127.0.0.1", REMOTE_PORT).await;
+    assert_eq!(
+        greeting,
+        REMOTE_GREETING,
+        "{}",
+        String::from_utf8_lossy(&greeting)
     );
 
     input.write(b"exit\n".to_vec()).expect("typed");

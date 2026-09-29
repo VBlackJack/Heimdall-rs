@@ -228,6 +228,10 @@ struct LegacyServer {
     vault_entry_name: Option<String>,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
+    /// The gateway's port of the remote forward; 0 opens none.
+    remote_bind_port: Option<i64>,
+    /// The local port of the remote forward; 0 is the same port.
+    remote_local_port: Option<i64>,
     local_shell_executable: Option<String>,
     local_shell_arguments: Option<String>,
     local_shell_working_directory: Option<String>,
@@ -655,14 +659,18 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
 /// The ports a profile opens through its gateway; a port out of range skips it, as the C#
 /// import refuses it.
 fn forwards_of(server: &LegacyServer) -> Result<Forwards, SkipReason> {
-    let socks_port = match server.socks_proxy_port {
-        None => None,
+    let port = |value: Option<i64>| match value {
+        None => Ok(None),
         Some(value) => match u16::try_from(value) {
-            Ok(port) => Some(port).filter(|port| *port != 0),
-            Err(_) => return Err(SkipReason::InvalidPort(value)),
+            Ok(port) => Ok(Some(port).filter(|port| *port != 0)),
+            Err(_) => Err(SkipReason::InvalidPort(value)),
         },
     };
-    Ok(Forwards { socks_port })
+    Ok(Forwards {
+        socks_port: port(server.socks_proxy_port)?,
+        remote_bind_port: port(server.remote_bind_port)?,
+        remote_local_port: port(server.remote_local_port)?,
+    })
 }
 
 /// An RDP profile, through its SSH gateway when it goes through one among `gateways`.

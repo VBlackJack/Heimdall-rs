@@ -948,3 +948,34 @@ fn the_socks_proxy_port_is_imported_and_zero_opens_none() {
         ]
     );
 }
+
+#[test]
+fn the_remote_forward_is_imported_as_the_csharp_one_reads_it() {
+    let json = servers(
+        r#"{"id": "both", "remoteServer": "a.lab", "connectionType": "SSH", "remoteBindPort": 8080, "remoteLocalPort": 3000},
+           {"id": "same", "remoteServer": "b.lab", "connectionType": "RDP", "remoteBindPort": 8081, "remoteLocalPort": 0},
+           {"id": "off", "remoteServer": "c.lab", "connectionType": "SSH", "remoteBindPort": 0, "remoteLocalPort": 3000},
+           {"id": "big", "remoteServer": "d.lab", "connectionType": "SSH", "remoteBindPort": 70000},
+           {"id": "neg", "remoteServer": "e.lab", "connectionType": "SSH", "remoteBindPort": 8082, "remoteLocalPort": -1}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let ssh: Vec<_> = report
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.forwards.remote()))
+        .collect();
+    assert_eq!(ssh, [("both", Some((8080, 3000))), ("off", None)]);
+    assert_eq!(report.rdp[0].forwards.remote(), Some((8081, 8081)));
+    let skipped: Vec<_> = report
+        .skipped
+        .into_iter()
+        .map(|skipped| (skipped.id, skipped.reason))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            ("big".to_owned(), SkipReason::InvalidPort(70000)),
+            ("neg".to_owned(), SkipReason::InvalidPort(-1)),
+        ]
+    );
+}

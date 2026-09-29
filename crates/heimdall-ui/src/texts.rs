@@ -128,6 +128,9 @@ pub fn error(error: &UiError) -> String {
                 detail = detail.as_str()
             )
         }
+        UiError::RemoteForwardRefused { port } => {
+            fl!("ui-error-remote-forward", port = port.to_string())
+        }
         UiError::SubsystemRefused { name } => {
             fl!("ui-error-subsystem-refused", name = server_text(name))
         }
@@ -204,6 +207,8 @@ pub fn draft_error(error: DraftError) -> String {
         ),
         DraftError::GatewayLoop => fl!("ui-gateway-error-loop"),
         DraftError::SocksPortInvalid => fl!("ui-profile-error-socks-port"),
+        DraftError::RemoteBindPortInvalid => fl!("ui-profile-error-remote-bind-port"),
+        DraftError::RemoteLocalPortInvalid => fl!("ui-profile-error-remote-local-port"),
     }
 }
 

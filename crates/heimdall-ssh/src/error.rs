@@ -142,6 +142,13 @@ pub enum ConnectError {
         #[source]
         source: std::io::Error,
     },
+    /// The server would not listen on `port` for a remote forward: forwarding is off on it,
+    /// or the port is taken there.
+    #[error("the server refused to listen on its port {port}")]
+    RemoteForwardRefused {
+        /// The port asked for.
+        port: u16,
+    },
     /// Any other SSH protocol error.
     #[error("ssh: {0}")]
     Protocol(#[source] russh::Error),

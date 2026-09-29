@@ -72,6 +72,7 @@ fn request(
             vault_entry: None,
             forwards: Forwards {
                 socks_port: Some(socks_port),
+                ..Forwards::default()
             },
         },
         known_hosts: dir.join("known_rdp_hosts"),

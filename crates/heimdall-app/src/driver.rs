@@ -26,6 +26,7 @@ use std::time::Duration;
 use heimdall_core::profile::{Forwards, SshProfile, display_address};
 use heimdall_files::RemoteSession;
 use heimdall_sftp::{ClientConfig, SftpClient};
+use heimdall_ssh::RemoteForward;
 use heimdall_ssh::socks::{self, Proxy};
 use heimdall_ssh::{
     ConnectError, ConnectOptions, Connection, KeyboardInteractiveQuestion, PassphraseQuestion,
@@ -237,19 +238,19 @@ async fn run(
     .await
     {
         Ok(Routed { server, gateway }) => {
-            match socks_proxy(request.profile.forwards, gateway.as_ref()).await {
-                Ok(proxy) => server
+            match open_forwards(request.profile.forwards, gateway.as_ref()).await {
+                Ok(forwards) => server
                     .open_shell(&request.options, request.cancel.clone())
                     .await
-                    .map(|session| (session, proxy, gateway)),
+                    .map(|session| (session, forwards, gateway)),
                 Err(error) => Err(error),
             }
         }
         Err(error) => Err(error),
     };
-    // The proxy and the gateway, whose drop would disconnect it and the server carried over
-    // it, last as long as the session: they go when this attempt returns.
-    let (session, _proxy, _gateway) = match result {
+    // The forwards and the gateway, whose drop would disconnect it and the server carried
+    // over it, last as long as the session: they go when this attempt returns.
+    let (session, _forwards, _gateway) = match result {
         Ok(opened) => opened,
         Err(ConnectError::UnknownHostKey { host, port, key }) => {
             let fingerprint = fingerprint(&key);
@@ -311,26 +312,49 @@ async fn run(
     }
 }
 
-/// Opens the SOCKS proxy of `forwards` on `gateway`, when the profile has one and goes
-/// through a gateway; it runs until dropped.
+/// The ports a session opened through its gateway; each closes when this is dropped.
+#[derive(Debug, Default)]
+pub(crate) struct OpenForwards {
+    _proxy: Option<Proxy>,
+    _remote: Option<RemoteForward>,
+}
+
+/// Opens the ports of `forwards` through `gateway`, when the profile goes through one: the
+/// SOCKS proxy, then the remote forward.
 ///
 /// # Errors
 ///
-/// [`ConnectError::ProxyPort`] when its port cannot be taken.
-pub(crate) async fn socks_proxy(
+/// [`ConnectError::ProxyPort`] when the proxy's port cannot be taken,
+/// [`ConnectError::RemoteForwardRefused`] when the gateway will not listen on its port.
+pub(crate) async fn open_forwards(
     forwards: Forwards,
     gateway: Option<&Connection>,
-) -> Result<Option<Proxy>, ConnectError> {
-    let (Some(port), Some(gateway)) = (forwards.socks_port, gateway) else {
-        return Ok(None);
+) -> Result<OpenForwards, ConnectError> {
+    let Some(gateway) = gateway else {
+        return Ok(OpenForwards::default());
     };
-    match socks::start(port, Arc::new(gateway.clone())).await {
-        Ok(proxy) => {
-            log::info!("SOCKS5 proxy listening on {}", proxy.address());
-            Ok(Some(proxy))
+    let proxy = match forwards.socks_port {
+        None => None,
+        Some(port) => match socks::start(port, Arc::new(gateway.clone())).await {
+            Ok(proxy) => {
+                log::info!("SOCKS5 proxy listening on {}", proxy.address());
+                Some(proxy)
+            }
+            Err(source) => return Err(ConnectError::ProxyPort { port, source }),
+        },
+    };
+    let remote = match forwards.remote() {
+        None => None,
+        Some((port, local)) => {
+            let remote = gateway.forward_remote(port, local).await?;
+            log::info!("remote forward: gateway port {port} to local port {local}");
+            Some(remote)
         }
-        Err(source) => Err(ConnectError::ProxyPort { port, source }),
-    }
+    };
+    Ok(OpenForwards {
+        _proxy: proxy,
+        _remote: remote,
+    })
 }
 
 /// Name of the SFTP subsystem.

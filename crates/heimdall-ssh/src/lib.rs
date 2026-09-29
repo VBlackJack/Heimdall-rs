@@ -27,6 +27,7 @@ mod auth;
 mod client;
 mod connection;
 mod error;
+mod forward;
 mod key_file;
 mod known_hosts;
 mod options;
@@ -39,6 +40,7 @@ pub mod socks;
 pub use client::{Routed, connect, establish, establish_via, establish_via_keeping_gateway};
 pub use connection::{ChannelBytes, Connection, SubsystemStream, Tunnel};
 pub use error::{AuthMethod, ConnectError};
+pub use forward::RemoteForward;
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
 pub use known_hosts::{
     KnownHostEntry, KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,

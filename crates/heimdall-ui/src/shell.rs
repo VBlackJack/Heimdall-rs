@@ -112,8 +112,8 @@ const PORT_FIELD_WIDTH: f32 = 150.0;
 /// Where the SOCKS proxy listens: this computer's loopback address, as in the C# Heimdall.
 const LOOPBACK: &str = "127.0.0.1";
 
-/// The SOCKS port that opens none, the placeholder of its field.
-const SOCKS_OFF: u16 = 0;
+/// The port that opens none, the placeholder of the forwarded ports' fields.
+const PORT_OFF: u16 = 0;
 
 /// Tallest the list of skipped profiles grows before it scrolls, in logical pixels.
 const SKIPPED_LIST_HEIGHT: f32 = 200.0;
@@ -3232,7 +3232,11 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-field-vault-entry"),
             fl!("ui-profile-vault-entry-placeholder"),
         ),
-        ProfileField::SocksPort => (fl!("ui-profile-socks-port"), SOCKS_OFF.to_string()),
+        ProfileField::SocksPort => (fl!("ui-profile-socks-port"), PORT_OFF.to_string()),
+        ProfileField::RemoteBindPort => (fl!("ui-profile-remote-bind-port"), PORT_OFF.to_string()),
+        ProfileField::RemoteLocalPort => {
+            (fl!("ui-profile-remote-local-port"), PORT_OFF.to_string())
+        }
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -3358,21 +3362,57 @@ fn network_section<'a>(
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
     }
-    // As the C# SOCKS5 card, shown only through a gateway.
     if draft.shows(ProfileField::SocksPort) {
-        let listening = match draft.socks_port.trim().parse::<u16>() {
-            Ok(port) if port != 0 => display_address(LOOPBACK, port),
-            _ => fl!("ui-profile-socks-off"),
-        };
-        section_column = section_column
-            .push(section(
-                fl!("ui-profile-socks-title"),
-                Some(fl!("ui-profile-socks-desc")),
-            ))
-            .push(container(form_field(draft, ProfileField::SocksPort)).width(PORT_FIELD_WIDTH))
-            .push(text(listening).size(SMALL_SIZE));
+        section_column = forward_cards(draft, section_column);
     }
     section_column.into()
+}
+
+/// A port typed in a forward's field, when it opens one.
+fn typed_port(typed: &str) -> Option<u16> {
+    typed.trim().parse::<u16>().ok().filter(|port| *port != 0)
+}
+
+/// The C# SOCKS5 and remote forwarding cards, shown only through a gateway: each port's
+/// field and, under it, what it opens.
+fn forward_cards<'a>(draft: &'a ProfileDraft, column: Column<'a, Message>) -> Column<'a, Message> {
+    let port_field =
+        |field: ProfileField| container(form_field(draft, field)).width(PORT_FIELD_WIDTH);
+    let listening = typed_port(&draft.socks_port).map_or_else(
+        || fl!("ui-profile-socks-off"),
+        |port| display_address(LOOPBACK, port),
+    );
+    let route = typed_port(&draft.remote_bind_port).map_or_else(
+        || fl!("ui-profile-socks-off"),
+        |remote| {
+            let local = typed_port(&draft.remote_local_port).unwrap_or(remote);
+            fl!(
+                "ui-profile-remote-route",
+                remote = remote.to_string(),
+                local = local.to_string()
+            )
+        },
+    );
+    column
+        .push(section(
+            fl!("ui-profile-socks-title"),
+            Some(fl!("ui-profile-socks-desc")),
+        ))
+        .push(port_field(ProfileField::SocksPort))
+        .push(text(listening).size(SMALL_SIZE))
+        .push(section(
+            fl!("ui-profile-remote-title"),
+            Some(fl!("ui-profile-remote-desc")),
+        ))
+        .push(
+            row![
+                port_field(ProfileField::RemoteBindPort),
+                port_field(ProfileField::RemoteLocalPort),
+            ]
+            .spacing(SPACING),
+        )
+        .push(text(fl!("ui-profile-remote-local-hint")).size(SMALL_SIZE))
+        .push(text(route).size(SMALL_SIZE))
 }
 
 /// The C# gateway dialog: name, host, port, username, key, password, parent gateway.

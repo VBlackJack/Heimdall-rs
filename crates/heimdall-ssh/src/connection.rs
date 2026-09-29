@@ -36,8 +36,9 @@ use russh::{ChannelMsg, ChannelStream, Disconnect};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::sync::CancellationToken;
 
-use crate::client::ClientHandler;
+use crate::client::{ClientHandler, Reached};
 use crate::error::ConnectError;
+use crate::forward::{self, RemoteForward, Routes};
 use crate::options::ConnectOptions;
 use crate::session::{self, ShellSession};
 
@@ -50,6 +51,8 @@ const DISCONNECT_LANGUAGE: &str = "";
 struct Inner {
     /// Present until the last clone drops.
     handle: Option<Handle<ClientHandler>>,
+    /// The remote forwards the handler serves.
+    routes: Routes,
 }
 
 impl Drop for Inner {
@@ -88,12 +91,32 @@ impl std::fmt::Debug for Connection {
 }
 
 impl Connection {
-    pub(crate) fn new(handle: Handle<ClientHandler>) -> Self {
+    pub(crate) fn new((handle, routes): Reached) -> Self {
         Self {
             inner: Arc::new(Inner {
                 handle: Some(handle),
+                routes,
             }),
         }
+    }
+
+    pub(crate) fn routes(&self) -> &Routes {
+        &self.inner.routes
+    }
+
+    /// Asks the server to listen on its loopback `port` and to send each connection it takes
+    /// there to `local` on this computer's loopback address (`ssh -R`), until the returned
+    /// forward is dropped.
+    ///
+    /// # Errors
+    ///
+    /// [`ConnectError::RemoteForwardRefused`] when the server will not listen there.
+    pub async fn forward_remote(
+        &self,
+        port: u16,
+        local: u16,
+    ) -> Result<RemoteForward, ConnectError> {
+        forward::start(self, port, local).await
     }
 
     pub(crate) fn handle(&self) -> &Handle<ClientHandler> {
