@@ -1045,15 +1045,30 @@ fn post_connect_steps_are_imported_as_the_csharp_migration_reads_them_and_never_
 #[test]
 fn forwarding_the_agent_is_imported_off_unless_the_csharp_profile_turned_it_on() {
     let json = servers(
-        r#"{"id": "on", "remoteServer": "a.lab", "connectionType": "SSH", "sshAgentForwarding": true},
-           {"id": "off", "remoteServer": "b.lab", "connectionType": "SSH", "sshAgentForwarding": false},
-           {"id": "unsaid", "remoteServer": "c.lab", "connectionType": "SSH"}"#,
+        r#"{"id": "on", "remoteServer": "a.lab", "connectionType": "SSH", "sshAgentForwarding": true, "sshCompression": true},
+           {"id": "off", "remoteServer": "b.lab", "connectionType": "SSH", "sshAgentForwarding": false, "sshCompression": false},
+           {"id": "unsaid", "remoteServer": "c.lab", "connectionType": "SSH"},
+           {"id": "compressed", "remoteServer": "d.lab", "connectionType": "SSH", "sshCompression": true}"#,
     );
     let report = import(&json, None).expect("valid JSON");
-    let forwarded: Vec<_> = report
+    let options: Vec<_> = report
         .profiles
         .iter()
-        .map(|profile| (profile.id.as_str(), profile.forward_agent))
+        .map(|profile| {
+            (
+                profile.id.as_str(),
+                profile.forward_agent,
+                profile.compression,
+            )
+        })
         .collect();
-    assert_eq!(forwarded, [("on", true), ("off", false), ("unsaid", false)]);
+    assert_eq!(
+        options,
+        [
+            ("on", true, true),
+            ("off", false, false),
+            ("unsaid", false, false),
+            ("compressed", false, true),
+        ]
+    );
 }

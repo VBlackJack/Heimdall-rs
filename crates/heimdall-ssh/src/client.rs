@@ -23,9 +23,9 @@ use std::time::Duration;
 
 use heimdall_core::profile::SshProfile;
 use russh::Channel;
-use russh::Preferred;
 use russh::client::{self, ChannelOpenHandle, DisconnectReason, Msg};
 use russh::keys::{Algorithm, PublicKey, PublicKeyOrCertificate};
+use russh::{Preferred, compression};
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::{self, AuthContext};
@@ -175,6 +175,24 @@ impl client::Handler for ClientHandler {
             }
             Ok(())
         }
+    }
+}
+
+/// Compression asked for with `ssh -C`, in OpenSSH's order: compressed first, uncompressed
+/// still accepted from a server that offers nothing else.
+const COMPRESSED_FIRST: &[compression::Name] = &[
+    compression::ZLIB_LEGACY,
+    compression::ZLIB,
+    compression::NONE,
+];
+
+/// Compression to offer: compressed first when asked, else russh's own order, uncompressed
+/// first.
+pub(crate) fn preferred_compression(on: bool) -> Cow<'static, [compression::Name]> {
+    if on {
+        Cow::Borrowed(COMPRESSED_FIRST)
+    } else {
+        Preferred::DEFAULT.compression
     }
 }
 
@@ -419,6 +437,7 @@ async fn hop<P: Prompter>(
         nodelay: true,
         preferred: Preferred {
             key: Cow::Owned(preferred_host_key_algorithms(&recorded)),
+            compression: preferred_compression(options.compression),
             ..Preferred::DEFAULT
         },
         ..client::Config::default()
@@ -483,7 +502,26 @@ async fn hop<P: Prompter>(
 mod tests {
     use russh::keys::{Algorithm, HashAlg, PublicKey};
 
-    use super::preferred_host_key_algorithms;
+    use russh::compression;
+
+    use super::{preferred_compression, preferred_host_key_algorithms};
+
+    #[test]
+    fn compression_asked_for_is_offered_first_and_uncompressed_is_still_accepted() {
+        assert_eq!(
+            preferred_compression(true).as_ref(),
+            [
+                compression::ZLIB_LEGACY,
+                compression::ZLIB,
+                compression::NONE
+            ]
+        );
+        assert_eq!(
+            preferred_compression(false).first(),
+            Some(&compression::NONE),
+            "off: uncompressed first"
+        );
+    }
 
     const ED25519: &str = include_str!("../tests/fixtures/keys/ed25519-openssh.pub");
 

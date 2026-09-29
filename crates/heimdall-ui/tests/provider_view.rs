@@ -292,6 +292,7 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
+        compression: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

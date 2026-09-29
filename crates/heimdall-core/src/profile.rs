@@ -108,6 +108,10 @@ pub struct SshProfile {
     /// agent": off unless turned on, written down only when on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub forward_agent: bool,
+    /// Compress the traffic (`ssh -C`), as the C# "Enable compression": off unless turned on,
+    /// written down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub compression: bool,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -180,6 +184,7 @@ impl SshGateway {
             forwards: Forwards::default(),
             post_connect: PostConnect::default(),
             forward_agent: false,
+            compression: false,
         }
     }
 }

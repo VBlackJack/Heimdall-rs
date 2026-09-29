@@ -56,6 +56,7 @@ fn hop(host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile {
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
+        compression: false,
     }
 }
 
@@ -479,3 +480,43 @@ async fn the_agent_is_forwarded_to_the_lab_shell_only_when_asked() {
     // 2: no agent to reach at all.
     assert!(kept.contains("agent-2"), "no agent there: {kept}");
 }
+
+#[tokio::test]
+async fn a_compressed_shell_opens_through_the_lab_gateway() {
+    let Some(keys) = std::env::var_os(KEYS_VARIABLE).map(PathBuf::from) else {
+        eprintln!("{KEYS_VARIABLE} not set: skipped");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let known_hosts = dir.path().join("known_hosts");
+    let (event, events) = first_event_past_host_keys(&keys, &known_hosts, Purpose::Shell).await;
+    assert!(
+        matches!(event, ConnectionEvent::Connected { .. }),
+        "{event:?}"
+    );
+    drop(events);
+    let mut compressed = request(&keys, &known_hosts, Purpose::Shell);
+    compressed.options.compression = true;
+    let mut events = connection_events(compressed, AnswerRegistry::default());
+    let mut screen = String::new();
+    tokio::time::timeout(STEP_TIMEOUT, async {
+        while let Some(event) = events.next().await {
+            match event {
+                // Repetitive output, well past the first compressed packet.
+                ConnectionEvent::Connected { input } => {
+                    input.write(COMPRESSED_COMMAND.to_vec()).expect("typed");
+                }
+                ConnectionEvent::Output(bytes) => screen.push_str(&String::from_utf8_lossy(&bytes)),
+                ConnectionEvent::Closed { .. } => return,
+                other => panic!("{other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the shell ended");
+    assert!(screen.contains("done-42"), "{screen}");
+}
+
+/// Many identical lines through the compressed connection, then a computed marker.
+const COMPRESSED_COMMAND: &[u8] =
+    b"yes compressed | head -n 2000 | tail -n 1; echo \"done-$((6*7))\"; exit\n";

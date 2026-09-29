@@ -40,6 +40,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
+        compression: false,
     }
 }
 

@@ -230,6 +230,9 @@ struct LegacyServer {
     /// "Forward SSH agent"; absent is off.
     #[serde(default)]
     ssh_agent_forwarding: bool,
+    /// "Enable compression"; absent is off.
+    #[serde(default)]
+    ssh_compression: bool,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
     /// The post-connect sequence; a null entry is dropped, as the C# migration does.
@@ -656,6 +659,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
             approved: None,
         },
         forward_agent: server.ssh_agent_forwarding,
+        compression: server.ssh_compression,
     })
 }
 

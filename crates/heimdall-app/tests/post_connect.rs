@@ -53,6 +53,7 @@ fn profile(id: &str, post_connect: PostConnect) -> SshProfile {
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect,
         forward_agent: false,
+        compression: false,
     }
 }
 
@@ -288,6 +289,7 @@ fn a_shell_forwards_the_agent_only_when_its_profile_says_so() {
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     let mut forwarding = profile("forwarding", PostConnect::default());
     forwarding.forward_agent = true;
+    forwarding.compression = true;
     store.merge([forwarding, profile("plain", PostConnect::default())]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {
@@ -296,6 +298,8 @@ fn a_shell_forwards_the_agent_only_when_its_profile_says_so() {
     });
     let effects = app.update(Message::OpenProfile(ProfileId::new("forwarding")));
     assert!(connect_request(&effects).options.forward_agent);
+    assert!(connect_request(&effects).options.compression);
     let effects = app.update(Message::OpenProfile(ProfileId::new("plain")));
     assert!(!connect_request(&effects).options.forward_agent);
+    assert!(!connect_request(&effects).options.compression);
 }

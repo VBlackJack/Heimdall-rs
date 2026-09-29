@@ -338,3 +338,77 @@ async fn a_server_cannot_reach_the_agent_of_a_shell_that_did_not_ask() {
     assert_eq!(observed.agent_asked, 0);
     assert_eq!(observed.agent_opens, [false]);
 }
+
+/// A relay in front of `port` counting the bytes it carries from the server: what the wire
+/// holds, compressed or not.
+async fn counting_relay(port: u16) -> (u16, Arc<std::sync::atomic::AtomicUsize>) {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("relay");
+    let relay_port = listener.local_addr().expect("address").port();
+    let counted = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let count = counted.clone();
+    tokio::spawn(async move {
+        let Ok((client, _)) = listener.accept().await else {
+            return;
+        };
+        let server = tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port))
+            .await
+            .expect("server");
+        let (mut client_read, mut client_write) = client.into_split();
+        let (mut server_read, mut server_write) = server.into_split();
+        tokio::spawn(async move {
+            let _ = tokio::io::copy(&mut client_read, &mut server_write).await;
+        });
+        let mut buffer = vec![0; 16 * 1024];
+        while let Ok(read) = server_read.read(&mut buffer).await {
+            if read == 0 || client_write.write_all(&buffer[..read]).await.is_err() {
+                break;
+            }
+            count.fetch_add(read, std::sync::atomic::Ordering::SeqCst);
+        }
+    });
+    (relay_port, counted)
+}
+
+/// Bytes the server sent to echo `text` once connected, with compression `on` or off.
+async fn wire_bytes_of_an_echo(text: &[u8], on: bool) -> usize {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let (relay, counted) = counting_relay(server.port).await;
+    // The relay's port, the server's host key.
+    let mut options = options_trusting(dir.path(), relay, "host-ed25519");
+    options.compression = on;
+    let connection = tokio::time::timeout(
+        STEP_TIMEOUT,
+        establish(
+            &profile(relay, None),
+            &options,
+            Arc::new(ScriptedPrompter::passwords(&[PASSWORD])),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("in time")
+    .expect("connected");
+    let mut stream = connection
+        .open_subsystem(SUBSYSTEM_ACCEPTED, ANSWER_TIMEOUT)
+        .await
+        .expect("accepted");
+    let before = counted.load(std::sync::atomic::Ordering::SeqCst);
+    echoes(&mut stream, text).await;
+    counted.load(std::sync::atomic::Ordering::SeqCst) - before
+}
+
+#[tokio::test]
+async fn compression_asked_for_shrinks_what_crosses_the_wire_and_keeps_the_bytes() {
+    // Repetitive, as a listing or a log is.
+    let text = "compressed ".repeat(2048);
+    let plain = wire_bytes_of_an_echo(text.as_bytes(), false).await;
+    let compressed = wire_bytes_of_an_echo(text.as_bytes(), true).await;
+    assert!(plain >= text.len(), "uncompressed: {plain} bytes");
+    assert!(
+        compressed * 4 < plain,
+        "compressed {compressed} bytes against {plain}"
+    );
+}
