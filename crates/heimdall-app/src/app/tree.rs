@@ -53,6 +53,18 @@ pub enum ProfileKind {
 }
 
 impl ProfileKind {
+    /// Every protocol, in the order the C# filter lists them.
+    pub const ALL: [Self; 8] = [
+        Self::Rdp,
+        Self::Ssh,
+        Self::WinRm,
+        Self::Sftp,
+        Self::Vnc,
+        Self::Telnet,
+        Self::Ftp,
+        Self::Local,
+    ];
+
     /// The protocol's name, as the tree shows it and its search finds it.
     #[must_use]
     pub fn label(self) -> &'static str {
@@ -261,6 +273,10 @@ impl App {
             }
             Message::ToggleFolder(path) => {
                 self.toggle_folder(&path);
+                Vec::new()
+            }
+            Message::Filter(message) => {
+                self.filter_message(message);
                 Vec::new()
             }
             Message::Folder(message) => self.folder_menu(message),

@@ -80,14 +80,20 @@ impl Node {
 }
 
 impl App {
-    /// The rows of the tree, searched for `search`: all of them when it is empty.
+    /// The rows of the tree, searched for `search` and passed through its filters: all of
+    /// them when neither leaves any out. While either does, as in the C# tree, every folder
+    /// shown is open and only the folders holding a profile found are shown.
     #[must_use]
     pub fn tree_rows(&self, search: &str) -> Vec<TreeRow> {
-        let searching = !search.trim().is_empty();
+        let searching = !search.trim().is_empty() || self.tree_filter().is_active();
         let mut root = Node::default();
         let mut loose = Vec::new();
         for profile in self.profile_summaries() {
-            if !profile.matches(search) {
+            if !profile.matches(search)
+                || !self
+                    .tree_filter()
+                    .accepts(&profile, self.profile_state(&profile.id))
+            {
                 continue;
             }
             let parts = profile
