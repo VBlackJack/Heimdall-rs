@@ -109,7 +109,10 @@ impl GatewayDraft {
             | ProfileField::VaultEntry
             | ProfileField::SocksPort
             | ProfileField::RemoteBindPort
-            | ProfileField::RemoteLocalPort => "",
+            | ProfileField::RemoteLocalPort
+            | ProfileField::LocalProgram
+            | ProfileField::LocalArguments
+            | ProfileField::WorkingDirectory => "",
         }
     }
 
@@ -128,7 +131,10 @@ impl GatewayDraft {
             | ProfileField::VaultEntry
             | ProfileField::SocksPort
             | ProfileField::RemoteBindPort
-            | ProfileField::RemoteLocalPort => {}
+            | ProfileField::RemoteLocalPort
+            | ProfileField::LocalProgram
+            | ProfileField::LocalArguments
+            | ProfileField::WorkingDirectory => {}
         }
     }
 

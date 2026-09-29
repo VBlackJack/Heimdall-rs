@@ -207,6 +207,7 @@ pub fn draft_error(error: DraftError) -> String {
         ),
         DraftError::GatewayLoop => fl!("ui-gateway-error-loop"),
         DraftError::SocksPortInvalid => fl!("ui-profile-error-socks-port"),
+        DraftError::ArgumentsInvalid => fl!("ui-profile-error-local-arguments"),
         DraftError::RemoteBindPortInvalid => fl!("ui-profile-error-remote-bind-port"),
         DraftError::RemoteLocalPortInvalid => fl!("ui-profile-error-remote-local-port"),
     }

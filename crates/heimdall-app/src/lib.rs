@@ -30,6 +30,7 @@ mod event;
 pub mod files;
 pub mod gateway_draft;
 mod ids;
+pub mod local_draft;
 pub mod local_driver;
 mod post_connect;
 pub mod profile_draft;

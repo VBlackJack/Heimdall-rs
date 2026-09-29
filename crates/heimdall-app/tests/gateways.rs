@@ -53,6 +53,7 @@ fn web(gateway: Option<&str>) -> SshProfile {
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }
 }
 
