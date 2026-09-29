@@ -28,6 +28,8 @@
 //! its own way: a rename never replaces, a delete never follows a link, a download never
 //! reads anything but a regular file.
 
+mod ftp;
+
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -37,6 +39,7 @@ use heimdall_sftp::tree::{self, TreeError};
 use heimdall_sftp::{DirEntry, SftpClient, SftpError};
 use tokio_util::sync::CancellationToken;
 
+pub use ftp::{FtpClient, FtpConnectError, FtpSecurity, FtpTarget};
 pub use heimdall_sftp::RemotePath;
 pub use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 pub use heimdall_sftp::path::display_bytes;
@@ -49,6 +52,8 @@ const PERMISSION_BITS: u32 = 0o7777;
 pub enum RemoteSession {
     /// SFTP over an SSH connection.
     Sftp(SftpClient),
+    /// FTP, plain or explicit FTPS.
+    Ftp(FtpClient),
 }
 
 /// What an entry is.
@@ -137,6 +142,7 @@ impl RemoteSession {
     pub async fn canonical(&self, path: &RemotePath) -> Result<RemotePath, RemoteError> {
         match self {
             Self::Sftp(client) => client.realpath(path).await.map_err(|e| sftp_error(&e)),
+            Self::Ftp(client) => client.canonical(path).await,
         }
     }
 
@@ -154,6 +160,7 @@ impl RemoteSession {
                 .into_iter()
                 .map(sftp_item)
                 .collect()),
+            Self::Ftp(client) => client.list(path).await,
         }
     }
 
@@ -168,6 +175,7 @@ impl RemoteSession {
                 .mkdir(path, Attributes::default())
                 .await
                 .map_err(|e| sftp_error(&e)),
+            Self::Ftp(client) => client.make_folder(path).await,
         }
     }
 
@@ -183,6 +191,7 @@ impl RemoteSession {
                 .rename(from, to, false)
                 .await
                 .map_err(|e| sftp_error(&e)),
+            Self::Ftp(client) => client.rename(from, to).await,
         }
     }
 
@@ -203,6 +212,7 @@ impl RemoteSession {
                 )
                 .await
                 .map_err(|e| sftp_error(&e)),
+            Self::Ftp(client) => client.set_permissions(path, mode).await,
         }
     }
 
@@ -219,6 +229,7 @@ impl RemoteSession {
                 .await
                 .map(|_| ())
                 .map_err(|e| tree_error(&e)),
+            Self::Ftp(client) => client.remove(path).await,
         }
     }
 
@@ -247,6 +258,7 @@ impl RemoteSession {
             .await
             .map(|report| report.bytes)
             .map_err(|e| transfer_error(&e)),
+            Self::Ftp(client) => client.download(remote, local, cancel, progress).await,
         }
     }
 
@@ -277,6 +289,11 @@ impl RemoteSession {
             .await
             .map(|report| report.bytes)
             .map_err(|e| transfer_error(&e)),
+            Self::Ftp(client) => {
+                client
+                    .upload(local, remote, replace, cancel, progress)
+                    .await
+            }
         }
     }
 
@@ -306,6 +323,11 @@ impl RemoteSession {
                 skipped: report.skipped.len(),
             })
             .map_err(|e| tree_error(&e)),
+            Self::Ftp(client) => {
+                client
+                    .download_folder(remote, local, cancel, progress)
+                    .await
+            }
         }
     }
 
@@ -335,6 +357,7 @@ impl RemoteSession {
                 skipped: report.skipped.len(),
             })
             .map_err(|e| tree_error(&e)),
+            Self::Ftp(client) => client.upload_folder(local, remote, cancel, progress).await,
         }
     }
 }
