@@ -75,6 +75,7 @@ mod folders;
 mod ftp_tab;
 mod gateways;
 mod local_tab;
+mod openssh_import;
 mod pin;
 mod post_connect;
 mod profile_menu;
@@ -106,6 +107,7 @@ use files_tab::{PendingOperation, PendingTransfer};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
+pub use openssh_import::{OpenSshMessage, OpenSshPreview, OpenSshRow};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
 pub use profile_menu::ProfileMenuMessage;
@@ -356,6 +358,8 @@ pub enum Message {
     ImportLegacy,
     /// Export every profile and gateway in the C# Heimdall's session file.
     ExportSessions,
+    /// The import of an OpenSSH configuration.
+    OpenSsh(OpenSshMessage),
     /// How the export's file went.
     ExportFinished(ExportOutcome),
     /// Open an empty profile form.
@@ -570,6 +574,9 @@ impl fmt::Debug for Message {
             Self::WindowCloseRequested => f.write_str("WindowCloseRequested"),
             Self::ImportLegacy => f.write_str("ImportLegacy"),
             Self::ExportSessions => f.write_str("ExportSessions"),
+            // The file's text is the user's configuration: never shown.
+            Self::OpenSsh(OpenSshMessage::Read(_)) => f.write_str("OpenSsh(Read(..))"),
+            Self::OpenSsh(message) => write!(f, "OpenSsh({message:?})"),
             Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
@@ -690,6 +697,9 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Ask which OpenSSH configuration to import, as the C# open dialog, then read it;
+    /// answered with [`OpenSshMessage::Read`], or nothing when no file is picked.
+    PickOpenSshConfig,
     /// Ask where to save the exported sessions, as the C# save dialog, then write them
     /// there; answered with [`Message::ExportFinished`].
     SaveExport {
@@ -806,6 +816,7 @@ impl fmt::Debug for Effect {
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
+            Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
             Self::WakeAt {
                 tab, generation, ..
@@ -1227,6 +1238,26 @@ pub enum Dialog {
         /// Technical detail.
         detail: String,
     },
+    /// What an OpenSSH configuration gives, to choose from.
+    OpenSshPreview(Box<OpenSshPreview>),
+    /// The OpenSSH configuration picked could not be read.
+    OpenSshUnreadable {
+        /// Technical detail.
+        detail: String,
+    },
+    /// The OpenSSH configuration picked gives nothing to import.
+    OpenSshEmpty,
+    /// What the OpenSSH import added.
+    OpenSshDone {
+        /// Profiles added.
+        imported: usize,
+        /// Gateways added for their chains.
+        gateways: usize,
+        /// Servers left out: a profile has their name.
+        duplicates: usize,
+        /// Profiles whose key file is not there.
+        warnings: usize,
+    },
     /// The profile file could not be read or written.
     StoreError {
         /// Technical detail.
@@ -1580,6 +1611,7 @@ impl App {
             | Message::ImportLegacy
             | Message::ExportSessions
             | Message::ExportFinished(_)
+            | Message::OpenSsh(_)
             | Message::Settings(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
@@ -2296,6 +2328,10 @@ impl App {
 
     fn confirm_dialog(&mut self) -> Vec<Effect> {
         match self.dialog.take() {
+            Some(Dialog::OpenSshPreview(preview)) => {
+                self.import_openssh(&preview);
+                Vec::new()
+            }
             Some(Dialog::ConfirmCloseTab(tab)) => {
                 self.close_tab(tab);
                 Vec::new()
@@ -2370,6 +2406,9 @@ impl App {
                 | Dialog::ImportFailed { .. }
                 | Dialog::ExportDone { .. }
                 | Dialog::ExportFailed { .. }
+                | Dialog::OpenSshUnreadable { .. }
+                | Dialog::OpenSshEmpty
+                | Dialog::OpenSshDone { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. },
             )
@@ -2389,6 +2428,7 @@ impl App {
                 Vec::new()
             }
             Message::ExportSessions => vec![self.export_sessions()],
+            Message::OpenSsh(message) => self.openssh_message(message.clone()),
             Message::ExportFinished(outcome) => {
                 self.dialog = match outcome {
                     ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),

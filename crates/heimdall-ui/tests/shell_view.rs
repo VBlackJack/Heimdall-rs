@@ -356,7 +356,7 @@ fn quitting_with_a_live_session_asks_in_a_dialog() {
     snapshot(&shell, "quit.png");
     let mut ui = simulator(&shell);
     ui.find("Quit Heimdall?").expect("dialog title");
-    ui.find("One session is still open and will be disconnected.")
+    ui.find("1 session is still open and will be disconnected.")
         .expect("plural form for one");
     ui.click("Quit").expect("confirm button");
     assert!(
@@ -2270,5 +2270,96 @@ fn nothing_passing_the_filters_offers_to_reset_them_and_the_search() {
     assert!(
         ui.find("Production  a.lab").is_err(),
         "the search emptied too"
+    );
+}
+
+#[test]
+fn the_more_menu_imports_an_openssh_config_as_the_csharp_one() {
+    use heimdall_app::OpenSshMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = simulator(&shell);
+    ui.click("Import OpenSSH config...").expect("the entry");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::OpenSsh(OpenSshMessage::Start))
+    )));
+}
+
+#[test]
+fn the_openssh_preview_lists_the_servers_what_was_left_out_and_imports() {
+    use heimdall_app::OpenSshMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let text = "Host web\n    HostName web.lab\n    ProxyJump alice@edge.lab:2200\nHost \"server a\" spare\n    HostName other.lab\n    Frobnicate yes\n";
+    let _ = shell.update(Message::App(AppMessage::OpenSsh(OpenSshMessage::Read(Ok(
+        text.to_owned(),
+    )))));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Import OpenSSH config",
+            "3 candidates - 2 new, 1 duplicate",
+            "ProxyJump entries are imported as SSH gateway chains.",
+            "web.lab",
+            "alice@edge.lab:2200",
+            "New",
+            "Duplicate",
+            "Diagnostics (1)",
+            "Line 6: Unknown directive ignored: Frobnicate",
+        ] {
+            ui.find(said).expect(said);
+        }
+        ui.click("Import").expect("the button");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("2 imported, 0 skipped (duplicates), 0 warnings")
+        .expect("as the C# says it");
+    ui.find("1 SSH gateway created for the ProxyJump chains.")
+        .expect("the chain");
+}
+
+#[tokio::test]
+async fn an_unreadable_file_is_said_with_its_path() {
+    let dir = tempfile::tempdir().expect("dir");
+    let missing = dir.path().join("config");
+    let error = heimdall_ui::openssh_view::read_file(&missing)
+        .await
+        .expect_err("no such file");
+    assert!(error.starts_with(&missing.display().to_string()), "{error}");
+    std::fs::write(&missing, "Host a\n").expect("write");
+    assert_eq!(
+        heimdall_ui::openssh_view::read_file(&missing).await,
+        Ok("Host a\n".to_owned())
+    );
+}
+
+#[test]
+fn nothing_chosen_in_the_openssh_preview_leaves_import_disabled() {
+    use heimdall_app::OpenSshMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::OpenSsh(OpenSshMessage::Read(Ok(
+        "Host web\n".to_owned(),
+    )))));
+    let _ = shell.update(Message::App(AppMessage::OpenSsh(
+        OpenSshMessage::ChooseAll(false),
+    )));
+    let mut ui = simulator(&shell);
+    ui.click("Import").expect("the button");
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog))),
+        "nothing to import"
     );
 }

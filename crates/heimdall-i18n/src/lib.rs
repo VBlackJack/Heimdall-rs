@@ -32,7 +32,9 @@ use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fluent_syntax::ast::{Entry, Expression, InlineExpression, Pattern, PatternElement};
+use fluent_syntax::ast::{
+    Entry, Expression, InlineExpression, Pattern, PatternElement, VariantKey,
+};
 use fluent_syntax::parser;
 
 /// Language used when a message is missing in the requested one.
@@ -159,6 +161,48 @@ pub fn message_variables(source: &str) -> Result<BTreeMap<String, BTreeSet<Strin
             _ => None,
         })
         .collect())
+}
+
+/// The messages of a Fluent source with a `one` variant that does not name the number it
+/// is chosen by. French puts 0 in `one`: a variant reading "1 session" would say it of none.
+///
+/// # Errors
+///
+/// Returns the number of syntax errors when the source does not parse cleanly.
+pub fn fixed_one_variants(source: &str) -> Result<Vec<String>, usize> {
+    let resource = parser::parse(source).map_err(|(_, errors)| errors.len())?;
+    Ok(resource
+        .body
+        .iter()
+        .filter_map(|entry| match entry {
+            Entry::Message(message) => {
+                let fixed = message
+                    .value
+                    .iter()
+                    .chain(message.attributes.iter().map(|attribute| &attribute.value))
+                    .any(pattern_has_fixed_one);
+                fixed.then(|| message.id.name.to_owned())
+            }
+            _ => None,
+        })
+        .collect())
+}
+
+fn pattern_has_fixed_one(pattern: &Pattern<&str>) -> bool {
+    pattern.elements.iter().any(|element| match element {
+        PatternElement::Placeable {
+            expression: Expression::Select { selector, variants },
+        } => variants.iter().any(|variant| {
+            let fixed = matches!(variant.key, VariantKey::Identifier { name: "one" })
+                && matches!(selector, InlineExpression::VariableReference { id } if {
+                    let mut names = BTreeSet::new();
+                    pattern_variables(&variant.value, &mut names);
+                    !names.contains(id.name)
+                });
+            fixed || pattern_has_fixed_one(&variant.value)
+        }),
+        _ => false,
+    })
 }
 
 fn pattern_variables(pattern: &Pattern<&str>, names: &mut BTreeSet<String>) {

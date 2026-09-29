@@ -16,7 +16,9 @@
 
 use std::path::PathBuf;
 
-use heimdall_i18n::{CheckError, Gap, GapKind, find_gaps, message_ids, message_variables};
+use heimdall_i18n::{
+    CheckError, Gap, GapKind, find_gaps, fixed_one_variants, message_ids, message_variables,
+};
 
 const DOMAIN: &str = "demo";
 
@@ -95,5 +97,19 @@ fn variables_are_found_in_selectors_calls_variants_and_attributes() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         ["hint", "nested", "size", "style", "unit"]
+    );
+}
+
+#[test]
+fn a_one_variant_must_name_its_number() {
+    let source = concat!(
+        "fixed = { $count ->\n    [one] 1 file\n   *[other] { $count } files\n}\n",
+        "named = { $count ->\n    [one] { $count } file\n   *[other] { $count } files\n}\n",
+        "other-key = { $count ->\n    [few] a few\n   *[other] { $count } files\n}\n",
+        "nested = { $a ->\n   *[other] { $b ->\n        [one] 1 thing\n       *[other] { $b } things\n    }\n}\n",
+    );
+    assert_eq!(
+        fixed_one_variants(source).expect("valid Fluent"),
+        ["fixed", "nested"]
     );
 }

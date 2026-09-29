@@ -229,7 +229,7 @@ ui-dialog-close-tab-body = La sesión sigue abierta. Cerrar la pestaña la desco
 ui-dialog-close-tab-confirm = Cerrar
 ui-dialog-exit-title = ¿Salir de Heimdall?
 ui-dialog-exit-body = { $count ->
-    [one] Una sesión sigue abierta y se desconectará.
+    [one] { $count } sesión sigue abierta y se desconectará.
    *[other] { $count } sesiones siguen abiertas y se desconectarán.
 }
 ui-dialog-exit-confirm = Salir
@@ -248,7 +248,7 @@ ui-dialog-delete-folder-body = La carpeta { $name } y todo su contenido se elimi
 ui-dialog-delete-confirm = Eliminar
 ui-dialog-paste-title = ¿Pegar varias líneas?
 ui-dialog-paste-body = { $count ->
-    [one] El texto contiene una línea. El shell puede ejecutarla como un comando en cuanto llega.
+    [one] El texto contiene { $count } línea. El shell puede ejecutarla como un comando en cuanto llega.
    *[other] El texto contiene { $count } líneas. El shell puede ejecutar cada una como un comando en cuanto llega.
 }
 ui-dialog-paste-confirm = Pegar
@@ -288,7 +288,7 @@ ui-files-state-running = { $done } de { $total }
 ui-files-state-running-unknown = { $done }
 ui-files-state-done = Terminado
 ui-files-state-incomplete = Terminado, { $count ->
-    [one] 1 elemento omitido (un enlace, un nombre inutilizable o un fallo)
+    [one] { $count } elemento omitido (un enlace, un nombre inutilizable o un fallo)
    *[other] { $count } elementos omitidos (enlaces, nombres inutilizables o fallos)
 }
 ui-files-state-cancelled = Cancelado; vuelva a iniciarlo para reanudar
@@ -385,12 +385,69 @@ ui-tree-import-sessions = Importar sesiones
 ui-tree-export-sessions = Exportar sesiones
 ui-dialog-export-title = Exportar sesiones
 ui-dialog-export-done = { $count ->
-    [one] 1 sesión exportada correctamente.
+    [one] { $count } sesión exportada correctamente.
    *[other] { $count } sesiones exportadas correctamente.
 }
 ui-dialog-export-credentials = Las credenciales no se incluyeron en el archivo de exportación.
 ui-dialog-export-failed = Falló la exportación: { $detail }
 ui-export-filter-json = Archivos JSON
+ui-tree-import-openssh = Importar configuración de OpenSSH...
+ui-openssh-title = Importar configuración de OpenSSH
+ui-openssh-summary = { $total ->
+    [one] { $total } candidato
+   *[other] { $total } candidatos
+} - { $new ->
+    [one] { $new } nuevo
+   *[other] { $new } nuevos
+}, { $duplicate ->
+    [one] { $duplicate } duplicado
+   *[other] { $duplicate } duplicados
+}
+ui-openssh-hint = Las entradas ProxyJump se importan como cadenas de pasarela SSH.
+ui-openssh-choose-all = Importar todo
+ui-openssh-column-alias = Alias
+ui-openssh-column-host = HostName
+ui-openssh-column-port = Puerto
+ui-openssh-column-user = Usuario
+ui-openssh-column-key = IdentityFile
+ui-openssh-column-chain = Cadena de pasarelas
+ui-openssh-column-status = Estado
+ui-openssh-status-new = Nuevo
+ui-openssh-status-duplicate = Duplicado
+ui-openssh-reusing = reutilizando la pasarela existente "{ $name }"
+ui-openssh-diagnostics = Diagnóstico ({ $count })
+ui-openssh-diag-line = Línea { $line }: { $said }
+ui-openssh-diag-match = Bloque Match no leído
+ui-openssh-diag-include = Directiva Include no seguida: { $value }
+ui-openssh-diag-wildcard = Alias con comodín ignorado: { $value }
+ui-openssh-diag-unknown = Directiva desconocida ignorada: { $value }
+ui-openssh-diag-port = Puerto { $value } no válido; se usará 22 en su lugar
+ui-openssh-diag-duplicate = Alias duplicado dentro del archivo ignorado: { $value }
+ui-openssh-diag-proxycommand = ProxyCommand no es compatible; Heimdall solo admite saltos TCP nativos mediante ProxyJump: { $value }
+ui-openssh-diag-mixed = ProxyJump y ProxyCommand combinados; usa solo ProxyJump para la importación en Heimdall: { $value }
+ui-openssh-diag-jump-token = ProxyJump con tokens de OpenSSH (%h/%p/%r) no es compatible: { $value }
+ui-openssh-diag-cycle = Se detectó un ciclo de ProxyJump en la cadena del host { $value }
+ui-openssh-diag-syntax = Sintaxis de ProxyJump no reconocida: { $value }
+ui-openssh-diag-tilde = El ~ de IdentityFile se expandió a la carpeta personal: { $value }
+ui-openssh-diag-fallback = Falta HostName; se usará el alias en su lugar: { $value }
+ui-openssh-diag-host-token = HostName usa un token de OpenSSH que Heimdall no puede expandir (solo se admite %h); host omitido: { $value }
+ui-openssh-import-button = Importar
+ui-openssh-done = { $imported ->
+    [one] { $imported } importado
+   *[other] { $imported } importados
+}, { $duplicates ->
+    [one] { $duplicates } omitido
+   *[other] { $duplicates } omitidos
+} (duplicados), { $warnings ->
+    [one] { $warnings } aviso
+   *[other] { $warnings } avisos
+}
+ui-openssh-done-gateways = { $count ->
+    [one] { $count } pasarela SSH creada para las cadenas ProxyJump.
+   *[other] { $count } pasarelas SSH creadas para las cadenas ProxyJump.
+}
+ui-openssh-unreadable = No se puede leer el archivo seleccionado: { $detail }
+ui-openssh-empty = El archivo seleccionado no contiene entradas importables.
 ui-tree-add-tooltip = Añadir sesión
 ui-tree-more-tooltip = Más acciones
 ui-tree-tooltip-host = Host: { $host }
@@ -631,11 +688,11 @@ ui-status-error = Error
 ui-status-copied = Copiado al portapapeles: { $text }
 ui-status-folder-created = Carpeta "{ $path }" creada.
 ui-status-sessions = { $count ->
-    [one] 1 sesión
+    [one] { $count } sesión
    *[other] { $count } sesiones
 }
 ui-status-sessions-filtered = { $shown } de { $count ->
-    [one] 1 sesión
+    [one] { $count } sesión
    *[other] { $count } sesiones
 }
 
