@@ -38,6 +38,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         gateway: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
     }
 }
 
@@ -687,4 +688,41 @@ fn a_socks_port_is_saved_only_when_set() {
         .map(|profile| (profile.id.as_str(), profile.forwards.socks_port))
         .collect();
     assert_eq!(ports, [("none", None), ("proxied", Some(1080))]);
+}
+
+#[test]
+fn the_store_keeps_an_approval_of_post_connect_steps_and_never_takes_one_from_an_import() {
+    use heimdall_core::post_connect::{PostConnect, PostConnectStep};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let steps = vec![PostConnectStep::new("sudo -i")];
+    let with = |approved: Option<Vec<PostConnectStep>>| {
+        let mut profile = profile("a", "h1");
+        profile.post_connect = PostConnect {
+            steps: steps.clone(),
+            approved,
+        };
+        profile
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    // An approval arriving with the profile is not taken.
+    store.merge([with(Some(steps.clone()))]);
+    assert!(!store.ssh_profiles()[0].post_connect.is_approved());
+    // Approving other steps than those saved approves nothing saved.
+    assert!(store.approve_post_connect(&ProfileId::new("a"), &[PostConnectStep::new("ls")]));
+    assert!(store.ssh_profiles()[0].post_connect.needs_approval());
+    assert!(store.approve_post_connect(&ProfileId::new("a"), &steps));
+    assert!(!store.approve_post_connect(&ProfileId::new("gone"), &steps));
+    store.save().expect("saves");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert!(reopened.ssh_profiles()[0].post_connect.is_approved());
+
+    // The same steps merged again keep the approval; other steps are not approved by it.
+    store.merge([with(None)]);
+    assert!(store.ssh_profiles()[0].post_connect.is_approved());
+    let mut changed = with(None);
+    changed.post_connect.steps = vec![PostConnectStep::new("rm -rf /")];
+    store.merge([changed]);
+    assert!(store.ssh_profiles()[0].post_connect.needs_approval());
 }

@@ -21,7 +21,7 @@
 
 use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
-use heimdall_app::{KeyProblem, NetworkFailure, UiError, server_text};
+use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::SkipReason;
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
@@ -209,6 +209,17 @@ pub fn draft_error(error: DraftError) -> String {
         DraftError::SocksPortInvalid => fl!("ui-profile-error-socks-port"),
         DraftError::RemoteBindPortInvalid => fl!("ui-profile-error-remote-bind-port"),
         DraftError::RemoteLocalPortInvalid => fl!("ui-profile-error-remote-local-port"),
+    }
+}
+
+/// What became of a post-connect step, as the C# statuses name it.
+pub fn step_status(status: StepStatus) -> String {
+    match status {
+        StepStatus::Running => fl!("ui-post-connect-running"),
+        StepStatus::Completed => fl!("ui-post-connect-completed"),
+        StepStatus::Failed => fl!("ui-post-connect-failed"),
+        StepStatus::Skipped => fl!("ui-post-connect-skipped"),
+        StepStatus::Cancelled => fl!("ui-post-connect-cancelled"),
     }
 }
 

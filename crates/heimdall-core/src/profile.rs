@@ -21,6 +21,8 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+use crate::post_connect::PostConnect;
+
 /// Port an SSH server listens on unless a profile says otherwise.
 pub const DEFAULT_SSH_PORT: u16 = 22;
 
@@ -99,6 +101,9 @@ pub struct SshProfile {
     /// Ports this computer opens through the gateway while the session runs.
     #[serde(default, flatten)]
     pub forwards: Forwards,
+    /// Commands the shell types by itself once ready.
+    #[serde(default, skip_serializing_if = "PostConnect::is_empty")]
+    pub post_connect: PostConnect,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -169,6 +174,7 @@ impl SshGateway {
             gateway: None,
             vault_entry: None,
             forwards: Forwards::default(),
+            post_connect: PostConnect::default(),
         }
     }
 }

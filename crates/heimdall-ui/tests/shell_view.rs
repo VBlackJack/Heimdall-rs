@@ -75,6 +75,7 @@ fn profile(id: &str, group: Option<&str>) -> SshProfile {
         gateway: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
     }
 }
 
@@ -2040,4 +2041,76 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
     let _ = shell.update(Message::FontSizeApply);
     assert_eq!(shell.app().settings().terminal_font_size, 72);
     assert!(same(shell.font_size(tab), 28.0));
+}
+
+#[test]
+fn the_tab_shows_the_post_connect_count_and_a_click_on_it_stops_the_steps() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::PostConnect(heimdall_app::PostConnectProgress {
+            step: 1,
+            total: 2,
+            command: "sudo -i".to_owned(),
+            status: heimdall_app::StepStatus::Running,
+            stop: tokio_util::sync::CancellationToken::new(),
+        }),
+    }));
+    let mut ui = simulator(&shell);
+    ui.click("1/2").expect("the count");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::StopPostConnect(stopped)) if stopped == tab
+    )));
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::PostConnectDone,
+    }));
+    assert!(simulator(&shell).find("1/2").is_err(), "gone once over");
+}
+
+#[test]
+fn imported_post_connect_steps_are_shown_whole_and_enter_never_runs_them() {
+    use heimdall_core::post_connect::{PostConnect, PostConnectStep};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut imported = profile("d", None);
+    imported.post_connect = PostConnect {
+        steps: vec![
+            PostConnectStep::new("sudo -i"),
+            PostConnectStep::new("cd /srv"),
+        ],
+        approved: None,
+    };
+    // In the file before the application reads it, as an import leaves it.
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge([imported]);
+    store.save().expect("save");
+    let mut core = app(dir.path());
+    let _ = core.update(AppMessage::OpenProfile(ProfileId::new("d")));
+    let mut shell = Shell::with_app(core);
+    snapshot(&shell, "post-connect-question.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Run post-connect commands?",
+            "sudo -i\ncd /srv",
+            "Run and remember",
+            "Connect without them",
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.click("Connect without them").expect("no");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::SkipPostConnect)))
+        );
+    }
+    // A key pressed as the dialog appears is not agreement.
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert!(shell.app().dialog.is_some());
+    assert!(shell.app().tabs.is_empty());
 }

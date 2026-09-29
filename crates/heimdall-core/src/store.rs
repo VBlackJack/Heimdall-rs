@@ -24,6 +24,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::folder::{self, FolderError};
+use crate::post_connect::PostConnectStep;
 use crate::profile::{
     LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
     VncProfile, WinRmProfile,
@@ -285,8 +286,36 @@ impl ProfileStore {
     }
 
     /// Adds or replaces SSH profiles by identifier; the order of existing profiles is kept.
+    ///
+    /// A profile already in the store keeps the approval of its post-connect steps: an
+    /// approval names what it approved, so it still holds only if the incoming steps are the
+    /// same. An approval is never taken from the incoming profile.
     pub fn merge(&mut self, incoming: impl IntoIterator<Item = SshProfile>) -> MergeReport {
+        let incoming: Vec<SshProfile> = incoming
+            .into_iter()
+            .map(|mut profile| {
+                profile.post_connect.approved = self
+                    .ssh
+                    .iter()
+                    .find(|existing| existing.id == profile.id)
+                    .and_then(|existing| existing.post_connect.approved.clone());
+                profile
+            })
+            .collect();
         merge_into(&mut self.ssh, incoming, |profile| &profile.id)
+    }
+
+    /// Records that the user approved `steps` as the post-connect steps of the SSH profile
+    /// `id`; whether it was there. Steps changed since the user saw them are not approved by
+    /// this: the approval names the steps shown.
+    pub fn approve_post_connect(&mut self, id: &ProfileId, steps: &[PostConnectStep]) -> bool {
+        match self.ssh.iter_mut().find(|profile| profile.id == *id) {
+            Some(profile) => {
+                profile.post_connect.approved = Some(steps.to_vec());
+                true
+            }
+            None => false,
+        }
     }
 
     /// Adds or replaces RDP profiles by identifier; the order of existing profiles is kept.

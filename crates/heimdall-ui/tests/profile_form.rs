@@ -109,6 +109,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         gateway: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

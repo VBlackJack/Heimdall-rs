@@ -23,6 +23,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use heimdall_core::post_connect::PostConnectStep;
 use heimdall_core::profile::{Forwards, SshProfile, display_address};
 use heimdall_files::RemoteSession;
 use heimdall_sftp::{ClientConfig, SftpClient};
@@ -40,6 +41,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::ids::QuestionId;
+use crate::post_connect;
 use crate::sink::InputSink;
 
 /// Events buffered before the attempt waits for the UI to read them.
@@ -291,6 +293,13 @@ async fn run(
     {
         sink.close();
         return;
+    }
+    // The steps stop with the session: when this attempt returns, or when the tab asks.
+    let steps = request.profile.post_connect.to_run();
+    let stop = request.cancel.child_token();
+    let _stop_with_session = stop.clone().drop_guard();
+    if steps.iter().any(PostConnectStep::runs) {
+        tokio::spawn(post_connect::run(steps, sink.clone(), events.clone(), stop));
     }
     while let Some(event) = session_events.recv().await {
         let event = match event {

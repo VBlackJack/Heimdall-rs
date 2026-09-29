@@ -24,6 +24,7 @@ pub mod import;
 pub mod lockout;
 pub mod paths;
 pub mod pin;
+pub mod post_connect;
 pub mod profile;
 pub mod settings;
 pub mod store;

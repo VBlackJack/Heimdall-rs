@@ -704,6 +704,7 @@ impl ProfileDraft {
                 gateway: self.routed_gateway(),
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
+                post_connect: heimdall_core::post_connect::PostConnect::default(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -844,6 +845,7 @@ impl ProfileDraft {
             gateway: self.gateway.clone(),
             vault_entry: optional(self.vault_entry.trim()),
             forwards: self.saved_forwards()?,
+            post_connect: heimdall_core::post_connect::PostConnect::default(),
         })
     }
 }
@@ -1002,6 +1004,7 @@ mod tests {
             gateway: None,
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
+            post_connect: heimdall_core::post_connect::PostConnect::default(),
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);

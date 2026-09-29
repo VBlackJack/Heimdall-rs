@@ -40,11 +40,11 @@ use heimdall_app::{
     DesktopPane, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
-    PinMessage, PinMode, ProfileMenuMessage, Prompt, ProviderMessage, Purpose, QuestionId,
-    QuestionKind, Retry, SelectionMessage, SettingsMessage, SpecialKeys, SystemCredentials, Tab,
-    TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, UiError, VaultDialog,
-    VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem,
-    open_vault, server_text,
+    PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
+    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
+    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
+    TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
+    connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -2532,6 +2532,9 @@ impl Shell {
                     .style(container::rounded_box),
                 );
             }
+            if let Some(progress) = &tab.post_connect {
+                tabs = tabs.push(post_connect_badge(tab.id, progress));
+            }
             if tab.transcript.is_some() {
                 label = label.push(
                     tooltip(
@@ -4060,6 +4063,64 @@ fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message
     .into()
 }
 
+/// The C# question about an imported profile's post-connect commands, with the commands
+/// shown: Yes types them and remembers the choice, No opens the shell without them.
+fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Message> {
+    let count = confirmation.commands.len();
+    column![
+        text(fl!("ui-dialog-post-connect-title")).size(HEADING_SIZE),
+        text(fl!(
+            "ui-dialog-post-connect-body",
+            name = confirmation.name.as_str(),
+            count = count.to_string()
+        )),
+        container(
+            scrollable(
+                text(confirmation.commands.join("\n"))
+                    .font(iced::Font::MONOSPACE)
+                    .wrapping(text::Wrapping::Glyph)
+            )
+            .height(Length::Shrink)
+        )
+        .max_height(LOCAL_COMMAND_HEIGHT)
+        .padding(PADDING)
+        .style(container::rounded_box),
+        row![
+            button(text(fl!("ui-dialog-post-connect-skip")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::SkipPostConnect)),
+            button(text(fl!("ui-dialog-post-connect-run")))
+                .style(button::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The count of a tab's running post-connect steps, as the C# tab shows it; its tooltip says
+/// which step and what became of it, a click stops the rest.
+fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_, Message> {
+    let count = format!("{}/{}", progress.step, progress.total);
+    let status = texts::step_status(progress.status);
+    tooltip(
+        button(text(count.clone()).size(SMALL_SIZE))
+            .style(button::text)
+            .on_press(Message::App(AppMessage::StopPostConnect(tab))),
+        text(fl!(
+            "ui-post-connect-tooltip",
+            progress = count,
+            status = status,
+            command = progress.command.as_str()
+        ))
+        .size(SMALL_SIZE),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
 /// The work of a Files tab: listing, transferring, changing entries.
 fn files_task(effect: Effect) -> Task<Message> {
     match effect {
@@ -4526,6 +4587,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         )
         .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
+        Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),

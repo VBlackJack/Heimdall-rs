@@ -34,6 +34,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::post_connect::{DEFAULT_STEP_DELAY_MS, OnFailure, PostConnect, PostConnectStep};
 use crate::profile::{
     AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_RDP_PORT, DEFAULT_SSH_PORT,
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
@@ -228,6 +229,11 @@ struct LegacyServer {
     vault_entry_name: Option<String>,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
+    /// The post-connect sequence; a null entry is dropped, as the C# migration does.
+    #[serde(default)]
+    post_connect_steps: Vec<Option<LegacyStep>>,
+    /// The sequence before steps: one command per line.
+    post_connect_command: Option<String>,
     /// The gateway's port of the remote forward; 0 opens none.
     remote_bind_port: Option<i64>,
     /// The local port of the remote forward; 0 is the same port.
@@ -240,8 +246,6 @@ struct LegacyServer {
     local_shell_elevated: bool,
     /// A name or a number: the C# does not tie the enum to its names.
     elevation_mode: Option<serde_json::Value>,
-    #[serde(default)]
-    post_connect_steps: Vec<LegacyPostConnectStep>,
     /// Absent or zero or less is the default port of the transport.
     win_rm_port: Option<i64>,
     win_rm_username: Option<String>,
@@ -251,15 +255,6 @@ struct LegacyServer {
     win_rm_skip_certificate_check: bool,
     /// A name or a number, as the C# converter accepts both.
     win_rm_identity_mode: Option<serde_json::Value>,
-}
-
-#[derive(Debug, Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct LegacyPostConnectStep {
-    #[serde(default)]
-    enabled: bool,
-    input: Option<String>,
-    command_library_id: Option<String>,
 }
 
 fn default_connection_type() -> String {
@@ -653,7 +648,68 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         gateway,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
+        post_connect: PostConnect {
+            steps: post_connect_of(server),
+            approved: None,
+        },
     })
+}
+
+/// A post-connect step as the C# writes it.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct LegacyStep {
+    #[serde(default)]
+    input: String,
+    delay_ms: Option<i64>,
+    /// Absent is on, as a new C# step is.
+    enabled: Option<bool>,
+    /// A command of the C# Command Library, which Heimdall-rs has not.
+    command_library_id: Option<String>,
+    /// 0 or `Continue`, 1 or `Stop`: the C# writes the number.
+    on_failure: Option<serde_json::Value>,
+}
+
+/// The C# `PostConnectFailurePolicy` value meaning "stop".
+const STOP_POLICY: i64 = 1;
+
+/// The post-connect sequence as `PostConnectMigration` reads it: the steps, or else the old
+/// command field, one step per line. A step linked to the C# Command Library keeps only its
+/// own text, which is typed if there is any. Never approved: the user approves what arrives.
+fn post_connect_of(server: &LegacyServer) -> Vec<PostConnectStep> {
+    let steps: Vec<PostConnectStep> = server
+        .post_connect_steps
+        .iter()
+        .flatten()
+        .map(|step| PostConnectStep {
+            input: step.input.clone(),
+            delay_ms: step.delay_ms.map_or(DEFAULT_STEP_DELAY_MS, |delay| {
+                u32::try_from(delay.max(0)).unwrap_or(u32::MAX)
+            }),
+            enabled: step.enabled.unwrap_or(true),
+            on_failure: match &step.on_failure {
+                Some(serde_json::Value::Number(number)) if number.as_i64() == Some(STOP_POLICY) => {
+                    OnFailure::Stop
+                }
+                Some(serde_json::Value::String(name)) if name.eq_ignore_ascii_case("stop") => {
+                    OnFailure::Stop
+                }
+                _ => OnFailure::Continue,
+            },
+        })
+        .collect();
+    if !steps.is_empty() {
+        return steps;
+    }
+    server
+        .post_connect_command
+        .as_deref()
+        .unwrap_or_default()
+        .split('\n')
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(PostConnectStep::new)
+        .collect()
 }
 
 /// The ports a profile opens through its gateway; a port out of range skips it, as the C#
@@ -811,9 +867,9 @@ fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
     if is_elevated(server) {
         return Err(SkipReason::NeedsElevation);
     }
-    if server.post_connect_steps.iter().any(|step| {
-        step.enabled
-            && (!is_blank(step.input.as_deref()) || !is_blank(step.command_library_id.as_deref()))
+    if server.post_connect_steps.iter().flatten().any(|step| {
+        step.enabled.unwrap_or(true)
+            && (!step.input.trim().is_empty() || !is_blank(step.command_library_id.as_deref()))
     }) {
         return Err(SkipReason::NeedsPostConnectCommands);
     }
