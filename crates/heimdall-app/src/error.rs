@@ -289,9 +289,13 @@ fn error_text(error: &ConnectError) -> String {
 #[cfg(test)]
 mod tests {
     use std::io::{self, ErrorKind};
-    use std::net::{Ipv4Addr, TcpListener, TcpStream};
+    use std::net::{Ipv4Addr, TcpStream};
 
     use super::{NetworkFailure, UiError};
+
+    /// A port under 1024, which no test process can take: a port set free and asked again at
+    /// once was taken by a test running beside this one, and the connection went through.
+    const CLOSED_PORT: u16 = 1;
 
     #[test]
     fn a_failure_is_told_by_its_kind() {
@@ -330,11 +334,7 @@ mod tests {
 
     #[test]
     fn a_closed_port_is_refused_and_an_unknown_name_unreachable() {
-        let port = {
-            let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("listener");
-            listener.local_addr().expect("address").port()
-        };
-        let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, port)).expect_err("closed");
+        let refused = TcpStream::connect((Ipv4Addr::LOCALHOST, CLOSED_PORT)).expect_err("closed");
         assert!(matches!(
             UiError::network(&refused),
             UiError::Network {
