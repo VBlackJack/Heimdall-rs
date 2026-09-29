@@ -507,7 +507,11 @@ async fn explicit_ftps_refuses_a_certificate_it_does_not_trust() {
 
 #[tokio::test]
 async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_trusted_goes_through() {
-    use heimdall_files::ftps_trust::{PresentedSlot, connector, fingerprint};
+    use heimdall_files::ftps_trust::{PresentedSlot, UserTrust, connector, fingerprint};
+
+    let trusting = |fingerprints: Vec<[u8; 32]>| -> UserTrust {
+        std::sync::Arc::new(move |der| fingerprints.contains(&fingerprint(der)))
+    };
 
     let root = tempfile::tempdir().expect("root");
     let keys = tempfile::tempdir().expect("keys");
@@ -515,8 +519,11 @@ async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_truste
 
     // Self-signed: the system does not trust it, nor has the user.
     let presented = PresentedSlot::default();
-    let stopped =
-        FtpClient::connect(&ftps_target(port, connector(Vec::new(), presented.clone()))).await;
+    let stopped = FtpClient::connect(&ftps_target(
+        port,
+        connector(trusting(Vec::new()), presented.clone()),
+    ))
+    .await;
     assert!(
         matches!(stopped, Err(heimdall_files::FtpConnectError::Tls(_))),
         "{stopped:?}"
@@ -532,7 +539,7 @@ async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_truste
     let trusted = vec![fingerprint(&shown)];
     let client = FtpClient::connect(&ftps_target(
         port,
-        connector(trusted, PresentedSlot::default()),
+        connector(trusting(trusted), PresentedSlot::default()),
     ))
     .await
     .expect("trusted");
@@ -546,7 +553,7 @@ async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_truste
     let other = vec![fingerprint(b"another certificate")];
     let refused = FtpClient::connect(&ftps_target(
         port,
-        connector(other, PresentedSlot::default()),
+        connector(trusting(other), PresentedSlot::default()),
     ))
     .await;
     assert!(refused.is_err());
