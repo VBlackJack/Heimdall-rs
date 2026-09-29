@@ -93,6 +93,7 @@ fn outline(rows: &[TreeRow]) -> Vec<String> {
                 name,
                 depth,
                 open,
+                ..
             } => {
                 let name = if path == NO_FOLDER { "(none)" } else { name };
                 format!("{}{name}@{depth}", if *open { '+' } else { '-' })
@@ -420,4 +421,32 @@ fn a_profile_is_renamed_and_an_empty_name_leaves_it() {
     )));
     app.update(Message::ConfirmDialog);
     assert_eq!(name(&app), "Database", "unchanged");
+}
+
+#[test]
+fn a_folder_counts_the_profiles_it_holds_its_sub_folders_included() {
+    let dir = tempfile::tempdir().expect("dir");
+    let app = app(dir.path());
+    let counts = |rows: Vec<TreeRow>| -> Vec<(String, usize)> {
+        rows.into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Folder { path, count, .. } => Some((path, count)),
+                TreeRow::Profile { .. } => None,
+            })
+            .collect()
+    };
+    assert_eq!(
+        counts(app.tree_rows("")),
+        [
+            ("dev".to_owned(), 1),
+            ("Prod".to_owned(), 4),
+            ("Prod/Web".to_owned(), 2),
+            (NO_FOLDER.to_owned(), 2),
+        ]
+    );
+    assert_eq!(
+        counts(app.tree_rows("web")),
+        [("Prod".to_owned(), 2), ("Prod/Web".to_owned(), 2)],
+        "while searching, only what was found (api by its folder)"
+    );
 }

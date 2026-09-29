@@ -21,7 +21,7 @@ use std::path::Path;
 
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Effect, FolderMessage, Message, NetworkFailure,
-    Notice, ProfileCopy, SessionStatus, TabId, UiError,
+    Notice, ProfileCopy, SessionState, SessionStatus, TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -258,4 +258,69 @@ impl heimdall_app::InputSink for NullSink {
         Ok(())
     }
     fn close(&self) {}
+}
+
+#[test]
+fn a_profile_row_shows_the_most_alive_of_its_sessions() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let web = ProfileId::new("web");
+    assert_eq!(app.profile_state(&web), None, "no session open");
+
+    let (first, first_attempt) = open_ssh(&mut app);
+    assert_eq!(app.profile_state(&web), Some(SessionState::Connecting));
+    event(
+        &mut app,
+        first,
+        first_attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    assert_eq!(app.profile_state(&web), Some(SessionState::Failed));
+
+    let (second, second_attempt) = open_ssh(&mut app);
+    assert_eq!(
+        app.profile_state(&web),
+        Some(SessionState::Connecting),
+        "one on its way says more than one that failed"
+    );
+    let (third, third_attempt) = open_ssh(&mut app);
+    event(
+        &mut app,
+        second,
+        second_attempt,
+        ConnectionEvent::Connected {
+            input: std::sync::Arc::new(NullSink),
+        },
+    );
+    assert_eq!(
+        app.profile_state(&web),
+        Some(SessionState::Connected),
+        "an open one says more than one on its way"
+    );
+    assert_eq!(
+        app.profile_state(&ProfileId::new("dc")),
+        None,
+        "another profile's sessions are not its own"
+    );
+    event(
+        &mut app,
+        third,
+        third_attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+
+    event(
+        &mut app,
+        second,
+        second_attempt,
+        ConnectionEvent::Closed { exit_status: None },
+    );
+    assert_eq!(
+        app.profile_state(&web),
+        Some(SessionState::Failed),
+        "an ended session says nothing"
+    );
+    app.update(Message::RequestCloseTab(first));
+    app.update(Message::RequestCloseTab(third));
+    assert_eq!(app.profile_state(&web), None, "only an ended session left");
 }

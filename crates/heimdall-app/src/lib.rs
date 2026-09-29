@@ -50,8 +50,8 @@ pub use app::{
     NameAction, Notice, OpenedVault, Phase, PinDialog, PinFailure, PinMessage, PinMode,
     PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
-    RDP_MAX_ATTEMPTS, Retry, SelectionMessage, SessionStatus, SettingsMessage, SystemCredentials,
-    Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow, TrustedKey, TrustedKeys,
+    RDP_MAX_ATTEMPTS, Retry, SelectionMessage, SessionState, SessionStatus, SettingsMessage,
+    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeRow, TrustedKey, TrustedKeys,
     TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
     VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };

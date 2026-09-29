@@ -149,7 +149,7 @@ ui-home-import-button = Importar conexiones
 ui-home-shortcuts = Ctrl+N para añadir una sesión, Ctrl+K para conexión rápida
 ui-home-select = Selecciona una sesión o pulsa Ctrl+K para conectarte
 
-ui-tab-close-button = Cerrar
+ui-tab-close-button = ✕
 ui-tab-bell-badge = campana
 
 ui-connect-progress = Conectando con { $target }...

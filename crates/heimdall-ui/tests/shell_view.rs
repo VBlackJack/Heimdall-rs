@@ -2117,3 +2117,27 @@ fn imported_post_connect_steps_are_shown_whole_and_enter_never_runs_them() {
     assert!(shell.app().dialog.is_some());
     assert!(shell.app().tabs.is_empty());
 }
+
+#[test]
+fn the_close_button_inside_a_tab_closes_it_without_selecting_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.click("\u{2715}").expect("the tab's close button");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::RequestCloseTab(closed)) if *closed == tab
+        )),
+        "{messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::SelectTab(_)))),
+        "the press is the close button's alone: {messages:?}"
+    );
+}

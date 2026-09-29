@@ -42,10 +42,10 @@ use heimdall_app::{
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
-    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SettingsMessage,
-    SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
-    TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus,
-    connection_events, master_password_problem, open_vault, server_text,
+    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SessionState,
+    SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
+    TabProfile, TreeRow, TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -1875,10 +1875,12 @@ impl Shell {
                 name,
                 depth,
                 open,
-            } => tree_view::folder_row(path, name, depth, open),
+                count,
+            } => tree_view::folder_row(path, name, depth, open, count),
             TreeRow::Profile { profile, depth } => {
                 let selected = self.app.is_selected(&profile.id);
-                tree_view::indented(tree_view::owned_row(&profile, selected), depth)
+                let state = self.app.profile_state(&profile.id);
+                tree_view::indented(tree_view::owned_row(&profile, selected, state), depth)
             }
         }));
         // A right click beside the rows is the tree's own menu.
@@ -2518,9 +2520,11 @@ impl Shell {
             } else {
                 tab_label(tab.display_title())
             };
-            // The protocol before the name, as the C# tab's icon; in the button's own colour,
-            // which a secondary one would lose on both the active and the other tabs.
+            // The session's state and protocol before the name, as the C# tab's dot and icon;
+            // the protocol in the button's own colour, which a secondary one would lose on
+            // both the active and the other tabs.
             let mut label = row![
+                tree_view::state_dot(Some(SessionState::of(tab))),
                 text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
                 text(title),
             ]
@@ -2568,23 +2572,25 @@ impl Shell {
                     .style(container::rounded_box),
                 );
             }
+            // The close button inside the tab, at its right, as the C# tab's: it takes the
+            // press, which selecting the tab then does not see.
+            label = label.push(
+                button(text(fl!("ui-tab-close-button")).size(SMALL_SIZE))
+                    .style(button::text)
+                    .padding([0.0, 2.0])
+                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+            );
             tabs = tabs.push(
-                row![
-                    mouse_area(
-                        button(label)
-                            .style(if active {
-                                button::primary
-                            } else {
-                                button::secondary
-                            })
-                            .on_press(Message::App(AppMessage::SelectTab(tab.id)))
-                    )
-                    .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab.id))),
-                    button(text(fl!("ui-tab-close-button")).size(SMALL_SIZE))
-                        .style(button::text)
-                        .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-                ]
-                .align_y(iced::Alignment::Center),
+                mouse_area(
+                    button(label)
+                        .style(if active {
+                            button::primary
+                        } else {
+                            button::secondary
+                        })
+                        .on_press(Message::App(AppMessage::SelectTab(tab.id))),
+                )
+                .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab.id))),
             );
         }
         tabs.wrap().into()
@@ -2643,7 +2649,7 @@ impl Shell {
                         reason = reason.as_str()
                     )));
                 }
-                center(card(ended.push(self.session_actions(tab)))).into()
+                center(card(ended.push(self.session_actions(tab).wrap()))).into()
             }
             Phase::Closed { exit_status } => {
                 let status = exit_status.map_or_else(
@@ -2660,8 +2666,11 @@ impl Shell {
                 .into()
             }
             Phase::Failed(UiError::Cancelled) => center(card(
-                column![text(fl!("ui-session-cancelled")), self.session_actions(tab)]
-                    .spacing(SPACING),
+                column![
+                    text(fl!("ui-session-cancelled")),
+                    self.session_actions(tab).wrap()
+                ]
+                .spacing(SPACING),
             ))
             .into(),
             Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
@@ -2696,7 +2705,8 @@ impl Shell {
             column![
                 text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
                 text(texts::error(error)),
-                actions,
+                // Buttons go to the next line whole when a translation is long, never cut.
+                actions.wrap().vertical_spacing(SPACING),
             ]
             .spacing(SPACING),
         ))
@@ -2710,13 +2720,13 @@ impl Shell {
         let mut actions = row![].spacing(SPACING).align_y(iced::Alignment::Center);
         if self.app.can_reconnect(tab) {
             actions = actions.push(
-                button(text(fl!("ui-session-reconnect-button")))
+                button(action_label(fl!("ui-session-reconnect-button")))
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
             );
         }
         if matches!(&tab.phase, Phase::Failed(error) if *error != UiError::Cancelled) {
             actions = actions.push(
-                button(text(fl!("ui-session-copy-error-button")))
+                button(action_label(fl!("ui-session-copy-error-button")))
                     .style(button::secondary)
                     .on_press(Message::CopyError(tab.id)),
             );
@@ -2727,13 +2737,13 @@ impl Shell {
             .filter(|profile| self.app.can_edit(&profile.id))
         {
             actions = actions.push(
-                button(text(fl!("ui-session-edit-profile-button")))
+                button(action_label(fl!("ui-session-edit-profile-button")))
                     .style(button::secondary)
                     .on_press(Message::App(AppMessage::EditProfile(profile.id))),
             );
         }
         actions.push(
-            button(text(fl!("ui-session-close-button")))
+            button(action_label(fl!("ui-session-close-button")))
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
         )
@@ -3044,6 +3054,11 @@ fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
         .max_width(CARD_WIDTH)
         .style(container::bordered_box)
         .into()
+}
+
+/// A session action's label, kept on one line: a card moves the whole button instead.
+fn action_label<'a>(label: String) -> iced::widget::Text<'a> {
+    text(label).wrapping(text::Wrapping::None)
 }
 
 /// The report of an import: counts, and the profiles left out with their reason.

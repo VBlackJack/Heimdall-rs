@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
     ConnectAs, FilesMessage, FolderMessage, GatewayBadge, Message as AppMessage, NO_FOLDER,
-    ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, TabGroup,
-    TabId, TabMenuMessage,
+    ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, SessionState,
+    TabGroup, TabId, TabMenuMessage,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -99,6 +99,42 @@ pub enum TreeMenu {
     },
 }
 
+/// Width of the protocol column: every name starts at the same place, as beside the C#
+/// tree's icons.
+const PROTOCOL_WIDTH: f32 = 38.0;
+
+/// Size of a session's state dot, as the C# tree's and tabs'.
+const DOT_SIZE: f32 = 7.0;
+
+/// A session's state as the C# Heimdall's dot shows it: green connected, amber on its way,
+/// red failed, grey when none is open.
+#[must_use]
+pub fn state_dot<'a>(state: Option<SessionState>) -> Element<'a, Message> {
+    container(iced::widget::space())
+        .width(DOT_SIZE)
+        .height(DOT_SIZE)
+        .style(move |theme: &Theme| {
+            let palette = theme.extended_palette();
+            let colour = match state {
+                Some(SessionState::Connected) => palette.success.base.color,
+                Some(SessionState::Connecting | SessionState::Reconnecting) => {
+                    palette.warning.base.color
+                }
+                Some(SessionState::Failed) => palette.danger.base.color,
+                Some(SessionState::Ended) | None => palette.secondary.base.color,
+            };
+            container::Style {
+                background: Some(colour.into()),
+                border: iced::Border {
+                    radius: (DOT_SIZE / 2.0).into(),
+                    ..iced::Border::default()
+                },
+                ..container::Style::default()
+            }
+        })
+        .into()
+}
+
 /// How far a row moves right for each folder it is in.
 const INDENT: f32 = 14.0;
 
@@ -119,11 +155,13 @@ pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message>
 }
 
 /// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
+/// The profiles it holds counted at its right, as the C# tree's.
 pub fn folder_row<'a>(
     path: String,
     name: String,
     depth: usize,
     open: bool,
+    count: usize,
 ) -> Element<'a, Message> {
     let label = if path == NO_FOLDER {
         fl!("ui-sidebar-group-none")
@@ -135,6 +173,10 @@ pub fn folder_row<'a>(
         row![
             text(marker).size(PROTOCOL_SIZE).style(text::secondary),
             text(label).size(FOLDER_SIZE),
+            iced::widget::space::horizontal(),
+            text(count.to_string())
+                .size(PROTOCOL_SIZE)
+                .style(text::secondary),
         ]
         .spacing(6.0)
         .align_y(iced::Alignment::Center),
@@ -151,13 +193,22 @@ pub fn folder_row<'a>(
     )
 }
 
-/// One profile: protocol and name; the host, account and protocol in its tooltip.
-pub fn owned_row(profile: &ProfileSummary, selected: bool) -> Element<'static, Message> {
+/// One profile: protocol, the state of its sessions and name, as the C# tree's row; the
+/// host, account and protocol in its tooltip.
+pub fn owned_row(
+    profile: &ProfileSummary,
+    selected: bool,
+    state: Option<SessionState>,
+) -> Element<'static, Message> {
     let id = profile.id.clone();
     let mut label = row![
-        text(profile.kind.label())
-            .size(PROTOCOL_SIZE)
-            .style(text::secondary),
+        container(
+            text(profile.kind.label())
+                .size(PROTOCOL_SIZE)
+                .style(text::secondary)
+        )
+        .width(PROTOCOL_WIDTH),
+        state_dot(state),
         text(profile.name.clone()).wrapping(text::Wrapping::Glyph),
     ]
     .spacing(6.0)
