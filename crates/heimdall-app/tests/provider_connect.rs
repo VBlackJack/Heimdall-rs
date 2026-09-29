@@ -43,6 +43,7 @@ fn app(dir: &Path) -> App {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -439,6 +440,7 @@ fn a_blank_vault_entry_name_written_in_the_file_is_the_name() {
         key_path: None,
         gateway: None,
         vault_entry: Some("   ".to_owned()),
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

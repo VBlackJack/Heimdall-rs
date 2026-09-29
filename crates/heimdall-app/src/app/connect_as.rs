@@ -147,6 +147,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 key_path: None,
                 gateway: None,
                 vault_entry: None,
+                forwards: heimdall_core::profile::Forwards::default(),
             }),
             purpose,
         )
@@ -169,6 +170,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 redirect_drives: false,
                 options: heimdall_core::profile::RdpOptions::default(),
                 vault_entry: None,
+                forwards: heimdall_core::profile::Forwards::default(),
             }),
             Purpose::Rdp,
         ),

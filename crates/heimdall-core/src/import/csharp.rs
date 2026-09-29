@@ -37,8 +37,8 @@ use thiserror::Error;
 use crate::profile::{
     AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_RDP_PORT, DEFAULT_SSH_PORT,
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
-    LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile, Resolution,
-    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    Forwards, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile,
+    Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -226,6 +226,8 @@ struct LegacyServer {
     vnc_view_only: bool,
     /// The entry in the external password manager, for the provider's `{Title}`.
     vault_entry_name: Option<String>,
+    /// The SOCKS5 proxy's local port; 0 opens none.
+    socks_proxy_port: Option<i64>,
     local_shell_executable: Option<String>,
     local_shell_arguments: Option<String>,
     local_shell_working_directory: Option<String>,
@@ -646,7 +648,21 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         key_path: non_empty(server.ssh_key_path.as_ref()).map(PathBuf::from),
         gateway,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
+        forwards: forwards_of(server)?,
     })
+}
+
+/// The ports a profile opens through its gateway; a port out of range skips it, as the C#
+/// import refuses it.
+fn forwards_of(server: &LegacyServer) -> Result<Forwards, SkipReason> {
+    let socks_port = match server.socks_proxy_port {
+        None => None,
+        Some(value) => match u16::try_from(value) {
+            Ok(port) => Some(port).filter(|port| *port != 0),
+            Err(_) => return Err(SkipReason::InvalidPort(value)),
+        },
+    };
+    Ok(Forwards { socks_port })
 }
 
 /// An RDP profile, through its SSH gateway when it goes through one among `gateways`.
@@ -715,6 +731,7 @@ fn convert_rdp(
             dynamic_resolution: server.rdp_dynamic_resolution.unwrap_or(true),
         },
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
+        forwards: forwards_of(server)?,
     })
 }
 

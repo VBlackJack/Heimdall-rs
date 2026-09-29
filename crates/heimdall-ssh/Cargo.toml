@@ -15,6 +15,7 @@ publish.workspace = true
 [dependencies]
 data-encoding.workspace = true
 heimdall-core.workspace = true
+log.workspace = true
 russh.workspace = true
 thiserror.workspace = true
 tokio.workspace = true

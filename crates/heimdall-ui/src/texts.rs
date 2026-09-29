@@ -121,6 +121,13 @@ pub fn error(error: &UiError) -> String {
             "ui-error-jump-refused",
             target = display_address(&server_text(host), *port)
         ),
+        UiError::ProxyPort { port, detail } => {
+            fl!(
+                "ui-error-proxy-port",
+                port = port.to_string(),
+                detail = detail.as_str()
+            )
+        }
         UiError::SubsystemRefused { name } => {
             fl!("ui-error-subsystem-refused", name = server_text(name))
         }
@@ -196,6 +203,7 @@ pub fn draft_error(error: DraftError) -> String {
             max = FIXED_HEIGHT_MAX
         ),
         DraftError::GatewayLoop => fl!("ui-gateway-error-loop"),
+        DraftError::SocksPortInvalid => fl!("ui-profile-error-socks-port"),
     }
 }
 

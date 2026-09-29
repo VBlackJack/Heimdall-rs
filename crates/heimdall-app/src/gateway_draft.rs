@@ -106,7 +106,8 @@ impl GatewayDraft {
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
-            | ProfileField::VaultEntry => "",
+            | ProfileField::VaultEntry
+            | ProfileField::SocksPort => "",
         }
     }
 
@@ -122,7 +123,8 @@ impl GatewayDraft {
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
-            | ProfileField::VaultEntry => {}
+            | ProfileField::VaultEntry
+            | ProfileField::SocksPort => {}
         }
     }
 

@@ -109,6 +109,12 @@ const BODY_SIZE: f32 = 16.0;
 /// Width of the port column beside the server field, as in the C# dialog.
 const PORT_FIELD_WIDTH: f32 = 150.0;
 
+/// Where the SOCKS proxy listens: this computer's loopback address, as in the C# Heimdall.
+const LOOPBACK: &str = "127.0.0.1";
+
+/// The SOCKS port that opens none, the placeholder of its field.
+const SOCKS_OFF: u16 = 0;
+
 /// Tallest the list of skipped profiles grows before it scrolls, in logical pixels.
 const SKIPPED_LIST_HEIGHT: f32 = 200.0;
 
@@ -3226,6 +3232,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-field-vault-entry"),
             fl!("ui-profile-vault-entry-placeholder"),
         ),
+        ProfileField::SocksPort => (fl!("ui-profile-socks-port"), SOCKS_OFF.to_string()),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -3291,7 +3298,10 @@ fn gateway_choice(gateway: &SshGateway) -> GatewayChoice {
 
 /// A session's gateway routing, as the C# Network tab: connect directly, or through a
 /// gateway chosen, added or edited here.
-fn network_section<'a>(draft: &ProfileDraft, gateways: &'a [SshGateway]) -> Element<'a, Message> {
+fn network_section<'a>(
+    draft: &'a ProfileDraft,
+    gateways: &'a [SshGateway],
+) -> Element<'a, Message> {
     let direct = draft.is_on(ProfileToggle::DirectConnection);
     let mut section_column = column![
         section(
@@ -3347,6 +3357,20 @@ fn network_section<'a>(draft: &ProfileDraft, gateways: &'a [SshGateway]) -> Elem
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
+    }
+    // As the C# SOCKS5 card, shown only through a gateway.
+    if draft.shows(ProfileField::SocksPort) {
+        let listening = match draft.socks_port.trim().parse::<u16>() {
+            Ok(port) if port != 0 => display_address(LOOPBACK, port),
+            _ => fl!("ui-profile-socks-off"),
+        };
+        section_column = section_column
+            .push(section(
+                fl!("ui-profile-socks-title"),
+                Some(fl!("ui-profile-socks-desc")),
+            ))
+            .push(container(form_field(draft, ProfileField::SocksPort)).width(PORT_FIELD_WIDTH))
+            .push(text(listening).size(SMALL_SIZE));
     }
     section_column.into()
 }
@@ -4554,6 +4578,7 @@ mod tests {
                 redirect_drives: false,
                 options,
                 vault_entry: None,
+                forwards: heimdall_core::profile::Forwards::default(),
             })
         };
         let fixed = RdpOptions {

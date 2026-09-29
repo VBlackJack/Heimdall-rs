@@ -1011,6 +1011,7 @@ mod tests {
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
             vault_entry: None,
+            forwards: heimdall_core::profile::Forwards::default(),
         })
     }
 

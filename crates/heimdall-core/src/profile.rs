@@ -96,6 +96,19 @@ pub struct SshProfile {
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_entry: Option<String>,
+    /// Ports this computer opens through the gateway while the session runs.
+    #[serde(default, flatten)]
+    pub forwards: Forwards,
+}
+
+/// Ports a session reached through a gateway opens on this computer's loopback address, as
+/// the C# Heimdall's gateway profiles do. Each is used only through a gateway.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Forwards {
+    /// A SOCKS5 proxy whose connections leave from the gateway (`ssh -D`); `None` for none,
+    /// as the C# `SocksProxyPort` 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socks_port: Option<u16>,
 }
 
 /// An SSH gateway: a server that other connections go through, itself possibly reached
@@ -138,6 +151,7 @@ impl SshGateway {
             key_path: self.key_path.clone(),
             gateway: None,
             vault_entry: None,
+            forwards: Forwards::default(),
         }
     }
 }
@@ -184,6 +198,9 @@ pub struct RdpProfile {
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vault_entry: Option<String>,
+    /// Ports this computer opens through the gateway while the session runs.
+    #[serde(default, flatten)]
+    pub forwards: Forwards,
     /// How the session looks, sounds and which session it opens.
     #[serde(flatten)]
     pub options: RdpOptions,

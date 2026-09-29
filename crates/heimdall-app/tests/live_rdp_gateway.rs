@@ -20,16 +20,19 @@
 //! `HEIMDALL_LIVE_RDP_USER` and `HEIMDALL_LIVE_RDP_PASSWORD` hold the account of its xrdp
 //! server. The gateway on `127.0.0.1:2222` opens a tunnel to `heimdall-rdp:3389`, a name
 //! only it resolves; the gateway's SSH key and the server's certificate are both accepted
-//! as the user would, and the desktop must come up.
+//! as the user would, and the desktop must come up, with the profile's SOCKS proxy.
 
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use heimdall_app::rdp_driver::{DEFAULT_DESKTOP, RdpRequest, rdp_events};
 use heimdall_app::{Answer, AnswerRegistry, ConnectionEvent};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
+use heimdall_core::profile::{Forwards, ProfileId, RdpProfile, SshProfile};
 use heimdall_rdp::Fingerprint;
 use heimdall_ssh::{AgentSource, ConnectOptions, KnownHosts, Secret};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
@@ -42,7 +45,13 @@ const CLIPBOARD_SETTLE: Duration = Duration::from_secs(3);
 /// Attempts: the gateway's key, the server's certificate, then the desktop.
 const ATTEMPTS: usize = 3;
 
-fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -> RdpRequest {
+fn request(
+    keys: &Path,
+    dir: &Path,
+    user: &str,
+    accepted: Option<Fingerprint>,
+    socks_port: u16,
+) -> RdpRequest {
     let mut ssh = ConnectOptions::new(dir.join("known_hosts"));
     ssh.agent = AgentSource::Disabled;
     RdpRequest {
@@ -61,6 +70,9 @@ fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
             vault_entry: None,
+            forwards: Forwards {
+                socks_port: Some(socks_port),
+            },
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,
@@ -76,10 +88,42 @@ fn request(keys: &Path, dir: &Path, user: &str, accepted: Option<Fingerprint>) -
             key_path: Some(keys.join("gateway")),
             gateway: None,
             vault_entry: None,
+            forwards: heimdall_core::profile::Forwards::default(),
         }],
         ssh,
         cancel: CancellationToken::new(),
     }
+}
+
+/// A port nothing listens on now.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .expect("bound")
+        .local_addr()
+        .expect("address")
+        .port()
+}
+
+/// The first bytes `host:port` sends, reached through the SOCKS5 proxy on `proxy`.
+async fn through_socks(proxy: u16, host: &str, port: u16) -> Vec<u8> {
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy))
+        .await
+        .expect("the proxy listens");
+    let name = u8::try_from(host.len()).expect("short name");
+    let mut hello = vec![5, 1, 0, 5, 1, 0, 3, name];
+    hello.extend_from_slice(host.as_bytes());
+    hello.extend_from_slice(&port.to_be_bytes());
+    stream.write_all(&hello).await.expect("asked");
+    let mut answer = [0; 12];
+    stream.read_exact(&mut answer).await.expect("answered");
+    assert_eq!(answer[..4], [5, 0, 5, 0], "{answer:?}");
+    let mut first = vec![0; 64];
+    let read = tokio::time::timeout(STEP, stream.read(&mut first))
+        .await
+        .expect("in time")
+        .expect("read");
+    first.truncate(read);
+    first
 }
 
 #[tokio::test]
@@ -93,10 +137,11 @@ async fn a_desktop_comes_up_through_the_lab_gateway() {
         return;
     };
     let dir = tempfile::tempdir().expect("dir");
+    let socks_port = free_port();
     let mut accepted = None;
     for _ in 0..ATTEMPTS {
         let registry = AnswerRegistry::default();
-        let request = request(&keys, dir.path(), &user, accepted);
+        let request = request(&keys, dir.path(), &user, accepted, socks_port);
         let cancel = request.cancel.clone();
         let mut events = rdp_events(request, registry.clone());
         loop {
@@ -150,6 +195,14 @@ async fn a_desktop_comes_up_through_the_lab_gateway() {
                             },
                         }
                     }
+                    // The profile's SOCKS proxy runs with the desktop: linux-a, which only the
+                    // gateway reaches, answers through it.
+                    let banner = through_socks(socks_port, "linux-a", 22).await;
+                    assert!(
+                        banner.starts_with(b"SSH-2.0-"),
+                        "{}",
+                        String::from_utf8_lossy(&banner)
+                    );
                     cancel.cancel();
                     return;
                 }

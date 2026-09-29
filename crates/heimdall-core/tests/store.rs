@@ -19,8 +19,8 @@ use std::path::PathBuf;
 
 use heimdall_core::paths::PROFILES_FILE_NAME;
 use heimdall_core::profile::{
-    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshGateway,
-    SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    Forwards, LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile,
+    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 use heimdall_core::store::{
     MergeReport, PROFILE_FILE_VERSION, ProfileStore, RouteError, StoreError,
@@ -37,6 +37,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         key_path: Some(PathBuf::from("/keys/admin")),
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 
@@ -149,6 +150,7 @@ fn rdp(id: &str) -> RdpProfile {
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 
@@ -655,4 +657,33 @@ fn a_renamed_profile_keeps_its_old_name_as_its_vault_entry_as_the_csharp_rename_
     assert_eq!(fresh.ssh_profiles()[0].vault_entry, None, "not renamed");
     assert!(!fresh.rename_profile(&ProfileId::new("b"), "  "));
     assert!(!fresh.rename_profile(&ProfileId::new("none"), "X"));
+}
+
+#[test]
+fn a_socks_port_is_saved_only_when_set() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([profile("none", "h1")]);
+    store.save().expect("saves");
+    assert!(
+        !fs::read_to_string(&path)
+            .expect("read")
+            .contains("socks_port"),
+        "no proxy, nothing written"
+    );
+
+    let mut proxied = profile("proxied", "h2");
+    proxied.forwards = Forwards {
+        socks_port: Some(1080),
+    };
+    store.merge([proxied]);
+    store.save().expect("saves");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    let ports: Vec<_> = reopened
+        .ssh_profiles()
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.forwards.socks_port))
+        .collect();
+    assert_eq!(ports, [("none", None), ("proxied", Some(1080))]);
 }

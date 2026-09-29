@@ -23,8 +23,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use heimdall_core::profile::{
     AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN,
-    FIXED_WIDTH_MAX, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile, TelnetProfile,
-    VncProfile, WinRmProfile, fixed_desktop,
+    FIXED_WIDTH_MAX, Forwards, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile,
+    TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// Port when the field is left empty.
@@ -56,11 +56,13 @@ pub enum ProfileField {
     FixedHeight,
     /// The profile's entry in the external password manager.
     VaultEntry,
+    /// The local port of the SOCKS proxy opened through the gateway.
+    SocksPort,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 10] = [
+    pub const ALL: [Self; 11] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -71,6 +73,7 @@ impl ProfileField {
         Self::FixedWidth,
         Self::FixedHeight,
         Self::VaultEntry,
+        Self::SocksPort,
     ];
 }
 
@@ -108,6 +111,7 @@ impl DraftProtocol {
             ProfileField::KeyPath => self == Self::Ssh,
             // The protocols whose password the external credential provider gives.
             ProfileField::VaultEntry => self.saves_password(),
+            ProfileField::SocksPort => self.routes_through_gateway(),
         }
     }
 
@@ -254,6 +258,8 @@ pub struct ProfileDraft {
     pub fixed_height: String,
     /// The entry in the external password manager; empty uses the name.
     pub vault_entry: String,
+    /// The SOCKS proxy's local port, as typed; empty or 0 opens none, as the C# 0.
+    pub socks_port: String,
 }
 
 /// Why a form cannot be saved yet.
@@ -287,6 +293,8 @@ pub enum DraftError {
     FixedHeightInvalid,
     /// A gateway's parents lead back to it.
     GatewayLoop,
+    /// The SOCKS port is not a number from 0 to 65535.
+    SocksPortInvalid,
 }
 
 impl DraftError {
@@ -305,6 +313,7 @@ impl DraftError {
             Self::DomainInvalid => ProfileField::Domain,
             Self::FixedWidthInvalid => ProfileField::FixedWidth,
             Self::FixedHeightInvalid => ProfileField::FixedHeight,
+            Self::SocksPortInvalid => ProfileField::SocksPort,
         }
     }
 }
@@ -327,6 +336,7 @@ impl ProfileDraft {
                 .unwrap_or_default(),
             gateway: profile.gateway.clone(),
             vault_entry: profile.vault_entry.clone().unwrap_or_default(),
+            socks_port: socks_text(profile.forwards),
             protocol: DraftProtocol::Ssh,
             protocol_chosen: true,
             ..Self::default()
@@ -359,6 +369,7 @@ impl ProfileDraft {
             domain: profile.domain.clone().unwrap_or_default(),
             gateway: profile.gateway.clone(),
             vault_entry: profile.vault_entry.clone().unwrap_or_default(),
+            socks_port: socks_text(profile.forwards),
             protocol: DraftProtocol::Rdp,
             protocol_chosen: true,
             toggles,
@@ -528,7 +539,7 @@ impl ProfileDraft {
     }
 
     /// Whether `field` is shown now: the `WinRM` account only for a stored credential, an RDP
-    /// fixed size only in the fixed mode.
+    /// fixed size only in the fixed mode, the SOCKS port only through a gateway.
     #[must_use]
     pub fn shows(&self, field: ProfileField) -> bool {
         let fixed_size = matches!(field, ProfileField::FixedWidth | ProfileField::FixedHeight);
@@ -537,6 +548,29 @@ impl ProfileDraft {
                 && field == ProfileField::Username
                 && !self.is_on(ProfileToggle::StoredCredential))
             && !(fixed_size && self.rdp_options.resolution != Resolution::Fixed)
+            && !(field == ProfileField::SocksPort && self.routed_gateway().is_none())
+    }
+
+    /// The ports saved: the SOCKS port typed. Checked only where it is shown; hidden, with no
+    /// gateway, a value that does not read is dropped, as it could not be used.
+    ///
+    /// # Errors
+    ///
+    /// A shown SOCKS port that is not a number from 0 to 65535.
+    fn saved_forwards(&self) -> Result<Forwards, DraftError> {
+        let socks_port = match self.socks_port.trim() {
+            "" => None,
+            typed => match typed.parse::<u16>() {
+                Ok(port) => Some(port),
+                Err(_) if self.shows(ProfileField::SocksPort) => {
+                    return Err(DraftError::SocksPortInvalid);
+                }
+                Err(_) => None,
+            },
+        };
+        Ok(Forwards {
+            socks_port: socks_port.filter(|port| *port != 0),
+        })
     }
 
     /// Whether `toggle` is shown now: skipping certificate checks only over HTTPS.
@@ -633,6 +667,7 @@ impl ProfileDraft {
                 key_path: optional(key_path).map(PathBuf::from),
                 gateway: self.routed_gateway(),
                 vault_entry: optional(vault_entry),
+                forwards: self.saved_forwards()?,
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -648,6 +683,7 @@ impl ProfileDraft {
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
                 options: self.saved_rdp_options()?,
                 vault_entry: optional(vault_entry),
+                forwards: self.saved_forwards()?,
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -701,6 +737,7 @@ impl ProfileDraft {
             ProfileField::FixedWidth => &self.fixed_width,
             ProfileField::FixedHeight => &self.fixed_height,
             ProfileField::VaultEntry => &self.vault_entry,
+            ProfileField::SocksPort => &self.socks_port,
         }
     }
 
@@ -717,6 +754,7 @@ impl ProfileDraft {
             ProfileField::FixedWidth => &mut self.fixed_width,
             ProfileField::FixedHeight => &mut self.fixed_height,
             ProfileField::VaultEntry => &mut self.vault_entry,
+            ProfileField::SocksPort => &mut self.socks_port,
         } = value;
     }
 
@@ -765,8 +803,17 @@ impl ProfileDraft {
             key_path: optional(key_path).map(PathBuf::from),
             gateway: self.gateway.clone(),
             vault_entry: optional(self.vault_entry.trim()),
+            forwards: self.saved_forwards()?,
         })
     }
+}
+
+/// The SOCKS port as the form shows it: empty for none.
+fn socks_text(forwards: Forwards) -> String {
+    forwards
+        .socks_port
+        .map(|port| port.to_string())
+        .unwrap_or_default()
 }
 
 /// The address as saved: trimmed, and an IPv6 address without the brackets it may have
@@ -917,6 +964,7 @@ mod tests {
             key_path: None,
             gateway: None,
             vault_entry: None,
+            forwards: heimdall_core::profile::Forwards::default(),
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -958,6 +1006,57 @@ mod tests {
     }
 
     #[test]
+    fn a_socks_port_is_shown_and_checked_only_through_a_gateway() {
+        let socks = |draft: &ProfileDraft, typed: &str| {
+            let mut draft = draft.clone();
+            draft.set(ProfileField::SocksPort, typed.to_owned());
+            draft.to_saved(id()).map(|saved| match saved {
+                DraftProfile::Ssh(profile) => profile.forwards.socks_port,
+                DraftProfile::Rdp(profile) => profile.forwards.socks_port,
+                other => panic!("{other:?}"),
+            })
+        };
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Ssh);
+        draft.set(ProfileField::Name, "web".to_owned());
+        draft.set(ProfileField::Host, "web.lab".to_owned());
+        assert!(!draft.shows(ProfileField::SocksPort), "no gateway");
+        // Hidden, a port that reads is kept, as the C# keeps it; one that does not is dropped.
+        assert_eq!(socks(&draft, "1080"), Ok(Some(1080)));
+        assert_eq!(socks(&draft, "proxy"), Ok(None));
+
+        draft.gateway = Some(ProfileId::new("gw"));
+        assert!(draft.shows(ProfileField::SocksPort));
+        assert_eq!(socks(&draft, " 1080 "), Ok(Some(1080)));
+        assert_eq!(socks(&draft, ""), Ok(None));
+        assert_eq!(socks(&draft, "0"), Ok(None), "0 opens none, as in C#");
+        assert_eq!(socks(&draft, "65535"), Ok(Some(65535)));
+        for typed in ["65536", "-1", "proxy"] {
+            assert_eq!(
+                socks(&draft, typed),
+                Err(DraftError::SocksPortInvalid),
+                "{typed}"
+            );
+        }
+        assert_eq!(
+            DraftError::SocksPortInvalid.field(),
+            ProfileField::SocksPort
+        );
+
+        draft.toggle(ProfileToggle::DirectConnection, true);
+        assert!(!draft.shows(ProfileField::SocksPort), "connecting directly");
+
+        let mut rdp = ProfileDraft::new_for(DraftProtocol::Rdp);
+        rdp.gateway = Some(ProfileId::new("gw"));
+        assert!(rdp.shows(ProfileField::SocksPort));
+        let mut telnet = ProfileDraft::new_for(DraftProtocol::Telnet);
+        telnet.gateway = Some(ProfileId::new("gw"));
+        assert!(
+            !telnet.shows(ProfileField::SocksPort),
+            "never through a gateway"
+        );
+    }
+
+    #[test]
     fn every_protocol_reads_back_from_its_form() {
         let rdp = RdpProfile {
             id: id(),
@@ -973,6 +1072,9 @@ mod tests {
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
             vault_entry: None,
+            forwards: Forwards {
+                socks_port: Some(1080),
+            },
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),

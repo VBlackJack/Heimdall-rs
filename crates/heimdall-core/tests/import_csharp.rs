@@ -915,3 +915,36 @@ fn the_vault_entry_name_is_kept_for_the_credential_provider() {
     assert_eq!(report.rdp[0].vault_entry.as_deref(), Some("Windows/DC"));
     assert_eq!(report.vnc[0].vault_entry.as_deref(), Some("Kiosk"));
 }
+
+#[test]
+fn the_socks_proxy_port_is_imported_and_zero_opens_none() {
+    let json = servers(
+        r#"{"id": "s", "remoteServer": "web.lab", "connectionType": "SSH", "socksProxyPort": 1080},
+           {"id": "r", "remoteServer": "dc.lab", "connectionType": "RDP", "socksProxyPort": 1081},
+           {"id": "off", "remoteServer": "off.lab", "connectionType": "SSH", "socksProxyPort": 0},
+           {"id": "absent", "remoteServer": "absent.lab", "connectionType": "SSH"},
+           {"id": "big", "remoteServer": "big.lab", "connectionType": "SSH", "socksProxyPort": 70000},
+           {"id": "neg", "remoteServer": "neg.lab", "connectionType": "RDP", "socksProxyPort": -1}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let ssh: Vec<_> = report
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.forwards.socks_port))
+        .collect();
+    assert_eq!(ssh, [("s", Some(1080)), ("off", None), ("absent", None)]);
+    assert_eq!(report.rdp.len(), 1);
+    assert_eq!(report.rdp[0].forwards.socks_port, Some(1081));
+    let skipped: Vec<_> = report
+        .skipped
+        .into_iter()
+        .map(|skipped| (skipped.id, skipped.reason))
+        .collect();
+    assert_eq!(
+        skipped,
+        [
+            ("big".to_owned(), SkipReason::InvalidPort(70000)),
+            ("neg".to_owned(), SkipReason::InvalidPort(-1)),
+        ]
+    );
+}

@@ -50,6 +50,7 @@ fn app(dir: &Path, gateway: Option<&str>, gateways: Vec<SshGateway>) -> App {
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.merge_gateways(gateways);
     store.save().expect("save");

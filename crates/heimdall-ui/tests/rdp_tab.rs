@@ -62,6 +62,7 @@ fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
         redirect_drives: false,
         options,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     App::new(AppConfig {

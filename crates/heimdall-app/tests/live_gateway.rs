@@ -15,19 +15,24 @@
  */
 
 //! The connection driver through a real OpenSSH gateway, opt-in: a shell and a Files session
-//! on a server that only the gateway can reach.
+//! on a server that only the gateway can reach, and the SOCKS proxy a profile opens there.
 //!
 //! Runs when `HEIMDALL_LIVE_JUMP_KEYS` names the key folder of the Heimdall-TestEnv lab: its
 //! gateway listens on `127.0.0.1:2222` for the `gateway` account and reaches `linux-a:22`,
 //! where `admin` logs in with its own key. Host keys are learnt as each first contact reports
 //! them, the way the interface asks the user.
 
+use std::net::Ipv4Addr;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use heimdall_app::{AnswerRegistry, ConnectRequest, ConnectionEvent, Purpose, connection_events};
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_app::{
+    AnswerRegistry, ConnectRequest, ConnectionEvent, Purpose, UiError, connection_events,
+};
+use heimdall_core::profile::{Forwards, ProfileId, SshProfile};
 use heimdall_ssh::{AgentSource, ConnectOptions, KnownHosts};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::TcpStream;
 use tokio_stream::StreamExt;
 use tokio_util::sync::CancellationToken;
 
@@ -47,6 +52,7 @@ fn hop(host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile {
         key_path: Some(key),
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 
@@ -133,4 +139,114 @@ async fn a_shell_and_a_files_session_open_through_the_lab_gateway() {
         matches!(event, ConnectionEvent::FilesReady { .. }),
         "{event:?}"
     );
+}
+
+/// A port nothing listens on now.
+fn free_port() -> u16 {
+    std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .expect("bound")
+        .local_addr()
+        .expect("address")
+        .port()
+}
+
+/// The first bytes `host:port` sends, reached through the SOCKS5 proxy on `proxy`.
+async fn through_socks(proxy: u16, host: &str, port: u16) -> Vec<u8> {
+    let mut stream = TcpStream::connect((Ipv4Addr::LOCALHOST, proxy))
+        .await
+        .expect("the proxy listens");
+    let name = u8::try_from(host.len()).expect("short name");
+    let mut hello = vec![5, 1, 0, 5, 1, 0, 3, name];
+    hello.extend_from_slice(host.as_bytes());
+    hello.extend_from_slice(&port.to_be_bytes());
+    stream.write_all(&hello).await.expect("asked");
+    // The method chosen, then the reply to CONNECT with its bound address, IPv4.
+    let mut answer = [0; 12];
+    stream.read_exact(&mut answer).await.expect("answered");
+    assert_eq!(answer[..4], [5, 0, 5, 0], "{answer:?}");
+    let mut first = vec![0; 64];
+    let read = tokio::time::timeout(STEP_TIMEOUT, stream.read(&mut first))
+        .await
+        .expect("in time")
+        .expect("read");
+    first.truncate(read);
+    first
+}
+
+#[tokio::test]
+async fn a_socks_proxy_reaches_through_the_lab_gateway_while_the_shell_runs() {
+    let Some(keys) = std::env::var_os(KEYS_VARIABLE).map(PathBuf::from) else {
+        eprintln!("{KEYS_VARIABLE} not set: skipped");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let known_hosts = dir.path().join("known_hosts");
+    // Both host keys learnt first, without a proxy.
+    let (event, events) = first_event_past_host_keys(&keys, &known_hosts, Purpose::Shell).await;
+    assert!(
+        matches!(event, ConnectionEvent::Connected { .. }),
+        "{event:?}"
+    );
+    drop(events);
+
+    // A port another program holds: the attempt fails and says which port.
+    let holder = std::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("holder");
+    let held = holder.local_addr().expect("address").port();
+    let mut taken = request(&keys, &known_hosts, Purpose::Shell);
+    taken.profile.forwards = Forwards {
+        socks_port: Some(held),
+    };
+    let mut events = connection_events(taken, AnswerRegistry::default());
+    let event = tokio::time::timeout(STEP_TIMEOUT, events.next())
+        .await
+        .expect("in time")
+        .expect("an event");
+    assert!(
+        matches!(event, ConnectionEvent::Failed(UiError::ProxyPort { port, .. }) if port == held),
+        "{event:?}"
+    );
+    drop(holder);
+
+    let port = free_port();
+    let mut with_proxy = request(&keys, &known_hosts, Purpose::Shell);
+    with_proxy.profile.forwards = Forwards {
+        socks_port: Some(port),
+    };
+    let mut events = connection_events(with_proxy, AnswerRegistry::default());
+    let event = tokio::time::timeout(STEP_TIMEOUT, events.next())
+        .await
+        .expect("in time")
+        .expect("an event");
+    let ConnectionEvent::Connected { input } = event else {
+        panic!("{event:?}");
+    };
+    // linux-a is reached only from the gateway: its banner came through the proxy.
+    let banner = through_socks(port, "linux-a", 22).await;
+    assert!(
+        banner.starts_with(b"SSH-2.0-"),
+        "{}",
+        String::from_utf8_lossy(&banner)
+    );
+
+    input.write(b"exit\n".to_vec()).expect("typed");
+    tokio::time::timeout(STEP_TIMEOUT, async {
+        while let Some(event) = events.next().await {
+            if matches!(event, ConnectionEvent::Closed { .. }) {
+                return;
+            }
+        }
+    })
+    .await
+    .expect("the shell ended");
+    // The proxy goes with the session.
+    tokio::time::timeout(STEP_TIMEOUT, async {
+        while TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+            .await
+            .is_ok()
+        {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .expect("the proxy stopped with the session");
 }

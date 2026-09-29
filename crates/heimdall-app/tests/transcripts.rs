@@ -45,6 +45,7 @@ fn app(dir: &Path) -> App {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.merge_telnet([TelnetProfile {
         id: ProfileId::new("switch"),

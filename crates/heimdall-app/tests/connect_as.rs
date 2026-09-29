@@ -42,6 +42,7 @@ fn app(dir: &Path) -> App {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.merge_rdp([RdpProfile {
         id: ProfileId::new("dc"),
@@ -57,6 +58,7 @@ fn app(dir: &Path) -> App {
         redirect_drives: true,
         options: heimdall_core::profile::RdpOptions::default(),
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.merge_local([LocalProfile {
         id: ProfileId::new("sh"),

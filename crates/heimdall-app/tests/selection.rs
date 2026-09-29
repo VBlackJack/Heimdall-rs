@@ -36,6 +36,7 @@ fn ssh(id: &str) -> SshProfile {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 
