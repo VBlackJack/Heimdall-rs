@@ -54,6 +54,7 @@ fn hop(host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile {
         gateway: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
     }
 }
 
@@ -151,6 +152,9 @@ const PRIVILEGED_PORT: u16 = 22;
 
 /// What the local end of the remote forward says.
 const REMOTE_GREETING: &[u8] = b"heimdall-remote-forward";
+
+/// How long a shell with unapproved steps is watched for anything typed.
+const UNAPPROVED_WAIT: Duration = Duration::from_secs(3);
 
 /// A port nothing listens on now.
 fn free_port() -> u16 {
@@ -297,4 +301,79 @@ async fn the_forwards_of_a_profile_run_through_the_lab_gateway_while_the_shell_r
     })
     .await
     .expect("the proxy stopped with the session");
+}
+
+#[tokio::test]
+async fn approved_post_connect_steps_are_typed_into_the_lab_shell() {
+    use heimdall_core::post_connect::{PostConnect, PostConnectStep};
+
+    let Some(keys) = std::env::var_os(KEYS_VARIABLE).map(PathBuf::from) else {
+        eprintln!("{KEYS_VARIABLE} not set: skipped");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let known_hosts = dir.path().join("known_hosts");
+    let (event, events) = first_event_past_host_keys(&keys, &known_hosts, Purpose::Shell).await;
+    assert!(
+        matches!(event, ConnectionEvent::Connected { .. }),
+        "{event:?}"
+    );
+    drop(events);
+
+    // Steps nobody approved: the shell opens and nothing is typed.
+    let mut unapproved = request(&keys, &known_hosts, Purpose::Shell);
+    unapproved.profile.post_connect = PostConnect {
+        steps: vec![PostConnectStep::new("exit")],
+        approved: None,
+    };
+    let mut events = connection_events(unapproved, AnswerRegistry::default());
+    let quiet = tokio::time::timeout(UNAPPROVED_WAIT, async {
+        while let Some(event) = events.next().await {
+            assert!(
+                matches!(
+                    event,
+                    ConnectionEvent::Connected { .. } | ConnectionEvent::Output(_)
+                ),
+                "nothing typed, nothing ended: {event:?}"
+            );
+        }
+    })
+    .await;
+    assert!(quiet.is_err(), "the shell stayed open, its step not typed");
+    drop(events);
+
+    let mut with_steps = request(&keys, &known_hosts, Purpose::Shell);
+    with_steps.profile.post_connect = PostConnect::approved_as(vec![
+        PostConnectStep::new("echo \"post-$((6*7))\""),
+        PostConnectStep::new("exit"),
+    ]);
+    let mut events = connection_events(with_steps, AnswerRegistry::default());
+    let mut screen = String::new();
+    let mut completed = 0;
+    let mut done = false;
+    tokio::time::timeout(STEP_TIMEOUT, async {
+        while let Some(event) = events.next().await {
+            match event {
+                ConnectionEvent::Connected { .. } => {}
+                ConnectionEvent::Output(bytes) => screen.push_str(&String::from_utf8_lossy(&bytes)),
+                ConnectionEvent::PostConnect(progress) => {
+                    if progress.status == heimdall_app::StepStatus::Completed {
+                        completed += 1;
+                    }
+                }
+                ConnectionEvent::PostConnectDone => done = true,
+                // The last step ends the shell.
+                ConnectionEvent::Closed { .. } => return,
+                other => panic!("{other:?}"),
+            }
+        }
+    })
+    .await
+    .expect("the shell ended by its last step");
+    assert!(screen.contains("post-42"), "{screen}");
+    assert_eq!(completed, 2);
+    assert!(
+        done,
+        "the sequence said it was over before the shell closed"
+    );
 }

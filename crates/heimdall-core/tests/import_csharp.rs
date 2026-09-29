@@ -17,6 +17,7 @@
 use std::path::PathBuf;
 
 use heimdall_core::import::csharp::{ImportError, SkipReason, import};
+use heimdall_core::post_connect::{OnFailure, PostConnect, PostConnectStep};
 use heimdall_core::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, LocalArguments, ProfileId, SshProfile,
@@ -500,6 +501,8 @@ fn a_local_profile_with_commands_to_run_after_start_is_left_out() {
             "postConnectSteps": [{"enabled": true, "input": "whoami"}]},
            {"id": "library", "connectionType": "LOCAL",
             "postConnectSteps": [{"enabled": true, "commandLibraryId": "c1"}]},
+           {"id": "unsaid", "connectionType": "LOCAL",
+            "postConnectSteps": [{"input": "whoami"}]},
            {"id": "off", "connectionType": "LOCAL",
             "postConnectSteps": [{"enabled": false, "input": "whoami"},
                                  {"enabled": true, "input": "  "}]}"#,
@@ -515,6 +518,8 @@ fn a_local_profile_with_commands_to_run_after_start_is_left_out() {
         [
             ("steps", &SkipReason::NeedsPostConnectCommands),
             ("library", &SkipReason::NeedsPostConnectCommands),
+            // A step says nothing of being on: on, as a new C# step is.
+            ("unsaid", &SkipReason::NeedsPostConnectCommands),
         ]
     );
     assert_eq!(report.local.len(), 1, "nothing enabled to run");
@@ -978,4 +983,61 @@ fn the_remote_forward_is_imported_as_the_csharp_one_reads_it() {
             ("neg".to_owned(), SkipReason::InvalidPort(-1)),
         ]
     );
+}
+
+#[test]
+fn post_connect_steps_are_imported_as_the_csharp_migration_reads_them_and_never_approved() {
+    let json = servers(
+        r#"{"id": "steps", "remoteServer": "a.lab", "connectionType": "SSH",
+            "postConnectSteps": [
+                {"input": "sudo -i", "delayMs": 500, "enabled": true, "onFailure": 1},
+                null,
+                {"input": "cd /srv", "delayMs": -5, "enabled": false, "onFailure": "Continue"},
+                {"input": "ls", "onFailure": "Stop"}],
+            "postConnectCommand": "ignored"},
+           {"id": "legacy", "remoteServer": "b.lab", "connectionType": "SSH",
+            "postConnectCommand": "sudo -i\n  \n cd /srv \n"},
+           {"id": "none", "remoteServer": "c.lab", "connectionType": "SSH"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let by_id = |id: &str| {
+        report
+            .profiles
+            .iter()
+            .find(|profile| profile.id.as_str() == id)
+            .expect(id)
+            .post_connect
+            .clone()
+    };
+    let steps = by_id("steps");
+    assert_eq!(steps.approved, None);
+    assert_eq!(
+        steps.steps,
+        [
+            PostConnectStep {
+                delay_ms: 500,
+                on_failure: OnFailure::Stop,
+                ..PostConnectStep::new("sudo -i")
+            },
+            PostConnectStep {
+                delay_ms: 0,
+                enabled: false,
+                ..PostConnectStep::new("cd /srv")
+            },
+            PostConnectStep {
+                on_failure: OnFailure::Stop,
+                ..PostConnectStep::new("ls")
+            },
+        ]
+    );
+    assert_eq!(
+        by_id("legacy").steps,
+        [
+            PostConnectStep::new("sudo -i"),
+            PostConnectStep::new("cd /srv")
+        ],
+        "one step per line, as PostConnectMigration splits it"
+    );
+    assert_eq!(by_id("none"), PostConnect::default());
 }

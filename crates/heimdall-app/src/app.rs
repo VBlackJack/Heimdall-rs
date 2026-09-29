@@ -49,7 +49,7 @@ use tokio_util::sync::CancellationToken;
 use crate::desktop::{DesktopInput, DesktopPane, SpecialKeys};
 use crate::driver::{ConnectRequest, Purpose};
 use crate::error::{ServerAddress, UiError};
-use crate::event::{Answer, ConnectionEvent, QuestionKind};
+use crate::event::{Answer, ConnectionEvent, PostConnectProgress, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::gateway_draft::GatewayDraft;
 use crate::ids::{AttemptId, QuestionId, TabId};
@@ -73,6 +73,7 @@ mod folders;
 mod gateways;
 mod local_tab;
 mod pin;
+mod post_connect;
 mod profile_menu;
 mod profiles;
 mod provider;
@@ -102,6 +103,7 @@ pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use local_tab::LocalConfirmation;
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
+pub use post_connect::PostConnectConfirmation;
 pub use profile_menu::ProfileMenuMessage;
 pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
@@ -360,6 +362,10 @@ pub enum Message {
     DeleteProfile,
     /// Confirm the open dialog.
     ConfirmDialog,
+    /// Open the shell asked about without typing its steps.
+    SkipPostConnect,
+    /// Stop the post-connect steps of a tab.
+    StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
     /// Save the profile form, with the password typed into it, if any.
@@ -537,6 +543,8 @@ impl fmt::Debug for Message {
             Self::ProfileField { field, .. } => write!(f, "ProfileField({field:?}, ..)"),
             Self::DeleteProfile => f.write_str("DeleteProfile"),
             Self::ConfirmDialog => f.write_str("ConfirmDialog"),
+            Self::SkipPostConnect => f.write_str("SkipPostConnect"),
+            Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
             Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
             Self::ClearPassword => f.write_str("ClearPassword"),
@@ -875,6 +883,8 @@ pub struct Tab {
     auto_answered: Vec<(AttemptId, ProfileId)>,
     /// How the tab opens again, for Reconnect.
     reopen: reconnect::Reopen,
+    /// The post-connect step running, while the sequence runs.
+    pub post_connect: Option<PostConnectProgress>,
 }
 
 impl fmt::Debug for Tab {
@@ -935,6 +945,7 @@ impl Tab {
             find_missed: false,
             transcript: None,
             reopen: reconnect::Reopen::of(&profile),
+            post_connect: None,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -1121,6 +1132,8 @@ pub enum Dialog {
     },
     /// Run a local profile's command, shown whole, which the user has not approved yet.
     ConfirmLocalCommand(Box<LocalConfirmation>),
+    /// Type post-connect steps, shown whole, which the user has not approved yet.
+    ConfirmPostConnect(Box<PostConnectConfirmation>),
     /// Result of an import.
     ImportDone(ImportSummary),
     /// An import could not run.
@@ -1216,7 +1229,11 @@ impl Dialog {
         // The vault's and the PIN's fields submit themselves.
         !matches!(
             self,
-            Self::ConfirmLocalCommand(_) | Self::Vault(_) | Self::Pin(_) | Self::EditGateway { .. }
+            Self::ConfirmLocalCommand(_)
+                | Self::ConfirmPostConnect(_)
+                | Self::Vault(_)
+                | Self::Pin(_)
+                | Self::EditGateway { .. }
         )
     }
 }
@@ -1495,7 +1512,10 @@ impl App {
                 self.profile_message(message);
                 Vec::new()
             }
-            Message::ConfirmDialog => self.confirm_dialog(),
+            message @ (Message::ConfirmDialog
+            | Message::DismissDialog
+            | Message::SkipPostConnect
+            | Message::StopPostConnect(_)) => self.dialog_message(&message),
             message @ (Message::SelectProfile(_)
             | Message::ToggleFolder(_)
             | Message::Folder(_)
@@ -1514,6 +1534,13 @@ impl App {
             Message::Pin(message) => self.pin_message(message),
             Message::CredentialProvider(message) => self.provider_message(message),
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
+        }
+    }
+
+    /// Answers the open dialog, or stops a tab's post-connect steps.
+    fn dialog_message(&mut self, message: &Message) -> Vec<Effect> {
+        match message {
+            Message::ConfirmDialog => self.confirm_dialog(),
             Message::DismissDialog => self
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())
@@ -1521,6 +1548,7 @@ impl App {
                     self.dismiss_dialog();
                     Vec::new()
                 }),
+            _ => self.post_connect_message(message),
         }
     }
 
@@ -1625,8 +1653,8 @@ impl App {
         self.open_ssh(profile, purpose)
     }
 
-    /// Opens a tab for `profile`, a shell or its files.
-    pub(super) fn open_ssh(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
+    /// Opens a tab for `profile`, a shell or its files, without asking about its steps.
+    pub(super) fn open_ssh_now(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
@@ -1791,8 +1819,17 @@ impl App {
                 let output = tab.terminal.feed(&bytes);
                 handle_feed(tab, output, active)
             }
+            ConnectionEvent::PostConnect(progress) => {
+                tab.post_connect = Some(progress);
+                Vec::new()
+            }
+            ConnectionEvent::PostConnectDone => {
+                tab.post_connect = None;
+                Vec::new()
+            }
             ConnectionEvent::Closed { exit_status } => {
                 tab.phase = Phase::Closed { exit_status };
+                tab.post_connect = None;
                 tab.sink = None;
                 tab.desktop = None;
                 tab.prompts.clear();
@@ -2227,6 +2264,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
+            Some(Dialog::ConfirmPostConnect(confirmation)) => self.run_post_connect(*confirmation),
             Some(dialog @ (Dialog::Vault(_) | Dialog::Pin(_) | Dialog::EditGateway { .. })) => {
                 self.dialog = Some(dialog);
                 Vec::new()

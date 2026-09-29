@@ -28,6 +28,7 @@ use heimdall_files::RemoteSession;
 use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use tokio::sync::{mpsc, watch};
+use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
 use crate::error::UiError;
@@ -155,6 +156,40 @@ pub enum ConnectionEvent {
     },
     /// The attempt failed. Last event of the attempt.
     Failed(UiError),
+    /// A step of the post-connect sequence moved.
+    PostConnect(PostConnectProgress),
+    /// The post-connect sequence is over, run whole or stopped.
+    PostConnectDone,
+}
+
+/// Where the post-connect sequence stands.
+#[derive(Debug, Clone)]
+pub struct PostConnectProgress {
+    /// The step, from 1.
+    pub step: usize,
+    /// How many steps there are.
+    pub total: usize,
+    /// What the step types, made safe.
+    pub command: String,
+    /// What became of it.
+    pub status: StepStatus,
+    /// Stops the sequence.
+    pub stop: CancellationToken,
+}
+
+/// What became of a post-connect step, as the C# statuses.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StepStatus {
+    /// Waiting for its delay, then typed.
+    Running,
+    /// Typed.
+    Completed,
+    /// Could not be typed: the session had ended.
+    Failed,
+    /// Off, or nothing to type.
+    Skipped,
+    /// The sequence was stopped before it.
+    Cancelled,
 }
 
 impl fmt::Debug for ConnectionEvent {
@@ -200,6 +235,13 @@ impl fmt::Debug for ConnectionEvent {
                 .finish(),
             Self::Ended { reason } => f.debug_struct("Ended").field("reason", reason).finish(),
             Self::Failed(error) => f.debug_tuple("Failed").field(error).finish(),
+            Self::PostConnect(progress) => f
+                .debug_struct("PostConnect")
+                .field("step", &progress.step)
+                .field("total", &progress.total)
+                .field("status", &progress.status)
+                .finish_non_exhaustive(),
+            Self::PostConnectDone => f.write_str("PostConnectDone"),
         }
     }
 }

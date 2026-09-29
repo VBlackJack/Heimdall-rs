@@ -44,6 +44,7 @@ fn app(dir: &Path) -> App {
         gateway: None,
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -441,6 +442,7 @@ fn a_blank_vault_entry_name_written_in_the_file_is_the_name() {
         gateway: None,
         vault_entry: Some("   ".to_owned()),
         forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {
