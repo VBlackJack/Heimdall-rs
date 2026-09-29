@@ -88,6 +88,7 @@ fn profile(id: &str) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }
 }
 

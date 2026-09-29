@@ -16,8 +16,8 @@
 
 //! The external credential provider asked at connect, as the C# `ServerListViewModel` asks
 //! it: only when no password is saved for the server, only for the tab's own server (never
-//! a gateway on the way), and once per attempt. The profile's name stands for `{Title}`,
-//! the C# fallback when no vault entry name is set.
+//! a gateway on the way), and once per attempt. `{Title}` is the profile's vault entry
+//! name, or its name when it has none, as the C# fallback.
 //!
 //! When it gives nothing, the question is asked of the user as it would have been, and the
 //! status bar says why, where the C# one shows a warning and connects without a password.
@@ -26,7 +26,7 @@ use heimdall_core::credential_provider::{Lookup, ProviderKind, ProviderSettings}
 use heimdall_ssh::Secret;
 
 use super::vault::usable_endpoint;
-use super::{App, Effect, Notice};
+use super::{App, Effect, Notice, TabProfile};
 use crate::credential_provider::{Provided, ProviderFailure, ask};
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::ids::{AttemptId, QuestionId, TabId};
@@ -79,6 +79,22 @@ impl ProviderRequest {
     }
 }
 
+/// The profile's entry in the password manager, `{Title}`: its vault entry name when set,
+/// else its name, as the C# fallback.
+fn provider_title(profile: &TabProfile) -> String {
+    let entry = match profile {
+        TabProfile::Ssh(profile) => profile.vault_entry.as_deref(),
+        TabProfile::Rdp(profile) => profile.vault_entry.as_deref(),
+        TabProfile::Vnc(profile) => profile.vault_entry.as_deref(),
+        TabProfile::Telnet(_) | TabProfile::Local(_) => None,
+    };
+    entry
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .unwrap_or_else(|| profile.name())
+        .to_owned()
+}
+
 impl App {
     /// The provider's request for `question` in `tab_id`, when the provider is to be asked:
     /// it is on and runs a command, the question is the tab's own server's password, first
@@ -121,7 +137,7 @@ impl App {
                 host: endpoint.host,
                 port: endpoint.port,
                 user,
-                title: tab.profile.name().to_owned(),
+                title: provider_title(&tab.profile),
             },
             unlock: self.provider_unlock_secret(),
         })))

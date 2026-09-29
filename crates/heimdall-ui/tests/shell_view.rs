@@ -73,6 +73,7 @@ fn profile(id: &str, group: Option<&str>) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }
 }
 

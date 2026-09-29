@@ -107,6 +107,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         username: None,
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

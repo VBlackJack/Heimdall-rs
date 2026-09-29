@@ -43,6 +43,7 @@ fn app(dir: &Path) -> App {
         port: 5901,
         view_only: true,
         allow_no_password: false,
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

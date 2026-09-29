@@ -41,6 +41,7 @@ fn app(dir: &Path) -> App {
         username: Some("deploy".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.merge_rdp([RdpProfile {
         id: ProfileId::new("dc"),
@@ -55,6 +56,7 @@ fn app(dir: &Path) -> App {
         redirect_clipboard: false,
         redirect_drives: true,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }]);
     store.merge_local([LocalProfile {
         id: ProfileId::new("sh"),

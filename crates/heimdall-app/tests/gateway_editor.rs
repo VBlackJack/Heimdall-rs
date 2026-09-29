@@ -59,6 +59,7 @@ fn app(dir: &Path, route: Option<&str>, gateways: Vec<SshGateway>) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: route.map(id),
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

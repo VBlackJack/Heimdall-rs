@@ -35,6 +35,7 @@ fn ssh(id: &str) -> SshProfile {
         username: None,
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }
 }
 

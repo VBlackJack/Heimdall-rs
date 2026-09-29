@@ -92,6 +92,10 @@ pub struct SshProfile {
     /// The SSH gateway the server is reached through, if any.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway: Option<ProfileId>,
+    /// The profile's entry in the external password manager, for `{Title}`; `None` uses
+    /// its name, as the C# `VaultEntryName`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_entry: Option<String>,
 }
 
 /// An SSH gateway: a server that other connections go through, itself possibly reached
@@ -133,6 +137,7 @@ impl SshGateway {
             username: self.username.clone(),
             key_path: self.key_path.clone(),
             gateway: None,
+            vault_entry: None,
         }
     }
 }
@@ -175,6 +180,10 @@ pub struct RdpProfile {
     /// as in the C# Heimdall: written down only when on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub redirect_drives: bool,
+    /// The profile's entry in the external password manager, for `{Title}`; `None` uses
+    /// its name, as the C# `VaultEntryName`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_entry: Option<String>,
     /// How the session looks, sounds and which session it opens.
     #[serde(flatten)]
     pub options: RdpOptions,
@@ -521,6 +530,10 @@ pub struct VncProfile {
     /// that expects a password, an impostor offering none would otherwise be let in.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_no_password: bool,
+    /// The profile's entry in the external password manager, for `{Title}`; `None` uses
+    /// its name, as the C# `VaultEntryName`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_entry: Option<String>,
 }
 
 /// The arguments of a local program.

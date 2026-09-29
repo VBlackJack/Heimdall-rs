@@ -58,6 +58,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
             username: Some(LIVE_USER.to_owned()),
             key_path: None,
             gateway: None,
+            vault_entry: None,
         },
         options,
         cancel: CancellationToken::new(),

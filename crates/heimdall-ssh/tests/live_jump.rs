@@ -46,6 +46,7 @@ fn hop(id: &str, host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile 
         username: Some(user.to_owned()),
         key_path: Some(key),
         gateway: None,
+        vault_entry: None,
     }
 }
 

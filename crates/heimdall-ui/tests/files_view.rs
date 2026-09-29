@@ -77,6 +77,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

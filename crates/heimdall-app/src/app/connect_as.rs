@@ -146,6 +146,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 username: username.clone(),
                 key_path: None,
                 gateway: None,
+                vault_entry: None,
             }),
             purpose,
         )
@@ -167,6 +168,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 redirect_clipboard: true,
                 redirect_drives: false,
                 options: heimdall_core::profile::RdpOptions::default(),
+                vault_entry: None,
             }),
             Purpose::Rdp,
         ),
@@ -179,6 +181,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 port: DEFAULT_VNC_PORT,
                 view_only: false,
                 allow_no_password: false,
+                vault_entry: None,
             }),
             Purpose::Vnc,
         ),

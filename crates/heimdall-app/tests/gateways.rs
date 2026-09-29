@@ -48,6 +48,7 @@ fn web(gateway: Option<&str>) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: gateway.map(ProfileId::new),
+        vault_entry: None,
     }
 }
 

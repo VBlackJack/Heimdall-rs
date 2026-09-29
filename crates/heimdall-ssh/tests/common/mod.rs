@@ -527,6 +527,7 @@ pub fn profile(port: u16, key: Option<&str>) -> SshProfile {
         username: Some(USER.to_owned()),
         key_path: key.map(client_key_path),
         gateway: None,
+        vault_entry: None,
     }
 }
 

@@ -266,3 +266,45 @@ fn the_status_bar_says_why_the_provider_gave_nothing() {
         assert_eq!(text, said);
     }
 }
+
+#[test]
+fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
+    use heimdall_app::profile_draft::ProfileField;
+    use heimdall_core::profile::{ProfileId, SshProfile};
+    use heimdall_core::store::ProfileStore;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge([SshProfile {
+        id: ProfileId::new("a"),
+        name: "Web server".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        gateway: None,
+        vault_entry: None,
+    }]);
+    store.save().expect("save");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::EditProfile(ProfileId::new("a"))));
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        ui.find("Vault entry name").expect("the C# label");
+        ui.find(
+            "Optional name of this server's entry in the external password manager. Used for \
+             the credential provider's {Title} lookup; when empty, the display name is used.",
+        )
+        .expect("the C# help");
+        ui.click("Leave empty to use the display name")
+            .expect("the field, by its placeholder");
+        ui.typewrite("Servers/Web");
+        ui.into_messages().collect()
+    };
+    apply(&mut shell, messages);
+    let Some(heimdall_app::Dialog::EditProfile { draft, .. }) = &shell.app().dialog else {
+        panic!("the form");
+    };
+    assert_eq!(draft.value(ProfileField::VaultEntry), "Servers/Web");
+}

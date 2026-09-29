@@ -49,6 +49,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.merge_rdp([RdpProfile {
         id: id("rdp"),
@@ -63,6 +64,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),
@@ -79,6 +81,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         port: 5900,
         view_only: false,
         allow_no_password: true,
+        vault_entry: None,
     }]);
     let command = LocalCommand {
         program: None,

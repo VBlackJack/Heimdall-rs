@@ -39,6 +39,7 @@ fn profile(id: &str, name: &str, group: Option<&str>) -> SshProfile {
         username: None,
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }
 }
 

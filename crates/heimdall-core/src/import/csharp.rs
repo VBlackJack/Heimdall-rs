@@ -224,6 +224,8 @@ struct LegacyServer {
     vnc_password: Option<String>,
     #[serde(default)]
     vnc_view_only: bool,
+    /// The entry in the external password manager, for the provider's `{Title}`.
+    vault_entry_name: Option<String>,
     local_shell_executable: Option<String>,
     local_shell_arguments: Option<String>,
     local_shell_working_directory: Option<String>,
@@ -643,6 +645,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         username: non_empty(server.ssh_username.as_ref()),
         key_path: non_empty(server.ssh_key_path.as_ref()).map(PathBuf::from),
         gateway,
+        vault_entry: non_empty(server.vault_entry_name.as_ref()),
     })
 }
 
@@ -711,6 +714,7 @@ fn convert_rdp(
             scale_fixed: server.rdp_initial_smart_sizing.unwrap_or(true),
             dynamic_resolution: server.rdp_dynamic_resolution.unwrap_or(true),
         },
+        vault_entry: non_empty(server.vault_entry_name.as_ref()),
     })
 }
 
@@ -768,6 +772,7 @@ fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
         port,
         view_only: server.vnc_view_only,
         allow_no_password: is_null_or_empty(server.vnc_password.as_ref()),
+        vault_entry: non_empty(server.vault_entry_name.as_ref()),
     })
 }
 

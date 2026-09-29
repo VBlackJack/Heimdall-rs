@@ -54,11 +54,13 @@ pub enum ProfileField {
     FixedWidth,
     /// Height of a fixed RDP desktop.
     FixedHeight,
+    /// The profile's entry in the external password manager.
+    VaultEntry,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -68,6 +70,7 @@ impl ProfileField {
         Self::KeyPath,
         Self::FixedWidth,
         Self::FixedHeight,
+        Self::VaultEntry,
     ];
 }
 
@@ -103,6 +106,8 @@ impl DraftProtocol {
                 self == Self::Rdp
             }
             ProfileField::KeyPath => self == Self::Ssh,
+            // The protocols whose password the external credential provider gives.
+            ProfileField::VaultEntry => self.saves_password(),
         }
     }
 
@@ -247,6 +252,8 @@ pub struct ProfileDraft {
     pub fixed_width: String,
     /// RDP: height of a fixed desktop, as typed.
     pub fixed_height: String,
+    /// The entry in the external password manager; empty uses the name.
+    pub vault_entry: String,
 }
 
 /// Why a form cannot be saved yet.
@@ -319,6 +326,7 @@ impl ProfileDraft {
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             gateway: profile.gateway.clone(),
+            vault_entry: profile.vault_entry.clone().unwrap_or_default(),
             protocol: DraftProtocol::Ssh,
             protocol_chosen: true,
             ..Self::default()
@@ -350,6 +358,7 @@ impl ProfileDraft {
             username: profile.username.clone().unwrap_or_default(),
             domain: profile.domain.clone().unwrap_or_default(),
             gateway: profile.gateway.clone(),
+            vault_entry: profile.vault_entry.clone().unwrap_or_default(),
             protocol: DraftProtocol::Rdp,
             protocol_chosen: true,
             toggles,
@@ -376,6 +385,7 @@ impl ProfileDraft {
             group: profile.group.clone().unwrap_or_default(),
             host: profile.host.clone(),
             port: profile.port.to_string(),
+            vault_entry: profile.vault_entry.clone().unwrap_or_default(),
             protocol: DraftProtocol::Vnc,
             protocol_chosen: true,
             toggles,
@@ -546,6 +556,18 @@ impl ProfileDraft {
         }
     }
 
+    /// The port typed, or the protocol's when the field is empty.
+    fn typed_port(&self) -> Result<u16, DraftError> {
+        match self.port.trim() {
+            "" => Ok(self.default_port()),
+            typed => typed
+                .parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or(DraftError::PortInvalid),
+        }
+    }
+
     /// The port an empty field stands for.
     #[must_use]
     pub fn default_port(&self) -> u16 {
@@ -572,21 +594,15 @@ impl ProfileDraft {
         let group = self.group.trim();
         let key_path = self.key_path.trim();
         let domain = self.domain.trim();
-        if [name, group, key_path, domain]
+        let vault_entry = self.vault_entry.trim();
+        if [name, group, key_path, domain, vault_entry]
             .iter()
             .any(|text| text.chars().any(char::is_control))
         {
             return Err(DraftError::ControlCharacter);
         }
         let host = host(&self.host)?;
-        let port = match self.port.trim() {
-            "" => self.default_port(),
-            typed => typed
-                .parse::<u16>()
-                .ok()
-                .filter(|port| *port != 0)
-                .ok_or(DraftError::PortInvalid)?,
-        };
+        let port = self.typed_port()?;
         let username = if self.shows(ProfileField::Username) {
             self.username.trim()
         } else {
@@ -616,6 +632,7 @@ impl ProfileDraft {
                 username: optional(username),
                 key_path: optional(key_path).map(PathBuf::from),
                 gateway: self.routed_gateway(),
+                vault_entry: optional(vault_entry),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -630,6 +647,7 @@ impl ProfileDraft {
                 redirect_clipboard: self.is_on(ProfileToggle::RedirectClipboard),
                 redirect_drives: self.is_on(ProfileToggle::RedirectDrives),
                 options: self.saved_rdp_options()?,
+                vault_entry: optional(vault_entry),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -639,6 +657,7 @@ impl ProfileDraft {
                 port,
                 view_only: self.is_on(ProfileToggle::ViewOnly),
                 allow_no_password: self.is_on(ProfileToggle::AllowNoPassword),
+                vault_entry: optional(vault_entry),
             }),
             DraftProtocol::WinRm => {
                 let stored = self.is_on(ProfileToggle::StoredCredential);
@@ -681,6 +700,7 @@ impl ProfileDraft {
             ProfileField::Domain => &self.domain,
             ProfileField::FixedWidth => &self.fixed_width,
             ProfileField::FixedHeight => &self.fixed_height,
+            ProfileField::VaultEntry => &self.vault_entry,
         }
     }
 
@@ -696,6 +716,7 @@ impl ProfileDraft {
             ProfileField::Domain => &mut self.domain,
             ProfileField::FixedWidth => &mut self.fixed_width,
             ProfileField::FixedHeight => &mut self.fixed_height,
+            ProfileField::VaultEntry => &mut self.vault_entry,
         } = value;
     }
 
@@ -743,6 +764,7 @@ impl ProfileDraft {
             username: optional(username),
             key_path: optional(key_path).map(PathBuf::from),
             gateway: self.gateway.clone(),
+            vault_entry: optional(self.vault_entry.trim()),
         })
     }
 }
@@ -894,6 +916,7 @@ mod tests {
             username: None,
             key_path: None,
             gateway: None,
+            vault_entry: None,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -949,6 +972,7 @@ mod tests {
             redirect_clipboard: false,
             redirect_drives: false,
             options: heimdall_core::profile::RdpOptions::default(),
+            vault_entry: None,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),
@@ -973,6 +997,7 @@ mod tests {
             port: 5901,
             view_only: true,
             allow_no_password: true,
+            vault_entry: None,
         };
         assert_eq!(
             ProfileDraft::from_vnc(&vnc).to_saved(id()),

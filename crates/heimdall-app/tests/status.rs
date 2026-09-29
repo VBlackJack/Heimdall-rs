@@ -46,6 +46,7 @@ fn app(dir: &Path) -> App {
         redirect_clipboard: false,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }]);
     store.merge([SshProfile {
         id: ProfileId::new("web"),
@@ -56,6 +57,7 @@ fn app(dir: &Path) -> App {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

@@ -105,7 +105,8 @@ impl GatewayDraft {
             ProfileField::Group
             | ProfileField::Domain
             | ProfileField::FixedWidth
-            | ProfileField::FixedHeight => "",
+            | ProfileField::FixedHeight
+            | ProfileField::VaultEntry => "",
         }
     }
 
@@ -120,7 +121,8 @@ impl GatewayDraft {
             ProfileField::Group
             | ProfileField::Domain
             | ProfileField::FixedWidth
-            | ProfileField::FixedHeight => {}
+            | ProfileField::FixedHeight
+            | ProfileField::VaultEntry => {}
         }
     }
 

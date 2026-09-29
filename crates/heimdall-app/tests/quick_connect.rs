@@ -37,6 +37,7 @@ fn ssh(id: &str, name: &str, host: &str, group: Option<&str>) -> SshProfile {
         username: Some("admin".to_owned()),
         key_path: None,
         gateway: None,
+        vault_entry: None,
     }
 }
 
@@ -57,6 +58,7 @@ fn app_with(dir: &Path, profiles: Vec<SshProfile>) -> App {
         redirect_clipboard: true,
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
+        vault_entry: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
