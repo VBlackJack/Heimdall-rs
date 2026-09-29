@@ -64,6 +64,9 @@ rcgen = { version = "0.14.5", default-features = false, features = ["crypto", "r
 ring = "0.17.14"
 russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2"] }
 rust-embed = "8.12.0"
+# rustls-native-certs: the system's certificate store, for an FTPS certificate it trusts, as in
+# the C#.
+rustls-native-certs = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
 # suppaftp: FTP and explicit FTPS for the Files tab; tokio and rustls on ring, as the workspace.
