@@ -386,3 +386,121 @@ async fn removing_a_link_removes_the_link_and_never_what_it_points_to() {
         "what the link points to is untouched: {result:?}"
     );
 }
+
+/// An FTPS server on `root` with a fresh certificate for `localhost`; its port and the
+/// certificate, to trust or not.
+async fn serve_ftps(root: &Path, keys: &Path) -> (u16, Vec<u8>) {
+    let issued = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
+    let cert = keys.join("cert.pem");
+    let key = keys.join("key.pem");
+    std::fs::write(&cert, issued.cert.pem()).expect("cert file");
+    std::fs::write(&key, issued.signing_key.serialize_pem()).expect("key file");
+    for _ in 0..START_TRIES {
+        let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .expect("free port")
+            .local_addr()
+            .expect("address")
+            .port();
+        let home = root.to_owned();
+        let server = libunftp::ServerBuilder::new(Box::new(move || {
+            Filesystem::new(home.clone()).expect("root")
+        }))
+        .ftps(cert.clone(), key.clone())
+        .build()
+        .expect("server");
+        tokio::spawn(server.listen(format!("127.0.0.1:{port}")));
+        let started = tokio::time::timeout(STEP, async {
+            while tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
+                .await
+                .is_err()
+            {
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await;
+        if started.is_ok() {
+            return (port, issued.cert.der().to_vec());
+        }
+    }
+    panic!("no FTPS server started");
+}
+
+/// A TLS client trusting `trusted` alone.
+fn trusting(trusted: &[u8]) -> tokio_rustls::TlsConnector {
+    use std::sync::Arc;
+    use tokio_rustls::rustls::crypto::ring::default_provider;
+    use tokio_rustls::rustls::pki_types::CertificateDer;
+    use tokio_rustls::rustls::{ClientConfig, RootCertStore};
+
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(CertificateDer::from(trusted.to_vec()))
+        .expect("root");
+    let config = ClientConfig::builder_with_provider(Arc::new(default_provider()))
+        .with_safe_default_protocol_versions()
+        .expect("versions")
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    tokio_rustls::TlsConnector::from(Arc::new(config))
+}
+
+fn ftps_target(port: u16, connector: tokio_rustls::TlsConnector) -> FtpTarget {
+    FtpTarget {
+        host: "127.0.0.1".to_owned(),
+        port,
+        username: None,
+        password: String::new(),
+        passive: true,
+        security: FtpSecurity::Explicit {
+            connector,
+            domain: "localhost".to_owned(),
+        },
+        timeout: STEP,
+    }
+}
+
+#[tokio::test]
+async fn explicit_ftps_lists_and_transfers_over_tls_with_a_trusted_certificate() {
+    let root = tempfile::tempdir().expect("root");
+    let keys = tempfile::tempdir().expect("keys");
+    std::fs::write(root.path().join("secret.txt"), b"over tls").expect("file");
+    let (port, cert) = serve_ftps(root.path(), keys.path()).await;
+    let client = FtpClient::connect(&ftps_target(port, trusting(&cert)))
+        .await
+        .expect("connected over TLS");
+    let session = RemoteSession::Ftp(client);
+    let top = session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("top");
+    assert_eq!(
+        names(&session.list(&top).await.expect("listed")),
+        ["secret.txt"]
+    );
+    let local = tempfile::tempdir().expect("local");
+    let target = local.path().join("secret.txt");
+    session
+        .download(
+            &top.join(b"secret.txt"),
+            &target,
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await
+        .expect("downloaded");
+    assert_eq!(std::fs::read(&target).expect("read"), b"over tls");
+}
+
+#[tokio::test]
+async fn explicit_ftps_refuses_a_certificate_it_does_not_trust() {
+    let root = tempfile::tempdir().expect("root");
+    let keys = tempfile::tempdir().expect("keys");
+    let (port, _) = serve_ftps(root.path(), keys.path()).await;
+    // Another certificate trusted: not the server's.
+    let other = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
+    let refused = FtpClient::connect(&ftps_target(port, trusting(other.cert.der()))).await;
+    assert!(
+        matches!(refused, Err(heimdall_files::FtpConnectError::Tls(_))),
+        "{refused:?}"
+    );
+}

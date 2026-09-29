@@ -24,6 +24,8 @@ thiserror.workspace = true
 [dev-dependencies]
 # An FTP server the FTP tests run against, on disk.
 libunftp.workspace = true
+# The FTPS test server's certificate.
+rcgen = { workspace = true, features = ["pem"] }
 tempfile.workspace = true
 unftp-sbe-fs.workspace = true
 # process: OpenSSH's sftp-server run as a child in the tests.
