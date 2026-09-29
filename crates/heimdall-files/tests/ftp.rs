@@ -504,3 +504,57 @@ async fn explicit_ftps_refuses_a_certificate_it_does_not_trust() {
         "{refused:?}"
     );
 }
+
+#[tokio::test]
+async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_trusted_goes_through() {
+    use heimdall_files::ftps_trust::{PresentedSlot, UserTrust, connector, fingerprint};
+
+    let trusting = |fingerprints: Vec<[u8; 32]>| -> UserTrust {
+        std::sync::Arc::new(move |der| fingerprints.contains(&fingerprint(der)))
+    };
+
+    let root = tempfile::tempdir().expect("root");
+    let keys = tempfile::tempdir().expect("keys");
+    let (port, cert) = serve_ftps(root.path(), keys.path()).await;
+
+    // Self-signed: the system does not trust it, nor has the user.
+    let presented = PresentedSlot::default();
+    let stopped = FtpClient::connect(&ftps_target(
+        port,
+        connector(trusting(Vec::new()), presented.clone()),
+    ))
+    .await;
+    assert!(
+        matches!(stopped, Err(heimdall_files::FtpConnectError::Tls(_))),
+        "{stopped:?}"
+    );
+    let shown = presented
+        .lock()
+        .expect("slot")
+        .clone()
+        .expect("kept for the question");
+    assert_eq!(shown, cert, "the certificate the server presented");
+
+    // Trusted by its fingerprint: through.
+    let trusted = vec![fingerprint(&shown)];
+    let client = FtpClient::connect(&ftps_target(
+        port,
+        connector(trusting(trusted), PresentedSlot::default()),
+    ))
+    .await
+    .expect("trusted");
+    let session = RemoteSession::Ftp(client);
+    session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("a working session");
+
+    // Another fingerprint trusted is not this one.
+    let other = vec![fingerprint(b"another certificate")];
+    let refused = FtpClient::connect(&ftps_target(
+        port,
+        connector(trusting(other), PresentedSlot::default()),
+    ))
+    .await;
+    assert!(refused.is_err());
+}
