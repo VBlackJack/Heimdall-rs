@@ -104,6 +104,10 @@ pub struct SshProfile {
     /// Commands the shell types by itself once ready.
     #[serde(default, skip_serializing_if = "PostConnect::is_empty")]
     pub post_connect: PostConnect,
+    /// Forward this computer's SSH agent to the shell (`ssh -A`), as the C# "Forward SSH
+    /// agent": off unless turned on, written down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub forward_agent: bool,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -175,6 +179,7 @@ impl SshGateway {
             vault_entry: None,
             forwards: Forwards::default(),
             post_connect: PostConnect::default(),
+            forward_agent: false,
         }
     }
 }

@@ -52,6 +52,7 @@ fn profile(id: &str, post_connect: PostConnect) -> SshProfile {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect,
+        forward_agent: false,
     }
 }
 
@@ -278,4 +279,23 @@ fn an_imported_profile_saved_from_its_form_has_its_steps_approved_as_the_csharp_
         connect_request(&effects).profile.post_connect.to_run(),
         steps()
     );
+}
+
+#[test]
+fn a_shell_forwards_the_agent_only_when_its_profile_says_so() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    let mut forwarding = profile("forwarding", PostConnect::default());
+    forwarding.forward_agent = true;
+    store.merge([forwarding, profile("plain", PostConnect::default())]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        ..config(dir.path())
+    });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("forwarding")));
+    assert!(connect_request(&effects).options.forward_agent);
+    let effects = app.update(Message::OpenProfile(ProfileId::new("plain")));
+    assert!(!connect_request(&effects).options.forward_agent);
 }

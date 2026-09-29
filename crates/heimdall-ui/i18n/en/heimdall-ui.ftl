@@ -469,6 +469,7 @@ ui-dialog-post-connect-title = Run post-connect commands?
 ui-dialog-post-connect-body = "{ $name }" was imported and will automatically run { $count } command(s) in this session. Only continue if you trust this profile. Run them and remember this choice?
 ui-dialog-post-connect-run = Run and remember
 ui-dialog-post-connect-skip = Connect without them
+ui-profile-toggle-forward-agent = Forward SSH agent
 ui-post-connect-title = Post-connect sequence
 ui-post-connect-hint = These steps run after the embedded SSH session is ready. Delays apply before each step.
 ui-post-connect-empty = No steps yet. Add a step to send commands automatically once this session is connected.

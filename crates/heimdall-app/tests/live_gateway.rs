@@ -55,6 +55,7 @@ fn hop(host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
     }
 }
 
@@ -376,4 +377,105 @@ async fn approved_post_connect_steps_are_typed_into_the_lab_shell() {
         done,
         "the sequence said it was over before the shell closed"
     );
+}
+
+/// An `ssh-agent` of its own, holding `key`, stopped when dropped.
+#[cfg(unix)]
+struct LabAgent {
+    socket: PathBuf,
+    pid: String,
+}
+
+#[cfg(unix)]
+impl LabAgent {
+    fn start(dir: &Path, key: &Path) -> Self {
+        use std::os::unix::fs::PermissionsExt as _;
+        use std::process::Command;
+
+        let socket = dir.join("agent.sock");
+        let started = Command::new("ssh-agent")
+            .arg("-a")
+            .arg(&socket)
+            .arg("-s")
+            .output()
+            .expect("ssh-agent runs");
+        let script = String::from_utf8_lossy(&started.stdout);
+        let pid = script
+            .split(';')
+            .find_map(|part| part.trim().strip_prefix("SSH_AGENT_PID="))
+            .expect("its pid")
+            .to_owned();
+        // ssh-add refuses a key others may read: a private copy.
+        let private = dir.join("key");
+        std::fs::copy(key, &private).expect("copied");
+        std::fs::set_permissions(&private, std::fs::Permissions::from_mode(0o600)).expect("0600");
+        let added = Command::new("ssh-add")
+            .arg(&private)
+            .env("SSH_AUTH_SOCK", &socket)
+            .output()
+            .expect("ssh-add runs");
+        assert!(added.status.success(), "{added:?}");
+        Self { socket, pid }
+    }
+}
+
+#[cfg(unix)]
+impl Drop for LabAgent {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("kill").arg(&self.pid).status();
+    }
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_agent_is_forwarded_to_the_lab_shell_only_when_asked() {
+    use heimdall_ssh::AgentSource;
+
+    let Some(keys) = std::env::var_os(KEYS_VARIABLE).map(PathBuf::from) else {
+        eprintln!("{KEYS_VARIABLE} not set: skipped");
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let known_hosts = dir.path().join("known_hosts");
+    let (event, events) = first_event_past_host_keys(&keys, &known_hosts, Purpose::Shell).await;
+    assert!(
+        matches!(event, ConnectionEvent::Connected { .. }),
+        "{event:?}"
+    );
+    drop(events);
+    let agent = LabAgent::start(dir.path(), &keys.join("admin"));
+
+    // `ssh-add -l` on linux-a lists what reaches it: the key here, or nothing.
+    let listed = |forward: bool| {
+        let mut request = request(&keys, &known_hosts, Purpose::Shell);
+        request.options.agent = AgentSource::Path(agent.socket.clone());
+        request.options.forward_agent = forward;
+        async move {
+            let mut events = connection_events(request, AnswerRegistry::default());
+            let mut screen = String::new();
+            tokio::time::timeout(STEP_TIMEOUT, async {
+                while let Some(event) = events.next().await {
+                    match event {
+                        ConnectionEvent::Connected { input } => input
+                            .write(b"ssh-add -l; echo \"agent-$?\"; exit\n".to_vec())
+                            .expect("typed"),
+                        ConnectionEvent::Output(bytes) => {
+                            screen.push_str(&String::from_utf8_lossy(&bytes));
+                        }
+                        ConnectionEvent::Closed { .. } => return,
+                        other => panic!("{other:?}"),
+                    }
+                }
+            })
+            .await
+            .expect("the shell ended");
+            screen
+        }
+    };
+    let forwarded = listed(true).await;
+    assert!(forwarded.contains("agent-0"), "the key listed: {forwarded}");
+    assert!(forwarded.contains("SHA256:"), "{forwarded}");
+    let kept = listed(false).await;
+    // 2: no agent to reach at all.
+    assert!(kept.contains("agent-2"), "no agent there: {kept}");
 }

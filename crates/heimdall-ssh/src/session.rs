@@ -44,7 +44,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::connection::Connection;
 use crate::error::ConnectError;
-use crate::options::{ConnectOptions, TerminalSize};
+use crate::options::{AgentSource, ConnectOptions, TerminalSize};
 
 /// Output messages buffered before the reader waits for the UI.
 const OUTPUT_QUEUE_LENGTH: usize = 256;
@@ -256,6 +256,15 @@ pub(crate) async fn open(
         .await
         .map_err(ConnectError::Protocol)?;
     expect_success(&mut channel, ConnectError::PtyRefused).await?;
+    if options.forward_agent && options.agent != AgentSource::Disabled {
+        // Granted before it is asked: the server may open the agent channel at once.
+        connection.routes().grant_agent(options.agent.clone());
+        // No reply is awaited, as OpenSSH does: a server that refuses still opens the shell.
+        channel
+            .agent_forward(false)
+            .await
+            .map_err(ConnectError::Protocol)?;
+    }
     channel
         .request_shell(true)
         .await

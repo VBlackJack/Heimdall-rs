@@ -110,6 +110,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());
@@ -568,4 +569,18 @@ fn only_an_ssh_form_has_post_connect_steps() {
             "{protocol:?}"
         );
     }
+}
+
+#[test]
+fn an_ssh_form_offers_to_forward_the_agent_as_the_csharp_box() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    tall_simulator(&shell)
+        .find("Forward SSH agent")
+        .expect("the box");
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    assert!(tall_simulator(&shell).find("Forward SSH agent").is_err());
 }

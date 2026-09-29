@@ -20,6 +20,9 @@
 //!
 //! The server may open a forwarded channel only on a port this side asked for: any other is
 //! refused, so a server cannot reach this computer's ports on its own initiative.
+//!
+//! Agent forwarding (`ssh -A`) goes the same way: the server may reach this computer's SSH
+//! agent only on a connection whose shell asked for it.
 
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
@@ -29,32 +32,50 @@ use russh::Channel;
 use russh::client::Msg;
 use tokio::net::TcpStream;
 
+use crate::agent;
 use crate::connection::Connection;
 use crate::error::ConnectError;
+use crate::options::AgentSource;
 
 /// Address the server listens on for this side: its own loopback, as in the C# Heimdall.
 pub(crate) const SERVER_LOOPBACK: &str = "127.0.0.1";
 
-/// Ports the server listens on for this side, each with the local port its connections go
-/// to. Shared between a connection and its russh handler.
+/// What the server may send back over a connection: the ports it listens on for this side,
+/// each with the local port its connections go to, and the agent it may reach. Shared between
+/// a connection and its russh handler.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Routes(Arc<Mutex<HashMap<u32, u16>>>);
+pub(crate) struct Routes {
+    ports: Arc<Mutex<HashMap<u32, u16>>>,
+    agent: Arc<Mutex<Option<AgentSource>>>,
+}
 
 impl Routes {
+    /// The agent the server may reach, once a shell asked to forward it.
+    pub(crate) fn agent(&self) -> Option<AgentSource> {
+        self.agent.lock().ok()?.clone()
+    }
+
+    /// Lets the server reach the agent `source`.
+    pub(crate) fn grant_agent(&self, source: AgentSource) {
+        if let Ok(mut agent) = self.agent.lock() {
+            *agent = Some(source);
+        }
+    }
+
     /// Where a connection the server forwards from its `port` goes, if this side asked for
     /// that port.
     pub(crate) fn local_port(&self, port: u32) -> Option<u16> {
-        self.0.lock().ok()?.get(&port).copied()
+        self.ports.lock().ok()?.get(&port).copied()
     }
 
     fn insert(&self, port: u32, local: u16) {
-        if let Ok(mut routes) = self.0.lock() {
+        if let Ok(mut routes) = self.ports.lock() {
             routes.insert(port, local);
         }
     }
 
     fn remove(&self, port: u32) {
-        if let Ok(mut routes) = self.0.lock() {
+        if let Ok(mut routes) = self.ports.lock() {
             routes.remove(&port);
         }
     }
@@ -74,6 +95,21 @@ pub(crate) async fn carry(channel: Channel<Msg>, local: u16) {
             log::debug!("nothing took the forwarded connection on local port {local}: {error}");
             let _ = channel.close().await;
         }
+    }
+}
+
+/// Carries an agent channel the server opened to the agent `source`, both ways until either
+/// side closes it.
+pub(crate) async fn carry_agent(channel: Channel<Msg>, source: AgentSource) {
+    let Some(agent) = agent::connect(&source).await else {
+        log::debug!("no SSH agent to forward to");
+        let _ = channel.close().await;
+        return;
+    };
+    let mut near = agent.into_inner();
+    let mut far = channel.into_stream();
+    if let Err(error) = tokio::io::copy_bidirectional(&mut near, &mut far).await {
+        log::debug!("a forwarded agent connection ended: {error}");
     }
 }
 

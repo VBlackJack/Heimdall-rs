@@ -103,6 +103,8 @@ pub struct Spec {
     pub inactivity_timeout: Option<Duration>,
     /// Connects onward when a client asks, as a gateway does; off, as `AllowTcpForwarding no`.
     pub forwarding: bool,
+    /// Opens an agent channel once the shell starts, whether the client asked or not.
+    pub agent_unasked: bool,
 }
 
 impl Default for Spec {
@@ -122,6 +124,7 @@ impl Default for Spec {
             key_algorithms: None,
             inactivity_timeout: None,
             forwarding: false,
+            agent_unasked: false,
         }
     }
 }
@@ -153,7 +156,16 @@ pub struct Observed {
     pub forwarded_reply: Vec<u8>,
     /// Ports whose listening clients cancelled.
     pub cancelled: Vec<u32>,
+    /// Shells whose client asked to forward its agent.
+    pub agent_asked: usize,
+    /// Agent channels the server opened, and whether the client took each.
+    pub agent_opens: Vec<bool>,
+    /// What the client's agent answered through the forwarded channel.
+    pub agent_reply: Vec<u8>,
 }
+
+/// An agent request for the identities it holds: length 1, `SSH_AGENTC_REQUEST_IDENTITIES`.
+pub const AGENT_REQUEST: &[u8] = &[0, 0, 0, 1, 11];
 
 /// What the server sends through a forwarded channel the client takes.
 pub const FORWARDED_GREETING: &[u8] = b"from-the-server\n";
@@ -267,6 +279,35 @@ impl Connection {
         } else {
             reject()
         }
+    }
+}
+
+impl Connection {
+    /// Opens an agent channel to the client, sends [`AGENT_REQUEST`] and records the answer.
+    fn open_agent(&self, session: &Session) {
+        let handle = session.handle();
+        let observed = self.observed.clone();
+        tokio::spawn(async move {
+            let opened = handle.channel_open_agent().await;
+            observed
+                .lock()
+                .expect("observed")
+                .agent_opens
+                .push(opened.is_ok());
+            if let Ok(channel) = opened {
+                let mut stream = channel.into_stream();
+                let _ = stream.write_all(AGENT_REQUEST).await;
+                let mut length = [0; 4];
+                if stream.read_exact(&mut length).await.is_ok() {
+                    let mut body = vec![0; u32::from_be_bytes(length) as usize];
+                    if stream.read_exact(&mut body).await.is_ok() {
+                        let mut reply = length.to_vec();
+                        reply.extend(body);
+                        observed.lock().expect("observed").agent_reply = reply;
+                    }
+                }
+            }
+        });
     }
 }
 
@@ -456,7 +497,22 @@ impl server::Handler for Connection {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
+        if self.spec.agent_unasked {
+            self.open_agent(session);
+        }
         session.channel_success(channel)
+    }
+
+    /// Records the request and, as `sshd` does when a program asks the agent, opens the agent
+    /// channel back and asks for the identities.
+    async fn agent_request(
+        &mut self,
+        _channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        self.observe(|o| o.agent_asked += 1);
+        self.open_agent(session);
+        Ok(true)
     }
 
     /// `sftp` is accepted and echoes like the shell; `silent` gets no answer at all; any
@@ -592,6 +648,7 @@ pub fn profile(port: u16, key: Option<&str>) -> SshProfile {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
     }
 }
 
