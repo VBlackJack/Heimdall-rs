@@ -67,6 +67,12 @@ impl App {
                     draft.choose(choice);
                 }
             }
+            Message::PostConnectEdit(edit) => {
+                if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut() {
+                    draft.post_connect.apply(edit);
+                    *error = None;
+                }
+            }
             // The gateway dialog opens from a session's form and returns to it.
             other => self.gateway_message(other),
         }
@@ -162,7 +168,15 @@ impl App {
             .filter(|old| *old != draft.name.trim());
         let result = self.store.apply(|store| {
             match profile {
-                DraftProfile::Ssh(profile) => store.merge([profile]),
+                // Steps written in the form are approved by the one who wrote them, as the
+                // C# dialog confirms them when it saves.
+                DraftProfile::Ssh(profile) => {
+                    let steps = profile.post_connect.steps.clone();
+                    let saved = profile.id.clone();
+                    let report = store.merge([profile]);
+                    store.approve_post_connect(&saved, &steps);
+                    report
+                }
                 DraftProfile::Rdp(profile) => store.merge_rdp([profile]),
                 DraftProfile::Vnc(profile) => store.merge_vnc([profile]),
                 DraftProfile::WinRm(profile) => store.merge_winrm([profile]),

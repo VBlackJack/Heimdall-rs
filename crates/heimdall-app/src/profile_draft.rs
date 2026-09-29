@@ -20,12 +20,15 @@ use std::hash::{BuildHasher as _, RandomState};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
     AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN,
     FIXED_WIDTH_MAX, Forwards, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile,
     TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
+
+use crate::steps_draft::StepsDraft;
 
 /// Port when the field is left empty.
 pub const DEFAULT_SSH_PORT: u16 = 22;
@@ -272,6 +275,8 @@ pub struct ProfileDraft {
     pub remote_bind_port: String,
     /// The remote forward's local port, as typed; empty or 0 is the same port.
     pub remote_local_port: String,
+    /// SSH: the post-connect steps and the one selected.
+    pub post_connect: StepsDraft,
 }
 
 /// Why a form cannot be saved yet.
@@ -357,6 +362,7 @@ impl ProfileDraft {
             socks_port: port_text(profile.forwards.socks_port),
             remote_bind_port: port_text(profile.forwards.remote_bind_port),
             remote_local_port: port_text(profile.forwards.remote_local_port),
+            post_connect: StepsDraft::of(&profile.post_connect.steps),
             protocol: DraftProtocol::Ssh,
             protocol_chosen: true,
             ..Self::default()
@@ -609,6 +615,26 @@ impl ProfileDraft {
         })
     }
 
+    /// The post-connect steps saved, of an SSH form: approved by the store, which the user
+    /// who wrote them does when saving, as the C# dialog confirms them.
+    fn saved_post_connect(&self) -> PostConnect {
+        PostConnect {
+            steps: self.post_connect.steps.clone(),
+            approved: None,
+        }
+    }
+
+    /// Whether a step's command holds a control character, which a line typed into a shell
+    /// cannot carry.
+    fn post_connect_has_control(&self) -> bool {
+        self.protocol == DraftProtocol::Ssh
+            && self
+                .post_connect
+                .steps
+                .iter()
+                .any(|step| step.input.chars().any(char::is_control))
+    }
+
     /// Whether `toggle` is shown now: skipping certificate checks only over HTTPS.
     #[must_use]
     pub fn shows_toggle(&self, toggle: ProfileToggle) -> bool {
@@ -668,6 +694,7 @@ impl ProfileDraft {
         if [name, group, key_path, domain, vault_entry]
             .iter()
             .any(|text| text.chars().any(char::is_control))
+            || self.post_connect_has_control()
         {
             return Err(DraftError::ControlCharacter);
         }
@@ -704,7 +731,7 @@ impl ProfileDraft {
                 gateway: self.routed_gateway(),
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
-                post_connect: heimdall_core::post_connect::PostConnect::default(),
+                post_connect: self.saved_post_connect(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -845,7 +872,7 @@ impl ProfileDraft {
             gateway: self.gateway.clone(),
             vault_entry: optional(self.vault_entry.trim()),
             forwards: self.saved_forwards()?,
-            post_connect: heimdall_core::post_connect::PostConnect::default(),
+            post_connect: self.saved_post_connect(),
         })
     }
 }

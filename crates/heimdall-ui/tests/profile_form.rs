@@ -30,7 +30,7 @@ use iced::{Settings, Size};
 use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
-/// Height of a window showing the whole RDP form.
+/// Height of a window showing a whole form: RDP, or SSH with its post-connect steps.
 const TALL_HEIGHT: f32 = 1100.0;
 
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
@@ -341,7 +341,8 @@ fn a_gateway_is_added_from_the_form_and_the_tree_says_via_it() {
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     snapshot(&shell, "profile-network.png");
     {
-        let mut ui = simulator(&shell);
+        // Under the post-connect steps: a window tall enough to click it.
+        let mut ui = tall_simulator(&shell);
         for label in [
             "Gateway routing",
             "Connect directly without an SSH gateway",
@@ -500,4 +501,71 @@ fn the_socks_card_shows_only_through_a_gateway_and_says_where_it_listens() {
     let mut ui = tall_simulator(&shell);
     ui.find("server:8080 -> local:3000").expect("where it goes");
     assert!(ui.find("Disabled").is_err());
+}
+
+#[test]
+fn an_ssh_form_lists_its_post_connect_steps_as_the_csharp_card() {
+    use heimdall_app::steps_draft::StepEdit;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Post-connect sequence",
+            "No steps yet. Add a step to send commands automatically once this session is connected.",
+        ] {
+            ui.find(label).expect(label);
+        }
+        // Nothing selected: Remove does nothing.
+        ui.click("Remove").expect("remove");
+        ui.click("Add").expect("add");
+        let messages: Vec<_> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|m| matches!(m, Message::App(AppMessage::PostConnectEdit(StepEdit::Add))))
+        );
+        assert!(
+            !messages.iter().any(|m| matches!(
+                m,
+                Message::App(AppMessage::PostConnectEdit(StepEdit::Remove))
+            )),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(app(AppMessage::PostConnectEdit(StepEdit::Add)));
+    snapshot(&shell, "post-connect-steps.png");
+    let mut ui = tall_simulator(&shell);
+    // A pick list's choice is not found by its text: the snapshot shows it.
+    for label in ["Command", "Delay (ms)", "On failure", "150"] {
+        ui.find(label).expect(label);
+    }
+    assert!(
+        ui.find("No steps yet. Add a step to send commands automatically once this session is connected.")
+            .is_err()
+    );
+    ui.click("Remove").expect("remove");
+    assert!(ui.into_messages().any(|m| matches!(
+        m,
+        Message::App(AppMessage::PostConnectEdit(StepEdit::Remove))
+    )));
+}
+
+#[test]
+fn only_an_ssh_form_has_post_connect_steps() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    for protocol in [DraftProtocol::Rdp, DraftProtocol::Telnet] {
+        let _ = shell.update(app(AppMessage::NewProfile));
+        let _ = shell.update(app(AppMessage::ChooseProtocol(protocol)));
+        assert!(
+            tall_simulator(&shell)
+                .find("Post-connect sequence")
+                .is_err(),
+            "{protocol:?}"
+        );
+    }
 }
