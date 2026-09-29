@@ -1859,7 +1859,8 @@ impl Shell {
             list = list.push(text(fl!("ui-sidebar-empty")));
         }
         let rows = self.app.tree_rows(&self.search);
-        if rows.is_empty() && !self.search.trim().is_empty() {
+        let searching = !self.search.trim().is_empty();
+        if rows.is_empty() && searching {
             list = list
                 .push(text(fl!("ui-tree-search-no-results")).size(SMALL_SIZE))
                 .push(
@@ -1880,7 +1881,13 @@ impl Shell {
             TreeRow::Profile { profile, depth } => {
                 let selected = self.app.is_selected(&profile.id);
                 let state = self.app.profile_state(&profile.id);
-                tree_view::indented(tree_view::owned_row(&profile, selected, state), depth)
+                let context = searching
+                    .then(|| tree_view::search_context(&profile))
+                    .flatten();
+                tree_view::indented(
+                    tree_view::owned_row(&profile, selected, state, context),
+                    depth,
+                )
             }
         }));
         // A right click beside the rows is the tree's own menu.

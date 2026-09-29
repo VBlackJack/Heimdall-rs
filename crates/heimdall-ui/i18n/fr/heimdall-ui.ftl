@@ -4,7 +4,7 @@
 ui-window-title = Heimdall
 ui-window-title-tab = { $tab } - Heimdall
 
-ui-sidebar-title = Profils
+ui-sidebar-title = Sessions
 ui-sidebar-empty = Aucun profil enregistré.
 ui-sidebar-settings-button = Paramètres
 ui-desktop-send-keys = Envoyer des touches

@@ -193,12 +193,32 @@ pub fn folder_row<'a>(
     )
 }
 
-/// One profile: protocol, the state of its sessions and name, as the C# tree's row; the
-/// host, account and protocol in its tooltip.
+/// Size of the line under a found profile's name.
+const CONTEXT_SIZE: f32 = 11.0;
+
+/// Where a found profile is: its folder and host, as the C# tree says under the name while
+/// searching; `None` when it has neither.
+#[must_use]
+pub fn search_context(profile: &ProfileSummary) -> Option<String> {
+    let parts: Vec<&str> = [
+        profile.group.as_deref(),
+        profile.endpoint.as_ref().map(|(host, _)| host.as_str()),
+    ]
+    .into_iter()
+    .flatten()
+    .filter(|part| !part.trim().is_empty())
+    .collect();
+    (!parts.is_empty()).then(|| parts.join("  "))
+}
+
+/// One profile: protocol, the state of its sessions and name, as the C# tree's row, with
+/// where it is under the name while searching; the host, account and protocol in its
+/// tooltip.
 pub fn owned_row(
     profile: &ProfileSummary,
     selected: bool,
     state: Option<SessionState>,
+    context: Option<String>,
 ) -> Element<'static, Message> {
     let id = profile.id.clone();
     let mut label = row![
@@ -209,7 +229,14 @@ pub fn owned_row(
         )
         .width(PROTOCOL_WIDTH),
         state_dot(state),
-        text(profile.name.clone()).wrapping(text::Wrapping::Glyph),
+        column![text(profile.name.clone()).wrapping(text::Wrapping::Glyph)].push(context.map(
+            |context| {
+                text(context)
+                    .size(CONTEXT_SIZE)
+                    .style(text::secondary)
+                    .wrapping(text::Wrapping::Glyph)
+            }
+        )),
     ]
     .spacing(6.0)
     .align_y(iced::Alignment::Center);

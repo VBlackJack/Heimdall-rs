@@ -59,14 +59,14 @@ fn each_language_chosen_shows_at_once_and_is_kept_for_the_next_run() {
     let _ = shell.update(Message::ShowSettings);
     {
         let mut ui = simulator(&shell);
-        for label in ["Appearance", "Language", "Profiles"] {
+        for label in ["Appearance", "Language", "Sessions"] {
             ui.find(label).expect(label);
         }
     }
     for (language, title) in [
-        (Language::French, "Profils"),
-        (Language::Spanish, "Perfiles"),
-        (Language::English, "Profiles"),
+        (Language::French, "Paramètres"),
+        (Language::Spanish, "Ajustes"),
+        (Language::English, "Settings"),
     ] {
         let _ = shell.update(Message::LanguageChosen(language));
         assert_eq!(heimdall_ui::i18n::current(), language);
