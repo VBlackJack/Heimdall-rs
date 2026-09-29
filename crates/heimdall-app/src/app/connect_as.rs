@@ -67,6 +67,7 @@ impl ConnectAs {
         matches!(
             (self, kind),
             (Self::Ssh, ProfileKind::Ssh)
+                | (Self::Sftp, ProfileKind::Sftp)
                 | (Self::Rdp, ProfileKind::Rdp)
                 | (Self::Vnc, ProfileKind::Vnc)
                 | (Self::Telnet, ProfileKind::Telnet)
@@ -151,6 +152,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 post_connect: heimdall_core::post_connect::PostConnect::default(),
                 forward_agent: false,
                 compression: false,
+                sftp: false,
             }),
             purpose,
         )

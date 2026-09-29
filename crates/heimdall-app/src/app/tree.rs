@@ -36,6 +36,8 @@ const DEFAULT_SSH_PORT: u16 = 22;
 pub enum ProfileKind {
     /// SSH shell, and SFTP for its files.
     Ssh,
+    /// SFTP: an SSH profile that opens its files.
+    Sftp,
     /// Remote desktop.
     Rdp,
     /// Telnet terminal.
@@ -54,6 +56,7 @@ impl ProfileKind {
     pub fn label(self) -> &'static str {
         match self {
             Self::Ssh => "SSH",
+            Self::Sftp => "SFTP",
             Self::Rdp => "RDP",
             Self::Telnet => "Telnet",
             Self::Vnc => "VNC",
@@ -138,7 +141,11 @@ impl App {
                 id: profile.id.clone(),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
-                kind: ProfileKind::Ssh,
+                kind: if profile.sftp {
+                    ProfileKind::Sftp
+                } else {
+                    ProfileKind::Ssh
+                },
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: profile.username.clone(),
                 gateway: self.badge(profile.gateway.as_ref()),
@@ -304,7 +311,7 @@ impl App {
         let copy = new.clone();
         let result = self.store.apply(|store| {
             match source.kind {
-                ProfileKind::Ssh => {
+                ProfileKind::Ssh | ProfileKind::Sftp => {
                     let found = store.ssh_profiles().iter().find(|p| p.id == *id).cloned();
                     if let Some(mut profile) = found {
                         profile.id = copy.clone();

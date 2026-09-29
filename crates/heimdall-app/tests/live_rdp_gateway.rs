@@ -93,6 +93,7 @@ fn request(
             post_connect: heimdall_core::post_connect::PostConnect::default(),
             forward_agent: false,
             compression: false,
+            sftp: false,
         }],
         ssh,
         cancel: CancellationToken::new(),

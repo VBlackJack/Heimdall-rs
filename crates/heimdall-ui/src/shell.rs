@@ -3140,6 +3140,7 @@ fn protocol_name(protocol: DraftProtocol) -> String {
     match protocol {
         DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-name"),
         DraftProtocol::Ssh => fl!("ui-profile-protocol-ssh-name"),
+        DraftProtocol::Sftp => fl!("ui-profile-protocol-sftp-name"),
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-name"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
@@ -3150,6 +3151,7 @@ fn protocol_description(protocol: DraftProtocol) -> String {
     match protocol {
         DraftProtocol::Rdp => fl!("ui-profile-protocol-rdp-desc"),
         DraftProtocol::Ssh => fl!("ui-profile-protocol-ssh-desc"),
+        DraftProtocol::Sftp => fl!("ui-profile-protocol-sftp-desc"),
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-desc"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
@@ -3209,7 +3211,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::Port => (
             match draft.protocol {
                 DraftProtocol::Rdp => fl!("ui-profile-port-rdp"),
-                DraftProtocol::Ssh => fl!("ui-profile-port-ssh"),
+                DraftProtocol::Ssh | DraftProtocol::Sftp => fl!("ui-profile-port-ssh"),
                 DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
                 DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
                 DraftProtocol::Telnet => fl!("ui-profile-port-telnet"),
@@ -3595,7 +3597,7 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             fl!("ui-profile-credentials-rdp"),
             Some(fl!("ui-profile-credentials-rdp-desc")),
         )),
-        DraftProtocol::Ssh => Some((
+        DraftProtocol::Ssh | DraftProtocol::Sftp => Some((
             fl!("ui-profile-credentials-ssh"),
             Some(fl!("ui-profile-credentials-ssh-desc")),
         )),
@@ -3658,7 +3660,7 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
         DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
         DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
-        DraftProtocol::Ssh => Some(fl!("ui-profile-options-ssh")),
+        DraftProtocol::Ssh | DraftProtocol::Sftp => Some(fl!("ui-profile-options-ssh")),
         DraftProtocol::WinRm => None,
     };
     if let Some(options) = options {

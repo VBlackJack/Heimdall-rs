@@ -92,6 +92,8 @@ pub enum DraftProtocol {
     /// SSH, with SFTP for its files.
     #[default]
     Ssh,
+    /// SFTP: the SSH fields, opening the files.
+    Sftp,
     /// Remote desktop.
     Rdp,
     /// VNC desktop.
@@ -104,7 +106,20 @@ pub enum DraftProtocol {
 
 impl DraftProtocol {
     /// Every protocol, in the order the picker shows them.
-    pub const ALL: [Self; 5] = [Self::Rdp, Self::Ssh, Self::WinRm, Self::Vnc, Self::Telnet];
+    pub const ALL: [Self; 6] = [
+        Self::Rdp,
+        Self::Ssh,
+        Self::WinRm,
+        Self::Sftp,
+        Self::Vnc,
+        Self::Telnet,
+    ];
+
+    /// Whether it is SSH or SFTP: the same fields, the same profile.
+    #[must_use]
+    pub fn is_ssh_family(self) -> bool {
+        matches!(self, Self::Ssh | Self::Sftp)
+    }
 
     /// Whether a form for this protocol shows `field`.
     #[must_use]
@@ -113,11 +128,13 @@ impl DraftProtocol {
             ProfileField::Name | ProfileField::Group | ProfileField::Host | ProfileField::Port => {
                 true
             }
-            ProfileField::Username => matches!(self, Self::Ssh | Self::Rdp | Self::WinRm),
+            ProfileField::Username => {
+                matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm)
+            }
             ProfileField::Domain | ProfileField::FixedWidth | ProfileField::FixedHeight => {
                 self == Self::Rdp
             }
-            ProfileField::KeyPath => self == Self::Ssh,
+            ProfileField::KeyPath => self.is_ssh_family(),
             // The protocols whose password the external credential provider gives.
             ProfileField::VaultEntry => self.saves_password(),
             ProfileField::SocksPort
@@ -130,19 +147,19 @@ impl DraftProtocol {
     /// typed into `PowerShell`, which asks for it.
     #[must_use]
     pub fn saves_password(self) -> bool {
-        matches!(self, Self::Ssh | Self::Rdp | Self::Vnc)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::Vnc)
     }
 
     /// Whether this protocol's sessions can go through an SSH gateway.
     #[must_use]
     pub fn routes_through_gateway(self) -> bool {
-        matches!(self, Self::Ssh | Self::Rdp)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
     }
 
     /// Whether a saved password belongs to an account, which the form must then name.
     #[must_use]
     pub fn password_needs_username(self) -> bool {
-        matches!(self, Self::Ssh | Self::Rdp)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
     }
 }
 
@@ -196,6 +213,8 @@ impl ProfileToggle {
             ],
             DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
             DraftProtocol::Ssh => &[Self::Compression, Self::ForwardAgent],
+            // No shell to forward the agent to.
+            DraftProtocol::Sftp => &[Self::Compression],
             DraftProtocol::Telnet => &[],
         }
     }
@@ -375,7 +394,11 @@ impl ProfileDraft {
             .into_iter()
             .filter_map(|(on, toggle)| on.then_some(toggle))
             .collect(),
-            protocol: DraftProtocol::Ssh,
+            protocol: if profile.sftp {
+                DraftProtocol::Sftp
+            } else {
+                DraftProtocol::Ssh
+            },
             protocol_chosen: true,
             ..Self::default()
         }
@@ -701,7 +724,7 @@ impl ProfileDraft {
     #[must_use]
     pub fn default_port(&self) -> u16 {
         match self.protocol {
-            DraftProtocol::Ssh => DEFAULT_SSH_PORT,
+            DraftProtocol::Ssh | DraftProtocol::Sftp => DEFAULT_SSH_PORT,
             DraftProtocol::Rdp => DEFAULT_RDP_PORT,
             DraftProtocol::Vnc => DEFAULT_VNC_PORT,
             DraftProtocol::Telnet => DEFAULT_TELNET_PORT,
@@ -741,7 +764,7 @@ impl ProfileDraft {
         let group = optional(group);
         let name = name.to_owned();
         Ok(match self.protocol {
-            DraftProtocol::Ssh => DraftProfile::Ssh(SshProfile {
+            DraftProtocol::Ssh | DraftProtocol::Sftp => DraftProfile::Ssh(SshProfile {
                 id,
                 name,
                 group,
@@ -753,8 +776,10 @@ impl ProfileDraft {
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
                 post_connect: self.saved_post_connect(),
-                forward_agent: self.is_on(ProfileToggle::ForwardAgent),
+                forward_agent: self.protocol == DraftProtocol::Ssh
+                    && self.is_on(ProfileToggle::ForwardAgent),
                 compression: self.is_on(ProfileToggle::Compression),
+                sftp: self.protocol == DraftProtocol::Sftp,
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -898,6 +923,7 @@ impl ProfileDraft {
             post_connect: self.saved_post_connect(),
             forward_agent: self.is_on(ProfileToggle::ForwardAgent),
             compression: self.is_on(ProfileToggle::Compression),
+            sftp: false,
         })
     }
 }
@@ -1059,6 +1085,7 @@ mod tests {
             post_connect: heimdall_core::post_connect::PostConnect::default(),
             forward_agent: false,
             compression: false,
+            sftp: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1148,6 +1175,57 @@ mod tests {
             !telnet.shows(ProfileField::SocksPort),
             "never through a gateway"
         );
+    }
+
+    #[test]
+    fn an_sftp_form_saves_an_ssh_profile_that_opens_its_files() {
+        assert_eq!(
+            DraftProtocol::ALL,
+            [
+                DraftProtocol::Rdp,
+                DraftProtocol::Ssh,
+                DraftProtocol::WinRm,
+                DraftProtocol::Sftp,
+                DraftProtocol::Vnc,
+                DraftProtocol::Telnet,
+            ],
+            "the C# picker's order"
+        );
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Sftp);
+        assert_eq!(draft.port, "22");
+        for field in [
+            ProfileField::Username,
+            ProfileField::KeyPath,
+            ProfileField::VaultEntry,
+        ] {
+            assert!(draft.shows(field), "{field:?}");
+        }
+        assert_eq!(
+            ProfileToggle::of(DraftProtocol::Sftp),
+            [ProfileToggle::Compression],
+            "no shell to forward the agent to"
+        );
+        assert!(DraftProtocol::Sftp.routes_through_gateway());
+        draft.set(ProfileField::Name, "files".to_owned());
+        draft.set(ProfileField::Host, "files.lab".to_owned());
+        draft.set(ProfileField::Username, "ops".to_owned());
+        draft.toggle(ProfileToggle::Compression, true);
+        draft.toggle(ProfileToggle::ForwardAgent, true);
+        let Ok(DraftProfile::Ssh(profile)) = draft.to_saved(id()) else {
+            panic!("an SSH profile");
+        };
+        assert!(profile.sftp && profile.compression);
+        assert!(!profile.forward_agent, "never for SFTP, even ticked");
+        let reread = ProfileDraft::from_profile(&profile);
+        assert_eq!(reread.protocol, DraftProtocol::Sftp);
+        assert!(reread.is_on(ProfileToggle::Compression));
+        let mut shell = ProfileDraft::new_for(DraftProtocol::Ssh);
+        shell.set(ProfileField::Name, "web".to_owned());
+        shell.set(ProfileField::Host, "web.lab".to_owned());
+        let Ok(DraftProfile::Ssh(profile)) = shell.to_saved(id()) else {
+            panic!("an SSH profile");
+        };
+        assert!(!profile.sftp);
     }
 
     #[test]

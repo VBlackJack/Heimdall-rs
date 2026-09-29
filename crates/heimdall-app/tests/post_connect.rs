@@ -54,6 +54,7 @@ fn profile(id: &str, post_connect: PostConnect) -> SshProfile {
         post_connect,
         forward_agent: false,
         compression: false,
+        sftp: false,
     }
 }
 
@@ -302,4 +303,49 @@ fn a_shell_forwards_the_agent_only_when_its_profile_says_so() {
     let effects = app.update(Message::OpenProfile(ProfileId::new("plain")));
     assert!(!connect_request(&effects).options.forward_agent);
     assert!(!connect_request(&effects).options.compression);
+}
+
+#[test]
+fn an_sftp_profile_opens_its_files_is_shown_as_sftp_and_offers_a_shell_as_another_protocol() {
+    use heimdall_app::{ConnectAs, ProfileKind};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    let mut files = profile("files", PostConnect::default());
+    files.sftp = true;
+    store.merge([files]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        ..config(dir.path())
+    });
+    let summary = app
+        .profile_summaries()
+        .into_iter()
+        .find(|profile| profile.id.as_str() == "files")
+        .expect("listed");
+    assert_eq!(summary.kind, ProfileKind::Sftp);
+    assert_eq!(summary.kind.label(), "SFTP");
+    let choices = app.connect_as_choices(&ProfileId::new("files"));
+    assert!(choices.contains(&ConnectAs::Ssh) && !choices.contains(&ConnectAs::Sftp));
+    // A double click opens its files, as the C# SFTP profile.
+    let effects = app.update(Message::ConnectProfile(ProfileId::new("files")));
+    let request = connect_request(&effects);
+    assert_eq!(request.purpose, Purpose::Files);
+    let [Effect::Connect { tab, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let tab = *tab;
+    assert_eq!(app.tab_kind(app.tab(tab).expect("tab")), ProfileKind::Sftp);
+    // Deleted meanwhile, the tab still says what it runs.
+    app.update(Message::RequestDeleteProfile(ProfileId::new("files")));
+    app.update(Message::ConfirmDialog);
+    assert!(
+        app.profile_summaries()
+            .iter()
+            .all(|profile| profile.id.as_str() != "files"),
+        "deleted"
+    );
+    assert_eq!(app.tab_kind(app.tab(tab).expect("tab")), ProfileKind::Sftp);
 }

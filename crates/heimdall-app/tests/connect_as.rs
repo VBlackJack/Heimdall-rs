@@ -46,6 +46,7 @@ fn app(dir: &Path) -> App {
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }]);
     store.merge_rdp([RdpProfile {
         id: ProfileId::new("dc"),

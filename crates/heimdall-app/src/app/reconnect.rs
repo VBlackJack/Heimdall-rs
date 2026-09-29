@@ -102,7 +102,9 @@ impl App {
             return Vec::new();
         };
         let message = match profile.kind {
+            // An SFTP profile opens its files, as the C# one.
             ProfileKind::Ssh if purpose == Purpose::Files => Message::OpenFiles(profile.id),
+            ProfileKind::Sftp => Message::OpenFiles(profile.id),
             ProfileKind::Ssh => Message::OpenProfile(profile.id),
             ProfileKind::Rdp => Message::OpenRdp(profile.id),
             ProfileKind::Telnet => Message::OpenTelnet(profile.id),

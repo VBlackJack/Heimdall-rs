@@ -51,6 +51,7 @@ fn hop(id: &str, host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile 
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }
 }
 

@@ -112,6 +112,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());
@@ -139,6 +140,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         snapshot(&shell, "profile-protocols.png");
         ui.find("Choose a protocol").expect("picker");
         ui.find("Windows remote desktop session").expect("RDP card");
+        ui.find("Secure file transfer over SSH").expect("SFTP card");
         ui.click("Secure shell terminal").expect("SSH card");
         assert!(ui.into_messages().any(|message| matches!(
             message,
@@ -589,4 +591,27 @@ fn an_ssh_form_offers_to_forward_the_agent_as_the_csharp_box() {
     let mut ui = tall_simulator(&shell);
     assert!(ui.find("Forward SSH agent").is_err());
     assert!(ui.find("Enable compression").is_err());
+}
+
+#[test]
+fn an_sftp_form_is_the_ssh_one_without_what_a_shell_needs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Sftp)));
+    let mut ui = tall_simulator(&shell);
+    for label in [
+        "SFTP",
+        "Remote SSH port",
+        "SSH credentials",
+        "SSH key",
+        "SSH options",
+        "Enable compression",
+        "Gateway routing",
+    ] {
+        ui.find(label).expect(label);
+    }
+    for absent in ["Forward SSH agent", "Post-connect sequence"] {
+        assert!(ui.find(absent).is_err(), "{absent}");
+    }
 }
