@@ -165,7 +165,7 @@ fn shell(name: &str, command: &LocalCommand, program_path: Option<&Path>) -> Loc
     }
 }
 
-fn term_arguments(arguments: &LocalArguments) -> TermArguments {
+pub(super) fn term_arguments(arguments: &LocalArguments) -> TermArguments {
     match arguments {
         LocalArguments::List(args) => TermArguments::List(args.clone()),
         LocalArguments::WindowsLine(line) => TermArguments::WindowsLine(line.clone()),

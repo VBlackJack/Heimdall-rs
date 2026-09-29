@@ -375,6 +375,15 @@ ui-tree-copy-ssh-command = Copier la commande SSH
 ui-tree-delete = Supprimer
 ui-tree-add-session = Ajouter une session
 ui-tree-import-sessions = Importer des sessions
+ui-tree-export-sessions = Exporter les sessions
+ui-dialog-export-title = Exporter les sessions
+ui-dialog-export-done = { $count ->
+    [one] 1 session exportée avec succès.
+   *[other] { $count } sessions exportées avec succès.
+}
+ui-dialog-export-credentials = Les identifiants n'ont pas été inclus dans le fichier exporté.
+ui-dialog-export-failed = Échec de l'export : { $detail }
+ui-export-filter-json = Fichiers JSON
 ui-tree-add-tooltip = Ajouter une session
 ui-tree-more-tooltip = Autres actions
 ui-tree-tooltip-host = Hôte : { $host }

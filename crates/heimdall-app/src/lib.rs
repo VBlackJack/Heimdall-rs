@@ -44,8 +44,8 @@ pub mod transcript;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, FilesMessage, FolderMessage,
-    FolderNaming, GatewayBadge, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS,
+    App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, ExportOutcome, FilesMessage,
+    FolderMessage, FolderNaming, GatewayBadge, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS,
     LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER,
     NameAction, Notice, OpenedVault, Phase, PinDialog, PinFailure, PinMessage, PinMode,
     PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,

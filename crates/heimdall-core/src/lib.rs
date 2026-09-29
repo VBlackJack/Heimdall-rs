@@ -19,6 +19,7 @@
 
 pub mod credential_provider;
 pub mod credentials;
+pub mod export;
 pub mod folder;
 pub mod import;
 pub mod lockout;

@@ -1534,6 +1534,7 @@ impl Shell {
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            Effect::SaveExport { document, count } => save_export(document, count),
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
             Effect::RetryAt {
@@ -3069,6 +3070,62 @@ fn action_label<'a>(label: String) -> iced::widget::Text<'a> {
 }
 
 /// The report of an import: counts, and the profiles left out with their reason.
+/// The save dialog of an export, held by the window, then the file written.
+fn save_export(document: String, count: usize) -> Task<Message> {
+    let (title, filter) = (fl!("ui-dialog-export-title"), fl!("ui-export-filter-json"));
+    window::latest().then(move |id| {
+        let (title, filter) = (title.clone(), filter.clone());
+        let pick = match id {
+            Some(id) => window::run(id, move |window| {
+                crate::export_file::dialog(title, filter, Some(window))
+            }),
+            None => Task::done(crate::export_file::dialog(title, filter, None)),
+        };
+        let document = document.clone();
+        pick.then(move |pick| {
+            Task::perform(
+                crate::export_file::save(pick, document.clone(), count),
+                |outcome| Message::App(AppMessage::ExportFinished(outcome)),
+            )
+        })
+    })
+}
+
+/// A report under its title, closed by OK: how the export went, as the C# message box
+/// says it, or why the import or a password save failed, with the technical detail.
+fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element<'a, Message> {
+    let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
+    let (title, lines) = match dialog {
+        Dialog::ExportDone { count } => (
+            fl!("ui-dialog-export-title"),
+            vec![
+                text(fl!("ui-dialog-export-done", count = count.to_owned())),
+                text(fl!("ui-dialog-export-credentials")),
+            ],
+        ),
+        Dialog::ExportFailed { detail } => (
+            fl!("ui-dialog-export-title"),
+            vec![text(fl!(
+                "ui-dialog-export-failed",
+                detail = detail.as_str()
+            ))],
+        ),
+        Dialog::ImportFailed { detail: technical } => (
+            fl!("ui-dialog-import-failed-title"),
+            vec![detail(technical)],
+        ),
+        Dialog::PasswordSaveFailed { detail: technical } => {
+            (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
+        }
+        _ => (String::new(), Vec::new()),
+    };
+    column![text(title).size(HEADING_SIZE)]
+        .extend(lines.into_iter().map(Element::from))
+        .push(ok)
+        .spacing(SPACING)
+        .into()
+}
+
 fn import_report<'a>(
     summary: &'a heimdall_app::ImportSummary,
     ok: iced::widget::Button<'a, Message>,
@@ -4682,13 +4739,10 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
-        Dialog::ImportFailed { detail: technical } => column![
-            heading(fl!("ui-dialog-import-failed-title")),
-            detail(technical),
-            ok(),
-        ]
-        .spacing(SPACING)
-        .into(),
+        Dialog::ExportDone { .. }
+        | Dialog::ExportFailed { .. }
+        | Dialog::ImportFailed { .. }
+        | Dialog::PasswordSaveFailed { .. } => report(dialog, ok()),
         Dialog::StoreError { detail: technical } => column![
             heading(fl!("ui-dialog-store-title")),
             text(fl!("ui-dialog-store-body")),
@@ -4700,13 +4754,6 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::Pin(pin) => pin_dialog(pin, forms.vault),
         Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),
-        Dialog::PasswordSaveFailed { detail: technical } => column![
-            heading(fl!("ui-vault-save-failed-title")),
-            detail(technical),
-            ok(),
-        ]
-        .spacing(SPACING)
-        .into(),
     }
 }
 

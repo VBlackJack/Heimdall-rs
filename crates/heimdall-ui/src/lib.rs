@@ -18,6 +18,7 @@
 
 mod desktop_texture;
 pub mod desktop_view;
+pub mod export_file;
 mod files_view;
 pub mod finder;
 pub mod i18n;

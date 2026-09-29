@@ -352,6 +352,10 @@ pub enum Message {
     WindowCloseRequested,
     /// Import the profiles of the C# Heimdall.
     ImportLegacy,
+    /// Export every profile and gateway in the C# Heimdall's session file.
+    ExportSessions,
+    /// How the export's file went.
+    ExportFinished(ExportOutcome),
     /// Open an empty profile form.
     NewProfile,
     /// Open the form of a saved profile.
@@ -561,6 +565,8 @@ impl fmt::Debug for Message {
             Self::WindowFocus(focused) => write!(f, "WindowFocus({focused})"),
             Self::WindowCloseRequested => f.write_str("WindowCloseRequested"),
             Self::ImportLegacy => f.write_str("ImportLegacy"),
+            Self::ExportSessions => f.write_str("ExportSessions"),
+            Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
             Self::ProfileField { field, .. } => write!(f, "ProfileField({field:?}, ..)"),
@@ -679,6 +685,14 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Ask where to save the exported sessions, as the C# save dialog, then write them
+    /// there; answered with [`Message::ExportFinished`].
+    SaveExport {
+        /// The C# session document.
+        document: String,
+        /// Profiles it holds.
+        count: usize,
+    },
     /// Read the clipboard, then send [`Message::ClipboardText`] for `tab`.
     ReadClipboard {
         /// Tab the paste is for.
@@ -786,6 +800,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
             Self::WakeAt {
                 tab, generation, ..
@@ -871,6 +886,17 @@ pub struct Prompt {
     pub question: QuestionId,
     /// What is asked.
     pub kind: QuestionKind,
+}
+
+/// How writing the exported sessions went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ExportOutcome {
+    /// Written: this many profiles.
+    Saved(usize),
+    /// The save dialog was closed without a file.
+    Cancelled,
+    /// The file could not be written.
+    Failed(String),
 }
 
 /// One tab.
@@ -1183,6 +1209,16 @@ pub enum Dialog {
     ImportDone(ImportSummary),
     /// An import could not run.
     ImportFailed {
+        /// Technical detail.
+        detail: String,
+    },
+    /// The sessions were exported: how many, as the C# says it.
+    ExportDone {
+        /// Profiles written.
+        count: usize,
+    },
+    /// The export's file could not be written.
+    ExportFailed {
         /// Technical detail.
         detail: String,
     },
@@ -1537,6 +1573,8 @@ impl App {
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
             | Message::ImportLegacy
+            | Message::ExportSessions
+            | Message::ExportFinished(_)
             | Message::Settings(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
@@ -2323,6 +2361,8 @@ impl App {
                 Dialog::ImportDone(_)
                 | Dialog::FileProperties(_)
                 | Dialog::ImportFailed { .. }
+                | Dialog::ExportDone { .. }
+                | Dialog::ExportFailed { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. },
             )
@@ -2331,7 +2371,8 @@ impl App {
     }
 
     /// The window's focus and its close, and what it asks of the application: the import
-    /// from the C# Heimdall, a change of the settings or of broadcast input.
+    /// from the C# Heimdall and the export for it, a change of the settings or of broadcast
+    /// input.
     fn window_message(&mut self, message: &Message) -> Vec<Effect> {
         match message {
             Message::WindowFocus(focused) => self.window_focus(*focused),
@@ -2340,9 +2381,32 @@ impl App {
                 self.import_legacy();
                 Vec::new()
             }
+            Message::ExportSessions => vec![self.export_sessions()],
+            Message::ExportFinished(outcome) => {
+                self.dialog = match outcome {
+                    ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),
+                    ExportOutcome::Failed(detail) => Some(Dialog::ExportFailed {
+                        detail: detail.clone(),
+                    }),
+                    ExportOutcome::Cancelled => self.dialog.take(),
+                };
+                Vec::new()
+            }
             Message::Settings(message) => self.settings_message(message),
             Message::Broadcast(message) => self.broadcast_message(*message),
             _ => Vec::new(),
+        }
+    }
+
+    /// The profiles and gateways as the C# session document, a local shell's arguments
+    /// quoted as the terminal runs them.
+    fn export_sessions(&self) -> Effect {
+        let store = &self.store;
+        Effect::SaveExport {
+            document: heimdall_core::export::csharp(store, &|arguments| {
+                heimdall_term::local::windows_arguments(&local_tab::term_arguments(arguments))
+            }),
+            count: heimdall_core::export::session_count(store),
         }
     }
 

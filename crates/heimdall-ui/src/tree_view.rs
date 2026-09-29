@@ -415,10 +415,15 @@ pub fn menu_entries<'a>(
         }
         (TreeMenu::Add, _) => entries = add_entries(entries),
         (TreeMenu::More, _) => {
-            entries = entries.push(entry(
-                fl!("ui-tree-import-sessions"),
-                can_import.then_some(AppMessage::ImportLegacy),
-            ));
+            entries = entries
+                .push(entry(
+                    fl!("ui-tree-import-sessions"),
+                    can_import.then_some(AppMessage::ImportLegacy),
+                ))
+                .push(entry(
+                    fl!("ui-tree-export-sessions"),
+                    Some(AppMessage::ExportSessions),
+                ));
         }
         _ => {}
     }

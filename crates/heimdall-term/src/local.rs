@@ -23,6 +23,7 @@
 //! watcher post to.
 
 mod command_line;
+pub use command_line::windows_arguments;
 pub mod program;
 #[cfg(unix)]
 mod unix;

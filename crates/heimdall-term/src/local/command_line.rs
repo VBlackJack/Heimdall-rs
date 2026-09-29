@@ -27,20 +27,32 @@ use super::LocalArguments;
 #[cfg_attr(unix, allow(dead_code, reason = "tested everywhere, used on Windows"))]
 pub fn windows(program: &Path, arguments: &LocalArguments) -> String {
     let mut line = format!("\"{}\"", program.to_string_lossy());
-    match arguments {
-        LocalArguments::List(args) => {
-            for arg in args {
-                line.push(' ');
-                push_quoted(&mut line, arg);
-            }
-        }
-        LocalArguments::WindowsLine(text) if !text.is_empty() => {
-            line.push(' ');
-            line.push_str(text);
-        }
-        LocalArguments::WindowsLine(_) => {}
+    let arguments = windows_arguments(arguments);
+    if !arguments.is_empty() {
+        line.push(' ');
+        line.push_str(&arguments);
     }
     line
+}
+
+/// `arguments` as the one Windows argument string [`windows`] puts after the program: each
+/// listed argument quoted as the C runtime reads it back, a Windows argument string as
+/// written. Also what an exported profile hands the C# Heimdall.
+#[must_use]
+pub fn windows_arguments(arguments: &LocalArguments) -> String {
+    match arguments {
+        LocalArguments::List(args) => {
+            let mut line = String::new();
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    line.push(' ');
+                }
+                push_quoted(&mut line, arg);
+            }
+            line
+        }
+        LocalArguments::WindowsLine(text) => text.clone(),
+    }
 }
 
 /// `arg` as the C runtime splits it back out of a command line: quoted when it holds a space
@@ -114,7 +126,7 @@ mod tests {
 
     #[cfg(windows)]
     use super::is_cmd;
-    use super::{LocalArguments, unix_display, windows};
+    use super::{LocalArguments, unix_display, windows, windows_arguments};
 
     fn list(args: &[&str]) -> LocalArguments {
         LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect())
@@ -140,6 +152,24 @@ mod tests {
         assert_eq!(
             windows(Path::new(PROGRAM), &list(&[r"C:\a b\"])),
             r#""C:\My Tools\x.exe" "C:\a b\\""#
+        );
+    }
+
+    #[test]
+    fn the_arguments_alone_are_the_line_after_the_program() {
+        assert_eq!(windows_arguments(&list(&[])), "");
+        assert_eq!(
+            windows_arguments(&list(&[""])),
+            r#""""#,
+            "an empty one kept"
+        );
+        assert_eq!(
+            windows_arguments(&list(&["-a", "two words"])),
+            r#"-a "two words""#
+        );
+        assert_eq!(
+            windows_arguments(&LocalArguments::WindowsLine("/c dir".to_owned())),
+            "/c dir"
         );
     }
 
