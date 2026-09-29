@@ -33,6 +33,7 @@ fn ssh(id: &str, group: Option<&str>) -> SshProfile {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 
@@ -51,6 +52,7 @@ fn rdp(id: &str, group: Option<&str>) -> RdpProfile {
         redirect_drives: false,
         options: heimdall_core::profile::RdpOptions::default(),
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 

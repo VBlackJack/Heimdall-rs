@@ -132,6 +132,16 @@ pub enum ConnectError {
         /// Port.
         port: u16,
     },
+    /// The local port of the profile's SOCKS proxy could not be taken: another program holds
+    /// it.
+    #[error("the SOCKS proxy port {port} could not be opened: {source}")]
+    ProxyPort {
+        /// The port.
+        port: u16,
+        /// Why.
+        #[source]
+        source: std::io::Error,
+    },
     /// Any other SSH protocol error.
     #[error("ssh: {0}")]
     Protocol(#[source] russh::Error),

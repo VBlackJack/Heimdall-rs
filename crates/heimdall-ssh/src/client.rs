@@ -271,6 +271,56 @@ pub async fn establish_via<P: Prompter>(
     prompter: Arc<P>,
     cancel: CancellationToken,
 ) -> Result<Connection, ConnectError> {
+    // The gateway's handle can go: its session lives on for as long as the connection
+    // onward is open, and ends when the hop after it disconnects.
+    let (server, _gateway) = walk(route, profile, options, prompter.as_ref(), &cancel).await?;
+    Ok(Connection::new(server))
+}
+
+/// A server reached through a gateway, and that gateway, still usable.
+#[derive(Debug)]
+pub struct Routed {
+    /// The server.
+    pub server: Connection,
+    /// The last gateway of the route, to connect onward elsewhere too (a SOCKS proxy);
+    /// `None` without a route. Dropping it disconnects the gateway, and with it the server
+    /// carried over it: keep it as long as the server.
+    pub gateway: Option<Connection>,
+}
+
+/// As [`establish_via`], keeping the last gateway of the route usable.
+///
+/// # Errors
+///
+/// As [`establish_via`].
+pub async fn establish_via_keeping_gateway<P: Prompter>(
+    route: &[SshProfile],
+    profile: &SshProfile,
+    options: &ConnectOptions,
+    prompter: Arc<P>,
+    cancel: CancellationToken,
+) -> Result<Routed, ConnectError> {
+    let (server, gateway) = walk(route, profile, options, prompter.as_ref(), &cancel).await?;
+    Ok(Routed {
+        server: Connection::new(server),
+        gateway: gateway.map(Connection::new),
+    })
+}
+
+/// Walks `route` to `profile`: the server's handle, and the last gateway's.
+async fn walk<P: Prompter>(
+    route: &[SshProfile],
+    profile: &SshProfile,
+    options: &ConnectOptions,
+    prompter: &P,
+    cancel: &CancellationToken,
+) -> Result<
+    (
+        client::Handle<ClientHandler>,
+        Option<client::Handle<ClientHandler>>,
+    ),
+    ConnectError,
+> {
     // Reached over TCP: the nearest gateway, or the server itself without one.
     let (first, onward): (&SshProfile, Vec<&SshProfile>) = match route.split_first() {
         Some((nearest, rest)) => (
@@ -279,13 +329,13 @@ pub async fn establish_via<P: Prompter>(
         ),
         None => (profile, Vec::new()),
     };
-    let mut handle = hop(first, None, options, prompter.as_ref(), &cancel).await?;
+    let mut handle = hop(first, None, options, prompter, cancel).await?;
+    let mut gateway = None;
     for next in onward {
-        // The gateway's handle can go once the next hop runs: its session lives on for as
-        // long as the connection onward is open, and ends when the hop after it disconnects.
-        handle = hop(next, Some(&handle), options, prompter.as_ref(), &cancel).await?;
+        let reached = hop(next, Some(&handle), options, prompter, cancel).await?;
+        gateway = Some(std::mem::replace(&mut handle, reached));
     }
-    Ok(Connection::new(handle))
+    Ok((handle, gateway))
 }
 
 /// Originator address reported to a gateway when it is asked to connect onward: the client

@@ -60,6 +60,7 @@ fn app(dir: &Path, route: Option<&str>, gateways: Vec<SshGateway>) -> App {
         key_path: None,
         gateway: route.map(id),
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     App::new(AppConfig {

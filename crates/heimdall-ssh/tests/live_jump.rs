@@ -47,6 +47,7 @@ fn hop(id: &str, host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile 
         key_path: Some(key),
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 

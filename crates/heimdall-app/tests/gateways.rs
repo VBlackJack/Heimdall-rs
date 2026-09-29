@@ -49,6 +49,7 @@ fn web(gateway: Option<&str>) -> SshProfile {
         key_path: None,
         gateway: gateway.map(ProfileId::new),
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 

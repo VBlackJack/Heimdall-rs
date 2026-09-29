@@ -146,6 +146,13 @@ pub enum UiError {
         /// Port.
         port: u16,
     },
+    /// The local port of the profile's SOCKS proxy could not be taken.
+    ProxyPort {
+        /// The port.
+        port: u16,
+        /// Operating system message.
+        detail: String,
+    },
     /// The server refused a subsystem, such as SFTP.
     SubsystemRefused {
         /// Subsystem asked for.
@@ -275,6 +282,10 @@ impl From<ConnectError> for UiError {
             ConnectError::ShellRefused => Self::ShellRefused,
             ConnectError::SubsystemRefused { name } => Self::SubsystemRefused { name },
             ConnectError::JumpRefused { host, port } => Self::JumpRefused { host, port },
+            ConnectError::ProxyPort { port, source } => Self::ProxyPort {
+                port,
+                detail: source.to_string(),
+            },
             ConnectError::Protocol(source) => Self::Protocol {
                 detail: source.to_string(),
             },

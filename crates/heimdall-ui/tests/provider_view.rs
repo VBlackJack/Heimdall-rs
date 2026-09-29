@@ -289,6 +289,7 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

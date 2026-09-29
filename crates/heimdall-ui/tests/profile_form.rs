@@ -108,6 +108,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());
@@ -437,4 +438,41 @@ fn a_form_taller_than_the_window_scrolls_above_buttons_that_stay_in_view() {
         ui.into_messages()
             .any(|message| matches!(message, Message::SaveProfileForm))
     );
+}
+
+#[test]
+fn the_socks_card_shows_only_through_a_gateway_and_says_where_it_listens() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    assert!(
+        tall_simulator(&shell).find("SOCKS5 Proxy").is_err(),
+        "no gateway"
+    );
+    let _ = shell.update(app(AppMessage::NewGateway));
+    for (field, value) in [
+        (ProfileField::Name, "bastion"),
+        (ProfileField::Host, "bastion.lab"),
+        (ProfileField::Username, "jump"),
+    ] {
+        let _ = shell.update(app(AppMessage::GatewayField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let _ = shell.update(Message::SaveGatewayForm);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in ["SOCKS5 Proxy", "Local port", "Disabled"] {
+            ui.find(label).expect(label);
+        }
+    }
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::SocksPort,
+        value: "1080".to_owned(),
+    }));
+    let mut ui = tall_simulator(&shell);
+    ui.find("127.0.0.1:1080").expect("where it listens");
+    assert!(ui.find("Disabled").is_err());
 }

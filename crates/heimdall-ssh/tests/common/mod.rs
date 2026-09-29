@@ -528,6 +528,7 @@ pub fn profile(port: u16, key: Option<&str>) -> SshProfile {
         key_path: key.map(client_key_path),
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }
 }
 

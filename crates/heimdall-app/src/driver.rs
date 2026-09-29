@@ -23,13 +23,14 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use heimdall_core::profile::{SshProfile, display_address};
+use heimdall_core::profile::{Forwards, SshProfile, display_address};
 use heimdall_files::RemoteSession;
 use heimdall_sftp::{ClientConfig, SftpClient};
+use heimdall_ssh::socks::{self, Proxy};
 use heimdall_ssh::{
-    ConnectError, ConnectOptions, KeyboardInteractiveQuestion, PassphraseQuestion,
-    PasswordQuestion, Prompter, Secret, SessionEvent, ShellSession, UsernameQuestion,
-    establish_via, fingerprint,
+    ConnectError, ConnectOptions, Connection, KeyboardInteractiveQuestion, PassphraseQuestion,
+    PasswordQuestion, Prompter, Routed, Secret, SessionEvent, ShellSession, UsernameQuestion,
+    establish_via, establish_via_keeping_gateway, fingerprint,
 };
 use tokio::sync::{mpsc, oneshot};
 use tokio_stream::wrappers::ReceiverStream;
@@ -226,7 +227,7 @@ async fn run(
         open_files(&request, prompter, &events, &target).await;
         return;
     }
-    let result = match establish_via(
+    let result = match establish_via_keeping_gateway(
         &request.route,
         &request.profile,
         &request.options,
@@ -235,15 +236,21 @@ async fn run(
     )
     .await
     {
-        Ok(connection) => {
-            connection
-                .open_shell(&request.options, request.cancel.clone())
-                .await
+        Ok(Routed { server, gateway }) => {
+            match socks_proxy(request.profile.forwards, gateway.as_ref()).await {
+                Ok(proxy) => server
+                    .open_shell(&request.options, request.cancel.clone())
+                    .await
+                    .map(|session| (session, proxy, gateway)),
+                Err(error) => Err(error),
+            }
         }
         Err(error) => Err(error),
     };
-    let session = match result {
-        Ok(session) => session,
+    // The proxy and the gateway, whose drop would disconnect it and the server carried over
+    // it, last as long as the session: they go when this attempt returns.
+    let (session, _proxy, _gateway) = match result {
+        Ok(opened) => opened,
         Err(ConnectError::UnknownHostKey { host, port, key }) => {
             let fingerprint = fingerprint(&key);
             log::info!("{target} presented an unknown host key {fingerprint}");
@@ -301,6 +308,28 @@ async fn run(
         if last {
             return;
         }
+    }
+}
+
+/// Opens the SOCKS proxy of `forwards` on `gateway`, when the profile has one and goes
+/// through a gateway; it runs until dropped.
+///
+/// # Errors
+///
+/// [`ConnectError::ProxyPort`] when its port cannot be taken.
+pub(crate) async fn socks_proxy(
+    forwards: Forwards,
+    gateway: Option<&Connection>,
+) -> Result<Option<Proxy>, ConnectError> {
+    let (Some(port), Some(gateway)) = (forwards.socks_port, gateway) else {
+        return Ok(None);
+    };
+    match socks::start(port, Arc::new(gateway.clone())).await {
+        Ok(proxy) => {
+            log::info!("SOCKS5 proxy listening on {}", proxy.address());
+            Ok(Some(proxy))
+        }
+        Err(source) => Err(ConnectError::ProxyPort { port, source }),
     }
 }
 

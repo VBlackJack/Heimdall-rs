@@ -71,6 +71,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         key_path: None,
         gateway: None,
         vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

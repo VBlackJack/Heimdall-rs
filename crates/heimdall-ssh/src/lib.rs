@@ -34,8 +34,9 @@ mod prompter;
 mod run_trust;
 mod secret;
 mod session;
+pub mod socks;
 
-pub use client::{connect, establish, establish_via};
+pub use client::{Routed, connect, establish, establish_via, establish_via_keeping_gateway};
 pub use connection::{ChannelBytes, Connection, SubsystemStream, Tunnel};
 pub use error::{AuthMethod, ConnectError};
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
