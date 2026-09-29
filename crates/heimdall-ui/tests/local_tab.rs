@@ -102,8 +102,11 @@ fn a_saved_local_profile_is_listed_and_opens_by_its_id() {
     let mut ui = Simulator::with_size(settings(), WINDOW, shell.view());
     ui.find("Local").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    common::double_click(&mut ui, "Build tool");
-    let messages: Vec<Message> = ui.into_messages().collect();
+    drop(ui);
+    let messages = common::double_click_messages(
+        || Simulator::with_size(settings(), WINDOW, shell.view()),
+        "Build tool",
+    );
     assert!(messages.iter().any(|message| matches!(
         message,
         Message::TreeClick(id) if id.as_str() == "tool"

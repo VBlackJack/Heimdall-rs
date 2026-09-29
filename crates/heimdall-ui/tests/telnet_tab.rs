@@ -62,11 +62,14 @@ fn a_telnet_profile_is_listed_and_opens_a_telnet_tab() {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = Simulator::with_size(settings, WINDOW, shell.view());
+    let mut ui = Simulator::with_size(settings.clone(), WINDOW, shell.view());
     ui.find("Telnet").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    common::double_click(&mut ui, "Core switch");
-    let messages: Vec<Message> = ui.into_messages().collect();
+    drop(ui);
+    let messages = common::double_click_messages(
+        || Simulator::with_size(settings.clone(), WINDOW, shell.view()),
+        "Core switch",
+    );
     assert!(messages.iter().any(|message| matches!(
         message,
         Message::TreeClick(id) if id.as_str() == "sw"

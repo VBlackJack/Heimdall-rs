@@ -120,8 +120,8 @@ fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
     let mut ui = simulator(&shell);
     ui.find("RDP").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    common::double_click(&mut ui, "Domain controller");
-    let messages: Vec<Message> = ui.into_messages().collect();
+    drop(ui);
+    let messages = common::double_click_messages(|| simulator(&shell), "Domain controller");
     assert!(messages.iter().any(|message| matches!(
         message,
         Message::TreeClick(id) if id.as_str() == "dc"
