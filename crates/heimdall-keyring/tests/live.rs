@@ -49,3 +49,63 @@ fn a_secret_goes_in_comes_back_whole_and_leaves() {
     assert_eq!(keyring.get(name).expect("get"), None, "gone");
     assert!(!keyring.remove(name).expect("remove again"), "nothing left");
 }
+
+/// A target name no one uses, for this run.
+fn unused_target() -> String {
+    format!("heimdall-rs-test-generic-{}", std::process::id())
+}
+
+#[test]
+fn a_blank_target_names_no_credential() {
+    assert!(matches!(heimdall_keyring::read_generic("  "), Ok(None)));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_target_no_credential_has_is_none() {
+    // Reading only: nothing is written to the user's store.
+    let read = heimdall_keyring::read_generic(&unused_target()).expect("the store answers");
+    assert!(read.is_none());
+}
+
+#[cfg(not(windows))]
+#[test]
+fn away_from_windows_there_is_no_credential_manager() {
+    assert!(matches!(
+        heimdall_keyring::read_generic(&unused_target()),
+        Err(heimdall_keyring::KeyringError::Unavailable(_))
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn a_generic_credential_made_with_cmdkey_is_read_by_its_target_name() {
+    use std::process::Command;
+
+    if std::env::var_os(LIVE_VARIABLE).is_none() {
+        return;
+    }
+    let target = unused_target();
+    let made = Command::new("cmdkey")
+        .args([
+            format!("/generic:{target}"),
+            "/user:deploy".to_owned(),
+            "/pass:s3cret-pw".to_owned(),
+        ])
+        .status()
+        .expect("cmdkey runs");
+    assert!(made.success(), "cmdkey made it");
+    let read = heimdall_keyring::read_generic(&target).expect("the store answers");
+    let _ = Command::new("cmdkey")
+        .arg(format!("/delete:{target}"))
+        .status();
+    let credential = read.expect("found by its target name");
+    assert_eq!(credential.username.as_deref(), Some("deploy"));
+    assert_eq!(credential.password.as_str(), "s3cret-pw");
+    assert!(
+        heimdall_keyring::read_generic(&target)
+            .expect("the store answers")
+            .is_none(),
+        "deleted"
+    );
+}

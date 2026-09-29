@@ -101,6 +101,61 @@ impl SystemKeyring {
     }
 }
 
+/// A generic credential of Windows Credential Manager, as the C# credential provider reads
+/// one.
+#[derive(Debug)]
+pub struct GenericCredential {
+    /// Its user name, when it has one.
+    pub username: Option<String>,
+    /// Its password.
+    pub password: Zeroizing<String>,
+}
+
+/// The generic credential of Windows Credential Manager whose target name is exactly
+/// `target`, as `cmdkey /generic:` writes one; `None` when there is none, or its password is
+/// empty, as the C# provider finds none.
+///
+/// # Errors
+///
+/// [`KeyringError::Unavailable`] away from Windows; [`KeyringError::Failed`] when the store
+/// fails, or the password is not text.
+pub fn read_generic(target: &str) -> Result<Option<GenericCredential>, KeyringError> {
+    if target.trim().is_empty() {
+        return Ok(None);
+    }
+    read_generic_on_platform(target)
+}
+
+#[cfg(windows)]
+fn read_generic_on_platform(target: &str) -> Result<Option<GenericCredential>, KeyringError> {
+    default_store()?;
+    let modifiers = std::collections::HashMap::from([("target", target)]);
+    // With a target, the service and the user do not name the credential.
+    let entry = Entry::new_with_modifiers("heimdall", target, &modifiers)
+        .map_err(|error| failure(&error))?;
+    let password = match entry.get_password() {
+        Ok(password) => Zeroizing::new(password),
+        Err(Error::NoEntry) => return Ok(None),
+        Err(error) => return Err(failure(&error)),
+    };
+    if password.is_empty() {
+        return Ok(None);
+    }
+    let username = entry
+        .get_attributes()
+        .ok()
+        .and_then(|attributes| attributes.get("username").cloned())
+        .filter(|name| !name.is_empty());
+    Ok(Some(GenericCredential { username, password }))
+}
+
+#[cfg(not(windows))]
+fn read_generic_on_platform(_target: &str) -> Result<Option<GenericCredential>, KeyringError> {
+    Err(KeyringError::Unavailable(
+        "Windows Credential Manager exists only on Windows".to_owned(),
+    ))
+}
+
 fn failure(error: &Error) -> KeyringError {
     match error {
         Error::NoStorageAccess(_) | Error::NoDefaultStore => {

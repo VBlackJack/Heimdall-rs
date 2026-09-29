@@ -33,6 +33,12 @@ jobs:
           # The SFTP tests against OpenSSH's server must run here, not skip.
           echo "HEIMDALL_REQUIRE_SFTP_SERVER=1" >> "$GITHUB_ENV"
 
+      # The runner is thrown away: the keyring's live tests may write to its store there.
+      - name: Let the keyring's live tests write to the runner's store
+        if: runner.os == 'Windows'
+        shell: bash
+        run: echo "HEIMDALL_LIVE_KEYRING=1" >> "$GITHUB_ENV"
+
       - name: Install the pinned toolchain
         run: rustup toolchain install
 

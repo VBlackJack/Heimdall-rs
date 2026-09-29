@@ -458,3 +458,43 @@ fn a_blank_vault_entry_name_written_in_the_file_is_the_name() {
     let (_, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
     assert_eq!(request.expect("asked").lookup.title, "Web server");
 }
+
+#[test]
+fn windows_credential_manager_needs_no_command_and_looks_up_the_entry() {
+    use heimdall_core::credential_provider::ProviderKind;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::CredentialProvider(ProviderMessage::Enabled(true)));
+    app.update(Message::CredentialProvider(ProviderMessage::Kind(
+        ProviderKind::WindowsCredentialManager,
+    )));
+    let (tab, attempt) = open(&mut app);
+    let (_, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
+    let request = request.expect("asked without a command");
+    assert_eq!(
+        request.settings.kind,
+        ProviderKind::WindowsCredentialManager
+    );
+    assert_eq!(request.lookup.title, "Web server");
+}
+
+#[cfg(not(windows))]
+#[tokio::test]
+async fn away_from_windows_the_credential_manager_says_it_is_not_there() {
+    use heimdall_core::credential_provider::ProviderKind;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::CredentialProvider(ProviderMessage::Enabled(true)));
+    app.update(Message::CredentialProvider(ProviderMessage::Kind(
+        ProviderKind::WindowsCredentialManager,
+    )));
+    let (tab, attempt) = open(&mut app);
+    let (question, request) = ask(&mut app, tab, attempt, password("a.lab", 1));
+    let answered = request.expect("asked").run().await;
+    assert!(matches!(answered.result, Err(ProviderFailure::Launch(_))));
+    app.update(Message::CredentialProvided(Box::new(answered)));
+    assert!(shown(&app, tab, question), "the user is asked");
+    assert!(matches!(app.notice(), Some(Notice::ProviderFailed(_))));
+}

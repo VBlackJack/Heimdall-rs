@@ -30,6 +30,10 @@ use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
 use iced_test::simulator::Simulator;
 
+/// Width of a label before its field, as the card lays it out.
+const LABEL_WIDTH: f32 = 200.0;
+/// From the start of a field to inside its first radio button.
+const RADIO_OFFSET: f32 = 16.0;
 /// A window tall enough for the whole Settings page.
 const WINDOW: Size = Size::new(1100.0, 2800.0);
 
@@ -307,4 +311,50 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
         panic!("the form");
     };
     assert_eq!(draft.value(ProfileField::VaultEntry), "Servers/Web");
+}
+
+#[test]
+fn with_windows_credential_manager_the_card_only_explains_where_it_reads() {
+    use heimdall_core::credential_provider::ProviderKind;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = enabled(dir.path());
+    let _ = shell.update(Message::App(AppMessage::CredentialProvider(
+        ProviderMessage::Kind(ProviderKind::WindowsCredentialManager),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Provider type").expect("the choice");
+        ui.find(
+            "Reads generic credentials from Windows Credential Manager. The entry is looked up \
+             by the profile's vault entry name, or its display name when not set.",
+        )
+        .expect("the C# help");
+        assert!(ui.find("Provider command").is_err(), "no command to set");
+    }
+    // A radio's label is drawn by the radio, not found as a text: the first one is reached
+    // by its place, right of the "Provider type" label, as a user's pointer reaches it.
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        let label = ui.find("Provider type").expect("the choice").bounds();
+        let first = iced::Point::new(label.x + LABEL_WIDTH + RADIO_OFFSET, label.center_y());
+        // A click on a point targets the widget there and presses its middle: the pointer
+        // is placed, and the button pressed and released where it is.
+        ui.point_at(first);
+        let _ = ui.simulate([
+            iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)),
+            iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+                iced::mouse::Button::Left,
+            )),
+        ]);
+        ui.into_messages().collect()
+    };
+    apply(&mut shell, messages);
+    assert_eq!(
+        shell.app().settings().credential_provider.kind,
+        ProviderKind::Command
+    );
+    simulator(&shell)
+        .find("Provider command")
+        .expect("the command again");
 }

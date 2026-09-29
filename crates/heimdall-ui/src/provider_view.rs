@@ -20,8 +20,10 @@
 
 use heimdall_app::credential_provider::{ProviderFailure, ProviderTest};
 use heimdall_app::{App, Message as AppMessage, ProviderMessage};
-use heimdall_core::credential_provider::{PRESETS, TemplateProblem};
-use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text, text_input};
+use heimdall_core::credential_provider::{PRESETS, ProviderKind, TemplateProblem};
+use iced::widget::{
+    Column, button, checkbox, column, container, pick_list, radio, row, text, text_input,
+};
 use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
@@ -82,6 +84,17 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
     .spacing(SPACING);
     if !settings.enabled {
         card = card.push(text(fl!("ui-settings-provider-disabled-hint")).size(SMALL_SIZE));
+        return boxed(card);
+    }
+    // Windows Credential Manager is offered on Windows, as the C# one; chosen elsewhere
+    // (a settings file carried over), the choice still shows, to go back.
+    let credential_manager = settings.kind == ProviderKind::WindowsCredentialManager;
+    if cfg!(windows) || credential_manager {
+        card = card.push(kind_choice(settings.kind));
+    }
+    if credential_manager {
+        // As in C#: nothing to set, the entry's name comes from the profile.
+        card = card.push(text(fl!("ui-settings-provider-credman-help")).size(SMALL_SIZE));
         return boxed(card);
     }
     let presets: Vec<Preset> = (0..PRESETS.len()).map(Preset).collect();
@@ -148,6 +161,29 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         .push(text(fl!("ui-settings-provider-first-line-help")).size(SMALL_SIZE))
         .push(text(fl!("ui-settings-provider-keepass2-hint")).size(SMALL_SIZE));
     boxed(card)
+}
+
+/// Where the password comes from, as the C# radio buttons choose it.
+fn kind_choice<'a>(kind: ProviderKind) -> Element<'a, Message> {
+    field(
+        fl!("ui-settings-provider-type"),
+        row![
+            radio(
+                fl!("ui-settings-provider-type-command"),
+                ProviderKind::Command,
+                Some(kind),
+                |kind| provider(ProviderMessage::Kind(kind)),
+            ),
+            radio(
+                fl!("ui-settings-provider-type-credman"),
+                ProviderKind::WindowsCredentialManager,
+                Some(kind),
+                |kind| provider(ProviderMessage::Kind(kind)),
+            ),
+        ]
+        .spacing(SPACING * 2.0),
+        None,
+    )
 }
 
 fn boxed(card: Column<'_, Message>) -> Element<'_, Message> {
