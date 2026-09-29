@@ -16,9 +16,16 @@
 
 //! Gestures shared by the window's tests.
 
+use heimdall_app::Message as AppMessage;
 use heimdall_ui::shell::Message;
 use iced::mouse::{Button, Event as MouseEvent};
 use iced_test::simulator::Simulator;
+
+/// Windows a double click is tried in. iced tells a double click by the real time between
+/// the presses: a runner stalled between them, as the Windows CI runner was on 2026-09-29,
+/// makes two single clicks. Each try is a whole double click on a fresh window, so a tree
+/// that does not connect on a double click fails every one.
+const DOUBLE_CLICK_TRIES: usize = 3;
 
 /// Double-clicks the text `label` as a user does: the pointer on it, two presses and releases
 /// in one batch. iced tells a double click by the time between the presses; two separate
@@ -29,4 +36,26 @@ pub fn double_click(ui: &mut Simulator<'_, Message>, label: &str) {
     let press = iced::Event::Mouse(MouseEvent::ButtonPressed(Button::Left));
     let release = iced::Event::Mouse(MouseEvent::ButtonReleased(Button::Left));
     let _ = ui.simulate([press.clone(), release.clone(), press, release]);
+}
+
+/// The messages of a double click on `label` in the window `window` draws: those of the first
+/// try iced took for a double click, one that connected, else those of the last try.
+#[allow(dead_code, reason = "not every test file double-clicks")]
+pub fn double_click_messages<'a>(
+    window: impl Fn() -> Simulator<'a, Message>,
+    label: &str,
+) -> Vec<Message> {
+    let mut messages = Vec::new();
+    for _ in 0..DOUBLE_CLICK_TRIES {
+        let mut ui = window();
+        double_click(&mut ui, label);
+        messages = ui.into_messages().collect();
+        if messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::ConnectProfile(_))))
+        {
+            break;
+        }
+    }
+    messages
 }
