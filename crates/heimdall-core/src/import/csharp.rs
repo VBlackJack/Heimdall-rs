@@ -166,6 +166,24 @@ pub enum ImportError {
 struct LegacyServers {
     #[serde(default)]
     servers: Vec<LegacyServer>,
+    /// The SSH gateways of an exported document (schema 2); the app's own file keeps them
+    /// in `settings.json`.
+    #[serde(default)]
+    gateways: Vec<LegacyGateway>,
+}
+
+/// `servers.json` as the C# writes it: an object, or a bare array of servers in the first
+/// export format (schema 1).
+fn read_servers(text: &str) -> Result<LegacyServers, serde_json::Error> {
+    let value: serde_json::Value = serde_json::from_str(text)?;
+    if value.is_array() {
+        Ok(LegacyServers {
+            servers: serde_json::from_value(value)?,
+            gateways: Vec::new(),
+        })
+    } else {
+        serde_json::from_value(value)
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -234,6 +252,9 @@ struct LegacyServer {
     vnc_password: Option<String>,
     #[serde(default)]
     vnc_view_only: bool,
+    /// Heimdall-rs's own key, written by its export: the C# derives it from the stored
+    /// password, which no export carries.
+    vnc_allow_no_password: Option<bool>,
     /// The entry in the external password manager, for the provider's `{Title}`.
     vault_entry_name: Option<String>,
     /// "Forward SSH agent"; absent is off.
@@ -426,15 +447,23 @@ pub fn import(
     servers_json: &str,
     settings_json: Option<&str>,
 ) -> Result<ImportReport, ImportError> {
-    let servers: LegacyServers =
-        serde_json::from_str(servers_json).map_err(ImportError::Servers)?;
+    let mut servers = read_servers(servers_json).map_err(ImportError::Servers)?;
     let settings: LegacySettings = match settings_json {
         Some(text) => serde_json::from_str(text).map_err(ImportError::Settings)?,
         None => LegacySettings::default(),
     };
 
     let mut report = ImportReport::default();
-    let (gateways, skipped_gateways) = convert_gateways(&settings.ssh_gateways);
+    // The document's gateways, then the settings' ones: an identifier seen twice is the
+    // first one's.
+    let mut legacy_gateways = std::mem::take(&mut servers.gateways);
+    let mut seen: HashSet<String> = legacy_gateways.iter().map(|g| g.id.clone()).collect();
+    for gateway in settings.ssh_gateways {
+        if seen.insert(gateway.id.clone()) {
+            legacy_gateways.push(gateway);
+        }
+    }
+    let (gateways, skipped_gateways) = convert_gateways(&legacy_gateways);
     let known: HashSet<&str> = gateways.iter().map(|gateway| gateway.id.as_str()).collect();
     for mut server in servers.servers {
         resolve_group_defaults(server.group.as_deref(), &settings.group_defaults)
@@ -884,7 +913,9 @@ fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
         host: server.remote_server.trim().to_owned(),
         port,
         view_only: server.vnc_view_only,
-        allow_no_password: is_null_or_empty(server.vnc_password.as_ref()),
+        allow_no_password: server
+            .vnc_allow_no_password
+            .unwrap_or_else(|| is_null_or_empty(server.vnc_password.as_ref())),
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
     })
 }

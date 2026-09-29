@@ -2164,3 +2164,45 @@ fn a_profile_found_by_a_search_says_its_folder_and_host_under_its_name() {
     let mut ui = simulator(&shell);
     ui.find("c.lab").expect("in no folder: its host alone");
 }
+
+#[test]
+fn the_more_menu_exports_the_sessions_as_the_csharp_one() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = simulator(&shell);
+    ui.click("Export Sessions").expect("the entry");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(AppMessage::ExportSessions)))
+    );
+}
+
+#[test]
+fn the_export_says_how_many_sessions_and_that_no_credential_went() {
+    use heimdall_app::ExportOutcome;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    for (count, said) in [
+        (1, "1 session exported successfully."),
+        (3, "3 sessions exported successfully."),
+    ] {
+        let _ = shell.update(Message::App(AppMessage::ExportFinished(
+            ExportOutcome::Saved(count),
+        )));
+        let mut ui = simulator(&shell);
+        ui.find(said).expect(said);
+        ui.find("Credentials were not included in the export file.")
+            .expect("as the C# says");
+        drop(ui);
+        let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    }
+    let _ = shell.update(Message::App(AppMessage::ExportFinished(
+        ExportOutcome::Failed("disk full".to_owned()),
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Export failed: disk full").expect("the reason");
+}

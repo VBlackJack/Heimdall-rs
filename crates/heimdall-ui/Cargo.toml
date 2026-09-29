@@ -35,8 +35,10 @@ i18n-embed-fl.workspace = true
 iced = { workspace = true, features = ["advanced", "tokio", "fira-sans", "image-without-codecs"] }
 iced_renderer = { workspace = true, features = ["wgpu"] }
 log.workspace = true
+rfd.workspace = true
 rust-embed.workspace = true
-tokio.workspace = true
+# fs: the exported sessions written where the save dialog says.
+tokio = { workspace = true, features = ["fs"] }
 zeroize.workspace = true
 
 [dev-dependencies]
