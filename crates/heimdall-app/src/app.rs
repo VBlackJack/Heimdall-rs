@@ -1028,6 +1028,7 @@ impl TabProfile {
     #[must_use]
     pub fn kind(&self) -> ProfileKind {
         match self {
+            Self::Ssh(profile) if profile.sftp => ProfileKind::Sftp,
             Self::Ssh(_) => ProfileKind::Ssh,
             Self::Rdp(_) => ProfileKind::Rdp,
             Self::Telnet(_) => ProfileKind::Telnet,

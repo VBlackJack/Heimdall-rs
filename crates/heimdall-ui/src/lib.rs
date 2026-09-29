@@ -22,6 +22,7 @@ mod files_view;
 pub mod finder;
 pub mod i18n;
 pub mod keysym;
+pub mod local_form;
 mod logging;
 pub mod palette;
 pub mod post_connect_form;

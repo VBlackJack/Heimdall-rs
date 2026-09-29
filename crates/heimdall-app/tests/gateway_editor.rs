@@ -64,6 +64,7 @@ fn app(dir: &Path, route: Option<&str>, gateways: Vec<SshGateway>) -> App {
         post_connect: heimdall_core::post_connect::PostConnect::default(),
         forward_agent: false,
         compression: false,
+        sftp: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

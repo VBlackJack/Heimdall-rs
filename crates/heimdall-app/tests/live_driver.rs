@@ -63,6 +63,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
             post_connect: heimdall_core::post_connect::PostConnect::default(),
             forward_agent: false,
             compression: false,
+            sftp: false,
         },
         options,
         cancel: CancellationToken::new(),

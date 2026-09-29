@@ -69,6 +69,9 @@ rust-embed = "8.12.0"
 rustls-native-certs = "0.8.4"
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = "1.0.151"
+# shlex: a local shell's argument line split as a POSIX shell does (Unix); already in the
+# tree through the build of a dependency.
+shlex = "2.0.1"
 # suppaftp: FTP and explicit FTPS for the Files tab; tokio and rustls on ring, as the workspace.
 suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
 tempfile = "3.27.0"

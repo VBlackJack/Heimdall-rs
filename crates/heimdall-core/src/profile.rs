@@ -112,6 +112,10 @@ pub struct SshProfile {
     /// written down only when on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub compression: bool,
+    /// An SFTP profile, as the C# `connectionType` SFTP: it opens its files rather than a
+    /// shell. Written down only when it is one.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sftp: bool,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -185,6 +189,7 @@ impl SshGateway {
             post_connect: PostConnect::default(),
             forward_agent: false,
             compression: false,
+            sftp: false,
         }
     }
 }
