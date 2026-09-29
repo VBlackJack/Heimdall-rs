@@ -30,6 +30,7 @@ pub mod palette;
 pub mod post_connect_form;
 mod provider_view;
 pub mod rdp_options;
+pub mod rdp_view;
 mod report;
 pub mod shell;
 pub mod status_bar;

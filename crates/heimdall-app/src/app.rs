@@ -83,6 +83,7 @@ mod profiles;
 mod provider;
 mod provider_connect;
 mod quick_connect;
+mod rdp_import;
 mod rdp_tab;
 mod reconnect;
 mod selection;
@@ -114,6 +115,7 @@ pub use profile_menu::ProfileMenuMessage;
 pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::QuickResult;
+pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
 pub use selection::SelectionMessage;
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
@@ -360,6 +362,8 @@ pub enum Message {
     ExportSessions,
     /// The import of an OpenSSH configuration.
     OpenSsh(OpenSshMessage),
+    /// The import of `.rdp` files.
+    Rdp(RdpMessage),
     /// How the export's file went.
     ExportFinished(ExportOutcome),
     /// Open an empty profile form.
@@ -577,6 +581,11 @@ impl fmt::Debug for Message {
             // The file's text is the user's configuration: never shown.
             Self::OpenSsh(OpenSshMessage::Read(_)) => f.write_str("OpenSsh(Read(..))"),
             Self::OpenSsh(message) => write!(f, "OpenSsh({message:?})"),
+            // A file's text may name servers and accounts: never shown.
+            Self::Rdp(RdpMessage::Read { files, .. }) => {
+                write!(f, "Rdp(Read({} files))", files.len())
+            }
+            Self::Rdp(message) => write!(f, "Rdp({message:?})"),
             Self::ExportFinished(outcome) => write!(f, "ExportFinished({outcome:?})"),
             Self::NewProfile => f.write_str("NewProfile"),
             Self::EditProfile(id) => write!(f, "EditProfile({id})"),
@@ -700,6 +709,11 @@ pub enum Effect {
     /// Ask which OpenSSH configuration to import, as the C# open dialog, then read it;
     /// answered with [`OpenSshMessage::Read`], or nothing when no file is picked.
     PickOpenSshConfig,
+    /// Ask which `.rdp` files to import, then read them; answered with
+    /// [`RdpMessage::Read`], or nothing when none is picked.
+    PickRdpFiles,
+    /// Read these `.rdp` files, dropped on the window; answered with [`RdpMessage::Read`].
+    ReadRdpFiles(Vec<PathBuf>),
     /// Ask where to save the exported sessions, as the C# save dialog, then write them
     /// there; answered with [`Message::ExportFinished`].
     SaveExport {
@@ -817,6 +831,8 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
+            Self::PickRdpFiles => f.write_str("PickRdpFiles"),
+            Self::ReadRdpFiles(paths) => write!(f, "ReadRdpFiles({})", paths.len()),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
             Self::WakeAt {
                 tab, generation, ..
@@ -1247,6 +1263,15 @@ pub enum Dialog {
     },
     /// The OpenSSH configuration picked gives nothing to import.
     OpenSshEmpty,
+    /// What `.rdp` files give, to choose from.
+    RdpPreview(Box<RdpPreview>),
+    /// No `.rdp` file could be read.
+    RdpNothing {
+        /// Why each could not.
+        unreadable: Vec<String>,
+    },
+    /// What the `.rdp` import did.
+    RdpDone(RdpOutcome),
     /// What the OpenSSH import added.
     OpenSshDone {
         /// Profiles added.
@@ -1612,6 +1637,7 @@ impl App {
             | Message::ExportSessions
             | Message::ExportFinished(_)
             | Message::OpenSsh(_)
+            | Message::Rdp(_)
             | Message::Settings(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
@@ -2332,6 +2358,10 @@ impl App {
                 self.import_openssh(&preview);
                 Vec::new()
             }
+            Some(Dialog::RdpPreview(preview)) => {
+                self.import_rdp(&preview);
+                Vec::new()
+            }
             Some(Dialog::ConfirmCloseTab(tab)) => {
                 self.close_tab(tab);
                 Vec::new()
@@ -2409,6 +2439,8 @@ impl App {
                 | Dialog::OpenSshUnreadable { .. }
                 | Dialog::OpenSshEmpty
                 | Dialog::OpenSshDone { .. }
+                | Dialog::RdpNothing { .. }
+                | Dialog::RdpDone(_)
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. },
             )
@@ -2429,6 +2461,7 @@ impl App {
             }
             Message::ExportSessions => vec![self.export_sessions()],
             Message::OpenSsh(message) => self.openssh_message(message.clone()),
+            Message::Rdp(message) => self.rdp_message(message.clone()),
             Message::ExportFinished(outcome) => {
                 self.dialog = match outcome {
                     ExportOutcome::Saved(count) => Some(Dialog::ExportDone { count: *count }),

@@ -439,6 +439,51 @@ ui-openssh-done-gateways = { $count ->
 }
 ui-openssh-unreadable = Unable to read the selected file: { $detail }
 ui-openssh-empty = The selected file contains no importable entries.
+ui-tree-import-rdp = Import RDP files...
+ui-rdp-title = Import .rdp files
+ui-rdp-filter = Remote Desktop files
+ui-rdp-summary = { $chosen } selected / { $files ->
+    [one] { $files } file
+   *[other] { $files } files
+}, { $conflicts ->
+    [one] { $conflicts } conflict
+   *[other] { $conflicts } conflicts
+}, { $passwords ->
+    [one] { $passwords } password warning.
+   *[other] { $passwords } password warnings.
+}
+ui-rdp-unreadable = { $count ->
+    [one] { $count } file could not be read.
+   *[other] { $count } files could not be read.
+}
+ui-rdp-select-all = Select all
+ui-rdp-select-none = Select none
+ui-rdp-apply-all = Apply to all conflicts:
+ui-rdp-column-source = Source
+ui-rdp-column-name = Name
+ui-rdp-column-host = Host
+ui-rdp-column-status = Status
+ui-rdp-column-conflict = Conflict
+ui-rdp-conflict-skip = Skip
+ui-rdp-conflict-replace = Replace
+ui-rdp-conflict-rename = Auto-rename
+ui-rdp-status-invalid-address = Missing or invalid RDP target address.
+ui-rdp-status-rd-gateway = Goes through a Remote Desktop Gateway, not supported yet
+ui-rdp-status-conflict = Conflict with { $name }
+ui-rdp-status-password = Password not imported
+ui-rdp-status-partial = Partial mapping
+ui-rdp-status-unknown = { $count ->
+    [one] { $count } unknown key
+   *[other] { $count } unknown keys
+}
+ui-rdp-import-button = Import selected
+ui-rdp-rename = { $name } (Imported { $n })
+ui-rdp-fallback-name = Imported RDP
+ui-rdp-done = { $imported } imported, { $replaced } replaced, { $renamed } auto-renamed, { $skipped } skipped, { $passwords ->
+    [one] { $passwords } password ignored.
+   *[other] { $passwords } passwords ignored.
+}
+ui-rdp-nothing = No valid .rdp files were found to import.
 ui-tree-add-tooltip = Add session
 ui-tree-more-tooltip = More actions
 ui-tree-tooltip-host = Host: { $host }

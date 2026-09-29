@@ -1540,6 +1540,10 @@ impl Shell {
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
+            Effect::PickRdpFiles => pick_rdp(),
+            Effect::ReadRdpFiles(paths) => {
+                Task::perform(crate::rdp_view::read_all(paths), rdp_read)
+            }
             Effect::ReadClipboard { tab } => iced::clipboard::read()
                 .map(move |text| Message::App(AppMessage::ClipboardText { tab, text })),
             Effect::RetryAt {
@@ -1615,11 +1619,12 @@ impl Shell {
                 container(responsive(move |size| {
                     let content = dialog_view(dialog, &self.forms(size.height));
                     // The OpenSSH preview is a table: wider than a form, as the C# one.
-                    let card = if matches!(dialog, Dialog::OpenSshPreview(_)) {
-                        wide_card(content)
-                    } else {
-                        card(content)
-                    };
+                    let card =
+                        if matches!(dialog, Dialog::OpenSshPreview(_) | Dialog::RdpPreview(_)) {
+                            wide_card(content)
+                        } else {
+                            card(content)
+                        };
                     center(card).into()
                 }))
                 .style(move |theme: &Theme| container::Style {
@@ -2200,7 +2205,13 @@ impl Shell {
                     Some(tab) => self
                         .app
                         .update(AppMessage::Files(FilesMessage::Dropped { tab, path })),
-                    None => Vec::new(),
+                    // Where no Files tab takes it, a .rdp file is imported, as the C# window
+                    // takes one dropped anywhere.
+                    None => self
+                        .app
+                        .update(AppMessage::Rdp(heimdall_app::RdpMessage::Dropped(vec![
+                            path,
+                        ]))),
                 }
             }
             _ => Vec::new(),
@@ -3149,6 +3160,35 @@ fn wide_card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Messag
 }
 
 /// The report of an import: counts, and the profiles left out with their reason.
+/// The files read for the `.rdp` import, with the words it writes into names.
+fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message {
+    Message::App(AppMessage::Rdp(heimdall_app::RdpMessage::Read {
+        files,
+        names: crate::rdp_view::names(),
+    }))
+}
+
+/// The open dialog of the `.rdp` import, held by the window, then the files read; nothing
+/// when none is picked.
+fn pick_rdp() -> Task<Message> {
+    let (title, filter) = (fl!("ui-rdp-title"), fl!("ui-rdp-filter"));
+    window::latest().then(move |id| {
+        let (title, filter) = (title.clone(), filter.clone());
+        let pick = match id {
+            Some(id) => window::run(id, move |window| {
+                crate::rdp_view::pick(title, filter, Some(window))
+            }),
+            None => Task::done(crate::rdp_view::pick(title, filter, None)),
+        };
+        pick.then(|pick| {
+            Task::future(crate::rdp_view::read_picked(pick)).then(|read| match read {
+                Some(files) => Task::done(rdp_read(files)),
+                None => Task::none(),
+            })
+        })
+    })
+}
+
 /// The open dialog of the OpenSSH import, held by the window, then the file read; nothing
 /// when no file is picked.
 fn pick_openssh() -> Task<Message> {
@@ -3219,14 +3259,17 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::PasswordSaveFailed { detail: technical } => {
             (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
         }
-        other => (
-            fl!("ui-openssh-title"),
-            crate::openssh_view::report_lines(other)
-                .unwrap_or_default()
-                .into_iter()
-                .map(text)
-                .collect(),
-        ),
+        other => match crate::rdp_view::report_lines(other) {
+            Some(lines) => (fl!("ui-rdp-title"), lines.into_iter().map(text).collect()),
+            None => (
+                fl!("ui-openssh-title"),
+                crate::openssh_view::report_lines(other)
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(text)
+                    .collect(),
+            ),
+        },
     };
     column![text(title).size(HEADING_SIZE)]
         .extend(lines.into_iter().map(Element::from))
@@ -4854,8 +4897,11 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::OpenSshUnreadable { .. }
         | Dialog::OpenSshEmpty
         | Dialog::OpenSshDone { .. }
+        | Dialog::RdpNothing { .. }
+        | Dialog::RdpDone(_)
         | Dialog::PasswordSaveFailed { .. } => report(dialog, ok()),
         Dialog::OpenSshPreview(preview) => crate::openssh_view::preview(preview),
+        Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
         Dialog::StoreError { detail: technical } => column![
             heading(fl!("ui-dialog-store-title")),
             text(fl!("ui-dialog-store-body")),

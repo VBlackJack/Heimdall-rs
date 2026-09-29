@@ -2363,3 +2363,81 @@ fn nothing_chosen_in_the_openssh_preview_leaves_import_disabled() {
         "nothing to import"
     );
 }
+
+#[test]
+fn the_more_menu_imports_rdp_files_as_the_csharp_one() {
+    use heimdall_app::RdpMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = simulator(&shell);
+    ui.click("Import RDP files...").expect("the entry");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Rdp(RdpMessage::Start))
+    )));
+}
+
+#[test]
+fn the_rdp_preview_says_each_files_state_and_imports() {
+    use heimdall_app::RdpMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Rdp(RdpMessage::Read {
+        files: vec![
+            (
+                "server a.rdp".into(),
+                Ok("full address:s:dc.lab:3390\npassword 51:b:01\ncompression:i:1\n".to_owned()),
+            ),
+            (
+                "gw.rdp".into(),
+                Ok("full address:s:x\ngatewayhostname:s:g\ngatewayusagemethod:i:1\n".to_owned()),
+            ),
+            ("gone.rdp".into(), Err("gone.rdp: missing".to_owned())),
+        ],
+        names: heimdall_ui::rdp_view::names(),
+    })));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Import .rdp files",
+            "1 selected / 2 files, 1 conflict, 1 password warning.",
+            "1 file could not be read.",
+            "dc.lab:3390",
+            "Conflict with server a, Password not imported, Partial mapping",
+            "Goes through a Remote Desktop Gateway, not supported yet",
+            "Apply to all conflicts:",
+            "Auto-rename",
+        ] {
+            ui.find(said).expect(said);
+        }
+        ui.click("Import selected").expect("the button");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("1 imported, 0 replaced, 1 auto-renamed, 0 skipped, 1 password ignored.")
+        .expect("as the C# counts it");
+    drop(ui);
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let mut ui = simulator(&shell);
+    ui.find("server a (Imported 2)")
+        .expect("renamed in the tree");
+}
+
+#[tokio::test]
+async fn rdp_files_are_read_or_said_unreadable_with_their_path() {
+    let dir = tempfile::tempdir().expect("dir");
+    let here = dir.path().join("a.rdp");
+    std::fs::write(&here, "full address:s:a\n").expect("write");
+    let missing = dir.path().join("b.rdp");
+    let read = heimdall_ui::rdp_view::read_all(vec![here.clone(), missing.clone()]).await;
+    assert_eq!(read[0], (here, Ok("full address:s:a\n".to_owned())));
+    assert!(matches!(&read[1].1, Err(why) if why.starts_with(&missing.display().to_string())));
+}

@@ -448,6 +448,66 @@ ui-openssh-done-gateways = { $count ->
 }
 ui-openssh-unreadable = No se puede leer el archivo seleccionado: { $detail }
 ui-openssh-empty = El archivo seleccionado no contiene entradas importables.
+ui-tree-import-rdp = Importar archivos RDP...
+ui-rdp-title = Importar archivos .rdp
+ui-rdp-filter = Archivos de Escritorio remoto
+ui-rdp-summary = { $chosen ->
+    [one] { $chosen } seleccionado
+   *[other] { $chosen } seleccionados
+} / { $files ->
+    [one] { $files } archivo
+   *[other] { $files } archivos
+}, { $conflicts ->
+    [one] { $conflicts } conflicto
+   *[other] { $conflicts } conflictos
+}, { $passwords ->
+    [one] { $passwords } aviso de contraseña.
+   *[other] { $passwords } avisos de contraseña.
+}
+ui-rdp-unreadable = { $count ->
+    [one] No se pudo leer { $count } archivo.
+   *[other] No se pudieron leer { $count } archivos.
+}
+ui-rdp-select-all = Seleccionar todo
+ui-rdp-select-none = No seleccionar nada
+ui-rdp-apply-all = Aplicar a todos los conflictos:
+ui-rdp-column-source = Origen
+ui-rdp-column-name = Nombre
+ui-rdp-column-host = Host
+ui-rdp-column-status = Estado
+ui-rdp-column-conflict = Conflicto
+ui-rdp-conflict-skip = Omitir
+ui-rdp-conflict-replace = Reemplazar
+ui-rdp-conflict-rename = Renombrar automáticamente
+ui-rdp-status-invalid-address = Falta la dirección de destino RDP o no es válida.
+ui-rdp-status-rd-gateway = Pasa por una puerta de enlace de Escritorio remoto, aún no admitido
+ui-rdp-status-conflict = Conflicto con { $name }
+ui-rdp-status-password = Contraseña no importada
+ui-rdp-status-partial = Asignación parcial
+ui-rdp-status-unknown = { $count ->
+    [one] { $count } clave desconocida
+   *[other] { $count } claves desconocidas
+}
+ui-rdp-import-button = Importar seleccionados
+ui-rdp-rename = { $name } (Importado { $n })
+ui-rdp-fallback-name = RDP importado
+ui-rdp-done = { $imported ->
+    [one] { $imported } importado
+   *[other] { $imported } importados
+}, { $replaced ->
+    [one] { $replaced } reemplazado
+   *[other] { $replaced } reemplazados
+}, { $renamed ->
+    [one] { $renamed } renombrado automáticamente
+   *[other] { $renamed } renombrados automáticamente
+}, { $skipped ->
+    [one] { $skipped } omitido
+   *[other] { $skipped } omitidos
+}, { $passwords ->
+    [one] { $passwords } contraseña ignorada.
+   *[other] { $passwords } contraseñas ignoradas.
+}
+ui-rdp-nothing = No se encontraron archivos .rdp válidos para importar.
 ui-tree-add-tooltip = Añadir sesión
 ui-tree-more-tooltip = Más acciones
 ui-tree-tooltip-host = Host: { $host }
