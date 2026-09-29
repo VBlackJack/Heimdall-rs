@@ -676,6 +676,7 @@ fn a_socks_port_is_saved_only_when_set() {
     let mut proxied = profile("proxied", "h2");
     proxied.forwards = Forwards {
         socks_port: Some(1080),
+        ..Forwards::default()
     };
     store.merge([proxied]);
     store.save().expect("saves");

@@ -35,6 +35,7 @@ use heimdall_ssh::{
 use russh::keys::{Algorithm, PrivateKey, PublicKey};
 use russh::server::{self, Auth, Msg, Response, Session};
 use russh::{Channel, ChannelId, MethodKind, MethodSet, Preferred};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::TcpListener;
 
 pub const USER: &str = "tester";
@@ -143,7 +144,19 @@ pub struct Observed {
     pub endings: Vec<String>,
     /// Where clients asked to be connected onward, accepted or not.
     pub forwards: Vec<(String, u32)>,
+    /// Ports clients asked the server to listen on, accepted or not.
+    pub listened: Vec<u32>,
+    /// Forwarded channels the server opened back, by port, and whether the client took
+    /// each: one on the port asked for, one on the next, never asked for.
+    pub forwarded_opens: Vec<(u32, bool)>,
+    /// What came through the forwarded channel the client took.
+    pub forwarded_reply: Vec<u8>,
+    /// Ports whose listening clients cancelled.
+    pub cancelled: Vec<u32>,
 }
+
+/// What the server sends through a forwarded channel the client takes.
+pub const FORWARDED_GREETING: &[u8] = b"from-the-server\n";
 
 pub struct TestServer {
     pub port: u16,
@@ -331,6 +344,55 @@ impl server::Handler for Connection {
     ) -> Result<(), Self::Error> {
         reply.accept().await;
         Ok(())
+    }
+
+    /// Listens when forwarding is on, refuses otherwise. Listening, it opens a forwarded
+    /// channel back on the port asked for, then on the next, never asked for, and records
+    /// which the client took.
+    async fn tcpip_forward(
+        &mut self,
+        address: &str,
+        port: &mut u32,
+        session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        let asked = *port;
+        self.observe(|o| o.listened.push(asked));
+        if !self.spec.forwarding {
+            return Ok(false);
+        }
+        let handle = session.handle();
+        let address = address.to_owned();
+        let observed = self.observed.clone();
+        tokio::spawn(async move {
+            for opened_port in [asked, asked + 1] {
+                let opened = handle
+                    .channel_open_forwarded_tcpip(address.clone(), opened_port, LOOPBACK, 0)
+                    .await;
+                observed
+                    .lock()
+                    .expect("observed")
+                    .forwarded_opens
+                    .push((opened_port, opened.is_ok()));
+                if let Ok(channel) = opened {
+                    let mut stream = channel.into_stream();
+                    let _ = stream.write_all(FORWARDED_GREETING).await;
+                    let mut reply = Vec::new();
+                    let _ = stream.read_to_end(&mut reply).await;
+                    observed.lock().expect("observed").forwarded_reply = reply;
+                }
+            }
+        });
+        Ok(true)
+    }
+
+    async fn cancel_tcpip_forward(
+        &mut self,
+        _address: &str,
+        port: u32,
+        _session: &mut Session,
+    ) -> Result<bool, Self::Error> {
+        self.observe(|o| o.cancelled.push(port));
+        Ok(true)
     }
 
     /// Connects onward and relays both ways when forwarding is on; refuses otherwise, as a

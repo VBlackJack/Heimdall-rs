@@ -58,11 +58,15 @@ pub enum ProfileField {
     VaultEntry,
     /// The local port of the SOCKS proxy opened through the gateway.
     SocksPort,
+    /// The gateway's port of the remote forward.
+    RemoteBindPort,
+    /// The local port of the remote forward.
+    RemoteLocalPort,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 13] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -74,6 +78,8 @@ impl ProfileField {
         Self::FixedHeight,
         Self::VaultEntry,
         Self::SocksPort,
+        Self::RemoteBindPort,
+        Self::RemoteLocalPort,
     ];
 }
 
@@ -111,7 +117,9 @@ impl DraftProtocol {
             ProfileField::KeyPath => self == Self::Ssh,
             // The protocols whose password the external credential provider gives.
             ProfileField::VaultEntry => self.saves_password(),
-            ProfileField::SocksPort => self.routes_through_gateway(),
+            ProfileField::SocksPort
+            | ProfileField::RemoteBindPort
+            | ProfileField::RemoteLocalPort => self.routes_through_gateway(),
         }
     }
 
@@ -260,6 +268,10 @@ pub struct ProfileDraft {
     pub vault_entry: String,
     /// The SOCKS proxy's local port, as typed; empty or 0 opens none, as the C# 0.
     pub socks_port: String,
+    /// The remote forward's gateway port, as typed; empty or 0 opens none.
+    pub remote_bind_port: String,
+    /// The remote forward's local port, as typed; empty or 0 is the same port.
+    pub remote_local_port: String,
 }
 
 /// Why a form cannot be saved yet.
@@ -295,6 +307,10 @@ pub enum DraftError {
     GatewayLoop,
     /// The SOCKS port is not a number from 0 to 65535.
     SocksPortInvalid,
+    /// The remote forward's gateway port is not a number from 0 to 65535.
+    RemoteBindPortInvalid,
+    /// The remote forward's local port is not a number from 0 to 65535.
+    RemoteLocalPortInvalid,
 }
 
 impl DraftError {
@@ -314,6 +330,8 @@ impl DraftError {
             Self::FixedWidthInvalid => ProfileField::FixedWidth,
             Self::FixedHeightInvalid => ProfileField::FixedHeight,
             Self::SocksPortInvalid => ProfileField::SocksPort,
+            Self::RemoteBindPortInvalid => ProfileField::RemoteBindPort,
+            Self::RemoteLocalPortInvalid => ProfileField::RemoteLocalPort,
         }
     }
 }
@@ -336,7 +354,9 @@ impl ProfileDraft {
                 .unwrap_or_default(),
             gateway: profile.gateway.clone(),
             vault_entry: profile.vault_entry.clone().unwrap_or_default(),
-            socks_port: socks_text(profile.forwards),
+            socks_port: port_text(profile.forwards.socks_port),
+            remote_bind_port: port_text(profile.forwards.remote_bind_port),
+            remote_local_port: port_text(profile.forwards.remote_local_port),
             protocol: DraftProtocol::Ssh,
             protocol_chosen: true,
             ..Self::default()
@@ -369,7 +389,9 @@ impl ProfileDraft {
             domain: profile.domain.clone().unwrap_or_default(),
             gateway: profile.gateway.clone(),
             vault_entry: profile.vault_entry.clone().unwrap_or_default(),
-            socks_port: socks_text(profile.forwards),
+            socks_port: port_text(profile.forwards.socks_port),
+            remote_bind_port: port_text(profile.forwards.remote_bind_port),
+            remote_local_port: port_text(profile.forwards.remote_local_port),
             protocol: DraftProtocol::Rdp,
             protocol_chosen: true,
             toggles,
@@ -548,28 +570,42 @@ impl ProfileDraft {
                 && field == ProfileField::Username
                 && !self.is_on(ProfileToggle::StoredCredential))
             && !(fixed_size && self.rdp_options.resolution != Resolution::Fixed)
-            && !(field == ProfileField::SocksPort && self.routed_gateway().is_none())
+            && !(Self::FORWARD_FIELDS.contains(&field) && self.routed_gateway().is_none())
     }
 
-    /// The ports saved: the SOCKS port typed. Checked only where it is shown; hidden, with no
-    /// gateway, a value that does not read is dropped, as it could not be used.
+    /// The fields of the ports opened through the gateway, shown only through one.
+    const FORWARD_FIELDS: [ProfileField; 3] = [
+        ProfileField::SocksPort,
+        ProfileField::RemoteBindPort,
+        ProfileField::RemoteLocalPort,
+    ];
+
+    /// The ports saved, as typed; 0 or empty is none. Checked only where they are shown;
+    /// hidden, with no gateway, a value that does not read is dropped, as it could not be
+    /// used.
     ///
     /// # Errors
     ///
-    /// A shown SOCKS port that is not a number from 0 to 65535.
+    /// A shown port that is not a number from 0 to 65535.
     fn saved_forwards(&self) -> Result<Forwards, DraftError> {
-        let socks_port = match self.socks_port.trim() {
-            "" => None,
+        let port = |field: ProfileField, error: DraftError| match self.value(field).trim() {
+            "" => Ok(None),
             typed => match typed.parse::<u16>() {
-                Ok(port) => Some(port),
-                Err(_) if self.shows(ProfileField::SocksPort) => {
-                    return Err(DraftError::SocksPortInvalid);
-                }
-                Err(_) => None,
+                Ok(port) => Ok(Some(port).filter(|port| *port != 0)),
+                Err(_) if self.shows(field) => Err(error),
+                Err(_) => Ok(None),
             },
         };
         Ok(Forwards {
-            socks_port: socks_port.filter(|port| *port != 0),
+            socks_port: port(ProfileField::SocksPort, DraftError::SocksPortInvalid)?,
+            remote_bind_port: port(
+                ProfileField::RemoteBindPort,
+                DraftError::RemoteBindPortInvalid,
+            )?,
+            remote_local_port: port(
+                ProfileField::RemoteLocalPort,
+                DraftError::RemoteLocalPortInvalid,
+            )?,
         })
     }
 
@@ -738,6 +774,8 @@ impl ProfileDraft {
             ProfileField::FixedHeight => &self.fixed_height,
             ProfileField::VaultEntry => &self.vault_entry,
             ProfileField::SocksPort => &self.socks_port,
+            ProfileField::RemoteBindPort => &self.remote_bind_port,
+            ProfileField::RemoteLocalPort => &self.remote_local_port,
         }
     }
 
@@ -755,6 +793,8 @@ impl ProfileDraft {
             ProfileField::FixedHeight => &mut self.fixed_height,
             ProfileField::VaultEntry => &mut self.vault_entry,
             ProfileField::SocksPort => &mut self.socks_port,
+            ProfileField::RemoteBindPort => &mut self.remote_bind_port,
+            ProfileField::RemoteLocalPort => &mut self.remote_local_port,
         } = value;
     }
 
@@ -808,12 +848,9 @@ impl ProfileDraft {
     }
 }
 
-/// The SOCKS port as the form shows it: empty for none.
-fn socks_text(forwards: Forwards) -> String {
-    forwards
-        .socks_port
-        .map(|port| port.to_string())
-        .unwrap_or_default()
+/// A port as the form shows it: empty for none.
+fn port_text(port: Option<u16>) -> String {
+    port.map(|port| port.to_string()).unwrap_or_default()
 }
 
 /// The address as saved: trimmed, and an IPv6 address without the brackets it may have
@@ -1057,6 +1094,70 @@ mod tests {
     }
 
     #[test]
+    fn a_remote_forward_is_read_as_the_csharp_one_and_checked_only_through_a_gateway() {
+        let remote = |draft: &ProfileDraft, bind: &str, local: &str| {
+            let mut draft = draft.clone();
+            draft.set(ProfileField::RemoteBindPort, bind.to_owned());
+            draft.set(ProfileField::RemoteLocalPort, local.to_owned());
+            draft.to_saved(id()).map(|saved| match saved {
+                DraftProfile::Ssh(profile) => profile.forwards.remote(),
+                other => panic!("{other:?}"),
+            })
+        };
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Ssh);
+        draft.set(ProfileField::Name, "web".to_owned());
+        draft.set(ProfileField::Host, "web.lab".to_owned());
+        for field in [ProfileField::RemoteBindPort, ProfileField::RemoteLocalPort] {
+            assert!(!draft.shows(field), "no gateway");
+        }
+        assert_eq!(remote(&draft, "8080", "x"), Ok(Some((8080, 8080))));
+
+        draft.gateway = Some(ProfileId::new("gw"));
+        for field in [ProfileField::RemoteBindPort, ProfileField::RemoteLocalPort] {
+            assert!(draft.shows(field));
+        }
+        assert_eq!(remote(&draft, "", ""), Ok(None));
+        assert_eq!(remote(&draft, "0", "3000"), Ok(None), "0 opens none");
+        assert_eq!(remote(&draft, "8080", ""), Ok(Some((8080, 8080))));
+        assert_eq!(
+            remote(&draft, "8080", "0"),
+            Ok(Some((8080, 8080))),
+            "0 is the same"
+        );
+        assert_eq!(remote(&draft, " 8080 ", "3000"), Ok(Some((8080, 3000))));
+        assert_eq!(
+            remote(&draft, "70000", ""),
+            Err(DraftError::RemoteBindPortInvalid)
+        );
+        assert_eq!(
+            remote(&draft, "8080", "local"),
+            Err(DraftError::RemoteLocalPortInvalid)
+        );
+        assert_eq!(
+            DraftError::RemoteBindPortInvalid.field(),
+            ProfileField::RemoteBindPort
+        );
+        assert_eq!(
+            DraftError::RemoteLocalPortInvalid.field(),
+            ProfileField::RemoteLocalPort
+        );
+        let mut saved = draft.clone();
+        saved.set(ProfileField::RemoteBindPort, "8080".to_owned());
+        saved.set(ProfileField::RemoteLocalPort, "3000".to_owned());
+        let Ok(DraftProfile::Ssh(profile)) = saved.to_saved(id()) else {
+            panic!("saved");
+        };
+        let reread = ProfileDraft::from_profile(&profile);
+        assert_eq!(
+            (
+                reread.remote_bind_port.as_str(),
+                reread.remote_local_port.as_str()
+            ),
+            ("8080", "3000")
+        );
+    }
+
+    #[test]
     fn every_protocol_reads_back_from_its_form() {
         let rdp = RdpProfile {
             id: id(),
@@ -1074,6 +1175,7 @@ mod tests {
             vault_entry: None,
             forwards: Forwards {
                 socks_port: Some(1080),
+                ..Forwards::default()
             },
         };
         assert_eq!(

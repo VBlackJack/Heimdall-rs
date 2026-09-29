@@ -23,8 +23,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT, ScriptedPrompter, Spec,
-    TestServer, options_trusting, profile, start,
+    FORWARDED_GREETING, PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT,
+    ScriptedPrompter, Spec, TestServer, options_trusting, profile, start,
 };
 use heimdall_ssh::{ConnectError, Connection, SessionEvent, establish};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -160,4 +160,90 @@ async fn closing_the_shell_leaves_a_subsystem_on_the_same_connection_working() {
     } else {
         assert_eq!(endings, vec!["Ok(())".to_owned()]);
     }
+}
+
+/// Waits until `check` holds on what the server observed.
+async fn observed_until(server: &TestServer, check: impl Fn(&common::Observed) -> bool) -> bool {
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    while tokio::time::Instant::now() < deadline {
+        if check(&server.observed.lock().expect("observed")) {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
+}
+
+/// The server's port of the remote forward in these tests; the test server listens nowhere.
+const REMOTE_PORT: u16 = 9000;
+
+#[tokio::test]
+async fn a_remote_forward_brings_the_server_s_connections_to_the_local_port_and_no_other() {
+    let server = start(Spec {
+        forwarding: true,
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let local = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("local");
+    let local_port = local.local_addr().expect("address").port();
+
+    let forward = connection
+        .forward_remote(REMOTE_PORT, local_port)
+        .await
+        .expect("listening");
+    assert_eq!(
+        (forward.port(), forward.local_port()),
+        (REMOTE_PORT, local_port)
+    );
+    let (mut taken, _) = tokio::time::timeout(STEP_TIMEOUT, local.accept())
+        .await
+        .expect("in time")
+        .expect("a connection came back");
+    let mut greeting = vec![0; FORWARDED_GREETING.len()];
+    taken.read_exact(&mut greeting).await.expect("read");
+    assert_eq!(greeting, FORWARDED_GREETING);
+    taken.write_all(b"from-here").await.expect("answered");
+    drop(taken);
+    assert!(
+        observed_until(&server, |o| o.forwarded_reply == b"from-here").await,
+        "the answer went back"
+    );
+    // The port never asked for is refused: the server cannot reach this computer on its own.
+    assert!(
+        observed_until(&server, |o| o.forwarded_opens.len() == 2).await,
+        "both opens answered"
+    );
+    assert_eq!(
+        server.observed.lock().expect("observed").forwarded_opens,
+        [
+            (u32::from(REMOTE_PORT), true),
+            (u32::from(REMOTE_PORT) + 1, false)
+        ]
+    );
+
+    drop(forward);
+    assert!(
+        observed_until(&server, |o| o.cancelled == [u32::from(REMOTE_PORT)]).await,
+        "the server stops listening with the forward"
+    );
+}
+
+#[tokio::test]
+async fn a_server_that_will_not_listen_refuses_the_remote_forward() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let refused = connection.forward_remote(REMOTE_PORT, 1).await;
+    assert!(
+        matches!(refused, Err(ConnectError::RemoteForwardRefused { port }) if port == REMOTE_PORT),
+        "{refused:?}"
+    );
+    assert_eq!(
+        server.observed.lock().expect("observed").listened,
+        [u32::from(REMOTE_PORT)]
+    );
 }

@@ -29,7 +29,6 @@ use heimdall_rdp::{
     AskCredentials, CloseReason, Fingerprint, KnownRdpHosts, Opening, RdpConfig, RdpConnection,
     RdpError, Security, Timeouts, Transport, connect, connect_through,
 };
-use heimdall_ssh::socks::Proxy;
 use heimdall_ssh::{
     AuthMethod, ConnectError, ConnectOptions, PasswordQuestion, UsernameQuestion, establish_via,
 };
@@ -38,7 +37,9 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-use crate::driver::{AnswerRegistry, ChannelPrompter, ask, report_failure, socks_proxy};
+use crate::driver::{
+    AnswerRegistry, ChannelPrompter, OpenForwards, ask, open_forwards, report_failure,
+};
 use crate::error::UiError;
 use crate::event::{Answer, ConnectionEvent, QuestionKind};
 use crate::text::server_text;
@@ -79,8 +80,9 @@ const TUNNEL_CLIENT_ADDRESS: SocketAddr =
 /// connection sees only that its stream could not be opened.
 type TunnelFailure = Arc<Mutex<Option<ConnectError>>>;
 
-/// Where the profile's SOCKS proxy, opened with the tunnel, waits for the session to end.
-type ProxySlot = Arc<Mutex<Option<Proxy>>>;
+/// Where the ports the profile opens through the gateway, opened with the tunnel, wait for
+/// the session to end.
+type ForwardsSlot = Arc<Mutex<Option<OpenForwards>>>;
 
 /// The stream to the server through `route`, opened once the RDP connection asks for it, so
 /// that credentials asked before the connection are asked before the tunnel too.
@@ -88,7 +90,7 @@ fn tunnel(
     request: &RdpRequest,
     prompter: Arc<ChannelPrompter>,
     failure: TunnelFailure,
-    proxy: ProxySlot,
+    opened: ForwardsSlot,
 ) -> Opening {
     let route = request.route.clone();
     let forwards = request.profile.forwards;
@@ -100,10 +102,10 @@ fn tunnel(
         let opened = match route.split_last() {
             Some((last, before)) => {
                 match establish_via(before, last, &options, prompter, cancel).await {
-                    Ok(gateway) => match socks_proxy(forwards, Some(&gateway)).await {
-                        Ok(opened) => {
-                            if let Ok(mut slot) = proxy.lock() {
-                                *slot = opened;
+                    Ok(gateway) => match open_forwards(forwards, Some(&gateway)).await {
+                        Ok(forwards) => {
+                            if let Ok(mut slot) = opened.lock() {
+                                *slot = Some(forwards);
                             }
                             gateway.open_tunnel(&host, port).await
                         }
@@ -152,15 +154,15 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         Box::new(move || Box::pin(async move { credentials(&profile, &registry, &events).await }))
     };
     let failure = TunnelFailure::default();
-    // The proxy runs as long as the session: it goes when this attempt returns.
-    let proxy = ProxySlot::default();
+    // The forwards run as long as the session: they go when this attempt returns.
+    let forwards = ForwardsSlot::default();
     let connecting = open(
         &request,
         &registry,
         &events,
         ask_credentials,
         &failure,
-        &proxy,
+        &forwards,
     )
     .await;
     // A failure on the way to the server is reported as itself: an unknown gateway key asks
@@ -282,7 +284,7 @@ async fn open(
     events: &mpsc::Sender<ConnectionEvent>,
     ask_credentials: AskCredentials,
     failure: &TunnelFailure,
-    proxy: &ProxySlot,
+    forwards: &ForwardsSlot,
 ) -> Result<RdpConnection, RdpError> {
     let config = rdp_config(request);
     if request.route.is_empty() {
@@ -292,7 +294,7 @@ async fn open(
             events: events.clone(),
             registry: registry.clone(),
         });
-        let opening = tunnel(request, prompter, failure.clone(), proxy.clone());
+        let opening = tunnel(request, prompter, failure.clone(), forwards.clone());
         // No limit of its own: each SSH hop bounds its steps, and a gateway may ask for a
         // password, which a person types.
         connect_through(

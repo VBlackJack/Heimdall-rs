@@ -109,6 +109,23 @@ pub struct Forwards {
     /// as the C# `SocksProxyPort` 0.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socks_port: Option<u16>,
+    /// A port the gateway listens on, on its own loopback address, whose connections come
+    /// back here (`ssh -R`); `None` for none, as the C# `RemoteBindPort` 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_bind_port: Option<u16>,
+    /// The local port those connections go to; `None` for the same port, as the C#
+    /// `RemoteLocalPort` 0.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub remote_local_port: Option<u16>,
+}
+
+impl Forwards {
+    /// The remote forward asked for: the gateway's port and the local port it goes to.
+    #[must_use]
+    pub fn remote(self) -> Option<(u16, u16)> {
+        self.remote_bind_port
+            .map(|port| (port, self.remote_local_port.unwrap_or(port)))
+    }
 }
 
 /// An SSH gateway: a server that other connections go through, itself possibly reached

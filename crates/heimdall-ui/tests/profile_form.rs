@@ -472,7 +472,31 @@ fn the_socks_card_shows_only_through_a_gateway_and_says_where_it_listens() {
         field: ProfileField::SocksPort,
         value: "1080".to_owned(),
     }));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("127.0.0.1:1080").expect("where it listens");
+        for label in [
+            "Remote Port Forwarding",
+            "Remote port (server)",
+            "0 = same as remote port",
+        ] {
+            ui.find(label).expect(label);
+        }
+        // The remote forward is still off.
+        ui.find("Disabled").expect("no remote forward");
+    }
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::RemoteBindPort,
+        value: "8080".to_owned(),
+    }));
+    tall_simulator(&shell)
+        .find("server:8080 -> local:8080")
+        .expect("the same port by default");
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::RemoteLocalPort,
+        value: "3000".to_owned(),
+    }));
     let mut ui = tall_simulator(&shell);
-    ui.find("127.0.0.1:1080").expect("where it listens");
+    ui.find("server:8080 -> local:3000").expect("where it goes");
     assert!(ui.find("Disabled").is_err());
 }

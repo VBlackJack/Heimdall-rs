@@ -107,7 +107,9 @@ impl GatewayDraft {
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
             | ProfileField::VaultEntry
-            | ProfileField::SocksPort => "",
+            | ProfileField::SocksPort
+            | ProfileField::RemoteBindPort
+            | ProfileField::RemoteLocalPort => "",
         }
     }
 
@@ -124,7 +126,9 @@ impl GatewayDraft {
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
             | ProfileField::VaultEntry
-            | ProfileField::SocksPort => {}
+            | ProfileField::SocksPort
+            | ProfileField::RemoteBindPort
+            | ProfileField::RemoteLocalPort => {}
         }
     }
 

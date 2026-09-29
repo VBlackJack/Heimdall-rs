@@ -22,14 +22,16 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use heimdall_core::profile::SshProfile;
+use russh::Channel;
 use russh::Preferred;
-use russh::client::{self, DisconnectReason};
+use russh::client::{self, ChannelOpenHandle, DisconnectReason, Msg};
 use russh::keys::{Algorithm, PublicKey, PublicKeyOrCertificate};
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::{self, AuthContext};
 use crate::connection::Connection;
 use crate::error::ConnectError;
+use crate::forward::{self, Routes};
 use crate::known_hosts::{
     KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
@@ -70,7 +72,12 @@ pub(crate) enum HandlerError {
 pub(crate) struct ClientHandler {
     recorded: Vec<PublicKey>,
     server_message: ServerMessage,
+    /// Ports this side asked the server to listen on.
+    routes: Routes,
 }
+
+/// A connection reached: its russh handle and the remote forwards its handler serves.
+pub(crate) type Reached = (client::Handle<ClientHandler>, Routes);
 
 impl ClientHandler {
     fn decide(&self, server_key: &PublicKeyOrCertificate) -> Result<bool, HandlerError> {
@@ -120,6 +127,33 @@ impl client::Handler for ClientHandler {
         reason: DisconnectReason<Self::Error>,
     ) -> impl Future<Output = Result<(), Self::Error>> + Send {
         std::future::ready(self.record_disconnect(reason))
+    }
+
+    /// A connection the server took on a port this side asked it to listen on goes to its
+    /// local port; on any other port it is refused, dropping `reply` refusing it.
+    fn server_channel_open_forwarded_tcpip(
+        &mut self,
+        channel: Channel<Msg>,
+        _connected_address: &str,
+        connected_port: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let local = self.routes.local_port(connected_port);
+        async move {
+            if let Some(local) = local {
+                reply.accept().await;
+                tokio::spawn(forward::carry(channel, local));
+            } else {
+                log::warn!(
+                    "the server forwarded a connection from its port {connected_port}, which was not asked for: refused"
+                );
+                drop(reply);
+            }
+            Ok(())
+        }
     }
 }
 
@@ -314,13 +348,7 @@ async fn walk<P: Prompter>(
     options: &ConnectOptions,
     prompter: &P,
     cancel: &CancellationToken,
-) -> Result<
-    (
-        client::Handle<ClientHandler>,
-        Option<client::Handle<ClientHandler>>,
-    ),
-    ConnectError,
-> {
+) -> Result<(Reached, Option<Reached>), ConnectError> {
     // Reached over TCP: the nearest gateway, or the server itself without one.
     let (first, onward): (&SshProfile, Vec<&SshProfile>) = match route.split_first() {
         Some((nearest, rest)) => (
@@ -329,13 +357,13 @@ async fn walk<P: Prompter>(
         ),
         None => (profile, Vec::new()),
     };
-    let mut handle = hop(first, None, options, prompter, cancel).await?;
+    let mut reached = hop(first, None, options, prompter, cancel).await?;
     let mut gateway = None;
     for next in onward {
-        let reached = hop(next, Some(&handle), options, prompter, cancel).await?;
-        gateway = Some(std::mem::replace(&mut handle, reached));
+        let onward = hop(next, Some(&reached.0), options, prompter, cancel).await?;
+        gateway = Some(std::mem::replace(&mut reached, onward));
     }
-    Ok((handle, gateway))
+    Ok((reached, gateway))
 }
 
 /// Originator address reported to a gateway when it is asked to connect onward: the client
@@ -350,16 +378,18 @@ async fn hop<P: Prompter>(
     options: &ConnectOptions,
     prompter: &P,
     cancel: &CancellationToken,
-) -> Result<client::Handle<ClientHandler>, ConnectError> {
+) -> Result<Reached, ConnectError> {
     let host = validate_host(&profile.host)?;
     let port = profile.port;
     let mut recorded = KnownHosts::new(&options.known_hosts).recorded(&host, port)?;
     recorded.extend(options.run_trust.keys(&host, port));
 
     let server_message = ServerMessage::default();
+    let routes = Routes::default();
     let handler = ClientHandler {
         recorded: recorded.clone(),
         server_message: server_message.clone(),
+        routes: routes.clone(),
     };
     let config = Arc::new(client::Config {
         inactivity_timeout: None,
@@ -425,7 +455,7 @@ async fn hop<P: Prompter>(
     })
     .await?;
 
-    Ok(handle)
+    Ok((handle, routes))
 }
 
 #[cfg(test)]
