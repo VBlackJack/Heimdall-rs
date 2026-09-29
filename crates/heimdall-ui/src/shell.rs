@@ -1541,6 +1541,19 @@ impl Shell {
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
             Effect::PickRdpFiles => pick_rdp(),
+            // The registry or the files, read off the window's thread.
+            Effect::ReadPuttySessions => Task::perform(
+                async {
+                    tokio::task::spawn_blocking(heimdall_app::putty_store::read)
+                        .await
+                        .unwrap_or_else(|error| Err(error.to_string()))
+                },
+                |read| {
+                    Message::App(AppMessage::Sessions(
+                        heimdall_app::SessionsMessage::PuttyRead(read),
+                    ))
+                },
+            ),
             Effect::ReadRdpFiles(paths) => {
                 Task::perform(crate::rdp_view::read_all(paths), rdp_read)
             }
@@ -1620,7 +1633,7 @@ impl Shell {
                     let content = dialog_view(dialog, &self.forms(size.height));
                     // The OpenSSH preview is a table: wider than a form, as the C# one.
                     let card =
-                        if matches!(dialog, Dialog::OpenSshPreview(_) | Dialog::RdpPreview(_)) {
+                        if matches!(dialog, Dialog::SessionsPreview(_) | Dialog::RdpPreview(_)) {
                             wide_card(content)
                         } else {
                             card(content)
@@ -3197,14 +3210,14 @@ fn pick_openssh() -> Task<Message> {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
-                crate::openssh_view::pick(title, Some(window))
+                crate::sessions_view::pick(title, Some(window))
             }),
-            None => Task::done(crate::openssh_view::pick(title, None)),
+            None => Task::done(crate::sessions_view::pick(title, None)),
         };
         pick.then(|pick| {
-            Task::future(crate::openssh_view::read(pick)).then(|read| match read {
-                Some(read) => Task::done(Message::App(AppMessage::OpenSsh(
-                    heimdall_app::OpenSshMessage::Read(read),
+            Task::future(crate::sessions_view::read(pick)).then(|read| match read {
+                Some(read) => Task::done(Message::App(AppMessage::Sessions(
+                    heimdall_app::SessionsMessage::Read(read),
                 ))),
                 None => Task::none(),
             })
@@ -3259,17 +3272,13 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::PasswordSaveFailed { detail: technical } => {
             (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
         }
-        other => match crate::rdp_view::report_lines(other) {
-            Some(lines) => (fl!("ui-rdp-title"), lines.into_iter().map(text).collect()),
-            None => (
-                fl!("ui-openssh-title"),
-                crate::openssh_view::report_lines(other)
-                    .unwrap_or_default()
-                    .into_iter()
-                    .map(text)
-                    .collect(),
-            ),
-        },
+        other => {
+            let (title, lines) = crate::rdp_view::report_lines(other)
+                .map(|lines| (fl!("ui-rdp-title"), lines))
+                .or_else(|| crate::sessions_view::report_lines(other))
+                .unwrap_or_default();
+            (title, lines.into_iter().map(text).collect())
+        }
     };
     column![text(title).size(HEADING_SIZE)]
         .extend(lines.into_iter().map(Element::from))
@@ -4894,13 +4903,13 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ExportDone { .. }
         | Dialog::ExportFailed { .. }
         | Dialog::ImportFailed { .. }
-        | Dialog::OpenSshUnreadable { .. }
-        | Dialog::OpenSshEmpty
-        | Dialog::OpenSshDone { .. }
+        | Dialog::SessionsUnreadable { .. }
+        | Dialog::SessionsEmpty { .. }
+        | Dialog::SessionsDone { .. }
         | Dialog::RdpNothing { .. }
         | Dialog::RdpDone(_)
         | Dialog::PasswordSaveFailed { .. } => report(dialog, ok()),
-        Dialog::OpenSshPreview(preview) => crate::openssh_view::preview(preview),
+        Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
         Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
         Dialog::StoreError { detail: technical } => column![
             heading(fl!("ui-dialog-store-title")),

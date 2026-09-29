@@ -448,6 +448,49 @@ ui-openssh-done-gateways = { $count ->
 }
 ui-openssh-unreadable = No se puede leer el archivo seleccionado: { $detail }
 ui-openssh-empty = El archivo seleccionado no contiene entradas importables.
+ui-tree-import-putty = Importar sesiones de PuTTY...
+ui-putty-title = Importar sesiones de PuTTY
+ui-sessions-summary-invalid = { $total ->
+    [one] { $total } candidato
+   *[other] { $total } candidatos
+} - { $new ->
+    [one] { $new } nuevo
+   *[other] { $new } nuevos
+}, { $duplicate ->
+    [one] { $duplicate } duplicado
+   *[other] { $duplicate } duplicados
+}, { $invalid ->
+    [one] { $invalid } no válido
+   *[other] { $invalid } no válidos
+}
+ui-sessions-status-invalid = No válido
+ui-sessions-no-host = (sin host)
+ui-putty-diag-default = Ajustes predeterminados de PuTTY omitidos: { $session }
+ui-putty-diag-not-ssh = Sesión "{ $session }" ignorada porque el protocolo "{ $value }" no es SSH
+ui-putty-diag-missing-host = La sesión "{ $session }" no tiene nombre de host y se marcará como no válida
+ui-putty-diag-port = La sesión "{ $session }" tiene un puerto no válido "{ $value }"; se usará 22 en su lugar
+ui-putty-diag-ppk = La sesión "{ $session }" hace referencia a una clave .ppk conservada sin convertir: { $value }
+ui-putty-diag-proxy = La sesión "{ $session }" define ajustes de proxy que se capturaron pero no se asignaron: { $value }
+ui-putty-diag-forwards = La sesión "{ $session }" define { $count ->
+    [one] { $count } túnel que se capturó pero no se asignó
+   *[other] { $count } túneles que se capturaron pero no se asignaron
+}
+ui-putty-diag-command = La sesión "{ $session }" define un comando de inicio que se capturó pero no se asignó: { $value }
+ui-putty-done = { $imported ->
+    [one] { $imported } importado
+   *[other] { $imported } importados
+}, { $duplicates ->
+    [one] { $duplicates } omitido
+   *[other] { $duplicates } omitidos
+} (duplicados), { $invalid ->
+    [one] { $invalid } no válido
+   *[other] { $invalid } no válidos
+}, { $warnings ->
+    [one] { $warnings } aviso
+   *[other] { $warnings } avisos
+}
+ui-putty-unreadable = No se pudieron leer las sesiones de PuTTY: { $detail }
+ui-putty-empty = No se encontraron sesiones SSH de PuTTY.
 ui-tree-import-rdp = Importar archivos RDP...
 ui-rdp-title = Importar archivos .rdp
 ui-rdp-filter = Archivos de Escritorio remoto

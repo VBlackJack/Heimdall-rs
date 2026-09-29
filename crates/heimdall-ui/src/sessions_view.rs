@@ -22,8 +22,11 @@ use std::future::Future;
 use std::path::Path;
 use std::pin::Pin;
 
-use heimdall_app::{Dialog, Message as AppMessage, OpenSshMessage, OpenSshPreview, OpenSshRow};
+use heimdall_app::{
+    Dialog, Message as AppMessage, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
+};
 use heimdall_core::import::openssh::{Code, Diagnostic, GatewayStep, Level, Status};
+use heimdall_core::import::putty;
 use iced::widget::{Column, button, checkbox, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
 
@@ -93,8 +96,8 @@ pub async fn read_file(path: &Path) -> Result<String, String> {
         .map_err(|error| format!("{}: {error}", path.display()))
 }
 
-fn app(message: OpenSshMessage) -> Message {
-    Message::App(AppMessage::OpenSsh(message))
+fn app(message: SessionsMessage) -> Message {
+    Message::App(AppMessage::Sessions(message))
 }
 
 /// A cell of `width`, its text on one line and cut at its edge.
@@ -111,8 +114,24 @@ fn cell<'a>(value: impl Into<String>, width: f32) -> Element<'a, Message> {
 
 /// The preview, as the C# `ImportSessionsPreviewDialog`.
 #[must_use]
-pub fn preview(preview: &OpenSshPreview) -> Element<'_, Message> {
-    let (total, new, duplicate) = preview.counts();
+pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
+    let (total, new, duplicate, invalid) = preview.counts();
+    let summary = if invalid > 0 {
+        fl!(
+            "ui-sessions-summary-invalid",
+            total = total,
+            new = new,
+            duplicate = duplicate,
+            invalid = invalid
+        )
+    } else {
+        fl!(
+            "ui-openssh-summary",
+            total = total,
+            new = new,
+            duplicate = duplicate
+        )
+    };
     let header = row![
         cell("", COLUMNS[0]),
         cell(fl!("ui-openssh-column-alias"), COLUMNS[1]),
@@ -132,38 +151,35 @@ pub fn preview(preview: &OpenSshPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(fl!("ui-openssh-title")).size(TITLE_SIZE),
-        text(fl!(
-            "ui-openssh-summary",
-            total = total,
-            new = new,
-            duplicate = duplicate
-        ))
-        .size(TEXT_SIZE),
-        text(fl!("ui-openssh-hint")).size(TEXT_SIZE),
-        checkbox(preview.all_chosen())
-            .label(fl!("ui-openssh-choose-all"))
-            .text_size(TEXT_SIZE)
-            .on_toggle(|on| app(OpenSshMessage::ChooseAll(on))),
-        header,
-        scrollable(rows).height(Length::Shrink).height(ROWS_HEIGHT),
+        text(title(preview.source)).size(TITLE_SIZE),
+        text(summary).size(TEXT_SIZE),
     ]
     .spacing(SPACING);
-    if !preview.diagnostics.is_empty() {
+    // The C# hint is about ProxyJump, which only an OpenSSH file has.
+    if preview.source == SessionsSource::OpenSsh {
+        content = content.push(text(fl!("ui-openssh-hint")).size(TEXT_SIZE));
+    }
+    let mut content = content.push(
+        column![
+            checkbox(preview.all_chosen())
+                .label(fl!("ui-openssh-choose-all"))
+                .text_size(TEXT_SIZE)
+                .on_toggle(|on| app(SessionsMessage::ChooseAll(on))),
+            header,
+            scrollable(rows).height(Length::Shrink).height(ROWS_HEIGHT),
+        ]
+        .spacing(SPACING),
+    );
+    let said: Vec<Element<'_, Message>> = preview
+        .diagnostics
+        .iter()
+        .map(diagnostic_line)
+        .chain(preview.putty_diagnostics.iter().map(putty_line))
+        .collect();
+    if !said.is_empty() {
         content = content
-            .push(
-                text(fl!(
-                    "ui-openssh-diagnostics",
-                    count = preview.diagnostics.len()
-                ))
-                .size(TEXT_SIZE),
-            )
-            .push(
-                scrollable(Column::with_children(
-                    preview.diagnostics.iter().map(diagnostic_line),
-                ))
-                .height(DIAGNOSTICS_HEIGHT),
-            );
+            .push(text(fl!("ui-openssh-diagnostics", count = said.len())).size(TEXT_SIZE))
+            .push(scrollable(Column::with_children(said)).height(DIAGNOSTICS_HEIGHT));
     }
     content
         .push(
@@ -182,17 +198,27 @@ pub fn preview(preview: &OpenSshPreview) -> Element<'_, Message> {
         .into()
 }
 
-fn server_row(index: usize, row: &OpenSshRow) -> Element<'_, Message> {
+fn server_row(index: usize, row: &SessionsRow) -> Element<'_, Message> {
     let candidate = &row.assessment.candidate;
     let status = match row.assessment.status {
         Status::New => fl!("ui-openssh-status-new"),
         Status::Duplicate => fl!("ui-openssh-status-duplicate"),
+        Status::Invalid => fl!("ui-sessions-status-invalid"),
+    };
+    // As the C# preview: an invalid server has no tick to give.
+    let tick = checkbox(row.chosen).on_toggle_maybe(
+        row.choosable()
+            .then_some(move |_| app(SessionsMessage::Choose(index))),
+    );
+    let host = if candidate.host_name.is_empty() {
+        fl!("ui-sessions-no-host")
+    } else {
+        candidate.host_name.clone()
     };
     row![
-        container(checkbox(row.chosen).on_toggle(move |_| app(OpenSshMessage::Choose(index))))
-            .width(COLUMNS[0]),
+        container(tick).width(COLUMNS[0]),
         cell(candidate.alias.clone(), COLUMNS[1]),
-        cell(candidate.host_name.clone(), COLUMNS[2]),
+        cell(host, COLUMNS[2]),
         cell(candidate.port.to_string(), COLUMNS[3]),
         cell(candidate.user.clone().unwrap_or_default(), COLUMNS[4]),
         cell(
@@ -260,31 +286,85 @@ fn diagnostic_line(diagnostic: &Diagnostic) -> Element<'_, Message> {
     .into()
 }
 
-/// What the import said when it ended, or why it did not start: the lines under the title.
+/// What a `PuTTY` session said, as the C# preview names it.
+fn putty_line(diagnostic: &putty::Diagnostic) -> Element<'_, Message> {
+    let session = diagnostic.session.as_str();
+    let value = diagnostic.context.as_deref().unwrap_or_default();
+    let said = match diagnostic.code {
+        putty::Code::DefaultSettingsSkipped => fl!("ui-putty-diag-default", session = session),
+        putty::Code::NotSsh => fl!("ui-putty-diag-not-ssh", session = session, value = value),
+        putty::Code::MissingHost => fl!("ui-putty-diag-missing-host", session = session),
+        putty::Code::InvalidPort => fl!("ui-putty-diag-port", session = session, value = value),
+        putty::Code::PpkKey => fl!("ui-putty-diag-ppk", session = session, value = value),
+        putty::Code::ProxyNotMapped => fl!("ui-putty-diag-proxy", session = session, value = value),
+        putty::Code::ForwardingsNotMapped => fl!(
+            "ui-putty-diag-forwards",
+            session = session,
+            count = value.parse::<usize>().unwrap_or_default()
+        ),
+        putty::Code::RemoteCommandNotMapped => {
+            fl!("ui-putty-diag-command", session = session, value = value)
+        }
+    };
+    let warning = diagnostic.level == putty::Level::Warning;
+    text(said)
+        .size(TEXT_SIZE)
+        .style(move |theme: &Theme| text::Style {
+            color: warning.then(|| theme.extended_palette().danger.base.color),
+        })
+        .into()
+}
+
+/// The title of an import's dialogs.
 #[must_use]
-pub fn report_lines(dialog: &Dialog) -> Option<Vec<String>> {
-    match dialog {
-        Dialog::OpenSshDone {
-            imported,
-            gateways,
-            duplicates,
-            warnings,
-        } => {
-            let mut lines = vec![fl!(
-                "ui-openssh-done",
-                imported = imported.to_owned(),
-                duplicates = duplicates.to_owned(),
-                warnings = warnings.to_owned()
-            )];
-            if *gateways > 0 {
-                lines.push(fl!("ui-openssh-done-gateways", count = gateways.to_owned()));
-            }
-            Some(lines)
-        }
-        Dialog::OpenSshUnreadable { detail } => {
-            Some(vec![fl!("ui-openssh-unreadable", detail = detail.as_str())])
-        }
-        Dialog::OpenSshEmpty => Some(vec![fl!("ui-openssh-empty")]),
-        _ => None,
+pub fn title(source: SessionsSource) -> String {
+    match source {
+        SessionsSource::OpenSsh => fl!("ui-openssh-title"),
+        SessionsSource::Putty => fl!("ui-putty-title"),
     }
+}
+
+/// What the import said when it ended, or why it did not start: the title and the lines
+/// under it.
+#[must_use]
+pub fn report_lines(dialog: &Dialog) -> Option<(String, Vec<String>)> {
+    let lines = match dialog {
+        Dialog::SessionsDone { source, counts } => {
+            let mut lines = vec![match source {
+                SessionsSource::OpenSsh => fl!(
+                    "ui-openssh-done",
+                    imported = counts.imported,
+                    duplicates = counts.duplicates,
+                    warnings = counts.warnings
+                ),
+                SessionsSource::Putty => fl!(
+                    "ui-putty-done",
+                    imported = counts.imported,
+                    duplicates = counts.duplicates,
+                    invalid = counts.invalid,
+                    warnings = counts.warnings
+                ),
+            }];
+            if counts.gateways > 0 {
+                lines.push(fl!("ui-openssh-done-gateways", count = counts.gateways));
+            }
+            (*source, lines)
+        }
+        Dialog::SessionsUnreadable { source, detail } => (
+            *source,
+            vec![match source {
+                SessionsSource::OpenSsh => fl!("ui-openssh-unreadable", detail = detail.as_str()),
+                SessionsSource::Putty => fl!("ui-putty-unreadable", detail = detail.as_str()),
+            }],
+        ),
+        Dialog::SessionsEmpty { source } => (
+            *source,
+            vec![match source {
+                SessionsSource::OpenSsh => fl!("ui-openssh-empty"),
+                SessionsSource::Putty => fl!("ui-putty-empty"),
+            }],
+        ),
+        _ => return None,
+    };
+    Some((title(lines.0), lines.1))
 }

@@ -2349,6 +2349,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "unftp-sbe-fs",
+ "windows-registry",
  "zeroize",
 ]
 

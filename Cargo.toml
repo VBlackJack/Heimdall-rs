@@ -77,6 +77,8 @@ suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-ru
 # rfd: the system's save dialog for "Export Sessions", as the C# SaveFileDialog; on Linux
 # through the desktop portal (zbus, already in the tree), no GTK.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+# windows-registry: PuTTY's saved sessions, read-only, on Windows; already in the tree.
+windows-registry = "0.6.1"
 tempfile = "3.27.0"
 # des: VNC Authentication only, a DES challenge the protocol mandates.
 des = "0.9.0"

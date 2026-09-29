@@ -701,6 +701,8 @@ pub enum Status {
     New,
     /// A profile has its name: not imported, as the C# import leaves it.
     Duplicate,
+    /// No host to reach, as a `PuTTY` session can be: never imported.
+    Invalid,
 }
 
 /// A gateway on the way to a candidate, as the preview shows it.
@@ -736,6 +738,8 @@ pub struct Plan {
     pub gateways: Vec<SshGateway>,
     /// The names left out: a profile already has them.
     pub duplicates: Vec<String>,
+    /// The names left out: no host to reach.
+    pub invalid: Vec<String>,
 }
 
 /// Finds and makes the gateways of chains: a saved one when host, port, account and parent
@@ -849,7 +853,9 @@ pub fn assess<S: BuildHasher>(
     candidates
         .iter()
         .map(|candidate| Assessment {
-            status: if names.contains(&candidate.alias.to_lowercase()) {
+            status: if candidate.host_name.trim().is_empty() {
+                Status::Invalid
+            } else if names.contains(&candidate.alias.to_lowercase()) {
                 Status::Duplicate
             } else {
                 Status::New
@@ -872,6 +878,10 @@ pub fn plan<S: BuildHasher>(
     let mut planner = Gateways::new(gateways);
     let mut plan = Plan::default();
     for candidate in chosen {
+        if candidate.host_name.trim().is_empty() {
+            plan.invalid.push(candidate.alias.clone());
+            continue;
+        }
         let name = candidate.alias.to_lowercase();
         if names.contains(&name) || !taken.insert(name) {
             plan.duplicates.push(candidate.alias.clone());

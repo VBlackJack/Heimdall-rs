@@ -439,6 +439,34 @@ ui-openssh-done-gateways = { $count ->
 }
 ui-openssh-unreadable = Unable to read the selected file: { $detail }
 ui-openssh-empty = The selected file contains no importable entries.
+ui-tree-import-putty = Import PuTTY sessions...
+ui-putty-title = Import PuTTY sessions
+ui-sessions-summary-invalid = { $total ->
+    [one] { $total } candidate
+   *[other] { $total } candidates
+} - { $new } new, { $duplicate ->
+    [one] { $duplicate } duplicate
+   *[other] { $duplicate } duplicates
+}, { $invalid } invalid
+ui-sessions-status-invalid = Invalid
+ui-sessions-no-host = (no host)
+ui-putty-diag-default = PuTTY default settings skipped: { $session }
+ui-putty-diag-not-ssh = Session "{ $session }" ignored because protocol "{ $value }" is not SSH
+ui-putty-diag-missing-host = Session "{ $session }" has no host name and will be marked invalid
+ui-putty-diag-port = Session "{ $session }" has invalid port "{ $value }"; falling back to 22
+ui-putty-diag-ppk = Session "{ $session }" references a .ppk key preserved without conversion: { $value }
+ui-putty-diag-proxy = Session "{ $session }" defines proxy settings that were captured but not mapped: { $value }
+ui-putty-diag-forwards = Session "{ $session }" defines { $count ->
+    [one] { $count } tunnel
+   *[other] { $count } tunnels
+} captured but not mapped
+ui-putty-diag-command = Session "{ $session }" defines a startup command that was captured but not mapped: { $value }
+ui-putty-done = { $imported } imported, { $duplicates } skipped (duplicates), { $invalid } invalid, { $warnings ->
+    [one] { $warnings } warning
+   *[other] { $warnings } warnings
+}
+ui-putty-unreadable = PuTTY's sessions could not be read: { $detail }
+ui-putty-empty = No PuTTY SSH sessions were found.
 ui-tree-import-rdp = Import RDP files...
 ui-rdp-title = Import .rdp files
 ui-rdp-filter = Remote Desktop files
