@@ -2337,6 +2337,7 @@ dependencies = [
  "rust-embed",
  "tempfile",
  "tokio",
+ "tokio-util",
  "zeroize",
 ]
 
