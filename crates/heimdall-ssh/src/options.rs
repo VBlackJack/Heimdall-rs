@@ -88,6 +88,8 @@ pub struct ConnectOptions {
     pub known_hosts: PathBuf,
     /// Where to look for an SSH agent.
     pub agent: AgentSource,
+    /// Forward the agent to the server's shell (`ssh -A`), as the C# "Forward SSH agent".
+    pub forward_agent: bool,
     /// Keys trusted for this run only, counted as recorded beside `known_hosts`.
     pub run_trust: RunTrust,
 }
@@ -106,6 +108,7 @@ impl ConnectOptions {
             known_hosts,
             agent: AgentSource::Auto,
             run_trust: RunTrust::default(),
+            forward_agent: false,
         }
     }
 }

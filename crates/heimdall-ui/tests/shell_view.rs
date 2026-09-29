@@ -76,6 +76,7 @@ fn profile(id: &str, group: Option<&str>) -> SshProfile {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
     }
 }
 
@@ -157,9 +158,9 @@ fn the_sidebar_lists_profiles_by_group_and_a_click_opens_one() {
         production < ungrouped,
         "profiles without a folder come last"
     );
-    common::double_click(&mut ui, "server b");
-    let connected: Vec<String> = ui
-        .into_messages()
+    drop(ui);
+    let connected: Vec<String> = common::double_click_messages(|| simulator(&shell), "server b")
+        .into_iter()
         .filter_map(|message| match message {
             Message::App(AppMessage::ConnectProfile(id)) => Some(id.to_string()),
             _ => None,

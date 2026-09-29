@@ -227,6 +227,9 @@ struct LegacyServer {
     vnc_view_only: bool,
     /// The entry in the external password manager, for the provider's `{Title}`.
     vault_entry_name: Option<String>,
+    /// "Forward SSH agent"; absent is off.
+    #[serde(default)]
+    ssh_agent_forwarding: bool,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
     /// The post-connect sequence; a null entry is dropped, as the C# migration does.
@@ -652,6 +655,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
             steps: post_connect_of(server),
             approved: None,
         },
+        forward_agent: server.ssh_agent_forwarding,
     })
 }
 

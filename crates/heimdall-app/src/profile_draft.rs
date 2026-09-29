@@ -172,6 +172,8 @@ pub enum ProfileToggle {
     /// RDP: open the server's administrative session, as the C# "Run as administrator
     /// session (/admin)" box.
     AdminSession,
+    /// SSH: forward this computer's SSH agent to the shell, as the C# "Forward SSH agent".
+    ForwardAgent,
 }
 
 impl ProfileToggle {
@@ -191,7 +193,8 @@ impl ProfileToggle {
                 Self::SkipCertificateCheck,
             ],
             DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
-            DraftProtocol::Ssh | DraftProtocol::Telnet => &[],
+            DraftProtocol::Ssh => &[Self::ForwardAgent],
+            DraftProtocol::Telnet => &[],
         }
     }
 }
@@ -363,6 +366,11 @@ impl ProfileDraft {
             remote_bind_port: port_text(profile.forwards.remote_bind_port),
             remote_local_port: port_text(profile.forwards.remote_local_port),
             post_connect: StepsDraft::of(&profile.post_connect.steps),
+            toggles: if profile.forward_agent {
+                vec![ProfileToggle::ForwardAgent]
+            } else {
+                Vec::new()
+            },
             protocol: DraftProtocol::Ssh,
             protocol_chosen: true,
             ..Self::default()
@@ -624,6 +632,27 @@ impl ProfileDraft {
         }
     }
 
+    /// The user name saved: the one typed where the form shows it, else none.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::UsernameInvalid`] for a space, a control character or a double quote: a
+    /// `WinRM` account is written into a command, and no account name holds one.
+    fn checked_username(&self) -> Result<&str, DraftError> {
+        let username = if self.shows(ProfileField::Username) {
+            self.username.trim()
+        } else {
+            ""
+        };
+        if username
+            .chars()
+            .any(|c| c.is_whitespace() || c.is_control() || c == '"')
+        {
+            return Err(DraftError::UsernameInvalid);
+        }
+        Ok(username)
+    }
+
     /// Whether a step's command holds a control character, which a line typed into a shell
     /// cannot carry.
     fn post_connect_has_control(&self) -> bool {
@@ -700,19 +729,7 @@ impl ProfileDraft {
         }
         let host = host(&self.host)?;
         let port = self.typed_port()?;
-        let username = if self.shows(ProfileField::Username) {
-            self.username.trim()
-        } else {
-            ""
-        };
-        // A double quote is refused too: a WinRM account is written into a command, and no
-        // account name holds one.
-        if username
-            .chars()
-            .any(|c| c.is_whitespace() || c.is_control() || c == '"')
-        {
-            return Err(DraftError::UsernameInvalid);
-        }
+        let username = self.checked_username()?;
         if domain.chars().any(|c| c.is_whitespace() || c == '"') {
             return Err(DraftError::DomainInvalid);
         }
@@ -732,6 +749,7 @@ impl ProfileDraft {
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
                 post_connect: self.saved_post_connect(),
+                forward_agent: self.is_on(ProfileToggle::ForwardAgent),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -873,6 +891,7 @@ impl ProfileDraft {
             vault_entry: optional(self.vault_entry.trim()),
             forwards: self.saved_forwards()?,
             post_connect: self.saved_post_connect(),
+            forward_agent: self.is_on(ProfileToggle::ForwardAgent),
         })
     }
 }
@@ -1032,6 +1051,7 @@ mod tests {
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
             post_connect: heimdall_core::post_connect::PostConnect::default(),
+            forward_agent: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1121,6 +1141,35 @@ mod tests {
             !telnet.shows(ProfileField::SocksPort),
             "never through a gateway"
         );
+    }
+
+    #[test]
+    fn forwarding_the_agent_is_an_ssh_option_that_reads_back() {
+        assert_eq!(
+            ProfileToggle::of(DraftProtocol::Ssh),
+            [ProfileToggle::ForwardAgent]
+        );
+        for protocol in [
+            DraftProtocol::Rdp,
+            DraftProtocol::Vnc,
+            DraftProtocol::WinRm,
+            DraftProtocol::Telnet,
+        ] {
+            assert!(!ProfileToggle::of(protocol).contains(&ProfileToggle::ForwardAgent));
+        }
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Ssh);
+        draft.set(ProfileField::Name, "web".to_owned());
+        draft.set(ProfileField::Host, "web.lab".to_owned());
+        let saved = |draft: &ProfileDraft| match draft.to_saved(id()) {
+            Ok(DraftProfile::Ssh(profile)) => profile,
+            other => panic!("{other:?}"),
+        };
+        assert!(!saved(&draft).forward_agent, "off by default, as in C#");
+        draft.toggle(ProfileToggle::ForwardAgent, true);
+        let profile = saved(&draft);
+        assert!(profile.forward_agent);
+        assert!(ProfileDraft::from_profile(&profile).is_on(ProfileToggle::ForwardAgent));
+        assert!(draft.to_profile(id()).expect("profile").forward_agent);
     }
 
     #[test]

@@ -247,3 +247,94 @@ async fn a_server_that_will_not_listen_refuses_the_remote_forward() {
         [u32::from(REMOTE_PORT)]
     );
 }
+
+/// A stand-in for the user's agent: answers any request with an empty list of identities.
+#[cfg(unix)]
+fn fake_agent(dir: &std::path::Path) -> std::path::PathBuf {
+    let path = dir.join("agent.sock");
+    let listener = tokio::net::UnixListener::bind(&path).expect("agent socket");
+    tokio::spawn(async move {
+        while let Ok((mut client, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut request = [0; 5];
+                if client.read_exact(&mut request).await.is_ok() {
+                    let _ = client.write_all(&EMPTY_IDENTITIES).await;
+                }
+            });
+        }
+    });
+    path
+}
+
+/// `SSH_AGENT_IDENTITIES_ANSWER` with no identity.
+#[cfg(unix)]
+const EMPTY_IDENTITIES: [u8; 9] = [0, 0, 0, 5, 12, 0, 0, 0, 0];
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_agent_is_forwarded_only_to_a_shell_that_asked() {
+    use heimdall_ssh::AgentSource;
+
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let agent = fake_agent(dir.path());
+    let connection = connected(&server, dir.path()).await;
+    let mut options = options_trusting(dir.path(), server.port, "host-ed25519");
+    options.agent = AgentSource::Path(agent);
+    options.forward_agent = true;
+    let _shell = connection
+        .open_shell(&options, CancellationToken::new())
+        .await
+        .expect("shell");
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    while server
+        .observed
+        .lock()
+        .expect("observed")
+        .agent_reply
+        .is_empty()
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let observed = server.observed.lock().expect("observed").clone();
+    assert_eq!(observed.agent_asked, 1);
+    assert_eq!(observed.agent_opens, [true]);
+    assert_eq!(
+        observed.agent_reply, EMPTY_IDENTITIES,
+        "the agent answered through it"
+    );
+}
+
+#[tokio::test]
+async fn a_server_cannot_reach_the_agent_of_a_shell_that_did_not_ask() {
+    let server = start(Spec {
+        agent_unasked: true,
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    // Forwarding off, an agent named: nothing is asked, and what the server opens anyway is
+    // refused.
+    let mut options = options_trusting(dir.path(), server.port, "host-ed25519");
+    options.agent = heimdall_ssh::AgentSource::Path(dir.path().join("agent.sock"));
+    let _shell = connection
+        .open_shell(&options, CancellationToken::new())
+        .await
+        .expect("shell");
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    while server
+        .observed
+        .lock()
+        .expect("observed")
+        .agent_opens
+        .is_empty()
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let observed = server.observed.lock().expect("observed").clone();
+    assert_eq!(observed.agent_asked, 0);
+    assert_eq!(observed.agent_opens, [false]);
+}

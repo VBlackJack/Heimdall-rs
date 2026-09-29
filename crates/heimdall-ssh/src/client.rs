@@ -129,6 +129,27 @@ impl client::Handler for ClientHandler {
         std::future::ready(self.record_disconnect(reason))
     }
 
+    /// An agent channel reaches the agent only on a connection whose shell asked to forward
+    /// it; otherwise it is refused, dropping `reply` refusing it.
+    fn server_channel_open_agent_forward(
+        &mut self,
+        channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        let source = self.routes.agent();
+        async move {
+            if let Some(source) = source {
+                reply.accept().await;
+                tokio::spawn(forward::carry_agent(channel, source));
+            } else {
+                log::warn!("the server asked for the SSH agent, which was not forwarded: refused");
+                drop(reply);
+            }
+            Ok(())
+        }
+    }
+
     /// A connection the server took on a port this side asked it to listen on goes to its
     /// local port; on any other port it is refused, dropping `reply` refusing it.
     fn server_channel_open_forwarded_tcpip(

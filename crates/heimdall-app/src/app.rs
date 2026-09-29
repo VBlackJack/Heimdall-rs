@@ -1658,6 +1658,7 @@ impl App {
         options.agent = self.config.agent.clone();
         options.run_trust = self.run_trust.clone();
         options.initial_size = terminal_size(grid, None);
+        options.forward_agent = profile.forward_agent;
         Ok(ConnectRequest {
             profile: profile.clone(),
             route: route.iter().map(SshGateway::as_hop).collect(),

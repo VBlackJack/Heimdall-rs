@@ -3276,6 +3276,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::AllowNoPassword => fl!("ui-profile-toggle-no-password"),
         ProfileToggle::DirectConnection => fl!("ui-profile-direct-connect"),
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
+        ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
     }
 }
 

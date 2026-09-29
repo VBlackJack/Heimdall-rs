@@ -61,6 +61,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
             post_connect: heimdall_core::post_connect::PostConnect::default(),
+            forward_agent: false,
         },
         options,
         cancel: CancellationToken::new(),

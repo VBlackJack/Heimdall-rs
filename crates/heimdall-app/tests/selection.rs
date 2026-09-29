@@ -38,6 +38,7 @@ fn ssh(id: &str) -> SshProfile {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
     }
 }
 

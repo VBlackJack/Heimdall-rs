@@ -80,6 +80,7 @@ fn app(dir: &Path) -> App {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
