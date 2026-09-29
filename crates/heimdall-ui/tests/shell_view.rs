@@ -2206,3 +2206,69 @@ fn the_export_says_how_many_sessions_and_that_no_credential_went() {
     let mut ui = simulator(&shell);
     ui.find("Export failed: disk full").expect("the reason");
 }
+
+#[test]
+fn the_filter_menu_ticks_a_protocol_and_stays_open_as_the_csharp_one() {
+    use heimdall_app::{FilterMessage, ProfileKind};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Filter));
+    let mut ui = simulator(&shell);
+    for label in [
+        "Protocols",
+        "Connected",
+        "Via gateway",
+        "Show gateway badge",
+    ] {
+        ui.find(label).expect(label);
+    }
+    ui.click("RDP").expect("the protocol");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Filter(FilterMessage::Protocol(
+                ProfileKind::Rdp
+            )))
+        )),
+        "{messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::MenuChoice(_) | Message::CloseTreeMenu)),
+        "the menu stays open for the next choice: {messages:?}"
+    );
+}
+
+#[test]
+fn nothing_passing_the_filters_offers_to_reset_them_and_the_search() {
+    use heimdall_app::{FilterMessage, ProfileKind};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Search("server".to_owned()));
+    let _ = shell.update(Message::App(AppMessage::Filter(FilterMessage::Protocol(
+        ProfileKind::Rdp,
+    ))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("No sessions match your search and filters.")
+            .expect("as the C# says it");
+        ui.click("Reset all filters").expect("the way back");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ResetTreeFilters))
+        );
+    }
+    let _ = shell.update(Message::ResetTreeFilters);
+    assert!(!shell.app().tree_filter().is_active());
+    let mut ui = simulator(&shell);
+    ui.find("server a").expect("every profile back");
+    assert!(
+        ui.find("Production  a.lab").is_err(),
+        "the search emptied too"
+    );
+}

@@ -38,7 +38,7 @@ use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
-    DesktopPane, Dialog, Effect, FilesMessage, FolderMessage, FolderNaming,
+    DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage, FolderNaming,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
@@ -97,6 +97,9 @@ const TERMINAL_MARGIN: f32 = 6.0;
 
 /// Width of a question or dialog card, in logical pixels.
 const CARD_WIDTH: f32 = 520.0;
+
+/// The filter button's mark, a funnel as the C# one's icon.
+const FILTER_GLYPH: &str = "\u{25BD}";
 
 /// Size of headings, in logical pixels.
 const HEADING_SIZE: f32 = 20.0;
@@ -303,6 +306,8 @@ pub enum Message {
     },
     /// The tree's search changed.
     Search(String),
+    /// The search emptied and every filter off, as the C# "Reset all filters".
+    ResetTreeFilters,
     /// Ctrl+F: move to the tree's search.
     FocusSearch,
     /// A field of the vault dialog changed.
@@ -414,6 +419,7 @@ impl fmt::Debug for Message {
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
+            Self::ResetTreeFilters => f.write_str("ResetTreeFilters"),
             Self::FocusSearch => f.write_str("FocusSearch"),
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
             Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
@@ -822,14 +828,9 @@ impl Shell {
             Message::SaveProviderUnlock => self.save_provider_unlock(),
             Message::SaveProfileForm => self.save_profile_form(),
             Message::SaveGatewayForm => self.save_gateway_form(),
-            Message::OpenTreeMenu(menu) => {
-                self.open_tree_menu(menu);
-                return Task::none();
-            }
-            Message::CloseTreeMenu => {
-                self.menu = None;
-                return Task::none();
-            }
+            message @ (Message::OpenTreeMenu(_)
+            | Message::CloseTreeMenu
+            | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => {
                 self.menu = None;
                 self.app.update(message)
@@ -1691,6 +1692,8 @@ impl Shell {
             tree_view::move_folder_entries(path, &self.app.folder_targets(path))
         } else if let TreeMenu::MoveProfile(id) = menu {
             tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
+        } else if let TreeMenu::Filter = menu {
+            tree_view::filter_entries(self.app.tree_filter())
         } else if let TreeMenu::Selection = menu {
             let selected = self.app.selected_profiles();
             let connectable = selected
@@ -1705,6 +1708,7 @@ impl Shell {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
                 TreeMenu::Add
                 | TreeMenu::More
+                | TreeMenu::Filter
                 | TreeMenu::Tab(_)
                 | TreeMenu::Folder(_)
                 | TreeMenu::MoveFolder(_)
@@ -1855,42 +1859,7 @@ impl Shell {
             );
         }
         let actions = actions.wrap();
-        let mut list = Column::new().spacing(2.0);
-        if self.app.profile_summaries().is_empty() {
-            list = list.push(text(fl!("ui-sidebar-empty")));
-        }
-        let rows = self.app.tree_rows(&self.search);
-        let searching = !self.search.trim().is_empty();
-        if rows.is_empty() && searching {
-            list = list
-                .push(text(fl!("ui-tree-search-no-results")).size(SMALL_SIZE))
-                .push(
-                    button(text(fl!("ui-tree-search-clear")).size(SMALL_SIZE))
-                        .style(button::secondary)
-                        .on_press(Message::Search(String::new())),
-                );
-        }
-        // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
-        list = list.extend(rows.into_iter().map(|row| match row {
-            TreeRow::Folder {
-                path,
-                name,
-                depth,
-                open,
-                count,
-            } => tree_view::folder_row(path, name, depth, open, count),
-            TreeRow::Profile { profile, depth } => {
-                let selected = self.app.is_selected(&profile.id);
-                let state = self.app.profile_state(&profile.id);
-                let context = searching
-                    .then(|| tree_view::search_context(&profile))
-                    .flatten();
-                tree_view::indented(
-                    tree_view::owned_row(&profile, selected, state, context),
-                    depth,
-                )
-            }
-        }));
+        let list = self.tree_list();
         // A right click beside the rows is the tree's own menu.
         let tree = mouse_area(
             container(scrollable(list))
@@ -1907,6 +1876,80 @@ impl Shell {
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// The tree's rows, searched and filtered, and what it says when none passes.
+    fn tree_list(&self) -> Column<'_, Message> {
+        let mut list = Column::new().spacing(2.0);
+        if self.app.profile_summaries().is_empty() {
+            list = list.push(text(fl!("ui-sidebar-empty")));
+        }
+        let rows = self.app.tree_rows(&self.search);
+        let filter = self.app.tree_filter();
+        let searching = !self.search.trim().is_empty() || filter.is_active();
+        if rows.is_empty() && searching {
+            // As the C# tree: the way back is emptying the search, or every filter with it.
+            let (said, way_back, message) = if filter.is_active() {
+                (
+                    fl!("ui-tree-filter-no-results"),
+                    fl!("ui-tree-filter-reset"),
+                    Message::ResetTreeFilters,
+                )
+            } else {
+                (
+                    fl!("ui-tree-search-no-results"),
+                    fl!("ui-tree-search-clear"),
+                    Message::Search(String::new()),
+                )
+            };
+            list = list.push(text(said).size(SMALL_SIZE)).push(
+                button(text(way_back).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(message),
+            );
+        }
+        let badge = filter.shows_gateway_badge();
+        // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
+        list = list.extend(rows.into_iter().map(|row| match row {
+            TreeRow::Folder {
+                path,
+                name,
+                depth,
+                open,
+                count,
+            } => tree_view::folder_row(path, name, depth, open, count),
+            TreeRow::Profile { mut profile, depth } => {
+                if !badge {
+                    profile.gateway = None;
+                }
+                let selected = self.app.is_selected(&profile.id);
+                let state = self.app.profile_state(&profile.id);
+                let context = searching
+                    .then(|| tree_view::search_context(&profile))
+                    .flatten();
+                tree_view::indented(
+                    tree_view::owned_row(&profile, selected, state, context),
+                    depth,
+                )
+            }
+        }));
+        list
+    }
+
+    /// Opens or closes the tree's menus; "Reset all filters" empties the search too, as the
+    /// C# one does.
+    fn tree_menu_message(&mut self, message: Message) -> Task<Message> {
+        match message {
+            Message::OpenTreeMenu(menu) => self.open_tree_menu(menu),
+            Message::CloseTreeMenu => self.menu = None,
+            Message::ResetTreeFilters => {
+                self.search.clear();
+                let effects = self.app.update(AppMessage::Filter(FilterMessage::Reset));
+                return Task::batch(effects.into_iter().map(|effect| self.run(effect)));
+            }
+            _ => {}
+        }
+        Task::none()
     }
 
     /// The tree's search, as the C# sidebar's: typing filters the profiles, Ctrl+F comes
@@ -1936,6 +1979,22 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
+        // The filters, as the C# button beside the search: lit while one leaves profiles out.
+        let active = self.app.tree_filter().is_active();
+        search = search.push(
+            tooltip(
+                button(text(FILTER_GLYPH))
+                    .style(if active {
+                        button::primary
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::OpenTreeMenu(TreeMenu::Filter)),
+                text(fl!("ui-tree-filter-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
+        );
         search.into()
     }
 

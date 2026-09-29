@@ -90,6 +90,7 @@ mod tab_menu;
 mod telnet_tab;
 mod transcripts;
 mod tree;
+mod tree_filter;
 mod trusted_keys;
 mod vault;
 mod vnc_tab;
@@ -115,6 +116,7 @@ pub use selection::SelectionMessage;
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
+pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 use vault::VaultState;
 pub use vault::{
@@ -421,6 +423,8 @@ pub enum Message {
     ChooseGateway(ProfileId),
     /// Open a folder of the tree, or close it.
     ToggleFolder(String),
+    /// A change to the tree's filters.
+    Filter(FilterMessage),
     /// Something from a folder's menu.
     Folder(FolderMessage),
     /// A profile's Rename or "Move to folder".
@@ -590,6 +594,7 @@ impl fmt::Debug for Message {
             Self::SaveGateway { .. } => f.write_str("SaveGateway(..)"),
             Self::ChooseGateway(id) => write!(f, "ChooseGateway({id})"),
             Self::ToggleFolder(path) => write!(f, "ToggleFolder({path})"),
+            Self::Filter(message) => write!(f, "Filter({message:?})"),
             Self::Folder(message) => write!(f, "Folder({message:?})"),
             Self::ProfileMenu(message) => write!(f, "ProfileMenu({message:?})"),
             Self::Selection(message) => write!(f, "Selection({message:?})"),
@@ -1388,6 +1393,8 @@ pub struct App {
     rdp_run_trust: Vec<(String, u16, heimdall_rdp::Fingerprint)>,
     /// The folders of the tree shown closed, by path, [`NO_FOLDER`] included.
     closed_folders: std::collections::HashSet<String>,
+    /// The tree's filters, beyond its search.
+    tree_filter: TreeFilter,
 }
 
 impl fmt::Debug for App {
@@ -1440,6 +1447,7 @@ impl App {
             run_trust: RunTrust::default(),
             rdp_run_trust: Vec::new(),
             closed_folders: std::collections::HashSet::new(),
+            tree_filter: TreeFilter::default(),
         };
         // The PIN when one is set, then a vault on disk is offered to unlock: its passwords
         // are then ready.
@@ -1537,10 +1545,7 @@ impl App {
             | Message::ForgetServer(_)) => self.open_message(message),
             message @ (Message::DesktopResize { .. }
             | Message::DesktopInput { .. }
-            | Message::SendKeys { .. }) => {
-                self.desktop_message(message);
-                Vec::new()
-            }
+            | Message::SendKeys { .. }) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => self.select_tab(tab),
             Message::RequestCloseTab(tab) => self.request_close(tab),
@@ -1603,6 +1608,7 @@ impl App {
             | Message::StopPostConnect(_)) => self.dialog_message(&message),
             message @ (Message::SelectProfile(_)
             | Message::ToggleFolder(_)
+            | Message::Filter(_)
             | Message::Folder(_)
             | Message::ProfileMenu(_)
             | Message::Selection(_)
@@ -1661,7 +1667,7 @@ impl App {
     }
 
     /// Applies a message for a remote desktop.
-    fn desktop_message(&mut self, message: Message) {
+    fn desktop_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::DesktopResize { tab, width, height } => {
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
@@ -1672,6 +1678,7 @@ impl App {
             Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
             _ => {}
         }
+        Vec::new()
     }
 
     /// Applies a message opening a session: a new tab, or a tab's session again.

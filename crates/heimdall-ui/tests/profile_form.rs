@@ -398,8 +398,17 @@ fn a_gateway_is_added_from_the_form_and_the_tree_says_via_it() {
     }
     let _ = shell.update(Message::SaveProfileForm);
     assert!(shell.app().dialog.is_none(), "{:?}", shell.app().dialog);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("via bastion").expect("the tree's badge");
+    }
+    // A view choice of the filter menu, as the C# one: the row stays, its badge goes.
+    let _ = shell.update(app(AppMessage::Filter(
+        heimdall_app::FilterMessage::GatewayBadge,
+    )));
     let mut ui = simulator(&shell);
-    ui.find("via bastion").expect("the tree's badge");
+    ui.find("web").expect("still listed");
+    assert!(ui.find("via bastion").is_err(), "the badge hidden");
 }
 
 #[test]

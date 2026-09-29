@@ -22,16 +22,17 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
-    ConnectAs, FilesMessage, FolderMessage, GatewayBadge, Message as AppMessage, NO_FOLDER,
-    ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage, SessionState,
-    TabGroup, TabId, TabMenuMessage,
+    ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, Message as AppMessage,
+    NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, SelectionMessage,
+    SessionState, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
 use iced::widget::{
-    Column, Container, button, column, container, mouse_area, row, rule, scrollable, text, tooltip,
+    Column, Container, button, checkbox, column, container, mouse_area, row, rule, scrollable,
+    text, tooltip,
 };
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
@@ -82,6 +83,8 @@ pub enum TreeMenu {
     MoveFolder(String),
     /// Which folder a profile can move to.
     MoveProfile(ProfileId),
+    /// The tree's filters, as the C# filter button's menu.
+    Filter,
     /// The menu of the profiles selected together.
     Selection,
     /// Which folder the profiles selected together can move to.
@@ -427,6 +430,52 @@ pub fn menu_entries<'a>(
         }
         _ => {}
     }
+    menu_card(entries).into()
+}
+
+/// The tree's filters, as the C# filter button's menu: the protocols, then connected and
+/// through a gateway, then the gateway badge. A box ticked leaves the menu open, as the C#
+/// entries stay open, so several can be chosen.
+pub fn filter_entries<'a>(filter: &TreeFilter) -> Element<'a, Message> {
+    let filter_box = |label: String, on: bool, message: FilterMessage| -> Element<'a, Message> {
+        container(
+            checkbox(on)
+                .label(label)
+                .text_size(MENU_TEXT_SIZE)
+                .on_toggle(move |_| Message::App(AppMessage::Filter(message))),
+        )
+        .padding(MENU_PADDING)
+        .into()
+    };
+    let mut entries = column![
+        container(text(fl!("ui-tree-filter-protocols")).size(MENU_TEXT_SIZE)).padding(MENU_PADDING)
+    ]
+    .width(MENU_WIDTH);
+    for kind in ProfileKind::ALL {
+        entries = entries.push(filter_box(
+            kind.label().to_owned(),
+            filter.has_protocol(kind),
+            FilterMessage::Protocol(kind),
+        ));
+    }
+    entries = entries
+        .push(separator())
+        .push(filter_box(
+            fl!("ui-tree-filter-connected"),
+            filter.connected(),
+            FilterMessage::Connected,
+        ))
+        .push(filter_box(
+            fl!("ui-tree-filter-gateway"),
+            filter.gateway(),
+            FilterMessage::Gateway,
+        ))
+        .push(separator())
+        .push(filter_box(
+            fl!("ui-tree-filter-gateway-badge"),
+            filter.shows_gateway_badge(),
+            FilterMessage::GatewayBadge,
+        ));
     menu_card(entries).into()
 }
 
