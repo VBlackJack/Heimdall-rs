@@ -31,9 +31,13 @@ tokio-util.workspace = true
 zeroize.workspace = true
 
 [dev-dependencies]
+# An FTP server, and its certificate, the FTP driver's tests run against.
+libunftp.workspace = true
+rcgen = { workspace = true, features = ["pem"] }
 tempfile.workspace = true
 # macros, rt: async tests; process: the reference sftp-server.
 tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread"] }
+unftp-sbe-fs.workspace = true
 
 [lints]
 workspace = true

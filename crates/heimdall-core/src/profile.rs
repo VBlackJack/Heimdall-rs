@@ -562,6 +562,55 @@ pub struct WinRmProfile {
     pub username: Option<String>,
 }
 
+/// Port of an FTP server when a profile names none, as the C# `DefaultPorts.Ftp`.
+pub const DEFAULT_FTP_PORT: u16 = 21;
+
+/// A saved FTP destination, reached directly, as the C# FTP profile: its files in a Files
+/// tab.
+///
+/// Holds no password: it is asked for when connecting, or saved apart as the others'.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FtpProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// Host name or address.
+    pub host: String,
+    /// TCP port.
+    pub port: u16,
+    /// Account; `None` logs in as `anonymous`, as the C# with no name.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// Passive data connections, as the C# default: on unless turned off, written down only
+    /// when off.
+    #[serde(default = "passive", skip_serializing_if = "is_passive")]
+    pub passive: bool,
+    /// Explicit FTPS (`AUTH TLS`), as the C# "Enable SSL/TLS (FTPS)": off unless turned on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub tls: bool,
+    /// The profile's entry in the external password manager, for `{Title}`; `None` uses
+    /// its name, as the C# `VaultEntryName`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vault_entry: Option<String>,
+}
+
+/// An FTP profile's data connections are passive unless it says otherwise.
+fn passive() -> bool {
+    true
+}
+
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_passive(value: &bool) -> bool {
+    *value
+}
+
 /// A saved VNC destination, reached directly.
 ///
 /// Holds no password: it is asked for when connecting.

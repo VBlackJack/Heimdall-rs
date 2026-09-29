@@ -125,6 +125,7 @@ impl App {
             TabProfile::Rdp(profile) => self.open_rdp_profile(profile),
             TabProfile::Telnet(profile) => self.open_telnet_profile(profile),
             TabProfile::Vnc(profile) => self.open_vnc_profile(profile),
+            TabProfile::Ftp(profile) => self.open_ftp_profile(profile),
             TabProfile::Local(shell) => self.open_local(shell),
         }
     }

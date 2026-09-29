@@ -517,6 +517,13 @@ fn asked_endpoint(profile: &TabProfile, kind: &QuestionKind) -> Option<(ProfileI
             // The domain names the account as much as the user name does.
             Some(rdp_account(profile.domain.as_deref(), &question.username)),
         ),
+        (TabProfile::Ftp(profile), QuestionKind::Password(question)) => (
+            &profile.id,
+            CredentialProtocol::Ftp,
+            (&profile.host, profile.port),
+            (question.host.as_str(), question.port),
+            Some(question.username.clone()),
+        ),
         (TabProfile::Vnc(profile), QuestionKind::ServerPassword(question)) => (
             &profile.id,
             CredentialProtocol::Vnc,

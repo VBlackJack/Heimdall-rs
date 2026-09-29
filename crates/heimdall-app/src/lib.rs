@@ -28,6 +28,7 @@ mod driver;
 mod error;
 mod event;
 pub mod files;
+pub mod ftp_driver;
 pub mod gateway_draft;
 mod ids;
 pub mod local_draft;

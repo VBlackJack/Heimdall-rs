@@ -48,6 +48,7 @@ impl Reopen {
             TabProfile::Rdp(profile) => Self::Profile(profile.id.clone()),
             TabProfile::Telnet(profile) => Self::Profile(profile.id.clone()),
             TabProfile::Vnc(profile) => Self::Profile(profile.id.clone()),
+            TabProfile::Ftp(profile) => Self::Profile(profile.id.clone()),
             TabProfile::Local(shell) => Self::Shell(shell.clone()),
         }
     }
@@ -109,6 +110,7 @@ impl App {
             ProfileKind::Rdp => Message::OpenRdp(profile.id),
             ProfileKind::Telnet => Message::OpenTelnet(profile.id),
             ProfileKind::Vnc => Message::OpenVnc(profile.id),
+            ProfileKind::Ftp => Message::OpenFtp(profile.id),
             ProfileKind::Local => Message::OpenLocalProfile(profile.id),
             ProfileKind::WinRm => Message::OpenWinRm(profile.id),
         };

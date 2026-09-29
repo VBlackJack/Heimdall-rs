@@ -15,12 +15,13 @@
  */
 
 //! The certificate check of explicit FTPS, as the C# one: a certificate the system trusts
-//! goes through; otherwise one the user trusted for this server; otherwise the handshake
-//! stops and the certificate is kept, for the user to be shown it and asked.
+//! goes through; otherwise one the user trusted for this server, which the caller decides,
+//! as it keeps the user's pins; otherwise the handshake stops and the certificate is kept,
+//! for the user to be shown it and asked.
 //!
 //! The decision is taken in the handshake, before any password is sent. Every handshake
 //! signature is verified against the certificate, so a server proves it holds its key: a
-//! replayed certificate would not match a trusted fingerprint.
+//! replayed certificate would not pass the signature check.
 
 use std::sync::{Arc, Mutex};
 
@@ -57,13 +58,23 @@ pub fn fingerprint(der: &[u8]) -> CertificateFingerprint {
 /// question.
 pub type PresentedSlot = Arc<Mutex<Option<Vec<u8>>>>;
 
-/// The check: the system, then the fingerprints the user trusted for this server.
-#[derive(Debug)]
+/// Whether the user trusted a certificate, given whole (DER), for the server connected to.
+pub type UserTrust = Arc<dyn Fn(&[u8]) -> bool + Send + Sync>;
+
+/// The check: the system, then what the user trusted for this server.
 struct Trust {
     system: Option<Arc<WebPkiServerVerifier>>,
-    trusted: Vec<CertificateFingerprint>,
+    trusted: UserTrust,
     presented: PresentedSlot,
     algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl std::fmt::Debug for Trust {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Trust")
+            .field("system", &self.system.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ServerCertVerifier for Trust {
@@ -75,7 +86,7 @@ impl ServerCertVerifier for Trust {
         ocsp_response: &[u8],
         now: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
-        if self.trusted.contains(&fingerprint(end_entity)) {
+        if (self.trusted)(end_entity.as_ref()) {
             return Ok(ServerCertVerified::assertion());
         }
         let refusal = match &self.system {
@@ -138,14 +149,14 @@ fn system_verifier(provider: &Arc<CryptoProvider>) -> Option<Arc<WebPkiServerVer
         .ok()
 }
 
-/// A TLS client for explicit FTPS trusting what the system trusts and the certificates of
-/// `trusted`; a certificate trusted by neither lands in `presented` and stops the handshake.
+/// A TLS client for explicit FTPS trusting what the system trusts and what `trusted`
+/// accepts; a certificate trusted by neither lands in `presented` and stops the handshake.
 ///
 /// # Panics
 ///
 /// Never: ring's default protocol versions are always accepted.
 #[must_use]
-pub fn connector(trusted: Vec<CertificateFingerprint>, presented: PresentedSlot) -> TlsConnector {
+pub fn connector(trusted: UserTrust, presented: PresentedSlot) -> TlsConnector {
     let provider = Arc::new(default_provider());
     let system = system_verifier(&provider);
     let trust = Trust {
@@ -173,10 +184,12 @@ mod tests {
     use tokio_rustls::rustls::crypto::ring::default_provider;
     use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
-    use super::{PresentedSlot, Trust, fingerprint};
+    use super::{PresentedSlot, Trust, UserTrust, fingerprint};
 
-    /// A check trusting `system_roots` as the system store and `trusted` as the user's.
+    /// A check trusting `system_roots` as the system store and the certificates of
+    /// `trusted` as the user's.
     fn trust(system_roots: &[&[u8]], trusted: Vec<[u8; 32]>) -> (Trust, PresentedSlot) {
+        let trusted: UserTrust = Arc::new(move |der| trusted.contains(&fingerprint(der)));
         let provider = Arc::new(default_provider());
         let system = (!system_roots.is_empty()).then(|| {
             let mut roots = RootCertStore::empty();

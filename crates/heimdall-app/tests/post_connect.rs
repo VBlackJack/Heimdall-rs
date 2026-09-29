@@ -349,3 +349,75 @@ fn an_sftp_profile_opens_its_files_is_shown_as_sftp_and_offers_a_shell_as_anothe
     );
     assert_eq!(app.tab_kind(app.tab(tab).expect("tab")), ProfileKind::Sftp);
 }
+
+#[test]
+fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it() {
+    use heimdall_app::{Effect, ProfileKind};
+    use heimdall_core::profile::FtpProfile;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_ftp([FtpProfile {
+        id: ProfileId::new("files"),
+        name: "Files".to_owned(),
+        group: None,
+        host: "ftp.lab".to_owned(),
+        port: 21,
+        username: Some("ops".to_owned()),
+        passive: true,
+        tls: true,
+        vault_entry: None,
+    }]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        ..config(dir.path())
+    });
+    let summary = app
+        .profile_summaries()
+        .into_iter()
+        .find(|profile| profile.id.as_str() == "files")
+        .expect("listed");
+    assert_eq!(
+        (summary.kind, summary.kind.label()),
+        (ProfileKind::Ftp, "FTP")
+    );
+
+    // A double click opens its Files tab.
+    let effects = app.update(Message::ConnectProfile(ProfileId::new("files")));
+    let [
+        Effect::ConnectFtp {
+            tab,
+            attempt,
+            request,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    assert_eq!(request.accepted, None);
+    assert!(request.known_hosts.ends_with("known_ftps_hosts"));
+    assert!(app.tab(tab).expect("tab").files.is_some(), "a Files tab");
+
+    // The certificate question, answered "trust": the next attempt carries the key.
+    let fingerprint: heimdall_rdp::Fingerprint =
+        "SHA256:47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU"
+            .parse()
+            .expect("fingerprint");
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::UnknownRdpCertificate {
+            host: "ftp.lab".to_owned(),
+            port: 21,
+            fingerprint,
+        },
+    });
+    let effects = app.update(Message::HostKeyDecision { tab, accept: true });
+    let [Effect::ConnectFtp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(request.accepted, Some(fingerprint));
+}

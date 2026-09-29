@@ -44,6 +44,8 @@ pub enum ProfileKind {
     Telnet,
     /// VNC desktop.
     Vnc,
+    /// FTP, plain or explicit FTPS: a Files tab.
+    Ftp,
     /// A program on this computer.
     Local,
     /// Remote `PowerShell`.
@@ -60,6 +62,7 @@ impl ProfileKind {
             Self::Rdp => "RDP",
             Self::Telnet => "Telnet",
             Self::Vnc => "VNC",
+            Self::Ftp => "FTP",
             Self::Local => "Local",
             Self::WinRm => "WinRM",
         }
@@ -181,6 +184,17 @@ impl App {
                 kind: ProfileKind::Vnc,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: None,
+                gateway: None,
+            });
+        }
+        for profile in self.store.ftp_profiles() {
+            all.push(ProfileSummary {
+                id: profile.id.clone(),
+                name: profile.name.clone(),
+                group: profile.group.clone(),
+                kind: ProfileKind::Ftp,
+                endpoint: Some((profile.host.clone(), profile.port)),
+                username: profile.username.clone(),
                 gateway: None,
             });
         }
@@ -345,6 +359,14 @@ impl App {
                         profile.id = copy.clone();
                         profile.name.clone_from(&name);
                         store.merge_vnc([profile]);
+                    }
+                }
+                ProfileKind::Ftp => {
+                    let found = store.ftp_profiles().iter().find(|p| p.id == *id).cloned();
+                    if let Some(mut profile) = found {
+                        profile.id = copy.clone();
+                        profile.name.clone_from(&name);
+                        store.merge_ftp([profile]);
                     }
                 }
                 ProfileKind::Local => {

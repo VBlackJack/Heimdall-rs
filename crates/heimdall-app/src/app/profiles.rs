@@ -101,6 +101,8 @@ impl App {
             ProfileDraft::from_telnet(profile)
         } else if let Some(profile) = self.local_profiles().iter().find(|p| p.id == *id) {
             ProfileDraft::from_local(profile)
+        } else if let Some(profile) = self.store.ftp_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_ftp(profile)
         } else {
             return;
         };
@@ -184,6 +186,7 @@ impl App {
                 DraftProfile::Vnc(profile) => store.merge_vnc([profile]),
                 DraftProfile::WinRm(profile) => store.merge_winrm([profile]),
                 DraftProfile::Telnet(profile) => store.merge_telnet([profile]),
+                DraftProfile::Ftp(profile) => store.merge_ftp([profile]),
                 // Written in the form: approved by the one who wrote it, the program as it is
                 // found now, as the C# dialog confirms it when it saves. A program found
                 // nowhere is saved unapproved; opening it says why it cannot run.
@@ -240,6 +243,7 @@ fn saved_id(profile: &DraftProfile) -> &ProfileId {
         DraftProfile::WinRm(profile) => &profile.id,
         DraftProfile::Telnet(profile) => &profile.id,
         DraftProfile::Local(profile) => &profile.id,
+        DraftProfile::Ftp(profile) => &profile.id,
     }
 }
 
@@ -267,6 +271,12 @@ fn password_endpoint(profile: &DraftProfile) -> Option<Endpoint> {
             host: profile.host.clone(),
             port: profile.port,
             username: None,
+        }),
+        DraftProfile::Ftp(profile) => Some(Endpoint {
+            protocol: CredentialProtocol::Ftp,
+            host: profile.host.clone(),
+            port: profile.port,
+            username: profile.username.clone(),
         }),
         DraftProfile::WinRm(_) | DraftProfile::Telnet(_) | DraftProfile::Local(_) => None,
     }
