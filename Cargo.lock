@@ -2336,13 +2336,16 @@ dependencies = [
  "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
+ "libunftp",
  "log",
+ "rcgen",
  "sealvault",
  "shlex",
  "tempfile",
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "unftp-sbe-fs",
  "zeroize",
 ]
 

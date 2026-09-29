@@ -26,8 +26,8 @@ use thiserror::Error;
 use crate::folder::{self, FolderError};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
-    LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
-    VncProfile, WinRmProfile,
+    FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile,
+    TelnetProfile, VncProfile, WinRmProfile,
 };
 
 /// Format version written into the profile file.
@@ -59,6 +59,8 @@ struct ProfileFile {
     gateway: Vec<SshGateway>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     winrm: Vec<WinRmProfile>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    ftp: Vec<FtpProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folder: Vec<String>,
 }
@@ -121,6 +123,7 @@ pub struct ProfileStore {
     local: Vec<LocalProfile>,
     gateways: Vec<SshGateway>,
     winrm: Vec<WinRmProfile>,
+    ftp: Vec<FtpProfile>,
     /// Folders kept for themselves, as the C# Heimdall's empty groups: normalised.
     folders: Vec<String>,
 }
@@ -151,6 +154,7 @@ impl ProfileStore {
             local: Vec::new(),
             gateways: Vec::new(),
             winrm: Vec::new(),
+            ftp: Vec::new(),
             folders: Vec::new(),
         }
     }
@@ -190,6 +194,7 @@ impl ProfileStore {
             local: file.local,
             gateways: file.gateway,
             winrm: file.winrm,
+            ftp: file.ftp,
             folders: file
                 .folder
                 .iter()
@@ -244,6 +249,17 @@ impl ProfileStore {
     /// Adds or replaces `WinRM` profiles by identifier; the order of existing ones is kept.
     pub fn merge_winrm(&mut self, incoming: impl IntoIterator<Item = WinRmProfile>) -> MergeReport {
         merge_into(&mut self.winrm, incoming, |profile| &profile.id)
+    }
+
+    /// FTP profiles, in file order.
+    #[must_use]
+    pub fn ftp_profiles(&self) -> &[FtpProfile] {
+        &self.ftp
+    }
+
+    /// Adds or replaces FTP profiles by identifier; the order of existing ones is kept.
+    pub fn merge_ftp(&mut self, incoming: impl IntoIterator<Item = FtpProfile>) -> MergeReport {
+        merge_into(&mut self.ftp, incoming, |profile| &profile.id)
     }
 
     /// SSH gateways, in file order.
@@ -377,6 +393,7 @@ impl ProfileStore {
         self.vnc.retain(|profile| profile.id != *id);
         self.local.retain(|profile| profile.id != *id);
         self.winrm.retain(|profile| profile.id != *id);
+        self.ftp.retain(|profile| profile.id != *id);
         self.len() != before
     }
 
@@ -396,6 +413,7 @@ impl ProfileStore {
             .chain(self.vnc.iter().map(|p| p.group.as_deref()))
             .chain(self.local.iter().map(|p| p.group.as_deref()))
             .chain(self.winrm.iter().map(|p| p.group.as_deref()))
+            .chain(self.ftp.iter().map(|p| p.group.as_deref()))
     }
 
     /// The folder of every profile, of any protocol, to change.
@@ -408,6 +426,7 @@ impl ProfileStore {
             .chain(self.vnc.iter_mut().map(|p| &mut p.group))
             .chain(self.local.iter_mut().map(|p| &mut p.group))
             .chain(self.winrm.iter_mut().map(|p| &mut p.group))
+            .chain(self.ftp.iter_mut().map(|p| &mut p.group))
     }
 
     /// Every folder the tree shows: those kept for themselves, those of the profiles, and
@@ -572,6 +591,7 @@ impl ProfileStore {
         find!(self.vnc);
         find!(self.local);
         find!(self.winrm);
+        find!(self.ftp);
         None
     }
 
@@ -600,6 +620,7 @@ impl ProfileStore {
             + self.vnc.len()
             + self.local.len()
             + self.winrm.len()
+            + self.ftp.len()
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
@@ -634,6 +655,7 @@ impl ProfileStore {
             local: self.local.clone(),
             gateway: self.gateways.clone(),
             winrm: self.winrm.clone(),
+            ftp: self.ftp.clone(),
             folder: self.folders.clone(),
         })?;
         write_atomic(&self.path, &text)

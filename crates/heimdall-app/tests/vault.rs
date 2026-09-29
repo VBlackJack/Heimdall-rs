@@ -1103,3 +1103,54 @@ async fn the_wrong_tries_at_start_add_up_across_restarts() {
     assert!(wrong_try(&mut app));
     assert!(locked_out(&app));
 }
+
+#[test]
+fn a_password_saved_for_an_ftp_account_answers_its_question() {
+    use heimdall_core::profile::FtpProfile;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_ftp([FtpProfile {
+        id: ProfileId::new("f"),
+        name: "files".to_owned(),
+        group: None,
+        host: "f.lab".to_owned(),
+        port: 21,
+        username: Some("ops".to_owned()),
+        passive: true,
+        tls: false,
+        vault_entry: None,
+    }]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: system.clone(),
+    });
+    app.update(Message::EditProfile(ProfileId::new("f")));
+    app.update(Message::SaveProfile {
+        password: Some(Secret::new(PASSWORD.to_owned())),
+    });
+    let effects = app.update(Message::OpenFtp(ProfileId::new("f")));
+    let [Effect::ConnectFtp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let (_, answered) = ask(
+        &mut app,
+        *tab,
+        *attempt,
+        QuestionKind::Password(PasswordQuestion {
+            host: "f.lab".to_owned(),
+            port: 21,
+            username: "ops".to_owned(),
+            attempt: 1,
+        }),
+    );
+    assert_eq!(answered.as_deref(), Some(PASSWORD));
+}

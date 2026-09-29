@@ -40,6 +40,8 @@ pub enum CredentialProtocol {
     Rdp,
     /// A VNC server, which has no account.
     Vnc,
+    /// An FTP account.
+    Ftp,
 }
 
 impl CredentialProtocol {
@@ -48,6 +50,7 @@ impl CredentialProtocol {
             Self::Ssh => 1,
             Self::Rdp => 2,
             Self::Vnc => 3,
+            Self::Ftp => 4,
         }
     }
 
@@ -56,6 +59,7 @@ impl CredentialProtocol {
             1 => Some(Self::Ssh),
             2 => Some(Self::Rdp),
             3 => Some(Self::Vnc),
+            4 => Some(Self::Ftp),
             _ => None,
         }
     }

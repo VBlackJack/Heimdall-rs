@@ -1093,3 +1093,34 @@ fn an_sftp_profile_is_imported_as_an_ssh_profile_that_opens_its_files() {
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(report.skipped[0].id, "lower");
 }
+
+#[test]
+fn an_ftp_profile_is_imported_as_the_csharp_one_reads_it() {
+    let json = servers(
+        r#"{"id": "files", "remoteServer": "ftp.lab", "connectionType": "FTP", "ftpPort": 2121,
+            "ftpUsername": "ops", "ftpPassiveMode": false, "ftpUseSsl": true, "vaultEntryName": "Ftp/Ops"},
+           {"id": "anon", "remoteServer": "pub.lab", "connectionType": "FTP", "ftpPort": 0},
+           {"id": "big", "remoteServer": "big.lab", "connectionType": "FTP", "ftpPort": 70000}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert_eq!(report.ftp.len(), 2);
+    let files = &report.ftp[0];
+    assert_eq!(
+        (
+            files.port,
+            files.username.as_deref(),
+            files.passive,
+            files.tls,
+            files.vault_entry.as_deref()
+        ),
+        (2121, Some("ops"), false, true, Some("Ftp/Ops"))
+    );
+    let anon = &report.ftp[1];
+    assert_eq!(
+        (anon.port, anon.username.as_deref(), anon.passive, anon.tls),
+        (21, None, true, false),
+        "the C# defaults"
+    );
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].reason, SkipReason::InvalidPort(70000));
+}

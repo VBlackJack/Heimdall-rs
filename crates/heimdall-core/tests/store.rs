@@ -729,3 +729,41 @@ fn the_store_keeps_an_approval_of_post_connect_steps_and_never_takes_one_from_an
     store.merge([changed]);
     assert!(store.ssh_profiles()[0].post_connect.needs_approval());
 }
+
+#[test]
+fn ftp_profiles_read_back_and_passive_is_written_only_when_off() {
+    use heimdall_core::profile::FtpProfile;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let ftp = |id: &str, passive: bool| FtpProfile {
+        id: ProfileId::new(id),
+        name: id.to_owned(),
+        group: Some("Files".to_owned()),
+        host: "ftp.lab".to_owned(),
+        port: 21,
+        username: Some("ops".to_owned()),
+        passive,
+        tls: true,
+        vault_entry: None,
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_ftp([ftp("passive", true)]);
+    store.save().expect("saves");
+    assert!(
+        !fs::read_to_string(&path)
+            .expect("read")
+            .contains("passive = "),
+        "the default is not written"
+    );
+    store.merge_ftp([ftp("active", false)]);
+    store.save().expect("saves");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(
+        reopened.ftp_profiles(),
+        [ftp("passive", true), ftp("active", false)]
+    );
+    let mut store = reopened;
+    assert!(store.remove(&ProfileId::new("active")));
+    assert_eq!(store.ftp_profiles().len(), 1);
+}

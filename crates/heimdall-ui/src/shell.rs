@@ -27,6 +27,7 @@ use std::path::PathBuf;
 use heimdall_app::files::{
     Direction, FilesKey, Side, file_operation, list_local, list_remote, transfer_events,
 };
+use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::{LocalShell, local_events};
 use heimdall_app::profile_draft::{
@@ -1452,8 +1453,8 @@ impl Shell {
         task
     }
 
-    /// Turns an effect into a task.
-    fn run(&mut self, effect: Effect) -> Task<Message> {
+    /// Starts the attempt a connection effect asks for; its events come back as messages.
+    fn start_attempt(&mut self, effect: Effect) -> Task<Message> {
         match effect {
             Effect::Connect {
                 tab,
@@ -1492,6 +1493,15 @@ impl Shell {
                 let events = stream::once(async move { vnc_events(*request, registry) }).flatten();
                 self.connection_task(tab, attempt, events)
             }
+            Effect::ConnectFtp {
+                tab,
+                attempt,
+                request,
+            } => {
+                let registry = self.registry.clone();
+                let events = stream::once(async move { ftp_events(*request, registry) }).flatten();
+                self.connection_task(tab, attempt, events)
+            }
             Effect::ConnectLocal {
                 tab,
                 attempt,
@@ -1500,6 +1510,19 @@ impl Shell {
                 let events = stream::once(async move { local_events(*request) }).flatten();
                 self.connection_task(tab, attempt, events)
             }
+            _ => Task::none(),
+        }
+    }
+
+    /// Turns an effect into a task.
+    fn run(&mut self, effect: Effect) -> Task<Message> {
+        match effect {
+            effect @ (Effect::Connect { .. }
+            | Effect::ConnectRdp { .. }
+            | Effect::ConnectTelnet { .. }
+            | Effect::ConnectVnc { .. }
+            | Effect::ConnectFtp { .. }
+            | Effect::ConnectLocal { .. }) => self.start_attempt(effect),
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
                     log::debug!("question {} was no longer waiting", question.value());
@@ -3144,6 +3167,7 @@ fn protocol_name(protocol: DraftProtocol) -> String {
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-name"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
+        DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-name"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-name"),
     }
 }
@@ -3156,6 +3180,7 @@ fn protocol_description(protocol: DraftProtocol) -> String {
         DraftProtocol::WinRm => fl!("ui-profile-protocol-winrm-desc"),
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
+        DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-desc"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-desc"),
     }
 }
@@ -3217,6 +3242,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
                 DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
                 DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
                 // Not shown: a local shell has no port.
+                DraftProtocol::Ftp => fl!("ui-profile-port-ftp"),
                 DraftProtocol::Telnet | DraftProtocol::Local => fl!("ui-profile-port-telnet"),
             },
             draft.default_port().to_string(),
@@ -3292,6 +3318,8 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
         ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
         ProfileToggle::Compression => fl!("ui-profile-toggle-compression"),
+        ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
+        ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
     }
 }
 
@@ -3618,6 +3646,10 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             Some(fl!("ui-profile-credentials-winrm-desc")),
         )),
         DraftProtocol::Vnc => Some((fl!("ui-profile-credentials-vnc"), None)),
+        DraftProtocol::Ftp => Some((
+            fl!("ui-profile-credentials-ftp"),
+            Some(fl!("ui-profile-credentials-ftp-desc")),
+        )),
         DraftProtocol::Telnet | DraftProtocol::Local => None,
     };
     if let Some((title, description)) = credentials {
@@ -3672,6 +3704,7 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
         DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
         DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
+        DraftProtocol::Ftp => Some(fl!("ui-profile-options-ftp")),
         DraftProtocol::Ssh | DraftProtocol::Sftp => Some(fl!("ui-profile-options-ssh")),
         DraftProtocol::WinRm | DraftProtocol::Local => None,
     };
@@ -4209,7 +4242,9 @@ fn fits_by_default(profile: &TabProfile) -> bool {
     match profile {
         TabProfile::Vnc(_) => true,
         TabProfile::Rdp(rdp) => rdp.options.scaled(),
-        TabProfile::Ssh(_) | TabProfile::Telnet(_) | TabProfile::Local(_) => false,
+        TabProfile::Ssh(_) | TabProfile::Telnet(_) | TabProfile::Local(_) | TabProfile::Ftp(_) => {
+            false
+        }
     }
 }
 

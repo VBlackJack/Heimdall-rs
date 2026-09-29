@@ -29,8 +29,8 @@ use std::time::Instant;
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{
-    LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile, VncProfile,
-    WinRmProfile,
+    FtpProfile, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
+    VncProfile, WinRmProfile,
 };
 use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore};
@@ -51,6 +51,7 @@ use crate::driver::{ConnectRequest, Purpose};
 use crate::error::{ServerAddress, UiError};
 use crate::event::{Answer, ConnectionEvent, PostConnectProgress, QuestionKind};
 use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
+use crate::ftp_driver::FtpRequest;
 use crate::gateway_draft::GatewayDraft;
 use crate::ids::{AttemptId, QuestionId, TabId};
 use crate::local_driver::{LocalRequest, LocalShell};
@@ -71,6 +72,7 @@ mod connect_as;
 mod files_tab;
 mod folder_menu;
 mod folders;
+mod ftp_tab;
 mod gateways;
 mod local_tab;
 mod pin;
@@ -194,6 +196,8 @@ pub enum Message {
     OpenTelnet(ProfileId),
     /// Open a VNC tab for a saved VNC profile.
     OpenVnc(ProfileId),
+    /// Open a Files tab for a saved FTP profile.
+    OpenFtp(ProfileId),
     /// Open a local shell tab.
     OpenLocal(LocalShell),
     /// Open a saved local profile, asking first unless what it runs is approved.
@@ -500,6 +504,7 @@ impl fmt::Debug for Message {
             Self::OpenLocalProfile(id) => write!(f, "OpenLocalProfile({id})"),
             Self::OpenWinRm(id) => write!(f, "OpenWinRm({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
+            Self::OpenFtp(id) => write!(f, "OpenFtp({id})"),
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
                 write!(f, "DesktopResize({}, {width}x{height})", tab.value())
@@ -638,6 +643,15 @@ pub enum Effect {
         /// What to connect to.
         request: Box<TelnetRequest>,
     },
+    /// Start an FTP attempt and feed its events back as [`Message::Connection`].
+    ConnectFtp {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to connect to.
+        request: Box<FtpRequest>,
+    },
     /// Start a VNC attempt and feed its events back as [`Message::Connection`].
     ConnectVnc {
         /// Tab.
@@ -758,6 +772,9 @@ impl fmt::Debug for Effect {
             }
             Self::ConnectTelnet { tab, attempt, .. } => {
                 write!(f, "ConnectTelnet({}, {})", tab.value(), attempt.value())
+            }
+            Self::ConnectFtp { tab, attempt, .. } => {
+                write!(f, "ConnectFtp({}, {})", tab.value(), attempt.value())
             }
             Self::ConnectVnc { tab, attempt, .. } => {
                 write!(f, "ConnectVnc({}, {})", tab.value(), attempt.value())
@@ -918,11 +935,12 @@ impl fmt::Debug for Tab {
 }
 
 impl Tab {
-    /// Whether the question the tab asks is about an RDP server's own certificate, not an
-    /// SSH key on the way to it.
+    /// Whether the question the tab asks is about a server's own certificate, an RDP or an
+    /// FTPS one, not an SSH key on the way to it.
     #[must_use]
     pub fn asks_about_certificate(&self) -> bool {
-        self.purpose == Purpose::Rdp && self.pending_rdp_key.is_some()
+        (self.purpose == Purpose::Rdp || matches!(self.profile, TabProfile::Ftp(_)))
+            && self.pending_rdp_key.is_some()
     }
 
     /// What the tab is called: the name the user gave it, else its title.
@@ -1019,6 +1037,8 @@ pub enum TabProfile {
     Telnet(TelnetProfile),
     /// A VNC remote desktop tab.
     Vnc(VncProfile),
+    /// A Files tab on an FTP server.
+    Ftp(FtpProfile),
     /// A local shell tab.
     Local(LocalShell),
 }
@@ -1033,6 +1053,7 @@ impl TabProfile {
             Self::Rdp(_) => ProfileKind::Rdp,
             Self::Telnet(_) => ProfileKind::Telnet,
             Self::Vnc(_) => ProfileKind::Vnc,
+            Self::Ftp(_) => ProfileKind::Ftp,
             Self::Local(_) => ProfileKind::Local,
         }
     }
@@ -1045,6 +1066,7 @@ impl TabProfile {
             Self::Rdp(profile) => &profile.name,
             Self::Telnet(profile) => &profile.name,
             Self::Vnc(profile) => &profile.name,
+            Self::Ftp(profile) => &profile.name,
             Self::Local(shell) => &shell.name,
         }
     }
@@ -1057,6 +1079,7 @@ impl TabProfile {
             Self::Rdp(profile) => Some((&profile.host, profile.port)),
             Self::Telnet(profile) => Some((&profile.host, profile.port)),
             Self::Vnc(profile) => Some((&profile.host, profile.port)),
+            Self::Ftp(profile) => Some((&profile.host, profile.port)),
             Self::Local(_) => None,
         }
     }
@@ -1067,6 +1090,7 @@ impl TabProfile {
         match self {
             Self::Ssh(profile) => profile.username.as_deref(),
             Self::Rdp(profile) => profile.username.as_deref(),
+            Self::Ftp(profile) => profile.username.as_deref(),
             // Telnet asks for its account in the session; VNC has none; a local shell runs
             // as the user running Heimdall.
             Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) => None,
@@ -1467,6 +1491,7 @@ impl App {
             | Message::OpenRdp(_)
             | Message::OpenTelnet(_)
             | Message::OpenVnc(_)
+            | Message::OpenFtp(_)
             | Message::OpenLocal(_)
             | Message::OpenLocalProfile(_)
             | Message::OpenWinRm(_)
@@ -1619,6 +1644,7 @@ impl App {
             Message::OpenRdp(id) => self.open_rdp(&id),
             Message::OpenTelnet(id) => self.open_telnet(&id),
             Message::OpenVnc(id) => self.open_vnc(&id),
+            Message::OpenFtp(id) => self.open_ftp(&id),
             Message::OpenLocal(shell) => self.open_local(shell),
             Message::OpenLocalProfile(id) => self.open_local_profile(&id),
             Message::OpenWinRm(id) => self.open_winrm(&id),
@@ -2351,8 +2377,9 @@ impl App {
             let vnc = store.merge_vnc(report.vnc);
             let local = store.merge_local(report.local);
             let winrm = store.merge_winrm(report.winrm);
+            let ftp = store.merge_ftp(report.ftp);
             let gateways = store.merge_gateways(report.gateways);
-            [ssh, rdp, telnet, vnc, local, winrm, gateways]
+            [ssh, rdp, telnet, vnc, local, winrm, ftp, gateways]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {
                     added: total.added + one.added,

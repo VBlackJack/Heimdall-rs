@@ -81,6 +81,16 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
 }
 
 impl App {
+    /// The certificate keys the user trusted for `host`:`port` for this run only, an RDP
+    /// server's or an FTPS one's.
+    pub(super) fn certificates_trusted_for_run(&self, host: &str, port: u16) -> Vec<Fingerprint> {
+        self.rdp_run_trust
+            .iter()
+            .filter(|(known, known_port, _)| known == host && *known_port == port)
+            .map(|(_, _, key)| *key)
+            .collect()
+    }
+
     pub(super) fn known_rdp_hosts(&self) -> PathBuf {
         self.config
             .known_hosts
@@ -106,12 +116,7 @@ impl App {
             profile: profile.clone(),
             known_hosts: self.known_rdp_hosts(),
             accepted,
-            trusted_for_run: self
-                .rdp_run_trust
-                .iter()
-                .filter(|(host, port, _)| *host == profile.host && *port == profile.port)
-                .map(|(_, _, key)| *key)
-                .collect(),
+            trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
             desktop: match profile.options.sizing() {
                 DesktopSizing::Fixed { width, height } => (width, height),
                 // Replaced by the tab's size as soon as it is shown.
@@ -205,11 +210,17 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        let (Phase::HostKey { .. }, Some(fingerprint), TabProfile::Rdp(profile)) =
-            (&tab.phase, tab.pending_rdp_key.take(), &tab.profile)
-        else {
+        // An RDP server's certificate, or an FTPS one's: the same question, the same pins.
+        let (Phase::HostKey { .. }, Some(fingerprint), Some((host, port))) = (
+            &tab.phase,
+            tab.pending_rdp_key.take(),
+            tab.profile
+                .endpoint()
+                .map(|(host, port)| (host.to_owned(), port)),
+        ) else {
             return Vec::new();
         };
+        let ftp = matches!(tab.profile, TabProfile::Ftp(_));
         match trust {
             KeyTrust::Refused => {
                 tab.phase = Phase::Failed(UiError::Cancelled);
@@ -217,13 +228,18 @@ impl App {
             }
             // Held in memory for this run: the file is not written.
             KeyTrust::Once => {
-                let server = (profile.host.clone(), profile.port, fingerprint);
+                let server = (host, port, fingerprint);
                 if !self.rdp_run_trust.contains(&server) {
                     self.rdp_run_trust.push(server);
                 }
-                self.reconnect_rdp(tab_id, None)
+                if ftp {
+                    self.reconnect_ftp(tab_id, None)
+                } else {
+                    self.reconnect_rdp(tab_id, None)
+                }
             }
             // Recorded by the next attempt, and only if the server presents exactly this key.
+            KeyTrust::Always if ftp => self.reconnect_ftp(tab_id, Some(fingerprint)),
             KeyTrust::Always => self.reconnect_rdp(tab_id, Some(fingerprint)),
         }
     }

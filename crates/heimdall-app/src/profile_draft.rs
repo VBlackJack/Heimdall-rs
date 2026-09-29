@@ -22,10 +22,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
-    AudioPlayback, ColorDepth, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
-    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN,
-    FIXED_WIDTH_MAX, Forwards, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile,
-    Resolution, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    AudioPlayback, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT,
+    DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX,
+    FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile, LocalCommand, LocalProfile, ProfileId,
+    RdpOptions, RdpProfile, Resolution, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    fixed_desktop,
 };
 
 use crate::local_draft;
@@ -115,19 +116,22 @@ pub enum DraftProtocol {
     WinRm,
     /// Telnet terminal.
     Telnet,
+    /// FTP, plain or explicit FTPS: a Files tab.
+    Ftp,
     /// A shell on this computer.
     Local,
 }
 
 impl DraftProtocol {
     /// Every protocol, in the order the picker shows them.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 8] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
         Self::Sftp,
         Self::Vnc,
         Self::Telnet,
+        Self::Ftp,
         Self::Local,
     ];
 
@@ -148,7 +152,10 @@ impl DraftProtocol {
             | ProfileField::LocalArguments
             | ProfileField::WorkingDirectory => self == Self::Local,
             ProfileField::Username => {
-                matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm)
+                matches!(
+                    self,
+                    Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm | Self::Ftp
+                )
             }
             ProfileField::Domain | ProfileField::FixedWidth | ProfileField::FixedHeight => {
                 self == Self::Rdp
@@ -166,7 +173,10 @@ impl DraftProtocol {
     /// typed into `PowerShell`, which asks for it.
     #[must_use]
     pub fn saves_password(self) -> bool {
-        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::Vnc)
+        matches!(
+            self,
+            Self::Ssh | Self::Sftp | Self::Rdp | Self::Vnc | Self::Ftp
+        )
     }
 
     /// Whether this protocol's sessions can go through an SSH gateway.
@@ -212,6 +222,10 @@ pub enum ProfileToggle {
     ForwardAgent,
     /// SSH: compress the traffic, as the C# "Enable compression".
     Compression,
+    /// FTP: passive data connections, as the C# "Passive mode", ticked by default.
+    Passive,
+    /// FTP: explicit FTPS, as the C# "Enable SSL/TLS (FTPS)".
+    Tls,
 }
 
 impl ProfileToggle {
@@ -234,6 +248,7 @@ impl ProfileToggle {
             DraftProtocol::Ssh => &[Self::Compression, Self::ForwardAgent],
             // No shell to forward the agent to.
             DraftProtocol::Sftp => &[Self::Compression],
+            DraftProtocol::Ftp => &[Self::Passive, Self::Tls],
             DraftProtocol::Telnet | DraftProtocol::Local => &[],
         }
     }
@@ -271,6 +286,8 @@ pub enum DraftProfile {
     Telnet(TelnetProfile),
     /// A local shell.
     Local(LocalProfile),
+    /// FTP.
+    Ftp(FtpProfile),
 }
 
 /// What the form holds, as typed.
@@ -328,6 +345,19 @@ pub struct ProfileDraft {
     pub local_arguments: String,
     /// Local: the folder it starts in, as typed.
     pub working_directory: String,
+}
+
+/// The fields every protocol's profile takes from the form, once checked.
+struct Checked<'a> {
+    id: ProfileId,
+    name: String,
+    group: Option<String>,
+    host: String,
+    port: u16,
+    username: &'a str,
+    key_path: &'a str,
+    domain: &'a str,
+    vault_entry: &'a str,
 }
 
 /// Why a form cannot be saved yet.
@@ -430,6 +460,30 @@ impl ProfileDraft {
                 DraftProtocol::Ssh
             },
             protocol_chosen: true,
+            ..Self::default()
+        }
+    }
+
+    /// A form filled from a saved FTP profile.
+    #[must_use]
+    pub fn from_ftp(profile: &FtpProfile) -> Self {
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            host: profile.host.clone(),
+            port: profile.port.to_string(),
+            username: profile.username.clone().unwrap_or_default(),
+            vault_entry: profile.vault_entry.clone().unwrap_or_default(),
+            protocol: DraftProtocol::Ftp,
+            protocol_chosen: true,
+            toggles: [
+                (profile.passive, ProfileToggle::Passive),
+                (profile.tls, ProfileToggle::Tls),
+            ]
+            .into_iter()
+            .filter_map(|(on, toggle)| on.then_some(toggle))
+            .collect(),
             ..Self::default()
         }
     }
@@ -598,6 +652,8 @@ impl ProfileDraft {
             protocol_chosen: true,
             toggles: match protocol {
                 DraftProtocol::Rdp => vec![ProfileToggle::RedirectClipboard, ProfileToggle::Nla],
+                // Passive by default, as a new C# FTP profile.
+                DraftProtocol::Ftp => vec![ProfileToggle::Passive],
                 _ => Vec::new(),
             },
             rdp_options: options,
@@ -828,6 +884,7 @@ impl ProfileDraft {
             DraftProtocol::WinRm if self.is_on(ProfileToggle::UseSsl) => DEFAULT_WINRM_HTTPS_PORT,
             DraftProtocol::WinRm => DEFAULT_WINRM_HTTP_PORT,
             DraftProtocol::Local => NO_PORT,
+            DraftProtocol::Ftp => DEFAULT_FTP_PORT,
         }
     }
 
@@ -860,9 +917,38 @@ impl ProfileDraft {
         if domain.chars().any(|c| c.is_whitespace() || c == '"') {
             return Err(DraftError::DomainInvalid);
         }
+        self.build(Checked {
+            id,
+            name: name.to_owned(),
+            group: (!group.is_empty()).then(|| group.to_owned()),
+            host,
+            port,
+            username,
+            key_path,
+            domain,
+            vault_entry,
+        })
+    }
+
+    /// The profile of the form's protocol, from its fields checked.
+    ///
+    /// # Errors
+    ///
+    /// What only one protocol checks: an RDP fixed size, a forwarded port, a `WinRM`
+    /// account, a local shell's arguments.
+    fn build(&self, checked: Checked<'_>) -> Result<DraftProfile, DraftError> {
+        let Checked {
+            id,
+            name,
+            group,
+            host,
+            port,
+            username,
+            key_path,
+            domain,
+            vault_entry,
+        } = checked;
         let optional = |text: &str| (!text.is_empty()).then(|| text.to_owned());
-        let group = optional(group);
-        let name = name.to_owned();
         Ok(match self.protocol {
             DraftProtocol::Ssh | DraftProtocol::Sftp => DraftProfile::Ssh(SshProfile {
                 id,
@@ -926,6 +1012,17 @@ impl ProfileDraft {
                 })
             }
             DraftProtocol::Local => self.saved_local(id, name, group)?,
+            DraftProtocol::Ftp => DraftProfile::Ftp(FtpProfile {
+                id,
+                name,
+                group,
+                host,
+                port,
+                username: optional(username),
+                passive: self.is_on(ProfileToggle::Passive),
+                tls: self.is_on(ProfileToggle::Tls),
+                vault_entry: optional(vault_entry),
+            }),
             DraftProtocol::Telnet => DraftProfile::Telnet(TelnetProfile {
                 id,
                 name,
@@ -1285,6 +1382,46 @@ mod tests {
     }
 
     #[test]
+    fn an_ftp_form_is_passive_by_default_and_reads_back() {
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Ftp);
+        assert_eq!(draft.port, "21");
+        assert!(
+            draft.is_on(ProfileToggle::Passive),
+            "as a new C# FTP profile"
+        );
+        assert_eq!(
+            ProfileToggle::of(DraftProtocol::Ftp),
+            [ProfileToggle::Passive, ProfileToggle::Tls]
+        );
+        for field in [ProfileField::Username, ProfileField::VaultEntry] {
+            assert!(draft.shows(field), "{field:?}");
+        }
+        for field in [ProfileField::KeyPath, ProfileField::SocksPort] {
+            assert!(!draft.shows(field), "{field:?}");
+        }
+        draft.set(ProfileField::Name, "files".to_owned());
+        draft.set(ProfileField::Host, "ftp.lab".to_owned());
+        let Ok(DraftProfile::Ftp(anonymous)) = draft.to_saved(id()) else {
+            panic!("an FTP profile");
+        };
+        assert_eq!(anonymous.username, None, "blank: anonymous");
+        draft.set(ProfileField::Username, "ops".to_owned());
+        draft.toggle(ProfileToggle::Passive, false);
+        draft.toggle(ProfileToggle::Tls, true);
+        let Ok(DraftProfile::Ftp(profile)) = draft.to_saved(id()) else {
+            panic!("an FTP profile");
+        };
+        assert_eq!(
+            (profile.username.as_deref(), profile.passive, profile.tls),
+            (Some("ops"), false, true)
+        );
+        assert_eq!(
+            ProfileDraft::from_ftp(&profile).to_saved(id()),
+            Ok(DraftProfile::Ftp(profile))
+        );
+    }
+
+    #[test]
     fn a_local_form_has_no_server_and_saves_its_command() {
         let mut draft = ProfileDraft::new_for(DraftProtocol::Local);
         for field in [
@@ -1377,9 +1514,10 @@ mod tests {
                 DraftProtocol::Sftp,
                 DraftProtocol::Vnc,
                 DraftProtocol::Telnet,
+                DraftProtocol::Ftp,
                 DraftProtocol::Local,
             ],
-            "the C# picker's order, FTP and Citrix aside"
+            "the C# picker's order, Citrix aside"
         );
         let mut draft = ProfileDraft::new_for(DraftProtocol::Sftp);
         assert_eq!(draft.port, "22");

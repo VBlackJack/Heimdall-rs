@@ -36,10 +36,11 @@ use thiserror::Error;
 
 use crate::post_connect::{DEFAULT_STEP_DELAY_MS, OnFailure, PostConnect, PostConnectStep};
 use crate::profile::{
-    AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_RDP_PORT, DEFAULT_SSH_PORT,
-    DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
-    Forwards, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpOptions, RdpProfile,
-    Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
+    DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT,
+    DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments, LocalCommand, LocalProfile,
+    ProfileId, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile,
+    VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -56,6 +57,9 @@ const TELNET_CONNECTION_TYPE: &str = "Telnet";
 
 /// `connectionType` of a VNC profile, compared without case as the C# catalog does.
 const VNC_CONNECTION_TYPE: &str = "VNC";
+
+/// `connectionType` of an FTP profile, compared without case as the C# catalog does.
+const FTP_CONNECTION_TYPE: &str = "FTP";
 
 /// `connectionType` of a local shell profile, compared without case as the C# trust check
 /// does.
@@ -138,6 +142,8 @@ pub struct ImportReport {
     pub local: Vec<LocalProfile>,
     /// `WinRM` profiles ready to be merged into the store.
     pub winrm: Vec<WinRmProfile>,
+    /// FTP profiles ready to be merged into the store.
+    pub ftp: Vec<FtpProfile>,
     /// SSH gateways ready to be merged into the store; each one's parent is among them.
     pub gateways: Vec<SshGateway>,
     /// Profiles left out, with the reason.
@@ -236,6 +242,14 @@ struct LegacyServer {
     /// "Enable compression"; absent is off.
     #[serde(default)]
     ssh_compression: bool,
+    /// Zero or less means the default port.
+    ftp_port: Option<i64>,
+    ftp_username: Option<String>,
+    /// Absent means the C# default: passive.
+    ftp_passive_mode: Option<bool>,
+    /// "Enable SSL/TLS (FTPS)"; absent is off.
+    #[serde(default)]
+    ftp_use_ssl: bool,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
     /// The post-connect sequence; a null entry is dropped, as the C# migration does.
@@ -448,6 +462,11 @@ pub fn import(
             .eq_ignore_ascii_case(VNC_CONNECTION_TYPE)
         {
             convert_vnc(&server).map(|profile| report.vnc.push(profile))
+        } else if server
+            .connection_type
+            .eq_ignore_ascii_case(FTP_CONNECTION_TYPE)
+        {
+            convert_ftp(&server).map(|profile| report.ftp.push(profile))
         } else {
             convert(&server, &known).map(|profile| report.profiles.push(profile))
         };
@@ -866,6 +885,36 @@ fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
         port,
         view_only: server.vnc_view_only,
         allow_no_password: is_null_or_empty(server.vnc_password.as_ref()),
+        vault_entry: non_empty(server.vault_entry_name.as_ref()),
+    })
+}
+
+/// An FTP profile as `FtpHandler` connects it: directly, never through a gateway.
+fn convert_ftp(server: &LegacyServer) -> Result<FtpProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    if server.remote_server.trim().is_empty() {
+        return Err(SkipReason::MissingHost);
+    }
+    let port = match server.ftp_port {
+        None => DEFAULT_FTP_PORT,
+        Some(value) if value <= 0 => DEFAULT_FTP_PORT,
+        Some(value) => u16::try_from(value).map_err(|_| SkipReason::InvalidPort(value))?,
+    };
+    Ok(FtpProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.is_empty() {
+            server.remote_server.clone()
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        host: server.remote_server.trim().to_owned(),
+        port,
+        username: non_empty(server.ftp_username.as_ref()),
+        passive: server.ftp_passive_mode.unwrap_or(true),
+        tls: server.ftp_use_ssl,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
     })
 }

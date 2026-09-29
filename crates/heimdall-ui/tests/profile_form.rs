@@ -142,6 +142,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         ui.find("Windows remote desktop session").expect("RDP card");
         ui.find("Secure file transfer over SSH").expect("SFTP card");
         ui.find("Local terminal session").expect("Local card");
+        ui.find("Classic file transfer").expect("FTP card");
         ui.click("Secure shell terminal").expect("SSH card");
         assert!(ui.into_messages().any(|message| matches!(
             message,
@@ -646,4 +647,24 @@ fn a_local_form_asks_for_a_program_and_its_folder_not_a_server() {
     ] {
         assert!(ui.find(absent).is_err(), "{absent}");
     }
+}
+
+#[test]
+fn an_ftp_form_asks_for_an_account_and_its_options_as_the_csharp_cards() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ftp)));
+    let mut ui = tall_simulator(&shell);
+    for label in [
+        "FTP port",
+        "FTP Authentication",
+        "Enter the FTP username and password. Leave blank for anonymous access.",
+        "FTP Options",
+        "Passive mode (recommended for firewalled networks)",
+        "Enable SSL/TLS (FTPS)",
+    ] {
+        ui.find(label).expect(label);
+    }
+    assert!(ui.find("Gateway routing").is_err(), "FTP goes directly");
 }
