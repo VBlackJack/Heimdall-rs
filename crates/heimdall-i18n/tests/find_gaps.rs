@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 
-use heimdall_i18n::{CheckError, Gap, GapKind, find_gaps, message_ids};
+use heimdall_i18n::{CheckError, Gap, GapKind, find_gaps, message_ids, message_variables};
 
 const DOMAIN: &str = "demo";
 
@@ -70,4 +70,30 @@ fn terms_and_comments_are_not_counted_as_messages() {
     let source = "# A comment\n-brand = Heimdall\nshell-title = { -brand }\n";
     let ids = message_ids(source).expect("valid Fluent");
     assert_eq!(ids.into_iter().collect::<Vec<_>>(), vec!["shell-title"]);
+}
+
+#[test]
+fn a_translation_naming_other_variables_is_reported() {
+    let gaps = find_gaps(&fixture("variables"), DOMAIN).expect("fixture is valid");
+    assert_eq!(
+        gaps,
+        vec![
+            gap("fr", "demo-name", GapKind::Variables),
+            gap("es", "demo-count", GapKind::Variables),
+        ],
+        "a renamed variable, and one left out of every variant"
+    );
+}
+
+#[test]
+fn variables_are_found_in_selectors_calls_variants_and_attributes() {
+    let source = "demo = { NUMBER($size, $style) ->\n    [one] { $unit }\n   *[other] { { $nested } }\n}\n    .title = { $hint }\n";
+    let variables = message_variables(source).expect("valid Fluent");
+    assert_eq!(
+        variables["demo"]
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["hint", "nested", "size", "style", "unit"]
+    );
 }

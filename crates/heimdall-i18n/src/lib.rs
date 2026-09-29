@@ -23,14 +23,16 @@
 //! languages, the fallback, and [`find_gaps`], which each of them runs in a test. New text
 //! is written in the fallback language first and translated later, so a key missing from
 //! another language is allowed (shown in the fallback meanwhile); a key the fallback lacks
-//! is refused.
+//! is refused, and so is a translation whose variables are not the fallback's: Fluent
+//! would show a variable it is never given as an error in the text, and drop one it is
+//! given and not asked for.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use fluent_syntax::ast::Entry;
+use fluent_syntax::ast::{Entry, Expression, InlineExpression, Pattern, PatternElement};
 use fluent_syntax::parser;
 
 /// Language used when a message is missing in the requested one.
@@ -52,6 +54,8 @@ pub enum GapKind {
     Missing,
     /// The key exists in this language and not in the fallback one.
     Extra,
+    /// The key exists in both, and this language's text names other variables.
+    Variables,
 }
 
 /// One key that is not present in every supported language.
@@ -131,45 +135,123 @@ pub fn message_ids(source: &str) -> Result<BTreeSet<String>, usize> {
         .collect())
 }
 
+/// Variables each message of a Fluent source names, in its value, its variants and its
+/// attributes, by message identifier.
+///
+/// # Errors
+///
+/// Returns the number of syntax errors when the source does not parse cleanly.
+pub fn message_variables(source: &str) -> Result<BTreeMap<String, BTreeSet<String>>, usize> {
+    let resource = parser::parse(source).map_err(|(_, errors)| errors.len())?;
+    Ok(resource
+        .body
+        .iter()
+        .filter_map(|entry| match entry {
+            Entry::Message(message) => {
+                let mut names = BTreeSet::new();
+                message
+                    .value
+                    .iter()
+                    .chain(message.attributes.iter().map(|attribute| &attribute.value))
+                    .for_each(|pattern| pattern_variables(pattern, &mut names));
+                Some((message.id.name.to_owned(), names))
+            }
+            _ => None,
+        })
+        .collect())
+}
+
+fn pattern_variables(pattern: &Pattern<&str>, names: &mut BTreeSet<String>) {
+    for element in &pattern.elements {
+        if let PatternElement::Placeable { expression } = element {
+            expression_variables(expression, names);
+        }
+    }
+}
+
+fn expression_variables(expression: &Expression<&str>, names: &mut BTreeSet<String>) {
+    match expression {
+        Expression::Select { selector, variants } => {
+            inline_variables(selector, names);
+            for variant in variants {
+                pattern_variables(&variant.value, names);
+            }
+        }
+        Expression::Inline(inline) => inline_variables(inline, names),
+    }
+}
+
+fn inline_variables(inline: &InlineExpression<&str>, names: &mut BTreeSet<String>) {
+    let arguments = match inline {
+        InlineExpression::VariableReference { id } => {
+            names.insert(id.name.to_owned());
+            None
+        }
+        InlineExpression::Placeable { expression } => {
+            expression_variables(expression, names);
+            None
+        }
+        InlineExpression::FunctionReference { arguments, .. } => Some(arguments),
+        InlineExpression::TermReference { arguments, .. } => arguments.as_ref(),
+        InlineExpression::StringLiteral { .. }
+        | InlineExpression::NumberLiteral { .. }
+        | InlineExpression::MessageReference { .. } => None,
+    };
+    if let Some(arguments) = arguments {
+        for argument in arguments
+            .positional
+            .iter()
+            .chain(arguments.named.iter().map(|named| &named.value))
+        {
+            inline_variables(argument, names);
+        }
+    }
+}
+
 /// Compares every supported language of `domain` against the fallback language.
 ///
-/// An empty result means every language declares exactly the same keys.
+/// An empty result means every language declares exactly the same keys, each naming the
+/// same variables as in the fallback language.
 ///
 /// # Errors
 ///
 /// Returns [`CheckError`] when a file is missing, unreadable or does not parse.
 pub fn find_gaps(crate_root: &Path, domain: &str) -> Result<Vec<Gap>, CheckError> {
-    let reference = load_ids(&ftl_path(crate_root, FALLBACK_LANGUAGE, domain))?;
+    let reference = load_messages(&ftl_path(crate_root, FALLBACK_LANGUAGE, domain))?;
     let mut gaps = Vec::new();
     for language in SUPPORTED_LANGUAGES
         .iter()
         .filter(|language| **language != FALLBACK_LANGUAGE)
     {
-        let ids = load_ids(&ftl_path(crate_root, language, domain))?;
+        let messages = load_messages(&ftl_path(crate_root, language, domain))?;
         let gap = |key: &String, kind: GapKind| Gap {
             language: (*language).to_owned(),
             key: key.clone(),
             kind,
         };
+        for (key, variables) in &reference {
+            gaps.extend(match messages.get(key) {
+                None => Some(gap(key, GapKind::Missing)),
+                Some(translated) if translated != variables => Some(gap(key, GapKind::Variables)),
+                Some(_) => None,
+            });
+        }
         gaps.extend(
-            reference
-                .difference(&ids)
-                .map(|key| gap(key, GapKind::Missing)),
-        );
-        gaps.extend(
-            ids.difference(&reference)
+            messages
+                .keys()
+                .filter(|key| !reference.contains_key(*key))
                 .map(|key| gap(key, GapKind::Extra)),
         );
     }
     Ok(gaps)
 }
 
-fn load_ids(path: &Path) -> Result<BTreeSet<String>, CheckError> {
+fn load_messages(path: &Path) -> Result<BTreeMap<String, BTreeSet<String>>, CheckError> {
     let source = fs::read_to_string(path).map_err(|source| CheckError::Io {
         path: path.to_owned(),
         source,
     })?;
-    message_ids(&source).map_err(|errors| CheckError::Parse {
+    message_variables(&source).map_err(|errors| CheckError::Parse {
         path: path.to_owned(),
         errors,
     })
