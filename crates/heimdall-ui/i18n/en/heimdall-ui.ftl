@@ -4,7 +4,7 @@
 ui-window-title = Heimdall
 ui-window-title-tab = { $tab } - Heimdall
 
-ui-sidebar-title = Profiles
+ui-sidebar-title = Sessions
 ui-sidebar-empty = No saved profile yet.
 ui-sidebar-settings-button = Settings
 ui-desktop-send-keys = Send keys
@@ -149,7 +149,7 @@ ui-home-import-button = Import Connections
 ui-home-shortcuts = Ctrl+N to add a session, Ctrl+K to quick connect
 ui-home-select = Select a session or press Ctrl+K to connect
 
-ui-tab-close-button = Close
+ui-tab-close-button = ✕
 ui-tab-bell-badge = bell
 
 ui-connect-progress = Connecting to { $target }...

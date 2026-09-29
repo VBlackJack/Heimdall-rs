@@ -43,6 +43,9 @@ pub enum TreeRow {
         depth: usize,
         /// Its content is shown.
         open: bool,
+        /// The profiles it holds, in its sub-folders too, as the C# tree counts them; only
+        /// those found while searching.
+        count: usize,
     },
     /// A profile.
     Profile {
@@ -61,6 +64,11 @@ struct Node {
 }
 
 impl Node {
+    /// The profiles in this folder and under it.
+    fn count(&self) -> usize {
+        self.profiles.len() + self.folders.values().map(Node::count).sum::<usize>()
+    }
+
     /// The node of `parts` under this one, made on the way.
     fn at(&mut self, parts: &[&str]) -> &mut Node {
         parts.iter().fold(self, |node, part| {
@@ -109,6 +117,7 @@ impl App {
                 name: String::new(),
                 depth: 0,
                 open,
+                count: loose.len(),
             });
             if open {
                 sort_by_name(&mut loose);
@@ -156,6 +165,7 @@ fn walk(
             name: name.clone(),
             depth,
             open,
+            count: child.count(),
         });
         if open {
             walk(child, &child_path, depth + 1, searching, closed, rows);

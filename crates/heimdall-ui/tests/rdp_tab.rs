@@ -455,7 +455,7 @@ fn full_screen_shows_the_session_only_and_comes_back() {
     let (mut shell, _, _received) = connected(dir.path());
     {
         let mut ui = simulator(&shell);
-        ui.find("Profiles").expect("the tree");
+        ui.find("Sessions").expect("the tree");
         ui.click("Fullscreen (F11)").expect("the button");
         assert!(
             ui.into_messages()
@@ -465,12 +465,12 @@ fn full_screen_shows_the_session_only_and_comes_back() {
     let _ = shell.update(Message::ToggleFullscreen);
     {
         let mut ui = simulator(&shell);
-        assert!(ui.find("Profiles").is_err(), "no tree in full screen");
+        assert!(ui.find("Sessions").is_err(), "no tree in full screen");
         ui.find("Exit fullscreen (F11)").expect("the way back");
     }
     let _ = shell.update(Message::ToggleFullscreen);
     let mut ui = simulator(&shell);
-    ui.find("Profiles").expect("the tree again");
+    ui.find("Sessions").expect("the tree again");
     ui.find("Fullscreen (F11)").expect("the button again");
 }
 

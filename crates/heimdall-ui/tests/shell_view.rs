@@ -151,7 +151,7 @@ fn the_sidebar_lists_profiles_by_group_and_a_click_opens_one() {
     let shell = Shell::with_app(app(dir.path()));
     snapshot(&shell, "home.png");
     let mut ui = simulator(&shell);
-    ui.find("Profiles").expect("heading");
+    ui.find("Sessions").expect("heading");
     ui.find("Production").expect("group");
     ui.find("(No Folder)").expect("profiles without a folder");
     let production = ui.find("Production").expect("group").bounds().y;
@@ -611,7 +611,7 @@ fn the_lock_hides_the_window_until_the_master_password_is_typed() {
         ui.find("Workspace locked").expect("the lock screen");
         ui.find("Enter your master password to unlock.")
             .expect("says how");
-        assert!(ui.find("Profiles").is_err(), "the window is hidden");
+        assert!(ui.find("Sessions").is_err(), "the window is hidden");
         assert!(ui.find("Cancel").is_err(), "no way around it");
         // Found is not enough: a dialog laid out in no room is found and cannot be typed in.
         ui.click(iced::widget::Id::from("vault-field-0".to_owned()))
@@ -2116,4 +2116,51 @@ fn imported_post_connect_steps_are_shown_whole_and_enter_never_runs_them() {
     let _ = shell.update(Message::DialogKey { confirm: true });
     assert!(shell.app().dialog.is_some());
     assert!(shell.app().tabs.is_empty());
+}
+
+#[test]
+fn the_close_button_inside_a_tab_closes_it_without_selecting_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, _) = open(&mut core, "a");
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.click("\u{2715}").expect("the tab's close button");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::RequestCloseTab(closed)) if *closed == tab
+        )),
+        "{messages:?}"
+    );
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::SelectTab(_)))),
+        "the press is the close button's alone: {messages:?}"
+    );
+}
+
+#[test]
+fn a_profile_found_by_a_search_says_its_folder_and_host_under_its_name() {
+    let dir = tempfile::tempdir().expect("dir");
+    let core = app(dir.path());
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Production  a.lab").is_err(),
+            "not while the tree is not searched"
+        );
+    }
+    let _ = shell.update(Message::Search("server a".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Production  a.lab")
+            .expect("its folder and host, as the C# tree");
+    }
+    let _ = shell.update(Message::Search("server c".to_owned()));
+    let mut ui = simulator(&shell);
+    ui.find("c.lab").expect("in no folder: its host alone");
 }

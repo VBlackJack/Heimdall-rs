@@ -112,7 +112,7 @@ pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::QuickResult;
 pub use selection::SelectionMessage;
-pub use status::{Notice, SessionStatus};
+pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};

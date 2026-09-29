@@ -18,8 +18,10 @@
 //! from it each time rather than kept; and a notice of what was just done, shown while
 //! the same session is shown in the same state.
 
+use heimdall_core::profile::ProfileId;
 use heimdall_core::settings::BroadcastScope;
 
+use super::reconnect::Reopen;
 use super::{App, Phase, Tab};
 use crate::ids::TabId;
 
@@ -76,21 +78,76 @@ pub enum Notice {
     ProviderTimedOut,
 }
 
+/// A session's state: the one the status bar names, its tab's dot shows and its profile's
+/// row in the tree, as the C# Heimdall's connection state.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SessionState {
+    /// Connecting, or asking something before it can.
+    Connecting,
+    /// Waiting to connect again.
+    Reconnecting,
+    /// Connected.
+    Connected,
+    /// Ended.
+    Ended,
+    /// Failed.
+    Failed,
+}
+
+impl SessionState {
+    /// The state of `tab`.
+    #[must_use]
+    pub fn of(tab: &Tab) -> Self {
+        if tab.retry.is_some() {
+            return Self::Reconnecting;
+        }
+        match tab.phase {
+            Phase::Connected => Self::Connected,
+            Phase::Closed { .. } => Self::Ended,
+            Phase::Failed(_) => Self::Failed,
+            _ => Self::Connecting,
+        }
+    }
+
+    /// What a profile's row says of its sessions: an open one before one on its way,
+    /// before one that failed. An ended session says nothing: the row is as if none were
+    /// open.
+    fn rank(self) -> Option<u8> {
+        match self {
+            Self::Connected => Some(3),
+            Self::Connecting | Self::Reconnecting => Some(2),
+            Self::Failed => Some(1),
+            Self::Ended => None,
+        }
+    }
+}
+
 /// The state of `tab`, named by its title.
 fn tab_status(tab: &Tab) -> SessionStatus {
     let title = tab.display_title().to_owned();
-    if tab.retry.is_some() {
-        return SessionStatus::Reconnecting(title);
-    }
-    match tab.phase {
-        Phase::Connected => SessionStatus::Connected(title),
-        Phase::Closed { .. } => SessionStatus::Disconnected(title),
-        Phase::Failed(_) => SessionStatus::Error(title),
-        _ => SessionStatus::Connecting(title),
+    match SessionState::of(tab) {
+        SessionState::Reconnecting => SessionStatus::Reconnecting(title),
+        SessionState::Connected => SessionStatus::Connected(title),
+        SessionState::Ended => SessionStatus::Disconnected(title),
+        SessionState::Failed => SessionStatus::Error(title),
+        SessionState::Connecting => SessionStatus::Connecting(title),
     }
 }
 
 impl App {
+    /// What the row of profile `id` shows of the sessions opened from it: the most alive
+    /// of their states, nothing when none is open or all have ended.
+    #[must_use]
+    pub fn profile_state(&self, id: &ProfileId) -> Option<SessionState> {
+        self.tabs
+            .iter()
+            .filter(|tab| matches!(&tab.reopen, Reopen::Profile(opened) if opened == id))
+            .map(SessionState::of)
+            .filter_map(|state| state.rank().map(|rank| (rank, state)))
+            .max_by_key(|(rank, _)| *rank)
+            .map(|(_, state)| state)
+    }
+
     /// The state of the session shown.
     #[must_use]
     pub fn session_status(&self) -> SessionStatus {
