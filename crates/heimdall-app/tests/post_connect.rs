@@ -211,3 +211,71 @@ fn the_tab_counts_the_steps_and_a_click_stops_them() {
     });
     assert!(app.tab(tab).expect("tab").post_connect.is_none());
 }
+
+#[test]
+fn steps_written_in_the_form_are_saved_approved_and_a_command_with_a_control_character_is_refused()
+{
+    use heimdall_app::profile_draft::DraftError;
+    use heimdall_app::steps_draft::StepEdit;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = App::new(config(dir.path()));
+    app.update(Message::EditProfile(ProfileId::new("plain")));
+    for step in [
+        StepEdit::Add,
+        StepEdit::Input(0, "sudo -i".to_owned()),
+        StepEdit::Delay(0, "500".to_owned()),
+        StepEdit::Add,
+        StepEdit::Input(1, "bad\u{1b}[2J".to_owned()),
+    ] {
+        app.update(Message::PostConnectEdit(step));
+    }
+    app.update(Message::SaveProfile { password: None });
+    let Some(Dialog::EditProfile { error, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(*error, Some(DraftError::ControlCharacter));
+
+    app.update(Message::PostConnectEdit(StepEdit::Remove));
+    app.update(Message::SaveProfile { password: None });
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    let saved = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    let plain = saved
+        .ssh_profiles()
+        .iter()
+        .find(|profile| profile.id.as_str() == "plain")
+        .expect("saved");
+    assert_eq!(
+        plain.post_connect.steps,
+        [PostConnectStep {
+            delay_ms: 500,
+            ..PostConnectStep::new("sudo -i")
+        }]
+    );
+    assert!(plain.post_connect.is_approved(), "written here: approved");
+    // The form reads them back, and the shell types them without asking.
+    app.update(Message::EditProfile(ProfileId::new("plain")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(draft.post_connect.steps, plain.post_connect.steps);
+    app.update(Message::DismissDialog);
+    let effects = app.update(Message::OpenProfile(ProfileId::new("plain")));
+    assert_eq!(
+        connect_request(&effects).profile.post_connect.to_run(),
+        plain.post_connect.steps
+    );
+}
+
+#[test]
+fn an_imported_profile_saved_from_its_form_has_its_steps_approved_as_the_csharp_dialog_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = App::new(config(dir.path()));
+    app.update(Message::EditProfile(ProfileId::new("imported")));
+    app.update(Message::SaveProfile { password: None });
+    let effects = app.update(Message::OpenProfile(ProfileId::new("imported")));
+    assert_eq!(
+        connect_request(&effects).profile.post_connect.to_run(),
+        steps()
+    );
+}

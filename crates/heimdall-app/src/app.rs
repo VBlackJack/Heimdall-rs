@@ -59,6 +59,7 @@ use crate::profile_draft::{
 };
 use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
+use crate::steps_draft::StepEdit;
 use crate::telnet_driver::TelnetRequest;
 use crate::text::server_text;
 use crate::vnc_driver::VncRequest;
@@ -386,6 +387,8 @@ pub enum Message {
     },
     /// In an RDP profile's form, choose from one of its lists.
     ProfileChoice(ProfileChoice),
+    /// Change the post-connect steps of the profile form.
+    PostConnectEdit(StepEdit),
     /// Open the gateway dialog for a new gateway.
     NewGateway,
     /// Open the gateway dialog for a saved gateway.
@@ -465,6 +468,21 @@ pub enum Message {
     Settings(SettingsMessage),
     /// A change of broadcast input.
     Broadcast(BroadcastMessage),
+}
+
+/// What a step edit does, without the text it carries.
+fn step_edit_name(edit: &StepEdit) -> &'static str {
+    match edit {
+        StepEdit::Add => "Add",
+        StepEdit::Remove => "Remove",
+        StepEdit::MoveUp => "MoveUp",
+        StepEdit::MoveDown => "MoveDown",
+        StepEdit::Select(_) => "Select",
+        StepEdit::Enabled(..) => "Enabled",
+        StepEdit::Input(..) => "Input",
+        StepEdit::Delay(..) => "Delay",
+        StepEdit::OnFailure(..) => "OnFailure",
+    }
 }
 
 impl fmt::Debug for Message {
@@ -551,6 +569,8 @@ impl fmt::Debug for Message {
             Self::ChooseProtocol(protocol) => write!(f, "ChooseProtocol({protocol:?})"),
             Self::ProfileToggle { toggle, on } => write!(f, "ProfileToggle({toggle:?}, {on})"),
             Self::ProfileChoice(choice) => write!(f, "ProfileChoice({choice:?})"),
+            // A command may carry anything: only which step changed is shown.
+            Self::PostConnectEdit(edit) => write!(f, "PostConnectEdit({})", step_edit_name(edit)),
             Self::NewGateway => f.write_str("NewGateway"),
             Self::EditGateway(id) => write!(f, "EditGateway({id})"),
             Self::GatewayField { field, .. } => write!(f, "GatewayField({field:?}, ..)"),
@@ -1501,6 +1521,7 @@ impl App {
             | Message::ClearPassword
             | Message::ChooseProtocol(_)
             | Message::ProfileToggle { .. }
+            | Message::PostConnectEdit(_)
             | Message::ProfileChoice(_)
             | Message::NewGateway
             | Message::EditGateway(_)

@@ -35,6 +35,7 @@ mod post_connect;
 pub mod profile_draft;
 pub mod rdp_driver;
 mod sink;
+pub mod steps_draft;
 pub mod telnet_driver;
 mod text;
 pub mod transcript;
