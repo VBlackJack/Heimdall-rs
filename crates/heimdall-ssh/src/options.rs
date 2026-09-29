@@ -90,6 +90,9 @@ pub struct ConnectOptions {
     pub agent: AgentSource,
     /// Forward the agent to the server's shell (`ssh -A`), as the C# "Forward SSH agent".
     pub forward_agent: bool,
+    /// Compress the traffic of every connection on the way (`ssh -C`), as the C# "Enable
+    /// compression".
+    pub compression: bool,
     /// Keys trusted for this run only, counted as recorded beside `known_hosts`.
     pub run_trust: RunTrust,
 }
@@ -109,6 +112,7 @@ impl ConnectOptions {
             agent: AgentSource::Auto,
             run_trust: RunTrust::default(),
             forward_agent: false,
+            compression: false,
         }
     }
 }

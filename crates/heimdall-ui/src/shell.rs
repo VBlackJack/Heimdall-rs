@@ -3277,6 +3277,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::DirectConnection => fl!("ui-profile-direct-connect"),
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
         ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
+        ProfileToggle::Compression => fl!("ui-profile-toggle-compression"),
     }
 }
 
@@ -3657,7 +3658,8 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
         DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
         DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
-        DraftProtocol::Ssh | DraftProtocol::WinRm => None,
+        DraftProtocol::Ssh => Some(fl!("ui-profile-options-ssh")),
+        DraftProtocol::WinRm => None,
     };
     if let Some(options) = options {
         form = form.push(section(options, None));

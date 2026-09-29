@@ -174,6 +174,8 @@ pub enum ProfileToggle {
     AdminSession,
     /// SSH: forward this computer's SSH agent to the shell, as the C# "Forward SSH agent".
     ForwardAgent,
+    /// SSH: compress the traffic, as the C# "Enable compression".
+    Compression,
 }
 
 impl ProfileToggle {
@@ -193,7 +195,7 @@ impl ProfileToggle {
                 Self::SkipCertificateCheck,
             ],
             DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
-            DraftProtocol::Ssh => &[Self::ForwardAgent],
+            DraftProtocol::Ssh => &[Self::Compression, Self::ForwardAgent],
             DraftProtocol::Telnet => &[],
         }
     }
@@ -366,11 +368,13 @@ impl ProfileDraft {
             remote_bind_port: port_text(profile.forwards.remote_bind_port),
             remote_local_port: port_text(profile.forwards.remote_local_port),
             post_connect: StepsDraft::of(&profile.post_connect.steps),
-            toggles: if profile.forward_agent {
-                vec![ProfileToggle::ForwardAgent]
-            } else {
-                Vec::new()
-            },
+            toggles: [
+                (profile.compression, ProfileToggle::Compression),
+                (profile.forward_agent, ProfileToggle::ForwardAgent),
+            ]
+            .into_iter()
+            .filter_map(|(on, toggle)| on.then_some(toggle))
+            .collect(),
             protocol: DraftProtocol::Ssh,
             protocol_chosen: true,
             ..Self::default()
@@ -750,6 +754,7 @@ impl ProfileDraft {
                 forwards: self.saved_forwards()?,
                 post_connect: self.saved_post_connect(),
                 forward_agent: self.is_on(ProfileToggle::ForwardAgent),
+                compression: self.is_on(ProfileToggle::Compression),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -892,6 +897,7 @@ impl ProfileDraft {
             forwards: self.saved_forwards()?,
             post_connect: self.saved_post_connect(),
             forward_agent: self.is_on(ProfileToggle::ForwardAgent),
+            compression: self.is_on(ProfileToggle::Compression),
         })
     }
 }
@@ -1052,6 +1058,7 @@ mod tests {
             forwards: heimdall_core::profile::Forwards::default(),
             post_connect: heimdall_core::post_connect::PostConnect::default(),
             forward_agent: false,
+            compression: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1147,7 +1154,8 @@ mod tests {
     fn forwarding_the_agent_is_an_ssh_option_that_reads_back() {
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Ssh),
-            [ProfileToggle::ForwardAgent]
+            [ProfileToggle::Compression, ProfileToggle::ForwardAgent],
+            "in the C# order"
         );
         for protocol in [
             DraftProtocol::Rdp,
@@ -1170,6 +1178,15 @@ mod tests {
         assert!(profile.forward_agent);
         assert!(ProfileDraft::from_profile(&profile).is_on(ProfileToggle::ForwardAgent));
         assert!(draft.to_profile(id()).expect("profile").forward_agent);
+        assert!(!profile.compression);
+        draft.toggle(ProfileToggle::Compression, true);
+        let profile = saved(&draft);
+        assert!(profile.compression && profile.forward_agent);
+        let reread = ProfileDraft::from_profile(&profile);
+        assert!(
+            reread.is_on(ProfileToggle::Compression) && reread.is_on(ProfileToggle::ForwardAgent)
+        );
+        assert!(draft.to_profile(id()).expect("profile").compression);
     }
 
     #[test]
