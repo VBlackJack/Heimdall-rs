@@ -63,10 +63,13 @@ pub enum AgentSource {
     /// Do not use an agent.
     Disabled,
     /// The platform's usual places: `SSH_AUTH_SOCK` on Unix; on Windows `SSH_AUTH_SOCK` when
-    /// it names a pipe, the OpenSSH agent pipe, then Pageant.
+    /// it names a pipe, the OpenSSH agent pipe, then Pageant, every one reachable offering
+    /// its keys, as the C# `SshAgentRegistry`.
     Auto,
     /// A Unix socket or a Windows named pipe given explicitly.
     Path(PathBuf),
+    /// Several agents given explicitly, their keys offered in this order.
+    Paths(Vec<PathBuf>),
 }
 
 /// Settings of one connection.

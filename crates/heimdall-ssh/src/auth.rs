@@ -47,7 +47,9 @@ use crate::prompter::{
 };
 use crate::secret::Secret;
 
-/// Agent keys tried when the profile names no key file.
+/// Agent keys tried when the profile names no key file, taken from each agent in turn, so a
+/// second agent's first key comes second: more would spend the server's `MaxAuthTries` (6 by
+/// default) before a password could be asked.
 pub(crate) const MAX_OTHER_AGENT_KEYS: usize = 3;
 
 /// Password questions before giving up.
@@ -79,8 +81,11 @@ struct Attempts<'a, P: Prompter> {
     methods: MethodSet,
     tried: Vec<AuthMethod>,
     rsa_hash: Option<HashAlg>,
-    agent: Option<Agent>,
-    agent_keys: Vec<PublicKey>,
+    /// Every agent reached, in the order their keys are offered.
+    agents: Vec<Agent>,
+    /// Each key an agent holds with the agent holding it, a key held twice kept once, taken
+    /// from each agent in turn.
+    agent_keys: Vec<(usize, PublicKey)>,
 }
 
 /// Hash for RSA signatures, from what the server announced in `server-sig-algs`.
@@ -98,6 +103,28 @@ pub(crate) fn rsa_hash(
     match announced {
         Ok(Some(hash)) => *hash,
         Ok(None) | Err(_) => Some(HashAlg::Sha256),
+    }
+}
+
+/// The keys of every agent, each with its agent's place in `held`: the first of each agent,
+/// then the second of each, and so on; a key a previous agent holds is kept at its first place.
+pub(crate) fn interleave(held: Vec<Vec<PublicKey>>) -> Vec<(usize, PublicKey)> {
+    let mut queues: Vec<std::vec::IntoIter<PublicKey>> =
+        held.into_iter().map(Vec::into_iter).collect();
+    let mut keys: Vec<(usize, PublicKey)> = Vec::new();
+    loop {
+        let mut any = false;
+        for (index, queue) in queues.iter_mut().enumerate() {
+            if let Some(key) = queue.next() {
+                any = true;
+                if !keys.iter().any(|(_, known)| *known == key) {
+                    keys.push((index, key));
+                }
+            }
+        }
+        if !any {
+            return keys;
+        }
     }
 }
 
@@ -134,7 +161,7 @@ pub(crate) async fn authenticate<P: Prompter>(ctx: AuthContext<'_, P>) -> Result
         methods,
         tried: Vec::new(),
         rsa_hash: None,
-        agent: None,
+        agents: Vec::new(),
         agent_keys: Vec::new(),
     };
     attempts.ensure_open()?;
@@ -145,10 +172,12 @@ impl<P: Prompter> Attempts<'_, P> {
     async fn run(&mut self) -> Result<(), ConnectError> {
         self.rsa_hash = rsa_hash(&self.ctx.handle.best_supported_rsa_hash().await);
         if self.allows(MethodKind::PublicKey) {
-            self.agent = agent::connect(&self.ctx.options.agent).await;
-            if let Some(agent) = self.agent.as_mut() {
-                self.agent_keys = agent::identities(agent).await;
+            self.agents = agent::connect_all(&self.ctx.options.agent).await;
+            let mut held = Vec::with_capacity(self.agents.len());
+            for agent in &mut self.agents {
+                held.push(agent::identities(agent).await);
             }
+            self.agent_keys = interleave(held);
         }
 
         if let Some(key_path) = self.ctx.key_path {
@@ -215,9 +244,18 @@ impl<P: Prompter> Attempts<'_, P> {
         }
     }
 
+    /// Signs with the agent holding `key`.
     async fn with_agent(&mut self, key: &PublicKey) -> Result<bool, ConnectError> {
         let hash = self.hash_for(key);
-        let Some(agent) = self.agent.as_mut() else {
+        let Some(index) = self
+            .agent_keys
+            .iter()
+            .find(|(_, held)| held == key)
+            .map(|(index, _)| *index)
+        else {
+            return Ok(false);
+        };
+        let Some(agent) = self.agents.get_mut(index) else {
             return Ok(false);
         };
         self.tried.push(AuthMethod::Agent);
@@ -236,7 +274,7 @@ impl<P: Prompter> Attempts<'_, P> {
     async fn key_file(&mut self, path: &Path) -> Result<bool, ConnectError> {
         let file = KeyFile::read(path)?;
         if let Some(public) = file.public_key().cloned()
-            && self.agent_keys.contains(&public)
+            && self.agent_keys.iter().any(|(_, held)| *held == public)
             && self.with_agent(&public).await?
         {
             return Ok(true);
@@ -290,7 +328,7 @@ impl<P: Prompter> Attempts<'_, P> {
             .agent_keys
             .iter()
             .take(MAX_OTHER_AGENT_KEYS)
-            .cloned()
+            .map(|(_, key)| key.clone())
             .collect();
         for key in keys {
             if !self.allows(MethodKind::PublicKey) {
@@ -418,9 +456,29 @@ impl<P: Prompter> Attempts<'_, P> {
 
 #[cfg(test)]
 mod tests {
-    use russh::keys::HashAlg;
+    use russh::keys::{HashAlg, PublicKey};
 
-    use super::rsa_hash;
+    use super::{interleave, rsa_hash};
+
+    fn key(seed: u8) -> PublicKey {
+        russh::keys::PrivateKey::from(russh::keys::ssh_key::private::Ed25519Keypair::from_seed(
+            &[seed; 32],
+        ))
+        .public_key()
+        .clone()
+    }
+
+    #[test]
+    fn each_agent_gives_its_first_key_before_any_gives_its_second_and_a_key_held_twice_counts_once()
+    {
+        let (a, b, c, d) = (key(1), key(2), key(3), key(4));
+        let order = interleave(vec![
+            vec![a.clone(), b.clone(), c.clone()],
+            vec![d.clone(), a.clone()],
+        ]);
+        assert_eq!(order, vec![(0, a), (1, d), (0, b), (0, c)]);
+        assert!(interleave(Vec::new()).is_empty());
+    }
 
     #[test]
     fn the_servers_announced_hash_is_used() {

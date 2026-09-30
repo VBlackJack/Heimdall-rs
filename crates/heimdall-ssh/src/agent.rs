@@ -17,10 +17,13 @@
 //! Reaching a running SSH agent.
 //!
 //! Unix: the socket named by `SSH_AUTH_SOCK`. Windows: `SSH_AUTH_SOCK` when it names a pipe
-//! (1Password, `KeeAgent`, gpg), then the OpenSSH agent pipe, then Pageant. Every attempt is
-//! bounded: russh retries a busy Windows pipe with no limit of its own.
+//! (1Password, `KeeAgent`, gpg), then the OpenSSH agent pipe, then Pageant. Authentication
+//! reaches every one of them and offers the keys of all, as the C# `SshAgentRegistry`: a key
+//! loaded in Pageant is offered even while the OpenSSH agent runs. Every attempt is bounded:
+//! russh retries a busy Windows pipe with no limit of its own.
 
-use std::path::Path;
+use std::future::Future;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use russh::keys::PublicKey;
@@ -47,19 +50,86 @@ const OPENSSH_AGENT_PIPE: &str = r"\\.\pipe\openssh-ssh-agent";
 /// An agent connection, whatever transport it uses.
 pub(crate) type Agent = AgentClient<Box<dyn AgentStream + Send + Unpin + 'static>>;
 
-/// Connects to the agent `source` designates, or `None`.
+/// Connects to the first agent `source` designates, or `None`: the one a forwarded agent
+/// channel is relayed to.
 pub(crate) async fn connect(source: &AgentSource) -> Option<Agent> {
-    let connecting = async {
-        match source {
-            AgentSource::Disabled => None,
-            AgentSource::Auto => connect_any().await,
-            AgentSource::Path(path) => connect_path(path).await,
+    for place in places(source) {
+        if let Some(agent) = bounded(reach(&place)).await {
+            return Some(agent);
         }
-    };
+    }
+    None
+}
+
+/// Connects to every agent `source` designates that answers, in order, each within its own
+/// time limit.
+pub(crate) async fn connect_all(source: &AgentSource) -> Vec<Agent> {
+    let mut agents = Vec::new();
+    for place in places(source) {
+        if let Some(agent) = bounded(reach(&place)).await {
+            agents.push(agent);
+        }
+    }
+    agents
+}
+
+async fn bounded(connecting: impl Future<Output = Option<Agent>>) -> Option<Agent> {
     tokio::time::timeout(AGENT_CONNECT_TIMEOUT, connecting)
         .await
         .ok()
         .flatten()
+}
+
+/// Where an agent may be found.
+enum Place {
+    /// A socket or pipe.
+    Path(PathBuf),
+    /// Unix: the socket `SSH_AUTH_SOCK` names.
+    #[cfg_attr(windows, allow(dead_code))]
+    Environment,
+    /// Windows: Pageant.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    Pageant,
+}
+
+/// The places `source` designates, in the order their keys are offered.
+fn places(source: &AgentSource) -> Vec<Place> {
+    match source {
+        AgentSource::Disabled => Vec::new(),
+        AgentSource::Path(path) => vec![Place::Path(path.clone())],
+        AgentSource::Paths(paths) => paths.iter().cloned().map(Place::Path).collect(),
+        AgentSource::Auto => auto_places(),
+    }
+}
+
+#[cfg(unix)]
+fn auto_places() -> Vec<Place> {
+    vec![Place::Environment]
+}
+
+#[cfg(windows)]
+fn auto_places() -> Vec<Place> {
+    let auth_sock = std::env::var(AUTH_SOCK_VARIABLE).ok();
+    candidate_pipes(auth_sock.as_deref())
+        .into_iter()
+        .map(|pipe| Place::Path(PathBuf::from(pipe)))
+        .chain(std::iter::once(Place::Pageant))
+        .collect()
+}
+
+async fn reach(place: &Place) -> Option<Agent> {
+    match place {
+        Place::Path(path) => connect_path(path).await,
+        #[cfg(unix)]
+        Place::Environment => connect_environment().await,
+        #[cfg(windows)]
+        Place::Pageant => connect_pageant().await,
+        // A place of the other platform: never listed here.
+        #[cfg(unix)]
+        Place::Pageant => None,
+        #[cfg(windows)]
+        Place::Environment => None,
+    }
 }
 
 #[cfg(unix)]
@@ -107,7 +177,7 @@ pub(crate) fn candidate_pipes(auth_sock: Option<&str>) -> Vec<String> {
 }
 
 #[cfg(unix)]
-async fn connect_any() -> Option<Agent> {
+async fn connect_environment() -> Option<Agent> {
     AgentClient::connect_env()
         .await
         .ok()
@@ -115,13 +185,7 @@ async fn connect_any() -> Option<Agent> {
 }
 
 #[cfg(windows)]
-async fn connect_any() -> Option<Agent> {
-    let auth_sock = std::env::var(AUTH_SOCK_VARIABLE).ok();
-    for pipe in candidate_pipes(auth_sock.as_deref()) {
-        if let Ok(client) = AgentClient::connect_named_pipe(&pipe).await {
-            return Some(client.dynamic());
-        }
-    }
+async fn connect_pageant() -> Option<Agent> {
     AgentClient::connect_pageant()
         .await
         .ok()
