@@ -50,7 +50,12 @@ fn fixture_private_key(name: &str) -> PrivateKey {
 
 /// Starts an agent on a socket in `dir` holding `keys`.
 async fn start_agent(dir: &Path, keys: &[PrivateKey]) -> std::path::PathBuf {
-    let socket = dir.join("agent.sock");
+    start_named_agent(dir, "agent.sock", keys).await
+}
+
+/// Starts an agent on socket `name` in `dir` holding `keys`.
+async fn start_named_agent(dir: &Path, name: &str, keys: &[PrivateKey]) -> std::path::PathBuf {
+    let socket = dir.join(name);
     let listener = UnixListener::bind(&socket).expect("bind agent socket");
     tokio::spawn(russh::keys::agent::server::serve(
         UnixListenerStream::new(listener),
@@ -151,4 +156,72 @@ async fn an_agent_key_the_server_accepts_logs_in_when_the_profile_names_none() {
     )
     .await;
     assert!(result.is_ok(), "{:?}", result.err());
+}
+
+/// Two agents as on Windows with the OpenSSH agent and Pageant: the first holds keys the
+/// server refuses, the second the one it accepts.
+async fn two_agents(dir: &Path, second: PrivateKey) -> AgentSource {
+    let unrelated: Vec<PrivateKey> = UNRELATED_HOST_KEYS
+        .iter()
+        .map(|name| host_private_key(name))
+        .collect();
+    let first = start_named_agent(dir, "openssh.sock", &unrelated).await;
+    let second = start_named_agent(dir, "pageant.sock", &[second]).await;
+    AgentSource::Paths(vec![first, dir.join("gone.sock"), second])
+}
+
+#[tokio::test]
+async fn a_key_held_by_the_second_agent_is_offered_while_the_first_holds_three() {
+    let server = start(Spec {
+        methods: vec![MethodKind::PublicKey],
+        authorized: vec![client_public_key("ed25519-openssh")],
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut options = options_trusting(dir.path(), server.port, "host-ed25519");
+    options.agent = two_agents(dir.path(), fixture_private_key("ed25519-openssh")).await;
+
+    let result = connect(
+        &profile(server.port, None),
+        &options,
+        Arc::new(ScriptedPrompter::default()),
+        CancellationToken::new(),
+    )
+    .await;
+    assert!(result.is_ok(), "{:?}", result.err());
+    assert_eq!(
+        server
+            .observed
+            .lock()
+            .expect("observed")
+            .publickey_offers
+            .len(),
+        2,
+        "the first agent's first key, then the second agent's: each agent in turn"
+    );
+}
+
+#[tokio::test]
+async fn a_profile_key_held_by_the_second_agent_is_signed_by_it_without_a_passphrase() {
+    let server = start(Spec {
+        methods: vec![MethodKind::PublicKey],
+        authorized: vec![client_public_key("ed25519-openssh-encrypted")],
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut options = options_trusting(dir.path(), server.port, "host-ed25519");
+    options.agent = two_agents(dir.path(), fixture_private_key("ed25519-openssh-encrypted")).await;
+    let prompter = Arc::new(ScriptedPrompter::default());
+
+    let result = connect(
+        &profile(server.port, Some("ed25519-openssh-encrypted")),
+        &options,
+        prompter.clone(),
+        CancellationToken::new(),
+    )
+    .await;
+    assert!(result.is_ok(), "{:?}", result.err());
+    assert!(prompter.asked().is_empty(), "asked {:?}", prompter.asked());
 }
