@@ -25,7 +25,7 @@ use heimdall_app::{
 use heimdall_rdp::KnownRdpHosts;
 use heimdall_ssh::{AgentSource, KnownHosts, PublicKey};
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, SettingsTab, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::trusted_keys_view::TrustedList;
 use iced::{Settings, Size};
@@ -67,18 +67,30 @@ fn trust(dir: &Path) {
         .expect("record");
 }
 
+/// The Settings page on its `tab`.
+fn show(shell: &mut Shell, tab: SettingsTab) {
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(tab));
+}
+
 #[test]
 fn nothing_trusted_says_so_in_the_csharp_words() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::ShowSettings);
+    show(&mut shell, SettingsTab::Ssh);
+    {
+        let mut ui = simulator(&shell);
+        for label in ["Trusted host keys", "No trusted host keys"] {
+            ui.find(label).expect(label);
+        }
+        assert!(
+            ui.find("Trusted RDP certificates").is_err(),
+            "the RDP tab's"
+        );
+    }
+    show(&mut shell, SettingsTab::Rdp);
     let mut ui = simulator(&shell);
-    for label in [
-        "Trusted host keys",
-        "No trusted host keys",
-        "Trusted RDP certificates",
-        "No trusted RDP certificates",
-    ] {
+    for label in ["Trusted RDP certificates", "No trusted RDP certificates"] {
         ui.find(label).expect(label);
     }
 }
@@ -88,21 +100,27 @@ fn the_page_lists_what_the_files_trust_when_shown() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     trust(dir.path());
-    let _ = shell.update(Message::ShowSettings);
-    let mut ui = simulator(&shell);
-    for label in ["web.lab:22", "db.lab:2222", "dc.lab:3389", "ssh-ed25519"] {
-        ui.find(label).expect(label);
+    show(&mut shell, SettingsTab::Ssh);
+    {
+        let mut ui = simulator(&shell);
+        for label in ["web.lab:22", "db.lab:2222", "ssh-ed25519"] {
+            ui.find(label).expect(label);
+        }
+        // Fingerprints cut short as the C# lists show them: 16 characters for SSH, 20 for RDP.
+        let ssh: String =
+            heimdall_ssh::fingerprint(&PublicKey::from_openssh(ED25519).expect("key"))
+                .chars()
+                .take(16)
+                .collect();
+        ui.find(format!("{ssh}..."))
+            .expect("the SSH key, cut after 16");
+        assert!(ui.find("No trusted host keys").is_err());
     }
-    // Fingerprints cut short as the C# lists show them: 16 characters for SSH, 20 for RDP.
-    let ssh: String = heimdall_ssh::fingerprint(&PublicKey::from_openssh(ED25519).expect("key"))
-        .chars()
-        .take(16)
-        .collect();
-    ui.find(format!("{ssh}..."))
-        .expect("the SSH key, cut after 16");
+    show(&mut shell, SettingsTab::Rdp);
+    let mut ui = simulator(&shell);
+    ui.find("dc.lab:3389").expect("the RDP server");
     ui.find("SHA256:rgJ0Y04RcqyBp...")
         .expect("the RDP key, cut after 20");
-    assert!(ui.find("No trusted host keys").is_err());
 }
 
 #[test]
@@ -110,7 +128,7 @@ fn a_search_keeps_the_servers_that_match() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     trust(dir.path());
-    let _ = shell.update(Message::ShowSettings);
+    show(&mut shell, SettingsTab::Ssh);
     let _ = shell.update(Message::TrustedSearch(
         TrustedList::HostKeys,
         " DB ".to_owned(),
@@ -119,6 +137,10 @@ fn a_search_keeps_the_servers_that_match() {
         let mut ui = simulator(&shell);
         ui.find("db.lab:2222").expect("matches");
         assert!(ui.find("web.lab:22").is_err(), "filtered out");
+    }
+    show(&mut shell, SettingsTab::Rdp);
+    {
+        let mut ui = simulator(&shell);
         ui.find("dc.lab:3389")
             .expect("the other list keeps its own search");
     }
@@ -135,7 +157,7 @@ fn copy_and_remove_ask_the_core_and_the_question_is_the_csharp_one() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     trust(dir.path());
-    let _ = shell.update(Message::ShowSettings);
+    show(&mut shell, SettingsTab::Ssh);
     let _ = shell.update(Message::TrustedSearch(
         TrustedList::HostKeys,
         "web".to_owned(),
@@ -205,7 +227,7 @@ fn a_certificate_is_forgotten_after_the_csharp_question_with_keep() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     trust(dir.path());
-    let _ = shell.update(Message::ShowSettings);
+    show(&mut shell, SettingsTab::Rdp);
     let dc = TrustedKey::Rdp(shell.app().trusted_keys().rdp[0].clone());
     {
         let mut ui = simulator(&shell);
@@ -241,7 +263,7 @@ fn a_certificate_is_forgotten_after_the_csharp_question_with_keep() {
 fn the_host_keys_section_imports_a_known_hosts_file_as_the_csharp_one() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
-    let _ = shell.update(Message::ShowSettings);
+    show(&mut shell, SettingsTab::Ssh);
     let mut ui = simulator(&shell);
     ui.click("Import known_hosts").expect("the button");
     assert!(ui.into_messages().any(|message| matches!(

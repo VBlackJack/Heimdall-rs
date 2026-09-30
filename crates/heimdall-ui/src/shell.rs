@@ -339,6 +339,8 @@ pub enum Message {
     ProfilePassword(String),
     /// Save the profile form, with the password typed into it.
     SaveProfileForm,
+    /// Show this tab of the Settings page.
+    SettingsTab(SettingsTab),
     /// Pick the SSH key of the profile form in the system's open dialog.
     BrowseKeyFile,
     /// The password field of the gateway dialog changed.
@@ -438,6 +440,7 @@ impl fmt::Debug for Message {
             Self::SaveProviderUnlock => f.write_str("SaveProviderUnlock"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
+            Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
             Self::BrowseKeyFile => f.write_str("BrowseKeyFile"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
             Self::SaveGatewayForm => f.write_str("SaveGatewayForm"),
@@ -559,6 +562,43 @@ fn config() -> AppConfig {
 }
 
 /// The window's state.
+/// A tab of the Settings page, as the C# Settings tabs group them.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SettingsTab {
+    /// The language.
+    #[default]
+    General,
+    /// The terminals' text and colours, and session logging.
+    Terminal,
+    /// SSH auto-reconnect and the trusted host keys.
+    Ssh,
+    /// The trusted RDP certificates.
+    Rdp,
+    /// The PIN, the master password and the external credential provider.
+    Security,
+}
+
+impl SettingsTab {
+    /// Every tab, in the C# order.
+    pub const ALL: [Self; 5] = [
+        Self::General,
+        Self::Terminal,
+        Self::Ssh,
+        Self::Rdp,
+        Self::Security,
+    ];
+
+    fn label(self) -> String {
+        match self {
+            Self::General => fl!("ui-settings-tab-general"),
+            Self::Terminal => fl!("ui-settings-tab-terminal"),
+            Self::Ssh => fl!("ui-settings-tab-ssh"),
+            Self::Rdp => fl!("ui-settings-tab-rdp"),
+            Self::Security => fl!("ui-settings-tab-security"),
+        }
+    }
+}
+
 pub struct Shell {
     app: App,
     registry: AnswerRegistry,
@@ -604,6 +644,8 @@ pub struct Shell {
     font_size_typed: Option<String>,
     /// The search typed over the trusted SSH host keys.
     host_key_search: String,
+    /// The Settings tab shown, kept while the application runs.
+    settings_tab: SettingsTab,
     /// The search typed over the trusted RDP certificates.
     certificate_search: String,
     /// Files are dragged over the window.
@@ -700,6 +742,7 @@ impl Shell {
             log_directory: None,
             font_size_typed: None,
             host_key_search: String::new(),
+            settings_tab: SettingsTab::default(),
             certificate_search: String::new(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
@@ -797,6 +840,7 @@ impl Shell {
             | Message::FocusVaultField(_)
             | Message::ProviderUnlock(_)
             | Message::Search(_)
+            | Message::SettingsTab(_)
             | Message::ProfilePassword(_)
             | Message::GatewayPassword(_)) => return self.input_message(message),
             Message::Submit(tab) => self.reply(tab, true),
@@ -898,6 +942,7 @@ impl Shell {
             }
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::Search(term) => self.search = term,
+            Message::SettingsTab(tab) => self.settings_tab = tab,
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::ProviderUnlock(value) => self.provider_unlock = Zeroizing::new(value),
             Message::GatewayPassword(value) => self.gateway_password = Zeroizing::new(value),
@@ -2098,24 +2143,36 @@ impl Shell {
         .padding(PADDING)
         .max_width(SETTINGS_WIDTH)
         .style(container::bordered_box);
-        scrollable(
-            column![
-                text(fl!("ui-settings-title")).size(HEADING_SIZE),
+        let body: Column<'_, Message> = match self.settings_tab {
+            SettingsTab::General => column![
                 text(fl!("ui-settings-appearance")).size(BODY_SIZE),
                 self.appearance_settings(),
-                text(fl!("ui-settings-security")).size(BODY_SIZE),
-                pin_card,
-                vault_card,
+            ],
+            SettingsTab::Terminal => column![
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
                 self.session_log_settings(),
+            ],
+            SettingsTab::Ssh => column![
                 text(fl!("ui-settings-ssh-auto-reconnect")).size(BODY_SIZE),
                 self.ssh_reconnect_settings(),
-                self.trusted_keys_settings(),
+                self.trusted_keys_settings(TrustedList::HostKeys),
+            ],
+            SettingsTab::Rdp => column![self.trusted_keys_settings(TrustedList::Certificates)],
+            SettingsTab::Security => column![
+                pin_card,
+                vault_card,
                 // Last: a long card, which would push the everyday settings down.
                 container(crate::provider_view::card(&self.app, &self.provider_unlock))
                     .max_width(SETTINGS_WIDTH),
+            ],
+        };
+        scrollable(
+            column![
+                text(fl!("ui-settings-title")).size(HEADING_SIZE),
+                settings_tabs(self.settings_tab),
+                body.spacing(SPACING),
             ]
             .spacing(SPACING)
             .padding(PADDING),
@@ -2152,13 +2209,17 @@ impl Shell {
             .into()
     }
 
-    /// The keys trusted for servers, as the C# Host keys and Certificates pages list them.
-    fn trusted_keys_settings(&self) -> Element<'_, Message> {
+    /// The keys trusted for servers of `list`, as the C# Host keys and Certificates pages
+    /// list them, with what could not be read.
+    fn trusted_keys_settings(&self, list: TrustedList) -> Element<'_, Message> {
         let keys = self.app.trusted_keys();
-        let mut lists = column![
-            crate::trusted_keys_view::host_keys(keys, &self.host_key_search),
-            crate::trusted_keys_view::certificates(keys, &self.certificate_search),
-        ]
+        let mut lists = column![match list {
+            TrustedList::HostKeys =>
+                crate::trusted_keys_view::host_keys(keys, &self.host_key_search),
+            TrustedList::Certificates => {
+                crate::trusted_keys_view::certificates(keys, &self.certificate_search)
+            }
+        }]
         .spacing(SPACING)
         .max_width(SETTINGS_WIDTH);
         if let Some(unreadable) = crate::trusted_keys_view::unreadable(keys) {
@@ -3226,6 +3287,24 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
         files,
         names: crate::rdp_view::names(),
     }))
+}
+
+/// The tabs of the Settings page, the one shown marked, as the C# `TabControl`.
+fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
+    SettingsTab::ALL
+        .into_iter()
+        .fold(row![].spacing(SPACING / 2.0), |tabs, tab| {
+            tabs.push(
+                button(text(tab.label()))
+                    .style(if tab == shown {
+                        button::primary
+                    } else {
+                        button::secondary
+                    })
+                    .on_press(Message::SettingsTab(tab)),
+            )
+        })
+        .into()
 }
 
 /// The open dialog of "Import Sessions", held by the window, then the file read; a `.rdp`
