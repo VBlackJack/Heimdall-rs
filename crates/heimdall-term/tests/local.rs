@@ -16,7 +16,7 @@
 
 //! Local shells on a pseudo-terminal, run for real: `sh` on Unix, `cmd` on Windows.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use heimdall_term::local::{LocalArguments, LocalConfig, LocalEvent, LocalSession, spawn};
 
@@ -43,15 +43,20 @@ fn shell(script: &str) -> LocalConfig {
     config("cmd.exe", &["/C", script])
 }
 
-/// The output until the exit, and the exit code.
+/// The output until the exit, and the exit code. A wait that runs out says what came before
+/// it: a shell that never started shows nothing, one whose exit was lost shows its output.
 async fn until_exit(session: &mut LocalSession) -> (String, Option<i32>) {
+    let started = Instant::now();
     let mut output = Vec::new();
     loop {
-        match tokio::time::timeout(WAIT, session.events.recv())
-            .await
-            .expect("in time")
-            .expect("an event")
-        {
+        let Ok(event) = tokio::time::timeout(WAIT, session.events.recv()).await else {
+            panic!(
+                "no event in {WAIT:?}, {:?} after the first wait, output so far: {:?}",
+                started.elapsed(),
+                String::from_utf8_lossy(&output)
+            );
+        };
+        match event.expect("an event") {
             LocalEvent::Output(bytes) => output.extend(bytes),
             LocalEvent::Exited(code) => {
                 return (String::from_utf8_lossy(&output).into_owned(), code);
