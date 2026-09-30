@@ -677,3 +677,36 @@ fn an_ftp_form_asks_for_an_account_and_its_options_as_the_csharp_cards() {
     }
     assert!(ui.find("Gateway routing").is_err(), "FTP goes directly");
 }
+
+#[test]
+fn the_ssh_key_is_browsed_for_and_the_folder_separator_is_taught_as_the_csharp_form() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find(
+            "Use / to nest folders: Production/Databases puts this session in Databases, inside Production.",
+        )
+        .expect("the folder hint");
+        ui.click("Browse...").expect("the button beside the key");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::BrowseKeyFile))
+        );
+    }
+    // The path picked fills the field, as any typing does.
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::KeyPath,
+        value: "/home/me/.ssh/id_ed25519".to_owned(),
+    }));
+    let mut ui = tall_simulator(&shell);
+    ui.find("/home/me/.ssh/id_ed25519")
+        .expect("the key path shown");
+    drop(ui);
+
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let mut ui = tall_simulator(&shell);
+    assert!(ui.find("Browse...").is_err(), "no SSH key for RDP");
+}

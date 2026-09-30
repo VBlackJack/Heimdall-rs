@@ -36,8 +36,8 @@ use crate::shell::Message;
 /// The file OpenSSH reads, offered first.
 const CONFIG_FILE_NAME: &str = "config";
 
-/// The folder it is in, under the home folder.
-const SSH_FOLDER: &str = ".ssh";
+/// The folder OpenSSH keeps its files in, under the home folder.
+pub const SSH_FOLDER: &str = ".ssh";
 
 /// Room between the parts of the preview.
 const SPACING: f32 = 8.0;

@@ -336,6 +336,8 @@ pub enum Message {
     ProfilePassword(String),
     /// Save the profile form, with the password typed into it.
     SaveProfileForm,
+    /// Pick the SSH key of the profile form in the system's open dialog.
+    BrowseKeyFile,
     /// The password field of the gateway dialog changed.
     GatewayPassword(String),
     /// Save the gateway dialog, with the password typed into it.
@@ -433,6 +435,7 @@ impl fmt::Debug for Message {
             Self::SaveProviderUnlock => f.write_str("SaveProviderUnlock"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
+            Self::BrowseKeyFile => f.write_str("BrowseKeyFile"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
             Self::SaveGatewayForm => f.write_str("SaveGatewayForm"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
@@ -839,6 +842,7 @@ impl Shell {
                 self.app.update(message)
             }
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
+            Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
             message
             @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
@@ -3632,6 +3636,66 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
     .into()
 }
 
+/// The SSH key field, with the C# "Browse..." button beside it.
+fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
+    let field = ProfileField::KeyPath;
+    column![
+        text(fl!("ui-profile-field-key")).size(SMALL_SIZE),
+        row![
+            text_input(&fl!("ui-profile-optional"), draft.value(field))
+                .id(profile_field_id(field))
+                .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
+                .on_submit(Message::SaveProfileForm),
+            button(text(fl!("ui-profile-browse-button")))
+                .style(button::secondary)
+                .on_press(Message::BrowseKeyFile),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(SPACING / 2.0)
+    .into()
+}
+
+/// The open dialog of the profile form's SSH key, held by the window, in `~/.ssh`: every
+/// file first, since an OpenSSH key has no extension, then the C# `.ppk` and `.pem`. The
+/// path picked fills the field; nothing when none is picked.
+fn pick_key_file() -> Task<Message> {
+    let dialog = || {
+        let mut dialog = rfd::AsyncFileDialog::new()
+            .set_title(fl!("ui-profile-browse-key-title"))
+            .add_filter(fl!("ui-profile-browse-key-all"), &["*"])
+            .add_filter(fl!("ui-profile-browse-key-ppk"), &["ppk"])
+            .add_filter(fl!("ui-profile-browse-key-pem"), &["pem"]);
+        if let Some(folder) = std::env::home_dir()
+            .map(|home| home.join(crate::sessions_view::SSH_FOLDER))
+            .filter(|folder| folder.is_dir())
+        {
+            dialog = dialog.set_directory(folder);
+        }
+        dialog
+    };
+    window::latest().then(move |id| {
+        let pick = match id {
+            Some(id) => window::run(id, move |window| {
+                let pick: crate::sessions_view::Pick =
+                    Box::pin(dialog().set_parent(&window).pick_file());
+                pick
+            }),
+            None => Task::done(Box::pin(dialog().pick_file()) as crate::sessions_view::Pick),
+        };
+        pick.then(|pick| {
+            Task::future(pick).then(|picked| match picked {
+                Some(file) => Task::done(Message::App(AppMessage::ProfileField {
+                    field: ProfileField::KeyPath,
+                    value: file.path().display().to_string(),
+                })),
+                None => Task::none(),
+            })
+        })
+    })
+}
+
 /// A box to tick, sending `toggle`.
 fn toggle_box<'a>(
     draft: &ProfileDraft,
@@ -4018,14 +4082,13 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             .spacing(SPACING / 2.0),
         );
     }
-    for field in [
-        ProfileField::Username,
-        ProfileField::Domain,
-        ProfileField::KeyPath,
-    ] {
+    for field in [ProfileField::Username, ProfileField::Domain] {
         if draft.shows(field) {
             form = form.push(form_field(draft, field));
         }
+    }
+    if draft.shows(ProfileField::KeyPath) {
+        form = form.push(key_field(draft));
     }
     if draft.protocol == DraftProtocol::Rdp {
         form = form.push(text(fl!("ui-profile-domain-hint")).size(SMALL_SIZE));
@@ -4148,7 +4211,9 @@ fn profile_form<'a>(
     // Organization.
     form = form
         .push(section(fl!("ui-profile-section-organization"), None))
-        .push(form_field(draft, ProfileField::Group));
+        .push(form_field(draft, ProfileField::Group))
+        // As the C#: the separator is taught by the example and by a sentence that stays.
+        .push(text(fl!("ui-profile-folder-hint")).size(SMALL_SIZE));
     // With the C# metadata: the password manager's entry, for the protocols it serves.
     if draft.shows(ProfileField::VaultEntry) {
         form = form

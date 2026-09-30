@@ -32,14 +32,11 @@ use iced::widget::{Column, button, checkbox, column, container, row, scrollable,
 use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
-use crate::sessions_view::Pick;
+use crate::sessions_view::{Pick, SSH_FOLDER};
 use crate::shell::Message;
 
 /// The file OpenSSH trusts its servers' keys in, offered first.
 const KNOWN_HOSTS_FILE_NAME: &str = "known_hosts";
-
-/// The folder it is in, under the home folder.
-const SSH_FOLDER: &str = ".ssh";
 
 /// Room between the parts of the preview.
 const SPACING: f32 = 8.0;
