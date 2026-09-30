@@ -19,7 +19,10 @@
 
 use std::path::Path;
 
-use heimdall_app::{App, AppConfig, Dialog, Effect, Message, OpenSshMessage, ProfileKind};
+use heimdall_app::{
+    App, AppConfig, Dialog, Effect, Message, ProfileKind, SessionsCounts, SessionsMessage,
+    SessionsSource,
+};
 use heimdall_core::import::openssh::Status;
 use heimdall_core::profile::{Forwards, ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -60,14 +63,16 @@ fn app(dir: &Path) -> App {
 }
 
 fn read(app: &mut App, text: &str) {
-    app.update(Message::OpenSsh(OpenSshMessage::Read(Ok(text.to_owned()))));
+    app.update(Message::Sessions(SessionsMessage::Read(
+        Ok(text.to_owned()),
+    )));
 }
 
 #[test]
 fn the_menu_entry_asks_for_the_file() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    let effects = app.update(Message::OpenSsh(OpenSshMessage::Start));
+    let effects = app.update(Message::Sessions(SessionsMessage::Start));
     assert!(
         matches!(effects.as_slice(), [Effect::PickOpenSshConfig]),
         "{effects:?}"
@@ -79,7 +84,7 @@ fn the_preview_chooses_the_new_servers_and_says_what_was_left_out() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     read(&mut app, CONFIG);
-    let Some(Dialog::OpenSshPreview(preview)) = &app.dialog else {
+    let Some(Dialog::SessionsPreview(preview)) = &app.dialog else {
         panic!("{:?}", app.dialog);
     };
     let rows: Vec<(&str, Status, bool)> = preview
@@ -98,22 +103,22 @@ fn the_preview_chooses_the_new_servers_and_says_what_was_left_out() {
         [("web", Status::New, true), ("db", Status::Duplicate, false)],
         "a profile named DB already"
     );
-    assert_eq!(preview.counts(), (2, 1, 1));
+    assert_eq!(preview.counts(), (2, 1, 1, 0));
     assert_eq!(preview.diagnostics.len(), 1, "UnknownThing");
     assert!(!preview.all_chosen());
 
-    app.update(Message::OpenSsh(OpenSshMessage::ChooseAll(false)));
-    let Some(Dialog::OpenSshPreview(preview)) = &app.dialog else {
+    app.update(Message::Sessions(SessionsMessage::ChooseAll(false)));
+    let Some(Dialog::SessionsPreview(preview)) = &app.dialog else {
         panic!();
     };
     assert!(!preview.can_import(), "nothing chosen, nothing to do");
-    app.update(Message::OpenSsh(OpenSshMessage::Choose(0)));
-    let Some(Dialog::OpenSshPreview(preview)) = &app.dialog else {
+    app.update(Message::Sessions(SessionsMessage::Choose(0)));
+    let Some(Dialog::SessionsPreview(preview)) = &app.dialog else {
         panic!();
     };
     assert!(preview.rows[0].chosen && !preview.rows[1].chosen);
-    app.update(Message::OpenSsh(OpenSshMessage::ChooseAll(true)));
-    let Some(Dialog::OpenSshPreview(preview)) = &app.dialog else {
+    app.update(Message::Sessions(SessionsMessage::ChooseAll(true)));
+    let Some(Dialog::SessionsPreview(preview)) = &app.dialog else {
         panic!();
     };
     assert!(preview.all_chosen());
@@ -125,16 +130,20 @@ fn the_chosen_servers_are_imported_through_their_gateway() {
     let mut app = app(dir.path());
     read(&mut app, CONFIG);
     // "db" chosen too: a profile has its name, so it is left out all the same.
-    app.update(Message::OpenSsh(OpenSshMessage::ChooseAll(true)));
+    app.update(Message::Sessions(SessionsMessage::ChooseAll(true)));
     app.update(Message::ConfirmDialog);
     assert!(
         matches!(
             app.dialog,
-            Some(Dialog::OpenSshDone {
-                imported: 1,
-                gateways: 1,
-                duplicates: 1,
-                warnings: 1,
+            Some(Dialog::SessionsDone {
+                source: SessionsSource::OpenSsh,
+                counts: SessionsCounts {
+                    imported: 1,
+                    gateways: 1,
+                    duplicates: 1,
+                    invalid: 0,
+                    warnings: 1,
+                },
             })
         ),
         "{:?}",
@@ -165,22 +174,30 @@ fn the_chosen_servers_are_imported_through_their_gateway() {
 fn an_unreadable_or_empty_file_is_said() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    app.update(Message::OpenSsh(OpenSshMessage::Read(Err(
+    app.update(Message::Sessions(SessionsMessage::Read(Err(
         "config: denied".to_owned(),
     ))));
     assert!(matches!(
         &app.dialog,
-        Some(Dialog::OpenSshUnreadable { detail }) if detail == "config: denied"
+        Some(Dialog::SessionsUnreadable { detail, source: SessionsSource::OpenSsh }) if detail == "config: denied"
     ));
     for text in ["", "# nothing here\n\n"] {
         read(&mut app, text);
-        assert!(matches!(app.dialog, Some(Dialog::OpenSshEmpty)), "{text:?}");
+        assert!(
+            matches!(
+                app.dialog,
+                Some(Dialog::SessionsEmpty {
+                    source: SessionsSource::OpenSsh
+                })
+            ),
+            "{text:?}"
+        );
     }
 }
 
 #[test]
 fn the_files_text_is_never_shown_in_a_log() {
-    let message = Message::OpenSsh(OpenSshMessage::Read(Ok("Host secret-name\n".to_owned())));
+    let message = Message::Sessions(SessionsMessage::Read(Ok("Host secret-name\n".to_owned())));
     assert!(!format!("{message:?}").contains("secret-name"));
 }
 
@@ -189,7 +206,7 @@ fn a_file_that_only_says_what_it_left_out_is_previewed() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     read(&mut app, "Include other\n");
-    let Some(Dialog::OpenSshPreview(preview)) = &app.dialog else {
+    let Some(Dialog::SessionsPreview(preview)) = &app.dialog else {
         panic!("{:?}", app.dialog);
     };
     assert!(preview.rows.is_empty() && preview.diagnostics.len() == 1);

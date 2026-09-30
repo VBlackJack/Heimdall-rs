@@ -2275,7 +2275,7 @@ fn nothing_passing_the_filters_offers_to_reset_them_and_the_search() {
 
 #[test]
 fn the_more_menu_imports_an_openssh_config_as_the_csharp_one() {
-    use heimdall_app::OpenSshMessage;
+    use heimdall_app::SessionsMessage;
     use heimdall_ui::tree_view::TreeMenu;
 
     let dir = tempfile::tempdir().expect("dir");
@@ -2285,20 +2285,20 @@ fn the_more_menu_imports_an_openssh_config_as_the_csharp_one() {
     ui.click("Import OpenSSH config...").expect("the entry");
     assert!(ui.into_messages().any(|message| matches!(
         message,
-        Message::MenuChoice(AppMessage::OpenSsh(OpenSshMessage::Start))
+        Message::MenuChoice(AppMessage::Sessions(SessionsMessage::Start))
     )));
 }
 
 #[test]
 fn the_openssh_preview_lists_the_servers_what_was_left_out_and_imports() {
-    use heimdall_app::OpenSshMessage;
+    use heimdall_app::SessionsMessage;
 
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let text = "Host web\n    HostName web.lab\n    ProxyJump alice@edge.lab:2200\nHost \"server a\" spare\n    HostName other.lab\n    Frobnicate yes\n";
-    let _ = shell.update(Message::App(AppMessage::OpenSsh(OpenSshMessage::Read(Ok(
-        text.to_owned(),
-    )))));
+    let _ = shell.update(Message::App(AppMessage::Sessions(SessionsMessage::Read(
+        Ok(text.to_owned()),
+    ))));
     {
         let mut ui = simulator(&shell);
         for said in [
@@ -2332,28 +2332,28 @@ fn the_openssh_preview_lists_the_servers_what_was_left_out_and_imports() {
 async fn an_unreadable_file_is_said_with_its_path() {
     let dir = tempfile::tempdir().expect("dir");
     let missing = dir.path().join("config");
-    let error = heimdall_ui::openssh_view::read_file(&missing)
+    let error = heimdall_ui::sessions_view::read_file(&missing)
         .await
         .expect_err("no such file");
     assert!(error.starts_with(&missing.display().to_string()), "{error}");
     std::fs::write(&missing, "Host a\n").expect("write");
     assert_eq!(
-        heimdall_ui::openssh_view::read_file(&missing).await,
+        heimdall_ui::sessions_view::read_file(&missing).await,
         Ok("Host a\n".to_owned())
     );
 }
 
 #[test]
 fn nothing_chosen_in_the_openssh_preview_leaves_import_disabled() {
-    use heimdall_app::OpenSshMessage;
+    use heimdall_app::SessionsMessage;
 
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
-    let _ = shell.update(Message::App(AppMessage::OpenSsh(OpenSshMessage::Read(Ok(
-        "Host web\n".to_owned(),
-    )))));
-    let _ = shell.update(Message::App(AppMessage::OpenSsh(
-        OpenSshMessage::ChooseAll(false),
+    let _ = shell.update(Message::App(AppMessage::Sessions(SessionsMessage::Read(
+        Ok("Host web\n".to_owned()),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::Sessions(
+        SessionsMessage::ChooseAll(false),
     )));
     let mut ui = simulator(&shell);
     ui.click("Import").expect("the button");
@@ -2440,4 +2440,66 @@ async fn rdp_files_are_read_or_said_unreadable_with_their_path() {
     let read = heimdall_ui::rdp_view::read_all(vec![here.clone(), missing.clone()]).await;
     assert_eq!(read[0], (here, Ok("full address:s:a\n".to_owned())));
     assert!(matches!(&read[1].1, Err(why) if why.starts_with(&missing.display().to_string())));
+}
+
+#[test]
+fn the_more_menu_imports_putty_sessions_as_the_csharp_one() {
+    use heimdall_app::SessionsMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = simulator(&shell);
+    ui.click("Import PuTTY sessions...").expect("the entry");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Sessions(SessionsMessage::Putty))
+    )));
+}
+
+#[test]
+fn the_putty_preview_names_invalid_sessions_and_says_what_is_not_imported() {
+    use heimdall_app::SessionsMessage;
+    use heimdall_core::import::putty::{RawSession, Value};
+
+    let text = |value: &str| Value::Text(value.to_owned());
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let sessions = vec![
+        RawSession::new(
+            "db".to_owned(),
+            [
+                ("Protocol".to_owned(), text("ssh")),
+                ("HostName".to_owned(), text("db.lab")),
+                ("PortForwardings".to_owned(), text("L1=a:1,L2=b:2")),
+            ],
+        ),
+        RawSession::new("empty".to_owned(), [("Protocol".to_owned(), text("ssh"))]),
+    ];
+    let _ = shell.update(Message::App(AppMessage::Sessions(
+        SessionsMessage::PuttyRead(Ok(sessions)),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Import PuTTY sessions",
+            "2 candidates - 1 new, 0 duplicates, 1 invalid",
+            "(no host)",
+            "Invalid",
+            "Session \"db\" defines 2 tunnels captured but not mapped",
+            "Session \"empty\" has no host name and will be marked invalid",
+        ] {
+            ui.find(said).expect(said);
+        }
+        assert!(
+            ui.find("ProxyJump entries are imported as SSH gateway chains.")
+                .is_err(),
+            "an OpenSSH hint"
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("1 imported, 0 skipped (duplicates), 0 invalid, 0 warnings")
+        .expect("as the C# counts it");
 }

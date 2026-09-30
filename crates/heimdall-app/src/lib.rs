@@ -35,6 +35,7 @@ pub mod local_draft;
 pub mod local_driver;
 mod post_connect;
 pub mod profile_draft;
+pub mod putty_store;
 pub mod rdp_driver;
 mod sink;
 pub mod steps_draft;
@@ -47,15 +48,15 @@ pub use app::{
     App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, ExportOutcome, FilesMessage,
     FilterMessage, FolderMessage, FolderNaming, GatewayBadge, ImportSummary, KeyInput,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenSshMessage,
-    OpenSshPreview, OpenSshRow, OpenedVault, Phase, PinDialog, PinFailure, PinMessage, PinMode,
-    PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
-    ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
-    RDP_EXTENSION, RDP_MAX_ATTEMPTS, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, Retry,
-    SelectionMessage, SessionState, SessionStatus, SettingsMessage, SystemCredentials, Tab,
-    TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey, TrustedKeys,
-    TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
-    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault, Phase,
+    PinDialog, PinFailure, PinMessage, PinMode, PointerInput, PostConnectConfirmation, ProfileCopy,
+    ProfileKind, ProfileMenuMessage, ProfileSummary, Prompt, ProviderAnswer, ProviderMessage,
+    ProviderRequest, QuickResult, RDP_EXTENSION, RDP_MAX_ATTEMPTS, RdpMessage, RdpNames,
+    RdpOutcome, RdpPreview, RdpRow, Retry, SelectionMessage, SessionState, SessionStatus,
+    SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage,
+    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey,
+    TrustedKeys, TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob,
+    VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

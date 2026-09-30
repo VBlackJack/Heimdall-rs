@@ -23,8 +23,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, Message as AppMessage,
-    NO_FOLDER, OpenSshMessage, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
-    RdpMessage, SelectionMessage, SessionState, TabGroup, TabId, TabMenuMessage, TreeFilter,
+    NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, RdpMessage,
+    SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -435,11 +435,15 @@ pub fn menu_entries<'a>(
                 ))
                 .push(entry(
                     fl!("ui-tree-import-openssh"),
-                    Some(AppMessage::OpenSsh(OpenSshMessage::Start)),
+                    Some(AppMessage::Sessions(SessionsMessage::Start)),
                 ))
                 .push(entry(
                     fl!("ui-tree-import-rdp"),
                     Some(AppMessage::Rdp(RdpMessage::Start)),
+                ))
+                .push(entry(
+                    fl!("ui-tree-import-putty"),
+                    Some(AppMessage::Sessions(SessionsMessage::Putty)),
                 ))
                 .push(entry(
                     fl!("ui-tree-export-sessions"),

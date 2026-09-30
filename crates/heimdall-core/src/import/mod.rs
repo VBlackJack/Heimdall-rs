@@ -18,4 +18,5 @@
 
 pub mod csharp;
 pub mod openssh;
+pub mod putty;
 pub mod rdp_file;
