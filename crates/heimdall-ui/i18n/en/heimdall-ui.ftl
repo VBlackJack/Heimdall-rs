@@ -647,6 +647,11 @@ ui-profile-options-telnet = Telnet Options
 ui-profile-toggle-clipboard = Redirect clipboard
 ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
+ui-profile-rdp-follow-defaults = Use global RDP defaults
+ui-profile-rdp-defaults-banner = This server is using your global RDP defaults. Uncheck "Use global RDP defaults" to set per-server options.
+ui-profile-rdp-defaults-not-in-effect = The options below are this server's own saved values, not the global ones now in effect.
+ui-settings-rdp-defaults = RDP Defaults
+ui-settings-rdp-defaults-hint = The options of every RDP server that uses the global defaults.
 ui-profile-toggle-admin = Run as administrator session (/admin)
 # An RDP profile's sound and colours, as the C# Display & Audio card.
 ui-profile-audio = Audio mode

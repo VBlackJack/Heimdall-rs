@@ -226,6 +226,9 @@ pub enum ProfileToggle {
     Passive,
     /// FTP: explicit FTPS, as the C# "Enable SSL/TLS (FTPS)".
     Tls,
+    /// RDP: take the application's RDP options, as the C# "Use global RDP defaults", ticked
+    /// for a new profile.
+    FollowDefaults,
 }
 
 impl ProfileToggle {
@@ -553,6 +556,9 @@ impl ProfileDraft {
         if profile.options.admin_session {
             toggles.push(ProfileToggle::AdminSession);
         }
+        if profile.follow_defaults {
+            toggles.push(ProfileToggle::FollowDefaults);
+        }
         Self {
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
@@ -651,7 +657,11 @@ impl ProfileDraft {
             protocol,
             protocol_chosen: true,
             toggles: match protocol {
-                DraftProtocol::Rdp => vec![ProfileToggle::RedirectClipboard, ProfileToggle::Nla],
+                DraftProtocol::Rdp => vec![
+                    ProfileToggle::FollowDefaults,
+                    ProfileToggle::RedirectClipboard,
+                    ProfileToggle::Nla,
+                ],
                 // Passive by default, as a new C# FTP profile.
                 DraftProtocol::Ftp => vec![ProfileToggle::Passive],
                 _ => Vec::new(),
@@ -982,6 +992,7 @@ impl ProfileDraft {
                 options: self.saved_rdp_options()?,
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
+                follow_defaults: self.is_on(ProfileToggle::FollowDefaults),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -1679,6 +1690,7 @@ mod tests {
                 socks_port: Some(1080),
                 ..Forwards::default()
             },
+            follow_defaults: false,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),

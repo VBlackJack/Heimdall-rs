@@ -2159,7 +2159,7 @@ impl Shell {
                 self.ssh_reconnect_settings(),
                 self.trusted_keys_settings(TrustedList::HostKeys),
             ],
-            SettingsTab::Rdp => column![self.trusted_keys_settings(TrustedList::Certificates)],
+            SettingsTab::Rdp => self.rdp_settings(),
             SettingsTab::Security => column![
                 pin_card,
                 vault_card,
@@ -2259,6 +2259,20 @@ impl Shell {
         .max_width(SETTINGS_WIDTH)
         .style(container::bordered_box)
         .into()
+    }
+
+    /// The RDP tab: the application's RDP options, then the certificates trusted.
+    fn rdp_settings(&self) -> Column<'_, Message> {
+        column![
+            text(fl!("ui-settings-rdp-defaults")).size(BODY_SIZE),
+            container(crate::rdp_options::defaults(
+                self.app.settings().rdp_defaults
+            ))
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box),
+            self.trusted_keys_settings(TrustedList::Certificates),
+        ]
     }
 
     /// SSH auto-reconnect, as the C# SSH Connection card: on or off, and how many attempts
@@ -3833,6 +3847,7 @@ fn toggle_box<'a>(
 fn toggle_label(toggle: ProfileToggle) -> String {
     match toggle {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
+        ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
@@ -4237,6 +4252,18 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         form = form.push(section(options, None));
     }
     if draft.protocol == DraftProtocol::Rdp {
+        // As the C# card: the choice first; the profile's own options stay shown, said not to
+        // be the ones in effect.
+        form = form.push(toggle_box(
+            draft,
+            ProfileToggle::FollowDefaults,
+            toggle_label(ProfileToggle::FollowDefaults),
+        ));
+        if draft.is_on(ProfileToggle::FollowDefaults) {
+            form = form
+                .push(text(fl!("ui-profile-rdp-defaults-banner")).size(SMALL_SIZE))
+                .push(text(fl!("ui-profile-rdp-defaults-not-in-effect")).size(SMALL_SIZE));
+        }
         form = form.push(crate::rdp_options::view(draft.rdp_options)).push(
             crate::rdp_options::resolution(draft, |field| form_field(draft, field)),
         );
@@ -5272,6 +5299,7 @@ mod tests {
                 options,
                 vault_entry: None,
                 forwards: heimdall_core::profile::Forwards::default(),
+                follow_defaults: false,
             })
         };
         let fixed = RdpOptions {

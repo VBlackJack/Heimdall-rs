@@ -2810,3 +2810,32 @@ fn the_settings_page_is_in_the_csharp_tabs_and_keeps_the_one_chosen() {
     ui.find("Master password").expect("the tab chosen, kept");
     assert!(ui.find("Language").is_err());
 }
+
+#[test]
+fn the_rdp_tab_sets_the_global_rdp_defaults_as_the_csharp_settings() {
+    use heimdall_app::SettingsMessage;
+    use heimdall_core::profile::RdpDefaults;
+    use heimdall_ui::shell::SettingsTab;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Rdp));
+    let mut ui = simulator(&shell);
+    for said in [
+        "RDP Defaults",
+        "The options of every RDP server that uses the global defaults.",
+        "Redirect clipboard",
+        "Enable Network Level Authentication",
+        "Allow dynamic resolution updates",
+        "Trusted RDP certificates",
+    ] {
+        ui.find(said).expect(said);
+    }
+    ui.click("Redirect drives").expect("its box");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(defaults)))
+            if defaults == RdpDefaults { redirect_drives: true, ..RdpDefaults::default() }
+    )));
+}

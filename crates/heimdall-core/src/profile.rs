@@ -197,6 +197,10 @@ impl SshGateway {
 /// A saved RDP destination, reached directly.
 ///
 /// Holds no secret: the password is asked for when connecting.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per C# RDP option, each saved on its own"
+)]
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RdpProfile {
     /// Stable identifier.
@@ -242,6 +246,71 @@ pub struct RdpProfile {
     /// How the session looks, sounds and which session it opens.
     #[serde(flatten)]
     pub options: RdpOptions,
+    /// The session takes the application's [`RdpDefaults`] rather than this profile's own
+    /// redirections, authentication, colours, sound and resizing, as the C#
+    /// `RdpUseGlobalDefaults`. Off for a profile saved before it existed, so none changes by
+    /// itself; the profile's own values are kept either way.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow_defaults: bool,
+}
+
+impl RdpProfile {
+    /// The profile a session opens with: its own values, or, when it follows them, the
+    /// application's `defaults` in their place. Derived for each session, never saved.
+    #[must_use]
+    pub fn effective(self, defaults: &RdpDefaults) -> Self {
+        let mut profile = self;
+        if profile.follow_defaults {
+            profile.redirect_clipboard = defaults.redirect_clipboard;
+            profile.redirect_drives = defaults.redirect_drives;
+            profile.allow_tls_only = !defaults.nla;
+            profile.options.color_depth = defaults.color_depth;
+            profile.options.audio = defaults.audio;
+            profile.options.dynamic_resolution = defaults.dynamic_resolution;
+        }
+        profile
+    }
+}
+
+/// The RDP options of the application, which a profile following them takes, as the C#
+/// `RdpDefault*` settings, with their defaults.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per C# `RdpDefault*` setting"
+)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RdpDefaults {
+    /// Share the clipboard, as `RdpDefaultRedirectClipboard`: on.
+    #[serde(default = "shared")]
+    pub redirect_clipboard: bool,
+    /// Share this computer's drives, as `RdpDefaultRedirectDrives`: off.
+    #[serde(default)]
+    pub redirect_drives: bool,
+    /// Require Network Level Authentication, as `RdpDefaultNla`: on.
+    #[serde(default = "shared")]
+    pub nla: bool,
+    /// Colours of the desktop, as `RdpDefaultColorDepth`: 32 bits.
+    #[serde(default)]
+    pub color_depth: ColorDepth,
+    /// Where the sound goes, as `RdpDefaultAudioMode`: not played.
+    #[serde(default)]
+    pub audio: AudioPlayback,
+    /// The desktop follows the tab's size, as `RdpDefaultDynamicResolution`: on.
+    #[serde(default = "shared")]
+    pub dynamic_resolution: bool,
+}
+
+impl Default for RdpDefaults {
+    fn default() -> Self {
+        Self {
+            redirect_clipboard: true,
+            redirect_drives: false,
+            nla: true,
+            color_depth: ColorDepth::default(),
+            audio: AudioPlayback::default(),
+            dynamic_resolution: true,
+        }
+    }
 }
 
 /// How an RDP session is given: colour depth, sound, administrative session, size. Each is

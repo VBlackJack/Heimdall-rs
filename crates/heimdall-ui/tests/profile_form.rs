@@ -710,3 +710,36 @@ fn the_ssh_key_is_browsed_for_and_the_folder_separator_is_taught_as_the_csharp_f
     let mut ui = tall_simulator(&shell);
     assert!(ui.find("Browse...").is_err(), "no SSH key for RDP");
 }
+
+#[test]
+fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_in_effect() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("This server is using your global RDP defaults. Uncheck \"Use global RDP defaults\" to set per-server options.")
+            .expect("the banner");
+        ui.find("The options below are this server's own saved values, not the global ones now in effect.")
+            .expect("what the options below are");
+        ui.click("Use global RDP defaults").expect("its box");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileToggle {
+                toggle: ProfileToggle::FollowDefaults,
+                on: false
+            })
+        )));
+    }
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    let mut ui = tall_simulator(&shell);
+    assert!(
+        ui.find("The options below are this server's own saved values, not the global ones now in effect.")
+            .is_err(),
+        "its own options are the ones in effect"
+    );
+}

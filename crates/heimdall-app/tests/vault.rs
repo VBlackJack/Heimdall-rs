@@ -640,6 +640,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
         options: heimdall_core::profile::RdpOptions::default(),
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        follow_defaults: false,
     };
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
     store.merge_rdp([rdp("nla", false), rdp("tls", true)]);

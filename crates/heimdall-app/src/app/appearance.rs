@@ -19,6 +19,7 @@
 
 use std::path::PathBuf;
 
+use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
     ColorScheme, Language, Settings, settings_path, ssh_auto_reconnect_attempts_accepted,
     terminal_font_size_accepted,
@@ -46,6 +47,8 @@ pub enum SettingsMessage {
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
     SshAutoReconnectAttempts(u32),
+    /// The RDP options profiles following the application's take.
+    RdpDefaults(RdpDefaults),
 }
 
 /// The colours of `scheme`.
@@ -121,6 +124,7 @@ impl App {
                 }
                 self.settings.ssh_auto_reconnect_attempts = *attempts;
             }
+            SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
             SettingsMessage::TrustedKeys(_) => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {

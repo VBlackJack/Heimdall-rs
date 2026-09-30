@@ -78,6 +78,7 @@ fn app(dir: &Path) -> App {
         options: RdpOptions::default(),
         vault_entry: None,
         forwards: Forwards::default(),
+        follow_defaults: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
