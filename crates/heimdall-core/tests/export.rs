@@ -24,8 +24,8 @@ use heimdall_core::import::csharp::import;
 use heimdall_core::post_connect::{OnFailure, PostConnect, PostConnectStep};
 use heimdall_core::profile::{
     AudioPlayback, ColorDepth, Forwards, FtpProfile, LocalArguments, LocalCommand, LocalProfile,
-    ProfileId, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile,
-    VncProfile, WinRmProfile,
+    ProfileId, RdpDefaults, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile,
+    TelnetProfile, VncProfile, WinRmProfile,
 };
 use heimdall_core::store::ProfileStore;
 
@@ -129,6 +129,7 @@ fn rdp() -> Vec<RdpProfile> {
             },
             vault_entry: Some("Win/DC".to_owned()),
             forwards: Forwards::default(),
+            follow_defaults: false,
         },
         RdpProfile {
             id: ProfileId::new("desk"),
@@ -149,6 +150,7 @@ fn rdp() -> Vec<RdpProfile> {
             },
             vault_entry: None,
             forwards: Forwards::default(),
+            follow_defaults: false,
         },
     ]
 }
@@ -232,8 +234,11 @@ fn store(dir: &std::path::Path) -> ProfileStore {
 fn every_profile_comes_back_the_same_through_the_import() {
     let dir = tempfile::tempdir().expect("dir");
     let store = store(dir.path());
-    let report =
-        import(&export::csharp(&store, &line), None).expect("the importer reads the export");
+    let report = import(
+        &export::csharp(&store, &line, &RdpDefaults::default()),
+        None,
+    )
+    .expect("the importer reads the export");
     assert!(report.skipped.is_empty(), "{:?}", report.skipped);
     assert_eq!(
         report.gateways,
@@ -270,7 +275,11 @@ fn listed_arguments_are_written_as_the_given_windows_line() {
         "/c".to_owned(),
         "echo hi".to_owned(),
     ]))]);
-    let report = import(&export::csharp(&store, &line), None).expect("reads");
+    let report = import(
+        &export::csharp(&store, &line, &RdpDefaults::default()),
+        None,
+    )
+    .expect("reads");
     assert_eq!(
         report.local[0].command.arguments,
         LocalArguments::WindowsLine("quoted:/c|echo hi".to_owned())
@@ -280,7 +289,7 @@ fn listed_arguments_are_written_as_the_given_windows_line() {
 #[test]
 fn the_document_has_the_csharp_shape_and_no_secret() {
     let dir = tempfile::tempdir().expect("dir");
-    let text = export::csharp(&store(dir.path()), &line);
+    let text = export::csharp(&store(dir.path()), &line, &RdpDefaults::default());
     let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
     assert_eq!(document["schemaVersion"], 2);
     let servers = document["servers"].as_array().expect("servers");

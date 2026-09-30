@@ -26,8 +26,8 @@ use serde::Serialize;
 
 use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
-    AudioPlayback, Forwards, FtpProfile, LocalArguments, LocalProfile, RdpProfile, Resolution,
-    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    AudioPlayback, Forwards, FtpProfile, LocalArguments, LocalProfile, RdpDefaults, RdpProfile,
+    Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -209,12 +209,22 @@ struct Gateway {
 ///
 /// Never: the document holds only strings, numbers and booleans, which always serialize.
 #[must_use]
-pub fn csharp(store: &ProfileStore, windows_line: &dyn Fn(&LocalArguments) -> String) -> String {
+pub fn csharp(
+    store: &ProfileStore,
+    windows_line: &dyn Fn(&LocalArguments) -> String,
+    rdp_defaults: &RdpDefaults,
+) -> String {
     let servers = store
         .ssh_profiles()
         .iter()
         .map(ssh)
-        .chain(store.rdp_profiles().iter().map(rdp))
+        // A profile following the application's options is written with the ones in effect.
+        .chain(
+            store
+                .rdp_profiles()
+                .iter()
+                .map(|profile| rdp(&profile.clone().effective(rdp_defaults))),
+        )
         .chain(store.telnet_profiles().iter().map(telnet))
         .chain(store.vnc_profiles().iter().map(vnc))
         .chain(store.ftp_profiles().iter().map(ftp))

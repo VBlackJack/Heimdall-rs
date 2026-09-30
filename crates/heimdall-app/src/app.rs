@@ -2540,9 +2540,13 @@ impl App {
     fn export_sessions(&self) -> Effect {
         let store = &self.store;
         Effect::SaveExport {
-            document: heimdall_core::export::csharp(store, &|arguments| {
-                heimdall_term::local::windows_arguments(&local_tab::term_arguments(arguments))
-            }),
+            document: heimdall_core::export::csharp(
+                store,
+                &|arguments| {
+                    heimdall_term::local::windows_arguments(&local_tab::term_arguments(arguments))
+                },
+                &self.settings.rdp_defaults,
+            ),
             count: heimdall_core::export::session_count(store),
         }
     }

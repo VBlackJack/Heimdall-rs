@@ -138,6 +138,8 @@ impl App {
 
     /// Opens an RDP tab for `profile`.
     pub(super) fn open_rdp_profile(&mut self, profile: RdpProfile) -> Vec<Effect> {
+        // With the application's options when the profile follows them, as they are now.
+        let profile = profile.effective(&self.settings.rdp_defaults);
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
@@ -174,12 +176,16 @@ impl App {
         tab_id: TabId,
         accepted: Option<Fingerprint>,
     ) -> Vec<Effect> {
+        let defaults = self.settings.rdp_defaults;
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
         let TabProfile::Rdp(profile) = tab.profile.clone() else {
             return Vec::new();
         };
+        let profile = profile.effective(&defaults);
+        // The tab draws with the options the session gets.
+        tab.profile = TabProfile::Rdp(profile.clone());
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
         tab.attempt = attempt;

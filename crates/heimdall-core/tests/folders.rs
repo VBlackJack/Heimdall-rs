@@ -57,6 +57,7 @@ fn rdp(id: &str, group: Option<&str>) -> RdpProfile {
         options: heimdall_core::profile::RdpOptions::default(),
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
+        follow_defaults: false,
     }
 }
 

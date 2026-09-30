@@ -857,6 +857,7 @@ fn convert_rdp(
         },
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
+        follow_defaults: false,
     })
 }
 

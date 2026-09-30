@@ -417,6 +417,7 @@ mod tests {
             options,
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
+            follow_defaults: false,
         }));
         assert_eq!(config.options, options);
     }

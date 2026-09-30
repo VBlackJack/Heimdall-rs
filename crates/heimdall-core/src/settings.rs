@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
 use crate::lockout::Lockout;
 use crate::pin::PinHash;
+use crate::profile::RdpDefaults;
 use crate::store::{StoreError, write_atomic};
 
 /// Name of the settings file, beside the profile file.
@@ -148,6 +149,8 @@ pub struct Settings {
     /// Attempts before the reconnect is left to the user, within
     /// [`SSH_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`SSH_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub ssh_auto_reconnect_attempts: u32,
+    /// The RDP options profiles following the application's take.
+    pub rdp_defaults: RdpDefaults,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -227,6 +230,7 @@ impl Default for Settings {
             credential_provider: ProviderSettings::default(),
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            rdp_defaults: RdpDefaults::default(),
         }
     }
 }
@@ -248,6 +252,8 @@ struct SettingsFile {
     credential_provider: ProviderSection,
     #[serde(default)]
     ssh: SshSection,
+    #[serde(default)]
+    rdp: RdpDefaults,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -465,6 +471,7 @@ impl Settings {
                 .auto_reconnect_attempts
                 .filter(|attempts| ssh_auto_reconnect_attempts_accepted(*attempts))
                 .unwrap_or(SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT),
+            rdp_defaults: file.rdp,
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -525,6 +532,7 @@ impl Settings {
                 auto_reconnect: self.ssh_auto_reconnect,
                 auto_reconnect_attempts: Some(self.ssh_auto_reconnect_attempts),
             },
+            rdp: self.rdp_defaults,
         })?;
         write_atomic(path, &text)
     }

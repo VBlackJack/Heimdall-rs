@@ -230,6 +230,8 @@ impl App {
                     options: heimdall_core::profile::RdpOptions::default(),
                     vault_entry: None,
                     forwards: heimdall_core::profile::Forwards::default(),
+                    // Nothing of its own: the application's RDP options.
+                    follow_defaults: true,
                 }),
                 Purpose::Rdp,
             ),

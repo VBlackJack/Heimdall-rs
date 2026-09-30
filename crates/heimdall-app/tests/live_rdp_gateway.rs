@@ -74,6 +74,7 @@ fn request(
                 socks_port: Some(socks_port),
                 ..Forwards::default()
             },
+            follow_defaults: false,
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,

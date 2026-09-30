@@ -17,9 +17,9 @@
 //! The display and sound choices of an RDP profile's form, as the C# "Display & Audio"
 //! card: the audio mode beside the colour depth, then how the desktop is sized.
 
-use heimdall_app::Message as AppMessage;
 use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField};
-use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
+use heimdall_app::{Message as AppMessage, SettingsMessage};
+use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpDefaults, RdpOptions, Resolution};
 use iced::widget::{checkbox, column, pick_list, row, text};
 use iced::{Element, Length};
 
@@ -60,15 +60,29 @@ impl std::fmt::Display for AudioChoice {
 }
 
 /// The audio mode and colour depth lists of `options`, side by side.
+#[must_use]
 pub fn view<'a>(options: RdpOptions) -> Element<'a, Message> {
+    lists(
+        options.audio,
+        options.color_depth,
+        |audio| Message::App(AppMessage::ProfileChoice(ProfileChoice::Audio(audio))),
+        |depth| Message::App(AppMessage::ProfileChoice(ProfileChoice::ColorDepth(depth))),
+    )
+}
+
+/// The audio mode and colour depth lists, side by side, each choice sent as it says.
+fn lists<'a>(
+    audio: AudioPlayback,
+    depth: ColorDepth,
+    on_audio: impl Fn(AudioPlayback) -> Message + 'a,
+    on_depth: impl Fn(ColorDepth) -> Message + 'a,
+) -> Element<'a, Message> {
     let audio = column![
         text(fl!("ui-profile-audio")).size(LABEL_SIZE),
         pick_list(
             AudioPlayback::ALL.map(AudioChoice),
-            Some(AudioChoice(options.audio)),
-            |choice: AudioChoice| Message::App(AppMessage::ProfileChoice(ProfileChoice::Audio(
-                choice.0
-            ))),
+            Some(AudioChoice(audio)),
+            move |choice: AudioChoice| on_audio(choice.0),
         )
         .width(Length::Fill),
     ]
@@ -78,16 +92,61 @@ pub fn view<'a>(options: RdpOptions) -> Element<'a, Message> {
         text(fl!("ui-profile-color-depth")).size(LABEL_SIZE),
         pick_list(
             ColorDepth::ALL.map(DepthChoice),
-            Some(DepthChoice(options.color_depth)),
-            |choice: DepthChoice| Message::App(AppMessage::ProfileChoice(
-                ProfileChoice::ColorDepth(choice.0,)
-            )),
+            Some(DepthChoice(depth)),
+            move |choice: DepthChoice| on_depth(choice.0),
         )
         .width(Length::Fill),
     ]
     .spacing(SPACING / 2.0)
     .width(Length::Fill);
     row![audio, depth].spacing(SPACING).into()
+}
+
+/// The application's RDP options, as the C# RDP settings: what a profile following them
+/// takes, each change applied at once.
+#[must_use]
+pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
+    let send = |defaults: RdpDefaults| {
+        Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(defaults)))
+    };
+    let tick = move |on: bool, label: String, set: fn(&mut RdpDefaults, bool)| {
+        checkbox(on).label(label).on_toggle(move |on| {
+            let mut changed = defaults;
+            set(&mut changed, on);
+            send(changed)
+        })
+    };
+    column![
+        text(fl!("ui-settings-rdp-defaults-hint")).size(LABEL_SIZE),
+        lists(
+            defaults.audio,
+            defaults.color_depth,
+            move |audio| send(RdpDefaults { audio, ..defaults }),
+            move |color_depth| send(RdpDefaults {
+                color_depth,
+                ..defaults
+            }),
+        ),
+        tick(
+            defaults.redirect_clipboard,
+            fl!("ui-profile-toggle-clipboard"),
+            |d, on| d.redirect_clipboard = on,
+        ),
+        tick(
+            defaults.redirect_drives,
+            fl!("ui-profile-toggle-drives"),
+            |d, on| d.redirect_drives = on,
+        ),
+        tick(defaults.nla, fl!("ui-profile-toggle-nla"), |d, on| d.nla =
+            on),
+        tick(
+            defaults.dynamic_resolution,
+            fl!("ui-profile-resolution-dynamic"),
+            |d, on| d.dynamic_resolution = on,
+        ),
+    ]
+    .spacing(SPACING)
+    .into()
 }
 
 /// A resolution mode as the list names it.

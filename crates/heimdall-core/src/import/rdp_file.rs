@@ -272,6 +272,7 @@ impl Patch {
             options: RdpOptions::default(),
             vault_entry: None,
             forwards: Forwards::default(),
+            follow_defaults: false,
         };
         self.apply(&mut profile);
         profile
