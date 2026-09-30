@@ -27,6 +27,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use heimdall_core::import::csharp::{self, SkipReason};
+use heimdall_core::import::foreign::FileWarning;
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{
     FtpProfile, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile, TelnetProfile,
@@ -69,6 +70,7 @@ mod appearance;
 mod auto_reconnect;
 mod broadcast;
 mod connect_as;
+mod file_import;
 mod files_tab;
 mod folder_menu;
 mod folders;
@@ -104,6 +106,7 @@ pub use appearance::SettingsMessage;
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
 pub use connect_as::ConnectAs;
+pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use folder_menu::{FolderMessage, FolderNaming};
@@ -720,6 +723,9 @@ pub enum Effect {
     /// Ask which `.rdp` files to import, then read them; answered with
     /// [`RdpMessage::Read`], or nothing when none is picked.
     PickRdpFiles,
+    /// Ask which file "Import Sessions" imports, then read it; answered with
+    /// [`SessionsMessage::FileRead`], or nothing when none is picked.
+    PickSessionsFile,
     /// Ask which `known_hosts` file to import, then read it; answered with
     /// [`HostKeysMessage::Read`], or nothing when none is picked.
     PickKnownHosts,
@@ -844,6 +850,7 @@ impl fmt::Debug for Effect {
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
             Self::ReadPuttySessions => f.write_str("ReadPuttySessions"),
             Self::PickRdpFiles => f.write_str("PickRdpFiles"),
+            Self::PickSessionsFile => f.write_str("PickSessionsFile"),
             Self::PickKnownHosts => f.write_str("PickKnownHosts"),
             Self::ReadRdpFiles(paths) => write!(f, "ReadRdpFiles({})", paths.len()),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
@@ -1176,6 +1183,10 @@ pub struct ImportSummary {
     pub merged: MergeReport,
     /// Profiles left out: display name and reason.
     pub skipped: Vec<(String, SkipReason)>,
+    /// What the file said as a whole.
+    pub warnings: Vec<FileWarning>,
+    /// For a `MobaXterm` file, the passwords it stores, which must be entered again.
+    pub stored_credentials: Option<usize>,
 }
 
 /// A modal decision that concerns the whole window.
@@ -1290,6 +1301,15 @@ pub enum Dialog {
     },
     /// What the `.rdp` import did.
     RdpDone(RdpOutcome),
+    /// How many sessions a picked file gives, asked before they are imported.
+    ConfirmImportFile(Box<PendingImport>),
+    /// A picked file gives no session: those left out, and what it said.
+    ImportNothing {
+        /// Sessions left out: display name and reason.
+        skipped: Vec<(String, SkipReason)>,
+        /// What the file said as a whole.
+        warnings: Vec<FileWarning>,
+    },
     /// What another `known_hosts` file gives, to choose from.
     HostKeysPreview(Box<HostKeysPreview>),
     /// The `known_hosts` file picked, or Heimdall's own, could not be read or written.
@@ -2384,16 +2404,13 @@ impl App {
 
     fn confirm_dialog(&mut self) -> Vec<Effect> {
         match self.dialog.take() {
-            Some(Dialog::SessionsPreview(preview)) => {
-                self.import_sessions(&preview);
-                Vec::new()
-            }
-            Some(Dialog::RdpPreview(preview)) => {
-                self.import_rdp(&preview);
-                Vec::new()
-            }
-            Some(Dialog::HostKeysPreview(preview)) => {
-                self.import_hostkeys(&preview);
+            Some(
+                dialog @ (Dialog::SessionsPreview(_)
+                | Dialog::RdpPreview(_)
+                | Dialog::HostKeysPreview(_)
+                | Dialog::ConfirmImportFile(_)),
+            ) => {
+                self.confirm_import(dialog);
                 Vec::new()
             }
             Some(Dialog::ConfirmCloseTab(tab)) => {
@@ -2475,6 +2492,7 @@ impl App {
                 | Dialog::SessionsDone { .. }
                 | Dialog::RdpNothing { .. }
                 | Dialog::RdpDone(_)
+                | Dialog::ImportNothing { .. }
                 | Dialog::HostKeysUnreadable { .. }
                 | Dialog::HostKeysEmpty
                 | Dialog::HostKeysDone { .. }
@@ -2551,39 +2569,9 @@ impl App {
             }
         };
         // Saved before it is kept: a failed save leaves the list as its file is.
-        let merged = match self.store.apply(|store| {
-            let ssh = store.merge(report.profiles);
-            let rdp = store.merge_rdp(report.rdp);
-            let telnet = store.merge_telnet(report.telnet);
-            let vnc = store.merge_vnc(report.vnc);
-            let local = store.merge_local(report.local);
-            let winrm = store.merge_winrm(report.winrm);
-            let ftp = store.merge_ftp(report.ftp);
-            let gateways = store.merge_gateways(report.gateways);
-            [ssh, rdp, telnet, vnc, local, winrm, ftp, gateways]
-                .into_iter()
-                .fold(MergeReport::default(), |total, one| MergeReport {
-                    added: total.added + one.added,
-                    updated: total.updated + one.updated,
-                    unchanged: total.unchanged + one.unchanged,
-                })
-        }) {
-            Ok(merged) => merged,
-            Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
-                return;
-            }
-        };
-        self.dialog = Some(Dialog::ImportDone(ImportSummary {
-            merged,
-            skipped: report
-                .skipped
-                .into_iter()
-                .map(|skipped| (server_text(&skipped.name), skipped.reason))
-                .collect(),
-        }));
+        if let Some(summary) = self.merge_import(report) {
+            self.dialog = Some(Dialog::ImportDone(summary));
+        }
     }
 }
 

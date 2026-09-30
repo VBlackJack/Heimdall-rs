@@ -45,19 +45,20 @@ pub mod transcript;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, ExportOutcome, FilesMessage,
-    FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage,
-    HostKeysOutcome, HostKeysPreview, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS,
-    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER,
-    NameAction, Notice, OpenedVault, Phase, PinDialog, PinFailure, PinMessage, PinMode,
-    PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
-    ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
-    RDP_EXTENSION, RDP_MAX_ATTEMPTS, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, Retry,
-    SelectionMessage, SessionState, SessionStatus, SessionsCounts, SessionsMessage,
-    SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SystemCredentials, Tab,
-    TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey, TrustedKeys,
-    TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
-    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, ExportOutcome, FileKind,
+    FilesMessage, FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
+    HostKeysMessage, HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary, KeyInput,
+    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
+    PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode, PointerInput,
+    PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, Prompt,
+    ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult, RDP_EXTENSION, RDP_MAX_ATTEMPTS,
+    RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, Retry, SelectionMessage, SessionState,
+    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
+    SettingsMessage, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter,
+    TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};

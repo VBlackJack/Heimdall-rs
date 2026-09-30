@@ -17,6 +17,10 @@
 //! Importers from other tools.
 
 pub mod csharp;
+pub mod foreign;
+pub mod mobaxterm;
+pub mod mremoteng;
 pub mod openssh;
 pub mod putty;
+pub mod rdcman;
 pub mod rdp_file;

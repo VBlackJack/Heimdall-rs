@@ -257,6 +257,29 @@ ui-dialog-import-counts = Añadidos: { $added }. Actualizados: { $updated }. Sin
 ui-dialog-import-skipped = Descartados:
 ui-dialog-import-skipped-item = { $name }: { $reason }
 ui-dialog-import-failed-title = La importación no pudo ejecutarse
+ui-import-file-title = Importar sesiones
+ui-import-file-filter-all = Todos los compatibles
+ui-import-file-filter-json = JSON
+ui-import-file-filter-rdp = Archivos RDP
+ui-import-file-filter-any = Todos los archivos
+ui-import-file-confirm = { $count ->
+    [one] ¿Importar { $count } sesión? Las sesiones existentes con el mismo ID se actualizarán.
+   *[other] ¿Importar { $count } sesiones? Las sesiones existentes con el mismo ID se actualizarán.
+}
+ui-import-file-confirm-mobaxterm = { $count ->
+    [one] ¿Importar { $count } sesión de MobaXterm? Las contraseñas no se pueden importar y deberán volver a introducirse.
+   *[other] ¿Importar { $count } sesiones de MobaXterm? Las contraseñas no se pueden importar y deberán volver a introducirse.
+}
+ui-import-file-button = Importar
+ui-import-file-nothing = No se encontraron sesiones en el archivo seleccionado.
+ui-import-file-unreadable = No se pudo leer el archivo: { $detail }
+ui-import-file-encrypted = El archivo está cifrado por completo. Descífralo antes en mRemoteNG (Archivo > Guardar como, sin cifrado).
+ui-import-file-too-large = El archivo es demasiado grande para importar ({ $size } bytes).
+ui-import-mobaxterm-passwords = Las contraseñas de MobaXterm están cifradas con un algoritmo propietario y no se pudieron importar. Vuelve a introducir las credenciales de cada sesión.
+ui-import-mobaxterm-passwords-detected = { $count ->
+    [one] Se detectó { $count } contraseña almacenada en el archivo de MobaXterm. MobaXterm la cifra con un algoritmo propietario, así que no se importó; vuelve a introducir las credenciales de la sesión afectada.
+   *[other] Se detectaron { $count } contraseñas almacenadas en el archivo de MobaXterm. MobaXterm las cifra con un algoritmo propietario, así que no se importaron; vuelve a introducir las credenciales de las sesiones afectadas.
+}
 ui-dialog-store-title = No se pudo usar el archivo de perfiles
 ui-dialog-store-body = Heimdall arrancó sin perfiles; los cambios se guardan junto al archivo ilegible, que queda intacto.
 ui-dialog-detail = Detalle: { $detail }

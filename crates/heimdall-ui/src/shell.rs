@@ -1541,6 +1541,7 @@ impl Shell {
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
             Effect::PickRdpFiles => pick_rdp(),
+            Effect::PickSessionsFile => pick_sessions_file(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
             Effect::ReadPuttySessions => Task::perform(
@@ -1757,13 +1758,7 @@ impl Shell {
                 .as_ref()
                 .map(|p| self.app.connect_as_choices(&p.id))
                 .unwrap_or_default();
-            tree_view::menu_entries(
-                menu,
-                profile.as_ref(),
-                &connect_as,
-                editable,
-                self.app.can_import(),
-            )
+            tree_view::menu_entries(menu, profile.as_ref(), &connect_as, editable)
         };
         Some(entries)
     }
@@ -3186,6 +3181,33 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
     }))
 }
 
+/// The open dialog of "Import Sessions", held by the window, then the file read; a `.rdp`
+/// file goes to the `.rdp` import, as the C# sends it. Nothing when no file is picked.
+fn pick_sessions_file() -> Task<Message> {
+    window::latest().then(|id| {
+        let pick = match id {
+            Some(id) => window::run(id, |window| crate::file_import_view::pick(Some(window))),
+            None => Task::done(crate::file_import_view::pick(None)),
+        };
+        pick.then(|pick| {
+            Task::future(pick).then(|picked| {
+                let Some(path) = picked.map(|file| file.path().to_owned()) else {
+                    return Task::none();
+                };
+                if crate::file_import_view::is_rdp(&path) {
+                    Task::perform(crate::rdp_view::read_all(vec![path]), rdp_read)
+                } else {
+                    Task::perform(crate::file_import_view::read(path), |read| {
+                        Message::App(AppMessage::Sessions(
+                            heimdall_app::SessionsMessage::FileRead(read),
+                        ))
+                    })
+                }
+            })
+        })
+    })
+}
+
 /// The open dialog of the `.rdp` import, held by the window, then the files read; nothing
 /// when none is picked.
 fn pick_rdp() -> Task<Message> {
@@ -3296,6 +3318,20 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::PasswordSaveFailed { detail: technical } => {
             (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
         }
+        Dialog::ImportNothing { skipped, warnings } => (
+            fl!("ui-import-file-title"),
+            std::iter::once(fl!("ui-import-file-nothing"))
+                .chain(crate::file_import_view::warning_lines(warnings))
+                .chain(skipped.iter().map(|(name, reason)| {
+                    fl!(
+                        "ui-dialog-import-skipped-item",
+                        name = server_text(name),
+                        reason = texts::skip_reason(reason)
+                    )
+                }))
+                .map(text)
+                .collect(),
+        ),
         Dialog::StoreError { detail: technical } => (
             fl!("ui-dialog-store-title"),
             vec![text(fl!("ui-dialog-store-body")), detail(technical)],
@@ -3322,6 +3358,22 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
         Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
         Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
         Dialog::HostKeysPreview(preview) => crate::hostkeys_view::preview(preview),
+        Dialog::ConfirmImportFile(pending) => {
+            let (title, body, action) = crate::file_import_view::question(pending);
+            column![
+                text(title).size(HEADING_SIZE),
+                text(body),
+                row![
+                    button(text(fl!("ui-dialog-cancel-button")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::DismissDialog)),
+                    button(text(action)).on_press(Message::App(AppMessage::ConfirmDialog)),
+                ]
+                .spacing(SPACING),
+            ]
+            .spacing(SPACING)
+            .into()
+        }
         _ => column![].into(),
     }
 }
@@ -3357,6 +3409,15 @@ fn import_report<'a>(
         content = content
             .push(text(fl!("ui-dialog-import-skipped")))
             .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
+    }
+    // What the file said, and for `MobaXterm` that its passwords must be entered again.
+    for line in crate::file_import_view::warning_lines(&summary.warnings)
+        .into_iter()
+        .chain(crate::file_import_view::password_notice(
+            summary.stored_credentials,
+        ))
+    {
+        content = content.push(text(line).size(SMALL_SIZE));
     }
     content.push(ok).into()
 }
@@ -4949,11 +5010,13 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::HostKeysUnreadable { .. }
         | Dialog::HostKeysEmpty
         | Dialog::HostKeysDone { .. }
+        | Dialog::ImportNothing { .. }
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreError { .. } => report(dialog, ok()),
-        Dialog::SessionsPreview(_) | Dialog::RdpPreview(_) | Dialog::HostKeysPreview(_) => {
-            import_preview(dialog)
-        }
+        Dialog::SessionsPreview(_)
+        | Dialog::RdpPreview(_)
+        | Dialog::HostKeysPreview(_)
+        | Dialog::ConfirmImportFile(_) => import_preview(dialog),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::Pin(pin) => pin_dialog(pin, forms.vault),
         Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),

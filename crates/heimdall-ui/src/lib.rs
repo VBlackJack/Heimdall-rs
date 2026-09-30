@@ -19,6 +19,7 @@
 mod desktop_texture;
 pub mod desktop_view;
 pub mod export_file;
+pub mod file_import_view;
 mod files_view;
 pub mod finder;
 pub mod hostkeys_view;

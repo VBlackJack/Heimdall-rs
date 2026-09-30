@@ -2622,3 +2622,122 @@ fn a_known_hosts_conflict_says_whether_the_file_or_the_trusted_key_it_contradict
     ui.find("Multiple different fingerprints for this host in the source file")
         .expect("the file");
 }
+
+#[test]
+fn the_more_menu_imports_sessions_from_a_file_as_the_csharp_one() {
+    use heimdall_app::SessionsMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = simulator(&shell);
+    ui.click("Import Sessions")
+        .expect("the entry, without a C# folder");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Sessions(SessionsMessage::File))
+    )));
+}
+
+#[test]
+fn a_mobaxterm_file_is_asked_about_then_its_passwords_are_said() {
+    use heimdall_app::{ImportFile, SessionsMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Sessions(
+        SessionsMessage::FileRead(Ok(ImportFile {
+            name: "lab.mxtsessions".to_owned(),
+            text: "[Bookmarks]\nweb= #109#0%web.lab%22%root\n[Passwords]\na=x\nb=y\n".to_owned(),
+            settings: None,
+        })),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(
+            "Import 1 session from MobaXterm? Passwords cannot be imported and must be re-entered.",
+        )
+        .expect("the C# question");
+        ui.click("Import").expect("the button");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("Added: 1. Updated: 0. Unchanged: 0.")
+        .expect("the counts");
+    ui.find(
+        "Detected 2 stored passwords in the MobaXterm file. MobaXterm encrypts them with a proprietary algorithm, so they were not imported - please re-enter credentials for the affected sessions.",
+    )
+    .expect("the C# notice");
+}
+
+#[test]
+fn a_file_giving_nothing_says_so_and_why() {
+    use heimdall_app::{ImportFile, SessionsMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Sessions(
+        SessionsMessage::FileRead(Ok(ImportFile {
+            name: "confCons.xml".to_owned(),
+            text: r#"<Connections FullFileEncryption="true"/>"#.to_owned(),
+            settings: None,
+        })),
+    )));
+    let mut ui = simulator(&shell);
+    for said in [
+        "Import Sessions",
+        "No sessions found in the selected file.",
+        "The file is fully encrypted. Decrypt it in mRemoteNG first (File > Save As with no encryption).",
+    ] {
+        ui.find(said).expect(said);
+    }
+}
+
+#[tokio::test]
+async fn a_servers_json_is_read_with_its_settings_and_a_large_file_is_refused() {
+    let dir = tempfile::tempdir().expect("dir");
+    let servers = dir.path().join("servers.json");
+    std::fs::write(&servers, "[]").expect("write");
+    std::fs::write(dir.path().join("settings.json"), "{}").expect("write");
+    let read = heimdall_ui::file_import_view::read(servers)
+        .await
+        .expect("read");
+    assert_eq!(
+        (read.name.as_str(), read.settings.as_deref()),
+        ("servers.json", Some("{}"))
+    );
+    let other = dir.path().join("export.json");
+    std::fs::write(&other, "[]").expect("write");
+    let read = heimdall_ui::file_import_view::read(other)
+        .await
+        .expect("read");
+    assert_eq!(
+        read.settings, None,
+        "only a servers.json takes its settings"
+    );
+
+    let large = dir.path().join("big.xml");
+    let file = std::fs::File::create(&large).expect("create");
+    file.set_len(heimdall_ui::file_import_view::MAX_FILE_BYTES + 1)
+        .expect("grow");
+    assert!(
+        heimdall_ui::file_import_view::read(large.clone())
+            .await
+            .is_err_and(|why| why.starts_with("The file is too large to import"))
+    );
+    file.set_len(heimdall_ui::file_import_view::MAX_FILE_BYTES)
+        .expect("shrink");
+    assert!(
+        !heimdall_ui::file_import_view::read(large)
+            .await
+            .is_err_and(|why| why.starts_with("The file is too large")),
+        "the limit itself is read"
+    );
+    assert!(heimdall_ui::file_import_view::is_rdp(Path::new("a/B.RDP")));
+    assert!(!heimdall_ui::file_import_view::is_rdp(Path::new("a/b.rdg")));
+}
