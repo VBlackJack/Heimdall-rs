@@ -1541,6 +1541,7 @@ impl Shell {
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
             Effect::PickRdpFiles => pick_rdp(),
+            Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
             Effect::ReadPuttySessions => Task::perform(
                 async {
@@ -1632,12 +1633,16 @@ impl Shell {
                 container(responsive(move |size| {
                     let content = dialog_view(dialog, &self.forms(size.height));
                     // The OpenSSH preview is a table: wider than a form, as the C# one.
-                    let card =
-                        if matches!(dialog, Dialog::SessionsPreview(_) | Dialog::RdpPreview(_)) {
-                            wide_card(content)
-                        } else {
-                            card(content)
-                        };
+                    let card = if matches!(
+                        dialog,
+                        Dialog::SessionsPreview(_)
+                            | Dialog::RdpPreview(_)
+                            | Dialog::HostKeysPreview(_)
+                    ) {
+                        wide_card(content)
+                    } else {
+                        card(content)
+                    };
                     center(card).into()
                 }))
                 .style(move |theme: &Theme| container::Style {
@@ -3202,6 +3207,25 @@ fn pick_rdp() -> Task<Message> {
     })
 }
 
+/// The open dialog of the `known_hosts` import, held by the window, then the file read;
+/// nothing when no file is picked.
+fn pick_known_hosts() -> Task<Message> {
+    window::latest().then(|id| {
+        let pick = match id {
+            Some(id) => window::run(id, |window| crate::hostkeys_view::pick(Some(window))),
+            None => Task::done(crate::hostkeys_view::pick(None)),
+        };
+        pick.then(|pick| {
+            Task::future(crate::hostkeys_view::read(pick)).then(|read| match read {
+                Some(read) => Task::done(crate::hostkeys_view::app(
+                    heimdall_app::HostKeysMessage::Read(read),
+                )),
+                None => Task::none(),
+            })
+        })
+    })
+}
+
 /// The open dialog of the OpenSSH import, held by the window, then the file read; nothing
 /// when no file is picked.
 fn pick_openssh() -> Task<Message> {
@@ -3272,10 +3296,15 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         Dialog::PasswordSaveFailed { detail: technical } => {
             (fl!("ui-vault-save-failed-title"), vec![detail(technical)])
         }
+        Dialog::StoreError { detail: technical } => (
+            fl!("ui-dialog-store-title"),
+            vec![text(fl!("ui-dialog-store-body")), detail(technical)],
+        ),
         other => {
             let (title, lines) = crate::rdp_view::report_lines(other)
                 .map(|lines| (fl!("ui-rdp-title"), lines))
                 .or_else(|| crate::sessions_view::report_lines(other))
+                .or_else(|| crate::hostkeys_view::report_lines(other))
                 .unwrap_or_default();
             (title, lines.into_iter().map(text).collect())
         }
@@ -3285,6 +3314,16 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
         .push(ok)
         .spacing(SPACING)
         .into()
+}
+
+/// The preview of an import, a table of what the file gives to choose from.
+fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
+    match dialog {
+        Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
+        Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
+        Dialog::HostKeysPreview(preview) => crate::hostkeys_view::preview(preview),
+        _ => column![].into(),
+    }
 }
 
 fn import_report<'a>(
@@ -4848,7 +4887,6 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         ]
         .spacing(SPACING)
     };
-    let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
     match dialog {
         Dialog::ConfirmCloseTab(_)
         | Dialog::ConfirmCloseTabs { .. }
@@ -4908,17 +4946,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::SessionsDone { .. }
         | Dialog::RdpNothing { .. }
         | Dialog::RdpDone(_)
-        | Dialog::PasswordSaveFailed { .. } => report(dialog, ok()),
-        Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
-        Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
-        Dialog::StoreError { detail: technical } => column![
-            heading(fl!("ui-dialog-store-title")),
-            text(fl!("ui-dialog-store-body")),
-            detail(technical),
-            ok(),
-        ]
-        .spacing(SPACING)
-        .into(),
+        | Dialog::HostKeysUnreadable { .. }
+        | Dialog::HostKeysEmpty
+        | Dialog::HostKeysDone { .. }
+        | Dialog::PasswordSaveFailed { .. }
+        | Dialog::StoreError { .. } => report(dialog, ok()),
+        Dialog::SessionsPreview(_) | Dialog::RdpPreview(_) | Dialog::HostKeysPreview(_) => {
+            import_preview(dialog)
+        }
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::Pin(pin) => pin_dialog(pin, forms.vault),
         Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),

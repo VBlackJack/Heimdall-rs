@@ -169,6 +169,17 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
         }
         rows.into()
     };
+    // As the C# section: the import beside the list it adds to.
+    let body = column![
+        small_button(
+            fl!("ui-trusted-host-keys-import"),
+            crate::hostkeys_view::app(heimdall_app::HostKeysMessage::Start),
+            button::secondary,
+        ),
+        body,
+    ]
+    .spacing(SPACING)
+    .into();
     card(
         fl!("ui-trusted-host-keys-title"),
         fl!("ui-trusted-host-keys-hint"),

@@ -236,3 +236,18 @@ fn a_certificate_is_forgotten_after_the_csharp_question_with_keep() {
     ui.find("Certificate forgotten for dc.lab:3389.")
         .expect("said");
 }
+
+#[test]
+fn the_host_keys_section_imports_a_known_hosts_file_as_the_csharp_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::ShowSettings);
+    let mut ui = simulator(&shell);
+    ui.click("Import known_hosts").expect("the button");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::Settings(SettingsMessage::TrustedKeys(
+            TrustedKeysMessage::Import(heimdall_app::HostKeysMessage::Start)
+        )))
+    )));
+}

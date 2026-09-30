@@ -74,6 +74,7 @@ mod folder_menu;
 mod folders;
 mod ftp_tab;
 mod gateways;
+mod hostkeys_import;
 mod local_tab;
 mod pin;
 mod post_connect;
@@ -107,6 +108,7 @@ pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingTransfer};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
+pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use local_tab::LocalConfirmation;
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
@@ -718,6 +720,9 @@ pub enum Effect {
     /// Ask which `.rdp` files to import, then read them; answered with
     /// [`RdpMessage::Read`], or nothing when none is picked.
     PickRdpFiles,
+    /// Ask which `known_hosts` file to import, then read it; answered with
+    /// [`HostKeysMessage::Read`], or nothing when none is picked.
+    PickKnownHosts,
     /// Read these `.rdp` files, dropped on the window; answered with [`RdpMessage::Read`].
     ReadRdpFiles(Vec<PathBuf>),
     /// Ask where to save the exported sessions, as the C# save dialog, then write them
@@ -839,6 +844,7 @@ impl fmt::Debug for Effect {
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
             Self::ReadPuttySessions => f.write_str("ReadPuttySessions"),
             Self::PickRdpFiles => f.write_str("PickRdpFiles"),
+            Self::PickKnownHosts => f.write_str("PickKnownHosts"),
             Self::ReadRdpFiles(paths) => write!(f, "ReadRdpFiles({})", paths.len()),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
             Self::WakeAt {
@@ -1284,6 +1290,22 @@ pub enum Dialog {
     },
     /// What the `.rdp` import did.
     RdpDone(RdpOutcome),
+    /// What another `known_hosts` file gives, to choose from.
+    HostKeysPreview(Box<HostKeysPreview>),
+    /// The `known_hosts` file picked, or Heimdall's own, could not be read or written.
+    HostKeysUnreadable {
+        /// Technical detail.
+        detail: String,
+    },
+    /// The `known_hosts` file picked gives no key.
+    HostKeysEmpty,
+    /// What the `known_hosts` import did.
+    HostKeysDone {
+        /// Keys imported, trusted already, in conflict.
+        done: HostKeysOutcome,
+        /// Lines the file could not be read at.
+        warnings: usize,
+    },
     /// What the OpenSSH or `PuTTY` import added.
     SessionsDone {
         /// OpenSSH or `PuTTY`.
@@ -2370,6 +2392,10 @@ impl App {
                 self.import_rdp(&preview);
                 Vec::new()
             }
+            Some(Dialog::HostKeysPreview(preview)) => {
+                self.import_hostkeys(&preview);
+                Vec::new()
+            }
             Some(Dialog::ConfirmCloseTab(tab)) => {
                 self.close_tab(tab);
                 Vec::new()
@@ -2449,6 +2475,9 @@ impl App {
                 | Dialog::SessionsDone { .. }
                 | Dialog::RdpNothing { .. }
                 | Dialog::RdpDone(_)
+                | Dialog::HostKeysUnreadable { .. }
+                | Dialog::HostKeysEmpty
+                | Dialog::HostKeysDone { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. },
             )
