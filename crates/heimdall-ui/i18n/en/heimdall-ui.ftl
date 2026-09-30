@@ -257,6 +257,29 @@ ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: {
 ui-dialog-import-skipped = Left out:
 ui-dialog-import-skipped-item = { $name }: { $reason }
 ui-dialog-import-failed-title = The import could not run
+ui-import-file-title = Import Sessions
+ui-import-file-filter-all = All supported
+ui-import-file-filter-json = JSON
+ui-import-file-filter-rdp = RDP files
+ui-import-file-filter-any = All files
+ui-import-file-confirm = { $count ->
+    [one] Import { $count } session? Existing sessions with the same ID will be updated.
+   *[other] Import { $count } sessions? Existing sessions with the same ID will be updated.
+}
+ui-import-file-confirm-mobaxterm = { $count ->
+    [one] Import { $count } session from MobaXterm? Passwords cannot be imported and must be re-entered.
+   *[other] Import { $count } sessions from MobaXterm? Passwords cannot be imported and must be re-entered.
+}
+ui-import-file-button = Import
+ui-import-file-nothing = No sessions found in the selected file.
+ui-import-file-unreadable = The file could not be read: { $detail }
+ui-import-file-encrypted = The file is fully encrypted. Decrypt it in mRemoteNG first (File > Save As with no encryption).
+ui-import-file-too-large = The file is too large to import ({ $size } bytes).
+ui-import-mobaxterm-passwords = MobaXterm passwords are encrypted with a proprietary algorithm and could not be imported. Please re-enter credentials for each session.
+ui-import-mobaxterm-passwords-detected = { $count ->
+    [one] Detected { $count } stored password in the MobaXterm file. MobaXterm encrypts it with a proprietary algorithm, so it was not imported - please re-enter credentials for the affected session.
+   *[other] Detected { $count } stored passwords in the MobaXterm file. MobaXterm encrypts them with a proprietary algorithm, so they were not imported - please re-enter credentials for the affected sessions.
+}
 ui-dialog-store-title = The profile file could not be used
 ui-dialog-store-body = Heimdall started with no profile; changes are saved beside the unreadable file, which is left untouched.
 ui-dialog-detail = Detail: { $detail }

@@ -408,7 +408,6 @@ pub fn menu_entries<'a>(
     profile: Option<&ProfileSummary>,
     connect_as: &[ConnectAs],
     editable: bool,
-    can_import: bool,
 ) -> Element<'a, Message> {
     let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
     match (menu, profile) {
@@ -432,7 +431,7 @@ pub fn menu_entries<'a>(
             entries = entries
                 .push(entry(
                     fl!("ui-tree-import-sessions"),
-                    can_import.then_some(AppMessage::ImportLegacy),
+                    Some(AppMessage::Sessions(SessionsMessage::File)),
                 ))
                 .push(entry(
                     fl!("ui-tree-import-openssh"),

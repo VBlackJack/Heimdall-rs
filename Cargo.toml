@@ -62,6 +62,9 @@ unftp-sbe-fs = "0.4.0"
 # rcgen: test certificates only.
 rcgen = { version = "0.14.5", default-features = false, features = ["crypto", "ring"] }
 ring = "0.17.14"
+# roxmltree: mRemoteNG and RDCMan files read, a DTD refused; already in the tree through the
+# font stack.
+roxmltree = "0.20.0"
 russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2"] }
 rust-embed = "8.12.0"
 # rustls-native-certs: the system's certificate store, for an FTPS certificate it trusts, as in

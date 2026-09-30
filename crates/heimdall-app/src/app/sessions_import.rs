@@ -120,6 +120,10 @@ pub enum SessionsMessage {
     Choose(usize),
     /// Every server that can be chosen, or none.
     ChooseAll(bool),
+    /// "Import Sessions": pick a file, a Heimdall, `MobaXterm`, `mRemoteNG` or `RDCMan` one.
+    File,
+    /// The file picked, read; or why it could not be.
+    FileRead(Result<super::ImportFile, String>),
 }
 
 impl App {
@@ -127,6 +131,8 @@ impl App {
         match message {
             SessionsMessage::Start => return vec![Effect::PickOpenSshConfig],
             SessionsMessage::Putty => return vec![Effect::ReadPuttySessions],
+            SessionsMessage::File => return vec![Effect::PickSessionsFile],
+            SessionsMessage::FileRead(read) => return self.import_file(read),
             SessionsMessage::Read(Ok(text)) => {
                 let parsed = openssh::parse(&text, std::env::home_dir().as_deref());
                 self.dialog = Some(self.sessions_preview(

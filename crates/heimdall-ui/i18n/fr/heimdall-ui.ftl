@@ -257,6 +257,29 @@ ui-dialog-import-counts = Ajoutés : { $added }. Mis à jour : { $updated }. Inc
 ui-dialog-import-skipped = Écartés :
 ui-dialog-import-skipped-item = { $name } : { $reason }
 ui-dialog-import-failed-title = L'import n'a pas pu s'exécuter
+ui-import-file-title = Importer des sessions
+ui-import-file-filter-all = Tous les formats
+ui-import-file-filter-json = JSON
+ui-import-file-filter-rdp = Fichiers RDP
+ui-import-file-filter-any = Tous les fichiers
+ui-import-file-confirm = { $count ->
+    [one] Importer { $count } session ? Les sessions existantes avec le même ID seront mises à jour.
+   *[other] Importer { $count } sessions ? Les sessions existantes avec le même ID seront mises à jour.
+}
+ui-import-file-confirm-mobaxterm = { $count ->
+    [one] Importer { $count } session depuis MobaXterm ? Les mots de passe ne peuvent pas être importés et devront être ressaisis.
+   *[other] Importer { $count } sessions depuis MobaXterm ? Les mots de passe ne peuvent pas être importés et devront être ressaisis.
+}
+ui-import-file-button = Importer
+ui-import-file-nothing = Aucune session trouvée dans le fichier sélectionné.
+ui-import-file-unreadable = Le fichier n'a pas pu être lu : { $detail }
+ui-import-file-encrypted = Le fichier est entièrement chiffré. Déchiffrez-le d'abord dans mRemoteNG (Fichier > Enregistrer sous, sans chiffrement).
+ui-import-file-too-large = Le fichier est trop volumineux pour être importé ({ $size } octets).
+ui-import-mobaxterm-passwords = Les mots de passe MobaXterm sont chiffrés avec un algorithme propriétaire et n'ont pas pu être importés. Veuillez ressaisir les identifiants pour chaque session.
+ui-import-mobaxterm-passwords-detected = { $count ->
+    [one] { $count } mot de passe stocké détecté dans le fichier MobaXterm. MobaXterm le chiffre avec un algorithme propriétaire : il n'a pas été importé - veuillez ressaisir les identifiants de la session concernée.
+   *[other] { $count } mots de passe stockés détectés dans le fichier MobaXterm. MobaXterm les chiffre avec un algorithme propriétaire : ils n'ont pas été importés - veuillez ressaisir les identifiants des sessions concernées.
+}
 ui-dialog-store-title = Le fichier des profils est inutilisable
 ui-dialog-store-body = Heimdall a démarré sans profil ; les changements sont enregistrés à côté du fichier illisible, qui reste intact.
 ui-dialog-detail = Détail : { $detail }
