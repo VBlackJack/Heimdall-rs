@@ -574,6 +574,13 @@ ui-hostkeys-diag-revoked = Le marqueur @revoked n'est pas pris en charge (ligne 
 ui-hostkeys-diag-pattern = Motif d'hôte non pris en charge ligne { $line } : { $value }
 ui-hostkeys-diag-key-type = Type de clé non pris en charge ligne { $line } : { $value }
 ui-hostkeys-diag-malformed = Ligne malformée { $line } : { $value }
+ui-hostkeys-malformed-too-long = ligne trop longue
+ui-hostkeys-malformed-fields = { $count ->
+    [one] { $count } champ au lieu de 3
+   *[other] { $count } champs au lieu de 3
+}
+ui-hostkeys-malformed-bad-key = la clé est illisible
+ui-hostkeys-malformed-marker = marqueur inconnu { $marker }
 ui-hostkeys-done = { $imported } importées, { $existing } ignorées (déjà approuvées), { $conflicts } ignorées (conflit), { $warnings ->
     [one] { $warnings } avertissement
    *[other] { $warnings } avertissements

@@ -61,13 +61,26 @@ pub enum HostKeyNote {
     /// `@revoked`: not imported.
     Revoked,
     /// A line that is not `hosts type key`; carries why.
-    Malformed(String),
+    Malformed(Malformed),
     /// A key type not read; carries it.
     UnsupportedKey(String),
     /// A hashed host name: not imported.
     HashedHost,
     /// A wildcard, negation or unreadable host pattern; carries it.
     HostPattern(String),
+}
+
+/// Why a line could not be read.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Malformed {
+    /// Longer than [`MAX_LINE`].
+    TooLong,
+    /// Fewer than the three fields `hosts type key`; carries how many.
+    Fields(usize),
+    /// A key that cannot be read.
+    BadKey,
+    /// A marker other than `@cert-authority` or `@revoked`; carries it, `@` included.
+    Marker(String),
 }
 
 impl HostKeyNote {
@@ -109,7 +122,7 @@ pub fn parse(text: &str) -> HostKeysParsed {
                 .push(HostKeyDiagnostic { line: number, note });
         };
         if line.len() > MAX_LINE {
-            say(HostKeyNote::Malformed("line too long".to_owned()));
+            say(HostKeyNote::Malformed(Malformed::TooLong));
             continue;
         }
         let line = line.trim();
@@ -121,20 +134,20 @@ pub fn parse(text: &str) -> HostKeysParsed {
             say(match marker {
                 "cert-authority" => HostKeyNote::CertAuthority,
                 "revoked" => HostKeyNote::Revoked,
-                other => HostKeyNote::Malformed(format!("@{other}")),
+                other => HostKeyNote::Malformed(Malformed::Marker(format!("@{other}"))),
             });
             continue;
         }
         let fields: Vec<&str> = line.split_whitespace().collect();
         let [hosts, kind, blob, ..] = fields.as_slice() else {
-            say(HostKeyNote::Malformed(format!("{} fields", fields.len())));
+            say(HostKeyNote::Malformed(Malformed::Fields(fields.len())));
             continue;
         };
         let Ok(key) = PublicKey::from_openssh(&format!("{kind} {blob}")) else {
             say(if kind.starts_with("ssh-") || kind.starts_with("ecdsa-") {
                 HostKeyNote::UnsupportedKey((*kind).to_owned())
             } else {
-                HostKeyNote::Malformed("bad key".to_owned())
+                HostKeyNote::Malformed(Malformed::BadKey)
             });
             continue;
         };

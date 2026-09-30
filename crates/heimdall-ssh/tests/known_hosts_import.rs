@@ -21,7 +21,7 @@ use std::path::Path;
 
 use heimdall_ssh::KnownHosts;
 use heimdall_ssh::known_hosts_import::{
-    HostKeyNote, HostKeyStatus, HostKeysImported, assess, import, parse,
+    HostKeyNote, HostKeyStatus, HostKeysImported, Malformed, assess, import, parse,
 };
 
 /// A host key fixture's `type base64` part.
@@ -72,9 +72,9 @@ fn plain_hosts_and_ports_are_read_and_the_rest_is_said_by_line() {
             (6, HostKeyNote::HostPattern("bad:22".to_owned())),
             (7, HostKeyNote::CertAuthority),
             (8, HostKeyNote::Revoked),
-            (9, HostKeyNote::Malformed("1 fields".to_owned())),
+            (9, HostKeyNote::Malformed(Malformed::Fields(1))),
             (10, HostKeyNote::UnsupportedKey("ssh-foo".to_owned())),
-            (11, HostKeyNote::Malformed("bad key".to_owned())),
+            (11, HostKeyNote::Malformed(Malformed::BadKey)),
         ]
     );
 }
@@ -86,7 +86,7 @@ fn an_overlong_line_is_malformed_and_host_names_are_lowercased() {
     assert!(parsed.candidates.is_empty());
     assert_eq!(
         parsed.diagnostics[0].note,
-        HostKeyNote::Malformed("line too long".to_owned())
+        HostKeyNote::Malformed(Malformed::TooLong)
     );
     let parsed = parse(&format!("Web.LAB {}\n", key("host-ed25519")));
     assert_eq!(parsed.candidates[0].host, "web.lab");

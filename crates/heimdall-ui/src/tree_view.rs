@@ -54,7 +54,7 @@ const OPEN_MARKER: &str = "\u{25BE}";
 const CLOSED_MARKER: &str = "\u{25B8}";
 
 /// Width of a menu.
-const MENU_WIDTH: f32 = 230.0;
+const MENU_WIDTH: f32 = 270.0;
 
 /// Space between a menu's card and its entries.
 const MENU_PADDING: f32 = 4.0;

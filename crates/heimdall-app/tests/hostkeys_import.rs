@@ -139,6 +139,7 @@ fn the_preview_says_each_key_new_trusted_or_in_conflict_and_ticks_only_new_ones(
         "the short line and the hashed host"
     );
     assert!(preview.can_import());
+    assert!(preview.all_chosen());
 }
 
 #[test]
@@ -166,6 +167,7 @@ fn only_a_new_key_can_be_chosen_and_choosing_none_leaves_nothing_to_import() {
     );
     import(&mut app, HostKeysMessage::ChooseAll(false));
     assert!(!preview(&app).can_import());
+    assert!(!preview(&app).all_chosen());
 }
 
 #[test]
@@ -238,6 +240,10 @@ fn an_empty_file_an_unreadable_one_and_one_that_gives_only_diagnostics() {
     assert!(preview.rows.is_empty());
     assert_eq!(preview.diagnostics.len(), 1);
     assert!(!preview.can_import());
+    assert!(
+        !preview.all_chosen(),
+        "nothing new: \"Import all\" is not ticked"
+    );
 }
 
 #[test]

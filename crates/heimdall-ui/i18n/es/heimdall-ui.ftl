@@ -574,6 +574,13 @@ ui-hostkeys-diag-revoked = El marcador @revoked no es compatible (línea { $line
 ui-hostkeys-diag-pattern = Patrón de host no compatible en la línea { $line }: { $value }
 ui-hostkeys-diag-key-type = Tipo de clave no compatible en la línea { $line }: { $value }
 ui-hostkeys-diag-malformed = Línea { $line } mal formada: { $value }
+ui-hostkeys-malformed-too-long = línea demasiado larga
+ui-hostkeys-malformed-fields = { $count ->
+    [one] { $count } campo en lugar de 3
+   *[other] { $count } campos en lugar de 3
+}
+ui-hostkeys-malformed-bad-key = no se puede leer la clave
+ui-hostkeys-malformed-marker = marcador desconocido { $marker }
 ui-hostkeys-done = { $imported } importados, { $existing } omitidos (ya de confianza), { $conflicts } omitidos (conflicto), { $warnings ->
     [one] { $warnings } aviso
    *[other] { $warnings } avisos

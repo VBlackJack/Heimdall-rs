@@ -26,7 +26,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::display_address;
 use heimdall_ssh::known_hosts_import::{
-    HostKeyDiagnostic, HostKeyNote, HostKeyStatus, MAX_FILE_BYTES,
+    HostKeyDiagnostic, HostKeyNote, HostKeyStatus, MAX_FILE_BYTES, Malformed,
 };
 use iced::widget::{Column, button, checkbox, column, container, row, scrollable, text};
 use iced::{Element, Length, Theme};
@@ -56,8 +56,9 @@ const ROWS_HEIGHT: f32 = 300.0;
 /// Tallest the diagnostics grow before they scroll.
 const DIAGNOSTICS_HEIGHT: f32 = 130.0;
 
-/// Widths of the columns: tick, host, type, fingerprint, status, notes.
-const COLUMNS: [f32; 6] = [50.0, 190.0, 150.0, 330.0, 110.0, 290.0];
+/// Widths of the columns: tick, host, type, fingerprint, status; the notes take the rest.
+/// A fingerprint, `SHA256:` and 43 characters, is shown whole.
+const COLUMNS: [f32; 5] = [40.0, 150.0, 150.0, 370.0, 110.0];
 
 /// The application's message a change to the import is.
 #[must_use]
@@ -137,7 +138,7 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
         cell(fl!("ui-hostkeys-column-type"), COLUMNS[2]),
         cell(fl!("ui-hostkeys-column-fingerprint"), COLUMNS[3]),
         cell(fl!("ui-openssh-column-status"), COLUMNS[4]),
-        cell(fl!("ui-hostkeys-column-notes"), COLUMNS[5]),
+        text(fl!("ui-hostkeys-column-notes")).size(TEXT_SIZE),
     ];
     let rows = Column::with_children(
         preview
@@ -147,11 +148,6 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
             .map(|(index, row)| key_row(index, row, preview)),
     )
     .spacing(2.0);
-    let all_chosen = preview
-        .rows
-        .iter()
-        .filter(|row| row.status == HostKeyStatus::New)
-        .all(|row| row.chosen);
     let mut content = column![
         text(fl!("ui-hostkeys-title")).size(TITLE_SIZE),
         text(fl!(
@@ -162,7 +158,7 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
             conflicts = conflicts
         ))
         .size(TEXT_SIZE),
-        checkbox(all_chosen)
+        checkbox(preview.all_chosen())
             .label(fl!("ui-openssh-choose-all"))
             .text_size(TEXT_SIZE)
             .on_toggle(|on| app(HostKeysMessage::ChooseAll(on))),
@@ -234,7 +230,8 @@ fn key_row<'a>(
         cell(candidate.key.algorithm().to_string(), COLUMNS[2]),
         cell(row.fingerprint.clone(), COLUMNS[3]),
         cell(status, COLUMNS[4]),
-        cell(note, COLUMNS[5]),
+        // The notes wrap rather than being cut: they are the reason a key is left out.
+        text(note).size(TEXT_SIZE).width(Length::Fill),
     ]
     .align_y(iced::Alignment::Center)
     .into()
@@ -272,12 +269,18 @@ fn diagnostic_line(diagnostic: &HostKeyDiagnostic) -> Element<'_, Message> {
                 value = value.as_str()
             )
         }
-        HostKeyNote::Malformed(value) => {
-            fl!(
-                "ui-hostkeys-diag-malformed",
-                line = line,
-                value = value.as_str()
-            )
+        HostKeyNote::Malformed(why) => {
+            let value = match why {
+                Malformed::TooLong => fl!("ui-hostkeys-malformed-too-long"),
+                Malformed::Fields(count) => {
+                    fl!("ui-hostkeys-malformed-fields", count = count.to_owned())
+                }
+                Malformed::BadKey => fl!("ui-hostkeys-malformed-bad-key"),
+                Malformed::Marker(marker) => {
+                    fl!("ui-hostkeys-malformed-marker", marker = marker.as_str())
+                }
+            };
+            fl!("ui-hostkeys-diag-malformed", line = line, value = value)
         }
     };
     let warning = diagnostic.note.is_warning();

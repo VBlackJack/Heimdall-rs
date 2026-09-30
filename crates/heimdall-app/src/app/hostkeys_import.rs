@@ -62,6 +62,17 @@ impl HostKeysPreview {
         )
     }
 
+    /// Whether every new key is chosen, as the C# "Import all": not when there is none.
+    #[must_use]
+    pub fn all_chosen(&self) -> bool {
+        let mut new = self
+            .rows
+            .iter()
+            .filter(|row| row.status == HostKeyStatus::New)
+            .peekable();
+        new.peek().is_some() && new.all(|row| row.chosen)
+    }
+
     /// Whether the import has something to do.
     #[must_use]
     pub fn can_import(&self) -> bool {

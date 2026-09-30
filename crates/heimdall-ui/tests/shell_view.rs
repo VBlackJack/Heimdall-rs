@@ -2535,7 +2535,7 @@ fn the_known_hosts_preview_says_each_key_and_what_was_left_out_then_imports() {
         .expect("learn");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(heimdall_ui::hostkeys_view::app(HostKeysMessage::Read(Ok(
-        format!("web.lab {ED25519}\n[new.lab]:2222 {ED25519}\n|1|c2FsdA==|aGFzaA== {ED25519}\n"),
+        format!("web.lab {ED25519}\n[new.lab]:2222 {ED25519}\n|1|c2FsdA==|aGFzaA== {ED25519}\nshort-line\n"),
     ))));
     {
         let mut ui = simulator(&shell);
@@ -2547,6 +2547,7 @@ fn the_known_hosts_preview_says_each_key_and_what_was_left_out_then_imports() {
             "Already trusted",
             "Same fingerprint already trusted",
             "Hashed known_hosts entry is not supported (line 3).",
+            "Malformed line 4: 1 field instead of 3",
             heimdall_ssh::fingerprint(&key).as_str(),
         ] {
             ui.find(said).expect(said);
@@ -2559,7 +2560,7 @@ fn the_known_hosts_preview_says_each_key_and_what_was_left_out_then_imports() {
     }
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
     let mut ui = simulator(&shell);
-    ui.find("1 imported, 1 skipped (already trusted), 0 skipped (conflict), 0 warnings")
+    ui.find("1 imported, 1 skipped (already trusted), 0 skipped (conflict), 1 warning")
         .expect("as the C# counts it");
 }
 

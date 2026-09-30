@@ -535,6 +535,13 @@ ui-hostkeys-diag-revoked = @revoked marker is not supported (line { $line }).
 ui-hostkeys-diag-pattern = Unsupported host pattern on line { $line }: { $value }
 ui-hostkeys-diag-key-type = Unsupported key type on line { $line }: { $value }
 ui-hostkeys-diag-malformed = Malformed line { $line }: { $value }
+ui-hostkeys-malformed-too-long = line too long
+ui-hostkeys-malformed-fields = { $count ->
+    [one] { $count } field instead of 3
+   *[other] { $count } fields instead of 3
+}
+ui-hostkeys-malformed-bad-key = the key cannot be read
+ui-hostkeys-malformed-marker = unknown marker { $marker }
 ui-hostkeys-done = { $imported } imported, { $existing } skipped (already trusted), { $conflicts } skipped (conflict), { $warnings ->
     [one] { $warnings } warning
    *[other] { $warnings } warnings
