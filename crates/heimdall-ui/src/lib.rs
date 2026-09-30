@@ -21,6 +21,7 @@ pub mod desktop_view;
 pub mod export_file;
 mod files_view;
 pub mod finder;
+pub mod hostkeys_view;
 pub mod i18n;
 pub mod keysym;
 pub mod local_form;

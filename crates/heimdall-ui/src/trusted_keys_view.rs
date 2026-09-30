@@ -39,6 +39,8 @@ const HEADING_SIZE: f32 = 20.0;
 const SSH_FINGERPRINT_SHOWN: usize = 16;
 /// Characters of an RDP fingerprint shown before the ellipsis.
 const RDP_FINGERPRINT_SHOWN: usize = 20;
+/// Share of a host key row the copy and remove buttons take.
+const ACTIONS_PORTION: u16 = 4;
 /// What stands for the rest of a fingerprint cut short.
 const ELLIPSIS: &str = "...";
 
@@ -127,7 +129,8 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
                 header(fl!("ui-trusted-host-keys-host"), 3),
                 header(fl!("ui-trusted-host-keys-algorithm"), 2),
                 header(fl!("ui-trusted-host-keys-fingerprint"), 3),
-                header(String::new(), 3),
+                // Room for both buttons, whatever the language: "Copier l'empreinte" is long.
+                header(String::new(), ACTIONS_PORTION),
             ]
             .spacing(SPACING),
         );
@@ -160,7 +163,7 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
                         ]
                         .spacing(SPACING / 2.0)
                         .into(),
-                        3,
+                        ACTIONS_PORTION,
                     ),
                 ]
                 .spacing(SPACING)
@@ -169,6 +172,17 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
         }
         rows.into()
     };
+    // As the C# section: the import beside the list it adds to.
+    let body = column![
+        small_button(
+            fl!("ui-trusted-host-keys-import"),
+            crate::hostkeys_view::app(heimdall_app::HostKeysMessage::Start),
+            button::secondary,
+        ),
+        body,
+    ]
+    .spacing(SPACING)
+    .into();
     card(
         fl!("ui-trusted-host-keys-title"),
         fl!("ui-trusted-host-keys-hint"),

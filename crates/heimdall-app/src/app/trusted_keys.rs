@@ -72,6 +72,8 @@ pub enum TrustedKeysMessage {
     CopyFingerprint(TrustedKey),
     /// Ask whether to forget a key.
     RequestForget(TrustedKey),
+    /// Import the keys of another `known_hosts` file, as the C# "Trusted SSH hosts...".
+    Import(super::HostKeysMessage),
 }
 
 impl App {
@@ -96,11 +98,12 @@ impl App {
                 self.dialog = Some(Dialog::ForgetTrustedKey(key.clone()));
                 Vec::new()
             }
+            TrustedKeysMessage::Import(message) => self.hostkeys_message(message.clone()),
         }
     }
 
     /// Reads both files of trusted keys.
-    fn read_trusted_keys(&mut self) {
+    pub(super) fn read_trusted_keys(&mut self) {
         let mut unreadable = Vec::new();
         let ssh = KnownHosts::new(&self.config.known_hosts)
             .entries()

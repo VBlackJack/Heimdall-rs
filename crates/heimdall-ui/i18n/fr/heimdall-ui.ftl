@@ -551,6 +551,44 @@ ui-rdp-done = { $imported ->
    *[other] { $passwords } mots de passe ignorés.
 }
 ui-rdp-nothing = Aucun fichier .rdp valide à importer.
+ui-tree-import-known-hosts = Importer des hôtes SSH de confiance...
+ui-hostkeys-title = Importer les hôtes SSH de confiance
+ui-hostkeys-pick-title = Sélectionner le fichier known_hosts
+ui-hostkeys-summary = { $total ->
+    [one] { $total } entrée
+   *[other] { $total } entrées
+} : { $new } nouvelles, { $existing } déjà approuvées, { $conflicts } en conflit
+ui-hostkeys-column-host = Hôte
+ui-hostkeys-column-type = Type
+ui-hostkeys-column-fingerprint = Empreinte
+ui-hostkeys-column-notes = Notes
+ui-hostkeys-status-new = Nouvelle
+ui-hostkeys-status-existing = Déjà approuvée
+ui-hostkeys-status-conflict = Conflit
+ui-hostkeys-note-existing = Empreinte déjà approuvée à l'identique
+ui-hostkeys-note-conflict-store = Conflit avec l'empreinte déjà approuvée
+ui-hostkeys-note-conflict-file = Plusieurs empreintes différentes pour cet hôte dans le fichier source
+ui-hostkeys-diag-hashed = Les entrées known_hosts hachées ne sont pas prises en charge (ligne { $line }).
+ui-hostkeys-diag-cert-authority = Le marqueur @cert-authority n'est pas pris en charge (ligne { $line }).
+ui-hostkeys-diag-revoked = Le marqueur @revoked n'est pas pris en charge (ligne { $line }).
+ui-hostkeys-diag-pattern = Motif d'hôte non pris en charge ligne { $line } : { $value }
+ui-hostkeys-diag-key-type = Type de clé non pris en charge ligne { $line } : { $value }
+ui-hostkeys-diag-malformed = Ligne malformée { $line } : { $value }
+ui-hostkeys-malformed-too-long = ligne trop longue
+ui-hostkeys-malformed-fields = { $count ->
+    [one] { $count } champ au lieu de 3
+   *[other] { $count } champs au lieu de 3
+}
+ui-hostkeys-malformed-bad-key = la clé est illisible
+ui-hostkeys-malformed-marker = marqueur inconnu { $marker }
+ui-hostkeys-done = { $imported } importées, { $existing } ignorées (déjà approuvées), { $conflicts } ignorées (conflit), { $warnings ->
+    [one] { $warnings } avertissement
+   *[other] { $warnings } avertissements
+}
+ui-hostkeys-empty = Aucune entrée exploitable trouvée dans le fichier known_hosts sélectionné.
+ui-hostkeys-unreadable = Le fichier n'a pas pu être lu : { $detail }
+ui-hostkeys-too-large = Le fichier est trop volumineux pour être importé ({ $size } octets).
+ui-trusted-host-keys-import = Importer known_hosts
 ui-tree-add-tooltip = Ajouter une session
 ui-tree-more-tooltip = Autres actions
 ui-tree-tooltip-host = Hôte : { $host }

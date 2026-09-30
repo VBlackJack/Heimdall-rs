@@ -30,6 +30,7 @@ mod error;
 mod forward;
 mod key_file;
 mod known_hosts;
+pub mod known_hosts_import;
 mod options;
 mod prompter;
 mod run_trust;

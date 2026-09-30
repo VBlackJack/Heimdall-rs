@@ -22,9 +22,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
-    ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, Message as AppMessage,
-    NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, RdpMessage,
-    SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage, TreeFilter,
+    ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
+    Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
+    RdpMessage, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage,
+    TreeFilter,
 };
 use heimdall_core::profile::ProfileId;
 use iced::advanced::layout::{self, Layout};
@@ -53,7 +54,7 @@ const OPEN_MARKER: &str = "\u{25BE}";
 const CLOSED_MARKER: &str = "\u{25B8}";
 
 /// Width of a menu.
-const MENU_WIDTH: f32 = 230.0;
+const MENU_WIDTH: f32 = 270.0;
 
 /// Space between a menu's card and its entries.
 const MENU_PADDING: f32 = 4.0;
@@ -444,6 +445,10 @@ pub fn menu_entries<'a>(
                 .push(entry(
                     fl!("ui-tree-import-putty"),
                     Some(AppMessage::Sessions(SessionsMessage::Putty)),
+                ))
+                .push(entry(
+                    fl!("ui-tree-import-known-hosts"),
+                    Some(crate::hostkeys_view::app_message(HostKeysMessage::Start)),
                 ))
                 .push(entry(
                     fl!("ui-tree-export-sessions"),

@@ -512,6 +512,44 @@ ui-rdp-done = { $imported } imported, { $replaced } replaced, { $renamed } auto-
    *[other] { $passwords } passwords ignored.
 }
 ui-rdp-nothing = No valid .rdp files were found to import.
+ui-tree-import-known-hosts = Import trusted SSH hosts...
+ui-hostkeys-title = Import trusted SSH hosts
+ui-hostkeys-pick-title = Select known_hosts file
+ui-hostkeys-summary = { $total ->
+    [one] { $total } entry
+   *[other] { $total } entries
+}: { $new } new, { $existing } already trusted, { $conflicts } conflict
+ui-hostkeys-column-host = Host
+ui-hostkeys-column-type = Type
+ui-hostkeys-column-fingerprint = Fingerprint
+ui-hostkeys-column-notes = Notes
+ui-hostkeys-status-new = New
+ui-hostkeys-status-existing = Already trusted
+ui-hostkeys-status-conflict = Conflict
+ui-hostkeys-note-existing = Same fingerprint already trusted
+ui-hostkeys-note-conflict-store = Conflict with the fingerprint already trusted
+ui-hostkeys-note-conflict-file = Multiple different fingerprints for this host in the source file
+ui-hostkeys-diag-hashed = Hashed known_hosts entry is not supported (line { $line }).
+ui-hostkeys-diag-cert-authority = @cert-authority marker is not supported (line { $line }).
+ui-hostkeys-diag-revoked = @revoked marker is not supported (line { $line }).
+ui-hostkeys-diag-pattern = Unsupported host pattern on line { $line }: { $value }
+ui-hostkeys-diag-key-type = Unsupported key type on line { $line }: { $value }
+ui-hostkeys-diag-malformed = Malformed line { $line }: { $value }
+ui-hostkeys-malformed-too-long = line too long
+ui-hostkeys-malformed-fields = { $count ->
+    [one] { $count } field instead of 3
+   *[other] { $count } fields instead of 3
+}
+ui-hostkeys-malformed-bad-key = the key cannot be read
+ui-hostkeys-malformed-marker = unknown marker { $marker }
+ui-hostkeys-done = { $imported } imported, { $existing } skipped (already trusted), { $conflicts } skipped (conflict), { $warnings ->
+    [one] { $warnings } warning
+   *[other] { $warnings } warnings
+}
+ui-hostkeys-empty = No usable entries were found in the selected known_hosts file.
+ui-hostkeys-unreadable = The file could not be read: { $detail }
+ui-hostkeys-too-large = The file is too large to import ({ $size } bytes).
+ui-trusted-host-keys-import = Import known_hosts
 ui-tree-add-tooltip = Add session
 ui-tree-more-tooltip = More actions
 ui-tree-tooltip-host = Host: { $host }

@@ -2503,3 +2503,122 @@ fn the_putty_preview_names_invalid_sessions_and_says_what_is_not_imported() {
     ui.find("1 imported, 0 skipped (duplicates), 0 invalid, 0 warnings")
         .expect("as the C# counts it");
 }
+
+#[test]
+fn the_more_menu_imports_trusted_ssh_hosts_as_the_csharp_one() {
+    use heimdall_app::{HostKeysMessage, SettingsMessage, TrustedKeysMessage};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = simulator(&shell);
+    ui.click("Import trusted SSH hosts...").expect("the entry");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Settings(SettingsMessage::TrustedKeys(
+            TrustedKeysMessage::Import(HostKeysMessage::Start)
+        )))
+    )));
+}
+
+#[test]
+fn the_known_hosts_preview_says_each_key_and_what_was_left_out_then_imports() {
+    use heimdall_app::HostKeysMessage;
+
+    const ED25519: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIEdv/0kqpfKUkuXCpQIlyU34zlRbf2MM2wBP+uTTnDTR";
+    let dir = tempfile::tempdir().expect("dir");
+    let key = heimdall_ssh::PublicKey::from_openssh(ED25519).expect("key");
+    heimdall_ssh::KnownHosts::new(dir.path().join("known_hosts"))
+        .learn("web.lab", 22, &key)
+        .expect("learn");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(heimdall_ui::hostkeys_view::app(HostKeysMessage::Read(Ok(
+        format!("web.lab {ED25519}\n[new.lab]:2222 {ED25519}\n|1|c2FsdA==|aGFzaA== {ED25519}\nshort-line\n"),
+    ))));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Import trusted SSH hosts",
+            "2 entries: 1 new, 1 already trusted, 0 conflict",
+            "web.lab:22",
+            "new.lab:2222",
+            "Already trusted",
+            "Same fingerprint already trusted",
+            "Hashed known_hosts entry is not supported (line 3).",
+            "Malformed line 4: 1 field instead of 3",
+            heimdall_ssh::fingerprint(&key).as_str(),
+        ] {
+            ui.find(said).expect(said);
+        }
+        ui.click("Import").expect("the button");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = simulator(&shell);
+    ui.find("1 imported, 1 skipped (already trusted), 0 skipped (conflict), 1 warning")
+        .expect("as the C# counts it");
+}
+
+#[tokio::test]
+async fn a_known_hosts_file_larger_than_the_csharp_limit_is_refused_unread() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("known_hosts");
+    let file = std::fs::File::create(&path).expect("create");
+    file.set_len(heimdall_ssh::known_hosts_import::MAX_FILE_BYTES + 1)
+        .expect("grow");
+    let read = heimdall_ui::hostkeys_view::read_file(&path).await;
+    assert_eq!(
+        read,
+        Err(format!(
+            "The file is too large to import ({} bytes).",
+            heimdall_ssh::known_hosts_import::MAX_FILE_BYTES + 1
+        ))
+    );
+    file.set_len(heimdall_ssh::known_hosts_import::MAX_FILE_BYTES)
+        .expect("shrink");
+    assert!(
+        heimdall_ui::hostkeys_view::read_file(&path).await.is_ok(),
+        "the limit itself is read"
+    );
+}
+
+#[test]
+fn a_known_hosts_conflict_says_whether_the_file_or_the_trusted_key_it_contradicts() {
+    use heimdall_app::HostKeysMessage;
+
+    let fixture = |name: &str| {
+        let text = std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../heimdall-ssh/tests/fixtures/hostkeys")
+                .join(format!("{name}.pub")),
+        )
+        .expect("fixture");
+        text.split_whitespace()
+            .take(2)
+            .collect::<Vec<_>>()
+            .join(" ")
+    };
+    let (ed, other) = (fixture("host-ed25519"), fixture("host-ed25519-other"));
+    let dir = tempfile::tempdir().expect("dir");
+    heimdall_ssh::KnownHosts::new(dir.path().join("known_hosts"))
+        .learn(
+            "changed.lab",
+            22,
+            &heimdall_ssh::PublicKey::from_openssh(&ed).expect("key"),
+        )
+        .expect("learn");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(heimdall_ui::hostkeys_view::app(HostKeysMessage::Read(Ok(
+        format!("changed.lab {other}\ntwice.lab {ed}\ntwice.lab {other}\n"),
+    ))));
+    let mut ui = simulator(&shell);
+    ui.find("Conflict with the fingerprint already trusted")
+        .expect("the store");
+    ui.find("Multiple different fingerprints for this host in the source file")
+        .expect("the file");
+}
