@@ -520,6 +520,9 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
         );
     }
     let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::Security,
+    ));
     assert!(shell.settings_shown());
     snapshot(&shell, "settings-vault-disabled.png");
     {
@@ -1775,6 +1778,9 @@ fn the_settings_page_has_the_terminal_appearance_section() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::Terminal,
+    ));
     snapshot(&shell, "settings-terminal.png");
     let mut ui = simulator(&shell);
     ui.find("Terminal Appearance").expect("its section");
@@ -1847,6 +1853,9 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::Terminal,
+    ));
     {
         let mut ui = simulator(&shell);
         ui.find("Session Logging").expect("its section");
@@ -2012,6 +2021,9 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
     let (mut shell, tab, _) = connected_shell(dir.path());
     let same = |a: f32, b: f32| (a - b).abs() < f32::EPSILON;
     let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::Terminal,
+    ));
     for (typed, refused) in [("7", true), ("big", true), ("73", true), (" 20 ", false)] {
         let _ = shell.update(Message::FontSizeEdited(typed.to_owned()));
         let _ = shell.update(Message::FontSizeApply);
@@ -2749,6 +2761,7 @@ fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(heimdall_ui::shell::SettingsTab::Ssh));
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
@@ -2769,4 +2782,31 @@ fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp
             true
         )))
     )));
+}
+
+#[test]
+fn the_settings_page_is_in_the_csharp_tabs_and_keeps_the_one_chosen() {
+    use heimdall_ui::shell::SettingsTab;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    {
+        let mut ui = simulator(&shell);
+        for tab in ["General", "Terminal", "SSH", "RDP", "Security"] {
+            ui.find(tab).expect(tab);
+        }
+        ui.find("Language").expect("General first");
+        assert!(ui.find("Master password").is_err(), "the Security tab's");
+        ui.click("Security").expect("its tab");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::SettingsTab(SettingsTab::Security)))
+        );
+    }
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let _ = shell.update(Message::ShowSettings);
+    let mut ui = simulator(&shell);
+    ui.find("Master password").expect("the tab chosen, kept");
+    assert!(ui.find("Language").is_err());
 }
