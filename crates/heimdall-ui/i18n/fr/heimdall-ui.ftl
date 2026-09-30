@@ -210,6 +210,7 @@ ui-error-auth-failed = L'authentification a échoué. Méthodes essayées : { $m
 ui-error-auth-failed-none = L'authentification a échoué : le serveur n'a accepté aucune méthode que Heimdall pouvait proposer.
 ui-error-disconnected = Le serveur a fermé la connexion.
 ui-error-disconnected-message = Le serveur a fermé la connexion : { $message }
+ui-error-connection-lost = Session déconnectée de manière inattendue.
 ui-error-cancelled = Annulé.
 ui-error-prompt-timeout = Une question est restée trop longtemps sans réponse.
 ui-error-pty-refused = Le serveur a refusé d'ouvrir un terminal.
@@ -900,6 +901,10 @@ ui-transcript-header = ===== Session démarrée { $started } | { $protocol } | h
 ui-transcript-footer = ===== Session terminée { $ended } | durée { $duration } =====
 ui-settings-session-logging = Journalisation des sessions
 ui-settings-session-logging-enabled = Activer la journalisation des sessions
+ui-settings-ssh-auto-reconnect = Reconnexion auto SSH
+ui-settings-ssh-auto-reconnect-description = Tente automatiquement de rétablir une session SSH déconnectée. Désactivé par défaut.
+ui-settings-ssh-auto-reconnect-enable = Activer la reconnexion automatique bornée
+ui-settings-ssh-auto-reconnect-attempts = Nombre maximum de tentatives avant le retour à la reconnexion manuelle
 ui-settings-session-log-directory = Répertoire des journaux de session :
 ui-settings-session-log-directory-hint = Dossier des journaux de session, relatif au dossier des paramètres sauf s'il est absolu. Appuyez sur Entrée pour appliquer.
 

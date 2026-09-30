@@ -20,7 +20,8 @@
 use std::path::PathBuf;
 
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, settings_path, terminal_font_size_accepted,
+    ColorScheme, Language, Settings, settings_path, ssh_auto_reconnect_attempts_accepted,
+    terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -41,6 +42,10 @@ pub enum SettingsMessage {
     TerminalFontSize(u16),
     /// The language chosen, once the window shows it.
     Language(Language),
+    /// SSH auto-reconnect on or off.
+    SshAutoReconnect(bool),
+    /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
+    SshAutoReconnectAttempts(u32),
 }
 
 /// The colours of `scheme`.
@@ -109,6 +114,13 @@ impl App {
                 self.settings.terminal_font_size = *size;
             }
             SettingsMessage::Language(language) => self.settings.language = Some(*language),
+            SettingsMessage::SshAutoReconnect(on) => self.settings.ssh_auto_reconnect = *on,
+            SettingsMessage::SshAutoReconnectAttempts(attempts) => {
+                if !ssh_auto_reconnect_attempts_accepted(*attempts) {
+                    return Vec::new();
+                }
+                self.settings.ssh_auto_reconnect_attempts = *attempts;
+            }
             SettingsMessage::TrustedKeys(_) => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {

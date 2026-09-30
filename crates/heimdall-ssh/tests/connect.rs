@@ -22,8 +22,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    EXIT_COMMAND, FIXTURE_PASSPHRASE, KbdRound, LOOPBACK, PASSWORD, STEP_TIMEOUT, ScriptedPrompter,
-    Spec, client_public_key, host_public_key, options_empty, options_trusting, profile, start,
+    DROP_COMMAND, EXIT_COMMAND, EXIT_THEN_DROP_COMMAND, FIXTURE_PASSPHRASE, KbdRound, LOOPBACK,
+    PASSWORD, STEP_TIMEOUT, ScriptedPrompter, Spec, client_public_key, host_public_key,
+    options_empty, options_trusting, profile, start,
 };
 use heimdall_ssh::{
     AuthMethod, ConnectError, KnownHosts, SessionEvent, ShellSession, TerminalSize, connect,
@@ -680,6 +681,48 @@ async fn the_exit_status_is_delivered_with_the_close() {
     .await;
     session.input.write(EXIT_COMMAND.to_vec()).expect("write");
     assert_eq!(closed_status(&mut session).await, Some(42));
+}
+
+/// The event that ended `session`, after `command`.
+async fn ending_after(session: &mut ShellSession, command: &[u8]) -> Option<SessionEvent> {
+    session.input.write(command.to_vec()).expect("write");
+    tokio::time::timeout(STEP_TIMEOUT, async {
+        let mut last = None;
+        while let Some(event) = session.events.recv().await {
+            if !matches!(event, SessionEvent::Output(_)) {
+                last = Some(event);
+            }
+        }
+        last
+    })
+    .await
+    .expect("ended in time")
+}
+
+#[tokio::test]
+async fn a_connection_dropped_under_the_shell_is_lost_not_closed() {
+    let (_server, mut session) = open_session(Spec::default()).await;
+    assert_eq!(
+        ending_after(&mut session, DROP_COMMAND).await,
+        Some(SessionEvent::Lost),
+        "the server never closed the session: its connection was lost"
+    );
+}
+
+#[tokio::test]
+async fn a_shell_that_said_how_it_ended_is_closed_whatever_happens_to_the_connection() {
+    let (_server, mut session) = open_session(Spec {
+        exit_status: 7,
+        ..Spec::default()
+    })
+    .await;
+    assert_eq!(
+        ending_after(&mut session, EXIT_THEN_DROP_COMMAND).await,
+        Some(SessionEvent::Closed {
+            exit_status: Some(7)
+        }),
+        "the shell ended: nothing to reconnect"
+    );
 }
 
 #[tokio::test]

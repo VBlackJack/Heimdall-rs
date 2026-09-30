@@ -59,6 +59,10 @@ pub enum SessionEvent {
         /// Exit status of the remote shell, when the server reported one.
         exit_status: Option<u32>,
     },
+    /// The connection went away while the shell ran: the server never closed the session nor
+    /// said how its shell ended, as when the network drops or keepalives go unanswered. Always
+    /// the last event, in place of [`SessionEvent::Closed`].
+    Lost,
 }
 
 /// The session is closed.
@@ -149,6 +153,8 @@ async fn read_output(
     cancel: CancellationToken,
 ) {
     let mut exit_status = None;
+    // Known only here: the server closing the channel, or the channel ending under it.
+    let mut lost = false;
     loop {
         let message = tokio::select! {
             () = cancel.cancelled() => break,
@@ -167,12 +173,23 @@ async fn read_output(
             Some(ChannelMsg::ExitStatus {
                 exit_status: status,
             }) => exit_status = Some(status),
-            Some(ChannelMsg::Close) | None => break,
+            Some(ChannelMsg::Close) => break,
+            None => {
+                // A shell that said how it ended has ended, whatever happens to the
+                // connection after.
+                lost = exit_status.is_none();
+                break;
+            }
             Some(_) => {}
         }
     }
     cancel.cancel();
-    let _ = events.send(SessionEvent::Closed { exit_status }).await;
+    let ending = if lost {
+        SessionEvent::Lost
+    } else {
+        SessionEvent::Closed { exit_status }
+    };
+    let _ = events.send(ending).await;
 }
 
 /// Sends queued input; a write waiting for the server's window never blocks a resize.
