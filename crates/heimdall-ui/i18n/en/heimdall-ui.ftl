@@ -210,6 +210,7 @@ ui-error-auth-failed = Authentication failed. Methods tried: { $methods }.
 ui-error-auth-failed-none = Authentication failed: the server accepted no method Heimdall could offer.
 ui-error-disconnected = The server closed the connection.
 ui-error-disconnected-message = The server closed the connection: { $message }
+ui-error-connection-lost = Session disconnected unexpectedly.
 ui-error-cancelled = Cancelled.
 ui-error-prompt-timeout = A question was left unanswered for too long.
 ui-error-pty-refused = The server refused to open a terminal.
@@ -870,6 +871,10 @@ ui-transcript-header = ===== Session started { $started } | { $protocol } | host
 ui-transcript-footer = ===== Session ended { $ended } | duration { $duration } =====
 ui-settings-session-logging = Session Logging
 ui-settings-session-logging-enabled = Enable session logging
+ui-settings-ssh-auto-reconnect = SSH auto-reconnect
+ui-settings-ssh-auto-reconnect-description = Automatically retry an SSH session that disconnects unexpectedly. Disabled by default.
+ui-settings-ssh-auto-reconnect-enable = Enable bounded auto-reconnect
+ui-settings-ssh-auto-reconnect-attempts = Max attempts before falling back to manual reconnect
 ui-settings-session-log-directory = Session log directory:
 ui-settings-session-log-directory-hint = Directory for session log files, relative to the settings folder unless absolute. Press Enter to apply.
 

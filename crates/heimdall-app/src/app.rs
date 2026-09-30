@@ -2003,6 +2003,8 @@ impl App {
                 Vec::new()
             }
             ConnectionEvent::Connected { input } => {
+                // Back: the attempts stop, and a later loss starts a chain of its own.
+                tab.retry = None;
                 tab.phase = Phase::Connected;
                 let grid = tab.terminal.size();
                 if grid != tab.connect_grid {

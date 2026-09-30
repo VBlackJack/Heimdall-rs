@@ -299,3 +299,204 @@ impl heimdall_app::InputSink for NullSink {
     }
     fn close(&self) {}
 }
+
+/// A live SSH shell of profile "web".
+fn live_ssh(app: &mut App) -> (TabId, AttemptId) {
+    let effects = app.update(Message::OpenProfile(ProfileId::new("web")));
+    let [Effect::Connect { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    event(
+        app,
+        tab,
+        attempt,
+        ConnectionEvent::Connected {
+            input: std::sync::Arc::new(NullSink),
+        },
+    );
+    (tab, attempt)
+}
+
+fn ssh_auto_reconnect(app: &mut App, attempts: u32) {
+    use heimdall_app::SettingsMessage;
+    app.update(Message::Settings(SettingsMessage::SshAutoReconnect(true)));
+    app.update(Message::Settings(
+        SettingsMessage::SshAutoReconnectAttempts(attempts),
+    ));
+}
+
+#[test]
+fn a_lost_ssh_shell_opens_again_in_its_place_when_the_setting_asks_up_to_its_attempts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    ssh_auto_reconnect(&mut app, 2);
+    let (tab, attempt) = live_ssh(&mut app);
+    let lost = ConnectionEvent::Failed(UiError::ConnectionLost);
+    wake(
+        &event(&mut app, tab, attempt, lost),
+        tab,
+        attempt,
+        Duration::from_secs(2),
+    );
+    let retry = app.tab(tab).expect("tab").retry.expect("waiting");
+    assert_eq!((retry.attempt, retry.max), (1, 2), "the setting's attempts");
+
+    // The time comes: the shell opens again in a tab in the same place, the chain with it.
+    let index = app.tabs.iter().position(|t| t.id == tab).expect("index");
+    let effects = app.update(Message::AutoReconnect { tab, attempt });
+    let [
+        Effect::Connect {
+            tab: again,
+            attempt: second,
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    let (again, second) = (*again, *second);
+    assert_eq!(app.tabs[index].id, again, "in the place of the lost one");
+    assert_eq!(app.active, Some(again));
+    assert_eq!(
+        app.tab(again).expect("tab").retry.map(|r| r.attempt),
+        Some(1)
+    );
+
+    // It cannot connect yet: the second and last attempt, after 5 seconds.
+    wake(
+        &event(&mut app, again, second, dropped()),
+        again,
+        second,
+        Duration::from_secs(5),
+    );
+    assert_eq!(
+        app.tab(again).expect("tab").retry.map(|r| r.attempt),
+        Some(2)
+    );
+    let effects = app.update(Message::AutoReconnect {
+        tab: again,
+        attempt: second,
+    });
+    let [
+        Effect::Connect {
+            tab: third_tab,
+            attempt: third,
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    let (third_tab, third) = (*third_tab, *third);
+    assert!(
+        event(&mut app, third_tab, third, dropped()).is_empty(),
+        "no third"
+    );
+    assert_eq!(
+        app.tab(third_tab).expect("tab").retry,
+        None,
+        "left to the user"
+    );
+}
+
+#[test]
+fn a_shell_back_ends_its_chain_and_a_clean_end_or_a_refusal_never_starts_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    ssh_auto_reconnect(&mut app, 3);
+    let (tab, attempt) = live_ssh(&mut app);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::ConnectionLost),
+    );
+    let effects = app.update(Message::AutoReconnect { tab, attempt });
+    let [
+        Effect::Connect {
+            tab: again,
+            attempt: second,
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    let (again, second) = (*again, *second);
+    event(
+        &mut app,
+        again,
+        second,
+        ConnectionEvent::Connected {
+            input: std::sync::Arc::new(NullSink),
+        },
+    );
+    assert_eq!(
+        app.tab(again).expect("tab").retry,
+        None,
+        "back: the chain ends"
+    );
+
+    // The shell exits: nothing comes back.
+    assert!(
+        event(
+            &mut app,
+            again,
+            second,
+            ConnectionEvent::Closed {
+                exit_status: Some(0)
+            }
+        )
+        .is_empty()
+    );
+
+    // A refusal needs the user.
+    let (tab, attempt) = live_ssh(&mut app);
+    let refused = ConnectionEvent::Failed(UiError::AuthenticationFailed { tried: Vec::new() });
+    assert!(event(&mut app, tab, attempt, refused).is_empty());
+    assert_eq!(app.tab(tab).expect("tab").retry, None);
+}
+
+#[test]
+fn an_attempts_setting_out_of_the_csharp_range_is_ignored() {
+    use heimdall_app::SettingsMessage;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    for refused in [0, 11] {
+        app.update(Message::Settings(
+            SettingsMessage::SshAutoReconnectAttempts(refused),
+        ));
+        assert_eq!(app.settings().ssh_auto_reconnect_attempts, 3, "{refused}");
+    }
+    app.update(Message::Settings(
+        SettingsMessage::SshAutoReconnectAttempts(10),
+    ));
+    assert_eq!(app.settings().ssh_auto_reconnect_attempts, 10);
+}
+
+#[test]
+fn a_shell_in_the_background_comes_back_there() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    ssh_auto_reconnect(&mut app, 3);
+    let (tab, attempt) = live_ssh(&mut app);
+    let (shown, _) = live(&mut app);
+    assert_eq!(app.active, Some(shown));
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::ConnectionLost),
+    );
+    let index = app.tabs.iter().position(|t| t.id == tab).expect("index");
+    app.update(Message::AutoReconnect { tab, attempt });
+    assert_eq!(app.active, Some(shown), "the tab looked at stays in front");
+    let again = &app.tabs[index];
+    assert_ne!(again.id, tab);
+    assert_eq!(
+        again.retry.map(|r| r.attempt),
+        Some(1),
+        "the chain went with it"
+    );
+}

@@ -375,3 +375,62 @@ fn the_credential_provider_is_kept_by_its_csharp_names() {
         ProviderSettings::default()
     );
 }
+
+#[test]
+fn ssh_auto_reconnect_is_off_by_default_and_its_attempts_kept_within_the_csharp_range() {
+    use heimdall_core::settings::{
+        SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
+        SSH_AUTO_RECONNECT_ATTEMPTS_MIN,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(dir.path(), "version = 1\n");
+    assert!(!read.ssh_auto_reconnect, "off unless chosen, as the C#");
+    assert_eq!(read.ssh_auto_reconnect_attempts, 3);
+    assert_eq!(SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT, 3);
+    for (attempts, read) in [
+        (
+            SSH_AUTO_RECONNECT_ATTEMPTS_MIN,
+            SSH_AUTO_RECONNECT_ATTEMPTS_MIN,
+        ),
+        (
+            SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
+            SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
+        ),
+        (
+            SSH_AUTO_RECONNECT_ATTEMPTS_MIN - 1,
+            SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+        ),
+        (
+            SSH_AUTO_RECONNECT_ATTEMPTS_MAX + 1,
+            SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+        ),
+    ] {
+        let text = format!(
+            "version = 1\n[ssh]\nauto_reconnect = true\nauto_reconnect_attempts = {attempts}\n"
+        );
+        let settings = written(dir.path(), &text);
+        assert!(settings.ssh_auto_reconnect);
+        assert_eq!(settings.ssh_auto_reconnect_attempts, read, "{attempts}");
+    }
+    assert_eq!(
+        (
+            SSH_AUTO_RECONNECT_ATTEMPTS_MIN,
+            SSH_AUTO_RECONNECT_ATTEMPTS_MAX
+        ),
+        (1, 10)
+    );
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        ssh_auto_reconnect: true,
+        ssh_auto_reconnect_attempts: 7,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path).expect("load"),
+        settings,
+        "written and read back"
+    );
+}

@@ -2741,3 +2741,32 @@ async fn a_servers_json_is_read_with_its_settings_and_a_large_file_is_refused() 
     assert!(heimdall_ui::file_import_view::is_rdp(Path::new("a/B.RDP")));
     assert!(!heimdall_ui::file_import_view::is_rdp(Path::new("a/b.rdg")));
 }
+
+#[test]
+fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp_card() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    // Tall enough for the whole page.
+    let mut ui = Simulator::with_size(settings, Size::new(1100.0, 2400.0), shell.view());
+    for said in [
+        "SSH auto-reconnect",
+        "Automatically retry an SSH session that disconnects unexpectedly. Disabled by default.",
+        "Max attempts before falling back to manual reconnect",
+    ] {
+        ui.find(said).expect(said);
+    }
+    ui.click("Enable bounded auto-reconnect").expect("its box");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::Settings(SettingsMessage::SshAutoReconnect(
+            true
+        )))
+    )));
+}

@@ -142,6 +142,12 @@ pub struct Settings {
     pub pin_unlock: Lockout,
     /// The external credential provider.
     pub credential_provider: ProviderSettings,
+    /// An SSH session whose connection is lost opens again by itself, as the C#
+    /// `SshAutoReconnect`: off unless chosen.
+    pub ssh_auto_reconnect: bool,
+    /// Attempts before the reconnect is left to the user, within
+    /// [`SSH_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`SSH_AUTO_RECONNECT_ATTEMPTS_MAX`].
+    pub ssh_auto_reconnect_attempts: u32,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -182,6 +188,21 @@ impl Language {
 pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 15;
 /// Smallest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
+/// Attempts of an SSH auto-reconnect by default, as the C# `SshAutoReconnectAttempts`.
+pub const SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT: u32 = 3;
+
+/// Fewest attempts of an SSH auto-reconnect accepted, as the C# setting's range.
+pub const SSH_AUTO_RECONNECT_ATTEMPTS_MIN: u32 = 1;
+
+/// Most attempts of an SSH auto-reconnect accepted, as the C# setting's range.
+pub const SSH_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 10;
+
+/// Whether `attempts` is a number of SSH auto-reconnect attempts the settings accept.
+#[must_use]
+pub fn ssh_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
+    (SSH_AUTO_RECONNECT_ATTEMPTS_MIN..=SSH_AUTO_RECONNECT_ATTEMPTS_MAX).contains(&attempts)
+}
+
 /// Largest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
 
@@ -204,6 +225,8 @@ impl Default for Settings {
             pin: None,
             pin_unlock: Lockout::default(),
             credential_provider: ProviderSettings::default(),
+            ssh_auto_reconnect: false,
+            ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
         }
     }
 }
@@ -223,6 +246,16 @@ struct SettingsFile {
     pin: PinSection,
     #[serde(default)]
     credential_provider: ProviderSection,
+    #[serde(default)]
+    ssh: SshSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct SshSection {
+    #[serde(default)]
+    auto_reconnect: bool,
+    #[serde(default)]
+    auto_reconnect_attempts: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -425,6 +458,13 @@ impl Settings {
                 SystemTime::now(),
             ),
             credential_provider: file.credential_provider.settings(),
+            ssh_auto_reconnect: file.ssh.auto_reconnect,
+            // Out of the range, as the C# load warns and keeps the default.
+            ssh_auto_reconnect_attempts: file
+                .ssh
+                .auto_reconnect_attempts
+                .filter(|attempts| ssh_auto_reconnect_attempts_accepted(*attempts))
+                .unwrap_or(SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT),
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -481,6 +521,10 @@ impl Settings {
                 locked_until: self.pin_unlock.until().map(to_epoch),
             },
             credential_provider: ProviderSection::of(&self.credential_provider),
+            ssh: SshSection {
+                auto_reconnect: self.ssh_auto_reconnect,
+                auto_reconnect_attempts: Some(self.ssh_auto_reconnect_attempts),
+            },
         })?;
         write_atomic(path, &text)
     }

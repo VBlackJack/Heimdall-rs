@@ -302,14 +302,11 @@ async fn run(
         tokio::spawn(post_connect::run(steps, sink.clone(), events.clone(), stop));
     }
     while let Some(event) = session_events.recv().await {
-        let event = match event {
-            SessionEvent::Output(bytes) => ConnectionEvent::Output(bytes),
-            SessionEvent::Closed { exit_status } => {
-                log::info!("session to {target} ended, exit status {exit_status:?}");
-                ConnectionEvent::Closed { exit_status }
-            }
-        };
-        let last = matches!(event, ConnectionEvent::Closed { .. });
+        let event = session_event(event, &target);
+        let last = matches!(
+            event,
+            ConnectionEvent::Closed { .. } | ConnectionEvent::Failed(_)
+        );
         if events.send(event).await.is_err() {
             // Nobody listens any more: the tab is gone.
             sink.close();
@@ -317,6 +314,22 @@ async fn run(
         }
         if last {
             return;
+        }
+    }
+}
+
+/// What a shell's session says, for the tab of `target`: a connection lost under it is a
+/// failure, which an auto-reconnect may take back.
+fn session_event(event: SessionEvent, target: &str) -> ConnectionEvent {
+    match event {
+        SessionEvent::Output(bytes) => ConnectionEvent::Output(bytes),
+        SessionEvent::Closed { exit_status } => {
+            log::info!("session to {target} ended, exit status {exit_status:?}");
+            ConnectionEvent::Closed { exit_status }
+        }
+        SessionEvent::Lost => {
+            log::info!("connection to {target} lost under the session");
+            ConnectionEvent::Failed(UiError::ConnectionLost)
         }
     }
 }

@@ -19,12 +19,12 @@
 //! opened again in its tab by itself, after 2, 5, then 15 seconds, up to 20 attempts. Cancel
 //! stops it; anything that needs the user (a question, a key to trust) stops it too.
 //!
-//! SSH has the same mechanism in the C# Heimdall, off unless a setting turns it on; it comes
-//! with that setting.
+//! An SSH shell does the same when its connection is lost or cannot be made again, as the C#
+//! `SshAutoReconnect`: off unless the setting turns it on, up to the attempts it sets.
 
 use std::time::{Duration, Instant};
 
-use super::{App, Effect, Message, Phase};
+use super::{App, Effect, Message, Phase, TabProfile};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
@@ -50,12 +50,22 @@ pub struct Retry {
     pub due: Instant,
 }
 
-/// Whether a session that failed with `error` may come back by itself.
-fn transient(error: &UiError) -> bool {
-    matches!(
-        error,
-        UiError::Network { .. } | UiError::Timeout | UiError::RdpProtocol { .. }
-    )
+/// Whether a session of `purpose` that failed with `error` may come back by itself: for
+/// SSH, the causes the C# `SshReconnectPolicy` retries.
+fn transient(purpose: Purpose, error: &UiError) -> bool {
+    match purpose {
+        Purpose::Rdp => matches!(
+            error,
+            UiError::Network { .. } | UiError::Timeout | UiError::RdpProtocol { .. }
+        ),
+        _ => matches!(
+            error,
+            UiError::Network { .. }
+                | UiError::Timeout
+                | UiError::ConnectionLost
+                | UiError::Disconnected { .. }
+        ),
+    }
 }
 
 /// The wait before attempt `attempt`, counted from 1.
@@ -73,24 +83,30 @@ impl App {
         error: &UiError,
         was_live: bool,
     ) -> Vec<Effect> {
+        let ssh_attempts = self
+            .settings
+            .ssh_auto_reconnect
+            .then_some(self.settings.ssh_auto_reconnect_attempts);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
+        };
+        // An RDP desktop always; an SSH shell when the setting asks; nothing else.
+        let max = match (&tab.profile, tab.purpose) {
+            (_, Purpose::Rdp) => Some(RDP_MAX_ATTEMPTS),
+            (TabProfile::Ssh(_), Purpose::Shell) => ssh_attempts,
+            _ => None,
         };
         let attempt = match tab.retry {
             Some(retry) => retry.attempt + 1,
             None if was_live => 1,
             None => return Vec::new(),
         };
-        if tab.purpose != Purpose::Rdp || !transient(error) || attempt > RDP_MAX_ATTEMPTS {
+        let Some(max) = max.filter(|max| transient(tab.purpose, error) && attempt <= *max) else {
             tab.retry = None;
             return Vec::new();
-        }
+        };
         let due = Instant::now() + delay(attempt);
-        tab.retry = Some(Retry {
-            attempt,
-            max: RDP_MAX_ATTEMPTS,
-            due,
-        });
+        tab.retry = Some(Retry { attempt, max, due });
         vec![Effect::RetryAt {
             tab: tab_id,
             attempt: tab.attempt,
@@ -119,7 +135,27 @@ impl App {
         if !waiting {
             return Vec::new();
         }
-        self.reconnect_rdp(tab_id, None)
+        if self
+            .tab(tab_id)
+            .is_some_and(|tab| tab.purpose == Purpose::Rdp)
+        {
+            return self.reconnect_rdp(tab_id, None);
+        }
+        // A shell opens again in a new tab in the same place; the chain goes with it, and a
+        // tab in the background stays there.
+        let retry = self.tab(tab_id).and_then(|tab| tab.retry);
+        let index = self.tabs.iter().position(|tab| tab.id == tab_id);
+        let shown = self.active;
+        let effects = self.reconnect_tab(tab_id);
+        if let Some(tab) = index.and_then(|index| self.tabs.get_mut(index))
+            && tab.id != tab_id
+        {
+            tab.retry = retry;
+        }
+        if shown != Some(tab_id) {
+            self.active = shown;
+        }
+        effects
     }
 
     /// Stops the attempts of `tab_id`: its failure is shown, with Reconnect.

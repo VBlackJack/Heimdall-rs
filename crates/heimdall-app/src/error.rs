@@ -129,6 +129,9 @@ pub enum UiError {
         /// The server's own words, untrusted.
         server_message: Option<String>,
     },
+    /// The connection went away under a live session that the server never closed: the
+    /// network dropped, or keepalives went unanswered.
+    ConnectionLost,
     /// Cancelled by the user.
     Cancelled,
     /// A question was not answered in time.

@@ -45,6 +45,13 @@ pub const LOOPBACK: &str = "127.0.0.1";
 /// Sent by a test to make the server end the shell with its configured exit status.
 pub const EXIT_COMMAND: &[u8] = b"exit\n";
 
+/// What makes the server drop the connection at once, without closing the session.
+pub const DROP_COMMAND: &[u8] = b"drop\n";
+
+/// What makes the server say the shell's exit status, then drop the connection without
+/// closing the session.
+pub const EXIT_THEN_DROP_COMMAND: &[u8] = b"exit-drop\n";
+
 /// Subsystem the test server accepts.
 pub const SUBSYSTEM_ACCEPTED: &str = "sftp";
 
@@ -553,6 +560,26 @@ impl server::Handler for Connection {
             return Ok(());
         }
         self.observe(|o| o.bytes_received += data.len());
+        if data == DROP_COMMAND {
+            return Err(russh::Error::Disconnect);
+        }
+        if data == EXIT_THEN_DROP_COMMAND {
+            session.exit_status_request(channel, self.spec.exit_status)?;
+            // The status reaches the client first; the connection goes a moment later, the
+            // session never closed.
+            let handle = session.handle();
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                let _ = handle
+                    .disconnect(
+                        russh::Disconnect::ByApplication,
+                        String::new(),
+                        String::new(),
+                    )
+                    .await;
+            });
+            return Ok(());
+        }
         if data == EXIT_COMMAND {
             session.exit_status_request(channel, self.spec.exit_status)?;
             session.close(channel)?;

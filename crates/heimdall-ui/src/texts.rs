@@ -113,6 +113,7 @@ pub fn error(error: &UiError) -> String {
             message = server_text(message)
         ),
         UiError::Disconnected { .. } => fl!("ui-error-disconnected"),
+        UiError::ConnectionLost => fl!("ui-error-connection-lost"),
         UiError::Cancelled => fl!("ui-error-cancelled"),
         UiError::PromptTimedOut => fl!("ui-error-prompt-timeout"),
         UiError::PtyRefused => fl!("ui-error-pty-refused"),
@@ -354,6 +355,18 @@ mod tests {
         assert!(text.contains("SSH agent, password"), "{text}");
         let none = error(&UiError::AuthenticationFailed { tried: Vec::new() });
         assert_ne!(none, text);
+    }
+
+    #[test]
+    fn a_lost_connection_is_said_in_the_csharp_words_not_as_a_server_close() {
+        let lost = error(&UiError::ConnectionLost);
+        assert_eq!(lost, "Session disconnected unexpectedly.");
+        assert_ne!(
+            lost,
+            error(&UiError::Disconnected {
+                server_message: None
+            })
+        );
     }
 
     #[test]

@@ -118,7 +118,7 @@ async fn a_shell_through_the_lab_gateway_reaches_a_server_only_it_can_see() {
         while let Some(event) = shell.events.recv().await {
             match event {
                 SessionEvent::Output(bytes) => seen.extend_from_slice(&bytes),
-                SessionEvent::Closed { .. } => return,
+                SessionEvent::Closed { .. } | SessionEvent::Lost => return,
             }
         }
     })

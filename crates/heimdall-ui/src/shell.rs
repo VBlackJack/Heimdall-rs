@@ -52,7 +52,10 @@ use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use heimdall_core::settings::Language;
-use heimdall_core::settings::{BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY};
+use heimdall_core::settings::{
+    BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
+    SSH_AUTO_RECONNECT_ATTEMPTS_MIN,
+};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -2103,6 +2106,8 @@ impl Shell {
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
                 self.session_log_settings(),
+                text(fl!("ui-settings-ssh-auto-reconnect")).size(BODY_SIZE),
+                self.ssh_reconnect_settings(),
                 self.trusted_keys_settings(),
                 // Last: a long card, which would push the everyday settings down.
                 container(crate::provider_view::card(&self.app, &self.provider_unlock))
@@ -2182,6 +2187,44 @@ impl Shell {
                 .spacing(SPACING)
                 .align_y(iced::Alignment::Center),
                 text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
+    }
+
+    /// SSH auto-reconnect, as the C# SSH Connection card: on or off, and how many attempts
+    /// before the reconnect is left to the user.
+    fn ssh_reconnect_settings(&self) -> Element<'_, Message> {
+        let settings = self.app.settings();
+        let attempts: Vec<u32> =
+            (SSH_AUTO_RECONNECT_ATTEMPTS_MIN..=SSH_AUTO_RECONNECT_ATTEMPTS_MAX).collect();
+        container(
+            column![
+                text(fl!("ui-settings-ssh-auto-reconnect-description")).size(SMALL_SIZE),
+                checkbox(settings.ssh_auto_reconnect)
+                    .label(fl!("ui-settings-ssh-auto-reconnect-enable"))
+                    .on_toggle(|on| {
+                        Message::App(AppMessage::Settings(SettingsMessage::SshAutoReconnect(on)))
+                    }),
+                row![
+                    text(fl!("ui-settings-ssh-auto-reconnect-attempts")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        attempts,
+                        Some(settings.ssh_auto_reconnect_attempts),
+                        |attempts| {
+                            Message::App(AppMessage::Settings(
+                                SettingsMessage::SshAutoReconnectAttempts(attempts),
+                            ))
+                        },
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
             ]
             .spacing(SPACING),
         )

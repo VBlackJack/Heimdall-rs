@@ -210,6 +210,7 @@ ui-error-auth-failed = La autenticación falló. Métodos probados: { $methods }
 ui-error-auth-failed-none = La autenticación falló: el servidor no aceptó ningún método que Heimdall pudiera ofrecer.
 ui-error-disconnected = El servidor cerró la conexión.
 ui-error-disconnected-message = El servidor cerró la conexión: { $message }
+ui-error-connection-lost = La sesión se desconectó de forma inesperada.
 ui-error-cancelled = Cancelado.
 ui-error-prompt-timeout = Una pregunta quedó sin respuesta demasiado tiempo.
 ui-error-pty-refused = El servidor se negó a abrir un terminal.
@@ -894,6 +895,10 @@ ui-transcript-header = ===== Sesión iniciada { $started } | { $protocol } | hos
 ui-transcript-footer = ===== Sesión finalizada { $ended } | duración { $duration } =====
 ui-settings-session-logging = Registro de sesión
 ui-settings-session-logging-enabled = Activar registro de sesión
+ui-settings-ssh-auto-reconnect = Reconexión automática SSH
+ui-settings-ssh-auto-reconnect-description = Reintentar automáticamente una sesión SSH que se desconecta de forma inesperada. Desactivado de forma predeterminada.
+ui-settings-ssh-auto-reconnect-enable = Activar reconexión automática limitada
+ui-settings-ssh-auto-reconnect-attempts = Intentos máximos antes de pasar a reconexión manual
 ui-settings-session-log-directory = Directorio de registro de sesiones:
 ui-settings-session-log-directory-hint = Carpeta de los registros de sesión, relativa a la carpeta de configuración salvo si es absoluta. Pulsa Intro para aplicar.
 
