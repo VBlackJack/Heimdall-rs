@@ -233,6 +233,51 @@ async fn a_file_goes_up_and_down_whole_and_an_upload_never_replaces_unasked() {
 }
 
 #[tokio::test]
+async fn a_file_put_there_by_someone_else_during_an_upload_is_never_replaced() {
+    let root = tempfile::tempdir().expect("root");
+    let local = tempfile::tempdir().expect("local");
+    let source = local.path().join("report.pdf");
+    std::fs::write(&source, vec![7u8; 300_000]).expect("source");
+    let session = session(root.path()).await;
+    let top = session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("top");
+    let theirs = root.path().join("report.pdf");
+    // Another client writes the same name while the data is being sent.
+    let mut arrived = false;
+    let refused = session
+        .upload(
+            &source,
+            &top.join(b"report.pdf"),
+            false,
+            &CancellationToken::new(),
+            |_| {
+                if !arrived {
+                    std::fs::write(&theirs, b"someone else's").expect("theirs");
+                    arrived = true;
+                }
+            },
+        )
+        .await;
+    assert!(arrived, "the other client wrote during the upload");
+    assert!(
+        matches!(refused, Err(RemoteError::Refused { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(
+        std::fs::read(&theirs).expect("theirs"),
+        b"someone else's",
+        "their file is untouched"
+    );
+    let left: Vec<_> = std::fs::read_dir(root.path())
+        .expect("listed")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(left.len(), 1, "no temporary file left: {left:?}");
+}
+
+#[tokio::test]
 async fn only_a_regular_file_is_downloaded() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("folder")).expect("folder");
