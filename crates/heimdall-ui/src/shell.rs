@@ -2228,8 +2228,8 @@ impl Shell {
         lists.into()
     }
 
-    /// Session logging, as the C# Settings page offers it: on or off, and the folder the
-    /// transcripts go to, applied with Enter.
+    /// Session logging, as the C# Settings page offers it: on or off, with what a transcript
+    /// keeps said, and the folder the transcripts go to, applied with Enter.
     fn session_log_settings(&self) -> Element<'_, Message> {
         let settings = self.app.settings();
         let typed = self
@@ -2239,10 +2239,11 @@ impl Shell {
         container(
             column![
                 checkbox(settings.session_logging)
-                    .label(fl!("ui-settings-session-logging-enabled"))
+                    .label(fl!("ui-settings-session-logging-record"))
                     .on_toggle(|on| {
                         Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(on)))
                     }),
+                text(fl!("ui-settings-session-logging-warning")).size(SMALL_SIZE),
                 row![
                     text(fl!("ui-settings-session-log-directory")),
                     text_input(DEFAULT_SESSION_LOG_DIRECTORY, typed)
@@ -5123,13 +5124,18 @@ fn delete_question(name: &str, folder: bool, count: usize) -> String {
 }
 
 /// The title, text and action of a question about the whole window: leaving it with
-/// sessions live, broadcasting input to every tab.
+/// sessions live, broadcasting input to every tab, recording every session.
 fn window_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
         Dialog::ConfirmExit { live } => (
             fl!("ui-dialog-exit-title"),
             fl!("ui-dialog-exit-body", count = (*live)),
             fl!("ui-dialog-exit-confirm"),
+        ),
+        Dialog::ConfirmSessionLogging => (
+            fl!("ui-dialog-session-logging-title"),
+            fl!("ui-dialog-session-logging-body"),
+            fl!("ui-dialog-session-logging-confirm"),
         ),
         _ => (
             fl!("ui-dialog-broadcast-title"),
@@ -5172,7 +5178,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmConnectFolder { .. }
         | Dialog::RenameProfile { .. }
         | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
-        Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } => {
+        Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } | Dialog::ConfirmSessionLogging => {
             let (title, body, action) = window_question(dialog);
             question(title, body, action).into()
         }

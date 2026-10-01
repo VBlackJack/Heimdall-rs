@@ -1859,12 +1859,32 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
     {
         let mut ui = simulator(&shell);
         ui.find("Session Logging").expect("its section");
-        ui.click("Enable session logging").expect("its box");
+        ui.find(
+            "Transcripts keep what you type as well as what is shown, including passwords or \
+             tokens echoed to the terminal. Keep the log folder private.",
+        )
+        .expect("what a transcript keeps is said");
+        ui.click("Record session transcripts (what each terminal shows, typed input included)")
+            .expect("its box");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(true)))
         )));
     }
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        SettingsMessage::SessionLogging(true),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Record session transcripts?").expect("asked first");
+        ui.click("Turn on").expect("its answer");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert!(shell.app().settings().session_logging);
     {
         let mut ui = simulator(&shell);
         ui.click("logs/sessions").expect("its folder");

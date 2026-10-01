@@ -910,7 +910,6 @@ ui-status-transcript-failed = No se pudo escribir la transcripción y se detuvo:
 ui-transcript-header = ===== Sesión iniciada { $started } | { $protocol } | host { $host } | { $title } =====
 ui-transcript-footer = ===== Sesión finalizada { $ended } | duración { $duration } =====
 ui-settings-session-logging = Registro de sesión
-ui-settings-session-logging-enabled = Activar registro de sesión
 ui-settings-ssh-auto-reconnect = Reconexión automática SSH
 ui-settings-ssh-auto-reconnect-description = Reintentar automáticamente una sesión SSH que se desconecta de forma inesperada. Desactivado de forma predeterminada.
 ui-settings-ssh-auto-reconnect-enable = Activar reconexión automática limitada

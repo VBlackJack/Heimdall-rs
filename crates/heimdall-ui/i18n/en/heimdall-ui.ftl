@@ -886,7 +886,8 @@ ui-status-transcript-failed = The transcript could not be written and stopped: {
 ui-transcript-header = ===== Session started { $started } | { $protocol } | host { $host } | { $title } =====
 ui-transcript-footer = ===== Session ended { $ended } | duration { $duration } =====
 ui-settings-session-logging = Session Logging
-ui-settings-session-logging-enabled = Enable session logging
+ui-settings-session-logging-record = Record session transcripts (what each terminal shows, typed input included)
+ui-settings-session-logging-warning = Transcripts keep what you type as well as what is shown, including passwords or tokens echoed to the terminal. Keep the log folder private.
 ui-settings-ssh-auto-reconnect = SSH auto-reconnect
 ui-settings-ssh-auto-reconnect-description = Automatically retry an SSH session that disconnects unexpectedly. Disabled by default.
 ui-settings-ssh-auto-reconnect-enable = Enable bounded auto-reconnect
@@ -909,6 +910,9 @@ ui-broadcast-target-tooltip = Send broadcast input to this session (broadcast ta
 ui-dialog-broadcast-title = Broadcast to all tabs?
 ui-dialog-broadcast-body = Input you type will be sent to terminal panes in every open tab, including tabs running in the background. Continue?
 ui-dialog-broadcast-confirm = Broadcast
+ui-dialog-session-logging-title = Record session transcripts?
+ui-dialog-session-logging-body = Every terminal session will be written to a file: what you type as well as what is shown, including passwords or tokens echoed to the terminal. Turn it on?
+ui-dialog-session-logging-confirm = Turn on
 
 ## The Files tab's path bar, as the C# one.
 ui-files-go-button = Go

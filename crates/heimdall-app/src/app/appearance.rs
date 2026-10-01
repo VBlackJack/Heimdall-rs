@@ -95,12 +95,29 @@ impl App {
         palette(self.settings.color_scheme)
     }
 
+    /// A settings change: applied as [`App::apply_settings`] says, once agreed to when it
+    /// needs to be.
+    pub(super) fn settings_message(&mut self, message: &SettingsMessage) -> Vec<Effect> {
+        match message {
+            SettingsMessage::TrustedKeys(message) => self.trusted_keys_message(message),
+            // As the C#: a transcript keeps what is typed as well as what is shown, passwords
+            // echoed to the terminal included, so turning transcripts on is asked first.
+            SettingsMessage::SessionLogging(true) if !self.settings.session_logging => {
+                self.dialog = Some(Dialog::ConfirmSessionLogging);
+                Vec::new()
+            }
+            _ => self.apply_settings(message),
+        }
+    }
+
+    /// Transcripts turned on, as the user agreed to.
+    pub(super) fn confirm_session_logging(&mut self) -> Vec<Effect> {
+        self.apply_settings(&SettingsMessage::SessionLogging(true))
+    }
+
     /// Applies `message` and saves the settings; one that cannot be saved is said and not
     /// applied. A colour scheme colours the terminals open too.
-    pub(super) fn settings_message(&mut self, message: &SettingsMessage) -> Vec<Effect> {
-        if let SettingsMessage::TrustedKeys(message) = message {
-            return self.trusted_keys_message(message);
-        }
+    fn apply_settings(&mut self, message: &SettingsMessage) -> Vec<Effect> {
         let before = self.settings.clone();
         match message {
             SettingsMessage::ColorScheme(scheme) => self.settings.color_scheme = *scheme,
