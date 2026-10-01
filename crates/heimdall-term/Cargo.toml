@@ -21,6 +21,8 @@ tokio = { workspace = true, features = ["signal"] }
 rustix.workspace = true
 
 [target.'cfg(windows)'.dependencies]
+# The Documents folder, where PowerShell keeps a user's modules.
+directories.workspace = true
 polling.workspace = true
 
 [dev-dependencies]
