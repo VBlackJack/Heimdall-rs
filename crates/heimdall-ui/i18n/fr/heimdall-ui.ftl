@@ -58,8 +58,14 @@ ui-pin-field-confirm = Confirmer le PIN
 ui-pin-unlock-button = Déverrouiller
 ui-pin-save-button = Enregistrer
 ui-pin-remove-button = Supprimer le PIN
-ui-pin-problem-wrong = PIN incorrect. { $remaining } tentative(s) restante(s).
-ui-pin-problem-locked-out = Trop de tentatives incorrectes. Réessayez dans { $minutes } minute(s).
+ui-pin-problem-wrong = PIN incorrect. { $remaining ->
+    [one] { $remaining } tentative restante.
+   *[other] { $remaining } tentatives restantes.
+}
+ui-pin-problem-locked-out = Trop de tentatives incorrectes. Réessayez dans { $minutes ->
+    [one] { $minutes } minute.
+   *[other] { $minutes } minutes.
+}
 ui-pin-problem-wrong-current = Le PIN actuel est incorrect.
 ui-pin-problem-too-short = Le PIN doit comporter au moins { $min } chiffres.
 ui-pin-problem-too-long = Le PIN doit comporter au plus { $max } chiffres.
@@ -741,7 +747,10 @@ ui-profile-gateway-direct-hint = La connexion directe est sélectionnée. Décoc
 ui-profile-gateway-explain-tunnel = Le trafic sera acheminé via cette passerelle SSH.
 ui-profile-socks-title = Proxy SOCKS5
 ui-dialog-post-connect-title = Exécuter les commandes post-connexion ?
-ui-dialog-post-connect-body = "{ $name }" a été importé et va exécuter automatiquement { $count } commande(s) dans cette session. Ne continuez que si vous faites confiance à ce profil. Les exécuter et mémoriser ce choix ?
+ui-dialog-post-connect-body = { $count ->
+    [one] "{ $name }" a été importé et va exécuter automatiquement { $count } commande dans cette session. Ne continuez que si vous faites confiance à ce profil. L'exécuter et mémoriser ce choix ?
+   *[other] "{ $name }" a été importé et va exécuter automatiquement { $count } commandes dans cette session. Ne continuez que si vous faites confiance à ce profil. Les exécuter et mémoriser ce choix ?
+}
 ui-dialog-post-connect-run = Exécuter et mémoriser
 ui-dialog-post-connect-skip = Se connecter sans elles
 ui-profile-toggle-forward-agent = Transférer l'agent SSH
@@ -846,12 +855,18 @@ ui-tree-rename = Renommer
 ui-tree-rename-title = Renommer la session
 ui-tree-move-to-folder = Déplacer vers le dossier
 
-ui-selection-count = { $count } élément(s) sélectionné(s)
+ui-selection-count = { $count ->
+    [one] { $count } élément sélectionné
+   *[other] { $count } éléments sélectionnés
+}
 ui-selection-connect = Connecter la sélection ({ $count })
 ui-selection-duplicate = Dupliquer la sélection
 ui-selection-delete = Supprimer la sélection ({ $count })
 ui-dialog-delete-selection-title = Supprimer les éléments sélectionnés
-ui-dialog-delete-selection-body = Êtes-vous sûr de vouloir supprimer { $count } élément(s) sélectionné(s) ?
+ui-dialog-delete-selection-body = Êtes-vous sûr de vouloir supprimer { $count ->
+    [one] { $count } élément sélectionné
+   *[other] { $count } éléments sélectionnés
+} ?
 
 ui-palette-placeholder = Rechercher un hôte ou une IP... (Ctrl+K)
 ui-palette-ssh-to = [SSH] Connexion vers { $target }
@@ -886,7 +901,10 @@ ui-find-nothing = Aucune correspondance
 ui-settings-terminal = Apparence du terminal
 ui-settings-color-scheme = Palette de couleurs
 ui-settings-appearance = Apparence
-ui-vault-problem-locked-out = Trop de tentatives incorrectes. Réessayez dans { $minutes } minute(s).
+ui-vault-problem-locked-out = Trop de tentatives incorrectes. Réessayez dans { $minutes ->
+    [one] { $minutes } minute.
+   *[other] { $minutes } minutes.
+}
 ui-settings-language = Langue
 ui-settings-language-en = Anglais
 ui-settings-language-fr = Français
@@ -973,7 +991,10 @@ ui-files-type-directory = Dossier
 ui-files-type-link = Lien symbolique
 ui-files-type-other = Type inconnu
 
-ui-files-selected-count = { $count } sélectionné(s)
+ui-files-selected-count = { $count ->
+    [one] { $count } sélectionné
+   *[other] { $count } sélectionnés
+}
 ui-dialog-delete-many-body = Supprimer { $count } éléments ? Les dossiers sont supprimés avec tout ce qu'ils contiennent. Cette action est irréversible.
 
 ui-files-bookmark-button = Ajouter aux favoris
