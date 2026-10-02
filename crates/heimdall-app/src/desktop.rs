@@ -147,6 +147,7 @@ const LETTER_L: KeyNames = ((false, 0x26), 0x006C);
 const LETTER_D: KeyNames = ((false, 0x20), 0x0064);
 const LETTER_E: KeyNames = ((false, 0x12), 0x0065);
 const F11: KeyNames = ((false, 0x57), 0xFFC8);
+const SHIFT: KeyNames = ((false, 0x2A), 0xFFE1);
 
 impl SpecialKeys {
     /// Every combination, in the C# menu's order.
@@ -183,17 +184,28 @@ impl SpecialKeys {
     /// no modifier is left held on the remote side.
     #[must_use]
     pub fn inputs(self) -> Vec<DesktopInput> {
-        let key = |((extended, value), keysym): KeyNames, pressed| DesktopInput::Key {
-            scancode: Some(Scancode::from_u8(extended, value)),
-            keysym: Some(keysym),
-            pressed,
-        };
-        let keys = self.keys();
-        keys.iter()
-            .map(|names| key(*names, true))
-            .chain(keys.iter().rev().map(|names| key(*names, false)))
-            .collect()
+        typed(self.keys())
     }
+}
+
+/// What an anti-idle tick sends, as the C# one: Shift pressed and released, which the server
+/// counts as input and the desktop shows nothing of.
+#[must_use]
+pub fn anti_idle_inputs() -> Vec<DesktopInput> {
+    typed(&[SHIFT])
+}
+
+/// `keys` down in order, then up in reverse.
+fn typed(keys: &[KeyNames]) -> Vec<DesktopInput> {
+    let key = |((extended, value), keysym): KeyNames, pressed| DesktopInput::Key {
+        scancode: Some(Scancode::from_u8(extended, value)),
+        keysym: Some(keysym),
+        pressed,
+    };
+    keys.iter()
+        .map(|names| key(*names, true))
+        .chain(keys.iter().rev().map(|names| key(*names, false)))
+        .collect()
 }
 
 /// Where the input of a desktop goes.
@@ -227,6 +239,9 @@ pub struct DesktopPane {
     sink: DesktopSink,
     /// Where this side's clipboard text goes, when the clipboard is shared.
     clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
+    /// The session gets anti-idle keys: its profile asks for them and the user has not
+    /// stopped them for this session.
+    pub anti_idle: bool,
 }
 
 impl fmt::Debug for DesktopPane {
@@ -255,6 +270,7 @@ impl DesktopPane {
                 sizing,
             },
             clipboard,
+            anti_idle: false,
         }
     }
 
@@ -353,6 +369,7 @@ impl DesktopPane {
                 position: AtomicU32::new(0),
                 view_only,
             }),
+            anti_idle: false,
         }
     }
 

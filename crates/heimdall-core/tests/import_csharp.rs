@@ -1184,14 +1184,8 @@ fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped(
         report.dropped,
         [
             dropped("shell", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
-            dropped(
-                "desk",
-                &[
-                    Dropped::RdpPrinters,
-                    Dropped::RdpSmartCards,
-                    Dropped::RdpAntiIdle
-                ]
-            ),
+            // Anti-idle is carried over, not dropped.
+            dropped("desk", &[Dropped::RdpPrinters, Dropped::RdpSmartCards]),
             // On the global defaults: the settings' choices are the ones dropped.
             dropped(
                 "global",

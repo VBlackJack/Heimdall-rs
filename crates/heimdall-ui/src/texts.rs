@@ -174,7 +174,6 @@ pub fn dropped_setting(dropped: Dropped) -> String {
         Dropped::RdpUsb => fl!("ui-import-dropped-rdp-usb"),
         Dropped::RdpMicrophone => fl!("ui-import-dropped-rdp-microphone"),
         Dropped::RdpMultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
-        Dropped::RdpAntiIdle => fl!("ui-import-dropped-rdp-anti-idle"),
     }
 }
 

@@ -46,6 +46,7 @@ fn app(dir: &Path) -> App {
         forwards: Forwards::default(),
         follow_defaults: false,
         several_servers: false,
+        anti_idle: false,
     }]);
     store.merge([SshProfile {
         id: ProfileId::new("web"),

@@ -377,6 +377,45 @@ fn the_credential_provider_is_kept_by_its_csharp_names() {
 }
 
 #[test]
+fn the_anti_idle_interval_is_a_minute_by_default_zero_or_within_the_csharp_range() {
+    use heimdall_core::settings::{
+        ANTI_IDLE_INTERVAL_DEFAULT, ANTI_IDLE_INTERVAL_MAX, ANTI_IDLE_INTERVAL_MIN,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(written(dir.path(), "version = 1\n").anti_idle_interval, 60);
+    assert_eq!(ANTI_IDLE_INTERVAL_DEFAULT, 60);
+    assert_eq!((ANTI_IDLE_INTERVAL_MIN, ANTI_IDLE_INTERVAL_MAX), (10, 3600));
+    for (seconds, read) in [
+        (0, 0),
+        (ANTI_IDLE_INTERVAL_MIN, ANTI_IDLE_INTERVAL_MIN),
+        (ANTI_IDLE_INTERVAL_MAX, ANTI_IDLE_INTERVAL_MAX),
+        // Out of the range, as the C# load warns and keeps the default.
+        (ANTI_IDLE_INTERVAL_MIN - 1, ANTI_IDLE_INTERVAL_DEFAULT),
+        (ANTI_IDLE_INTERVAL_MAX + 1, ANTI_IDLE_INTERVAL_DEFAULT),
+    ] {
+        let text = format!("version = 1\n[ssh]\nanti_idle_interval = {seconds}\n");
+        assert_eq!(
+            written(dir.path(), &text).anti_idle_interval,
+            read,
+            "{seconds}"
+        );
+    }
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        anti_idle_interval: 0,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path).expect("load"),
+        settings,
+        "off, kept off"
+    );
+}
+
+#[test]
 fn ssh_auto_reconnect_is_off_by_default_and_its_attempts_kept_within_the_csharp_range() {
     use heimdall_core::settings::{
         SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,

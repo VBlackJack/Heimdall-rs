@@ -268,6 +268,10 @@ pub struct RdpProfile {
     /// is refused as changed, the alarm of an intercepted connection.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub several_servers: bool,
+    /// Keeps the server from taking the session for idle, as the C# `RdpAntiIdle`: Shift is
+    /// pressed and released at the settings' anti-idle interval while the session is open.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub anti_idle: bool,
 }
 
 impl RdpProfile {

@@ -68,6 +68,7 @@ fn app_with(dir: &Path, profiles: Vec<SshProfile>) -> App {
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
         several_servers: false,
+        anti_idle: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
