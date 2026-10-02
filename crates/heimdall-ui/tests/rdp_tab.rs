@@ -732,6 +732,17 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
         message,
         Message::App(AppMessage::HostKeyDecision { accept: false, .. })
     )));
+
+    // Declined: the C# line, a choice the user made, not an error to report.
+    let _ = shell.update(Message::App(AppMessage::HostKeyDecision {
+        tab,
+        accept: false,
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Connection cancelled: you did not approve the certificate this server presented.")
+        .expect("the C# line");
+    assert!(ui.find("Copy error").is_err(), "nothing to report");
+    ui.find("Reconnect").expect("a way back");
 }
 
 #[test]

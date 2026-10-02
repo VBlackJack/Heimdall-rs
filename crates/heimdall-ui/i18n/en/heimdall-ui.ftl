@@ -886,6 +886,7 @@ ui-rdp-reason-security-error = A security error prevented the connection. The re
 ui-rdp-reason-admin-disconnect = The remote computer ended the session. An administrator may have ended it, the connection may have failed while it was being established, or a network problem may have interrupted it.
 ui-rdp-reason-license = A Remote Desktop licensing error blocked the session. Contact your administrator; the license server may be unreachable or out of CALs.
 ui-rdp-reason-with-severity = { $severity } { $reason }
+ui-rdp-certificate-refused = Connection cancelled: you did not approve the certificate this server presented.
 
 ## A dropped desktop opening again by itself, as the C# countdown.
 ui-session-reconnecting = Reconnecting (attempt { $attempt }/{ $max })...

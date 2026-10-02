@@ -3119,14 +3119,18 @@ impl Shell {
                 }
                 ended.into()
             }
-            Phase::Failed(UiError::Cancelled) => center(card(
-                column![
-                    text(fl!("ui-session-cancelled")),
-                    self.session_actions(tab).wrap()
-                ]
-                .spacing(SPACING),
-            ))
-            .into(),
+            // Stopped by the user: said, without an error to report.
+            Phase::Failed(error @ (UiError::Cancelled | UiError::CertificateRefused)) => {
+                let said = if *error == UiError::Cancelled {
+                    fl!("ui-session-cancelled")
+                } else {
+                    texts::error(error)
+                };
+                center(card(
+                    column![text(said), self.session_actions(tab).wrap()].spacing(SPACING),
+                ))
+                .into()
+            }
             Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
             Phase::Failed(error) => self.failure_card(tab, error),
         }
@@ -3178,7 +3182,10 @@ impl Shell {
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
             );
         }
-        if matches!(&tab.phase, Phase::Failed(error) if *error != UiError::Cancelled) {
+        if matches!(
+            &tab.phase,
+            Phase::Failed(error) if !matches!(error, UiError::Cancelled | UiError::CertificateRefused)
+        ) {
             actions = actions.push(
                 button(action_label(fl!("ui-session-copy-error-button")))
                     .style(button::secondary)
