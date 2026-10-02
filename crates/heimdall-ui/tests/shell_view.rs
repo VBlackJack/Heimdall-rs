@@ -2895,6 +2895,24 @@ fn the_rdp_tab_sets_the_global_rdp_defaults_as_the_csharp_settings() {
 }
 
 #[test]
+fn ctrl_comma_shows_the_settings_with_or_without_a_tab_but_not_over_a_dialog() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Settings));
+    assert!(shell.settings_shown(), "no tab open");
+
+    let mut core = app(dir.path());
+    let _ = open(&mut core, "a");
+    core.dialog = Some(heimdall_app::Dialog::ConfirmBroadcast);
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Settings));
+    assert!(!shell.settings_shown(), "the dialog has the keyboard");
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Settings));
+    assert!(shell.settings_shown(), "over the tab shown");
+}
+
+#[test]
 fn enter_in_the_search_opens_the_one_profile_found_and_never_guesses_among_several() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));

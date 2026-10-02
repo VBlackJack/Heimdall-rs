@@ -121,6 +121,11 @@ pub enum RemoteError {
     },
     /// Not a regular file: a link, a device.
     NotAFile,
+    /// The file an upload would replace is not a regular file; it was left as it is.
+    DestinationNotAFile,
+    /// The file an upload would replace was left as it is: it cannot be replaced in one
+    /// step, or keeping its group was refused.
+    ReplaceNotSafe,
     /// A folder holds more entries than a transfer or a delete walks.
     TooLarge,
     /// Stopped by the caller; a download can be resumed by starting it again.
@@ -412,6 +417,8 @@ fn transfer_error(error: &TransferError) -> RemoteError {
             detail: source.to_string(),
         },
         TransferError::NotARegularFile => RemoteError::NotAFile,
+        TransferError::DestinationNotAFile => RemoteError::DestinationNotAFile,
+        TransferError::ReplaceNotSafe => RemoteError::ReplaceNotSafe,
         TransferError::Cancelled { .. } => RemoteError::Cancelled,
     }
 }
