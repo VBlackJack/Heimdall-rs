@@ -1128,3 +1128,26 @@ ui-dialog-forget-certificate-confirm = Forget
 ui-status-fingerprint-copied = Copied full fingerprint for { $server }.
 ui-status-host-key-removed = Removed trusted host key for { $server }.
 ui-status-certificate-forgotten = Certificate forgotten for { $server }.
+
+## Tunnels opened by hand, as the C# "New tunnel" dialog and tunnels panel say them.
+ui-tunnel-new-title = New tunnel
+ui-tunnel-new-description = Create a session-scoped local port forward through one of your configured SSH gateways.
+ui-tunnel-gateway-label = Gateway
+ui-tunnel-remote-host-label = Remote host
+ui-tunnel-remote-port-label = Remote port
+ui-tunnel-local-port-label = Local port
+ui-tunnel-label-label = Label (optional)
+ui-tunnel-open-button = Open tunnel
+ui-tunnel-no-gateways = No SSH gateway configured. Add one in Settings before creating a tunnel.
+ui-tunnel-problem-gateway = Gateway is required.
+ui-tunnel-problem-remote-host = Remote host is required.
+ui-tunnel-problem-remote-port = Remote port must be between { $min } and { $max }.
+ui-tunnel-problem-local-port = Local port must be between { $min } and { $max }.
+ui-tunnel-problem-local-port-in-use = Local port { $port } is already in use by an active tunnel.
+ui-tunnel-opened = Tunnel opened on local port { $port } → { $host }:{ $remote }.
+ui-tunnel-failed = Tunnel creation failed: { $reason }
+ui-tunnel-closed = Tunnel on port { $port } closed.
+ui-tunnels-all-closed = All tunnels closed.
+ui-tunnel-port-copied = Port { $port } copied to clipboard.
+ui-tunnel-closed-reason = { $closed } ({ $reason })
+ui-error-local-port-unavailable = Local port { $port } is already in use, or reserved by the system.

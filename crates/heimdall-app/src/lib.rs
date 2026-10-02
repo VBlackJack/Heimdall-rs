@@ -45,6 +45,8 @@ pub mod telnet_driver;
 mod text;
 pub mod time_zone;
 pub mod transcript;
+pub mod tunnel;
+pub mod tunnel_driver;
 pub mod vnc_driver;
 pub mod winrm_driver;
 pub mod winrm_preflight;
@@ -61,8 +63,8 @@ pub use app::{
     RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, Retry, SelectionMessage, SessionState,
     SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
     SettingsMessage, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter,
-    TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME,
-    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY,
+    VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
     master_password_problem, open_vault,
 };
 pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};

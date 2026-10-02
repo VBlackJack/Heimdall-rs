@@ -128,6 +128,9 @@ pub fn error(error: &UiError) -> String {
             NetworkFailure::Other => fl!("ui-error-network", detail = server_text(detail)),
         },
         UiError::Timeout => fl!("ui-error-timeout"),
+        UiError::LocalPortUnavailable { port } => {
+            fl!("ui-error-local-port-unavailable", port = (*port))
+        }
         UiError::RdpRefused { refusal } => rdp_refusal(*refusal),
         UiError::RdpEnded { ending } => {
             rdp_ending(ending).unwrap_or_else(|| fl!("ui-session-closed"))

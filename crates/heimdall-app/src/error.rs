@@ -91,6 +91,11 @@ pub enum UiError {
     },
     /// Connection plus key exchange took too long.
     Timeout,
+    /// This local port is taken by another program, or kept by the system.
+    LocalPortUnavailable {
+        /// Port.
+        port: u16,
+    },
     /// The RDP server refused the logon, and why.
     RdpRefused {
         /// Why.

@@ -844,53 +844,63 @@ impl App {
     /// The saved password answering `kind` in `tab_id`, if the rules allow one.
     pub(super) fn saved_answer(&mut self, tab_id: TabId, kind: &QuestionKind) -> Option<Answer> {
         if let QuestionKind::Passphrase(question) = kind {
-            return self.saved_passphrase(tab_id, &question.key_path, question.attempt);
+            let owner = self.key_owner(tab_id, &question.key_path)?;
+            return self.saved_passphrase(&owner, &question.key_path, question.attempt);
         }
         let tab = self.tab(tab_id)?;
-        let (profile, endpoint) =
-            usable_endpoint(tab, kind).or_else(|| self.gateway_endpoint(&tab.profile, kind))?;
+        let (profile, endpoint) = usable_endpoint(tab, kind).or_else(|| {
+            route_gateway(&tab.profile).and_then(|gateway| self.route_endpoint(gateway, kind))
+        })?;
         let answered_before = tab
             .auto_answered
             .iter()
             .any(|(attempt, answered)| *attempt == tab.attempt && *answered == profile);
-        if try_number(kind) > 1 || answered_before {
-            // Asked again after a saved password: the server refused it.
-            if answered_before {
-                self.vault.refused.insert(profile);
-            }
-            return None;
-        }
-        if self.vault.refused.contains(&profile) {
-            return None;
-        }
-        let saved = decode(&self.vault.read(&password_entry(&profile))?)?;
-        if !saved.endpoint.is(&endpoint) {
-            return None;
-        }
+        let answer = self.saved_password(&profile, &endpoint, kind, answered_before)?;
         let tab = self.tab_mut(tab_id)?;
         let attempt = tab.attempt;
         tab.auto_answered.retain(|(earlier, _)| *earlier == attempt);
         tab.auto_answered.push((attempt, profile));
+        Some(answer)
+    }
+
+    /// `profile`'s saved password, for `kind` asked at `endpoint`: only to the endpoint it
+    /// was saved for, and once an attempt. Given already in this attempt (`answered_before`),
+    /// or asked again, the server refused it: the user is asked from then on.
+    pub(super) fn saved_password(
+        &mut self,
+        profile: &ProfileId,
+        endpoint: &Endpoint,
+        kind: &QuestionKind,
+        answered_before: bool,
+    ) -> Option<Answer> {
+        if try_number(kind) > 1 || answered_before {
+            // Asked again after a saved password: the server refused it.
+            if answered_before {
+                self.vault.refused.insert(profile.clone());
+            }
+            return None;
+        }
+        if self.vault.refused.contains(profile) {
+            return None;
+        }
+        let saved = decode(&self.vault.read(&password_entry(profile))?)?;
+        if !saved.endpoint.is(endpoint) {
+            return None;
+        }
         Some(Answer::Secret(Secret::new(String::clone(&saved.password))))
     }
 
-    /// The gateway on the way to `profile`'s server that `kind` comes from, when it is one:
+    /// The gateway of the route through `gateway` that `kind` comes from, when it is one:
     /// same host, port and account as a gateway of the route. Its own saved password is
     /// then given, never the server's.
-    fn gateway_endpoint(
+    pub(super) fn route_endpoint(
         &self,
-        profile: &TabProfile,
+        gateway: &ProfileId,
         kind: &QuestionKind,
     ) -> Option<(ProfileId, Endpoint)> {
         let QuestionKind::Password(question) = kind else {
             return None;
         };
-        let gateway = match profile {
-            TabProfile::Ssh(profile) => profile.gateway.as_ref(),
-            TabProfile::Rdp(profile) => profile.gateway.as_ref(),
-            TabProfile::WinRm(profile) => profile.gateway.as_ref(),
-            _ => None,
-        }?;
         let route = self.store.route(Some(gateway)).ok()?;
         route
             .into_iter()
@@ -972,11 +982,15 @@ impl App {
     }
 
     /// The saved passphrase of the key file at `key_path`, for the first question of an
-    /// attempt, when the tab's profile or a gateway on its way has that key and saved it.
-    /// Asked again, the saved passphrase did not unlock the key: the user is asked from then
-    /// on.
-    fn saved_passphrase(&mut self, tab_id: TabId, key_path: &Path, attempt: u32) -> Option<Answer> {
-        let owner = self.key_owner(tab_id, key_path)?;
+    /// attempt, when `owner`, a profile or a gateway, has that key and saved it. Asked
+    /// again, the saved passphrase did not unlock the key: the user is asked from then on.
+    pub(super) fn saved_passphrase(
+        &mut self,
+        owner: &ProfileId,
+        key_path: &Path,
+        attempt: u32,
+    ) -> Option<Answer> {
+        let owner = owner.clone();
         let saved = decode_passphrase(&self.vault.read(&passphrase_entry(&owner))?)?;
         if Path::new(&saved.key_path) != key_path {
             return None;
@@ -1001,7 +1015,16 @@ impl App {
         if profile.key_path.as_deref() == Some(key_path) {
             return Some(profile.id.clone());
         }
-        let route = self.store.route(profile.gateway.as_ref()).ok()?;
+        self.route_key_owner(profile.gateway.as_ref(), key_path)
+    }
+
+    /// The gateway of the route through `gateway` whose key file is `key_path`.
+    pub(super) fn route_key_owner(
+        &self,
+        gateway: Option<&ProfileId>,
+        key_path: &Path,
+    ) -> Option<ProfileId> {
+        let route = self.store.route(gateway).ok()?;
         route
             .into_iter()
             .find(|hop| hop.key_path.as_deref() == Some(key_path))
@@ -1058,6 +1081,11 @@ impl App {
         }
     }
 
+    /// Takes `profiles`' saved passwords as refused: the user is asked for them next time.
+    pub(super) fn refuse_saved(&mut self, profiles: Vec<ProfileId>) {
+        self.vault.refused.extend(profiles);
+    }
+
     /// The connection of `tab_id` failed. After a saved password, whatever the reason: a
     /// server tired of wrong passwords disconnects rather than refuses, and asking the user
     /// once too often costs less than a locked account.
@@ -1075,6 +1103,16 @@ impl App {
             .map(|(_, profile)| profile.clone())
             .collect();
         self.vault.refused.extend(given);
+    }
+}
+
+/// The gateway `profile`'s server is reached through, if any.
+fn route_gateway(profile: &TabProfile) -> Option<&ProfileId> {
+    match profile {
+        TabProfile::Ssh(profile) => profile.gateway.as_ref(),
+        TabProfile::Rdp(profile) => profile.gateway.as_ref(),
+        TabProfile::WinRm(profile) => profile.gateway.as_ref(),
+        _ => None,
     }
 }
 

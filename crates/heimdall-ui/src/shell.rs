@@ -35,6 +35,7 @@ use heimdall_app::profile_draft::{
 };
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
+use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
@@ -45,8 +46,9 @@ use heimdall_app::{
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
     ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SessionState,
     SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
-    TabProfile, TreeRow, TrustedKeysMessage, UiError, VaultDialog, VaultJob, VaultMode,
-    VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault, server_text,
+    TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog, VaultJob,
+    VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault,
+    server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -1145,6 +1147,7 @@ impl Shell {
             gateway_password: &self.gateway_password,
             gateway_passphrase: &self.gateway_passphrase,
             gateways: self.app.gateways(),
+            tunnel_problem: self.app.tunnel_problem(),
             passwords: if self.app.can_save_passwords() {
                 PasswordStore::Ready
             } else if self.app.vault_status() == VaultStatus::Locked {
@@ -1682,6 +1685,17 @@ impl Shell {
             | Effect::ConnectFtp { .. }
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
+            Effect::OpenTunnel { id, request } => {
+                // Its end is the tunnel's own: closing it cancels the attempt, which ends
+                // the stream.
+                let registry = self.registry.clone();
+                // Started once the task runs, on the runtime, as a connection's.
+                let events =
+                    stream::once(async move { tunnel_events(*request, registry) }).flatten();
+                Task::stream(events).map(move |event| {
+                    Message::App(AppMessage::Tunnel(TunnelMessage::Event { id, event }))
+                })
+            }
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
                     log::debug!("question {} was no longer waiting", question.value());
@@ -3862,6 +3876,8 @@ struct Forms<'a> {
     gateway_passphrase: &'a str,
     /// Saved SSH gateways, for the lists to choose from.
     gateways: &'a [SshGateway],
+    /// What stops the "New tunnel" dialog's tunnel from opening, if anything.
+    tunnel_problem: Option<heimdall_app::tunnel::TunnelProblem>,
     /// Whether a password typed now can be saved.
     passwords: PasswordStore,
     /// The most a dialog's scrolling fields may take, so its buttons stay in the window.
@@ -5642,6 +5658,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             question(title, body, action).into()
         }
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
+        Dialog::NewTunnel(form) => {
+            crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)
+        }
+        Dialog::TunnelHostKey {
+            host,
+            port,
+            fingerprint,
+        } => crate::tunnels_view::host_key(host, *port, fingerprint),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmDeleteProfile { name, .. } => question(
