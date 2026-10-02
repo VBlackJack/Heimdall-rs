@@ -158,7 +158,7 @@ impl CredsspSequence {
                 credssp::ClientMode::Negotiate(sspi::NegotiateConfig {
                     protocol_config: credssp_config,
                     package_list: None,
-                    client_computer_name: server_name,
+                    client_computer_name: krb_config.hostname.clone(),
                 })
             }
             None => credssp::ClientMode::Ntlm(sspi::ntlm::NtlmConfig::default()),

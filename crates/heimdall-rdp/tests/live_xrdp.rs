@@ -62,6 +62,7 @@ fn config(port: u16, known: &std::path::Path, security: Security) -> RdpConfig {
         trusted_for_run: Vec::new(),
         options: RdpOptions::default(),
         several_servers: false,
+        kerberos: false,
     }
 }
 

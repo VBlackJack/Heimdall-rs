@@ -26,6 +26,7 @@ mod clipboard;
 pub mod connect;
 pub mod drives;
 mod frames;
+mod kdc;
 pub mod known_hosts;
 pub mod session;
 mod tls;
