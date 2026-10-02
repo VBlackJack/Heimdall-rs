@@ -4123,6 +4123,15 @@ fn toggle_box<'a>(
         .into()
 }
 
+/// The C# hint under `toggle`, for the boxes the C# dialog explains.
+fn toggle_hint(toggle: ProfileToggle) -> Option<String> {
+    match toggle {
+        ProfileToggle::UseSsl => Some(fl!("ui-profile-use-ssl-hint")),
+        ProfileToggle::SkipCertificateCheck => Some(fl!("ui-profile-skip-cert-hint")),
+        _ => None,
+    }
+}
+
 fn toggle_label(toggle: ProfileToggle) -> String {
     match toggle {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
@@ -4650,7 +4659,26 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
     for toggle in ProfileToggle::of(draft.protocol) {
         if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
             form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
+            // What the box does, under it, as the C# dialog's hint.
+            if let Some(hint) = toggle_hint(*toggle) {
+                form = form.push(text(hint).size(SMALL_SIZE));
+            }
         }
+    }
+    // TLS to the plaintext port: said, not corrected, as the C# schema check reports it.
+    if draft.protocol == DraftProtocol::WinRm
+        && draft.uses_ssl()
+        && draft.port.trim() == heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT.to_string()
+    {
+        form = form.push(
+            text(fl!(
+                "ui-profile-winrm-tls-on-http-port",
+                http = heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT,
+                https = heimdall_core::profile::DEFAULT_WINRM_HTTPS_PORT
+            ))
+            .size(SMALL_SIZE)
+            .style(text::danger),
+        );
     }
     if matches!(draft.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
         && draft.is_on(ProfileToggle::LegacyAlgorithms)
