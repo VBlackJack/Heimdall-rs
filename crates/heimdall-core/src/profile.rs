@@ -272,6 +272,10 @@ pub struct RdpProfile {
     /// pressed and released at the settings' anti-idle interval while the session is open.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub anti_idle: bool,
+    /// A desktop that drops for a reason that may pass is opened again by itself, as the C#
+    /// `RdpAutoReconnect`: on unless cleared.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub auto_reconnect: bool,
 }
 
 impl RdpProfile {
@@ -287,6 +291,7 @@ impl RdpProfile {
             profile.options.color_depth = defaults.color_depth;
             profile.options.audio = defaults.audio;
             profile.options.dynamic_resolution = defaults.dynamic_resolution;
+            profile.auto_reconnect = defaults.auto_reconnect;
         }
         profile
     }
@@ -318,6 +323,9 @@ pub struct RdpDefaults {
     /// The desktop follows the tab's size, as `RdpDefaultDynamicResolution`: on.
     #[serde(default = "shared")]
     pub dynamic_resolution: bool,
+    /// A dropped desktop is opened again by itself, as `RdpDefaultAutoReconnect`: on.
+    #[serde(default = "shared")]
+    pub auto_reconnect: bool,
 }
 
 impl Default for RdpDefaults {
@@ -329,6 +337,7 @@ impl Default for RdpDefaults {
             color_depth: ColorDepth::default(),
             audio: AudioPlayback::default(),
             dynamic_resolution: true,
+            auto_reconnect: true,
         }
     }
 }

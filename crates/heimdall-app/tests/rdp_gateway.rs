@@ -54,6 +54,7 @@ fn app(dir: &Path, gateway: Option<&str>, gateways: Vec<SshGateway>) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }]);
     store.merge_gateways(gateways);
     store.save().expect("save");

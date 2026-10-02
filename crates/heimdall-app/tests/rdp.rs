@@ -53,6 +53,7 @@ fn app(dir: &Path) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }]);
     // The same port on another server.
     store.merge_rdp([RdpProfile {
@@ -74,6 +75,7 @@ fn app(dir: &Path) -> App {
         several_servers: false,
         // Asks for anti-idle keys.
         anti_idle: true,
+        auto_reconnect: true,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

@@ -317,6 +317,8 @@ struct LegacyServer {
     rdp_multi_monitor: bool,
     #[serde(default)]
     rdp_anti_idle: bool,
+    /// Absent means the C# default: on.
+    rdp_auto_reconnect: Option<bool>,
     /// The C# `int`; kept whole, as the C# passes it to the control.
     #[serde(default)]
     rdp_performance_flags: i64,
@@ -432,15 +434,22 @@ struct LegacyRdpDefaults {
     audio_capture: bool,
     #[serde(default, rename = "rdpDefaultMultiMonitor")]
     multi_monitor: bool,
+    #[serde(rename = "rdpDefaultAutoReconnect")]
+    auto_reconnect: Option<bool>,
 }
 
 /// What an RDP profile is given, from its own choices or from the global defaults.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per C# choice, each resolved on its own"
+)]
 struct RdpChoices {
     clipboard: bool,
     drives: bool,
     nla: bool,
     color_depth: Option<i64>,
     audio_mode: i64,
+    auto_reconnect: bool,
     /// What the choices turn on that Heimdall-rs does not have.
     dropped: Vec<Dropped>,
 }
@@ -455,6 +464,7 @@ impl RdpChoices {
                 nla: defaults.nla.unwrap_or(true),
                 color_depth: defaults.color_depth,
                 audio_mode: defaults.audio_mode,
+                auto_reconnect: defaults.auto_reconnect.unwrap_or(true),
                 dropped: turned_on(&[
                     (
                         is_external(defaults.mode.as_deref()),
@@ -476,6 +486,7 @@ impl RdpChoices {
                 nla: server.rdp_nla.unwrap_or(true),
                 color_depth: server.rdp_color_depth,
                 audio_mode: server.rdp_audio_mode,
+                auto_reconnect: server.rdp_auto_reconnect.unwrap_or(true),
                 dropped: turned_on(&[
                     (
                         is_external(server.rdp_mode.as_deref()),
@@ -1120,6 +1131,7 @@ fn convert_rdp(
         several_servers: false,
         // Not one of the global defaults in the C# Heimdall either.
         anti_idle: server.rdp_anti_idle,
+        auto_reconnect: choices.auto_reconnect,
     })
 }
 
