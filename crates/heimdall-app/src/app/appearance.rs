@@ -22,7 +22,8 @@ use std::path::PathBuf;
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
     ColorScheme, Language, Settings, anti_idle_interval_accepted, settings_path,
-    ssh_auto_reconnect_attempts_accepted, terminal_font_size_accepted,
+    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    ssh_tmout_reset_interval_accepted, terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -49,6 +50,11 @@ pub enum SettingsMessage {
     SshAutoReconnectAttempts(u32),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
     AntiIdleInterval(u32),
+    /// Seconds between two SSH keep-alives; refused out of the C# range.
+    SshKeepAliveInterval(u32),
+    /// Seconds of no input before an SSH shell's `TMOUT` reset, 0 for none; refused out of
+    /// the C# range.
+    SshTmoutResetInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
 }
@@ -148,6 +154,18 @@ impl App {
                     return Vec::new();
                 }
                 self.settings.anti_idle_interval = *seconds;
+            }
+            SettingsMessage::SshKeepAliveInterval(seconds) => {
+                if !ssh_keep_alive_interval_accepted(*seconds) {
+                    return Vec::new();
+                }
+                self.settings.ssh_keep_alive_interval = *seconds;
+            }
+            SettingsMessage::SshTmoutResetInterval(seconds) => {
+                if !ssh_tmout_reset_interval_accepted(*seconds) {
+                    return Vec::new();
+                }
+                self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
             SettingsMessage::TrustedKeys(_) => {}

@@ -969,6 +969,11 @@ ui-settings-ssh-auto-reconnect-description = Automatically retry an SSH session 
 ui-settings-ssh-auto-reconnect-enable = Enable bounded auto-reconnect
 ui-settings-ssh-auto-reconnect-attempts = Max attempts before falling back to manual reconnect
 ui-settings-ssh-session = Session
+ui-settings-ssh-keep-alive-interval = SSH keep-alive interval
+ui-settings-ssh-keep-alive-hint = How often Heimdall sends SSH protocol keep-alives on sessions, SFTP, tunnels and gateways, so an idle connection is not dropped by a firewall or the server. Applies to connections opened after the change.
+ui-settings-ssh-keep-alive-refused = SSH keep-alive interval must be between { $min } and { $max } seconds.
+ui-settings-ssh-tmout-reset-interval = TMOUT reset interval (0 = off)
+ui-settings-ssh-tmout-reset-refused = SSH TMOUT reset interval must be between { $min } and { $max } seconds.
 ui-settings-anti-idle-interval = Anti-idle interval (0 = off)
 ui-settings-anti-idle-unit = s
 ui-settings-anti-idle-refused = Anti-idle interval must be 0, or between { $min } and { $max } seconds.

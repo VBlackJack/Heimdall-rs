@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use heimdall_core::profile::{DesktopSizing, ProfileId, RdpProfile, SshGateway};
 use heimdall_rdp::{Fingerprint, KnownRdpHosts};
-use heimdall_ssh::ConnectOptions;
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, KeyTrust, Phase, Tab, TabProfile};
@@ -108,9 +107,7 @@ impl App {
             .store
             .route(profile.gateway.as_ref())
             .map_err(UiError::Route)?;
-        let mut ssh = ConnectOptions::new(self.config.known_hosts.clone());
-        ssh.agent = self.config.agent.clone();
-        ssh.run_trust = self.run_trust.clone();
+        let ssh = self.ssh_options();
         Ok(RdpRequest {
             profile: profile.clone(),
             known_hosts: self.known_rdp_hosts(),

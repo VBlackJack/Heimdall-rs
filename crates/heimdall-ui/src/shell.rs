@@ -77,6 +77,7 @@ use crate::i18n::fl;
 use crate::palette::Palette;
 use crate::report;
 use crate::search_keys::SearchKeys;
+pub use crate::session_settings::SessionField;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
@@ -402,10 +403,10 @@ pub enum Message {
     FontSizeEdited(String),
     /// Apply the font size typed.
     FontSizeApply,
-    /// The anti-idle interval typed in the Settings page.
-    AntiIdleEdited(String),
-    /// Apply the anti-idle interval typed.
-    AntiIdleApply,
+    /// A number of the session card typed in the Settings page.
+    SessionFieldEdited(SessionField, String),
+    /// Apply the number typed in a field of the session card.
+    SessionFieldApply(SessionField),
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -484,8 +485,10 @@ impl fmt::Debug for Message {
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
             Self::FontSizeEdited(typed) => write!(f, "FontSizeEdited({typed:?})"),
             Self::FontSizeApply => f.write_str("FontSizeApply"),
-            Self::AntiIdleEdited(typed) => write!(f, "AntiIdleEdited({typed:?})"),
-            Self::AntiIdleApply => f.write_str("AntiIdleApply"),
+            Self::SessionFieldEdited(field, typed) => {
+                write!(f, "SessionFieldEdited({field:?}, {typed:?})")
+            }
+            Self::SessionFieldApply(field) => write!(f, "SessionFieldApply({field:?})"),
         }
     }
 }
@@ -666,8 +669,9 @@ pub struct Shell {
     log_directory: Option<String>,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
-    /// The anti-idle interval as typed in the Settings page, until applied.
-    anti_idle_typed: Option<String>,
+    /// The numbers of the session card as typed in the Settings page, until applied, by
+    /// [`SessionField::index`].
+    session_typed: [Option<String>; 3],
     /// The search typed over the trusted SSH host keys.
     host_key_search: String,
     /// The Settings tab shown, kept while the application runs.
@@ -769,7 +773,7 @@ impl Shell {
             focus_next: None,
             log_directory: None,
             font_size_typed: None,
-            anti_idle_typed: None,
+            session_typed: Default::default(),
             host_key_search: String::new(),
             settings_tab: SettingsTab::default(),
             certificate_search: String::new(),
@@ -841,6 +845,11 @@ impl Shell {
         let mut subscriptions = vec![events];
         if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
+        }
+        if let Some(interval) = self.app.tmout_reset_interval() {
+            subscriptions.push(
+                iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
+            );
         }
         if let Some(interval) = self.app.anti_idle_interval() {
             subscriptions
@@ -934,8 +943,8 @@ impl Shell {
             | Message::LogDirectoryApply
             | Message::FontSizeEdited(_)
             | Message::FontSizeApply
-            | Message::AntiIdleEdited(_)
-            | Message::AntiIdleApply) => self.settings_field_message(message),
+            | Message::SessionFieldEdited(..)
+            | Message::SessionFieldApply(_)) => self.settings_field_message(message),
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
@@ -2472,22 +2481,21 @@ impl Shell {
                         size,
                     )))
             }
-            Message::AntiIdleEdited(typed) => {
-                self.anti_idle_typed = Some(typed);
+            Message::SessionFieldEdited(field, typed) => {
+                self.session_typed[field.index()] = Some(typed);
                 Vec::new()
             }
-            Message::AntiIdleApply => {
+            Message::SessionFieldApply(field) => {
                 // Out of the range, it stays typed, the C# message under it.
-                let Some(seconds) = self.typed_anti_idle().filter(|seconds| {
-                    heimdall_core::settings::anti_idle_interval_accepted(*seconds)
-                }) else {
+                let Some(seconds) = self
+                    .typed_session(field)
+                    .filter(|seconds| field.accepted(*seconds))
+                else {
                     return Vec::new();
                 };
-                self.anti_idle_typed = None;
+                self.session_typed[field.index()] = None;
                 self.app
-                    .update(AppMessage::Settings(SettingsMessage::AntiIdleInterval(
-                        seconds,
-                    )))
+                    .update(AppMessage::Settings(field.applied(seconds)))
             }
             _ => match self.log_directory.take() {
                 Some(typed) => {
@@ -2506,45 +2514,47 @@ impl Shell {
         self.font_size_typed.as_deref()?.trim().parse().ok()
     }
 
-    /// The anti-idle interval typed, as a number; `None` when nothing is typed or it is not
-    /// one.
-    fn typed_anti_idle(&self) -> Option<u32> {
-        self.anti_idle_typed.as_deref()?.trim().parse().ok()
+    /// `field`'s value typed, as a number; `None` when nothing is typed or it is not one.
+    fn typed_session(&self, field: SessionField) -> Option<u32> {
+        self.session_typed[field.index()]
+            .as_deref()?
+            .trim()
+            .parse()
+            .ok()
     }
 
-    /// The SSH session settings, as the C# SSH/SFTP Session tab: the anti-idle interval,
-    /// applied with Enter, which RDP sessions asking for anti-idle keys follow.
+    /// The session settings, as the C# SSH/SFTP Session tab: the SSH keep-alive interval,
+    /// the `TMOUT` reset of idle SSH shells, and the anti-idle interval RDP sessions asking
+    /// for anti-idle keys follow; each applied with Enter.
     fn ssh_session_settings(&self) -> Element<'_, Message> {
-        let shown = self.app.settings().anti_idle_interval.to_string();
-        let typed = self.anti_idle_typed.as_deref().unwrap_or(&shown);
-        let refused = self.anti_idle_typed.is_some()
-            && !self
-                .typed_anti_idle()
-                .is_some_and(heimdall_core::settings::anti_idle_interval_accepted);
-        let mut card = column![
-            row![
-                text(fl!("ui-settings-anti-idle-interval")),
-                iced::widget::space::horizontal(),
-                text_input("", typed)
-                    .width(FONT_SIZE_FIELD_WIDTH)
-                    .on_input(Message::AntiIdleEdited)
-                    .on_submit(Message::AntiIdleApply),
-                text(fl!("ui-settings-anti-idle-unit")),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(SPACING);
-        if refused {
+        let settings = self.app.settings();
+        let mut card = Column::new().spacing(SPACING);
+        for field in SessionField::ALL {
+            let shown = field.value(settings).to_string();
+            let typed = self.session_typed[field.index()].clone().unwrap_or(shown);
+            let refused = self.session_typed[field.index()].is_some()
+                && !self
+                    .typed_session(field)
+                    .is_some_and(|seconds| field.accepted(seconds));
             card = card.push(
-                text(fl!(
-                    "ui-settings-anti-idle-refused",
-                    min = heimdall_core::settings::ANTI_IDLE_INTERVAL_MIN,
-                    max = heimdall_core::settings::ANTI_IDLE_INTERVAL_MAX
-                ))
-                .size(SMALL_SIZE)
-                .style(text::danger),
+                row![
+                    text(field.label()),
+                    iced::widget::space::horizontal(),
+                    text_input("", &typed)
+                        .width(FONT_SIZE_FIELD_WIDTH)
+                        .on_input(move |typed| Message::SessionFieldEdited(field, typed))
+                        .on_submit(Message::SessionFieldApply(field)),
+                    text(fl!("ui-settings-anti-idle-unit")),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
             );
+            if let Some(hint) = field.hint() {
+                card = card.push(text(hint).size(SMALL_SIZE));
+            }
+            if refused {
+                card = card.push(text(field.refusal()).size(SMALL_SIZE).style(text::danger));
+            }
         }
         container(card)
             .padding(PADDING)
