@@ -22,7 +22,7 @@ use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
 
 use alacritty_terminal::event::{OnResize as _, WindowSize};
-use alacritty_terminal::tty::windows::{PTY_CHILD_EVENT_TOKEN, PTY_READ_WRITE_TOKEN};
+use alacritty_terminal::tty::windows::PTY_READ_WRITE_TOKEN;
 use alacritty_terminal::tty::{
     self, ChildEvent, EventedPty as _, EventedReadWrite as _, Options, Pty,
 };
@@ -47,7 +47,12 @@ impl Commands {
 }
 
 pub(super) fn spawn(options: &Options, size: WindowSize) -> io::Result<LocalSession> {
-    let pty = tty::new(options, size, 0)?;
+    start(tty::new(options, size, 0)?)
+}
+
+/// Runs the session of a started `pty` on a thread of its own. The shell may have exited
+/// already: the thread is not there yet when the program starts.
+fn start(pty: Pty) -> io::Result<LocalSession> {
     let poller = Arc::new(Poller::new()?);
     let (sender, commands) = std_mpsc::channel();
     let (events_sent, events) = mpsc::channel(EVENT_QUEUE);
@@ -82,6 +87,13 @@ fn run(
         if pty.reregister(poller, interest, PollMode::Level).is_err() {
             break None;
         }
+        // An exit that came before the first registration was posted to no poller: it waits
+        // in the watcher's queue only, and nothing would end the wait below.
+        if let Some(ChildEvent::Exited(status)) = pty.next_child_event() {
+            // What the shell wrote before it exited comes first.
+            read_available(&mut pty, &mut buffer, events);
+            break status.and_then(|status| status.code());
+        }
         ready.clear();
         if poller.wait(&mut ready, None).is_err() {
             break None;
@@ -93,15 +105,7 @@ fn run(
                 Command::Close => break 'session None,
             }
         }
-        for event in ready.iter() {
-            if event.key == PTY_CHILD_EVENT_TOKEN
-                && let Some(ChildEvent::Exited(status)) = pty.next_child_event()
-            {
-                // What the shell wrote before it exited comes first.
-                read_available(&mut pty, &mut buffer, events);
-                break 'session status.and_then(|status| status.code());
-            }
-        }
+        // The exit's own wake-up is taken at the top of the next turn.
         if !read_available(&mut pty, &mut buffer, events) {
             break None;
         }
@@ -135,5 +139,50 @@ fn read_available(pty: &mut Pty, buffer: &mut [u8], events: &mpsc::Sender<LocalE
             }
             _ => return true,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::time::Duration;
+
+    use super::*;
+    use crate::local::{LocalArguments, LocalConfig, options};
+
+    /// Bound on anything the test waits for.
+    const WAIT: Duration = Duration::from_secs(15);
+
+    /// Far longer than `cmd /C exit` takes to end, so that it has ended before the session
+    /// watches it. On a machine slower than that the test proves nothing, but still passes.
+    const EXIT_HEADSTART: Duration = Duration::from_secs(2);
+
+    /// What the shell exits with.
+    const EXIT_CODE: i32 = 7;
+
+    #[tokio::test]
+    async fn an_exit_before_the_session_watches_is_still_reported() {
+        let options = options(&LocalConfig {
+            program: Some("cmd.exe".to_owned()),
+            arguments: LocalArguments::List(vec!["/C".to_owned(), format!("exit {EXIT_CODE}")]),
+            working_directory: None,
+            columns: 80,
+            rows: 24,
+        })
+        .expect("options");
+        let pty = tty::new(&options, window_size(80, 24), 0).expect("started");
+        // The watcher reports the exit with no poller registered to hear of it.
+        tokio::time::sleep(EXIT_HEADSTART).await;
+        let mut session = start(pty).expect("session");
+        let code = loop {
+            match tokio::time::timeout(WAIT, session.events.recv())
+                .await
+                .expect("in time")
+                .expect("an event")
+            {
+                LocalEvent::Output(_) => {}
+                LocalEvent::Exited(code) => break code,
+            }
+        };
+        assert_eq!(code, Some(EXIT_CODE));
     }
 }
