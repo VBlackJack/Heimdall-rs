@@ -112,6 +112,9 @@ pub struct Spec {
     pub forwarding: bool,
     /// Opens an agent channel once the shell starts, whether the client asked or not.
     pub agent_unasked: bool,
+    /// Speaks only what an old appliance does: SHA-1 Diffie-Hellman, a CBC cipher,
+    /// HMAC-SHA1.
+    pub legacy_only: bool,
 }
 
 impl Default for Spec {
@@ -132,6 +135,7 @@ impl Default for Spec {
             inactivity_timeout: None,
             forwarding: false,
             agent_unasked: false,
+            legacy_only: false,
         }
     }
 }
@@ -189,6 +193,15 @@ pub async fn start(spec: Spec) -> TestServer {
     let mut preferred = Preferred::default();
     if let Some(algorithms) = &spec.key_algorithms {
         preferred.key = Cow::Owned(algorithms.clone());
+    }
+    if spec.legacy_only {
+        preferred.kex = Cow::Owned(vec![
+            russh::kex::DH_G14_SHA1,
+            russh::kex::EXTENSION_SUPPORT_AS_SERVER,
+            russh::kex::EXTENSION_OPENSSH_STRICT_KEX_AS_SERVER,
+        ]);
+        preferred.cipher = Cow::Owned(vec![russh::cipher::AES_128_CBC]);
+        preferred.mac = Cow::Owned(vec![russh::mac::HMAC_SHA1]);
     }
     let config = Arc::new(server::Config {
         keys: spec
@@ -678,6 +691,7 @@ pub fn profile(port: u16, key: Option<&str>) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 

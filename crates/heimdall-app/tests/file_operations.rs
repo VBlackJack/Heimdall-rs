@@ -95,6 +95,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

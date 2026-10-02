@@ -58,6 +58,7 @@ fn hop(host: &str, port: u16, user: &str, key: PathBuf) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 

@@ -235,6 +235,9 @@ pub enum ProfileToggle {
     /// RDP: take the application's RDP options, as the C# "Use global RDP defaults", ticked
     /// for a new profile.
     FollowDefaults,
+    /// SSH, SFTP: also offer the older algorithms old appliances speak, after the current
+    /// ones.
+    LegacyAlgorithms,
     /// RDP: several machines answer at the address; each new certificate is asked about.
     SeveralServers,
 }
@@ -257,9 +260,13 @@ impl ProfileToggle {
                 Self::SkipCertificateCheck,
             ],
             DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
-            DraftProtocol::Ssh => &[Self::Compression, Self::ForwardAgent],
+            DraftProtocol::Ssh => &[
+                Self::Compression,
+                Self::ForwardAgent,
+                Self::LegacyAlgorithms,
+            ],
             // No shell to forward the agent to.
-            DraftProtocol::Sftp => &[Self::Compression],
+            DraftProtocol::Sftp => &[Self::Compression, Self::LegacyAlgorithms],
             DraftProtocol::Ftp => &[Self::Passive, Self::Tls],
             DraftProtocol::Telnet | DraftProtocol::Local => &[],
         }
@@ -485,6 +492,7 @@ impl ProfileDraft {
             toggles: [
                 (profile.compression, ProfileToggle::Compression),
                 (profile.forward_agent, ProfileToggle::ForwardAgent),
+                (profile.legacy_algorithms, ProfileToggle::LegacyAlgorithms),
             ]
             .into_iter()
             .filter_map(|(on, toggle)| on.then_some(toggle))
@@ -1011,6 +1019,7 @@ impl ProfileDraft {
                     && self.is_on(ProfileToggle::ForwardAgent),
                 compression: self.is_on(ProfileToggle::Compression),
                 sftp: self.protocol == DraftProtocol::Sftp,
+                legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -1175,6 +1184,7 @@ impl ProfileDraft {
             forward_agent: self.is_on(ProfileToggle::ForwardAgent),
             compression: self.is_on(ProfileToggle::Compression),
             sftp: false,
+            legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
         })
     }
 }
@@ -1337,6 +1347,7 @@ mod tests {
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1583,7 +1594,7 @@ mod tests {
         }
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Sftp),
-            [ProfileToggle::Compression],
+            [ProfileToggle::Compression, ProfileToggle::LegacyAlgorithms],
             "no shell to forward the agent to"
         );
         assert!(DraftProtocol::Sftp.routes_through_gateway());
@@ -1613,7 +1624,12 @@ mod tests {
     fn forwarding_the_agent_is_an_ssh_option_that_reads_back() {
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Ssh),
-            [ProfileToggle::Compression, ProfileToggle::ForwardAgent],
+            [
+                ProfileToggle::Compression,
+                ProfileToggle::ForwardAgent,
+                // Not in the C# dialog, which always offers them: after its boxes.
+                ProfileToggle::LegacyAlgorithms
+            ],
             "in the C# order"
         );
         for protocol in [

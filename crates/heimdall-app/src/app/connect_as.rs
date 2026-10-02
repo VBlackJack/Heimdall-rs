@@ -154,6 +154,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 forward_agent: false,
                 compression: false,
                 sftp: false,
+                legacy_algorithms: false,
             }),
             purpose,
         )
