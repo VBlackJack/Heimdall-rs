@@ -18,17 +18,17 @@
 //! system's store or, once a master password is set, in the vault; given back only to the
 //! server they are for, once per attempt, and never again in the session once refused.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use heimdall_app::profile_draft::{DraftError, ProfileField};
+use heimdall_app::profile_draft::{DraftError, ProfileField, SavedSecret};
 use heimdall_app::{
     Answer, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, Message, OpenedVault,
     QuestionId, QuestionKind, SystemCredentials, TabId, UiError, VaultJob, VaultMode, VaultProblem,
     VaultStatus, open_vault,
 };
-use heimdall_core::profile::{ProfileId, SshProfile};
+use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_ssh::{AgentSource, AuthMethod, PasswordQuestion, Secret};
+use heimdall_ssh::{AgentSource, AuthMethod, PassphraseQuestion, PasswordQuestion, Secret};
 use heimdall_term::GridSize;
 
 const MASTER: &str = "correct horse battery staple";
@@ -114,6 +114,7 @@ fn save_in_editor(app: &mut App, password: Option<&str>) {
     app.update(Message::EditProfile(ProfileId::new("a")));
     app.update(Message::SaveProfile {
         password: password.map(|typed| Secret::new(typed.to_owned())),
+        passphrase: None,
     });
 }
 
@@ -240,7 +241,10 @@ fn saving_the_editor_without_typing_keeps_the_password_and_clear_removes_it() {
         panic!("{:?}", app.dialog);
     };
     assert!(!draft.password_saved, "the form stops saying so at once");
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert!(!editor_says_saved(&mut app));
     assert_eq!(first_answer(&mut app, "a.lab"), None);
 }
@@ -439,7 +443,10 @@ fn a_profile_changed_in_the_editor_takes_its_password_along() {
         field: ProfileField::Host,
         value: "b.lab".to_owned(),
     });
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert_eq!(first_answer(&mut app, "b.lab").as_deref(), Some(PASSWORD));
     assert_eq!(
         first_answer(&mut app, "a.lab"),
@@ -693,6 +700,7 @@ fn saving_a_form_that_is_not_open_leaves_the_open_dialog() {
     app.update(Message::ShowVault);
     app.update(Message::SaveProfile {
         password: Some(Secret::new(PASSWORD.to_owned())),
+        passphrase: None,
     });
     assert!(
         matches!(app.dialog, Some(Dialog::Vault(_))),
@@ -738,6 +746,7 @@ fn save_gateway(app: &mut App) {
     }
     app.update(Message::SaveGateway {
         password: Some(Secret::new(GATEWAY_PASSWORD.to_owned())),
+        passphrase: None,
     });
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
 }
@@ -1138,6 +1147,7 @@ fn a_password_saved_for_an_ftp_account_answers_its_question() {
     app.update(Message::EditProfile(ProfileId::new("f")));
     app.update(Message::SaveProfile {
         password: Some(Secret::new(PASSWORD.to_owned())),
+        passphrase: None,
     });
     let effects = app.update(Message::OpenFtp(ProfileId::new("f")));
     let [Effect::ConnectFtp { tab, attempt, .. }] = effects.as_slice() else {
@@ -1155,4 +1165,175 @@ fn a_password_saved_for_an_ftp_account_answers_its_question() {
         }),
     );
     assert_eq!(answered.as_deref(), Some(PASSWORD));
+}
+
+const KEY: &str = "/keys/id_ed25519";
+
+/// The application with profile `a` logging in with the key file at `key`.
+fn keyed(dir: &Path, system: &SystemCredentials, key: &str) -> App {
+    let mut profile = profile("a", "a.lab", Some("admin"));
+    profile.key_path = Some(PathBuf::from(key));
+    app_with(dir, profile, system)
+}
+
+fn passphrase_question(key: &str, attempt: u32) -> QuestionKind {
+    QuestionKind::Passphrase(PassphraseQuestion {
+        key_path: PathBuf::from(key),
+        attempt,
+    })
+}
+
+/// Opens the editor of profile `a` and saves it, `passphrase` typed into it.
+fn save_passphrase(app: &mut App, passphrase: Option<&str>) {
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: passphrase.map(|typed| Secret::new(typed.to_owned())),
+    });
+}
+
+/// What the editor of profile `a` says of its key passphrase.
+fn editor_passphrase(app: &mut App) -> SavedSecret {
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    let said = match &app.dialog {
+        Some(Dialog::EditProfile { draft, .. }) => draft.passphrase,
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::DismissDialog);
+    said
+}
+
+/// What a new connection to profile `a` is answered with when its key at `key` asks.
+fn first_passphrase(app: &mut App, key: &str) -> Option<String> {
+    let (tab, attempt) = open(app);
+    ask(app, tab, attempt, passphrase_question(key, 1)).1
+}
+
+#[test]
+fn a_key_passphrase_saved_in_the_editor_unlocks_that_key_only_until_it_fails() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = keyed(dir.path(), &system, KEY);
+    assert_eq!(editor_passphrase(&mut app), SavedSecret::Absent);
+    save_passphrase(&mut app, Some("unlock me"));
+    assert_eq!(editor_passphrase(&mut app), SavedSecret::Saved);
+
+    let (tab, attempt) = open(&mut app);
+    assert_eq!(
+        ask(&mut app, tab, attempt, passphrase_question(KEY, 1))
+            .1
+            .as_deref(),
+        Some("unlock me")
+    );
+    assert_eq!(
+        ask(
+            &mut app,
+            tab,
+            attempt,
+            passphrase_question("/keys/other", 1)
+        )
+        .1,
+        None,
+        "another key file is asked about"
+    );
+    // Asked again: the saved passphrase did not unlock the key.
+    assert_eq!(
+        ask(&mut app, tab, attempt, passphrase_question(KEY, 2)).1,
+        None
+    );
+    assert_eq!(
+        first_passphrase(&mut app, KEY),
+        None,
+        "not given again in the session"
+    );
+    save_passphrase(&mut app, Some("the right one"));
+    assert_eq!(
+        first_passphrase(&mut app, KEY).as_deref(),
+        Some("the right one"),
+        "a new one saved is given again"
+    );
+    // A password question is not answered with it.
+    let (tab, attempt) = open(&mut app);
+    assert_eq!(
+        ask(&mut app, tab, attempt, password_question("a.lab", 1)).1,
+        None
+    );
+}
+
+#[test]
+fn another_key_file_drops_the_saved_passphrase_and_remove_clears_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = keyed(dir.path(), &system, KEY);
+    save_passphrase(&mut app, Some("unlock me"));
+
+    // Saved untouched: kept.
+    save_passphrase(&mut app, None);
+    assert_eq!(
+        first_passphrase(&mut app, KEY).as_deref(),
+        Some("unlock me")
+    );
+
+    // Another key file named: the passphrase of the first one goes.
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::ProfileField {
+        field: ProfileField::KeyPath,
+        value: "/keys/new".to_owned(),
+    });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    assert_eq!(editor_passphrase(&mut app), SavedSecret::Absent);
+    assert_eq!(first_passphrase(&mut app, "/keys/new"), None);
+
+    // Saved for the new key, then removed in the editor.
+    save_passphrase(&mut app, Some("new one"));
+    assert_eq!(
+        first_passphrase(&mut app, "/keys/new").as_deref(),
+        Some("new one")
+    );
+    app.update(Message::EditProfile(ProfileId::new("a")));
+    app.update(Message::ClearPassphrase);
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    assert_eq!(editor_passphrase(&mut app), SavedSecret::Absent);
+    assert_eq!(first_passphrase(&mut app, "/keys/new"), None);
+}
+
+#[test]
+fn a_gateways_key_passphrase_unlocks_the_gateways_key_on_the_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut target = profile("a", "a.lab", Some("admin"));
+    target.gateway = Some(ProfileId::new("jump"));
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("jump"),
+        name: "jump".to_owned(),
+        host: "jump.lab".to_owned(),
+        port: 22,
+        username: Some("hop".to_owned()),
+        key_path: Some(PathBuf::from("/keys/jump")),
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = app_with(dir.path(), target, &system);
+    app.update(Message::EditGateway(ProfileId::new("jump")));
+    app.update(Message::SaveGateway {
+        password: None,
+        passphrase: Some(Secret::new("hop key".to_owned())),
+    });
+    assert_eq!(
+        first_passphrase(&mut app, "/keys/jump").as_deref(),
+        Some("hop key")
+    );
+    assert_eq!(
+        first_passphrase(&mut app, KEY),
+        None,
+        "the profile's own key has none saved"
+    );
 }

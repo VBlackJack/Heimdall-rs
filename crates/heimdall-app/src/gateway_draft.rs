@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::{ProfileId, SshGateway};
 
-use crate::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileField, host};
+use crate::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileField, SavedSecret, host};
 
 /// A field of the gateway dialog; the profile form's names, as the fields are the same.
 pub const GATEWAY_FIELDS: [ProfileField; 5] = [
@@ -53,6 +53,8 @@ pub struct GatewayDraft {
     pub password_saved: bool,
     /// The saved password is to be removed when the dialog is saved.
     pub clear_password: bool,
+    /// The key passphrase saved for the gateway, as the dialog shows it.
+    pub passphrase: SavedSecret,
 }
 
 impl Default for GatewayDraft {
@@ -68,6 +70,7 @@ impl Default for GatewayDraft {
             parent: None,
             password_saved: false,
             clear_password: false,
+            passphrase: SavedSecret::Absent,
         }
     }
 }
@@ -90,6 +93,7 @@ impl GatewayDraft {
             parent: gateway.parent.clone(),
             password_saved: false,
             clear_password: false,
+            passphrase: SavedSecret::Absent,
         }
     }
 

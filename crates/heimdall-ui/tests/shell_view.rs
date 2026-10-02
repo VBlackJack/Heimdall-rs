@@ -3045,3 +3045,39 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
     ui.find("desk: printers, smart cards")
         .expect("the profile and what it came without");
 }
+
+#[test]
+fn the_profile_form_saves_a_key_passphrase_and_then_says_it_is_saved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    core.update(AppMessage::ProfileField {
+        field: heimdall_app::profile_draft::ProfileField::KeyPath,
+        value: "/keys/id_ed25519".to_owned(),
+    });
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Key passphrase").expect("a passphrase field");
+        ui.find(
+            "Used only to decrypt the selected SSH key. Leave blank if the key has no \
+             passphrase or is unlocked by an SSH agent.",
+        )
+        .expect("the C# hint");
+        assert!(ui.find("Passphrase saved").is_err(), "none yet");
+    }
+    let _ = shell.update(Message::ProfilePassphrase("unlock me".to_owned()));
+    let _ = shell.update(Message::SaveProfileForm);
+    let mut core = shell.into_app();
+    assert!(core.dialog.is_none(), "{:?}", core.dialog);
+
+    core.update(AppMessage::EditProfile(ProfileId::new("a")));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Passphrase saved").expect("says so");
+    ui.click("Clear").expect("a clear button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ClearPassphrase)))
+    );
+}
