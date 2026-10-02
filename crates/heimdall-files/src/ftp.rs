@@ -636,6 +636,11 @@ async fn upload_locked(
         if existing.is_some() {
             // FTP has no atomic replace: the old file goes just before the new one lands.
             control.rm(text(remote)).await.map_err(|e| ftp_error(&e))?;
+        } else if !replace && client.entry_locked(control, remote).await?.is_some() {
+            // As the C#: the name is checked again just before the move, since a rename can
+            // replace what someone else put there while the data was sent. A file arriving
+            // between this check and the move still can: FTP has no exclusive rename.
+            return Err(exists());
         }
         control
             .rename(text(&temporary), text(remote))

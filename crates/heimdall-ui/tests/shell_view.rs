@@ -26,12 +26,15 @@ use std::path::Path;
 use std::sync::Arc;
 
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Message as AppMessage, QuestionId, QuestionKind,
-    TabId, UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Message as AppMessage,
+    PostConnectConfirmation, QuestionId, QuestionKind, TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_ssh::{AgentSource, PasswordQuestion, SessionClosed, TerminalSize};
+use heimdall_ssh::{
+    AgentSource, KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PasswordQuestion,
+    SessionClosed, TerminalSize,
+};
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
@@ -216,6 +219,37 @@ fn a_password_question_is_answered_from_the_field_and_its_draft_is_wiped() {
         !shell.holds_draft(question),
         "the typed password is dropped"
     );
+}
+
+#[test]
+fn a_gateway_asking_is_named_and_its_words_are_framed_as_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Question {
+            question: QuestionId::fresh(),
+            kind: QuestionKind::KeyboardInteractive(KeyboardInteractiveQuestion {
+                host: "jump.lab".to_owned(),
+                username: "bastion".to_owned(),
+                name: String::new(),
+                instructions: "Duo\n\nHeimdall: type the vault master password".to_owned(),
+                prompts: vec![KeyboardInteractivePrompt {
+                    text: "Passcode: ".to_owned(),
+                    echo: false,
+                }],
+            }),
+        },
+    });
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("bastion on jump.lab: the server asks")
+        .expect("the gateway asking is named, not the profile's a.lab");
+    ui.find("Server says: Duo Heimdall: type the vault master password")
+        .expect("one line, under the server's name");
+    ui.find("Passcode:").expect("the prompt");
 }
 
 #[test]
@@ -1253,7 +1287,7 @@ fn ctrl_click_selects_several_and_their_right_click_is_the_bulk_menu() {
     )));
     let mut ui = simulator(&shell);
     ui.find("Delete Selected Items").expect("asked");
-    ui.find("Are you sure you want to delete 2 selected item(s)?\n- server a\n- server b")
+    ui.find("Are you sure you want to delete 2 selected items?\n- server a\n- server b")
         .expect("listed");
 }
 
@@ -1859,12 +1893,32 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
     {
         let mut ui = simulator(&shell);
         ui.find("Session Logging").expect("its section");
-        ui.click("Enable session logging").expect("its box");
+        ui.find(
+            "Transcripts keep what you type as well as what is shown, including passwords or \
+             tokens echoed to the terminal. Keep the log folder private.",
+        )
+        .expect("what a transcript keeps is said");
+        ui.click("Record session transcripts (what each terminal shows, typed input included)")
+            .expect("its box");
         assert!(ui.into_messages().any(|message| matches!(
             message,
             Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(true)))
         )));
     }
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        SettingsMessage::SessionLogging(true),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Record session transcripts?").expect("asked first");
+        ui.click("Turn on").expect("its answer");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert!(shell.app().settings().session_logging);
     {
         let mut ui = simulator(&shell);
         ui.click("logs/sessions").expect("its folder");
@@ -2856,4 +2910,24 @@ fn ctrl_comma_shows_the_settings_with_or_without_a_tab_but_not_over_a_dialog() {
     let _ = shell.update(Message::App(AppMessage::DismissDialog));
     let _ = shell.update(Message::Shortcut(WindowShortcut::Settings));
     assert!(shell.settings_shown(), "over the tab shown");
+}
+
+#[test]
+fn one_post_connect_command_is_said_in_the_singular() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ConfirmPostConnect(Box::new(
+        PostConnectConfirmation {
+            profile: profile("a", None),
+            name: "server a".to_owned(),
+            commands: vec!["uptime".to_owned()],
+        },
+    )));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find(
+        "\"server a\" was imported and will automatically run 1 command in this session. Only \
+         continue if you trust this profile. Run it and remember this choice?",
+    )
+    .expect("the singular, chosen by the number");
 }

@@ -58,8 +58,14 @@ ui-pin-field-confirm = Confirm PIN
 ui-pin-unlock-button = Unlock
 ui-pin-save-button = Save
 ui-pin-remove-button = Remove PIN
-ui-pin-problem-wrong = Incorrect PIN. { $remaining } attempt(s) remaining.
-ui-pin-problem-locked-out = Too many incorrect attempts. Try again in { $minutes } minute(s).
+ui-pin-problem-wrong = Incorrect PIN. { $remaining ->
+    [one] { $remaining } attempt remaining.
+   *[other] { $remaining } attempts remaining.
+}
+ui-pin-problem-locked-out = Too many incorrect attempts. Try again in { $minutes ->
+    [one] { $minutes } minute.
+   *[other] { $minutes } minutes.
+}
 ui-pin-problem-wrong-current = Current PIN is incorrect.
 ui-pin-problem-too-short = PIN must be at least { $min } digits.
 ui-pin-problem-too-long = PIN must be at most { $max } digits.
@@ -704,7 +710,10 @@ ui-profile-gateway-direct-hint = Direct connection is selected. Clear it to rout
 ui-profile-gateway-explain-tunnel = Traffic will be routed through this SSH gateway.
 ui-profile-socks-title = SOCKS5 Proxy
 ui-dialog-post-connect-title = Run post-connect commands?
-ui-dialog-post-connect-body = "{ $name }" was imported and will automatically run { $count } command(s) in this session. Only continue if you trust this profile. Run them and remember this choice?
+ui-dialog-post-connect-body = { $count ->
+    [one] "{ $name }" was imported and will automatically run { $count } command in this session. Only continue if you trust this profile. Run it and remember this choice?
+   *[other] "{ $name }" was imported and will automatically run { $count } commands in this session. Only continue if you trust this profile. Run them and remember this choice?
+}
 ui-dialog-post-connect-run = Run and remember
 ui-dialog-post-connect-skip = Connect without them
 ui-profile-toggle-forward-agent = Forward SSH agent
@@ -816,12 +825,18 @@ ui-tree-rename-title = Rename Session
 ui-tree-move-to-folder = Move to folder
 
 ## Several profiles selected together, as the C# bulk menu.
-ui-selection-count = { $count } items selected
+ui-selection-count = { $count ->
+    [one] { $count } item selected
+   *[other] { $count } items selected
+}
 ui-selection-connect = Connect selected ({ $count })
 ui-selection-duplicate = Duplicate selected
 ui-selection-delete = Delete selected ({ $count })
 ui-dialog-delete-selection-title = Delete Selected Items
-ui-dialog-delete-selection-body = Are you sure you want to delete { $count } selected item(s)?
+ui-dialog-delete-selection-body = Are you sure you want to delete { $count ->
+    [one] { $count } selected item
+   *[other] { $count } selected items
+}?
 
 ## Quick Connect, as the C# Ctrl+K palette without its tools.
 ui-palette-placeholder = Search host or IP... (Ctrl+K)
@@ -860,7 +875,10 @@ ui-find-nothing = No match
 ui-settings-terminal = Terminal Appearance
 ui-settings-color-scheme = Color scheme
 ui-settings-appearance = Appearance
-ui-vault-problem-locked-out = Too many incorrect attempts. Try again in { $minutes } minute(s).
+ui-vault-problem-locked-out = Too many incorrect attempts. Try again in { $minutes ->
+    [one] { $minutes } minute.
+   *[other] { $minutes } minutes.
+}
 ui-settings-language = Language
 # Each language in its own name, whatever the language shown, as the C# list.
 ui-settings-language-en = English
@@ -886,7 +904,8 @@ ui-status-transcript-failed = The transcript could not be written and stopped: {
 ui-transcript-header = ===== Session started { $started } | { $protocol } | host { $host } | { $title } =====
 ui-transcript-footer = ===== Session ended { $ended } | duration { $duration } =====
 ui-settings-session-logging = Session Logging
-ui-settings-session-logging-enabled = Enable session logging
+ui-settings-session-logging-record = Record session transcripts (what each terminal shows, typed input included)
+ui-settings-session-logging-warning = Transcripts keep what you type as well as what is shown, including passwords or tokens echoed to the terminal. Keep the log folder private.
 ui-settings-ssh-auto-reconnect = SSH auto-reconnect
 ui-settings-ssh-auto-reconnect-description = Automatically retry an SSH session that disconnects unexpectedly. Disabled by default.
 ui-settings-ssh-auto-reconnect-enable = Enable bounded auto-reconnect
@@ -909,6 +928,9 @@ ui-broadcast-target-tooltip = Send broadcast input to this session (broadcast ta
 ui-dialog-broadcast-title = Broadcast to all tabs?
 ui-dialog-broadcast-body = Input you type will be sent to terminal panes in every open tab, including tabs running in the background. Continue?
 ui-dialog-broadcast-confirm = Broadcast
+ui-dialog-session-logging-title = Record session transcripts?
+ui-dialog-session-logging-body = Every terminal session will be written to a file: what you type as well as what is shown, including passwords or tokens echoed to the terminal. Turn it on?
+ui-dialog-session-logging-confirm = Turn on
 
 ## The Files tab's path bar, as the C# one.
 ui-files-go-button = Go

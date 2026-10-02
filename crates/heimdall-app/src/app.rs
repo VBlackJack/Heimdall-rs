@@ -63,7 +63,7 @@ use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
 use crate::steps_draft::StepEdit;
 use crate::telnet_driver::TelnetRequest;
-use crate::text::server_text;
+use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
 
 mod appearance;
@@ -1196,6 +1196,8 @@ pub enum Dialog {
     ConfirmCloseTab(TabId),
     /// Start broadcast input to every tab.
     ConfirmBroadcast,
+    /// Turn session transcripts on, which keep what is typed.
+    ConfirmSessionLogging,
     /// Quit with live sessions.
     ConfirmExit {
         /// Live sessions.
@@ -2450,6 +2452,7 @@ impl App {
                 self.confirm_broadcast();
                 Vec::new()
             }
+            Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
                 Vec::new()
@@ -2633,13 +2636,13 @@ fn handle_feed(tab: &mut Tab, output: FeedOutput, active: bool) -> Vec<Effect> {
 fn safe_question(kind: QuestionKind) -> QuestionKind {
     match kind {
         QuestionKind::KeyboardInteractive(mut question) => {
-            question.name = server_text(&question.name);
-            question.instructions = server_text(&question.instructions);
+            question.name = server_prompt_text(&question.name);
+            question.instructions = server_prompt_text(&question.instructions);
             question.prompts = question
                 .prompts
                 .into_iter()
                 .map(|prompt| KeyboardInteractivePrompt {
-                    text: server_text(&prompt.text),
+                    text: server_prompt_text(&prompt.text),
                     echo: prompt.echo,
                 })
                 .collect();

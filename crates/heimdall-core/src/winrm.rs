@@ -17,6 +17,9 @@
 //! The `PowerShell` command that opens a `WinRM` profile: `Enter-PSSession`, run by a local
 //! `PowerShell` in a terminal tab.
 //!
+//! The tab is a remote session, so the local `PowerShell` never hands the user a prompt of its
+//! own: it ends the first time it would show one. See [`session_command`].
+//!
 //! The command is text `PowerShell` parses, so nothing from the profile reaches it unchecked:
 //! the host is a DNS name or an IP address and nothing else, and the account name is a
 //! single-quoted literal, every quote `PowerShell` would end it on doubled. Heimdall never
@@ -28,9 +31,18 @@ use thiserror::Error;
 
 use crate::profile::WinRmProfile;
 
-/// Arguments that run [`enter_session`] in a `PowerShell` left open once it is done, without
+/// Arguments that run [`session_command`] in a `PowerShell` left open once it is done, without
 /// the user's profile script: what the session does is what the command says.
 pub const POWERSHELL_ARGUMENTS: [&str; 4] = ["-NoLogo", "-NoExit", "-NoProfile", "-Command"];
+
+/// Exit code of the local `PowerShell` when the remote session was entered and has ended.
+pub const REMOTE_SESSION_ENDED_EXIT_CODE: i32 = 0;
+
+/// Exit code of the local `PowerShell` when the remote session was never entered.
+pub const REMOTE_SESSION_NOT_ENTERED_EXIT_CODE: i32 = 1;
+
+/// Global variable set once `Enter-PSSession` has returned without an error.
+const ENTERED_VARIABLE: &str = "$global:HeimdallWinRmEntered";
 
 /// Longest DNS name, in characters.
 const MAX_HOST_NAME_LENGTH: usize = 253;
@@ -51,12 +63,47 @@ pub enum CommandError {
     InvalidUsername,
 }
 
-/// The `Enter-PSSession` command for `profile`.
+/// The command a `WinRM` tab runs for `profile`: the local prompt guard, then
+/// `Enter-PSSession`, then the mark that the session was entered.
+///
+/// `Enter-PSSession` pushes the remote runspace and returns; the rest of the command still runs
+/// locally, and once it is done `PowerShell` evaluates the prompt in the pushed runspace, the
+/// remote one. The guard is the LOCAL `prompt` function, so it runs only when no remote
+/// runspace is pushed: `Enter-PSSession` failed or was cancelled
+/// ([`REMOTE_SESSION_NOT_ENTERED_EXIT_CODE`]), or the remote session ended through a remote
+/// `exit` or a dropped connection ([`REMOTE_SESSION_ENDED_EXIT_CODE`]). Either way the tab ends
+/// instead of leaving, under the remote host's name, a prompt that runs on this machine.
+///
+/// A plain `; exit` after `Enter-PSSession` would end `PowerShell` before the user ever reached
+/// the remote prompt, and `exit` inside the prompt function is not honoured (`PSReadLine`
+/// reports an `ExitException` and the local prompt stays), hence `[Environment]::Exit`.
+/// `-ErrorAction Stop` makes a refused connection, a non-terminating error of the cmdlet, end
+/// the command before the mark.
 ///
 /// # Errors
 ///
 /// The host or the account name is refused; see [`CommandError`].
-pub fn enter_session(profile: &WinRmProfile) -> Result<String, CommandError> {
+pub fn session_command(profile: &WinRmProfile) -> Result<String, CommandError> {
+    let enter = enter_session(profile)?;
+    Ok(format!(
+        "{}; {enter} -ErrorAction Stop; {ENTERED_VARIABLE} = $true",
+        local_prompt_guard()
+    ))
+}
+
+/// Ends the local `PowerShell` the first time it would show a prompt of its own: with
+/// [`REMOTE_SESSION_ENDED_EXIT_CODE`] once the session was entered, else with
+/// [`REMOTE_SESSION_NOT_ENTERED_EXIT_CODE`].
+fn local_prompt_guard() -> String {
+    format!(
+        "{ENTERED_VARIABLE} = $false; function global:prompt {{ if ({ENTERED_VARIABLE}) \
+         {{ [Environment]::Exit({REMOTE_SESSION_ENDED_EXIT_CODE}) }} \
+         [Environment]::Exit({REMOTE_SESSION_NOT_ENTERED_EXIT_CODE}) }}"
+    )
+}
+
+/// The `Enter-PSSession` command for `profile`.
+fn enter_session(profile: &WinRmProfile) -> Result<String, CommandError> {
     let host = checked_host(&profile.host)?;
     let mut command = format!(
         "Enter-PSSession -ComputerName '{host}' -Port {} -Authentication Negotiate",
@@ -132,6 +179,47 @@ mod tests {
             skip_certificate_check: false,
             username: None,
         }
+    }
+
+    #[test]
+    fn the_guard_ends_powershell_at_its_first_local_prompt() {
+        assert_eq!(
+            local_prompt_guard(),
+            "$global:HeimdallWinRmEntered = $false; function global:prompt { if \
+             ($global:HeimdallWinRmEntered) { [Environment]::Exit(0) } [Environment]::Exit(1) }"
+        );
+    }
+
+    #[test]
+    fn the_session_is_entered_between_the_guard_and_the_mark() {
+        let profile = WinRmProfile {
+            username: Some("LAB\\admin".to_owned()),
+            ..profile("dc01.lab.local")
+        };
+        assert_eq!(
+            session_command(&profile),
+            Ok(format!(
+                "{}; {} -ErrorAction Stop; $global:HeimdallWinRmEntered = $true",
+                local_prompt_guard(),
+                enter_session(&profile).expect("valid")
+            ))
+        );
+    }
+
+    #[test]
+    fn a_refused_profile_gives_no_command_at_all() {
+        assert_eq!(
+            session_command(&profile("h$(calc)")),
+            Err(CommandError::InvalidHost)
+        );
+        let profile = WinRmProfile {
+            username: Some("a\"b".to_owned()),
+            ..profile("h")
+        };
+        assert_eq!(
+            session_command(&profile),
+            Err(CommandError::InvalidUsername)
+        );
     }
 
     #[test]
