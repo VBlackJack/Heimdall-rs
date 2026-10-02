@@ -22,8 +22,8 @@ use std::sync::Arc;
 
 use heimdall_app::transcript::{TranscriptContext, TranscriptLines};
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Notice, SettingsMessage, TabId,
-    TabMenuMessage, UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, Message, Notice, SettingsMessage,
+    TabId, TabMenuMessage, UiError,
 };
 use heimdall_core::profile::{
     DEFAULT_WINRM_HTTP_PORT, ProfileId, SshProfile, TelnetProfile, WinRmProfile,
@@ -87,8 +87,14 @@ fn app(dir: &Path) -> App {
     app
 }
 
+/// Transcripts turned on or off from the settings, agreeing to the question turning them on
+/// asks.
 fn logging(app: &mut App, on: bool) {
     app.update(Message::Settings(SettingsMessage::SessionLogging(on)));
+    if matches!(app.dialog, Some(Dialog::ConfirmSessionLogging)) {
+        app.update(Message::ConfirmDialog);
+    }
+    assert_eq!(app.settings().session_logging, on);
 }
 
 /// Opens `message`'s session and connects it.
@@ -281,6 +287,34 @@ fn by_hand_a_transcript_starts_and_stops_and_says_so() {
     };
     app.update(Message::TabMenu(TabMenuMessage::StartTranscript(opened)));
     assert!(!recording(&app, opened));
+}
+
+#[test]
+fn turning_transcripts_on_is_asked_first_and_declining_keeps_them_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let turn_on = Message::Settings(SettingsMessage::SessionLogging(true));
+
+    app.update(turn_on.clone());
+    assert!(matches!(app.dialog, Some(Dialog::ConfirmSessionLogging)));
+    assert!(!app.settings().session_logging, "not before the answer");
+    app.update(Message::DismissDialog);
+    assert!(!app.settings().session_logging, "declined");
+    assert!(
+        !self::app(dir.path()).settings().session_logging,
+        "nothing saved"
+    );
+
+    app.update(turn_on.clone());
+    app.update(Message::ConfirmDialog);
+    assert!(app.settings().session_logging);
+    assert!(self::app(dir.path()).settings().session_logging, "saved");
+
+    app.update(turn_on);
+    assert!(app.dialog.is_none(), "already on: nothing to ask");
+    app.update(Message::Settings(SettingsMessage::SessionLogging(false)));
+    assert!(app.dialog.is_none(), "turning off is never asked");
+    assert!(!app.settings().session_logging);
 }
 
 #[test]
