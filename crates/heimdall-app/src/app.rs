@@ -1196,6 +1196,8 @@ pub enum Dialog {
     ConfirmCloseTab(TabId),
     /// Start broadcast input to every tab.
     ConfirmBroadcast,
+    /// Turn session transcripts on, which keep what is typed.
+    ConfirmSessionLogging,
     /// Quit with live sessions.
     ConfirmExit {
         /// Live sessions.
@@ -2450,6 +2452,7 @@ impl App {
                 self.confirm_broadcast();
                 Vec::new()
             }
+            Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
                 Vec::new()
