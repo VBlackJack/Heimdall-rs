@@ -92,6 +92,8 @@ pub enum TreeMenu {
     MoveSelection,
     /// The server's folders bookmarked in a Files tab.
     FilesBookmarks(TabId),
+    /// The menu of a row of the tunnels panel, as the C# one.
+    Tunnel(heimdall_app::tunnel::TunnelId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
     FilesEntry {
         /// The tab.
@@ -806,6 +808,33 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         .push(entry(
             fl!("ui-tab-menu-close-right"),
             close(TabGroup::Right).filter(|_| state.right),
+        ));
+    menu_card(entries).into()
+}
+
+/// How tall a tunnel row's menu is, about: it opens above the cursor, the panel being at the
+/// window's foot. Three entries of a menu's text and the button's room, a separator, the
+/// card's padding.
+pub const TUNNEL_MENU_HEIGHT: f32 = 3.0 * (MENU_TEXT_SIZE * 1.3 + 10.0) + 1.0 + 2.0 * MENU_PADDING;
+
+/// A tunnel row's menu, as the C# one: Close Tunnel, Copy Local Port, then Close All Tunnels.
+pub fn tunnel_menu_entries<'a>(id: heimdall_app::tunnel::TunnelId) -> Element<'a, Message> {
+    let tunnel = |message| Some(AppMessage::Tunnel(message));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(
+            fl!("ui-tunnels-menu-close"),
+            tunnel(heimdall_app::TunnelMessage::Close(id)),
+        ))
+        .push(entry(
+            fl!("ui-tunnels-menu-copy-port"),
+            tunnel(heimdall_app::TunnelMessage::CopyPort(id)),
+        ))
+        .push(separator())
+        .push(entry(
+            fl!("ui-tunnels-menu-close-all"),
+            tunnel(heimdall_app::TunnelMessage::CloseAll),
         ));
     menu_card(entries).into()
 }

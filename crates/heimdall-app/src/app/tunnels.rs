@@ -63,6 +63,8 @@ pub enum TunnelMessage {
     CloseAll,
     /// Copies a tunnel's local port.
     CopyPort(TunnelId),
+    /// Opens or closes the tunnels panel.
+    TogglePanel,
 }
 
 /// A tunnel being opened, or open: what it was asked for, and how to stop it.
@@ -122,6 +124,10 @@ impl App {
                     self.close_tunnel(id);
                 }
                 self.tell(Notice::AllTunnelsClosed);
+                Vec::new()
+            }
+            TunnelMessage::TogglePanel => {
+                self.tunnels_panel = !self.tunnels_panel;
                 Vec::new()
             }
             TunnelMessage::CopyPort(id) => {
