@@ -126,6 +126,12 @@ impl Connection {
             .expect("the handle is present until the last clone drops")
     }
 
+    /// Completes once the server, the network, or this side ended the connection: a
+    /// connection reached through gateways ends with any of them.
+    pub fn closed(&self) -> impl Future<Output = ()> + Send + 'static {
+        self.inner.routes.ended()
+    }
+
     /// Whether the server or the network ended the connection.
     #[must_use]
     pub fn is_closed(&self) -> bool {
