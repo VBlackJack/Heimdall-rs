@@ -3093,7 +3093,6 @@ impl Shell {
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
         let id = prompt.question;
-        let profile = &tab.profile;
         let mut form = Column::new().spacing(SPACING);
         match &prompt.kind {
             QuestionKind::Username(asked) => {
@@ -3134,10 +3133,12 @@ impl Shell {
                 form = form.push(self.field(tab.id, id, 0, true, true));
             }
             QuestionKind::KeyboardInteractive(asked) => {
+                // The server asking, which is a gateway's while the route is walked, not the
+                // profile's own host.
                 form = form.push(text(fl!(
                     "ui-prompt-interactive-title",
                     user = asked.username.as_str(),
-                    host = profile.endpoint().map_or("", |(host, _)| host)
+                    host = asked.host.as_str()
                 )));
                 // Server words are labelled as such, so they cannot pass for Heimdall's.
                 for said in [&asked.name, &asked.instructions] {

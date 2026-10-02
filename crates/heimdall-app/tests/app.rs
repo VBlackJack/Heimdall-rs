@@ -430,9 +430,9 @@ fn server_texts_in_a_keyboard_interactive_question_are_made_safe() {
                 host: "a.lab".to_owned(),
                 username: "admin".to_owned(),
                 name: "Bank\u{202E}lanigiro".to_owned(),
-                instructions: "\x1b[2J".to_owned(),
+                instructions: "\x1b[2J\r\nHeimdall:\u{2029}vault password".to_owned(),
                 prompts: vec![KeyboardInteractivePrompt {
-                    text: "Code\u{7}: ".to_owned(),
+                    text: "Code\u{7}: \u{200B}".to_owned(),
                     echo: false,
                 }],
             }),
@@ -443,8 +443,11 @@ fn server_texts_in_a_keyboard_interactive_question_are_made_safe() {
         panic!("keyboard-interactive expected");
     };
     assert_eq!(shown.name, "Banklanigiro");
-    assert_eq!(shown.instructions, "[2J");
-    assert_eq!(shown.prompts[0].text, "Code: ");
+    assert_eq!(
+        shown.instructions, "[2J Heimdall: vault password",
+        "no line of its own"
+    );
+    assert_eq!(shown.prompts[0].text, "Code :");
 }
 
 // ---- output, input, resize --------------------------------------------------------------
@@ -901,6 +904,27 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
     assert_eq!(reopened.vnc_profiles()[0].host, "v.lab");
     assert_eq!(app.winrm_profiles().len(), 1);
     assert_eq!(reopened.winrm_profiles()[0].host, "w.lab");
+}
+
+#[test]
+fn the_csharp_profiles_of_this_machine_keep_skipping_a_certificate_check() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut config = config(dir.path());
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir(&legacy).expect("legacy");
+    std::fs::write(
+        legacy.join("servers.json"),
+        r#"{"servers":[{"id":"w","displayName":"W","remoteServer":"w.lab","connectionType":"WINRM",
+            "winRmUseSsl":true,"winRmSkipCertificateCheck":true}]}"#,
+    )
+    .expect("servers");
+    config.legacy_dir = Some(legacy);
+    let mut app = App::new(config);
+    app.update(Message::ImportLegacy);
+    assert!(
+        app.winrm_profiles()[0].skip_certificate_check,
+        "decided on this machine, by this user, in the C# Heimdall"
+    );
 }
 
 #[test]

@@ -63,7 +63,7 @@ use crate::rdp_driver::RdpRequest;
 use crate::sink::InputSink;
 use crate::steps_draft::StepEdit;
 use crate::telnet_driver::TelnetRequest;
-use crate::text::server_text;
+use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
 
 mod appearance;
@@ -2636,13 +2636,13 @@ fn handle_feed(tab: &mut Tab, output: FeedOutput, active: bool) -> Vec<Effect> {
 fn safe_question(kind: QuestionKind) -> QuestionKind {
     match kind {
         QuestionKind::KeyboardInteractive(mut question) => {
-            question.name = server_text(&question.name);
-            question.instructions = server_text(&question.instructions);
+            question.name = server_prompt_text(&question.name);
+            question.instructions = server_prompt_text(&question.instructions);
             question.prompts = question
                 .prompts
                 .into_iter()
                 .map(|prompt| KeyboardInteractivePrompt {
-                    text: server_text(&prompt.text),
+                    text: server_prompt_text(&prompt.text),
                     echo: prompt.echo,
                 })
                 .collect();
