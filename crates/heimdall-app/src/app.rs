@@ -1163,7 +1163,8 @@ pub enum TabProfile {
     Ftp(FtpProfile),
     /// A local shell tab.
     Local(LocalShell),
-    /// A `WinRM` session through an SSH gateway; one reached directly is a local shell's tab.
+    /// A `WinRM` session: a local `PowerShell` entering it, directly or through an SSH
+    /// gateway.
     WinRm(WinRmProfile),
 }
 
@@ -2046,12 +2047,8 @@ impl App {
         };
         let mut effects = self.apply_connection_event(tab_id, event);
         self.follow_transcript(tab_id, was_connected);
-        // As the C# warns once the session is launched: through a gateway, NTLM.
-        let routed_winrm = self.tab(tab_id).is_some_and(|tab| {
-            tab.phase == Phase::Connected && matches!(tab.profile, TabProfile::WinRm(_))
-        });
-        if routed_winrm && !was_connected && self.active == Some(tab_id) {
-            self.tell(Notice::WinRmGatewayNtlm);
+        if !was_connected && self.active == Some(tab_id) {
+            self.warn_winrm(tab_id);
         }
         if let Some((error, was_live)) = failure {
             effects.extend(self.retry_after(tab_id, &error, was_live));

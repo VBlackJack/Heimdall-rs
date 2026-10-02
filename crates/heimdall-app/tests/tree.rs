@@ -146,6 +146,7 @@ fn connect(app: &mut App, profile: &str) -> String {
         [Effect::ConnectTelnet { .. }] => "ConnectTelnet".to_owned(),
         [Effect::ConnectVnc { .. }] => "ConnectVnc".to_owned(),
         [Effect::ConnectLocal { .. }] => "ConnectLocal".to_owned(),
+        [Effect::ConnectWinRm { .. }] => "ConnectWinRm".to_owned(),
         [] if matches!(app.dialog, Some(Dialog::ConfirmLocalCommand(_))) => {
             "ConfirmLocalCommand".to_owned()
         }
@@ -161,8 +162,8 @@ fn connecting_uses_the_profiles_own_protocol() {
     assert_eq!(connect(&mut app, "rdp"), "ConnectRdp");
     assert_eq!(connect(&mut app, "telnet"), "ConnectTelnet");
     assert_eq!(connect(&mut app, "vnc"), "ConnectVnc");
-    // A PowerShell entering the session, in a local tab.
-    assert_eq!(connect(&mut app, "winrm"), "ConnectLocal");
+    // The server probed, then a PowerShell entering the session.
+    assert_eq!(connect(&mut app, "winrm"), "ConnectWinRm");
     assert_eq!(
         app.selected_profile,
         Some(id("winrm")),

@@ -24,13 +24,13 @@
 //! machine under the remote host's name; see [`winrm::session_command`].
 
 use heimdall_core::profile::{ProfileId, SshGateway, WinRmProfile};
-use heimdall_core::winrm::{self, POWERSHELL_ARGUMENTS};
+use heimdall_core::winrm;
 use heimdall_ssh::ConnectOptions;
 use heimdall_term::local::{self, LocalArguments};
 use tokio_util::sync::CancellationToken;
 
 use super::reconnect::Reopen;
-use super::{App, Effect, Phase, Tab, TabProfile, terminal_size};
+use super::{App, Effect, Notice, Phase, Tab, TabProfile, terminal_size};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
@@ -53,34 +53,19 @@ impl App {
         effects
     }
 
-    /// Opens a `WinRM` tab for `profile`: a local `PowerShell` entering the session, through
-    /// the profile's SSH gateway when it names one.
+    /// Opens a `WinRM` tab for `profile`: a local `PowerShell` entering the session, once the
+    /// server is known to answer, through the profile's SSH gateway when it names one.
     pub(super) fn open_winrm_profile(&mut self, profile: WinRmProfile) -> Vec<Effect> {
-        let command = match winrm::session_command(&profile) {
-            Ok(command) => command,
-            Err(error) => {
-                self.open_refused(profile.name, UiError::from(&error));
-                return Vec::new();
-            }
-        };
-        if profile.gateway.is_some() {
-            return self.open_winrm_routed(profile);
+        // Checked before anything connects, HTTPS through a gateway included.
+        if let Err(error) = winrm::session_command(&profile) {
+            self.open_refused(profile.name, UiError::from(&error));
+            return Vec::new();
         }
-        let mut arguments: Vec<String> = POWERSHELL_ARGUMENTS
-            .iter()
-            .map(|argument| (*argument).to_owned())
-            .collect();
-        arguments.push(command);
-        self.open_local(LocalShell {
-            name: profile.name,
-            program: Some(powershell()),
-            arguments: LocalArguments::List(arguments),
-            working_directory: None,
-        })
+        self.open_winrm_tab(profile)
     }
 
-    /// A tab whose attempt opens the route, the forward, then `PowerShell`.
-    fn open_winrm_routed(&mut self, profile: WinRmProfile) -> Vec<Effect> {
+    /// A tab whose attempt probes the server or opens the route, then starts `PowerShell`.
+    fn open_winrm_tab(&mut self, profile: WinRmProfile) -> Vec<Effect> {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
@@ -141,8 +126,8 @@ impl App {
         }
     }
 
-    /// What reaching `profile` through its gateway needs; an error when the route cannot be
-    /// followed.
+    /// What reaching `profile` needs, its gateways included; an error when the route cannot
+    /// be followed.
     fn winrm_request(
         &self,
         profile: &WinRmProfile,
@@ -164,6 +149,22 @@ impl App {
             fallback_directory: self.config.files_start.clone(),
             cancel,
         })
+    }
+
+    /// Once the session of `tab_id` is launched, the C# warning it gets: certificate checks
+    /// skipped, else NTLM through a gateway.
+    pub(super) fn warn_winrm(&mut self, tab_id: TabId) {
+        let notice = match self.tab(tab_id) {
+            Some(tab) if tab.phase == Phase::Connected => match &tab.profile {
+                TabProfile::WinRm(profile) if profile.use_ssl && profile.skip_certificate_check => {
+                    Notice::WinRmCertificateSkipped
+                }
+                TabProfile::WinRm(profile) if profile.gateway.is_some() => Notice::WinRmGatewayNtlm,
+                _ => return,
+            },
+            _ => return,
+        };
+        self.tell(notice);
     }
 
     /// A tab that says why nothing was started.

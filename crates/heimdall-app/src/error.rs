@@ -63,6 +63,25 @@ pub enum UiError {
     InvalidUsername,
     /// `WinRM` over HTTPS through an SSH gateway, which the C# Heimdall refuses.
     WinRmHttpsThroughGateway,
+    /// The `WinRM` server's name does not resolve, as the C# preflight says.
+    WinRmHostUnresolved {
+        /// The name.
+        host: String,
+    },
+    /// The `WinRM` server's port refused or did not answer, as the C# preflight says.
+    WinRmUnreachable {
+        /// The server.
+        host: String,
+        /// Its port.
+        port: u16,
+    },
+    /// The `WinRM` server's TLS handshake failed: a certificate not trusted, or no TLS.
+    WinRmTlsFailed {
+        /// The server.
+        host: String,
+        /// Its port.
+        port: u16,
+    },
     /// The network connection failed.
     Network {
         /// How, as far as the operating system tells.

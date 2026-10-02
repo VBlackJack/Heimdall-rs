@@ -223,7 +223,7 @@ fn once_powershell_runs_the_ntlm_fallback_is_said_as_the_csharp_warns() {
 }
 
 #[test]
-fn a_winrm_profile_reached_directly_is_still_a_local_powershell() {
+fn a_winrm_profile_reached_directly_is_probed_with_no_route() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(
         dir.path(),
@@ -234,7 +234,33 @@ fn a_winrm_profile_reached_directly_is_still_a_local_powershell() {
     );
     let effects = app.update(Message::OpenWinRm(ProfileId::new("w")));
     assert!(
-        matches!(effects.as_slice(), [Effect::ConnectLocal { .. }]),
+        matches!(effects.as_slice(), [Effect::ConnectWinRm { request, .. }] if request.route.is_empty()),
         "{effects:?}"
     );
+    let tab = app.active_tab().expect("tab");
+    assert!(matches!(tab.profile, TabProfile::WinRm(_)));
+}
+
+#[test]
+fn skipped_certificate_checks_are_said_once_powershell_runs_and_before_ntlm() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(
+        dir.path(),
+        WinRmProfile {
+            gateway: None,
+            use_ssl: true,
+            skip_certificate_check: true,
+            port: DEFAULT_WINRM_HTTPS_PORT,
+            ..profile("bastion")
+        },
+    );
+    let (tab, attempt) = open(&mut app);
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    });
+    assert_eq!(app.notice(), Some(&Notice::WinRmCertificateSkipped));
 }
