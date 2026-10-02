@@ -244,6 +244,11 @@ impl App {
                     .collect(),
                 warnings: Vec::new(),
                 stored_credentials: None,
+                dropped: report
+                    .dropped
+                    .into_iter()
+                    .map(|dropped| (server_text(&dropped.name), dropped.settings))
+                    .collect(),
             }),
             Err(error) => {
                 self.dialog = Some(Dialog::StoreError {

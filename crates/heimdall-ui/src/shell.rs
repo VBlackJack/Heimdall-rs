@@ -3604,6 +3604,28 @@ fn import_report<'a>(
             .push(text(fl!("ui-dialog-import-skipped")))
             .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
     }
+    if !summary.dropped.is_empty() {
+        let dropped = summary.dropped.iter().fold(
+            Column::new().spacing(SPACING / 2.0),
+            |list, (name, settings)| {
+                let settings: Vec<String> = settings
+                    .iter()
+                    .map(|setting| texts::dropped_setting(*setting))
+                    .collect();
+                list.push(
+                    text(fl!(
+                        "ui-dialog-import-dropped-item",
+                        name = name.as_str(),
+                        settings = settings.join(&fl!("ui-dialog-import-dropped-separator"))
+                    ))
+                    .size(SMALL_SIZE),
+                )
+            },
+        );
+        content = content
+            .push(text(fl!("ui-dialog-import-dropped")))
+            .push(container(scrollable(dropped)).max_height(SKIPPED_LIST_HEIGHT));
+    }
     // What the file said, and for `MobaXterm` that its passwords must be entered again.
     for line in crate::file_import_view::warning_lines(&summary.warnings)
         .into_iter()

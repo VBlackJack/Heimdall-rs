@@ -22,7 +22,7 @@
 use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
-use heimdall_core::import::csharp::SkipReason;
+use heimdall_core::import::csharp::{Dropped, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
@@ -157,6 +157,24 @@ pub fn auth_method(method: AuthMethod) -> String {
         AuthMethod::KeyFile => fl!("ui-auth-method-key-file"),
         AuthMethod::KeyboardInteractive => fl!("ui-auth-method-keyboard-interactive"),
         AuthMethod::Password => fl!("ui-auth-method-password"),
+    }
+}
+
+/// A setting an imported profile came without.
+#[must_use]
+pub fn dropped_setting(dropped: Dropped) -> String {
+    match dropped {
+        Dropped::ExternalClient => fl!("ui-import-dropped-external-client"),
+        Dropped::X11Forwarding => fl!("ui-import-dropped-x11"),
+        Dropped::WinRmGateway => fl!("ui-import-dropped-winrm-gateway"),
+        Dropped::RdpPrinters => fl!("ui-import-dropped-rdp-printers"),
+        Dropped::RdpComPorts => fl!("ui-import-dropped-rdp-com-ports"),
+        Dropped::RdpSmartCards => fl!("ui-import-dropped-rdp-smart-cards"),
+        Dropped::RdpWebcam => fl!("ui-import-dropped-rdp-webcam"),
+        Dropped::RdpUsb => fl!("ui-import-dropped-rdp-usb"),
+        Dropped::RdpMicrophone => fl!("ui-import-dropped-rdp-microphone"),
+        Dropped::RdpMultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
+        Dropped::RdpAntiIdle => fl!("ui-import-dropped-rdp-anti-idle"),
     }
 }
 
