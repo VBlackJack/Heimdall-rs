@@ -36,6 +36,7 @@ use crate::known_hosts::{
     KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
 use crate::options::ConnectOptions;
+use crate::pins::{PinVerdict, Pins, pin_verdict};
 use crate::prompter::{Prompter, UsernameQuestion};
 use crate::session::ShellSession;
 
@@ -43,12 +44,21 @@ use crate::session::ShellSession;
 /// the code waiting on authentication.
 pub(crate) type ServerMessage = Arc<Mutex<Option<String>>>;
 
+/// The key that matched a pinned fingerprint, shared between the russh session task and the
+/// code that records it.
+type PinnedKey = Arc<Mutex<Option<PublicKey>>>;
+
 /// Why the host key check stopped the key exchange.
 #[derive(Debug)]
 pub(crate) enum HostKeyRejection {
     Unknown(Box<PublicKey>),
     Changed {
         recorded: Box<PublicKey>,
+        offered: Box<PublicKey>,
+    },
+    /// Only a fingerprint is pinned, and the key has another.
+    PinChanged {
+        pinned: String,
         offered: Box<PublicKey>,
     },
     OtherAlgorithm(Vec<Algorithm>),
@@ -71,6 +81,10 @@ pub(crate) enum HandlerError {
 
 pub(crate) struct ClientHandler {
     recorded: Vec<PublicKey>,
+    /// Fingerprints pinned for the server, consulted when nothing is recorded.
+    pins: Vec<String>,
+    /// The key that matched a pin, to record in full once the exchange is through.
+    pinned: PinnedKey,
     server_message: ServerMessage,
     /// Ports this side asked the server to listen on.
     routes: Routes,
@@ -86,7 +100,19 @@ impl ClientHandler {
         };
         let rejection = match verdict(&self.recorded, key) {
             Verdict::Trusted => return Ok(true),
-            Verdict::Unknown => HostKeyRejection::Unknown(Box::new(key.clone())),
+            Verdict::Unknown => match pin_verdict(&self.pins, key) {
+                PinVerdict::None => HostKeyRejection::Unknown(Box::new(key.clone())),
+                PinVerdict::Matches => {
+                    if let Ok(mut slot) = self.pinned.lock() {
+                        *slot = Some(key.clone());
+                    }
+                    return Ok(true);
+                }
+                PinVerdict::Differs { pinned } => HostKeyRejection::PinChanged {
+                    pinned,
+                    offered: Box::new(key.clone()),
+                },
+            },
             Verdict::Changed { recorded } => HostKeyRejection::Changed {
                 recorded,
                 offered: Box::new(key.clone()),
@@ -259,6 +285,14 @@ fn map_handler_error(
                 offered: fingerprint(&offered),
             }
         }
+        HandlerError::HostKey(HostKeyRejection::PinChanged { pinned, offered }) => {
+            ConnectError::HostKeyChanged {
+                host,
+                port,
+                recorded: pinned,
+                offered: fingerprint(&offered),
+            }
+        }
         HandlerError::HostKey(HostKeyRejection::OtherAlgorithm(algorithms)) => {
             ConnectError::HostKeyAlgorithmMismatch {
                 host,
@@ -420,13 +454,23 @@ async fn hop<P: Prompter>(
 ) -> Result<Reached, ConnectError> {
     let host = validate_host(&profile.host)?;
     let port = profile.port;
-    let mut recorded = KnownHosts::new(&options.known_hosts).recorded(&host, port)?;
+    let known_hosts = KnownHosts::new(&options.known_hosts);
+    let mut recorded = known_hosts.recorded(&host, port)?;
     recorded.extend(options.run_trust.keys(&host, port));
+    let pins = Pins::beside(&options.known_hosts);
+    let pinned_fingerprints = if recorded.is_empty() {
+        pins.pinned(&host, port)?
+    } else {
+        Vec::new()
+    };
+    let pinned = PinnedKey::default();
 
     let server_message = ServerMessage::default();
     let routes = Routes::default();
     let handler = ClientHandler {
         recorded: recorded.clone(),
+        pins: pinned_fingerprints,
+        pinned: pinned.clone(),
         server_message: server_message.clone(),
         routes: routes.clone(),
     };
@@ -471,6 +515,7 @@ async fn hop<P: Prompter>(
             Ok(Ok(handle)) => handle,
         },
     };
+    record_pinned(&known_hosts, &pins, &host, port, &pinned);
 
     let username = if let Some(username) = profile.username.clone() {
         username
@@ -496,6 +541,23 @@ async fn hop<P: Prompter>(
     .await?;
 
     Ok((handle, routes))
+}
+
+/// Records in full the key that matched a pinned fingerprint, and drops the pin: from now
+/// on the server is checked against its whole key. A failure leaves the pin, which still
+/// trusts that key and no other.
+fn record_pinned(known_hosts: &KnownHosts, pins: &Pins, host: &str, port: u16, pinned: &PinnedKey) {
+    let Some(key) = pinned.lock().ok().and_then(|mut slot| slot.take()) else {
+        return;
+    };
+    match known_hosts.learn(host, port, &key) {
+        Ok(()) => {
+            if let Err(error) = pins.unpin(host, port) {
+                log::warn!("the pin of a server recorded in full stays: {error}");
+            }
+        }
+        Err(error) => log::warn!("a pinned server's key is not recorded in full: {error}"),
+    }
 }
 
 #[cfg(test)]

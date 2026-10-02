@@ -28,6 +28,8 @@ use russh::keys::known_hosts::{known_host_keys_path, learn_known_hosts_path};
 use russh::keys::{Algorithm, HashAlg, PublicKey};
 use thiserror::Error;
 
+use crate::pins::Pins;
+
 /// Characters refused in a host name: they carry meaning in a `known_hosts` line, and could
 /// otherwise add or alter entries.
 const REFUSED_HOST_CHARACTERS: [char; 9] = [',', '#', '[', ']', '|', '*', '?', '!', '@'];
@@ -209,6 +211,8 @@ impl KnownHosts {
     /// Otherwise an unsafe host name, or a file that cannot be read or written.
     pub fn forget(&self, host: &str, port: u16) -> Result<bool, KnownHostsError> {
         let host = validate_host(host)?;
+        // A fingerprint pinned for the server goes with its keys.
+        let unpinned = Pins::beside(&self.path).unpin(&host, port)?;
         let wanted = if port == DEFAULT_SSH_PORT {
             host.clone()
         } else {
@@ -216,7 +220,7 @@ impl KnownHosts {
         };
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(false),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(unpinned),
             Err(source) => {
                 return Err(KnownHostsError::Unreadable {
                     path: self.path.clone(),
@@ -224,7 +228,7 @@ impl KnownHosts {
                 });
             }
         };
-        let mut removed = false;
+        let mut removed = unpinned;
         let mut kept = Vec::new();
         for line in text.lines() {
             match without_host(line, &wanted) {
@@ -262,24 +266,35 @@ pub struct KnownHostEntry {
     pub host: String,
     /// Port.
     pub port: u16,
-    /// Key algorithm, `ssh-ed25519` for one.
+    /// Key algorithm, `ssh-ed25519` for one; empty for a fingerprint pinned without its
+    /// key.
     pub algorithm: String,
     /// SHA-256 fingerprint, `SHA256:...`.
     pub fingerprint: String,
 }
 
 impl KnownHosts {
-    /// The keys the file trusts, one per host named plainly, in the order of the file. A
-    /// hashed or wildcard pattern names no host that can be shown, and a line whose key
-    /// cannot be read trusts nothing: both are left out.
+    /// The keys the file trusts, one per host named plainly, in the order of the file, then
+    /// the fingerprints pinned, their algorithm unknown. A hashed or wildcard pattern names
+    /// no host that can be shown, and a line whose key cannot be read trusts nothing: both
+    /// are left out.
     ///
     /// # Errors
     ///
     /// The file exists and cannot be read.
     pub fn entries(&self) -> Result<Vec<KnownHostEntry>, KnownHostsError> {
+        let pinned = Pins::beside(&self.path)
+            .all()?
+            .into_iter()
+            .map(|(host, port, pin)| KnownHostEntry {
+                host,
+                port,
+                algorithm: String::new(),
+                fingerprint: pin,
+            });
         let text = match fs::read_to_string(&self.path) {
             Ok(text) => text,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(pinned.collect()),
             Err(source) => {
                 return Err(KnownHostsError::Unreadable {
                     path: self.path.clone(),
@@ -308,6 +323,7 @@ impl KnownHosts {
                 });
             }
         }
+        entries.extend(pinned);
         Ok(entries)
     }
 }

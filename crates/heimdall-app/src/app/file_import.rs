@@ -244,6 +244,7 @@ impl App {
                     .collect(),
                 warnings: Vec::new(),
                 stored_credentials: None,
+                host_keys: None,
             }),
             Err(error) => {
                 self.dialog = Some(Dialog::StoreError {
@@ -258,6 +259,9 @@ impl App {
 /// `report` without the trust decisions made on the machine that wrote its file: skipping the
 /// check of a `WinRM` host's certificate is decided here, by whoever imports.
 fn distrust(report: &mut ImportReport) {
+    // Servers trusted elsewhere are not trusted here: only this computer's own C# store
+    // carries its trust over.
+    report.host_keys.clear();
     for profile in &mut report.winrm {
         profile.skip_certificate_check = false;
     }
