@@ -260,6 +260,9 @@ ui-dialog-paste-body = { $count ->
    *[other] The text holds { $count } lines. The shell may run each one as a command as soon as it arrives.
 }
 ui-dialog-paste-confirm = Paste
+ui-dialog-paste-dangerous-title = Paste a dangerous command?
+ui-dialog-paste-dangerous-body = The text holds { $command }, a command that can destroy data or stop the machine. Check it before it reaches the shell.
+ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
 ui-dialog-import-skipped = Left out:

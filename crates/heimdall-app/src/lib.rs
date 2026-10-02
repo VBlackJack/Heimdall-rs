@@ -34,6 +34,7 @@ mod ids;
 pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
+mod paste_guard;
 mod post_connect;
 pub mod profile_draft;
 pub mod putty_store;

@@ -4660,6 +4660,17 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::ConfirmPaste {
+            command: Some(command),
+            ..
+        } => (
+            fl!("ui-dialog-paste-dangerous-title"),
+            fl!(
+                "ui-dialog-paste-dangerous-body",
+                command = command.to_string()
+            ),
+            fl!("ui-dialog-paste-dangerous-confirm"),
+        ),
         Dialog::ConfirmPaste { lines, .. } => (
             fl!("ui-dialog-paste-title"),
             fl!("ui-dialog-paste-body", count = (*lines)),

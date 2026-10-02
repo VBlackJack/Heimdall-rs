@@ -1238,12 +1238,15 @@ pub enum Dialog {
         /// Live sessions.
         live: usize,
     },
-    /// Paste several lines into a shell that would run them one by one.
+    /// Paste several lines into a shell that would run them one by one, or a command that
+    /// can destroy data or stop the machine.
     ConfirmPaste {
         /// Tab.
         tab: TabId,
         /// Number of lines.
         lines: usize,
+        /// The destructive command the text holds, as the C# names it.
+        command: Option<&'static str>,
     },
     /// A name for a new folder or a renamed entry.
     AskName {
@@ -2360,10 +2363,14 @@ impl App {
                 self.tab(*target)
                     .is_some_and(|tab| !tab.terminal.input_mode().bracketed_paste)
             });
-        if runs_lines {
+        // A destructive command is asked about whatever the shell does with the lines, as
+        // the C# smart paste guard.
+        let command = crate::paste_guard::dangerous_command(&text);
+        if runs_lines || command.is_some() {
             self.dialog = Some(Dialog::ConfirmPaste {
                 tab: tab_id,
                 lines: command_lines(&text),
+                command,
             });
             self.pending_paste = Some((tab_id, text));
             return Vec::new();
