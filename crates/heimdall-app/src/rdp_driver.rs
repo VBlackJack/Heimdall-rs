@@ -275,6 +275,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         options: profile.options,
         several_servers: profile.several_servers,
         kerberos: request.route.is_empty(),
+        time_zone: crate::time_zone::local(),
     }
 }
 

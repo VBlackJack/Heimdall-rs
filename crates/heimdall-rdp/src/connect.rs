@@ -58,6 +58,7 @@ use crate::certificate::{Fingerprint, ServerCertificate};
 use crate::clipboard::{Offered, Request, TextBackend};
 use crate::drives::{DriveBackend, SharedDrive};
 use crate::known_hosts::{KnownRdpHosts, Verdict};
+use crate::time_zone::TimeZone;
 use crate::{kdc, tls};
 
 /// Cookie of the X.224 request. Without one, `IronRDP` sends the user name, in clear, before
@@ -172,6 +173,9 @@ pub struct RdpConfig {
     /// from this computer, as mstsc does; NTLM when no KDC is found or answers. Only for a
     /// server reached directly: through a tunnel, the KDC is on the far side too.
     pub kerberos: bool,
+    /// This computer's time zone, which a server redirecting time zones gives the session, as
+    /// mstsc tells it; `None` tells UTC, the server's own time then shown.
+    pub time_zone: Option<TimeZone>,
 }
 
 /// Why a connection did not open.
@@ -575,7 +579,10 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         desktop_scale_factor: 0,
         hardware_id: None,
         license_cache: None,
-        timezone_info: TimezoneInfo::default(),
+        timezone_info: config
+            .time_zone
+            .as_ref()
+            .map_or_else(TimezoneInfo::default, TimeZone::info),
         alternate_shell: String::new(),
         work_dir: String::new(),
     }
