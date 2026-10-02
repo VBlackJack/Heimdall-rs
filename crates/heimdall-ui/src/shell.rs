@@ -4615,6 +4615,9 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
                 .style(text::danger),
         );
     }
+    if draft.protocol == DraftProtocol::Rdp {
+        form = form.push(crate::rdp_options::experience(draft.rdp_options));
+    }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(crate::post_connect_form::view(&draft.post_connect));
     }
