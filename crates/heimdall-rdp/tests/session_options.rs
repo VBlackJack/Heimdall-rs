@@ -30,7 +30,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use heimdall_core::profile::{AudioPlayback, ColorDepth, Experience, RdpOptions};
-use heimdall_rdp::{KnownRdpHosts, RdpConfig, Security, Timeouts, connect_over, given};
+use heimdall_rdp::{
+    KnownRdpHosts, RdpConfig, Security, TimeZone, Timeouts, Transition, connect_over, given,
+};
 use ironrdp::pdu::gcc::{
     ClientClusterData, ClientEarlyCapabilityFlags, ClientGccBlocks, ConferenceCreateResponse,
     HighColorDepth, RdpVersion, RedirectionFlags, RedirectionVersion, ServerCoreData,
@@ -184,6 +186,11 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(mut stream: S) -> Sent {
 
 /// Connects with `options` to the fake server and returns what it read.
 async fn sent_with(options: RdpOptions) -> Sent {
+    sent_in(options, None).await
+}
+
+/// [`sent_with`], this computer said to be in `time_zone`.
+async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
     std::fs::write(&known, format!("{HOST}:{PORT} SHA256:{}\n", PIN.trim())).expect("known");
@@ -207,6 +214,7 @@ async fn sent_with(options: RdpOptions) -> Sent {
         options,
         several_servers: false,
         kerberos: false,
+        time_zone,
     };
     let (client, server) = tokio::io::duplex(1 << 16);
     let server = tokio::spawn(serve(server));
@@ -318,6 +326,48 @@ async fn the_boxes_ticked_are_the_flags_sent_and_none_keeps_the_experience_given
         Some(PerformanceFlags::DISABLE_WALLPAPER | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION),
         "exactly the boxes ticked, as the C# control is given them"
     );
+}
+
+#[tokio::test]
+async fn the_time_zone_of_this_computer_is_the_one_the_server_is_told() {
+    let sent = sent_with(RdpOptions::default()).await;
+    let utc = &sent.info.client_info.extra_info.optional_data;
+    assert_eq!(
+        utc.timezone().map(|zone| zone.bias),
+        Some(0),
+        "none known: UTC"
+    );
+    // New York: UTC is local time plus five hours, an hour less in summer.
+    let rule = |month: u16, occurrence: u16| {
+        let fields: [u16; 8] = [0, month, 0, occurrence, 2, 0, 0, 0];
+        let bytes: Vec<u8> = fields
+            .iter()
+            .flat_map(|field| field.to_le_bytes())
+            .collect();
+        Transition::from_systemtime(&bytes)
+    };
+    let zone = TimeZone {
+        bias: 300,
+        standard_name: "Eastern Standard Time".to_owned(),
+        standard_start: rule(11, 1),
+        standard_bias: 0,
+        daylight_name: "Eastern Daylight Time".to_owned(),
+        daylight_start: rule(3, 2),
+        daylight_bias: -60,
+    };
+    let sent = sent_in(RdpOptions::default(), Some(zone)).await;
+    let told = sent
+        .info
+        .client_info
+        .extra_info
+        .optional_data
+        .timezone()
+        .expect("a time zone");
+    assert_eq!(
+        (told.bias, told.daylight_bias, told.standard_name.as_str()),
+        (300, -60, "Eastern Standard Time")
+    );
+    assert!(told.standard_date.0.is_some() && told.daylight_date.0.is_some());
 }
 
 #[tokio::test]
