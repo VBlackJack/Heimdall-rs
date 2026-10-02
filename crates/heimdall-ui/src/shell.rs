@@ -4994,6 +4994,7 @@ impl fmt::Display for KeysChoice {
             SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
             SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
             SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
+            SpecialKeys::F11 => fl!("ui-desktop-keys-f11"),
             SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
             SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
             SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),

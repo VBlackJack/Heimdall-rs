@@ -21,6 +21,7 @@ ui-desktop-keys-alt-tab = Alt+Tab
 ui-desktop-keys-ctrl-esc = Ctrl+Esc (Start menu)
 ui-desktop-keys-escape = Escape
 ui-desktop-keys-print-screen = Print Screen
+ui-desktop-keys-f11 = F11
 ui-desktop-keys-win-l = Win+L (lock workstation)
 ui-desktop-keys-win-d = Win+D (show desktop)
 ui-desktop-keys-win-e = Win+E (file explorer)
