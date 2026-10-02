@@ -23,6 +23,13 @@ use heimdall_term::local::{LocalArguments, LocalConfig, LocalEvent, LocalSession
 /// Bound on anything the test waits for.
 const WAIT: Duration = Duration::from_secs(15);
 
+/// Bound on the silence of a Windows PowerShell loading a module. Its first cmdlet of a
+/// module autoloads it, and on a cold machine (a CI runner) that load, with the module
+/// analysis it starts, prints nothing for longer than [`WAIT`]: measured past 15 s on
+/// windows-latest, run 36992296258.
+#[cfg(windows)]
+const MODULE_LOAD_WAIT: Duration = Duration::from_secs(90);
+
 fn config(program: &str, args: &[&str]) -> LocalConfig {
     LocalConfig {
         program: Some(program.to_owned()),
@@ -45,9 +52,14 @@ fn shell(script: &str) -> LocalConfig {
 
 /// The output until the exit, and the exit code.
 async fn until_exit(session: &mut LocalSession) -> (String, Option<i32>) {
+    until_exit_within(session, WAIT).await
+}
+
+/// [`until_exit`], the session silent for at most `silence` between two events.
+async fn until_exit_within(session: &mut LocalSession, silence: Duration) -> (String, Option<i32>) {
     let mut output = Vec::new();
     loop {
-        match tokio::time::timeout(WAIT, session.events.recv())
+        match tokio::time::timeout(silence, session.events.recv())
             .await
             .expect("in time")
             .expect("an event")
@@ -154,7 +166,7 @@ async fn windows_powershell_gets_no_powershell_7_module_folder_and_loads_its_own
     let mut line = br"$p = 0; foreach ($e in $env:PSModulePath.Split(';')) { if ($e -and [IO.File]::Exists([IO.Path]::Combine([IO.Path]::GetDirectoryName($e.TrimEnd('\')), 'pwsh.exe'))) { $p++ } }; $h = 0; try { $null = Get-FileHash -LiteralPath ([IO.Path]::Combine($env:SystemRoot, 'win.ini')) -ErrorAction Stop } catch { $h = 1 }; exit (10 * $p + $h)".to_vec();
     line.push(b'\r');
     session.input.write(line).expect("typed");
-    let (output, code) = until_exit(&mut session).await;
+    let (output, code) = until_exit_within(&mut session, MODULE_LOAD_WAIT).await;
     assert_eq!(code, Some(0), "{output:?}");
 }
 
