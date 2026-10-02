@@ -192,7 +192,10 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
         app.update(Message::HostKeyDecision { tab, accept: false })
             .is_empty()
     );
-    assert_eq!(app.tabs[0].phase, Phase::Failed(UiError::Cancelled));
+    assert_eq!(
+        app.tabs[0].phase,
+        Phase::Failed(UiError::CertificateRefused)
+    );
 }
 
 #[test]

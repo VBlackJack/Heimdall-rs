@@ -225,8 +225,13 @@ impl App {
         };
         let ftp = matches!(tab.profile, TabProfile::Ftp(_));
         match trust {
+            // Said as the C# says it of an RDP server: the user stopped it, at the certificate.
             KeyTrust::Refused => {
-                tab.phase = Phase::Failed(UiError::Cancelled);
+                tab.phase = Phase::Failed(if ftp {
+                    UiError::Cancelled
+                } else {
+                    UiError::CertificateRefused
+                });
                 Vec::new()
             }
             // Held in memory for this run: the file is not written.

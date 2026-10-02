@@ -344,7 +344,7 @@ fn a_question_on_the_way_back_stops_the_attempts() {
     app.update(Message::HostKeyDecision { tab, accept: false });
     assert_eq!(
         app.tab(tab).expect("tab").phase,
-        Phase::Failed(UiError::Cancelled)
+        Phase::Failed(UiError::CertificateRefused)
     );
     assert_eq!(app.tab(tab).expect("tab").retry, None);
 }
