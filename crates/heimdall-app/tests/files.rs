@@ -330,6 +330,115 @@ async fn a_link_to_a_folder_is_entered_and_one_to_anything_else_goes_back_and_sa
 }
 
 #[tokio::test]
+async fn back_returns_through_the_folders_left_and_home_to_the_first_one_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let remote = |app: &App| {
+        let files = app.tab(tab).expect("tab").files.as_ref().expect("files");
+        (
+            files.remote.path.display(),
+            files
+                .remote
+                .history
+                .iter()
+                .map(RemotePath::display)
+                .collect::<Vec<_>>(),
+        )
+    };
+    let asked = |effects: &[Effect]| match effects {
+        [Effect::ListRemote { path, .. }] => path.display(),
+        other => panic!("{other:?}"),
+    };
+    let message = |app: &mut App, message: FilesMessage| files(app, message);
+    listed_remote(
+        &mut app,
+        tab,
+        "/home/admin",
+        vec![remote_entry(b"logs", EntryKind::Directory, 0)],
+    );
+    assert_eq!(remote(&app), ("/home/admin".to_owned(), Vec::new()));
+    let back = FilesMessage::Back {
+        tab,
+        side: Side::Remote,
+    };
+    assert!(
+        message(&mut app, back.clone()).is_empty(),
+        "nowhere to go back to"
+    );
+
+    // Into a folder, then up: each folder left is kept.
+    let into = message(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    assert_eq!(asked(&into), "/home/admin/logs");
+    listed_remote(&mut app, tab, "/home/admin/logs", Vec::new());
+    let up = message(
+        &mut app,
+        FilesMessage::Up {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert_eq!(asked(&up), "/home/admin");
+    listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    assert_eq!(
+        remote(&app).1,
+        ["/home/admin", "/home/admin/logs"],
+        "most recent last"
+    );
+
+    // Back: to the last folder left, taken out once shown.
+    assert_eq!(asked(&message(&mut app, back.clone())), "/home/admin/logs");
+    listed_remote(&mut app, tab, "/home/admin/logs", Vec::new());
+    assert_eq!(remote(&app).1, ["/home/admin"]);
+
+    // A folder that cannot be listed is not one that was left.
+    let typed = FilesMessage::PathEdited {
+        tab,
+        side: Side::Remote,
+        text: "/root".to_owned(),
+    };
+    message(&mut app, typed);
+    message(
+        &mut app,
+        FilesMessage::GoTo {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Err(FilesError::SessionClosed),
+        },
+    );
+    assert_eq!(
+        remote(&app).1,
+        ["/home/admin"],
+        "the refused listing kept nothing"
+    );
+
+    // Home: the first folder shown, and the one left kept for Back.
+    let home = message(
+        &mut app,
+        FilesMessage::Home {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert_eq!(asked(&home), "/home/admin");
+    listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    assert_eq!(remote(&app).1, ["/home/admin", "/home/admin/logs"]);
+}
+
+#[tokio::test]
 async fn opening_a_remote_file_downloads_it_into_the_local_folder() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());

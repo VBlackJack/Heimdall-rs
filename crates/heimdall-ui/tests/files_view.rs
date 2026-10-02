@@ -444,6 +444,8 @@ async fn the_path_bar_is_typed_over_and_enter_goes_there() {
     {
         let mut ui = simulator(&shell);
         ui.click("/home/admin").expect("the remote path bar");
+        // The click puts the cursor where it lands: typing goes after the path from its end.
+        let _ = ui.tap_key(iced::keyboard::key::Named::End);
         ui.typewrite("/x");
         let _ = ui.tap_key(iced::keyboard::key::Named::Enter);
         let messages = files_messages(ui);

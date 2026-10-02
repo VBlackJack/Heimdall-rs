@@ -158,6 +158,20 @@ pub enum FilesMessage {
         /// Pane.
         side: Side,
     },
+    /// Go back to the folder a pane showed before, as the C# Files tab's Back.
+    Back {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// Go to the folder a pane first showed, as the C# Files tab's Home.
+    Home {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
     /// List the folder again.
     Refresh {
         /// Tab.
@@ -269,6 +283,8 @@ impl FilesMessage {
             Self::Select { tab, side, .. }
             | Self::Open { tab, side, .. }
             | Self::Up { tab, side }
+            | Self::Back { tab, side }
+            | Self::Home { tab, side }
             | Self::Refresh { tab, side }
             | Self::GoTo { tab, side }
             | Self::SortBy { tab, side, .. }
@@ -309,6 +325,8 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "Open({}, {side:?}, {index})", tab.value())
             }
             Self::Up { tab, side } => write!(f, "Up({}, {side:?})", tab.value()),
+            Self::Back { tab, side } => write!(f, "Back({}, {side:?})", tab.value()),
+            Self::Home { tab, side } => write!(f, "Home({}, {side:?})", tab.value()),
             Self::Refresh { tab, side } => write!(f, "Refresh({}, {side:?})", tab.value()),
             Self::PathEdited { tab, side, .. } => {
                 write!(f, "PathEdited({}, {side:?}, ..)", tab.value())
@@ -477,15 +495,20 @@ impl App {
             pane.loading = false;
             match (result, pane.entering_link.take()) {
                 (Ok((path, entries)), _) => {
+                    pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
                     pane.error = None;
                 }
                 (Err(_), Some((from, name))) => {
+                    pane.not_arrived();
                     pane.path = from;
                     not_a_folder = Some(name);
                 }
-                (Err(error), None) => pane.error = Some(error),
+                (Err(error), None) => {
+                    pane.not_arrived();
+                    pane.error = Some(error);
+                }
             }
         }
         if let Some(name) = not_a_folder {
@@ -505,11 +528,15 @@ impl App {
             pane.loading = false;
             match result {
                 Ok((path, entries)) => {
+                    pane.arrived(&path);
                     pane.path = path;
                     pane.show(entries);
                     pane.error = None;
                 }
-                Err(error) => pane.error = Some(error),
+                Err(error) => {
+                    pane.not_arrived();
+                    pane.error = Some(error);
+                }
             }
         }
         Vec::new()
@@ -549,15 +576,22 @@ impl App {
                     return Vec::new();
                 };
                 match side {
-                    Side::Remote => files.remote.path = files.remote.path.parent(),
+                    Side::Remote => {
+                        files.remote.leave();
+                        files.remote.path = files.remote.path.parent();
+                    }
                     Side::Local => {
                         if let Some(parent) = files.local.path.parent() {
-                            files.local.path = parent.to_owned();
+                            let parent = parent.to_owned();
+                            files.local.leave();
+                            files.local.path = parent;
                         }
                     }
                 }
                 self.list(tab, side)
             }
+            FilesMessage::Back { tab, side } => self.go_back(tab, side),
+            FilesMessage::Home { tab, side } => self.go_home(tab, side),
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
             message @ (FilesMessage::PathEdited { .. }
             | FilesMessage::GoTo { .. }
@@ -725,6 +759,7 @@ impl App {
             return Vec::new();
         };
         files.focus = Side::Remote;
+        files.remote.leave();
         files.remote.loading = true;
         vec![Effect::ListRemote { tab, client, path }]
     }
@@ -774,6 +809,7 @@ impl App {
                 } else {
                     files.remote.path.join(typed.as_bytes())
                 };
+                files.remote.leave();
                 files.remote.loading = true;
                 vec![Effect::ListRemote { tab, client, path }]
             }
@@ -787,9 +823,42 @@ impl App {
                 }
                 // Joining an absolute path gives that path.
                 let path = files.local.path.join(typed);
+                files.local.leave();
                 files.local.loading = true;
                 vec![Effect::ListLocal { tab, path }]
             }
+        }
+    }
+
+    /// Back to the folder `side` showed before, as the C# Files tab's Back.
+    fn go_back(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let moved = match side {
+            Side::Remote => files.remote.back(),
+            Side::Local => files.local.back(),
+        };
+        if moved {
+            self.list(tab, side)
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// To the folder `side` first showed, as the C# Files tab's Home.
+    fn go_home(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let moved = match side {
+            Side::Remote => files.remote.go_home(),
+            Side::Local => files.local.go_home(),
+        };
+        if moved {
+            self.list(tab, side)
+        } else {
+            Vec::new()
         }
     }
 
@@ -860,6 +929,7 @@ impl App {
                 return selected.map_or_else(Vec::new, |index| self.open_entry(tab, side, index));
             }
             FilesKey::Parent => return self.files(FilesMessage::Up { tab, side }),
+            FilesKey::Back => return self.go_back(tab, side),
             FilesKey::Rename => return self.ask(tab, side, NameAction::Rename),
             FilesKey::Delete => return self.ask_delete(tab, side),
             FilesKey::Refresh => return self.list(tab, side),
@@ -881,15 +951,19 @@ impl App {
                     return Vec::new();
                 };
                 if entry.kind == EntryKind::Directory {
-                    files.remote.path = files.remote.path.join(&entry.name);
+                    let path = files.remote.path.join(&entry.name);
+                    files.remote.leave();
+                    files.remote.path = path;
                     return self.list(tab, side);
                 }
                 // The listing does not say what a link points at; listing it tells. A link is
                 // never downloaded from here, as in the C# Files tab.
                 if entry.kind == EntryKind::Link {
                     let from = files.remote.path.clone();
-                    files.remote.path = from.join(&entry.name);
+                    let path = from.join(&entry.name);
                     files.remote.entering_link = Some((from, entry.label.clone()));
+                    files.remote.leave();
+                    files.remote.path = path;
                     return self.list(tab, side);
                 }
                 files.remote.select_only(Some(index));
@@ -900,7 +974,9 @@ impl App {
                     return Vec::new();
                 };
                 if entry.kind == EntryKind::Directory {
-                    files.local.path = files.local.path.join(&entry.name);
+                    let path = files.local.path.join(&entry.name);
+                    files.local.leave();
+                    files.local.path = path;
                     return self.list(tab, side);
                 }
                 files.local.select_only(Some(index));

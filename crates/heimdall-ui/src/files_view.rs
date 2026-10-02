@@ -20,7 +20,7 @@
 //! between the panes send the selection, a file or a folder, to the other side.
 //!
 //! The keyboard acts on the pane with the focus, drawn with a stronger border: arrows, Home
-//! and End select, Enter opens or sends, Backspace goes up, Tab or Left and Right change
+//! and End select, Enter opens or sends, Backspace goes back, Tab or Left and Right change
 //! pane, F2 renames, Delete deletes and F5 lists again. Tab and Enter reach the tab through
 //! the window, as they act on a dialog first.
 
@@ -121,7 +121,8 @@ pub fn files_key(key: &keyboard::Key, modifiers: Modifiers) -> Option<FilesKey> 
         Named::ArrowDown => FilesKey::Next,
         Named::Home => FilesKey::First,
         Named::End => FilesKey::Last,
-        Named::Backspace => FilesKey::Parent,
+        // Back, as the C# Files tab's Backspace; Up stays a button.
+        Named::Backspace => FilesKey::Back,
         Named::ArrowLeft => FilesKey::Focus(Side::Local),
         Named::ArrowRight => FilesKey::Focus(Side::Remote),
         Named::F2 => FilesKey::Rename,
@@ -430,6 +431,17 @@ struct PaneParts<'p, E> {
     loading: bool,
     error: Option<&'p FilesError>,
     focused: bool,
+    /// Where the pane can go besides up.
+    moves: Moves,
+}
+
+/// Where a pane can go besides up, as the C# Files tab's Back and Home.
+#[derive(Debug, Clone, Copy)]
+struct Moves {
+    /// Back has a folder to go to.
+    back: bool,
+    /// Home is known: a folder was shown.
+    home: bool,
 }
 
 fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
@@ -450,13 +462,21 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         loading,
         error,
         focused,
+        moves,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
     let tools = pane_tools(tab, side, selected, chosen);
     let header = row![
+        // As the C# Files tab: Back, Up, Home.
+        button(text(fl!("ui-files-back-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press_maybe(moves.back.then(|| files(FilesMessage::Back { tab, side }))),
         button(text(fl!("ui-files-up-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press(files(FilesMessage::Up { tab, side })),
+        button(text(fl!("ui-files-home-button")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press_maybe(moves.home.then(|| files(FilesMessage::Home { tab, side }))),
         // The folder shown, typed over to go elsewhere, as the C# path bar.
         text_input(&location, typed.unwrap_or(&location))
             .size(SMALL_SIZE)
@@ -584,6 +604,10 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
         focused: files_pane.focus == Side::Local,
+        moves: Moves {
+            back: files_pane.local.can_go_back(),
+            home: files_pane.local.home.is_some(),
+        },
     });
     let remote = pane(PaneParts {
         tab,
@@ -602,6 +626,10 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
         focused: files_pane.focus == Side::Remote,
+        moves: Moves {
+            back: files_pane.remote.can_go_back(),
+            home: files_pane.remote.home.is_some(),
+        },
     });
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();
@@ -687,6 +715,11 @@ mod tests {
         assert_eq!(
             files_key(&keyboard::Key::Character("a".into()), Modifiers::empty()),
             None
+        );
+        assert_eq!(
+            files_key(&named(Named::Backspace), Modifiers::empty()),
+            Some(FilesKey::Back),
+            "Back, as the C# Files tab's Backspace"
         );
     }
 }
