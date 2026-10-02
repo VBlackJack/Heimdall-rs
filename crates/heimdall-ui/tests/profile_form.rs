@@ -17,6 +17,8 @@
 //! The profile form drawn headless: reached from the sidebar, typed into, refused with a
 //! reason. Setting `HEIMDALL_SNAPSHOT_DIR` writes PNGs, for a visual pass.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
@@ -27,7 +29,6 @@ use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
-use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
 /// Height of a window showing a whole form: RDP, or SSH with its post-connect steps.
@@ -47,21 +48,21 @@ fn shell(dir: &Path) -> Shell {
     }))
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 /// A window tall enough for the whole RDP form: in [`WINDOW`] its last options scroll.
-fn tall_simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn tall_simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, Size::new(WINDOW.width, TALL_HEIGHT), shell.view())
+    common::simulator(settings, Size::new(WINDOW.width, TALL_HEIGHT), shell.view())
 }
 
 fn snapshot(shell: &Shell, name: &str) {
@@ -435,7 +436,7 @@ fn a_form_taller_than_the_window_scrolls_above_buttons_that_stay_in_view() {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = Simulator::with_size(settings, SHORT_WINDOW, shell.view());
+    let mut ui = common::simulator(settings, SHORT_WINDOW, shell.view());
     let folder = ui.find("Folder").expect("the last field");
     assert!(
         folder.bounds().y + folder.bounds().height > SHORT_WINDOW.height,

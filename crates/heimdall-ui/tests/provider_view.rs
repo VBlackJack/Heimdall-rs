@@ -17,6 +17,8 @@
 //! The external credential provider's card on the Settings page, driven by its clicks and
 //! typing.
 
+mod common;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -28,7 +30,6 @@ use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
-use iced_test::simulator::Simulator;
 
 /// Width of a label before its field, as the card lays it out.
 const LABEL_WIDTH: f32 = 200.0;
@@ -54,12 +55,12 @@ fn shell(dir: &Path) -> Shell {
     shell
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 fn apply(shell: &mut Shell, messages: Vec<Message>) {

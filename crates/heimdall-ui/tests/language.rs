@@ -19,6 +19,8 @@
 //! The texts are one loader for the whole process: switching it here would change what the
 //! other test files read, so this file, its own process, holds the only test that switches.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{App, AppConfig, SystemCredentials};
@@ -28,7 +30,6 @@ use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings as IcedSettings, Size};
-use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1100.0, 1800.0);
 
@@ -44,12 +45,12 @@ fn shell(dir: &Path) -> Shell {
     }))
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = IcedSettings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..IcedSettings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 #[test]

@@ -28,7 +28,6 @@ use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
-use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
 
@@ -65,12 +64,12 @@ fn a_vnc_profile_is_listed_and_opens_a_vnc_tab() {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = Simulator::with_size(settings.clone(), WINDOW, shell.view());
+    let mut ui = common::simulator(settings.clone(), WINDOW, shell.view());
     ui.find("VNC").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
     drop(ui);
     let messages = common::double_click_messages(
-        || Simulator::with_size(settings.clone(), WINDOW, shell.view()),
+        || common::simulator(settings.clone(), WINDOW, shell.view()),
         "Lobby kiosk",
     );
     assert!(messages.iter().any(|message| matches!(

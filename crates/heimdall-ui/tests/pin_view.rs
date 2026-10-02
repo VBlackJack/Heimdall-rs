@@ -17,6 +17,8 @@
 //! The application PIN drawn: the gate at start hiding the window, the Settings card, and
 //! the dialog setting, changing and removing it, each driven by its clicks and keys.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{App, AppConfig, Message as AppMessage, PinMessage, SystemCredentials};
@@ -29,7 +31,6 @@ use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::keyboard::key::Named;
 use iced::{Settings, Size};
-use iced_test::simulator::Simulator;
 
 /// A window tall enough for the whole Settings page.
 const WINDOW: Size = Size::new(1100.0, 1800.0);
@@ -79,12 +80,12 @@ fn gated(dir: &Path) -> Shell {
     Shell::with_app(app(dir))
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 fn field(index: usize) -> iced::widget::Id {

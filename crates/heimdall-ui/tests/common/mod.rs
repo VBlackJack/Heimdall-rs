@@ -14,12 +14,97 @@
  * limitations under the License.
  */
 
-//! Gestures shared by the window's tests.
+//! Gestures shared by the window's tests, and the turn they render in.
+
+#![allow(dead_code, reason = "each test file uses part of this module")]
+
+use std::cell::{Cell, RefCell};
+use std::ops::{Deref, DerefMut};
+use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use heimdall_app::Message as AppMessage;
 use heimdall_ui::shell::Message;
 use iced::mouse::{Button, Event as MouseEvent};
+use iced::{Element, Settings, Size};
 use iced_test::simulator::Simulator;
+
+/// One test at a time renders in a test binary. Renderers made on several test threads at
+/// once ended whole binaries with no test reporting: `STATUS_ACCESS_VIOLATION` on the
+/// Windows runner (`rdp_tab`), SIGSEGV on Linux under load (`shell_view`, `rdp_options`).
+/// A test that fails still lets the next one draw.
+static RENDERING: Mutex<()> = Mutex::new(());
+
+thread_local! {
+    /// The turn this thread holds, and how many times it took it: a test makes its
+    /// simulators on its own thread, and may hold several at once.
+    static HELD: RefCell<Option<MutexGuard<'static, ()>>> = const { RefCell::new(None) };
+    static DEPTH: Cell<usize> = const { Cell::new(0) };
+}
+
+/// This thread's turn to render, given back when the last one it took is dropped.
+pub struct Turn(());
+
+/// The turn to render: waits while another test renders, never on the test itself.
+pub fn render_turn() -> Turn {
+    if DEPTH.get() == 0 {
+        let guard = RENDERING.lock().unwrap_or_else(PoisonError::into_inner);
+        HELD.with_borrow_mut(|held| *held = Some(guard));
+    }
+    DEPTH.set(DEPTH.get() + 1);
+    Turn(())
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        DEPTH.set(DEPTH.get() - 1);
+        if DEPTH.get() == 0 {
+            HELD.with_borrow_mut(Option::take);
+        }
+    }
+}
+
+/// A simulator holding the turn to render until it is dropped or its messages are taken.
+pub struct Drawn<'a> {
+    // Declared first: dropped, with its renderer, before the turn is given back.
+    ui: Simulator<'a, Message>,
+    _turn: Turn,
+}
+
+impl Drawn<'_> {
+    /// The messages the window sent, the turn given back.
+    pub fn into_messages(self) -> impl Iterator<Item = Message> {
+        let Drawn { ui, _turn } = self;
+        let messages: Vec<Message> = ui.into_messages().collect();
+        messages.into_iter()
+    }
+}
+
+impl<'a> Deref for Drawn<'a> {
+    type Target = Simulator<'a, Message>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.ui
+    }
+}
+
+impl DerefMut for Drawn<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.ui
+    }
+}
+
+/// A simulator of `view` at `size`, made once it is this test's turn to render.
+pub fn simulator<'a>(
+    settings: Settings,
+    size: Size,
+    view: impl Into<Element<'a, Message>>,
+) -> Drawn<'a> {
+    let turn = render_turn();
+    Drawn {
+        ui: Simulator::with_size(settings, size, view),
+        _turn: turn,
+    }
+}
 
 /// Windows a double click is tried in. iced tells a double click by the real time between
 /// the presses: a runner stalled between them, as the Windows CI runner was on 2026-09-29,
@@ -41,10 +126,7 @@ pub fn double_click(ui: &mut Simulator<'_, Message>, label: &str) {
 /// The messages of a double click on `label` in the window `window` draws: those of the first
 /// try iced took for a double click, one that connected, else those of the last try.
 #[allow(dead_code, reason = "not every test file double-clicks")]
-pub fn double_click_messages<'a>(
-    window: impl Fn() -> Simulator<'a, Message>,
-    label: &str,
-) -> Vec<Message> {
+pub fn double_click_messages<'a>(window: impl Fn() -> Drawn<'a>, label: &str) -> Vec<Message> {
     let mut messages = Vec::new();
     for _ in 0..DOUBLE_CLICK_TRIES {
         let mut ui = window();
