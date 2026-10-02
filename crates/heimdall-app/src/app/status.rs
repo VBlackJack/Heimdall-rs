@@ -23,6 +23,7 @@ use heimdall_core::settings::BroadcastScope;
 
 use super::reconnect::Reopen;
 use super::{App, Phase, Tab};
+use crate::error::UiError;
 use crate::ids::TabId;
 
 /// The state of the session shown.
@@ -47,6 +48,28 @@ pub enum SessionStatus {
 pub enum Notice {
     /// This text was copied.
     Copied(String),
+    /// A tunnel opened on this local port, to this host and port.
+    TunnelOpened {
+        /// Local port.
+        port: u16,
+        /// Remote host.
+        host: String,
+        /// Remote port.
+        remote_port: u16,
+    },
+    /// A tunnel could not be opened, for this reason.
+    TunnelFailed(UiError),
+    /// The tunnel on this local port closed; by itself when there is an error.
+    TunnelClosed {
+        /// Local port.
+        port: u16,
+        /// Why, when it was not closed by the user.
+        error: Option<UiError>,
+    },
+    /// Every tunnel was closed.
+    AllTunnelsClosed,
+    /// This local port was copied.
+    PortCopied(u16),
     /// This folder was created.
     FolderCreated(String),
     /// A transcript was started, in this file.

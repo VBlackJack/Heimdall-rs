@@ -1052,3 +1052,26 @@ ui-dialog-forget-certificate-confirm = Oublier
 ui-status-fingerprint-copied = Empreinte complète copiée pour { $server }.
 ui-status-host-key-removed = Clé d'hôte approuvée supprimée pour { $server }.
 ui-status-certificate-forgotten = Certificat oublié pour { $server }.
+
+## Tunnels opened by hand, as the C# "New tunnel" dialog and tunnels panel say them.
+ui-tunnel-new-title = Nouveau tunnel
+ui-tunnel-new-description = Créez une redirection de port local liée à la session via l'une de vos passerelles SSH configurées.
+ui-tunnel-gateway-label = Passerelle
+ui-tunnel-remote-host-label = Hôte distant
+ui-tunnel-remote-port-label = Port distant
+ui-tunnel-local-port-label = Port local
+ui-tunnel-label-label = Étiquette (optionnel)
+ui-tunnel-open-button = Ouvrir le tunnel
+ui-tunnel-no-gateways = Aucune passerelle SSH configurée. Ajoutez-en une dans les Paramètres avant de créer un tunnel.
+ui-tunnel-problem-gateway = La passerelle est requise.
+ui-tunnel-problem-remote-host = L'hôte distant est requis.
+ui-tunnel-problem-remote-port = Le port distant doit être compris entre { $min } et { $max }.
+ui-tunnel-problem-local-port = Le port local doit être compris entre { $min } et { $max }.
+ui-tunnel-problem-local-port-in-use = Le port local { $port } est déjà utilisé par un tunnel actif.
+ui-tunnel-opened = Tunnel ouvert sur le port local { $port } → { $host }:{ $remote }.
+ui-tunnel-failed = Échec de la création du tunnel : { $reason }
+ui-tunnel-closed = Tunnel sur le port { $port } fermé.
+ui-tunnels-all-closed = Tous les tunnels fermés.
+ui-tunnel-port-copied = Port { $port } copié dans le presse-papiers.
+ui-tunnel-closed-reason = { $closed } ({ $reason })
+ui-error-local-port-unavailable = Le port local { $port } est déjà utilisé, ou réservé par le système.

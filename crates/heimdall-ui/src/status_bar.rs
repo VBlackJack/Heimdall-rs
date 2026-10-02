@@ -58,6 +58,13 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-broadcast-on", scope = scope_label(*scope, targets))
             }
             Notice::BroadcastOff => fl!("ui-broadcast-off"),
+            notice @ (Notice::TunnelOpened { .. }
+            | Notice::TunnelFailed(_)
+            | Notice::TunnelClosed { .. }
+            | Notice::AllTunnelsClosed
+            | Notice::PortCopied(_)) => {
+                crate::tunnels_view::notice_text(notice).unwrap_or_default()
+            }
             Notice::Bookmarked(path) => fl!("ui-files-bookmark-added", path = path.as_str()),
             Notice::FingerprintCopied(server) => {
                 fl!("ui-status-fingerprint-copied", server = server.as_str())

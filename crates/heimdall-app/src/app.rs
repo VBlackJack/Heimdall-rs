@@ -100,6 +100,7 @@ mod transcripts;
 mod tree;
 mod tree_filter;
 mod trusted_keys;
+mod tunnels;
 mod vault;
 mod vnc_tab;
 mod winrm_tab;
@@ -132,6 +133,7 @@ pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
+pub use tunnels::TunnelMessage;
 use vault::VaultState;
 pub use vault::{
     LONG_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
@@ -262,6 +264,8 @@ pub enum Message {
     ReconnectTab(TabId),
     /// Something in a Files tab.
     Files(FilesMessage),
+    /// Something about the tunnels the user opens by hand.
+    Tunnel(TunnelMessage),
     /// Show a tab.
     SelectTab(TabId),
     /// Close a tab, asking first when its session is live.
@@ -564,6 +568,7 @@ impl fmt::Debug for Message {
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
+            Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
@@ -731,6 +736,13 @@ pub enum Effect {
         /// What to run.
         request: Box<LocalRequest>,
     },
+    /// Open a tunnel the user asked for and feed its events back as [`TunnelMessage::Event`].
+    OpenTunnel {
+        /// Tunnel.
+        id: crate::tunnel::TunnelId,
+        /// What to open.
+        request: Box<crate::tunnel_driver::TunnelRequest>,
+    },
     /// Start a `WinRM` session through an SSH gateway and feed its events back as
     /// [`Message::Connection`].
     ConnectWinRm {
@@ -885,6 +897,7 @@ impl fmt::Debug for Effect {
             Self::ConnectLocal { tab, attempt, .. } => {
                 write!(f, "ConnectLocal({}, {})", tab.value(), attempt.value())
             }
+            Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
             }
@@ -1292,6 +1305,18 @@ pub struct ConflictRow {
 /// A modal decision that concerns the whole window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
+    /// The C# "New tunnel" dialog, as filled.
+    NewTunnel(crate::tunnel::TunnelForm),
+    /// A gateway on a tunnel's way presented a key never seen: trusted, or the tunnel
+    /// not opened.
+    TunnelHostKey {
+        /// The gateway's host.
+        host: String,
+        /// Its port.
+        port: u16,
+        /// The key's SHA-256 fingerprint.
+        fingerprint: String,
+    },
     /// Close a tab whose session is live.
     ConfirmCloseTab(TabId),
     /// Close a Files tab whose transfers are running, which closing cancels, as the C#
@@ -1581,6 +1606,14 @@ pub struct App {
     pub active: Option<TabId>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
+    /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
+    pub tunnels: Vec<crate::tunnel::Tunnel>,
+    /// Tunnels being opened or open, with what stops them.
+    tunnel_runs: Vec<tunnels::TunnelRun>,
+    /// The identifier of the next tunnel.
+    next_tunnel: crate::tunnel::TunnelId,
+    /// The gateway key the user is asked about for a tunnel.
+    pending_tunnel_key: Option<tunnels::PendingTunnelKey>,
     /// The profile selected in the tree, the last one clicked: where a Shift+click range
     /// starts.
     pub selected_profile: Option<ProfileId>,
@@ -1658,6 +1691,10 @@ impl App {
             tabs: Vec::new(),
             active: None,
             dialog,
+            tunnels: Vec::new(),
+            tunnel_runs: Vec::new(),
+            next_tunnel: crate::tunnel::TunnelId::default(),
+            pending_tunnel_key: None,
             selected_profile: None,
             selection: std::collections::BTreeSet::new(),
             notice: None,
@@ -1774,6 +1811,7 @@ impl App {
             | Message::TmoutResetTick
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
+            Message::Tunnel(message) => self.tunnel_message(message),
             Message::SelectTab(tab) => self.select_tab(tab),
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::TabMenu(message) => self.tab_menu(message),
@@ -1876,6 +1914,7 @@ impl App {
             Message::DismissDialog => self
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())
+                .or_else(|| self.dismiss_tunnel_key())
                 .unwrap_or_else(|| {
                     self.dismiss_dialog();
                     Vec::new()
@@ -2565,12 +2604,16 @@ impl App {
     }
 
     fn confirm_dialog(&mut self) -> Vec<Effect> {
+        if let Some(Dialog::NewTunnel(_) | Dialog::TunnelHostKey { .. }) = &self.dialog {
+            return self.confirm_tunnel_dialog();
+        }
         let effects = self.confirm_open_dialog();
         // A transfer's question waits for any other to be answered.
         self.ask_next_conflicts();
         effects
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per dialog")]
     fn confirm_open_dialog(&mut self) -> Vec<Effect> {
         match self.dialog.take() {
             Some(
@@ -2667,7 +2710,10 @@ impl App {
                 | Dialog::HostKeysEmpty
                 | Dialog::HostKeysDone { .. }
                 | Dialog::StoreError { .. }
-                | Dialog::PasswordSaveFailed { .. },
+                | Dialog::PasswordSaveFailed { .. }
+                // Confirmed before: see `confirm_dialog`.
+                | Dialog::NewTunnel(_)
+                | Dialog::TunnelHostKey { .. },
             )
             | None => Vec::new(),
         }

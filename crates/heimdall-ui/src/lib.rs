@@ -44,6 +44,7 @@ mod texts;
 pub mod transcript_lines;
 pub mod tree_view;
 pub mod trusted_keys_view;
+pub mod tunnels_view;
 
 use heimdall_core::paths;
 use iced::{Font, Size, window};
