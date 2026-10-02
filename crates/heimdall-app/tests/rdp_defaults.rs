@@ -178,7 +178,10 @@ fn a_new_rdp_profile_follows_the_defaults_and_an_edit_keeps_what_was_chosen() {
             value: value.to_owned(),
         });
     }
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     let new = app
         .rdp_profiles()
         .iter()
@@ -187,7 +190,10 @@ fn a_new_rdp_profile_follows_the_defaults_and_an_edit_keeps_what_was_chosen() {
     assert!(new.follow_defaults, "ticked for a new profile, as the C#");
 
     app.update(Message::EditProfile(ProfileId::new("own")));
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert!(
         !app.rdp_profiles()
             .iter()
@@ -201,7 +207,10 @@ fn a_new_rdp_profile_follows_the_defaults_and_an_edit_keeps_what_was_chosen() {
         toggle: ProfileToggle::FollowDefaults,
         on: true,
     });
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert!(
         app.rdp_profiles()
             .iter()
@@ -254,7 +263,10 @@ fn editing_a_following_profile_keeps_it_following() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     app.update(Message::EditProfile(ProfileId::new("following")));
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert!(
         app.rdp_profiles()
             .iter()

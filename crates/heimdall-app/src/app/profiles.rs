@@ -25,7 +25,7 @@ use heimdall_ssh::Secret;
 use heimdall_term::local;
 
 use super::{App, Dialog, Message};
-use crate::profile_draft::{DraftError, DraftProfile, ProfileDraft, ProfileField};
+use crate::profile_draft::{DraftError, DraftProfile, ProfileDraft, ProfileField, SavedSecret};
 use crate::text::server_text;
 
 impl App {
@@ -36,9 +36,12 @@ impl App {
             Message::EditProfile(id) => self.edit_profile(&id),
             Message::ProfileField { field, value } => self.profile_field(field, value),
             Message::DeleteProfile => self.ask_delete_profile(),
-            Message::SaveProfile { password } => match self.dialog.take() {
+            Message::SaveProfile {
+                password,
+                passphrase,
+            } => match self.dialog.take() {
                 Some(Dialog::EditProfile { draft, .. }) => {
-                    self.save_profile(draft, password.as_ref());
+                    self.save_profile(draft, password.as_ref(), passphrase.as_ref());
                 }
                 // Not the form: whatever is open stays.
                 other => self.dialog = other,
@@ -47,6 +50,11 @@ impl App {
                 if let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut() {
                     draft.clear_password = true;
                     draft.password_saved = false;
+                }
+            }
+            Message::ClearPassphrase => {
+                if let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut() {
+                    draft.passphrase = SavedSecret::Cleared;
                 }
             }
             Message::ChooseProtocol(protocol) => {
@@ -108,6 +116,8 @@ impl App {
         };
         let mut draft = Box::new(draft);
         draft.password_saved = draft.protocol.saves_password() && self.password_saved(id);
+        draft.passphrase =
+            SavedSecret::from_saved(draft.protocol.has_key_file() && self.passphrase_saved(id));
         self.dialog = Some(Dialog::EditProfile { draft, error: None });
     }
 
@@ -134,8 +144,14 @@ impl App {
         self.dialog = Some(Dialog::ConfirmDeleteProfile { id, name });
     }
 
-    /// Saves the form, with `password` typed into it, or puts it back with what to fix.
-    pub(super) fn save_profile(&mut self, draft: Box<ProfileDraft>, password: Option<&Secret>) {
+    /// Saves the form, with `password` and `passphrase` typed into it, or puts it back with
+    /// what to fix.
+    pub(super) fn save_profile(
+        &mut self,
+        draft: Box<ProfileDraft>,
+        password: Option<&Secret>,
+        passphrase: Option<&Secret>,
+    ) {
         let id = draft.editing.clone().unwrap_or_else(|| self.fresh_id());
         let typed = password.filter(|typed| {
             !typed.expose().is_empty()
@@ -164,6 +180,11 @@ impl App {
             }
         };
         let id = saved_id(&profile).clone();
+        // The key whose passphrase the form saves: an SSH profile's, which may have none.
+        let key_file = match &profile {
+            DraftProfile::Ssh(profile) => Some(profile.key_path.clone()),
+            _ => None,
+        };
         // Renamed, it keeps its password manager's entry under the old name, as in C#.
         let old_name = draft
             .editing
@@ -219,6 +240,16 @@ impl App {
             && self.can_save_passwords()
         {
             self.save_edited_password(&id, endpoint, typed, draft.clear_password);
+        }
+        if let Some(key_path) = key_file
+            && self.can_save_passwords()
+        {
+            self.save_edited_passphrase(
+                &id,
+                key_path.as_deref(),
+                passphrase,
+                draft.passphrase == SavedSecret::Cleared,
+            );
         }
     }
 

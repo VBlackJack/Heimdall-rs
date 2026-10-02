@@ -173,6 +173,60 @@ pub fn decode(bytes: &[u8]) -> Option<SavedPassword> {
     })
 }
 
+/// Prefix of the vault entries holding the passphrase of a profile's SSH key.
+const PASSPHRASE_ENTRY_PREFIX: &str = "passphrase/";
+
+/// The passphrase of an SSH key file, and the file it unlocks. It never leaves this computer:
+/// it is given back only to unlock that same file, for the profile or gateway it is saved
+/// with.
+#[derive(Clone, PartialEq, Eq)]
+pub struct SavedPassphrase {
+    /// The key file, as the profile names it.
+    pub key_path: String,
+    /// Passphrase.
+    pub passphrase: Zeroizing<String>,
+}
+
+impl std::fmt::Debug for SavedPassphrase {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("SavedPassphrase")
+            .field("key_path", &self.key_path)
+            .finish_non_exhaustive()
+    }
+}
+
+/// Name of the vault entry holding the passphrase of `profile`'s key.
+#[must_use]
+pub fn passphrase_entry(profile: &ProfileId) -> String {
+    format!("{PASSPHRASE_ENTRY_PREFIX}{}", profile.as_str())
+}
+
+/// `saved` as vault entry bytes: a version, then the key file and the passphrase, each with
+/// its length.
+#[must_use]
+pub fn encode_passphrase(saved: &SavedPassphrase) -> Zeroizing<Vec<u8>> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    bytes.push(ENCODING_VERSION);
+    push_text(&mut bytes, &saved.key_path);
+    push_text(&mut bytes, &saved.passphrase);
+    bytes
+}
+
+/// The passphrase in vault entry `bytes`; `None` for anything this version did not write.
+#[must_use]
+pub fn decode_passphrase(bytes: &[u8]) -> Option<SavedPassphrase> {
+    let mut reader = Reader(bytes);
+    if reader.byte()? != ENCODING_VERSION {
+        return None;
+    }
+    let key_path = reader.text()?;
+    let passphrase = Zeroizing::new(reader.text()?);
+    reader.0.is_empty().then_some(SavedPassphrase {
+        key_path,
+        passphrase,
+    })
+}
+
 fn push_text(bytes: &mut Vec<u8>, text: &str) {
     // A text longer than 4 GiB cannot be typed into a password field.
     let length = u32::try_from(text.len()).unwrap_or(u32::MAX);
@@ -306,5 +360,33 @@ mod tests {
     #[test]
     fn entries_are_named_by_profile() {
         assert_eq!(password_entry(&ProfileId::new("a1")), "password/a1");
+    }
+
+    #[test]
+    fn a_passphrase_reads_back_with_its_key_file_and_nothing_else_does() {
+        let saved = SavedPassphrase {
+            key_path: "C:/keys/id_ed25519".to_owned(),
+            passphrase: Zeroizing::new("correct horse".to_owned()),
+        };
+        let bytes = encode_passphrase(&saved);
+        assert_eq!(decode_passphrase(&bytes), Some(saved.clone()));
+        assert_eq!(passphrase_entry(&ProfileId::new("web")), "passphrase/web");
+        assert_ne!(
+            passphrase_entry(&ProfileId::new("web")),
+            password_entry(&ProfileId::new("web"))
+        );
+        let mut longer = bytes.to_vec();
+        longer.push(0);
+        assert_eq!(decode_passphrase(&longer), None, "trailing bytes");
+        assert_eq!(
+            decode_passphrase(&bytes[..bytes.len() - 1]),
+            None,
+            "cut short"
+        );
+        assert_eq!(decode_passphrase(&[]), None);
+        assert!(
+            !format!("{saved:?}").contains("correct horse"),
+            "never in a log"
+        );
     }
 }

@@ -74,6 +74,7 @@ fn field(app: &mut App, field: ProfileField, value: &str) {
 fn save(app: &mut App, password: Option<&str>) {
     app.update(Message::SaveProfile {
         password: password.map(|typed| Secret::new(typed.to_owned())),
+        passphrase: None,
     });
 }
 

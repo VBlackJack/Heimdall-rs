@@ -185,6 +185,12 @@ impl DraftProtocol {
         matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
     }
 
+    /// Whether the protocol's profiles name a key file, whose passphrase can be saved.
+    #[must_use]
+    pub fn has_key_file(self) -> bool {
+        matches!(self, Self::Ssh | Self::Sftp)
+    }
+
     /// Whether a saved password belongs to an account, which the form must then name.
     #[must_use]
     pub fn password_needs_username(self) -> bool {
@@ -260,6 +266,27 @@ impl ProfileToggle {
     }
 }
 
+/// A secret saved for a profile or gateway, as its form shows it: its field stays empty
+/// whatever is saved.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SavedSecret {
+    /// None is saved.
+    #[default]
+    Absent,
+    /// One is saved: the form says so.
+    Saved,
+    /// The saved one is to be removed when the form is saved.
+    Cleared,
+}
+
+impl SavedSecret {
+    /// `Saved` when one is, `Absent` otherwise.
+    #[must_use]
+    pub fn from_saved(saved: bool) -> Self {
+        if saved { Self::Saved } else { Self::Absent }
+    }
+}
+
 /// A value chosen from a list of an RDP profile's form.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProfileChoice {
@@ -328,6 +355,8 @@ pub struct ProfileDraft {
     pub password_saved: bool,
     /// The saved password is to be removed when the form is saved.
     pub clear_password: bool,
+    /// The key passphrase saved for the profile, as the form shows it.
+    pub passphrase: SavedSecret,
     /// RDP: the options chosen from lists and boxes of their own; the administrative session
     /// is a toggle, the fixed size is typed in `fixed_width` and `fixed_height`.
     pub rdp_options: RdpOptions,

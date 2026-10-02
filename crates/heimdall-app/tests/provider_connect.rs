@@ -221,6 +221,7 @@ fn a_saved_password_wins_over_the_provider() {
     app.update(Message::EditProfile(ProfileId::new("a")));
     app.update(Message::SaveProfile {
         password: Some(Secret::new("saved-pw".to_owned())),
+        passphrase: None,
     });
     let (tab, attempt) = open(&mut app);
     let question = QuestionId::fresh();
@@ -332,7 +333,10 @@ fn edit_and_save(app: &mut App, field: heimdall_app::profile_draft::ProfileField
         field,
         value: value.to_owned(),
     });
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
 }
 
 #[test]

@@ -312,6 +312,7 @@ fn a_duplicate_takes_the_saved_password_along_except_for_rdp() {
     app.update(Message::EditProfile(id("ssh")));
     app.update(Message::SaveProfile {
         password: Some(Secret::new("pw".to_owned())),
+        passphrase: None,
     });
     duplicate(&mut app, "ssh");
     let copy = app.selected_profile.clone().expect("copy");

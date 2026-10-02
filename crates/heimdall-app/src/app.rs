@@ -394,13 +394,17 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
-    /// Save the profile form, with the password typed into it, if any.
+    /// Save the profile form, with the password and key passphrase typed into it, if any.
     SaveProfile {
         /// The password typed; `None` or empty leaves the saved one as it is.
         password: Option<Secret>,
+        /// The key passphrase typed; `None` or empty leaves the saved one as it is.
+        passphrase: Option<Secret>,
     },
     /// In the profile form, clear the saved password (done when the form is saved).
     ClearPassword,
+    /// In the profile form, clear the saved key passphrase (done when the form is saved).
+    ClearPassphrase,
     /// In a new profile's form, choose its protocol.
     ChooseProtocol(DraftProtocol),
     /// In the profile form, tick or clear an option.
@@ -429,10 +433,14 @@ pub enum Message {
     ChooseParentGateway(Option<ProfileId>),
     /// In the gateway dialog, clear the saved password (done when it is saved).
     ClearGatewayPassword,
-    /// Save the gateway dialog, with the password typed into it, if any.
+    /// In the gateway dialog, clear the saved key passphrase (done when it is saved).
+    ClearGatewayPassphrase,
+    /// Save the gateway dialog, with the password and key passphrase typed into it, if any.
     SaveGateway {
         /// The password typed; `None` or empty leaves the saved one as it is.
         password: Option<Secret>,
+        /// The key passphrase typed; `None` or empty leaves the saved one as it is.
+        passphrase: Option<Secret>,
     },
     /// In a session's form, route it through this gateway.
     ChooseGateway(ProfileId),
@@ -605,6 +613,7 @@ impl fmt::Debug for Message {
             Self::DismissDialog => f.write_str("DismissDialog"),
             Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
             Self::ClearPassword => f.write_str("ClearPassword"),
+            Self::ClearPassphrase => f.write_str("ClearPassphrase"),
             Self::ChooseProtocol(protocol) => write!(f, "ChooseProtocol({protocol:?})"),
             Self::ProfileToggle { toggle, on } => write!(f, "ProfileToggle({toggle:?}, {on})"),
             Self::ProfileChoice(choice) => write!(f, "ProfileChoice({choice:?})"),
@@ -615,6 +624,7 @@ impl fmt::Debug for Message {
             Self::GatewayField { field, .. } => write!(f, "GatewayField({field:?}, ..)"),
             Self::ChooseParentGateway(id) => write!(f, "ChooseParentGateway({id:?})"),
             Self::ClearGatewayPassword => f.write_str("ClearGatewayPassword"),
+            Self::ClearGatewayPassphrase => f.write_str("ClearGatewayPassphrase"),
             Self::SaveGateway { .. } => f.write_str("SaveGateway(..)"),
             Self::ChooseGateway(id) => write!(f, "ChooseGateway({id})"),
             Self::ToggleFolder(path) => write!(f, "ToggleFolder({path})"),
@@ -1667,16 +1677,9 @@ impl App {
             message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
                 self.retry_message(&message)
             }
-            Message::Connection {
-                tab,
-                attempt,
-                event,
-            } => self.connection(tab, attempt, event),
-            Message::Answer {
-                tab,
-                question,
-                answer,
-            } => self.answer(tab, question, answer),
+            message @ (Message::Connection { .. } | Message::Answer { .. }) => {
+                self.attempt_message(message)
+            }
             Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept.into()),
             Message::HostKeyTrustOnce(tab) => self.host_key_decision(tab, KeyTrust::Once),
             Message::Key { tab, input } => self.key(tab, &input),
@@ -1704,6 +1707,7 @@ impl App {
             | Message::DeleteProfile
             | Message::SaveProfile { .. }
             | Message::ClearPassword
+            | Message::ClearPassphrase
             | Message::ChooseProtocol(_)
             | Message::ProfileToggle { .. }
             | Message::PostConnectEdit(_)
@@ -1713,6 +1717,7 @@ impl App {
             | Message::GatewayField { .. }
             | Message::ChooseParentGateway(_)
             | Message::ClearGatewayPassword
+            | Message::ClearGatewayPassphrase
             | Message::SaveGateway { .. }
             | Message::ChooseGateway(_)) => {
                 self.profile_message(message);
@@ -1741,6 +1746,23 @@ impl App {
             Message::Pin(message) => self.pin_message(message),
             Message::CredentialProvider(message) => self.provider_message(message),
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
+        }
+    }
+
+    /// An event of a connection attempt, or the user's answer to its question.
+    fn attempt_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::Connection {
+                tab,
+                attempt,
+                event,
+            } => self.connection(tab, attempt, event),
+            Message::Answer {
+                tab,
+                question,
+                answer,
+            } => self.answer(tab, question, answer),
+            _ => Vec::new(),
         }
     }
 
@@ -2479,7 +2501,7 @@ impl App {
             Some(Dialog::AskName { value, .. }) => self.confirm_operation(Some(&value)),
             Some(Dialog::ConfirmDelete { .. }) => self.confirm_operation(None),
             Some(Dialog::EditProfile { draft, .. }) => {
-                self.save_profile(draft, None);
+                self.save_profile(draft, None, None);
                 Vec::new()
             }
             Some(Dialog::ConfirmDeleteProfile { id, .. }) => {
