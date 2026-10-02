@@ -77,13 +77,22 @@ fn open(app: &mut App, shell: LocalShell) -> (TabId, AttemptId, LocalRequest) {
     (tab, attempt, *request)
 }
 
-/// Feeds every event of the attempt to the application.
+/// Feeds every event of the attempt to the application. A silence that runs out says what
+/// came before it: a shell still starting shows nothing, one whose exit was lost its output.
 async fn follow(app: &mut App, tab: TabId, attempt: AttemptId, request: LocalRequest) {
+    let started = std::time::Instant::now();
     let mut events = local_events(request);
-    while let Some(event) = tokio::time::timeout(WAIT, events.next())
-        .await
-        .expect("in time")
-    {
+    loop {
+        let Ok(next) = tokio::time::timeout(WAIT, events.next()).await else {
+            panic!(
+                "silent for {WAIT:?}, {:?} after the first wait, screen so far:\n{}",
+                started.elapsed(),
+                screen(app, tab)
+            );
+        };
+        let Some(event) = next else {
+            return;
+        };
         let _ = app.update(Message::Connection {
             tab,
             attempt,

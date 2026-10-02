@@ -16,7 +16,7 @@
 
 //! Local shells on a pseudo-terminal, run for real: `sh` on Unix, `cmd` on Windows.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use heimdall_term::local::{LocalArguments, LocalConfig, LocalEvent, LocalSession, spawn};
 
@@ -55,15 +55,21 @@ async fn until_exit(session: &mut LocalSession) -> (String, Option<i32>) {
     until_exit_within(session, WAIT).await
 }
 
-/// [`until_exit`], the session silent for at most `silence` between two events.
+/// [`until_exit`], the session silent for at most `silence` between two events. A silence
+/// that runs out says what came before it: a shell still starting shows nothing or its
+/// banner, one whose exit was lost shows everything it had to say.
 async fn until_exit_within(session: &mut LocalSession, silence: Duration) -> (String, Option<i32>) {
+    let started = Instant::now();
     let mut output = Vec::new();
     loop {
-        match tokio::time::timeout(silence, session.events.recv())
-            .await
-            .expect("in time")
-            .expect("an event")
-        {
+        let Ok(event) = tokio::time::timeout(silence, session.events.recv()).await else {
+            panic!(
+                "silent for {silence:?}, {:?} after the first wait, output so far: {:?}",
+                started.elapsed(),
+                String::from_utf8_lossy(&output)
+            );
+        };
+        match event.expect("an event") {
             LocalEvent::Output(bytes) => output.extend(bytes),
             LocalEvent::Exited(code) => {
                 return (String::from_utf8_lossy(&output).into_owned(), code);
@@ -209,7 +215,7 @@ async fn output_left_unread_at_the_exit_still_arrives() {
 async fn a_background_job_does_not_hold_the_exit_back() {
     // The job keeps the terminal open: the exit must come from the shell, not the terminal.
     let mut session = spawn(&shell("sleep 30 & exit 3")).expect("spawned");
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     assert_eq!(until_exit(&mut session).await.1, Some(3));
     assert!(started.elapsed() < Duration::from_secs(10));
 }
@@ -279,7 +285,7 @@ async fn closing_ends_even_a_shell_that_ignores_the_hang_up() {
     let mut session = spawn(&shell("trap '' HUP; echo ready; sleep 100")).expect("spawned");
     // Once the trap is in place.
     until(&mut session, "ready").await;
-    let started = std::time::Instant::now();
+    let started = Instant::now();
     session.input.close();
     let (_, code) = until_exit(&mut session).await;
     assert_eq!(code, None, "killed, so no exit code");
