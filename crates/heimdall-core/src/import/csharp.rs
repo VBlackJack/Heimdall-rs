@@ -146,8 +146,24 @@ pub struct ImportReport {
     pub ftp: Vec<FtpProfile>,
     /// SSH gateways ready to be merged into the store; each one's parent is among them.
     pub gateways: Vec<SshGateway>,
+    /// The SSH servers `settings.json` trusts, and its gateways' fingerprints: for the
+    /// migration of this computer's own C# store only, never from a file picked.
+    pub host_keys: Vec<TrustedHostKey>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
+}
+
+/// An SSH server the C# Heimdall trusted.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TrustedHostKey {
+    /// Host, as the C# wrote it.
+    pub host: String,
+    /// Port.
+    pub port: u16,
+    /// The key's fingerprint, `SHA256:...` as OpenSSH writes it.
+    pub fingerprint: String,
+    /// The key's SSH wire form in base64, when the C# kept it.
+    pub key: Option<String>,
 }
 
 /// Why the C# files could not be read at all.
@@ -312,6 +328,12 @@ struct LegacySettings {
     group_defaults: HashMap<String, LegacyGroupDefaults>,
     #[serde(default)]
     ssh_gateways: Vec<LegacyGateway>,
+    /// `host:port` or `[ipv6]:port` to the fingerprint and, when kept, the key.
+    #[serde(default, rename = "trustedHostKeysV2")]
+    trusted_host_keys_v2: HashMap<String, LegacyHostKey>,
+    /// The first store, fingerprints alone, still written beside the second.
+    #[serde(default)]
+    trusted_host_keys: HashMap<String, String>,
     #[serde(flatten)]
     rdp_defaults: LegacyRdpDefaults,
 }
@@ -412,6 +434,14 @@ fn resolution_of(server: &LegacyServer) -> (Resolution, (u16, u16)) {
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+struct LegacyHostKey {
+    #[serde(default)]
+    fingerprint: String,
+    public_key_base64: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct LegacyGateway {
     #[serde(default)]
     id: String,
@@ -424,6 +454,8 @@ struct LegacyGateway {
     user: Option<String>,
     key_path: Option<String>,
     parent_gateway_id: Option<String>,
+    /// The gateway's host key, pinned by fingerprint in its own settings.
+    host_key_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -453,7 +485,10 @@ pub fn import(
         None => LegacySettings::default(),
     };
 
-    let mut report = ImportReport::default();
+    let mut report = ImportReport {
+        host_keys: trusted_host_keys(&settings),
+        ..ImportReport::default()
+    };
     // The document's gateways, then the settings' ones: an identifier seen twice is the
     // first one's.
     let mut legacy_gateways = std::mem::take(&mut servers.gateways);
@@ -511,6 +546,69 @@ pub fn import(
     report.skipped.extend(skipped_gateways);
     report.gateways = gateways;
     Ok(report)
+}
+
+/// The servers `settings.json` trusts, sorted by host and port: the second store's entries,
+/// the first store's for a server the second does not name, then a gateway's own
+/// fingerprint for a server neither names. Entries without a host, a port or a fingerprint
+/// are left out.
+fn trusted_host_keys(settings: &LegacySettings) -> Vec<TrustedHostKey> {
+    let mut trusted: Vec<TrustedHostKey> = Vec::new();
+    let mut add = |host: &str, port: u16, fingerprint: &str, key: Option<&String>| {
+        let fingerprint = fingerprint.trim();
+        if host.is_empty()
+            || fingerprint.is_empty()
+            || trusted
+                .iter()
+                .any(|known| known.host.eq_ignore_ascii_case(host) && known.port == port)
+        {
+            return;
+        }
+        trusted.push(TrustedHostKey {
+            host: host.to_owned(),
+            port,
+            fingerprint: fingerprint.to_owned(),
+            key: key.filter(|key| !key.trim().is_empty()).cloned(),
+        });
+    };
+    let mut second: Vec<_> = settings.trusted_host_keys_v2.iter().collect();
+    second.sort_by(|a, b| a.0.cmp(b.0));
+    for (name, entry) in second {
+        if let Some((host, port)) = host_and_port(name) {
+            add(
+                host,
+                port,
+                &entry.fingerprint,
+                entry.public_key_base64.as_ref(),
+            );
+        }
+    }
+    let mut first: Vec<_> = settings.trusted_host_keys.iter().collect();
+    first.sort();
+    for (name, fingerprint) in first {
+        if let Some((host, port)) = host_and_port(name) {
+            add(host, port, fingerprint, None);
+        }
+    }
+    for gateway in &settings.ssh_gateways {
+        let port = gateway.port.map_or(Some(DEFAULT_SSH_PORT), |port| {
+            u16::try_from(port).ok().filter(|port| *port != 0)
+        });
+        if let (Some(port), Some(fingerprint)) = (port, &gateway.host_key_fingerprint) {
+            add(gateway.host.trim(), port, fingerprint, None);
+        }
+    }
+    trusted
+}
+
+/// `host:port` or `[ipv6]:port`, as the C# keys its trust store.
+fn host_and_port(name: &str) -> Option<(&str, u16)> {
+    let (host, port) = match name.strip_prefix('[') {
+        Some(bracketed) => bracketed.split_once("]:")?,
+        None => name.rsplit_once(':')?,
+    };
+    let port = port.parse().ok().filter(|port| *port != 0)?;
+    (!host.is_empty()).then_some((host, port))
 }
 
 /// The gateways that can be used: each with an identifier, a host and a valid port, and a

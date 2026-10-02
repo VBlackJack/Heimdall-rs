@@ -3552,6 +3552,29 @@ fn import_report<'a>(
             .push(text(fl!("ui-dialog-import-skipped")))
             .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
     }
+    match &summary.host_keys {
+        Some(Ok(carried)) if carried.keys + carried.pins > 0 => {
+            content = content.push(
+                text(fl!(
+                    "ui-dialog-import-host-keys",
+                    keys = carried.keys,
+                    pins = carried.pins
+                ))
+                .size(SMALL_SIZE),
+            );
+        }
+        Some(Err(detail)) => {
+            content = content.push(
+                text(fl!(
+                    "ui-dialog-import-host-keys-failed",
+                    detail = detail.as_str()
+                ))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            );
+        }
+        _ => {}
+    }
     // What the file said, and for `MobaXterm` that its passwords must be entered again.
     for line in crate::file_import_view::warning_lines(&summary.warnings)
         .into_iter()

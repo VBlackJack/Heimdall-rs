@@ -267,6 +267,14 @@ ui-dialog-paste-confirm = Paste
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
 ui-dialog-import-skipped = Left out:
+ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
+    [one] { $keys } key
+   *[other] { $keys } keys
+} and { $pins ->
+    [one] { $pins } fingerprint
+   *[other] { $pins } fingerprints
+}.
+ui-dialog-import-host-keys-failed = The trusted SSH servers could not be carried over: { $detail }
 ui-dialog-import-skipped-item = { $name }: { $reason }
 ui-dialog-import-failed-title = The import could not run
 ui-import-file-title = Import Sessions
