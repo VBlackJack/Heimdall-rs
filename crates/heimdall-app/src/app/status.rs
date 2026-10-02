@@ -81,6 +81,8 @@ pub enum Notice {
     /// A `WinRM` session started through an SSH gateway, where Kerberos is out of reach and
     /// the sign-in falls back to NTLM, as the C# Heimdall warns.
     WinRmGatewayNtlm,
+    /// A `WinRM` session started with its TLS certificate checks skipped, as the C# warns.
+    WinRmCertificateSkipped,
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's

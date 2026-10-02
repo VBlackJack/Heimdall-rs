@@ -47,6 +47,7 @@ pub mod time_zone;
 pub mod transcript;
 pub mod vnc_driver;
 pub mod winrm_driver;
+pub mod winrm_preflight;
 
 pub use app::{
     App, AppConfig, BroadcastMessage, ConflictRow, ConnectAs, Dialog, Effect, ExportOutcome,

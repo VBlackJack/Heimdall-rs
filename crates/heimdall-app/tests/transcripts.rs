@@ -105,7 +105,8 @@ fn connected(app: &mut App, message: Message) -> (TabId, AttemptId) {
         [
             Effect::Connect { tab, attempt, .. }
             | Effect::ConnectTelnet { tab, attempt, .. }
-            | Effect::ConnectLocal { tab, attempt, .. },
+            | Effect::ConnectLocal { tab, attempt, .. }
+            | Effect::ConnectWinRm { tab, attempt, .. },
         ] => (*tab, *attempt),
         other => panic!("{other:?}"),
     };

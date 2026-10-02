@@ -2286,6 +2286,7 @@ dependencies = [
  "shlex",
  "tempfile",
  "tokio",
+ "tokio-rustls",
  "tokio-stream",
  "tokio-util",
  "unftp-sbe-fs",

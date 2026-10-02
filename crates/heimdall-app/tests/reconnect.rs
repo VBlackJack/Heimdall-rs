@@ -241,22 +241,14 @@ fn a_refused_winrm_tab_reopens_from_its_profile_never_as_an_empty_shell() {
         passphrase: None,
     });
     let effects = app.update(Message::ReconnectTab(refused));
-    let [Effect::ConnectLocal { request, .. }] = effects.as_slice() else {
+    let [Effect::ConnectWinRm { request, .. }] = effects.as_slice() else {
         panic!("{effects:?}");
     };
     assert!(
-        request.shell.program.is_some(),
+        !request.program.is_empty(),
         "PowerShell, not the default shell"
     );
-    let LocalArguments::List(arguments) = &request.shell.arguments else {
-        panic!("{:?}", request.shell.arguments);
-    };
-    assert!(
-        arguments
-            .iter()
-            .any(|argument| argument.contains("'dc.lab'")),
-        "{arguments:?}"
-    );
+    assert_eq!(request.profile.host, "dc.lab", "the profile as saved now");
 }
 
 #[test]
