@@ -171,9 +171,13 @@ async fn a_telnet_session_shows_in_its_tab_and_takes_its_input() {
 
 #[tokio::test]
 async fn a_closed_port_fails_the_tab_with_a_network_error() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
-    let port = listener.local_addr().expect("address").port();
-    drop(listener);
+    // Bound but not listening: the port stays this test's, and refuses. A listener
+    // dropped instead frees it, for a test running beside this one to take.
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket
+        .bind("127.0.0.1:0".parse().expect("address"))
+        .expect("bind");
+    let port = socket.local_addr().expect("address").port();
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), port);
     let (tab, attempt, request) = open(&mut app);

@@ -213,9 +213,13 @@ mod tests {
 
     #[tokio::test]
     async fn a_kdc_nobody_listens_at_is_an_error_not_a_wait() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-        let port = listener.local_addr().expect("address").port();
-        drop(listener);
+        // Bound but not listening: the port stays this test's, and refuses. A listener
+        // dropped instead frees it, for a test running beside this one to take.
+        let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+        socket
+            .bind("127.0.0.1:0".parse().expect("address"))
+            .expect("bind");
+        let port = socket.local_addr().expect("address").port();
         let error = send(&request(
             NetworkProtocol::Tcp,
             &format!("tcp://127.0.0.1:{port}"),
