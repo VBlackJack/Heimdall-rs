@@ -123,6 +123,41 @@ async fn the_default_shell_is_system_powershell_even_with_one_planted_beside_hei
     assert_eq!(code, Some(45), "Windows PowerShell 5 expected: {output:?}");
 }
 
+/// Whether the module path of this process holds a `PowerShell` 7 home's module folder, as it
+/// does when the tests run from `pwsh`: only then can the next test tell the fix apart.
+#[cfg(windows)]
+fn inherits_powershell_7_modules() -> bool {
+    std::env::var("PSModulePath").is_ok_and(|path| {
+        path.split(';').any(|entry| {
+            std::path::Path::new(entry.trim_end_matches('\\'))
+                .parent()
+                .is_some_and(|home| home.join("pwsh.exe").is_file())
+        })
+    })
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn windows_powershell_gets_no_powershell_7_module_folder_and_loads_its_own_cmdlets() {
+    if !inherits_powershell_7_modules() {
+        eprintln!("PSModulePath holds no PowerShell 7 folder here: the run checks the rest only");
+    }
+    let mut session = spawn(&LocalConfig {
+        columns: 120,
+        rows: 24,
+        ..LocalConfig::default()
+    })
+    .expect("spawned");
+    // .NET only up to the exit: a module path that breaks cmdlets cannot break the probe.
+    // Tens: PowerShell 7 module folders seen; units: Get-FileHash, of the Utility module,
+    // missing.
+    let mut line = br"$p = 0; foreach ($e in $env:PSModulePath.Split(';')) { if ($e -and [IO.File]::Exists([IO.Path]::Combine([IO.Path]::GetDirectoryName($e.TrimEnd('\')), 'pwsh.exe'))) { $p++ } }; $h = 0; try { $null = Get-FileHash -LiteralPath ([IO.Path]::Combine($env:SystemRoot, 'win.ini')) -ErrorAction Stop } catch { $h = 1 }; exit (10 * $p + $h)".to_vec();
+    line.push(b'\r');
+    session.input.write(line).expect("typed");
+    let (output, code) = until_exit(&mut session).await;
+    assert_eq!(code, Some(0), "{output:?}");
+}
+
 #[tokio::test]
 async fn the_exit_code_is_reported() {
     let mut session = spawn(&shell("exit 7")).expect("spawned");
