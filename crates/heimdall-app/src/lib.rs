@@ -31,6 +31,7 @@ pub mod files;
 pub mod ftp_driver;
 pub mod gateway_draft;
 mod ids;
+pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
 mod post_connect;

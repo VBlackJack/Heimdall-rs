@@ -256,7 +256,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         port: profile.port,
         domain: profile.domain.clone(),
         desktop: request.desktop,
-        keyboard_layout: 0,
+        keyboard_layout: crate::keyboard_layout::local(),
         security: if profile.allow_tls_only {
             Security::NlaOrTls
         } else {
