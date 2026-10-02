@@ -23,7 +23,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    FORWARDED_GREETING, PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT,
+    DROP_COMMAND, FORWARDED_GREETING, PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT,
     ScriptedPrompter, Spec, TestServer, options_trusting, profile, start,
 };
 use heimdall_ssh::{ConnectError, Connection, SessionEvent, establish};
@@ -160,6 +160,31 @@ async fn closing_the_shell_leaves_a_subsystem_on_the_same_connection_working() {
     } else {
         assert_eq!(endings, vec!["Ok(())".to_owned()]);
     }
+}
+
+#[tokio::test]
+async fn a_connection_the_server_dropped_says_it_ended_without_being_asked() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let connection = connected(&server, dir.path()).await;
+    let closed = connection.closed();
+    let shell = connection
+        .open_shell(&options, CancellationToken::new())
+        .await
+        .expect("shell");
+    // Still open: nothing has ended it.
+    assert!(
+        tokio::time::timeout(ANSWER_TIMEOUT, connection.closed())
+            .await
+            .is_err(),
+        "an open connection is not ended"
+    );
+    shell.input.write(DROP_COMMAND.to_vec()).expect("write");
+    tokio::time::timeout(STEP_TIMEOUT, closed)
+        .await
+        .expect("the end is told, not polled for");
+    assert!(connection.is_closed());
 }
 
 /// Waits until `check` holds on what the server observed.

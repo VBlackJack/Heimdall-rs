@@ -126,6 +126,8 @@ impl ClientHandler {
         &self,
         reason: DisconnectReason<HandlerError>,
     ) -> Result<(), HandlerError> {
+        // Whatever the reason: what rides on the connection learns it is gone.
+        self.routes.end();
         match reason {
             DisconnectReason::ReceivedDisconnect(info) => {
                 if let Ok(mut slot) = self.server_message.lock() {

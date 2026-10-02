@@ -18,8 +18,9 @@
 //! as `ssh -L` opens one: a program that can only dial a host and a port (the `WinRM` client
 //! of `PowerShell`, for one) reaches through it what the gateway reaches.
 //!
-//! [`start`] listens on the loopback address, on a port the system picks, for as long as the
-//! [`LocalForward`] it returns lives: every connection it carries ends with it.
+//! [`start`] listens on the loopback address, on a port the system picks, and [`start_on`] on
+//! a port the user chose, for as long as the [`LocalForward`] returned lives: every connection
+//! it carries ends with it.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -61,7 +62,22 @@ impl LocalForward {
 ///
 /// No port of the loopback address could be taken.
 pub async fn start<O: Opener>(opener: Arc<O>, host: String, port: u16) -> io::Result<LocalForward> {
-    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
+    start_on(opener, host, port, None).await
+}
+
+/// Starts a forward on port `local` of the loopback address, or on one the system picks when
+/// `None`, each connection it takes opened onward by `opener` to `host:port`.
+///
+/// # Errors
+///
+/// The port could not be taken: see [`port_unavailable`].
+pub async fn start_on<O: Opener>(
+    opener: Arc<O>,
+    host: String,
+    port: u16,
+    local: Option<u16>,
+) -> io::Result<LocalForward> {
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, local.unwrap_or(0))).await?;
     let address = listener.local_addr()?;
     let stop = CancellationToken::new();
     tokio::spawn(serve(listener, opener, (host, port), stop.clone()));
@@ -69,6 +85,17 @@ pub async fn start<O: Opener>(opener: Arc<O>, host: String, port: u16) -> io::Re
         address,
         _stop: stop.drop_guard(),
     })
+}
+
+/// Whether `error`, from [`start_on`], means the port is taken or not to be had: another
+/// program listens there, or Windows keeps it for itself (an excluded range answers "access
+/// denied").
+#[must_use]
+pub fn port_unavailable(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+    )
 }
 
 /// Takes clients on `listener` until `cancel`, each one carried both ways to `destination`.
@@ -182,6 +209,40 @@ mod tests {
             .expect("start");
         assert!(forward.address().ip().is_loopback());
         assert_ne!(forward.address().port(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_port_chosen_is_listened_on_and_a_taken_one_is_said_unavailable() {
+        // A port the system has just freed, chosen as a user would choose one.
+        let free = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+            .await
+            .expect("probe")
+            .local_addr()
+            .expect("address")
+            .port();
+        let forward = start_on(
+            Arc::new(FakeGateway::default()),
+            "dc.lab".to_owned(),
+            80,
+            Some(free),
+        )
+        .await
+        .expect("start on the port chosen");
+        assert_eq!(
+            forward.address(),
+            SocketAddr::from((Ipv4Addr::LOCALHOST, free))
+        );
+
+        let taken = start_on(
+            Arc::new(FakeGateway::default()),
+            "dc.lab".to_owned(),
+            80,
+            Some(free),
+        )
+        .await
+        .expect_err("the port is the first forward's");
+        assert!(port_unavailable(&taken), "{taken:?}");
+        assert!(!port_unavailable(&io::Error::other("something else")));
     }
 
     #[tokio::test]

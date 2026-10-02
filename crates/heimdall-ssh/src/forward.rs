@@ -31,6 +31,7 @@ use std::sync::{Arc, Mutex};
 use russh::Channel;
 use russh::client::Msg;
 use tokio::net::TcpStream;
+use tokio_util::sync::{CancellationToken, WaitForCancellationFutureOwned};
 
 use crate::agent;
 use crate::connection::Connection;
@@ -41,15 +42,26 @@ use crate::options::AgentSource;
 pub(crate) const SERVER_LOOPBACK: &str = "127.0.0.1";
 
 /// What the server may send back over a connection: the ports it listens on for this side,
-/// each with the local port its connections go to, and the agent it may reach. Shared between
-/// a connection and its russh handler.
+/// each with the local port its connections go to, and the agent it may reach; and whether
+/// the connection has ended. Shared between a connection and its russh handler.
 #[derive(Debug, Clone, Default)]
 pub(crate) struct Routes {
     ports: Arc<Mutex<HashMap<u32, u16>>>,
     agent: Arc<Mutex<Option<AgentSource>>>,
+    ended: CancellationToken,
 }
 
 impl Routes {
+    /// Marks the connection ended: the server, the network or this side closed it.
+    pub(crate) fn end(&self) {
+        self.ended.cancel();
+    }
+
+    /// Completes once the connection has ended.
+    pub(crate) fn ended(&self) -> WaitForCancellationFutureOwned {
+        self.ended.clone().cancelled_owned()
+    }
+
     /// The agent the server may reach, once a shell asked to forward it.
     pub(crate) fn agent(&self) -> Option<AgentSource> {
         self.agent.lock().ok()?.clone()
