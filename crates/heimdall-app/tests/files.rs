@@ -252,6 +252,84 @@ async fn opening_a_folder_lists_it_and_up_goes_back() {
 }
 
 #[tokio::test]
+async fn a_link_to_a_folder_is_entered_and_one_to_anything_else_goes_back_and_says_so() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let home = || {
+        vec![
+            remote_entry(b"www", EntryKind::Link, 0),
+            remote_entry(b"motd", EntryKind::Link, 0),
+        ]
+    };
+    // By its label: the pane sorts what it shows.
+    let open = |app: &mut App, label: &str| {
+        let index = app
+            .tab(tab)
+            .and_then(|found| found.files.as_ref())
+            .and_then(|files| {
+                files
+                    .remote
+                    .entries
+                    .iter()
+                    .position(|entry| entry.label == label)
+            })
+            .expect("listed");
+        files(
+            app,
+            FilesMessage::Open {
+                tab,
+                side: Side::Remote,
+                index,
+            },
+        )
+    };
+    listed_remote(&mut app, tab, "/home/admin", home());
+    let entered = open(&mut app, "www");
+    assert!(
+        matches!(
+            entered.as_slice(),
+            [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/home/admin/www"
+        ),
+        "listed, never downloaded: {entered:?}"
+    );
+    // The server lists it: a folder.
+    listed_remote(&mut app, tab, "/var/www", Vec::new());
+    let shown = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(shown.remote.path.display(), "/var/www");
+    assert_eq!(app.notice(), None);
+
+    listed_remote(&mut app, tab, "/home/admin", home());
+    let tried = open(&mut app, "motd");
+    assert!(
+        matches!(
+            tried.as_slice(),
+            [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/home/admin/motd"
+        ),
+        "{tried:?}"
+    );
+    // The server cannot list it: it points at no folder.
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Err(FilesError::SessionClosed),
+        },
+    );
+    let shown = app.tab(tab).expect("tab").files.as_ref().expect("files");
+    assert_eq!(
+        shown.remote.path.display(),
+        "/home/admin",
+        "back where it was"
+    );
+    assert_eq!(shown.remote.error, None, "the folder shown did not fail");
+    assert_eq!(
+        app.notice(),
+        Some(&heimdall_app::Notice::LinkNotAFolder("motd".to_owned()))
+    );
+}
+
+#[tokio::test]
 async fn opening_a_remote_file_downloads_it_into_the_local_folder() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());

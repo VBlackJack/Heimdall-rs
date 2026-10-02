@@ -463,6 +463,58 @@ impl App {
         }
     }
 
+    /// A remote listing arrived. A link being entered that cannot be listed points at no
+    /// folder: the pane goes back where it was opened from, as the C# Files tab stays, and
+    /// says so.
+    fn remote_listed(
+        &mut self,
+        tab: TabId,
+        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
+    ) -> Vec<Effect> {
+        let mut not_a_folder = None;
+        if let Some(files) = self.files_mut(tab) {
+            let pane = &mut files.remote;
+            pane.loading = false;
+            match (result, pane.entering_link.take()) {
+                (Ok((path, entries)), _) => {
+                    pane.path = path;
+                    pane.show(entries);
+                    pane.error = None;
+                }
+                (Err(_), Some((from, name))) => {
+                    pane.path = from;
+                    not_a_folder = Some(name);
+                }
+                (Err(error), None) => pane.error = Some(error),
+            }
+        }
+        if let Some(name) = not_a_folder {
+            self.tell(super::Notice::LinkNotAFolder(name));
+        }
+        Vec::new()
+    }
+
+    /// A local listing arrived.
+    fn local_listed(
+        &mut self,
+        tab: TabId,
+        result: Result<(PathBuf, Vec<crate::files::LocalEntry>), FilesError>,
+    ) -> Vec<Effect> {
+        if let Some(files) = self.files_mut(tab) {
+            let pane = &mut files.local;
+            pane.loading = false;
+            match result {
+                Ok((path, entries)) => {
+                    pane.path = path;
+                    pane.show(entries);
+                    pane.error = None;
+                }
+                Err(error) => pane.error = Some(error),
+            }
+        }
+        Vec::new()
+    }
+
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         if let Some((tab, side)) = message.gesture()
             && let Some(files) = self.files_mut(tab)
@@ -470,36 +522,8 @@ impl App {
             files.focus = side;
         }
         match message {
-            FilesMessage::RemoteListed { tab, result } => {
-                if let Some(files) = self.files_mut(tab) {
-                    let pane = &mut files.remote;
-                    pane.loading = false;
-                    match result {
-                        Ok((path, entries)) => {
-                            pane.path = path;
-                            pane.show(entries);
-                            pane.error = None;
-                        }
-                        Err(error) => pane.error = Some(error),
-                    }
-                }
-                Vec::new()
-            }
-            FilesMessage::LocalListed { tab, result } => {
-                if let Some(files) = self.files_mut(tab) {
-                    let pane = &mut files.local;
-                    pane.loading = false;
-                    match result {
-                        Ok((path, entries)) => {
-                            pane.path = path;
-                            pane.show(entries);
-                            pane.error = None;
-                        }
-                        Err(error) => pane.error = Some(error),
-                    }
-                }
-                Vec::new()
-            }
+            FilesMessage::RemoteListed { tab, result } => self.remote_listed(tab, result),
+            FilesMessage::LocalListed { tab, result } => self.local_listed(tab, result),
             FilesMessage::Select { tab, side, index } => self.select(tab, side, index),
             FilesMessage::AskNewFolder { tab, side } => self.ask(tab, side, NameAction::NewFolder),
             FilesMessage::AskRename { tab, side } => self.ask(tab, side, NameAction::Rename),
@@ -858,6 +882,14 @@ impl App {
                 };
                 if entry.kind == EntryKind::Directory {
                     files.remote.path = files.remote.path.join(&entry.name);
+                    return self.list(tab, side);
+                }
+                // The listing does not say what a link points at; listing it tells. A link is
+                // never downloaded from here, as in the C# Files tab.
+                if entry.kind == EntryKind::Link {
+                    let from = files.remote.path.clone();
+                    files.remote.path = from.join(&entry.name);
+                    files.remote.entering_link = Some((from, entry.label.clone()));
                     return self.list(tab, side);
                 }
                 files.remote.select_only(Some(index));

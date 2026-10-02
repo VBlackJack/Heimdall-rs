@@ -75,6 +75,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-status-provider-failed", detail = detail.as_str())
             }
             Notice::ProviderTimedOut => fl!("ui-status-provider-timed-out"),
+            Notice::LinkNotAFolder(name) => {
+                fl!("ui-status-link-not-a-folder", name = name.as_str())
+            }
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",

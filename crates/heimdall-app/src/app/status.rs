@@ -76,6 +76,8 @@ pub enum Notice {
     ProviderFailed(String),
     /// The external credential provider took too long.
     ProviderTimedOut,
+    /// The link of this name, opened in a Files tab, points at no folder.
+    LinkNotAFolder(String),
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's
