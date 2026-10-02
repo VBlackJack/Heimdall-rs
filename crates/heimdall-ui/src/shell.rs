@@ -3095,14 +3095,21 @@ impl Shell {
                     || fl!("ui-session-closed"),
                     |status| fl!("ui-session-closed-status", status = status.to_string()),
                 );
-                column![
+                let mut ended = column![
                     self.searchable_terminal(tab, self.app.dialog.is_none()),
                     row![text(status), self.session_actions(tab)]
                         .spacing(SPACING)
                         .padding(PADDING)
                         .align_y(iced::Alignment::Center),
-                ]
-                .into()
+                ];
+                // What PowerShell's error meant, as the C# says it under the session.
+                if let Some(found) = tab.winrm_diagnostic {
+                    ended = ended.push(
+                        container(text(texts::winrm_diagnostic(found)).style(text::danger))
+                            .padding(PADDING),
+                    );
+                }
+                ended.into()
             }
             Phase::Failed(UiError::Cancelled) => center(card(
                 column![

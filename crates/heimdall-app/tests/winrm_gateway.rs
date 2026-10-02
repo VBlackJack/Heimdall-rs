@@ -264,3 +264,34 @@ fn skipped_certificate_checks_are_said_once_powershell_runs_and_before_ntlm() {
     });
     assert_eq!(app.notice(), Some(&Notice::WinRmCertificateSkipped));
 }
+
+#[test]
+fn powershells_first_error_is_explained_until_the_user_types() {
+    use heimdall_core::winrm_diagnostic::Diagnostic;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), profile("bastion"));
+    let (tab, attempt) = open(&mut app);
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    });
+    let output = |app: &mut App, text: &str| {
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::Output(text.as_bytes().to_vec()),
+        });
+    };
+    output(
+        &mut app,
+        "Enter-PSSession : The WinRM client received an HTTP status code of 12152",
+    );
+    assert_eq!(
+        app.tab(tab).expect("tab").winrm_diagnostic,
+        Some(Diagnostic::WsmanInvalidResponse)
+    );
+}

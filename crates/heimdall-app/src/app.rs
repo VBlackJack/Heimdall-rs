@@ -35,6 +35,7 @@ use heimdall_core::profile::{
 };
 use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore};
+use heimdall_core::winrm_diagnostic::{Diagnostic, EarlyOutput};
 use heimdall_ssh::{
     AgentSource, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust, Secret, TerminalSize,
     Verdict, fingerprint, verdict,
@@ -1019,6 +1020,10 @@ pub struct Tab {
     pub retry: Option<Retry>,
     /// When the user's input last reached the session: a TMOUT reset waits for an idle shell.
     last_input: std::sync::Mutex<Option<Instant>>,
+    /// A `WinRM` session's first output, read for what it says went wrong.
+    early_output: Option<EarlyOutput>,
+    /// What a `WinRM` session's first output said went wrong, as the C# says it.
+    pub winrm_diagnostic: Option<Diagnostic>,
     /// The last search in its history found nothing.
     pub find_missed: bool,
     /// The transcript it keeps, while it keeps one.
@@ -1123,6 +1128,8 @@ impl Tab {
             end_reason: None,
             retry: None,
             last_input: std::sync::Mutex::new(None),
+            early_output: None,
+            winrm_diagnostic: None,
             find_missed: false,
             transcript: None,
             reopen: reconnect::Reopen::of(&profile),
@@ -2076,6 +2083,7 @@ impl App {
         }
         if let ConnectionEvent::Output(bytes) = &event {
             self.record(tab_id, bytes);
+            self.read_winrm_output(tab_id, bytes);
         }
         let was_connected = self
             .tab(tab_id)
