@@ -186,6 +186,7 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
         iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
             Some(Message::Modifiers(modifiers))
         }
+        iced::Event::Window(window::Event::Rescaled(scale)) => Some(Message::Rescaled(scale)),
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
         }
@@ -306,6 +307,10 @@ pub enum Message {
     LanguageChosen(Language),
     /// F11: the window full screen, showing the session only, or back.
     ToggleFullscreen,
+    /// The window opened: its screen's density is asked for.
+    WindowOpened(window::Id),
+    /// The window's screen draws this many physical pixels per logical one.
+    Rescaled(f32),
     /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
     DesktopFit {
         /// Tab.
@@ -442,6 +447,8 @@ impl fmt::Debug for Message {
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
+            Self::WindowOpened(_) => f.write_str("WindowOpened"),
+            Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
             Self::ResetTreeFilters => f.write_str("ResetTreeFilters"),
@@ -657,6 +664,9 @@ pub struct Shell {
     page: Page,
     /// Full screen: the window shows the session only.
     fullscreen: bool,
+    /// Physical pixels per logical one on the window's screen: remote desktops are drawn
+    /// one of their pixels per physical one.
+    density: f32,
     /// The keyboard's modifiers, for a click in the tree.
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
@@ -766,6 +776,7 @@ impl Shell {
             menu: None,
             page: Page::Tab,
             fullscreen: false,
+            density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
             palette: None,
@@ -827,7 +838,11 @@ impl Shell {
 
     /// Window events and shortcuts.
     pub fn subscription(&self) -> Subscription<Message> {
-        let events = event::listen_with(window_event);
+        let events = Subscription::batch([
+            event::listen_with(window_event),
+            // The screen's density is known once the window is open.
+            window::open_events().map(Message::WindowOpened),
+        ]);
         // A countdown shown: a tab's next attempt, or the minutes before a master password
         // or a PIN is taken again.
         let locked_out = matches!(
@@ -902,6 +917,8 @@ impl Shell {
             Message::LockKey => self.closing_menu(AppMessage::LockVault),
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
+            | Message::WindowOpened(_)
+            | Message::Rescaled(_)
             | Message::ShowSettings
             | Message::TrustedSearch(..)
             | Message::LanguageChosen(_)
@@ -999,6 +1016,13 @@ impl Shell {
         match message {
             Message::DesktopFit { tab, fit } => {
                 self.desktop_fit.insert(*tab, *fit);
+                Task::none()
+            }
+            Message::WindowOpened(id) => window::scale_factor(*id).map(Message::Rescaled),
+            Message::Rescaled(scale) => {
+                self.density = *scale;
+                // RDP desktops opened from now on ask for this scale.
+                let _ = self.app.update(AppMessage::DisplayScale(*scale));
                 Task::none()
             }
             Message::ToggleFullscreen => {
@@ -3211,7 +3235,8 @@ impl Shell {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
             .interactive(self.app.dialog.is_none() && !self.tree_focused)
-            .fit(fit);
+            .fit(fit)
+            .density(self.density);
         let tab_id = tab.id;
         let mode = pick_list(
             [DesktopMode::Match, DesktopMode::Fit],

@@ -176,6 +176,31 @@ pub struct RdpConfig {
     /// This computer's time zone, which a server redirecting time zones gives the session, as
     /// mstsc tells it; `None` tells UTC, the server's own time then shown.
     pub time_zone: Option<TimeZone>,
+    /// The desktop scale factor asked for, in percent, as the C# Heimdall maps the screen's
+    /// (see [`desktop_scale_factor`]): 100 draws the remote desktop at its own size.
+    pub desktop_scale: u32,
+}
+
+/// The desktop scale factors a server is offered, in percent, as the C# `RdpDisplayHelper`
+/// lists them.
+pub const DESKTOP_SCALE_FACTORS: [u32; 9] = [100, 125, 150, 175, 200, 250, 300, 400, 500];
+
+/// The desktop scale factor for a screen drawing `scale` physical pixels per logical one:
+/// the nearest the server is offered, as the C# `MapDpiToDesktopScaleFactor`.
+#[must_use]
+pub fn desktop_scale_factor(scale: f32) -> u32 {
+    let percent = (scale * 100.0).round();
+    DESKTOP_SCALE_FACTORS
+        .into_iter()
+        .min_by(|a, b| {
+            #[allow(
+                clippy::cast_precision_loss,
+                reason = "factors up to 500, exact in an f32"
+            )]
+            let distance = |factor: u32| (factor as f32 - percent).abs();
+            distance(*a).total_cmp(&distance(*b))
+        })
+        .unwrap_or(100)
 }
 
 /// Why a connection did not open.
@@ -246,6 +271,8 @@ pub struct RdpConnection {
     pub(crate) clipboard: Option<ClipboardLink>,
     /// What the connection sequence settled.
     pub result: ConnectionResult,
+    /// The desktop scale factor asked for, kept for each later resize.
+    pub(crate) desktop_scale: u32,
 }
 
 /// How the bytes reach the server: the stream once open, and the address this side reports
@@ -495,6 +522,7 @@ pub async fn connect_over(
         framed,
         clipboard,
         result,
+        desktop_scale: config.desktop_scale,
     })
 }
 
@@ -576,7 +604,7 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         pointer_software_rendering: true,
         multitransport_flags: None,
         performance_flags: performance_flags(config.options.performance_flags),
-        desktop_scale_factor: 0,
+        desktop_scale_factor: config.desktop_scale,
         hardware_id: None,
         license_cache: None,
         timezone_info: config
@@ -739,6 +767,24 @@ async fn credssp<S: FramedRead + FramedWrite>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_screen_scale_is_the_nearest_factor_a_server_is_offered_as_the_csharp_maps_it() {
+        for (scale, factor) in [
+            (1.0, 100),
+            (1.1, 100),
+            (1.25, 125),
+            (1.5, 150),
+            (1.75, 175),
+            (2.0, 200),
+            (2.2, 200),
+            (3.0, 300),
+            (6.0, 500),
+            (0.5, 100),
+        ] {
+            assert_eq!(desktop_scale_factor(scale), factor, "{scale}");
+        }
+    }
 
     #[test]
     fn sound_played_here_brings_the_device_channel_without_any_drive() {

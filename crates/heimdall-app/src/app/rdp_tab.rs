@@ -118,6 +118,7 @@ impl App {
                 // Replaced by the tab's size as soon as it is shown.
                 DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => DEFAULT_DESKTOP,
             },
+            desktop_scale: heimdall_rdp::desktop_scale_factor(self.display_scale),
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,

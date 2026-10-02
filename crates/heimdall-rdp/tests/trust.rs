@@ -174,6 +174,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
         // Negotiate: with no KDC to be found, NTLM still sends the first message.
         kerberos: true,
         time_zone: None,
+        desktop_scale: 100,
     }
 }
 
