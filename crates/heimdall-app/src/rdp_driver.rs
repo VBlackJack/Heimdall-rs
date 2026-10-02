@@ -421,6 +421,7 @@ mod tests {
             follow_defaults: false,
             several_servers: false,
             anti_idle: false,
+            auto_reconnect: true,
         }));
         assert_eq!(config.options, options);
     }

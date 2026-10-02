@@ -51,6 +51,7 @@ fn app(dir: &Path) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }]);
     store.merge([SshProfile {
         id: ProfileId::new("web"),

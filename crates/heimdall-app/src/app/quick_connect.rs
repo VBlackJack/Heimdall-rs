@@ -234,6 +234,7 @@ impl App {
                     follow_defaults: true,
                     several_servers: false,
                     anti_idle: false,
+                    auto_reconnect: true,
                 }),
                 Purpose::Rdp,
             ),

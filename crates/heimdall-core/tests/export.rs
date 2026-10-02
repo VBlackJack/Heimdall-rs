@@ -132,6 +132,7 @@ fn rdp() -> Vec<RdpProfile> {
             follow_defaults: false,
             several_servers: false,
             anti_idle: true,
+            auto_reconnect: true,
         },
         RdpProfile {
             id: ProfileId::new("desk"),
@@ -155,6 +156,7 @@ fn rdp() -> Vec<RdpProfile> {
             follow_defaults: false,
             several_servers: false,
             anti_idle: false,
+            auto_reconnect: true,
         },
     ]
 }

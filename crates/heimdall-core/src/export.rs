@@ -174,6 +174,7 @@ struct RdpKeys {
     rdp_initial_smart_sizing: bool,
     rdp_dynamic_resolution: bool,
     rdp_anti_idle: bool,
+    rdp_auto_reconnect: bool,
 }
 
 /// A post-connect step as the C# writes it.
@@ -355,6 +356,7 @@ fn rdp(profile: &RdpProfile) -> Entry {
             rdp_initial_smart_sizing: options.scale_fixed,
             rdp_dynamic_resolution: options.dynamic_resolution,
             rdp_anti_idle: profile.anti_idle,
+            rdp_auto_reconnect: profile.auto_reconnect,
         }),
         ..server(
             &profile.id,

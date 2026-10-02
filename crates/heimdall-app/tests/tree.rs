@@ -75,6 +75,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),

@@ -652,6 +652,36 @@ fn an_rdp_profile_on_the_global_defaults_takes_the_settings_not_its_own_choices(
 }
 
 #[test]
+fn auto_reconnect_is_on_unless_the_profile_or_the_defaults_it_follows_clear_it() {
+    let json = servers(
+        r#"{"id": "unset", "remoteServer": "h", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false},
+           {"id": "cleared", "remoteServer": "h", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false, "rdpAutoReconnect": false},
+           {"id": "global", "remoteServer": "h", "connectionType": "RDP",
+            "rdpAutoReconnect": true}"#,
+    );
+    let read = |settings| {
+        import(&json, Some(settings))
+            .expect("valid JSON")
+            .rdp
+            .iter()
+            .map(|profile| (profile.id.as_str().to_owned(), profile.auto_reconnect))
+            .collect::<Vec<_>>()
+    };
+    let owned = |list: [(&str, bool); 3]| list.map(|(id, on)| (id.to_owned(), on)).to_vec();
+    assert_eq!(
+        read("{}"),
+        owned([("unset", true), ("cleared", false), ("global", true)])
+    );
+    assert_eq!(
+        read(r#"{"rdpDefaultAutoReconnect": false}"#),
+        owned([("unset", true), ("cleared", false), ("global", false)]),
+        "a profile on the defaults takes theirs, not its own"
+    );
+}
+
+#[test]
 fn the_global_defaults_left_unset_are_the_csharp_ones() {
     use heimdall_core::profile::RdpOptions;
 

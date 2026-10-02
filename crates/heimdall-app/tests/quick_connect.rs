@@ -68,6 +68,7 @@ fn app_with(dir: &Path, profiles: Vec<SshProfile>) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

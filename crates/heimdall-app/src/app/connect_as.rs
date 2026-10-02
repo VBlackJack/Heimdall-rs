@@ -181,6 +181,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 follow_defaults: true,
                 several_servers: false,
                 anti_idle: false,
+                auto_reconnect: true,
             }),
             Purpose::Rdp,
         ),

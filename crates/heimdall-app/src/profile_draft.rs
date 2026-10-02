@@ -234,6 +234,9 @@ pub enum ProfileToggle {
     /// RDP: keep the server from taking the session for idle, as the C# "Enable anti-idle
     /// keepalive".
     AntiIdle,
+    /// RDP: open a dropped desktop again by itself, as the C# "Automatically reconnect",
+    /// ticked for a new profile.
+    AutoReconnect,
 }
 
 impl ProfileToggle {
@@ -245,6 +248,7 @@ impl ProfileToggle {
                 Self::RedirectClipboard,
                 Self::RedirectDrives,
                 Self::AntiIdle,
+                Self::AutoReconnect,
                 Self::Nla,
                 Self::AdminSession,
                 Self::SeveralServers,
@@ -572,6 +576,9 @@ impl ProfileDraft {
         if profile.anti_idle {
             toggles.push(ProfileToggle::AntiIdle);
         }
+        if profile.auto_reconnect {
+            toggles.push(ProfileToggle::AutoReconnect);
+        }
         Self {
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
@@ -673,6 +680,7 @@ impl ProfileDraft {
                 DraftProtocol::Rdp => vec![
                     ProfileToggle::FollowDefaults,
                     ProfileToggle::RedirectClipboard,
+                    ProfileToggle::AutoReconnect,
                     ProfileToggle::Nla,
                 ],
                 // Passive by default, as a new C# FTP profile.
@@ -1008,6 +1016,7 @@ impl ProfileDraft {
                 follow_defaults: self.is_on(ProfileToggle::FollowDefaults),
                 several_servers: self.is_on(ProfileToggle::SeveralServers),
                 anti_idle: self.is_on(ProfileToggle::AntiIdle),
+                auto_reconnect: self.is_on(ProfileToggle::AutoReconnect),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -1340,6 +1349,7 @@ mod tests {
             "one machine per address unless said"
         );
         assert!(!rdp.is_on(ProfileToggle::AntiIdle), "off, as the C#");
+        assert!(rdp.is_on(ProfileToggle::AutoReconnect), "on, as the C#");
         assert_eq!(rdp.rdp_options, RdpOptions::default());
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
@@ -1347,6 +1357,7 @@ mod tests {
                 ProfileToggle::RedirectClipboard,
                 ProfileToggle::RedirectDrives,
                 ProfileToggle::AntiIdle,
+                ProfileToggle::AutoReconnect,
                 ProfileToggle::Nla,
                 ProfileToggle::AdminSession,
                 // Not in the C# dialog, which always asks: after its boxes.
@@ -1716,6 +1727,7 @@ mod tests {
             follow_defaults: false,
             several_servers: true,
             anti_idle: true,
+            auto_reconnect: false,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),
