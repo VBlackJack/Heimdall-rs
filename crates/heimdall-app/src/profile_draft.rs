@@ -185,6 +185,12 @@ impl DraftProtocol {
         matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
     }
 
+    /// Whether the protocol's profiles name a key file, whose passphrase can be saved.
+    #[must_use]
+    pub fn has_key_file(self) -> bool {
+        matches!(self, Self::Ssh | Self::Sftp)
+    }
+
     /// Whether a saved password belongs to an account, which the form must then name.
     #[must_use]
     pub fn password_needs_username(self) -> bool {
@@ -229,6 +235,9 @@ pub enum ProfileToggle {
     /// RDP: take the application's RDP options, as the C# "Use global RDP defaults", ticked
     /// for a new profile.
     FollowDefaults,
+    /// SSH, SFTP: also offer the older algorithms old appliances speak, after the current
+    /// ones.
+    LegacyAlgorithms,
     /// RDP: several machines answer at the address; each new certificate is asked about.
     SeveralServers,
     /// RDP: keep the server from taking the session for idle, as the C# "Enable anti-idle
@@ -255,12 +264,37 @@ impl ProfileToggle {
                 Self::SkipCertificateCheck,
             ],
             DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
-            DraftProtocol::Ssh => &[Self::Compression, Self::ForwardAgent],
+            DraftProtocol::Ssh => &[
+                Self::Compression,
+                Self::ForwardAgent,
+                Self::LegacyAlgorithms,
+            ],
             // No shell to forward the agent to.
-            DraftProtocol::Sftp => &[Self::Compression],
+            DraftProtocol::Sftp => &[Self::Compression, Self::LegacyAlgorithms],
             DraftProtocol::Ftp => &[Self::Passive, Self::Tls],
             DraftProtocol::Telnet | DraftProtocol::Local => &[],
         }
+    }
+}
+
+/// A secret saved for a profile or gateway, as its form shows it: its field stays empty
+/// whatever is saved.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum SavedSecret {
+    /// None is saved.
+    #[default]
+    Absent,
+    /// One is saved: the form says so.
+    Saved,
+    /// The saved one is to be removed when the form is saved.
+    Cleared,
+}
+
+impl SavedSecret {
+    /// `Saved` when one is, `Absent` otherwise.
+    #[must_use]
+    pub fn from_saved(saved: bool) -> Self {
+        if saved { Self::Saved } else { Self::Absent }
     }
 }
 
@@ -332,6 +366,8 @@ pub struct ProfileDraft {
     pub password_saved: bool,
     /// The saved password is to be removed when the form is saved.
     pub clear_password: bool,
+    /// The key passphrase saved for the profile, as the form shows it.
+    pub passphrase: SavedSecret,
     /// RDP: the options chosen from lists and boxes of their own; the administrative session
     /// is a toggle, the fixed size is typed in `fixed_width` and `fixed_height`.
     pub rdp_options: RdpOptions,
@@ -460,6 +496,7 @@ impl ProfileDraft {
             toggles: [
                 (profile.compression, ProfileToggle::Compression),
                 (profile.forward_agent, ProfileToggle::ForwardAgent),
+                (profile.legacy_algorithms, ProfileToggle::LegacyAlgorithms),
             ]
             .into_iter()
             .filter_map(|(on, toggle)| on.then_some(toggle))
@@ -989,6 +1026,7 @@ impl ProfileDraft {
                     && self.is_on(ProfileToggle::ForwardAgent),
                 compression: self.is_on(ProfileToggle::Compression),
                 sftp: self.protocol == DraftProtocol::Sftp,
+                legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -1154,6 +1192,7 @@ impl ProfileDraft {
             forward_agent: self.is_on(ProfileToggle::ForwardAgent),
             compression: self.is_on(ProfileToggle::Compression),
             sftp: false,
+            legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
         })
     }
 }
@@ -1316,6 +1355,7 @@ mod tests {
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1564,7 +1604,7 @@ mod tests {
         }
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Sftp),
-            [ProfileToggle::Compression],
+            [ProfileToggle::Compression, ProfileToggle::LegacyAlgorithms],
             "no shell to forward the agent to"
         );
         assert!(DraftProtocol::Sftp.routes_through_gateway());
@@ -1594,7 +1634,12 @@ mod tests {
     fn forwarding_the_agent_is_an_ssh_option_that_reads_back() {
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Ssh),
-            [ProfileToggle::Compression, ProfileToggle::ForwardAgent],
+            [
+                ProfileToggle::Compression,
+                ProfileToggle::ForwardAgent,
+                // Not in the C# dialog, which always offers them: after its boxes.
+                ProfileToggle::LegacyAlgorithms
+            ],
             "in the C# order"
         );
         for protocol in [

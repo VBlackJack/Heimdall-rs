@@ -24,7 +24,7 @@ use heimdall_ssh::Secret;
 
 use super::{App, Dialog, Message};
 use crate::gateway_draft::GatewayDraft;
-use crate::profile_draft::{DraftError, ProfileToggle};
+use crate::profile_draft::{DraftError, ProfileToggle, SavedSecret};
 
 impl App {
     /// Saved SSH gateways.
@@ -41,6 +41,7 @@ impl App {
                 if let Some(gateway) = self.gateways().iter().find(|g| g.id == id) {
                     let mut draft = GatewayDraft::from_gateway(gateway);
                     draft.password_saved = self.password_saved(&id);
+                    draft.passphrase = SavedSecret::from_saved(self.passphrase_saved(&id));
                     self.open_gateway(draft);
                 }
             }
@@ -62,9 +63,17 @@ impl App {
                     draft.password_saved = false;
                 }
             }
-            Message::SaveGateway { password } => match self.dialog.take() {
+            Message::ClearGatewayPassphrase => {
+                if let Some(Dialog::EditGateway { draft, .. }) = self.dialog.as_mut() {
+                    draft.passphrase = SavedSecret::Cleared;
+                }
+            }
+            Message::SaveGateway {
+                password,
+                passphrase,
+            } => match self.dialog.take() {
                 Some(Dialog::EditGateway { draft, back, .. }) => {
-                    self.save_gateway(draft, back, password.as_ref());
+                    self.save_gateway(draft, back, password.as_ref(), passphrase.as_ref());
                 }
                 other => self.dialog = other,
             },
@@ -112,6 +121,7 @@ impl App {
         draft: Box<GatewayDraft>,
         back: Option<Box<Dialog>>,
         password: Option<&Secret>,
+        passphrase: Option<&Secret>,
     ) {
         let id = draft.editing.clone().unwrap_or_else(|| self.fresh_id());
         let checked = draft
@@ -135,6 +145,7 @@ impl App {
             username: gateway.username.clone(),
         };
         let id = gateway.id.clone();
+        let key_path = gateway.key_path.clone();
         if let Err(error) = self.store.apply(|store| store.merge_gateways([gateway])) {
             self.dialog = Some(Dialog::StoreError {
                 detail: error.to_string(),
@@ -152,6 +163,12 @@ impl App {
         if self.can_save_passwords() {
             let typed = password.filter(|typed| !typed.expose().is_empty());
             self.save_edited_password(&id, endpoint, typed, draft.clear_password);
+            self.save_edited_passphrase(
+                &id,
+                key_path.as_deref(),
+                passphrase,
+                draft.passphrase == SavedSecret::Cleared,
+            );
         }
     }
 

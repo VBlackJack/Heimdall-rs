@@ -979,6 +979,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         forward_agent: server.ssh_agent_forwarding,
         compression: server.ssh_compression,
         sftp,
+        legacy_algorithms: false,
     })
 }
 

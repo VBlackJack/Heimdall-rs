@@ -171,6 +171,8 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
         trusted_for_run: Vec::new(),
         options: heimdall_core::profile::RdpOptions::default(),
         several_servers: false,
+        // Negotiate: with no KDC to be found, NTLM still sends the first message.
+        kerberos: true,
     }
 }
 

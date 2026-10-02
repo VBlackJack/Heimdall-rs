@@ -47,6 +47,7 @@ fn app(dir: &Path) -> App {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.merge_rdp([RdpProfile {
         id: ProfileId::new("dc"),

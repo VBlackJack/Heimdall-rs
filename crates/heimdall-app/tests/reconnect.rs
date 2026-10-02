@@ -52,6 +52,7 @@ fn app(dir: &Path) -> App {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.merge_winrm([WinRmProfile {
         id: ProfileId::new("w"),
@@ -122,7 +123,10 @@ fn a_failed_session_opens_again_in_its_place_from_its_profile_as_now_saved() {
         field: ProfileField::Host,
         value: "a2.lab".to_owned(),
     });
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
 
     let (again, _, host) = connect(&app.update(Message::ReconnectTab(tab)));
     assert_eq!(host, "a2.lab");
@@ -231,7 +235,10 @@ fn a_refused_winrm_tab_reopens_from_its_profile_never_as_an_empty_shell() {
         field: ProfileField::Host,
         value: "dc.lab".to_owned(),
     });
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     let effects = app.update(Message::ReconnectTab(refused));
     let [Effect::ConnectLocal { request, .. }] = effects.as_slice() else {
         panic!("{effects:?}");

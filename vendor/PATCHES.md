@@ -52,9 +52,20 @@ Why: `scard` pulled thirteen crates into the build for a logon Heimdall-rs does 
 the build compiled), and `heapless` 0.7 through `iso7816`, whose `atomic-polyfill` is
 unmaintained (RUSTSEC-2023-0089, ignored in `deny.toml` until then).
 
+Also changed, for Kerberos logon:
+
+- `src/credssp.rs`, `CredsspSequence::init`: the `NegotiateConfig` names the client by
+  `KerberosConfig::hostname`, where the package named it by the server it connects to. sspi
+  gives that name to NTLM as the workstation and to Kerberos as the client computer, so a
+  server logged the logon as coming from itself.
+
+Why: Negotiate is used only with a `KerberosConfig`, which already carries the client's
+name; the package passed the wrong one of the two names it holds.
+
 Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later, can ask for the
-administrative session and for sound kept on the server, and leaves `scard` to the user (or
-Heimdall-rs offers smart-card logon). Then delete this directory and the
+administrative session and for sound kept on the server, leaves `scard` to the user (or
+Heimdall-rs offers smart-card logon), and names the client in `NegotiateConfig` by
+`KerberosConfig::hostname`. Then delete this directory and the
 `[patch.crates-io]` entry, map the two options to its fields, and run the gates,
 `crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
 

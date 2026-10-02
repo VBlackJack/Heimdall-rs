@@ -25,7 +25,7 @@ use heimdall_core::profile::SshProfile;
 use russh::Channel;
 use russh::client::{self, ChannelOpenHandle, DisconnectReason, Msg};
 use russh::keys::{Algorithm, PublicKey, PublicKeyOrCertificate};
-use russh::{Preferred, compression};
+use russh::{Preferred, cipher, compression, kex, mac};
 use tokio_util::sync::CancellationToken;
 
 use crate::auth::{self, AuthContext};
@@ -227,6 +227,44 @@ pub(crate) fn preferred_compression(on: bool) -> Cow<'static, [compression::Name
 /// Never `ssh-rsa` with SHA-1. For a known host, only the recorded algorithms: a server that
 /// no longer offers any of them fails negotiation instead of presenting a key that would be
 /// asked about as new. A recorded RSA key accepts `rsa-sha2-512` and `rsa-sha2-256`.
+/// Key exchanges, ciphers and MACs offered to a server that allows legacy algorithms, after
+/// the current ones, as SSH.NET (the C# Heimdall's client) offers them: SHA-1 Diffie-Hellman,
+/// CBC ciphers, HMAC-SHA1.
+const LEGACY_KEX: [kex::Name; 3] = [kex::DH_G14_SHA1, kex::DH_GEX_SHA1, kex::DH_G1_SHA1];
+const LEGACY_CIPHERS: [cipher::Name; 4] = [
+    cipher::AES_128_CBC,
+    cipher::AES_192_CBC,
+    cipher::AES_256_CBC,
+    cipher::TRIPLE_DES_CBC,
+];
+const LEGACY_MACS: [mac::Name; 2] = [mac::HMAC_SHA1_ETM, mac::HMAC_SHA1];
+
+/// The algorithms offered to a server: the current ones, its recorded key's family first,
+/// then, when `legacy` allows them, the older ones after them.
+pub(crate) fn preferred(recorded: &[PublicKey], compression: bool, legacy: bool) -> Preferred {
+    let mut key = preferred_host_key_algorithms(recorded);
+    let mut preferred = Preferred {
+        compression: preferred_compression(compression),
+        ..Preferred::DEFAULT
+    };
+    if legacy {
+        let rsa_sha1 = Algorithm::Rsa { hash: None };
+        if recorded.is_empty()
+            || recorded
+                .iter()
+                .any(|known| matches!(known.algorithm(), Algorithm::Rsa { .. }))
+        {
+            key.push(rsa_sha1);
+        }
+        preferred.kex = Cow::Owned([Preferred::DEFAULT.kex.as_ref(), &LEGACY_KEX[..]].concat());
+        preferred.cipher =
+            Cow::Owned([Preferred::DEFAULT.cipher.as_ref(), &LEGACY_CIPHERS[..]].concat());
+        preferred.mac = Cow::Owned([Preferred::DEFAULT.mac.as_ref(), &LEGACY_MACS[..]].concat());
+    }
+    preferred.key = Cow::Owned(key);
+    preferred
+}
+
 pub(crate) fn preferred_host_key_algorithms(recorded: &[PublicKey]) -> Vec<Algorithm> {
     let modern = |candidate: &Algorithm| !matches!(candidate, Algorithm::Rsa { hash: None });
     let recorded_family = |candidate: &Algorithm| {
@@ -479,11 +517,7 @@ async fn hop<P: Prompter>(
         keepalive_interval: Some(options.keepalive_interval),
         keepalive_max: options.keepalive_max,
         nodelay: true,
-        preferred: Preferred {
-            key: Cow::Owned(preferred_host_key_algorithms(&recorded)),
-            compression: preferred_compression(options.compression),
-            ..Preferred::DEFAULT
-        },
+        preferred: preferred(&recorded, options.compression, profile.legacy_algorithms),
         ..client::Config::default()
     });
 
@@ -566,7 +600,10 @@ mod tests {
 
     use russh::compression;
 
-    use super::{preferred_compression, preferred_host_key_algorithms};
+    use super::{
+        LEGACY_CIPHERS, LEGACY_KEX, LEGACY_MACS, preferred, preferred_compression,
+        preferred_host_key_algorithms,
+    };
 
     #[test]
     fn compression_asked_for_is_offered_first_and_uncompressed_is_still_accepted() {
@@ -607,5 +644,37 @@ mod tests {
             preferred_host_key_algorithms(&[key(ED25519)]),
             vec![Algorithm::Ed25519]
         );
+    }
+
+    #[test]
+    fn legacy_algorithms_come_only_when_allowed_and_after_the_current_ones() {
+        let modern = preferred(&[], false, false);
+        assert!(LEGACY_KEX.iter().all(|kex| !modern.kex.contains(kex)));
+        assert!(
+            LEGACY_CIPHERS
+                .iter()
+                .all(|cipher| !modern.cipher.contains(cipher))
+        );
+        assert!(LEGACY_MACS.iter().all(|mac| !modern.mac.contains(mac)));
+        assert!(!modern.key.contains(&Algorithm::Rsa { hash: None }));
+
+        let legacy = preferred(&[], false, true);
+        assert_eq!(
+            &legacy.kex[..modern.kex.len()],
+            &modern.kex[..],
+            "current ones first"
+        );
+        assert_eq!(&legacy.kex[modern.kex.len()..], &LEGACY_KEX[..]);
+        assert_eq!(&legacy.cipher[modern.cipher.len()..], &LEGACY_CIPHERS[..]);
+        assert_eq!(&legacy.mac[modern.mac.len()..], &LEGACY_MACS[..]);
+        assert_eq!(legacy.key.last(), Some(&Algorithm::Rsa { hash: None }));
+
+        // A server recorded with an Ed25519 key is never offered SHA-1 RSA.
+        let ed25519 = PublicKey::from_openssh(
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIGb9wFcIfI8bE9fMhXj1bDO0N2sVX4r3r7cS3nNa2yZf",
+        )
+        .expect("key");
+        let recorded = preferred(&[ed25519], false, true);
+        assert!(!recorded.key.contains(&Algorithm::Rsa { hash: None }));
     }
 }

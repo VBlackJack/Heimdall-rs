@@ -31,7 +31,7 @@ use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::{LocalShell, local_events};
 use heimdall_app::profile_draft::{
-    DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle,
+    DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle, SavedSecret,
 };
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
@@ -342,6 +342,8 @@ pub enum Message {
     SaveProviderUnlock,
     /// The password field of the profile form changed.
     ProfilePassword(String),
+    /// The key passphrase field of the profile form changed.
+    ProfilePassphrase(String),
     /// Save the profile form, with the password typed into it.
     SaveProfileForm,
     /// Show this tab of the Settings page.
@@ -350,6 +352,8 @@ pub enum Message {
     BrowseKeyFile,
     /// The password field of the gateway dialog changed.
     GatewayPassword(String),
+    /// The key passphrase field of the gateway dialog changed.
+    GatewayPassphrase(String),
     /// Save the gateway dialog, with the password typed into it.
     SaveGatewayForm,
     /// Open a menu of the profile tree at the pointer.
@@ -450,10 +454,12 @@ impl fmt::Debug for Message {
             Self::ProviderUnlock(_) => f.write_str("ProviderUnlock(..)"),
             Self::SaveProviderUnlock => f.write_str("SaveProviderUnlock"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
+            Self::ProfilePassphrase(_) => f.write_str("ProfilePassphrase(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
             Self::BrowseKeyFile => f.write_str("BrowseKeyFile"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
+            Self::GatewayPassphrase(_) => f.write_str("GatewayPassphrase(..)"),
             Self::SaveGatewayForm => f.write_str("SaveGatewayForm"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
@@ -631,10 +637,14 @@ pub struct Shell {
     vault_fields: [Zeroizing<String>; 3],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
+    /// What is typed into the key passphrase field of the profile form.
+    profile_passphrase: Zeroizing<String>,
     /// The credential provider's unlock secret typed, not saved yet.
     provider_unlock: Zeroizing<String>,
     /// What is typed into the password field of the gateway dialog.
     gateway_password: Zeroizing<String>,
+    /// What is typed into the key passphrase field of the gateway dialog.
+    gateway_passphrase: Zeroizing<String>,
     /// Where the pointer is, for a menu to open there.
     cursor: CursorSpot,
     /// The menu open in the profile tree, and where.
@@ -743,8 +753,10 @@ impl Shell {
             dialog_focus: None,
             vault_fields: Default::default(),
             profile_password: Zeroizing::default(),
+            profile_passphrase: Zeroizing::default(),
             provider_unlock: Zeroizing::default(),
             gateway_password: Zeroizing::default(),
+            gateway_passphrase: Zeroizing::default(),
             cursor: CursorSpot::default(),
             menu: None,
             page: Page::Tab,
@@ -837,10 +849,6 @@ impl Shell {
     }
 
     /// Applies a message.
-    #[expect(
-        clippy::too_many_lines,
-        reason = "a dispatcher: one arm per group of messages"
-    )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
@@ -863,7 +871,9 @@ impl Shell {
             | Message::Search(_)
             | Message::SettingsTab(_)
             | Message::ProfilePassword(_)
-            | Message::GatewayPassword(_)) => return self.input_message(message),
+            | Message::ProfilePassphrase(_)
+            | Message::GatewayPassword(_)
+            | Message::GatewayPassphrase(_)) => return self.input_message(message),
             Message::Submit(tab) => self.reply(tab, true),
             Message::Decline(tab) => self.reply(tab, false),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
@@ -879,10 +889,7 @@ impl Shell {
                 }
                 self.files_key(FilesKey::SwitchPane)
             }
-            Message::LockKey => {
-                self.menu = None;
-                self.app.update(AppMessage::LockVault)
-            }
+            Message::LockKey => self.closing_menu(AppMessage::LockVault),
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
             | Message::ShowSettings
@@ -908,10 +915,7 @@ impl Shell {
             message @ (Message::OpenTreeMenu(_)
             | Message::CloseTreeMenu
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
-            Message::MenuChoice(message) => {
-                self.menu = None;
-                self.app.update(message)
-            }
+            Message::MenuChoice(message) => self.closing_menu(message),
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
@@ -972,6 +976,8 @@ impl Shell {
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::ProviderUnlock(value) => self.provider_unlock = Zeroizing::new(value),
             Message::GatewayPassword(value) => self.gateway_password = Zeroizing::new(value),
+            Message::ProfilePassphrase(value) => self.profile_passphrase = Zeroizing::new(value),
+            Message::GatewayPassphrase(value) => self.gateway_passphrase = Zeroizing::new(value),
             _ => {}
         }
         Task::none()
@@ -1066,18 +1072,32 @@ impl Shell {
         })
     }
 
-    /// Hands the gateway dialog to the core with the password typed, which leaves the window.
-    fn save_gateway_form(&mut self) -> Vec<Effect> {
-        let typed = std::mem::take(&mut *self.gateway_password);
-        let password = (!typed.is_empty()).then(|| Secret::new(typed));
-        self.app.update(AppMessage::SaveGateway { password })
+    /// Closes the open menu, then hands `message` to the core.
+    fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
+        self.menu = None;
+        self.app.update(message)
     }
 
-    /// Hands the profile form to the core with the password typed, which leaves the window.
+    /// Hands the gateway dialog to the core with the password and passphrase typed, which
+    /// leave the window.
+    fn save_gateway_form(&mut self) -> Vec<Effect> {
+        let password = typed_secret(&mut self.gateway_password);
+        let passphrase = typed_secret(&mut self.gateway_passphrase);
+        self.app.update(AppMessage::SaveGateway {
+            password,
+            passphrase,
+        })
+    }
+
+    /// Hands the profile form to the core with the password and passphrase typed, which
+    /// leave the window.
     fn save_profile_form(&mut self) -> Vec<Effect> {
-        let typed = std::mem::take(&mut *self.profile_password);
-        let password = (!typed.is_empty()).then(|| Secret::new(typed));
-        self.app.update(AppMessage::SaveProfile { password })
+        let password = typed_secret(&mut self.profile_password);
+        let passphrase = typed_secret(&mut self.profile_passphrase);
+        self.app.update(AppMessage::SaveProfile {
+            password,
+            passphrase,
+        })
     }
 
     /// What the dialogs show that the window holds: typed secrets, and where passwords go.
@@ -1087,7 +1107,9 @@ impl Shell {
             fields_height: (height - DIALOG_RESERVED_HEIGHT).max(0.0),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
+            profile_passphrase: &self.profile_passphrase,
             gateway_password: &self.gateway_password,
+            gateway_passphrase: &self.gateway_passphrase,
             gateways: self.app.gateways(),
             passwords: if self.app.can_save_passwords() {
                 PasswordStore::Ready
@@ -1429,9 +1451,11 @@ impl Shell {
         };
         if !form_open {
             self.profile_password = Zeroizing::default();
+            self.profile_passphrase = Zeroizing::default();
         }
         if !matches!(app.dialog, Some(Dialog::EditGateway { .. })) {
             self.gateway_password = Zeroizing::default();
+            self.gateway_passphrase = Zeroizing::default();
         }
         self.connections.retain(|tab, _| app.tab(*tab).is_some());
         self.desktop_fit.retain(|tab, _| app.tab(*tab).is_some());
@@ -3772,8 +3796,12 @@ struct Forms<'a> {
     vault: &'a [Zeroizing<String>; 3],
     /// The profile form's password.
     profile_password: &'a str,
+    /// The profile form's key passphrase.
+    profile_passphrase: &'a str,
     /// The gateway dialog's password.
     gateway_password: &'a str,
+    /// The gateway dialog's key passphrase.
+    gateway_passphrase: &'a str,
     /// Saved SSH gateways, for the lists to choose from.
     gateways: &'a [SshGateway],
     /// Whether a password typed now can be saved.
@@ -4065,6 +4093,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
         ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
         ProfileToggle::Compression => fl!("ui-profile-toggle-compression"),
+        ProfileToggle::LegacyAlgorithms => fl!("ui-profile-toggle-legacy-algorithms"),
         ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
     }
@@ -4242,6 +4271,17 @@ fn gateway_dialog<'a>(
     }
     form = form
         .push(gateway_password(draft, forms))
+        .push(passphrase_field(
+            &Passphrase {
+                saved: draft.passphrase == SavedSecret::Saved,
+                typed: forms.gateway_passphrase,
+                on_input: Message::GatewayPassphrase,
+                submit: Message::SaveGatewayForm,
+                clear: AppMessage::ClearGatewayPassphrase,
+                id: "gateway-passphrase",
+            },
+            forms,
+        ))
         .push(parent_gateway(draft, forms));
     if let Some(error) = error {
         form = form.push(text(texts::draft_error(error)).style(text::danger));
@@ -4301,6 +4341,73 @@ fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, M
     }
     form = form.push(text(fl!("ui-gateway-password-hint")).size(SMALL_SIZE));
     form
+}
+
+/// A key passphrase field, of the profile form or of the gateway dialog.
+struct Passphrase<'a> {
+    /// A passphrase is saved.
+    saved: bool,
+    /// What is typed.
+    typed: &'a str,
+    /// What typing sends.
+    on_input: fn(String) -> Message,
+    /// What Enter sends.
+    submit: Message,
+    /// What clearing the saved one sends.
+    clear: AppMessage,
+    /// The field's widget identifier.
+    id: &'static str,
+}
+
+/// The passphrase of the key file, as the C# dialog shows it: an empty field whatever is
+/// saved, "Passphrase saved" and a button to remove it when one is, then the C# hint.
+fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Column<'a, Message> {
+    let mut input = text_input("", passphrase.typed)
+        .id(iced::widget::Id::new(passphrase.id))
+        .secure(true);
+    if forms.passwords == PasswordStore::Ready {
+        input = input
+            .on_input(passphrase.on_input)
+            .on_submit(passphrase.submit.clone());
+    }
+    let mut field = column![
+        text(fl!("ui-profile-field-passphrase")).size(SMALL_SIZE),
+        input
+    ]
+    .spacing(SPACING / 2.0);
+    match forms.passwords {
+        PasswordStore::Ready if passphrase.saved => {
+            field = field.push(
+                row![
+                    text(fl!("ui-profile-passphrase-saved")).size(SMALL_SIZE),
+                    tooltip(
+                        button(text(fl!("ui-profile-password-clear")).size(SMALL_SIZE))
+                            .style(button::text)
+                            .on_press(Message::App(passphrase.clear.clone())),
+                        text(fl!("ui-profile-passphrase-clear-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Top,
+                    )
+                    .style(container::rounded_box),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+            );
+        }
+        PasswordStore::Ready => {}
+        PasswordStore::VaultLocked => {
+            field = field.push(text(fl!("ui-profile-password-locked")).size(SMALL_SIZE));
+        }
+        PasswordStore::None => {
+            field = field.push(text(fl!("ui-profile-password-no-store")).size(SMALL_SIZE));
+        }
+    }
+    field.push(text(fl!("ui-profile-passphrase-hint")).size(SMALL_SIZE))
+}
+
+/// What is typed into a secret field, taken out of the window; `None` when nothing is.
+fn typed_secret(field: &mut Zeroizing<String>) -> Option<Secret> {
+    let typed = std::mem::take(&mut **field);
+    (!typed.is_empty()).then(|| Secret::new(typed))
 }
 
 /// The gateway this one is reached through: none, or another saved gateway.
@@ -4432,6 +4539,19 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
     }
     if draft.shows(ProfileField::KeyPath) {
         form = form.push(key_field(draft));
+        if draft.protocol.has_key_file() {
+            form = form.push(passphrase_field(
+                &Passphrase {
+                    saved: draft.passphrase == SavedSecret::Saved,
+                    typed: forms.profile_passphrase,
+                    on_input: Message::ProfilePassphrase,
+                    submit: Message::SaveProfileForm,
+                    clear: AppMessage::ClearPassphrase,
+                    id: "profile-passphrase",
+                },
+                forms,
+            ));
+        }
     }
     if draft.protocol == DraftProtocol::Rdp {
         form = form.push(text(fl!("ui-profile-domain-hint")).size(SMALL_SIZE));
@@ -4478,6 +4598,15 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
             form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
         }
+    }
+    if matches!(draft.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
+        && draft.is_on(ProfileToggle::LegacyAlgorithms)
+    {
+        form = form.push(
+            text(fl!("ui-profile-legacy-algorithms-hint"))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+        );
     }
     if draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::Nla) {
         form = form.push(
@@ -5090,6 +5219,7 @@ impl fmt::Display for KeysChoice {
             SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
             SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
             SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
+            SpecialKeys::F11 => fl!("ui-desktop-keys-f11"),
             SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
             SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
             SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),

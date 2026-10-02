@@ -55,6 +55,7 @@ fn profile(id: &str, post_connect: PostConnect) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 
@@ -233,14 +234,20 @@ fn steps_written_in_the_form_are_saved_approved_and_a_command_with_a_control_cha
     ] {
         app.update(Message::PostConnectEdit(step));
     }
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     let Some(Dialog::EditProfile { error, .. }) = &app.dialog else {
         panic!("{:?}", app.dialog);
     };
     assert_eq!(*error, Some(DraftError::ControlCharacter));
 
     app.update(Message::PostConnectEdit(StepEdit::Remove));
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
     let saved = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
     let plain = saved
@@ -275,7 +282,10 @@ fn an_imported_profile_saved_from_its_form_has_its_steps_approved_as_the_csharp_
     let dir = tempfile::tempdir().expect("dir");
     let mut app = App::new(config(dir.path()));
     app.update(Message::EditProfile(ProfileId::new("imported")));
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     let effects = app.update(Message::OpenProfile(ProfileId::new("imported")));
     assert_eq!(
         connect_request(&effects).profile.post_connect.to_run(),

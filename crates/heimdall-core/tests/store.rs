@@ -42,6 +42,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 

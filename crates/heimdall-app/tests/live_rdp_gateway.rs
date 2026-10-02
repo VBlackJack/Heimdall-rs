@@ -97,6 +97,7 @@ fn request(
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         }],
         ssh,
         cancel: CancellationToken::new(),
