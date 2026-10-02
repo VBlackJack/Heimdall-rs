@@ -55,6 +55,11 @@ pub(crate) const MAX_OTHER_AGENT_KEYS: usize = 3;
 /// Password questions before giving up.
 pub(crate) const MAX_PASSWORD_ATTEMPTS: u32 = 3;
 
+/// Passes over the methods: a server asking several factors (OpenSSH `AuthenticationMethods
+/// password,keyboard-interactive`) offers the next one only once the previous one partially
+/// succeeded, possibly after the client's turn for it.
+const MAX_FACTORS: usize = 3;
+
 /// Passphrase questions before giving up.
 pub(crate) const MAX_PASSPHRASE_ATTEMPTS: u32 = 3;
 
@@ -86,6 +91,10 @@ struct Attempts<'a, P: Prompter> {
     /// Each key an agent holds with the agent holding it, a key held twice kept once, taken
     /// from each agent in turn.
     agent_keys: Vec<(usize, PublicKey)>,
+    /// The agents were asked for their keys.
+    agents_loaded: bool,
+    /// A method of this pass was accepted as one factor among several.
+    partial: bool,
 }
 
 /// Hash for RSA signatures, from what the server announced in `server-sig-algs`.
@@ -163,39 +172,75 @@ pub(crate) async fn authenticate<P: Prompter>(ctx: AuthContext<'_, P>) -> Result
         rsa_hash: None,
         agents: Vec::new(),
         agent_keys: Vec::new(),
+        agents_loaded: false,
+        partial: false,
     };
     attempts.ensure_open()?;
     attempts.run().await
 }
 
 impl<P: Prompter> Attempts<'_, P> {
+    /// Keys, then keyboard-interactive, then the password, as long as the server allows them;
+    /// again while a method was accepted as one factor of several, each method tried once:
+    /// a refused one would be refused again, and every attempt counts against the server's
+    /// `MaxAuthTries`.
     async fn run(&mut self) -> Result<(), ConnectError> {
         self.rsa_hash = rsa_hash(&self.ctx.handle.best_supported_rsa_hash().await);
-        if self.allows(MethodKind::PublicKey) {
-            self.agents = agent::connect_all(&self.ctx.options.agent).await;
-            let mut held = Vec::with_capacity(self.agents.len());
-            for agent in &mut self.agents {
-                held.push(agent::identities(agent).await);
-            }
-            self.agent_keys = interleave(held);
-        }
-
-        if let Some(key_path) = self.ctx.key_path {
-            if self.allows(MethodKind::PublicKey) && self.key_file(key_path).await? {
+        for _ in 0..MAX_FACTORS {
+            self.partial = false;
+            if self.pass().await? {
                 return Ok(());
             }
-        } else if self.other_agent_keys().await? {
-            return Ok(());
-        }
-        if self.allows(MethodKind::KeyboardInteractive) && self.keyboard_interactive().await? {
-            return Ok(());
-        }
-        if self.allows(MethodKind::Password) && self.password().await? {
-            return Ok(());
+            if !self.partial {
+                break;
+            }
         }
         Err(ConnectError::AuthenticationFailed {
             tried: std::mem::take(&mut self.tried),
         })
+    }
+
+    /// One pass over the methods the server allows and not tried yet; `true` on success.
+    async fn pass(&mut self) -> Result<bool, ConnectError> {
+        let keys_tried =
+            self.tried_method(AuthMethod::Agent) || self.tried_method(AuthMethod::KeyFile);
+        if !keys_tried && self.allows(MethodKind::PublicKey) {
+            self.load_agents().await;
+            let accepted = match self.ctx.key_path {
+                Some(key_path) => self.key_file(key_path).await?,
+                None => self.other_agent_keys().await?,
+            };
+            if accepted {
+                return Ok(true);
+            }
+        }
+        if self.allows(MethodKind::KeyboardInteractive)
+            && !self.tried_method(AuthMethod::KeyboardInteractive)
+            && self.keyboard_interactive().await?
+        {
+            return Ok(true);
+        }
+        Ok(self.allows(MethodKind::Password)
+            && !self.tried_method(AuthMethod::Password)
+            && self.password().await?)
+    }
+
+    fn tried_method(&self, method: AuthMethod) -> bool {
+        self.tried.contains(&method)
+    }
+
+    /// Asks every agent for the keys it holds, once.
+    async fn load_agents(&mut self) {
+        if self.agents_loaded {
+            return;
+        }
+        self.agents_loaded = true;
+        self.agents = agent::connect_all(&self.ctx.options.agent).await;
+        let mut held = Vec::with_capacity(self.agents.len());
+        for agent in &mut self.agents {
+            held.push(agent::identities(agent).await);
+        }
+        self.agent_keys = interleave(held);
     }
 
     fn allows(&self, method: MethodKind) -> bool {
@@ -235,9 +280,11 @@ impl<P: Prompter> Attempts<'_, P> {
         match result {
             russh::client::AuthResult::Success => Ok(true),
             russh::client::AuthResult::Failure {
-                remaining_methods, ..
+                remaining_methods,
+                partial_success,
             } => {
                 self.methods = remaining_methods;
+                self.partial |= partial_success;
                 self.ensure_open()?;
                 Ok(false)
             }
@@ -337,6 +384,10 @@ impl<P: Prompter> Attempts<'_, P> {
             if self.with_agent(&key).await? {
                 return Ok(true);
             }
+            if self.partial {
+                // Accepted as one factor: no other key is offered for it.
+                break;
+            }
         }
         Ok(false)
     }
@@ -365,9 +416,11 @@ impl<P: Prompter> Attempts<'_, P> {
             match response {
                 KeyboardInteractiveAuthResponse::Success => return Ok(true),
                 KeyboardInteractiveAuthResponse::Failure {
-                    remaining_methods, ..
+                    remaining_methods,
+                    partial_success,
                 } => {
                     self.methods = remaining_methods;
+                    self.partial |= partial_success;
                     self.ensure_open()?;
                     return Ok(false);
                 }
@@ -448,6 +501,10 @@ impl<P: Prompter> Attempts<'_, P> {
                 .map_err(|error| request_failed(&self.ctx, error))?;
             if self.settle(result)? {
                 return Ok(true);
+            }
+            if self.partial {
+                // Accepted as the first factor: the next one is another method's.
+                break;
             }
         }
         Ok(false)

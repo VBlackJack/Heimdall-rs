@@ -138,3 +138,62 @@ async fn a_password_account_logs_in_to_openssh() {
     let session = connect_as(port, "pwuser", None, prompter).await;
     assert_shell_runs(session.expect("session")).await;
 }
+
+// Several factors are tested here only: the in-process server cannot ask for them, since
+// russh 0.63.3 resets the partial success a handler returns before replying
+// (server/encrypted.rs, `auth_request.partial_success = false` after each refusal).
+
+/// Environment variable naming the port of a live server asking `mfauser` for a password and
+/// then a key, as OpenSSH's `AuthenticationMethods password,publickey`; the account is
+/// authorised with the `ed25519-openssh.pub` fixture.
+const LIVE_MFA_PORT_VARIABLE: &str = "HEIMDALL_LIVE_SSH_MFA_PORT";
+
+/// Environment variable holding the password of `mfauser`.
+const LIVE_MFA_PASSWORD_VARIABLE: &str = "HEIMDALL_LIVE_SSH_MFA_PASSWORD";
+
+#[tokio::test]
+async fn a_password_then_a_key_log_in_when_openssh_asks_both() {
+    // The key comes before the password in the client's order, but OpenSSH offers it only
+    // once the password partially succeeded: the client goes back to it.
+    let Some(port) = std::env::var(LIVE_MFA_PORT_VARIABLE)
+        .ok()
+        .and_then(|port| port.parse().ok())
+    else {
+        return;
+    };
+    let password = std::env::var(LIVE_MFA_PASSWORD_VARIABLE).unwrap_or_else(|_| {
+        panic!("{LIVE_MFA_PASSWORD_VARIABLE} must be set with {LIVE_MFA_PORT_VARIABLE}")
+    });
+    let prompter = ScriptedPrompter::passwords(&[password.as_str()]);
+    let session = connect_as(port, "mfauser", Some("ed25519-openssh"), prompter).await;
+    assert_shell_runs(session.expect("password, then the key")).await;
+}
+
+/// Environment variable holding the password of `kiuser`, asked first through the password
+/// method, then through keyboard-interactive (`AuthenticationMethods
+/// password,keyboard-interactive` with PAM), on the server of [`LIVE_MFA_PORT_VARIABLE`].
+const LIVE_KI_PASSWORD_VARIABLE: &str = "HEIMDALL_LIVE_SSH_KI_PASSWORD";
+
+#[tokio::test]
+async fn a_password_then_keyboard_interactive_log_in_when_openssh_asks_both() {
+    // The shape of a password followed by a one-time code: keyboard-interactive is offered
+    // only once the password partially succeeded, after its turn in the client's order.
+    let Some(port) = std::env::var(LIVE_MFA_PORT_VARIABLE)
+        .ok()
+        .and_then(|port| port.parse().ok())
+    else {
+        return;
+    };
+    let password = std::env::var(LIVE_KI_PASSWORD_VARIABLE).unwrap_or_else(|_| {
+        panic!("{LIVE_KI_PASSWORD_VARIABLE} must be set with {LIVE_MFA_PORT_VARIABLE}")
+    });
+    let prompter = ScriptedPrompter {
+        kbd: vec![Some(vec![password.clone()])]
+            .into_iter()
+            .collect::<std::collections::VecDeque<_>>()
+            .into(),
+        ..ScriptedPrompter::passwords(&[password.as_str()])
+    };
+    let session = connect_as(port, "kiuser", None, prompter).await;
+    assert_shell_runs(session.expect("password, then keyboard-interactive")).await;
+}
