@@ -105,6 +105,8 @@ fn a_mobaxterm_file_is_asked_about_then_merged_with_new_ids_and_its_passwords_sa
             skipped: Vec::new(),
             warnings: Vec::new(),
             stored_credentials: Some(1),
+            dropped: Vec::new(),
+            host_keys: None,
         }))
     );
     let web = &app.profiles()[0];
@@ -236,5 +238,29 @@ fn an_imported_winrm_profile_checks_its_host_certificate_whatever_the_file_says(
     assert!(
         !dc.skip_certificate_check,
         "a file written elsewhere does not decide that this host's certificate goes unchecked"
+    );
+}
+
+#[test]
+fn a_picked_file_never_carries_the_servers_it_trusts_over() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let settings = r#"{"trustedHostKeysV2": {"dc.lab:22":
+        {"fingerprint": "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"}}}"#;
+    read(
+        &mut app,
+        "servers.json",
+        WINRM_SKIPPING_CHECKS,
+        Some(settings),
+    );
+    app.update(Message::ConfirmDialog);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(summary.host_keys, None, "not said: not done");
+    let pins = heimdall_ssh::Pins::beside(&dir.path().join("known_hosts"));
+    assert!(
+        !pins.path().exists(),
+        "a file written elsewhere trusts nothing here"
     );
 }

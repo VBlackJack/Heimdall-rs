@@ -273,6 +273,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         },
         trusted_for_run: request.trusted_for_run.clone(),
         options: profile.options,
+        several_servers: profile.several_servers,
     }
 }
 
@@ -418,6 +419,7 @@ mod tests {
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
             follow_defaults: false,
+            several_servers: false,
         }));
         assert_eq!(config.options, options);
     }

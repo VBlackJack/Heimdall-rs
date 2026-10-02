@@ -170,6 +170,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
         drives: Vec::new(),
         trusted_for_run: Vec::new(),
         options: heimdall_core::profile::RdpOptions::default(),
+        several_servers: false,
     }
 }
 
@@ -346,6 +347,51 @@ async fn a_changed_key_is_refused_without_a_question() {
     assert_eq!(seen.after_handshake, 0);
     assert!(!seen.asked);
     assert_eq!(lines(&known).len(), 1, "the recorded key stays");
+}
+
+#[tokio::test]
+async fn at_an_address_several_servers_answer_a_new_key_is_asked_about_and_trusted_beside() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    let other: Fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        .parse()
+        .expect("fingerprint");
+    std::fs::write(&known, format!("{HOST}:{PORT} {other}\n")).expect("known");
+    let pool = |accepted| RdpConfig {
+        several_servers: true,
+        ..config(&known, accepted, PORT)
+    };
+
+    // Asked about as a first contact, nothing sent and nothing recorded.
+    let (outcome, seen) = attempt(&pool(None), KEY).await;
+    let Err(RdpError::UnknownCertificate(certificate)) = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(certificate.fingerprint, expected_pin());
+    assert_eq!(seen.after_handshake, 0);
+    assert!(!seen.asked);
+    assert_eq!(lines(&known).len(), 1);
+
+    // Accepted: trusted beside the other machine's key, which stays.
+    let (outcome, seen) = attempt(&pool(Some(expected_pin())), KEY).await;
+    assert!(
+        !matches!(
+            outcome,
+            Err(RdpError::UnknownCertificate(_) | RdpError::CertificateChanged { .. })
+        ),
+        "{outcome:?}"
+    );
+    assert!(
+        seen.asked,
+        "the credentials come once the server is trusted"
+    );
+    assert_eq!(
+        lines(&known),
+        [
+            format!("{HOST}:{PORT} {other}"),
+            format!("{HOST}:{PORT} {}", expected_pin())
+        ]
+    );
 }
 
 #[tokio::test]

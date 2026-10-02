@@ -27,7 +27,7 @@ use common::{
     options_empty, options_trusting, profile, start,
 };
 use heimdall_ssh::{
-    AuthMethod, ConnectError, KnownHosts, SessionEvent, ShellSession, TerminalSize, connect,
+    AuthMethod, ConnectError, KnownHosts, Pins, SessionEvent, ShellSession, TerminalSize, connect,
     fingerprint,
 };
 use russh::MethodKind;
@@ -186,6 +186,69 @@ async fn a_changed_key_is_refused_without_asking() {
     );
     assert_eq!(offered, fingerprint(&host_public_key("host-ed25519")));
     assert!(prompter.asked().is_empty());
+}
+
+#[tokio::test]
+async fn a_pinned_fingerprint_trusts_its_key_once_and_records_it_in_full() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_empty(dir.path());
+    let pins = Pins::beside(&options.known_hosts);
+    let pinned = fingerprint(&host_public_key("host-ed25519"));
+    assert!(pins.pin(LOOPBACK, server.port, &pinned).expect("pinned"));
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD, PASSWORD]));
+
+    let session = run(server.port, None, &options, prompter.clone()).await;
+    assert!(session.is_ok(), "{:?}", session.err());
+    let known = KnownHosts::new(&options.known_hosts);
+    let recorded = known.recorded(LOOPBACK, server.port).expect("recorded");
+    assert_eq!(recorded.len(), 1, "the whole key, from now on");
+    assert_eq!(
+        recorded[0].key_data(),
+        host_public_key("host-ed25519").key_data()
+    );
+    assert!(
+        pins.pinned(LOOPBACK, server.port).expect("pins").is_empty(),
+        "the pin went"
+    );
+    let again = run(server.port, None, &options, prompter).await;
+    assert!(again.is_ok(), "{:?}", again.err());
+}
+
+#[tokio::test]
+async fn a_key_without_the_pinned_fingerprint_is_a_changed_key_not_a_first_contact() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_empty(dir.path());
+    let pins = Pins::beside(&options.known_hosts);
+    let pinned = fingerprint(&host_public_key("host-ed25519-other"));
+    pins.pin(LOOPBACK, server.port, &pinned).expect("pinned");
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD]));
+
+    let error = run(server.port, None, &options, prompter.clone())
+        .await
+        .expect_err("changed");
+    let ConnectError::HostKeyChanged {
+        recorded, offered, ..
+    } = error
+    else {
+        panic!("expected HostKeyChanged, got {error:?}");
+    };
+    assert_eq!(recorded, pinned);
+    assert_eq!(offered, fingerprint(&host_public_key("host-ed25519")));
+    assert!(prompter.asked().is_empty());
+    assert!(!options.known_hosts.exists(), "nothing recorded");
+
+    // Forgotten, the server is a first contact again.
+    let known = KnownHosts::new(&options.known_hosts);
+    assert!(known.forget(LOOPBACK, server.port).expect("forgotten"));
+    let error = run(server.port, None, &options, prompter)
+        .await
+        .expect_err("unknown");
+    assert!(
+        matches!(error, ConnectError::UnknownHostKey { .. }),
+        "{error:?}"
+    );
 }
 
 #[tokio::test]

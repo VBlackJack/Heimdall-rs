@@ -48,6 +48,7 @@ fn own(follow_defaults: bool) -> RdpProfile {
             ..RdpOptions::default()
         },
         follow_defaults,
+        several_servers: false,
     }
 }
 

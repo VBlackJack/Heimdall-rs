@@ -3018,3 +3018,31 @@ fn a_dangerous_paste_names_the_command_before_it_reaches_the_shell() {
     .expect("the command named");
     ui.find("Paste anyway").expect("the way on");
 }
+
+#[test]
+fn an_import_says_which_settings_it_left_out_of_which_profile() {
+    use heimdall_core::import::csharp::Dropped;
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport {
+            added: 1,
+            updated: 0,
+            unchanged: 0,
+        },
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        dropped: vec![(
+            "desk".to_owned(),
+            vec![Dropped::RdpPrinters, Dropped::RdpSmartCards],
+        )],
+    }));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Imported without settings Heimdall-rs does not have yet:")
+        .expect("said");
+    ui.find("desk: printers, smart cards")
+        .expect("the profile and what it came without");
+}

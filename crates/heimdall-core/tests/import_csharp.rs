@@ -1124,3 +1124,95 @@ fn an_ftp_profile_is_imported_as_the_csharp_one_reads_it() {
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(report.skipped[0].reason, SkipReason::InvalidPort(70000));
 }
+
+#[test]
+fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+    let report = import(
+        &servers(
+            r#"
+            {"id": "s", "displayName": "shell", "remoteServer": "s.lab", "connectionType": "SSH",
+             "sshMode": "External", "sshX11Forwarding": true},
+            {"id": "w", "displayName": "dc", "remoteServer": "dc.lab", "connectionType": "WINRM",
+             "sshGatewayId": "g"},
+            {"id": "r", "displayName": "desk", "remoteServer": "r.lab", "connectionType": "RDP",
+             "rdpUseGlobalDefaults": false, "rdpRedirectPrinters": true,
+             "rdpRedirectSmartCards": true, "rdpAntiIdle": true},
+            {"id": "g1", "displayName": "global", "remoteServer": "g.lab", "connectionType": "RDP"},
+            {"id": "plain", "displayName": "plain", "remoteServer": "p.lab", "connectionType": "SSH",
+             "sshMode": "Embedded"}
+            "#,
+        ),
+        Some(r#"{"rdpDefaultMode": "External", "rdpDefaultMultiMonitor": true}"#),
+    )
+    .expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let dropped = |name: &str, settings: &[Dropped]| DroppedSettings {
+        name: name.to_owned(),
+        settings: settings.to_vec(),
+    };
+    assert_eq!(
+        report.dropped,
+        [
+            dropped("shell", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
+            dropped("dc", &[Dropped::WinRmGateway]),
+            dropped(
+                "desk",
+                &[
+                    Dropped::RdpPrinters,
+                    Dropped::RdpSmartCards,
+                    Dropped::RdpAntiIdle
+                ]
+            ),
+            // On the global defaults: the settings' choices are the ones dropped.
+            dropped(
+                "global",
+                &[Dropped::ExternalClient, Dropped::RdpMultiMonitor]
+            ),
+        ]
+    );
+}
+
+#[test]
+fn the_trusted_ssh_servers_of_settings_are_read_with_their_keys_when_kept() {
+    use heimdall_core::import::csharp::TrustedHostKey;
+    let pinned = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    let other = "SHA256:BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+    let settings_json = format!(
+        r#"{{
+            "trustedHostKeysV2": {{
+                "web.lab:22": {{"fingerprint": "{pinned}", "publicKeyBase64": "AAAAC3Nz"}},
+                "[fe80::1]:2222": {{"fingerprint": "{pinned}"}},
+                "noport": {{"fingerprint": "{pinned}"}},
+                "empty.lab:22": {{"fingerprint": ""}}
+            }},
+            "trustedHostKeys": {{
+                "web.lab:22": "{other}",
+                "old.lab:2200": "{other}"
+            }},
+            "sshGateways": [
+                {{"id": "g", "name": "jump", "host": "jump.lab", "hostKeyFingerprint": "{other}"}},
+                {{"id": "h", "name": "web again", "host": "WEB.lab", "port": 22,
+                  "hostKeyFingerprint": "{other}"}}
+            ]
+        }}"#
+    );
+    let report = import(&servers(""), Some(&settings_json)).expect("valid JSON");
+    let entry = |host: &str, port, fingerprint: &str, key: Option<&str>| TrustedHostKey {
+        host: host.to_owned(),
+        port,
+        fingerprint: fingerprint.to_owned(),
+        key: key.map(str::to_owned),
+    };
+    assert_eq!(
+        report.host_keys,
+        [
+            entry("fe80::1", 2222, pinned, None),
+            entry("web.lab", DEFAULT_SSH_PORT, pinned, Some("AAAAC3Nz")),
+            // The first store, for a server the second does not name.
+            entry("old.lab", 2200, other, None),
+            // A gateway's own fingerprint, its port the SSH default.
+            entry("jump.lab", DEFAULT_SSH_PORT, other, None),
+        ]
+    );
+}

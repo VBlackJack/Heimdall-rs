@@ -45,6 +45,7 @@ fn app(dir: &Path) -> App {
         vault_entry: Some("Win/DC".to_owned()),
         forwards: Forwards::default(),
         follow_defaults: false,
+        several_servers: false,
     }]);
     store.merge([SshProfile {
         id: ProfileId::new("web"),

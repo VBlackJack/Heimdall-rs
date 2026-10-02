@@ -3612,6 +3612,51 @@ fn import_report<'a>(
             .push(text(fl!("ui-dialog-import-skipped")))
             .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
     }
+    if !summary.dropped.is_empty() {
+        let dropped = summary.dropped.iter().fold(
+            Column::new().spacing(SPACING / 2.0),
+            |list, (name, settings)| {
+                let settings: Vec<String> = settings
+                    .iter()
+                    .map(|setting| texts::dropped_setting(*setting))
+                    .collect();
+                list.push(
+                    text(fl!(
+                        "ui-dialog-import-dropped-item",
+                        name = name.as_str(),
+                        settings = settings.join(&fl!("ui-dialog-import-dropped-separator"))
+                    ))
+                    .size(SMALL_SIZE),
+                )
+            },
+        );
+        content = content
+            .push(text(fl!("ui-dialog-import-dropped")))
+            .push(container(scrollable(dropped)).max_height(SKIPPED_LIST_HEIGHT));
+    }
+    match &summary.host_keys {
+        Some(Ok(carried)) if carried.keys + carried.pins > 0 => {
+            content = content.push(
+                text(fl!(
+                    "ui-dialog-import-host-keys",
+                    keys = carried.keys,
+                    pins = carried.pins
+                ))
+                .size(SMALL_SIZE),
+            );
+        }
+        Some(Err(detail)) => {
+            content = content.push(
+                text(fl!(
+                    "ui-dialog-import-host-keys-failed",
+                    detail = detail.as_str()
+                ))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            );
+        }
+        _ => {}
+    }
     // What the file said, and for `MobaXterm` that its passwords must be entered again.
     for line in crate::file_import_view::warning_lines(&summary.warnings)
         .into_iter()
@@ -3910,6 +3955,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
     match toggle {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
+        ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
@@ -5405,6 +5451,7 @@ mod tests {
                 vault_entry: None,
                 forwards: heimdall_core::profile::Forwards::default(),
                 follow_defaults: false,
+                several_servers: false,
             })
         };
         let fixed = RdpOptions {

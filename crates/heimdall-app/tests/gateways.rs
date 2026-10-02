@@ -23,7 +23,7 @@ use heimdall_app::{App, AppConfig, Dialog, Effect, Message, Phase, UiError};
 use heimdall_core::paths::{LEGACY_SERVERS_FILE_NAME, LEGACY_SETTINGS_FILE_NAME};
 use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::store::{ProfileStore, RouteError};
-use heimdall_ssh::AgentSource;
+use heimdall_ssh::{AgentSource, Carried, Pins};
 use heimdall_term::GridSize;
 
 fn gateway(id: &str, parent: Option<&str>) -> SshGateway {
@@ -187,4 +187,53 @@ fn importing_brings_the_gateways_and_the_profiles_through_them() {
         .map(|hop| (hop.host.as_str(), hop.port))
         .collect();
     assert_eq!(hops, [("bastion.example.org", 2222)]);
+}
+
+#[test]
+fn migrating_the_csharp_store_carries_its_trusted_servers_over_once() {
+    let dir = tempfile::tempdir().expect("dir");
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir_all(&legacy).expect("legacy dir");
+    std::fs::write(legacy.join(LEGACY_SERVERS_FILE_NAME), r#"{"servers": []}"#).expect("servers");
+    let pinned = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+    std::fs::write(
+        legacy.join(LEGACY_SETTINGS_FILE_NAME),
+        format!(
+            r#"{{"trustedHostKeysV2": {{"web.lab:22": {{"fingerprint": "{pinned}"}}}},
+                "sshGateways": [{{"id": "b", "name": "B", "host": "bastion.lab",
+                "hostKeyFingerprint": "{pinned}"}}]}}"#
+        ),
+    )
+    .expect("settings");
+    let mut app = App::new(config(dir.path()));
+    app.update(Message::ImportLegacy);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        summary.host_keys,
+        Some(Ok(Carried {
+            keys: 0,
+            pins: 2,
+            left: 0
+        }))
+    );
+    let pins = Pins::beside(&dir.path().join("known_hosts"));
+    assert_eq!(pins.pinned("web.lab", 22).expect("read"), [pinned]);
+    assert_eq!(pins.pinned("bastion.lab", 22).expect("read"), [pinned]);
+
+    // Again: nothing more, nothing replaced.
+    app.update(Message::DismissDialog);
+    app.update(Message::ImportLegacy);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        summary.host_keys,
+        Some(Ok(Carried {
+            keys: 0,
+            pins: 0,
+            left: 2
+        }))
+    );
 }

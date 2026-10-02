@@ -145,6 +145,9 @@ pub struct RdpConfig {
     pub keyboard_layout: u32,
     /// Security protocols offered.
     pub security: Security,
+    /// Several machines answer at the address: a certificate not trusted yet is asked
+    /// about rather than refused as changed.
+    pub several_servers: bool,
     /// Pins of the servers trusted so far.
     pub known_hosts: KnownRdpHosts,
     /// A key the user accepted for this server after an [`RdpError::UnknownCertificate`]:
@@ -489,10 +492,16 @@ pub async fn connect_over(
 /// Decides about the server's key; `Ok` lets the credentials go.
 fn trust(config: &RdpConfig, certificate: ServerCertificate) -> Result<(), RdpError> {
     let presented = certificate.fingerprint;
-    let verdict = config
+    let verdict = match config
         .known_hosts
         .verdict(&config.host, config.port, &presented)
-        .map_err(RdpError::KnownHosts)?;
+        .map_err(RdpError::KnownHosts)?
+    {
+        // Several machines answer at the address: a certificate not trusted yet is another
+        // machine to ask about, trusted beside the others, not a change.
+        Verdict::Changed { .. } if config.several_servers => Verdict::Unknown,
+        verdict => verdict,
+    };
     match (verdict, config.accepted) {
         (Verdict::Known, _) => Ok(()),
         (Verdict::Unknown, _) if config.trusted_for_run.contains(&presented) => Ok(()),

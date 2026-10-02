@@ -270,7 +270,29 @@ ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
 ui-dialog-import-skipped = Left out:
+ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
+    [one] { $keys } key
+   *[other] { $keys } keys
+} and { $pins ->
+    [one] { $pins } fingerprint
+   *[other] { $pins } fingerprints
+}.
+ui-dialog-import-host-keys-failed = The trusted SSH servers could not be carried over: { $detail }
 ui-dialog-import-skipped-item = { $name }: { $reason }
+ui-dialog-import-dropped = Imported without settings Heimdall-rs does not have yet:
+ui-dialog-import-dropped-item = { $name }: { $settings }
+ui-dialog-import-dropped-separator = {", "}
+ui-import-dropped-external-client = opened in an external program
+ui-import-dropped-x11 = X11 forwarding
+ui-import-dropped-winrm-gateway = SSH gateway
+ui-import-dropped-rdp-printers = printers
+ui-import-dropped-rdp-com-ports = serial ports
+ui-import-dropped-rdp-smart-cards = smart cards
+ui-import-dropped-rdp-webcam = webcam
+ui-import-dropped-rdp-usb = USB devices
+ui-import-dropped-rdp-microphone = microphone
+ui-import-dropped-rdp-multi-monitor = several monitors
+ui-import-dropped-rdp-anti-idle = anti-idle keep-alive
 ui-dialog-import-failed-title = The import could not run
 ui-import-file-title = Import Sessions
 ui-import-file-filter-all = All supported
@@ -659,6 +681,7 @@ ui-profile-options-telnet = Telnet Options
 ui-profile-toggle-clipboard = Redirect clipboard
 ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
+ui-profile-toggle-several-servers = Several servers answer at this address: ask about each new certificate
 ui-profile-rdp-follow-defaults = Use global RDP defaults
 ui-profile-rdp-defaults-banner = This server is using your global RDP defaults. Uncheck "Use global RDP defaults" to set per-server options.
 ui-profile-rdp-defaults-not-in-effect = Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.
