@@ -3000,3 +3000,21 @@ fn one_post_connect_command_is_said_in_the_singular() {
     )
     .expect("the singular, chosen by the number");
 }
+
+#[test]
+fn a_dangerous_paste_names_the_command_before_it_reaches_the_shell() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::ClipboardText {
+        tab,
+        text: Some("dd if=/dev/zero of=/dev/sda".to_owned()),
+    }));
+    let mut ui = simulator(&shell);
+    ui.find("Paste a dangerous command?").expect("title");
+    ui.find(
+        "The text holds dd if=, a command that can destroy data or stop the machine. Check it \
+         before it reaches the shell.",
+    )
+    .expect("the command named");
+    ui.find("Paste anyway").expect("the way on");
+}
