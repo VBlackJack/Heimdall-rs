@@ -26,11 +26,11 @@ use heimdall_core::profile::{RdpProfile, SshProfile, display_address};
 use heimdall_rdp::drives::local_drives;
 use heimdall_rdp::session::{self, RdpEvent};
 use heimdall_rdp::{
-    AskCredentials, CloseReason, Fingerprint, KnownRdpHosts, Opening, RdpConfig, RdpConnection,
-    RdpError, Security, Timeouts, Transport, connect, connect_through,
+    AskCredentials, CloseReason, Ending, Fingerprint, KnownRdpHosts, Opening, RdpConfig,
+    RdpConnection, RdpError, Security, Timeouts, Transport, connect, connect_through,
 };
 use heimdall_ssh::{
-    AuthMethod, ConnectError, ConnectOptions, PasswordQuestion, UsernameQuestion, establish_via,
+    ConnectError, ConnectOptions, PasswordQuestion, UsernameQuestion, establish_via,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -225,9 +225,9 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                 ConnectionEvent::Failed(UiError::RdpProtocol { detail })
             }
             RdpEvent::Closed(CloseReason::Disconnected(reason)) => {
-                log::info!("RDP session to {target} ended: {reason}");
+                log::info!("RDP session to {target} ended: {reason:?}");
                 ConnectionEvent::Ended {
-                    reason: server_text(&reason),
+                    reason: safe(reason),
                 }
             }
             RdpEvent::Closed(_) => {
@@ -352,6 +352,14 @@ async fn failed(events: &mpsc::Sender<ConnectionEvent>, error: UiError) {
     let _ = events.send(ConnectionEvent::Failed(error)).await;
 }
 
+/// `ending`, the server's own words in it made safe to show.
+fn safe(ending: Ending) -> Ending {
+    match ending {
+        Ending::Other(words) => Ending::Other(server_text(&words)),
+        known => known,
+    }
+}
+
 /// How an RDP failure is shown.
 fn ui_error(error: RdpError) -> UiError {
     match error {
@@ -371,8 +379,9 @@ fn ui_error(error: RdpError) -> UiError {
         RdpError::KnownHosts(error) => UiError::KnownHosts {
             detail: error.to_string(),
         },
-        RdpError::Authentication => UiError::AuthenticationFailed {
-            tried: vec![AuthMethod::Password],
+        RdpError::Authentication(refusal) => UiError::RdpRefused { refusal },
+        RdpError::Ended(ending) => UiError::RdpEnded {
+            ending: safe(ending),
         },
         // An unknown certificate is a question, handled by the caller; the rest is a protocol
         // failure described in plain words.

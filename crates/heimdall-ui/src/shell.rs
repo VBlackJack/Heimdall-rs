@@ -3082,11 +3082,8 @@ impl Shell {
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
                 let mut ended = column![text(fl!("ui-session-closed"))].spacing(SPACING);
-                if let Some(reason) = &tab.end_reason {
-                    ended = ended.push(text(fl!(
-                        "ui-session-closed-reason",
-                        reason = reason.as_str()
-                    )));
+                if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
+                    ended = ended.push(text(reason));
                 }
                 center(card(ended.push(self.session_actions(tab).wrap()))).into()
             }

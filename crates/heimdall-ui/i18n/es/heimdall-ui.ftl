@@ -827,6 +827,22 @@ ui-error-network-timed-out = Se agotó el tiempo de conexión. Comprueba que el 
 ui-error-network-unreachable = El host o la red no son accesibles. Comprueba el DNS y el enrutamiento.
 ui-session-closed-reason = El servidor indicó: { $reason }
 
+## Why an RDP server refused a logon or ended a session, as the C# Heimdall says it.
+ui-rdp-severity-warning = Advertencia:
+ui-rdp-severity-error = Error:
+ui-rdp-reason-bad-credentials = No se aceptaron las credenciales. Verifica tu usuario, contraseña y dominio (NetBIOS DOMINIO\usuario o UPN usuario@dominio.com), luego vuelve a conectar.
+ui-rdp-reason-password-expired = La contraseña ha caducado y debe cambiarse antes de conectar.
+ui-rdp-reason-account-locked-out = La cuenta está bloqueada actualmente.
+ui-rdp-reason-account-disabled = La cuenta está deshabilitada en el equipo remoto. Pide a tu administrador que la habilite, luego vuelve a intentar conectar.
+ui-rdp-reason-account-expired = La cuenta ha caducado.
+ui-rdp-reason-time-of-day = No se permite iniciar sesión con esta cuenta en este momento. Una restricción de horario de inicio de sesión en la cuenta terminó la sesión.
+ui-rdp-reason-no-authority = No se pudo contactar con ninguna autoridad de autenticación para validar la cuenta. El equipo remoto podría haber perdido el contacto con su controlador de dominio.
+ui-rdp-reason-clock-skew = Los relojes de este equipo y del equipo remoto están demasiado desfasados para que la autenticación tenga éxito. Corrige la hora del sistema en uno de los dos, luego vuelve a conectar.
+ui-rdp-reason-security-error = Un error de seguridad impidió la conexión. El equipo remoto informó de que los datos de seguridad intercambiados durante la conexión no eran válidos.
+ui-rdp-reason-admin-disconnect = El equipo remoto terminó la sesión. Un administrador podría haberla finalizado, la conexión pudo fallar mientras se establecía, o un problema de red pudo haberla interrumpido.
+ui-rdp-reason-license = Un error de licencias de Escritorio remoto bloqueó la sesión. Contacta con tu administrador; el servidor de licencias podría ser inaccesible o quedarse sin CAL.
+ui-rdp-reason-with-severity = { $severity } { $reason }
+
 ui-session-reconnecting = Reconectando (intento { $attempt }/{ $max })...
 ui-session-reconnecting-in = en { $seconds }s
 ui-session-reconnecting-cancel = Cancelar

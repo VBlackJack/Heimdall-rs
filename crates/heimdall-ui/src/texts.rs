@@ -26,6 +26,7 @@ use heimdall_core::import::csharp::{Dropped, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
+use heimdall_rdp::{Ending, Refusal as RdpRefusal};
 use heimdall_ssh::AuthMethod;
 
 use crate::i18n::fl;
@@ -35,6 +36,54 @@ const KIB: f64 = 1024.0;
 
 /// Separator between the items of an inline list.
 const LIST_SEPARATOR: &str = ", ";
+
+/// Why an RDP server refused a logon, as the C# says it: a warning when the account is the
+/// user's to fix, an error otherwise.
+#[must_use]
+pub fn rdp_refusal(refusal: RdpRefusal) -> String {
+    let reason = match refusal {
+        RdpRefusal::BadCredentials => fl!("ui-rdp-reason-bad-credentials"),
+        RdpRefusal::PasswordExpired => fl!("ui-rdp-reason-password-expired"),
+        RdpRefusal::AccountLockedOut => fl!("ui-rdp-reason-account-locked-out"),
+        RdpRefusal::AccountDisabled => fl!("ui-rdp-reason-account-disabled"),
+        RdpRefusal::AccountExpired => fl!("ui-rdp-reason-account-expired"),
+        RdpRefusal::TimeOfDayRestriction => fl!("ui-rdp-reason-time-of-day"),
+        RdpRefusal::NoAuthenticationAuthority => fl!("ui-rdp-reason-no-authority"),
+        RdpRefusal::ClockSkew => fl!("ui-rdp-reason-clock-skew"),
+        RdpRefusal::SecurityError => fl!("ui-rdp-reason-security-error"),
+    };
+    with_severity(refusal.is_account_issue(), &reason)
+}
+
+/// Why an RDP server ended a session, as the C# says it. Nothing for a logoff: the C# says
+/// nothing of the session the user ended.
+#[must_use]
+pub fn rdp_ending(ending: &Ending) -> Option<String> {
+    let reason = match ending {
+        Ending::Logoff => return None,
+        Ending::AdminDisconnect => fl!("ui-rdp-reason-admin-disconnect"),
+        Ending::BadCredentials => fl!("ui-rdp-reason-bad-credentials"),
+        Ending::License => fl!("ui-rdp-reason-license"),
+        Ending::Other(words) => {
+            return Some(fl!("ui-session-closed-reason", reason = words.as_str()));
+        }
+    };
+    Some(with_severity(ending.is_account_issue(), &reason))
+}
+
+/// `reason` after the C# severity word: a warning for the account, an error otherwise.
+fn with_severity(account: bool, reason: &str) -> String {
+    let severity = if account {
+        fl!("ui-rdp-severity-warning")
+    } else {
+        fl!("ui-rdp-severity-error")
+    };
+    fl!(
+        "ui-rdp-reason-with-severity",
+        severity = severity,
+        reason = reason
+    )
+}
 
 /// The sentence explaining `error`.
 #[must_use]
@@ -69,6 +118,10 @@ pub fn error(error: &UiError) -> String {
             NetworkFailure::Other => fl!("ui-error-network", detail = server_text(detail)),
         },
         UiError::Timeout => fl!("ui-error-timeout"),
+        UiError::RdpRefused { refusal } => rdp_refusal(*refusal),
+        UiError::RdpEnded { ending } => {
+            rdp_ending(ending).unwrap_or_else(|| fl!("ui-session-closed"))
+        }
         UiError::RdpProtocol { detail } => {
             fl!("ui-error-rdp-protocol", detail = server_text(detail))
         }
@@ -347,6 +400,49 @@ mod tests {
     use heimdall_ssh::AuthMethod;
 
     use super::{error, skip_reason};
+
+    #[test]
+    fn an_rdp_refusal_warns_of_the_account_and_errs_on_the_rest_as_the_csharp() {
+        use heimdall_rdp::Refusal;
+
+        assert_eq!(
+            error(&UiError::RdpRefused {
+                refusal: Refusal::PasswordExpired
+            }),
+            "Warning: The password has expired and must be changed before connecting."
+        );
+        assert_eq!(
+            error(&UiError::RdpRefused {
+                refusal: Refusal::AccountDisabled
+            }),
+            "Error: The account is disabled on the remote computer. Ask your administrator to \
+             enable it, then try connecting again."
+        );
+        assert!(
+            error(&UiError::RdpRefused {
+                refusal: Refusal::BadCredentials
+            })
+            .starts_with("Warning: The credentials were not accepted.")
+        );
+    }
+
+    #[test]
+    fn an_rdp_connection_ended_by_a_logoff_says_only_that_it_ended() {
+        use heimdall_rdp::Ending;
+
+        assert_eq!(
+            error(&UiError::RdpEnded {
+                ending: Ending::Logoff
+            }),
+            "The session ended."
+        );
+        assert!(
+            error(&UiError::RdpEnded {
+                ending: Ending::License
+            })
+            .starts_with("Error: A Remote Desktop licensing error blocked the session.")
+        );
+    }
 
     #[test]
     fn a_network_failure_says_what_the_csharp_one_says() {

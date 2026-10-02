@@ -25,7 +25,7 @@ use heimdall_ssh::{
 };
 
 use heimdall_files::RemoteSession;
-use heimdall_rdp::{Fingerprint, Framebuffer, Operation};
+use heimdall_rdp::{Ending, Fingerprint, Framebuffer, Operation};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -149,10 +149,11 @@ pub enum ConnectionEvent {
         /// Exit status, when reported.
         exit_status: Option<u32>,
     },
-    /// The server ended the session and said why, made safe. Last event of the attempt.
+    /// The server ended the session and said why, its own words made safe. Last event of
+    /// the attempt.
     Ended {
         /// Its reason.
-        reason: String,
+        reason: Ending,
     },
     /// The attempt failed. Last event of the attempt.
     Failed(UiError),

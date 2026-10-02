@@ -27,7 +27,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::Framebuffer;
+use heimdall_rdp::{Ending, Framebuffer};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
@@ -743,7 +743,7 @@ fn a_session_the_server_ended_says_why() {
         tab,
         attempt,
         ConnectionEvent::Ended {
-            reason: "Another user connected to the session".to_owned(),
+            reason: Ending::Other("Another user connected to the session".to_owned()),
         },
     );
     let mut ui = simulator(&shell);
@@ -751,6 +751,44 @@ fn a_session_the_server_ended_says_why() {
     ui.find("The server said: Another user connected to the session")
         .expect("its reason");
     ui.click("Reconnect").expect("reconnect");
+}
+
+#[test]
+fn a_session_ended_by_the_server_says_it_as_the_csharp_and_a_logoff_says_nothing_more() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: Ending::AdminDisconnect,
+        },
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find(
+            "Error: The remote computer ended the session. An administrator may have ended it, \
+             the connection may have failed while it was being established, or a network \
+             problem may have interrupted it.",
+        )
+        .expect("the C# sentence, as an error");
+    }
+
+    let other = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(other.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: Ending::Logoff,
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("The session ended.").expect("ended");
+    assert!(ui.find("Error:").is_err(), "a logoff is not an error");
+    assert!(ui.find("The server said:").is_err(), "nor a reason");
 }
 
 #[tokio::test]

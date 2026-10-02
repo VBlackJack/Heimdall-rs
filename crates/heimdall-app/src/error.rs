@@ -91,6 +91,16 @@ pub enum UiError {
     },
     /// Connection plus key exchange took too long.
     Timeout,
+    /// The RDP server refused the logon, and why.
+    RdpRefused {
+        /// Why.
+        refusal: heimdall_rdp::Refusal,
+    },
+    /// The RDP server ended the connection before its session started, and why.
+    RdpEnded {
+        /// Why.
+        ending: heimdall_rdp::Ending,
+    },
     /// An RDP session or connection failed in the protocol.
     RdpProtocol {
         /// What failed, in the library's words.
