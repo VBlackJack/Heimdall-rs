@@ -112,3 +112,43 @@ async fn permissions_set_are_the_ones_listed_and_on_disk_with_the_owner_and_grou
     assert_eq!(item.owner, Some(on_disk.uid()));
     assert_eq!(item.group, Some(on_disk.gid()));
 }
+
+#[tokio::test]
+async fn the_permissions_of_a_link_are_never_set_on_what_it_points_to() {
+    let Some((_server, session)) = start().await else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("secret");
+    std::fs::write(&file, b"key").expect("written");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o600)).expect("mode");
+    let link = dir.path().join("link");
+    std::os::unix::fs::symlink(&file, &link).expect("link");
+
+    let refused = step(session.set_permissions(&remote(&link), 0o777)).await;
+    assert_eq!(refused, Err(heimdall_files::RemoteError::IsLink));
+    let on_disk = std::fs::metadata(&file).expect("metadata");
+    assert_eq!(on_disk.permissions().mode() & 0o7777, 0o600, "untouched");
+}
+
+#[tokio::test]
+async fn a_download_never_replaces_a_local_file_unasked() {
+    let Some((_server, session)) = start().await else {
+        return;
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let source = dir.path().join("source");
+    std::fs::write(&source, b"theirs").expect("source");
+    let target = dir.path().join("target");
+    std::fs::write(&target, b"mine").expect("target");
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    let refused =
+        step(session.download_with(&remote(&source), &target, false, &cancel, |_| {})).await;
+    assert_eq!(refused, Err(heimdall_files::RemoteError::LocalExists));
+    assert_eq!(std::fs::read(&target).expect("target"), b"mine");
+    step(session.download_with(&remote(&source), &target, true, &cancel, |_| {}))
+        .await
+        .expect("replaced when agreed");
+    assert_eq!(std::fs::read(&target).expect("target"), b"theirs");
+}

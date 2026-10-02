@@ -1190,6 +1190,9 @@ pub struct ImportSummary {
     /// Profiles imported without settings Heimdall-rs does not have: the name, made safe,
     /// and what was left out.
     pub dropped: Vec<(String, Vec<heimdall_core::import::csharp::Dropped>)>,
+    /// For the migration of this computer's C# store, the trusted SSH servers carried over;
+    /// or why they could not be.
+    pub host_keys: Option<Result<heimdall_ssh::Carried, String>>,
 }
 
 /// A modal decision that concerns the whole window.
@@ -2571,7 +2574,7 @@ impl App {
             }
         };
         let settings = std::fs::read_to_string(dir.join(LEGACY_SETTINGS_FILE_NAME)).ok();
-        let report = match csharp::import(&servers, settings.as_deref()) {
+        let mut report = match csharp::import(&servers, settings.as_deref()) {
             Ok(report) => report,
             Err(error) => {
                 self.dialog = Some(Dialog::ImportFailed {
@@ -2580,8 +2583,17 @@ impl App {
                 return;
             }
         };
+        let host_keys = std::mem::take(&mut report.host_keys);
         // Saved before it is kept: a failed save leaves the list as its file is.
-        if let Some(summary) = self.merge_import(report) {
+        if let Some(mut summary) = self.merge_import(report) {
+            // This computer's own C# store: its trusted servers are trusted here too.
+            summary.host_keys = Some(
+                heimdall_ssh::carry_over(
+                    &heimdall_ssh::KnownHosts::new(&self.config.known_hosts),
+                    &host_keys,
+                )
+                .map_err(|error| error.to_string()),
+            );
             self.dialog = Some(Dialog::ImportDone(summary));
         }
     }

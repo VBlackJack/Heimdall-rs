@@ -15,8 +15,9 @@
  */
 
 //! Downloads against OpenSSH's `sftp-server`: complete, resumed, restarted when the
-//! remote file changed or the part file is damaged, cancelled then resumed, and never
-//! written through a link planted where the part file goes.
+//! remote file changed or the part file is damaged, cancelled then resumed, never
+//! written through a link planted where the part file goes, and never committed over a
+//! local file the user did not agree to replace.
 
 #![cfg(unix)]
 
@@ -278,4 +279,48 @@ async fn a_directory_is_not_downloaded() {
         "{refused:?}"
     );
     assert!(!setup.part().exists());
+}
+
+#[tokio::test]
+async fn a_local_file_not_agreed_to_be_replaced_is_left_and_the_download_kept() {
+    let Some((_server, client)) = start().await else {
+        return;
+    };
+    let setup = Setup::new();
+    // Appeared after the user was asked, or never asked about.
+    std::fs::write(setup.target(), b"mine").expect("local file");
+    let config = TransferConfig {
+        replace_local: false,
+        ..TransferConfig::default()
+    };
+    let refused = step(download(
+        &client,
+        &remote(&setup.source()),
+        &setup.target(),
+        &config,
+        &CancellationToken::new(),
+        |_| {},
+    ))
+    .await
+    .expect_err("refused");
+    assert!(matches!(refused, TransferError::LocalExists), "{refused:?}");
+    assert_eq!(std::fs::read(setup.target()).expect("target"), b"mine");
+    assert!(
+        std::fs::read(setup.part()).expect("part") == setup.content,
+        "the complete download is kept"
+    );
+
+    // Agreed this time: resumed from the kept part's last mark, and the file replaced.
+    let report = step(download(
+        &client,
+        &remote(&setup.source()),
+        &setup.target(),
+        &TransferConfig::default(),
+        &CancellationToken::new(),
+        |_| {},
+    ))
+    .await
+    .expect("downloaded");
+    assert!(report.resumed_from > 0, "resumed, not started over");
+    setup.assert_complete();
 }

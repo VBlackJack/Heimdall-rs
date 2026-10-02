@@ -180,6 +180,7 @@ async fn reads_out_of_order_and_short_still_rebuild_the_file() {
         chunk: CHUNK,
         in_flight: 16,
         preserve_times: false,
+        ..TransferConfig::default()
     };
     let report = tokio::time::timeout(
         Duration::from_secs(60),
@@ -214,6 +215,7 @@ async fn a_cancel_amid_disorder_keeps_only_a_whole_prefix() {
         chunk: CHUNK,
         in_flight: 16,
         preserve_times: false,
+        ..TransferConfig::default()
     };
     let cancel = CancellationToken::new();
     let trigger = cancel.clone();
@@ -265,6 +267,7 @@ async fn ends_of_file_arriving_smallest_first_do_not_move_the_end() {
         chunk: CHUNK,
         in_flight: 16,
         preserve_times: false,
+        ..TransferConfig::default()
     };
     let report = tokio::time::timeout(
         Duration::from_secs(60),

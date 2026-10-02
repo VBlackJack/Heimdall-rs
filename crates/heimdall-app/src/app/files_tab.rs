@@ -1270,7 +1270,7 @@ fn prepare(
                     direction,
                     remote,
                     local,
-                    replace: true,
+                    replace: exists,
                     folder: entry.kind == EntryKind::Directory,
                     cancel: CancellationToken::new(),
                 },

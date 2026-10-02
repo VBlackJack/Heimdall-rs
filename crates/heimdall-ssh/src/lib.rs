@@ -32,6 +32,7 @@ mod key_file;
 mod known_hosts;
 pub mod known_hosts_import;
 mod options;
+mod pins;
 mod prompter;
 mod run_trust;
 mod secret;
@@ -47,6 +48,7 @@ pub use known_hosts::{
     KnownHostEntry, KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
 pub use options::{AgentSource, ConnectOptions, TerminalSize};
+pub use pins::{Carried, PinVerdict, Pins, carry_over, is_fingerprint, pin_verdict};
 pub use prompter::{
     KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PassphraseQuestion, PasswordQuestion,
     Prompter, UsernameQuestion,

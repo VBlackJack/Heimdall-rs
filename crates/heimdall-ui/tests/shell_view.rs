@@ -3015,6 +3015,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         skipped: Vec::new(),
         warnings: Vec::new(),
         stored_credentials: None,
+        host_keys: None,
         dropped: vec![(
             "desk".to_owned(),
             vec![Dropped::RdpPrinters, Dropped::RdpSmartCards],
