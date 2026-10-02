@@ -25,7 +25,7 @@ mod common;
 use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
 use std::path::Path;
 
-use common::{pattern, remote, start, step};
+use common::{pattern, remote, start, start_without_extensions, step};
 use heimdall_sftp::transfer::{TransferConfig, TransferError, upload};
 use tokio_util::sync::CancellationToken;
 
@@ -242,4 +242,127 @@ async fn a_local_link_is_not_followed() {
         "{refused:?}"
     );
     assert!(names(setup.remote.path()).is_empty());
+}
+
+#[tokio::test]
+async fn a_replaced_file_keeps_its_own_permissions() {
+    let Some((_server, client)) = start().await else {
+        return;
+    };
+    // The local copy is readable by everyone; the file on the server is private.
+    let setup = Setup::new(0o644);
+    std::fs::write(setup.target(), b"secret").expect("existing target");
+    std::fs::set_permissions(setup.target(), std::fs::Permissions::from_mode(0o600))
+        .expect("private");
+    step(upload(
+        &client,
+        &setup.source(),
+        &remote(&setup.target()),
+        true,
+        &TransferConfig::default(),
+        &CancellationToken::new(),
+        |_| {},
+    ))
+    .await
+    .expect("replaced");
+    let mode = std::fs::metadata(setup.target()).expect("target").mode() & 0o7777;
+    assert_eq!(mode, 0o600, "a private file stays private: {mode:o}");
+    assert!(same(
+        &std::fs::read(setup.target()).expect("replaced"),
+        &setup.content
+    ));
+}
+
+#[tokio::test]
+async fn a_folder_or_a_link_is_never_replaced_by_an_upload() {
+    let Some((_server, client)) = start().await else {
+        return;
+    };
+    let setup = Setup::new(0o644);
+    let elsewhere = setup.remote.path().join("elsewhere.txt");
+    std::fs::write(&elsewhere, b"pointed at").expect("pointed");
+    let folder = setup.remote.path().join("folder");
+    std::fs::create_dir(&folder).expect("folder");
+    let link = setup.remote.path().join("link");
+    std::os::unix::fs::symlink(&elsewhere, &link).expect("link");
+    for destination in [&folder, &link] {
+        let refused = step(upload(
+            &client,
+            &setup.source(),
+            &remote(destination),
+            true,
+            &TransferConfig::default(),
+            &CancellationToken::new(),
+            |_| {},
+        ))
+        .await
+        .expect_err("refused");
+        assert!(
+            matches!(refused, TransferError::DestinationNotAFile),
+            "{destination:?}: {refused:?}"
+        );
+    }
+    assert!(folder.is_dir(), "the folder is kept");
+    assert!(
+        std::fs::symlink_metadata(&link)
+            .expect("link")
+            .file_type()
+            .is_symlink(),
+        "the link is kept"
+    );
+    assert_eq!(std::fs::read(&elsewhere).expect("pointed"), b"pointed at");
+    assert_eq!(
+        names(setup.remote.path()),
+        vec!["elsewhere.txt", "folder", "link"],
+        "no temporary file left"
+    );
+}
+
+#[tokio::test]
+async fn without_an_atomic_rename_an_existing_file_is_left_as_it_is() {
+    let Some((_server, client)) = start_without_extensions().await else {
+        return;
+    };
+    let setup = Setup::new(0o644);
+    std::fs::write(setup.target(), b"older").expect("existing target");
+    let refused = step(upload(
+        &client,
+        &setup.source(),
+        &remote(&setup.target()),
+        true,
+        &TransferConfig::default(),
+        &CancellationToken::new(),
+        |_| {},
+    ))
+    .await
+    .expect_err("refused");
+    assert!(
+        matches!(refused, TransferError::ReplaceNotSafe),
+        "{refused:?}"
+    );
+    assert_eq!(
+        std::fs::read(setup.target()).expect("kept"),
+        b"older",
+        "never removed first"
+    );
+    assert_eq!(
+        names(setup.remote.path()),
+        vec!["target.bin"],
+        "temporary file removed"
+    );
+
+    // A file that does not exist yet is still created.
+    let fresh = setup.remote.path().join("fresh.bin");
+    step(upload(
+        &client,
+        &setup.source(),
+        &remote(&fresh),
+        true,
+        &TransferConfig::default(),
+        &CancellationToken::new(),
+        |_| {},
+    ))
+    .await
+    .expect("created");
+    assert!(same(&std::fs::read(&fresh).expect("fresh"), &setup.content));
 }
