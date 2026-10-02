@@ -1152,6 +1152,13 @@ impl Shell {
     }
 
     fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
+        if shortcut == WindowShortcut::Settings {
+            // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
+            if self.app.dialog.is_none() {
+                let _ = self.view_message(&Message::ShowSettings);
+            }
+            return Vec::new();
+        }
         let Some(active) = self.app.active else {
             return Vec::new();
         };
@@ -1174,7 +1181,8 @@ impl Shell {
             (WindowShortcut::PreviousTab, Some(index)) => {
                 AppMessage::SelectTab(self.app.tabs[(index + count - 1) % count].id)
             }
-            (_, None) => return Vec::new(),
+            // Settings: shown above, tab or no tab.
+            (WindowShortcut::Settings, _) | (_, None) => return Vec::new(),
         };
         self.app.update(message)
     }
@@ -5317,6 +5325,33 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn ctrl_comma_left_by_every_widget_is_the_settings_shortcut() {
+        let comma = |status| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Character(",".into()),
+                    modified_key: Key::Character(",".into()),
+                    physical_key: Physical::Unidentified(NativeCode::Unidentified),
+                    location: Location::Standard,
+                    modifiers: Modifiers::CTRL,
+                    text: None,
+                    repeat: false,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        assert!(matches!(
+            comma(event::Status::Ignored),
+            Some(Message::Shortcut(WindowShortcut::Settings))
+        ));
+        assert!(
+            comma(event::Status::Captured).is_none(),
+            "a field that took it keeps it"
+        );
     }
 
     #[test]
