@@ -83,6 +83,7 @@ ui-profile-vault-entry-help = Optional name of this server's entry in the extern
 ui-status-provider-no-password = The external credential provider returned no password for "{ $name }". Check the command configuration in Settings > Security.
 ui-status-provider-failed = External credential provider failed: { $detail }
 ui-status-provider-timed-out = External credential provider timed out.
+ui-status-link-not-a-folder = { $name } does not point at a directory.
 ui-status-winrm-gateway-ntlm = WinRM over a gateway: Kerberos is unavailable, authentication falls back to NTLM.
 ui-settings-provider-enabled = Use external credential provider
 ui-settings-provider-disabled-hint = Enable 'Use external credential provider' to configure these options
