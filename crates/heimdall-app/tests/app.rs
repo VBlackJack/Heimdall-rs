@@ -667,6 +667,36 @@ fn a_multi_line_paste_into_a_shell_without_bracketed_paste_asks_first() {
 }
 
 #[test]
+fn a_destructive_command_is_asked_about_even_on_one_line_and_in_bracketed_paste() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, sink) = connected(&mut app, "a");
+    output(&mut app, tab, attempt, b"\x1b[?2004h");
+    app.update(Message::ClipboardText {
+        tab,
+        text: Some("sudo shutdown -r now".to_owned()),
+    });
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::ConfirmPaste {
+            lines: 1,
+            command: Some("shutdown"),
+            ..
+        })
+    ));
+    assert!(sink.written().is_empty(), "nothing before the answer");
+    app.update(Message::DismissDialog);
+    assert!(sink.written().is_empty(), "nothing once refused");
+
+    app.update(Message::ClipboardText {
+        tab,
+        text: Some("uptime".to_owned()),
+    });
+    assert!(app.dialog.is_none(), "a harmless line goes straight in");
+    assert!(sink.written().ends_with(b"\x1b[200~uptime\x1b[201~"));
+}
+
+#[test]
 fn a_paste_counts_every_line_the_shell_would_run() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));

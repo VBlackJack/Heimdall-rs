@@ -28,8 +28,10 @@
 //! its own way: a rename never replaces, a delete never follows a link, a download never
 //! reads anything but a regular file.
 
+pub mod conflict;
 mod ftp;
 pub mod ftps_trust;
+mod plan;
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -44,6 +46,7 @@ pub use ftp::{FtpClient, FtpConnectError, FtpSecurity, FtpTarget};
 pub use heimdall_sftp::RemotePath;
 pub use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 pub use heimdall_sftp::path::display_bytes;
+pub use plan::{Plan, Ready, Root, Step};
 
 /// The permission bits of a mode, set-user, set-group and sticky included.
 const PERMISSION_BITS: u32 = 0o7777;
@@ -343,70 +346,6 @@ impl RemoteSession {
                     .upload(local, remote, replace, cancel, progress)
                     .await
             }
-        }
-    }
-
-    /// Downloads folder `remote` with everything in it into `local`, never following a link.
-    ///
-    /// # Errors
-    ///
-    /// [`RemoteError`]; [`RemoteError::Cancelled`] when `cancel` fired.
-    pub async fn download_folder(
-        &self,
-        remote: &RemotePath,
-        local: &Path,
-        cancel: &CancellationToken,
-        progress: impl FnMut(u64) + Send,
-    ) -> Result<FolderReport, RemoteError> {
-        match self {
-            Self::Sftp(client) => tree::download_tree(
-                client,
-                remote,
-                local,
-                &TransferConfig::default(),
-                cancel,
-                progress,
-            )
-            .await
-            .map(|report| FolderReport {
-                skipped: report.skipped.len(),
-            })
-            .map_err(|e| tree_error(&e)),
-            Self::Ftp(client) => {
-                client
-                    .download_folder(remote, local, cancel, progress)
-                    .await
-            }
-        }
-    }
-
-    /// Uploads folder `local` with everything in it into `remote`, never following a link.
-    ///
-    /// # Errors
-    ///
-    /// [`RemoteError`]; [`RemoteError::Cancelled`] when `cancel` fired.
-    pub async fn upload_folder(
-        &self,
-        local: &Path,
-        remote: &RemotePath,
-        cancel: &CancellationToken,
-        progress: impl FnMut(u64) + Send,
-    ) -> Result<FolderReport, RemoteError> {
-        match self {
-            Self::Sftp(client) => tree::upload_tree(
-                client,
-                local,
-                remote,
-                &TransferConfig::default(),
-                cancel,
-                progress,
-            )
-            .await
-            .map(|report| FolderReport {
-                skipped: report.skipped.len(),
-            })
-            .map_err(|e| tree_error(&e)),
-            Self::Ftp(client) => client.upload_folder(local, remote, cancel, progress).await,
         }
     }
 }

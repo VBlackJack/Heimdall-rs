@@ -73,6 +73,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
+        several_servers: false,
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),

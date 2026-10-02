@@ -130,6 +130,7 @@ fn rdp() -> Vec<RdpProfile> {
             vault_entry: Some("Win/DC".to_owned()),
             forwards: Forwards::default(),
             follow_defaults: false,
+            several_servers: false,
         },
         RdpProfile {
             id: ProfileId::new("desk"),
@@ -151,6 +152,7 @@ fn rdp() -> Vec<RdpProfile> {
             vault_entry: None,
             forwards: Forwards::default(),
             follow_defaults: false,
+            several_servers: false,
         },
     ]
 }

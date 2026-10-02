@@ -245,10 +245,6 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sessions sont encore ouvertes et seront déconnectées.
 }
 ui-dialog-exit-confirm = Quitter
-ui-dialog-overwrite-title = Remplacer le fichier ?
-ui-dialog-overwrite-local-body = { $name } existe déjà dans le dossier local. Le téléchargement le remplace.
-ui-dialog-overwrite-remote-body = { $name } existe déjà sur le serveur. L'envoi le remplace.
-ui-dialog-overwrite-confirm = Remplacer
 ui-dialog-new-folder-title = Nouveau dossier
 ui-dialog-new-folder-confirm = Créer
 ui-dialog-rename-title = Renommer

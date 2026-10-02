@@ -22,7 +22,9 @@ mod common;
 
 use std::path::{Path, PathBuf};
 
-use heimdall_app::files::{Direction, EntryKind, LocalEntry, RemoteEntry, Side, TransferEvent};
+use heimdall_app::files::{
+    Direction, EntryKind, LocalEntry, RemoteEntry, Side, TransferEvent, plan_transfer,
+};
 use heimdall_app::{
     App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message as AppMessage, TabId,
 };
@@ -296,10 +298,19 @@ async fn a_file_click_selects_and_the_button_sends_it() {
 async fn a_running_transfer_shows_its_progress_and_can_be_cancelled() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut core, tab) = files_tab(dir.path()).await;
-    let effects = core.update(AppMessage::Files(FilesMessage::Open {
+    let planning = core.update(AppMessage::Files(FilesMessage::Open {
         tab,
         side: Side::Remote,
         index: 1,
+    }));
+    let [Effect::PlanTransfer { request, .. }] = planning.as_slice() else {
+        panic!("{planning:?}")
+    };
+    let result = plan_transfer((**request).clone()).await.map(Box::new);
+    let effects = core.update(AppMessage::Files(FilesMessage::Planned {
+        tab,
+        request: request.clone(),
+        result,
     }));
     let [Effect::Transfer { id, .. }] = effects.as_slice() else {
         panic!("{effects:?}")
@@ -1111,19 +1122,30 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
         .files
         .as_ref()
         .expect("files");
-    assert_eq!(files.transfers.len(), 1, "sent");
+    assert!(
+        files.transfers.is_empty(),
+        "planned first: nothing is written before the plan says what is in the way"
+    );
     assert!(
         simulator(&shell).find("Drop files to upload").is_err(),
         "dropped: no longer said"
     );
+    // What is no file at all is refused at once: the drop reached the tab.
+    let _ = shell.update(Message::FileDropped(dir.path().join("gone")));
+    let files = shell
+        .app()
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files");
+    assert_eq!(files.transfers.len(), 1, "refused, and said so");
 
     // Not while the Settings page shows.
     let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::FilesHovered(true));
     assert!(simulator(&shell).find("Drop files to upload").is_err());
-    let again = dir.path().join("again.txt");
-    std::fs::write(&again, b"x").expect("written");
-    let _ = shell.update(Message::FileDropped(again));
+    let _ = shell.update(Message::FileDropped(dir.path().join("gone again")));
     let files = shell
         .app()
         .tab(tab)
@@ -1132,4 +1154,43 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
         .as_ref()
         .expect("files");
     assert_eq!(files.transfers.len(), 1, "nothing more");
+}
+
+#[tokio::test]
+async fn a_transfer_with_something_in_its_way_asks_about_every_destination_at_once() {
+    use heimdall_files::conflict::Choice;
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    std::fs::write(dir.path().join("backup.tar.gz"), b"mine").expect("in the way");
+    let planning = core.update(AppMessage::Files(FilesMessage::Open {
+        tab,
+        side: Side::Remote,
+        index: 1,
+    }));
+    let [Effect::PlanTransfer { request, .. }] = planning.as_slice() else {
+        panic!("{planning:?}")
+    };
+    let result = plan_transfer((**request).clone()).await.map(Box::new);
+    let started = core.update(AppMessage::Files(FilesMessage::Planned {
+        tab,
+        request: request.clone(),
+        result,
+    }));
+    assert!(started.is_empty(), "nothing before the answer");
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "files-conflicts.png");
+    let mut ui = simulator(&shell);
+    ui.find("File conflicts").expect("title");
+    ui.find("Choose what Heimdall should do before the transfer starts.")
+        .expect("hint");
+    ui.find("1 conflicting destination")
+        .expect("count, singular");
+    ui.find("Apply to all:").expect("apply to all");
+    ui.find("backup.tar.gz").expect("the destination");
+    ui.find("Destination").expect("column");
+    ui.click("Replace").expect("replace them all");
+    assert!(matches!(
+        files_messages(ui).as_slice(),
+        [FilesMessage::ConflictAll(Choice::Replace)]
+    ));
 }

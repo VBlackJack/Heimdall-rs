@@ -18,14 +18,15 @@
 
 use std::path::{Path, PathBuf};
 
-use heimdall_files::{RemotePath, RemoteSession};
+use heimdall_files::conflict::{Choice, Kind};
+use heimdall_files::{Plan, RemotePath, Root};
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Dialog, Effect, NameAction};
+use super::{App, ConflictRow, Dialog, Effect, NameAction};
 use crate::files::{
-    Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey, FilesPane, Side,
-    SortColumn, Transfer, TransferEvent, TransferId, TransferRequest, TransferState, download_name,
-    octal_mode, typed_name,
+    Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey, FilesPane,
+    PlanRequest, PlannedRoot, Side, SortColumn, Transfer, TransferEvent, TransferId,
+    TransferRequest, TransferState, download_name, octal_mode, typed_name,
 };
 use crate::ids::TabId;
 
@@ -240,6 +241,25 @@ pub enum FilesMessage {
         /// How it went.
         result: Result<(), FilesError>,
     },
+    /// A transfer's plan arrived: every entry it would write, checked against the
+    /// destination.
+    Planned {
+        /// Tab.
+        tab: TabId,
+        /// What was planned.
+        request: Box<PlanRequest>,
+        /// The plan; or why not.
+        result: Result<Box<Plan>, FilesError>,
+    },
+    /// The answer picked for one destination in the way.
+    ConflictChosen {
+        /// Row of the question.
+        row: usize,
+        /// Answer.
+        choice: Choice,
+    },
+    /// The same answer for every destination in the way that allows it.
+    ConflictAll(Choice),
 }
 
 impl FilesMessage {
@@ -344,6 +364,11 @@ impl std::fmt::Debug for FilesMessage {
                 tab.value(),
                 result.is_ok()
             ),
+            Self::Planned { tab, result, .. } => {
+                write!(f, "Planned({}, {})", tab.value(), result.is_ok())
+            }
+            Self::ConflictChosen { row, choice } => write!(f, "ConflictChosen({row}, {choice:?})"),
+            Self::ConflictAll(choice) => write!(f, "ConflictAll({choice:?})"),
         }
     }
 }
@@ -368,13 +393,12 @@ enum PendingKind {
     Permissions { remotes: Vec<RemotePath> },
 }
 
-/// A transfer waiting for the user to confirm it replaces an existing file.
+/// A planned transfer waiting for the user's answers to the destinations in its way.
 #[derive(Debug, Clone)]
-pub(super) struct PendingTransfer {
+pub(super) struct PendingPlan {
     tab: TabId,
-    request: TransferRequest,
-    label: String,
-    total: Option<u64>,
+    request: PlanRequest,
+    plan: Plan,
 }
 
 #[cfg(unix)]
@@ -527,6 +551,9 @@ impl App {
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
+            message @ (FilesMessage::Planned { .. }
+            | FilesMessage::ConflictChosen { .. }
+            | FilesMessage::ConflictAll(_)) => self.plan_message(message),
             FilesMessage::Cancel { tab, id } => {
                 if let Some(files) = self.files_mut(tab)
                     && let Some(transfer) = files.transfers.iter().find(|t| t.id == id)
@@ -626,32 +653,26 @@ impl App {
                 .push(failed(Direction::Upload, label, FilesError::NotAFile));
             return Vec::new();
         }
-        let bytes = name_bytes(name);
-        let exists = files.remote.listing.iter().any(|entry| entry.name == bytes);
-        let label = name.to_string_lossy().into_owned();
         let size = (!folder)
             .then(|| path.metadata().map(|meta| meta.len()).ok())
             .flatten();
-        let request = TransferRequest {
-            client,
-            direction: Direction::Upload,
-            remote: files.remote.path.join(&bytes),
-            local: path.to_owned(),
-            replace: exists,
-            folder,
-            cancel: CancellationToken::new(),
+        let root = PlannedRoot {
+            root: Root {
+                remote: files.remote.path.join(&name_bytes(name)),
+                local: path.to_owned(),
+                kind: if folder { Kind::Folder } else { Kind::File },
+            },
+            label: name.to_string_lossy().into_owned(),
+            total: size,
         };
-        if exists {
-            self.pending_transfers.push_back(PendingTransfer {
-                tab,
-                request,
-                label,
-                total: size,
-            });
-            self.ask_next_overwrite();
-            return Vec::new();
-        }
-        self.launch(tab, request, label, size)
+        vec![Effect::PlanTransfer {
+            tab,
+            request: Box::new(PlanRequest {
+                client,
+                direction: Direction::Upload,
+                roots: vec![root],
+            }),
+        }]
     }
 
     /// Bookmarks the server's folder shown, once, and says so.
@@ -867,37 +888,181 @@ impl App {
             Direction::Download => files.remote.chosen(),
             Direction::Upload => files.local.chosen(),
         };
-        let prepared: Vec<_> = chosen
+        let roots: Vec<_> = chosen
             .into_iter()
-            .filter_map(|index| prepare(files, client.clone(), direction, index))
+            .filter_map(|index| prepare(files, direction, index))
             .collect();
-        let mut effects = Vec::new();
-        for (request, label, total, exists) in prepared {
-            if exists {
-                // Asked one after the other, once nothing else is asked.
-                self.pending_transfers.push_back(PendingTransfer {
-                    tab,
-                    request,
-                    label,
-                    total,
-                });
-            } else {
-                effects.extend(self.launch(tab, request, label, total));
+        if roots.is_empty() {
+            return Vec::new();
+        }
+        // Planned whole first: nothing is written before every conflict is answered.
+        vec![Effect::PlanTransfer {
+            tab,
+            request: Box::new(PlanRequest {
+                client,
+                direction,
+                roots,
+            }),
+        }]
+    }
+
+    /// A transfer's plan, or an answer about what is in its way.
+    fn plan_message(&mut self, message: FilesMessage) -> Vec<Effect> {
+        match message {
+            FilesMessage::Planned {
+                tab,
+                request,
+                result,
+            } => self.planned(tab, *request, result),
+            FilesMessage::ConflictChosen { row, choice } => {
+                self.choose_conflict(Some(row), choice);
+                Vec::new()
+            }
+            FilesMessage::ConflictAll(choice) => {
+                self.choose_conflict(None, choice);
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// A transfer's plan arrived: launched when nothing is in the way, asked about
+    /// otherwise.
+    fn planned(
+        &mut self,
+        tab: TabId,
+        request: PlanRequest,
+        result: Result<Box<Plan>, FilesError>,
+    ) -> Vec<Effect> {
+        let plan = match result {
+            Ok(plan) => *plan,
+            Err(error) => {
+                if let Some(files) = self.files_mut(tab) {
+                    for root in request.roots {
+                        files
+                            .transfers
+                            .push(failed(request.direction, root.label, error.clone()));
+                    }
+                }
+                return Vec::new();
+            }
+        };
+        if !plan.has_conflicts() {
+            return self.launch_plan(tab, &request, &plan, &[]);
+        }
+        // Asked one after the other, once nothing else is asked.
+        self.pending_plans
+            .push_back(PendingPlan { tab, request, plan });
+        self.ask_next_conflicts();
+        Vec::new()
+    }
+
+    /// Asks about the next planned transfer with destinations in its way, unless something
+    /// else is being asked.
+    pub(super) fn ask_next_conflicts(&mut self) {
+        if self.dialog.is_some() {
+            return;
+        }
+        if let Some(next) = self.pending_plans.front() {
+            self.dialog = Some(Dialog::FileConflicts {
+                tab: next.tab,
+                rows: next
+                    .plan
+                    .conflicts()
+                    .filter_map(|(index, step, checked)| {
+                        let allowed = checked.allowed?;
+                        Some(ConflictRow {
+                            index,
+                            target: crate::text::server_text(&target_text(&step.target)),
+                            folder: step.kind == Kind::Folder,
+                            allowed,
+                            choice: allowed.default_choice()?,
+                        })
+                    })
+                    .collect(),
+            });
+        }
+    }
+
+    /// Picks `choice` for row `only`, or for every row without it, where it is allowed.
+    fn choose_conflict(&mut self, only: Option<usize>, choice: Choice) {
+        if let Some(Dialog::FileConflicts { rows, .. }) = self.dialog.as_mut() {
+            for (index, row) in rows.iter_mut().enumerate() {
+                if only.is_none_or(|only| only == index) && row.allowed.allows(choice) {
+                    row.choice = choice;
+                }
             }
         }
-        self.ask_next_overwrite();
+    }
+
+    /// The user answered every destination in the way of the transfer asked about.
+    pub(super) fn confirm_conflicts(&mut self, rows: &[ConflictRow]) -> Vec<Effect> {
+        let Some(pending) = self.pending_plans.pop_front() else {
+            return Vec::new();
+        };
+        let answers: Vec<_> = rows.iter().map(|row| (row.index, row.choice)).collect();
+        let effects = self.launch_plan(pending.tab, &pending.request, &pending.plan, &answers);
+        self.ask_next_conflicts();
         effects
     }
 
-    /// Asks about the next transfer waiting to replace a file.
-    fn ask_next_overwrite(&mut self) {
-        if let Some(next) = self.pending_transfers.front() {
-            self.dialog = Some(Dialog::ConfirmOverwrite {
-                tab: next.tab,
-                direction: next.request.direction,
-                name: next.label.clone(),
-            });
+    /// The question about the transfer shown was cancelled: that transfer goes nowhere.
+    pub(super) fn cancel_conflicts(&mut self) {
+        self.pending_plans.pop_front();
+    }
+
+    /// Starts one transfer per picked entry, as answered; an entry skipped whole is not
+    /// started.
+    fn launch_plan(
+        &mut self,
+        tab: TabId,
+        request: &PlanRequest,
+        plan: &Plan,
+        answers: &[(usize, Choice)],
+    ) -> Vec<Effect> {
+        let Ok(ready) = plan.resolve(answers) else {
+            // Rows are built from the plan's own conflicts, each with an allowed answer.
+            return Vec::new();
+        };
+        let mut effects = Vec::new();
+        for (index, (picked, steps)) in request.roots.iter().zip(ready).enumerate() {
+            let transfer = match picked.root.kind {
+                Kind::File => {
+                    let Some(step) = steps.into_iter().next() else {
+                        continue;
+                    };
+                    TransferRequest {
+                        client: request.client.clone(),
+                        direction: request.direction,
+                        remote: step.remote,
+                        local: step.local,
+                        replace: step.replace,
+                        folder: false,
+                        steps: Vec::new(),
+                        left_out: 0,
+                        cancel: CancellationToken::new(),
+                    }
+                }
+                Kind::Folder => {
+                    if steps.is_empty() {
+                        continue;
+                    }
+                    TransferRequest {
+                        client: request.client.clone(),
+                        direction: request.direction,
+                        remote: picked.root.remote.clone(),
+                        local: picked.root.local.clone(),
+                        replace: false,
+                        folder: true,
+                        steps,
+                        left_out: plan.left_out(index),
+                        cancel: CancellationToken::new(),
+                    }
+                }
+            };
+            effects.extend(self.launch(tab, transfer, picked.label.clone(), picked.total));
         }
+        effects
     }
 
     fn launch(
@@ -925,18 +1090,6 @@ impl App {
             id,
             request: Box::new(request),
         }]
-    }
-
-    /// The user confirmed replacing an existing file.
-    pub(super) fn confirm_overwrite(&mut self) -> Vec<Effect> {
-        let Some(pending) = self.pending_transfers.pop_front() else {
-            return Vec::new();
-        };
-        let mut request = pending.request;
-        request.replace = true;
-        let effects = self.launch(pending.tab, request, pending.label, pending.total);
-        self.ask_next_overwrite();
-        effects
     }
 
     fn transfer_event(&mut self, tab: TabId, id: TransferId, event: TransferEvent) -> Vec<Effect> {
@@ -1233,14 +1386,16 @@ impl App {
     }
 }
 
-/// A transfer request for the selected entry: the request, its label, its size when known,
-/// and whether the target exists. A refusal is recorded as a failed transfer.
-fn prepare(
-    files: &mut FilesPane,
-    client: RemoteSession,
-    direction: Direction,
-    index: usize,
-) -> Option<(TransferRequest, String, Option<u64>, bool)> {
+/// The selected entry at `index` as a transfer's picked entry. A refusal is recorded as a
+/// failed transfer.
+fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<PlannedRoot> {
+    let kind = |entry_kind| {
+        if entry_kind == EntryKind::Directory {
+            Kind::Folder
+        } else {
+            Kind::File
+        }
+    };
     Some(match direction {
         Direction::Download => {
             let entry = files.remote.entries.get(index)?;
@@ -1261,24 +1416,16 @@ fn prepare(
                     return None;
                 }
             };
-            let local = files.local.path.join(&name.name);
-            let exists = local.symlink_metadata().is_ok();
-            let remote = files.remote.path.join(&entry.name);
-            (
-                TransferRequest {
-                    client,
-                    direction,
-                    remote,
-                    local,
-                    replace: exists,
-                    folder: entry.kind == EntryKind::Directory,
-                    cancel: CancellationToken::new(),
+            PlannedRoot {
+                root: Root {
+                    remote: files.remote.path.join(&entry.name),
+                    local: files.local.path.join(&name.name),
+                    kind: kind(entry.kind),
                 },
                 label,
                 // A folder's own size is not what its transfer moves.
-                entry.size.filter(|_| entry.kind != EntryKind::Directory),
-                exists,
-            )
+                total: entry.size.filter(|_| entry.kind != EntryKind::Directory),
+            }
         }
         Direction::Upload => {
             let entry = files.local.entries.get(index)?;
@@ -1289,30 +1436,27 @@ fn prepare(
                     .push(failed(direction, label, FilesError::NotAFile));
                 return None;
             }
-            let name = name_bytes(&entry.name);
-            // Against every entry listed: a hidden or filtered one still exists.
-            let exists = files
-                .remote
-                .listing
-                .iter()
-                .any(|remote| remote.name == name);
-            (
-                TransferRequest {
-                    client,
-                    direction,
-                    remote: files.remote.path.join(&name),
+            PlannedRoot {
+                root: Root {
+                    remote: files.remote.path.join(&name_bytes(&entry.name)),
                     local: files.local.path.join(&entry.name),
-                    replace: exists,
-                    folder: entry.kind == EntryKind::Directory,
-                    cancel: CancellationToken::new(),
+                    kind: kind(entry.kind),
                 },
                 label,
                 // A folder's own size is not what its transfer moves.
-                entry.size.filter(|_| entry.kind != EntryKind::Directory),
-                exists,
-            )
+                total: entry.size.filter(|_| entry.kind != EntryKind::Directory),
+            }
         }
     })
+}
+
+/// A destination's names below the destination folder, joined as a path.
+fn target_text(target: &[Vec<u8>]) -> String {
+    target
+        .iter()
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
 }
 
 fn failed(direction: Direction, label: String, error: FilesError) -> Transfer {

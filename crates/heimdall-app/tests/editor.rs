@@ -50,6 +50,7 @@ fn app(dir: &Path) -> App {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
+        several_servers: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

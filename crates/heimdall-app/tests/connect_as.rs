@@ -64,6 +64,7 @@ fn app(dir: &Path) -> App {
         vault_entry: None,
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
+        several_servers: false,
     }]);
     store.merge_local([LocalProfile {
         id: ProfileId::new("sh"),

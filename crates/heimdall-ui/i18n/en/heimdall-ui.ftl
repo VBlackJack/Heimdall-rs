@@ -245,10 +245,6 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sessions are still open and will be disconnected.
 }
 ui-dialog-exit-confirm = Quit
-ui-dialog-overwrite-title = Replace the file?
-ui-dialog-overwrite-local-body = { $name } already exists in the local folder. The download replaces it.
-ui-dialog-overwrite-remote-body = { $name } already exists on the server. The upload replaces it.
-ui-dialog-overwrite-confirm = Replace
 ui-dialog-new-folder-title = New folder
 ui-dialog-new-folder-confirm = Create
 ui-dialog-rename-title = Rename
@@ -264,6 +260,9 @@ ui-dialog-paste-body = { $count ->
    *[other] The text holds { $count } lines. The shell may run each one as a command as soon as it arrives.
 }
 ui-dialog-paste-confirm = Paste
+ui-dialog-paste-dangerous-title = Paste a dangerous command?
+ui-dialog-paste-dangerous-body = The text holds { $command }, a command that can destroy data or stop the machine. Check it before it reaches the shell.
+ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
 ui-dialog-import-skipped = Left out:
@@ -365,6 +364,20 @@ ui-files-error-local = This computer refused: { $detail }
 ui-files-error-unsafe-name = The server's name "{ $name }" cannot be used here: { $reason }.
 ui-files-error-not-a-file = Only files and folders can be transferred, not links or special files.
 ui-files-error-is-link = The permissions of a symbolic link cannot be changed: the server would change those of what it points to.
+ui-files-conflict-title = File conflicts
+ui-files-conflict-hint = Choose what Heimdall should do before the transfer starts.
+ui-files-conflict-summary = { $count ->
+    [one] { $count } conflicting destination
+   *[other] { $count } conflicting destinations
+}
+ui-files-conflict-apply-all = Apply to all:
+ui-files-conflict-skip = Skip
+ui-files-conflict-replace = Replace
+ui-files-conflict-rename = Auto-rename
+ui-files-conflict-destination = Destination
+ui-files-conflict-action = Action
+ui-files-conflict-apply = Apply
+ui-files-conflict-folder-skip = This folder and all of its planned contents will be skipped.
 ui-files-error-destination-not-a-file = Upload refused: the destination already exists and is not a regular file.
 ui-files-error-replace-not-safe = Upload refused: the destination already exists and the server cannot replace it safely, so it was left as it is.
 ui-files-error-too-large = The folder holds too many entries to walk.
@@ -678,6 +691,7 @@ ui-profile-options-telnet = Telnet Options
 ui-profile-toggle-clipboard = Redirect clipboard
 ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
+ui-profile-toggle-several-servers = Several servers answer at this address: ask about each new certificate
 ui-profile-rdp-follow-defaults = Use global RDP defaults
 ui-profile-rdp-defaults-banner = This server is using your global RDP defaults. Uncheck "Use global RDP defaults" to set per-server options.
 ui-profile-rdp-defaults-not-in-effect = Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.
