@@ -51,3 +51,41 @@ fn every_one_variant_names_its_number() {
         assert!(fixed.is_empty(), "{language}: {fixed:?}");
     }
 }
+
+/// A count is worded by the plural rule of its language, as the C# words it: "(s)" reads as a
+/// form left unfinished, and in French it is wrong for 0 and 1 alike.
+#[test]
+fn no_text_leaves_a_plural_to_the_reader() {
+    let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+        let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+        let source = std::fs::read_to_string(&path).expect("readable");
+        let unfinished: Vec<&str> = source
+            .lines()
+            .filter(|line| !line.trim_start().starts_with('#') && line.contains("(s)"))
+            .collect();
+        assert!(unfinished.is_empty(), "{language}: {unfinished:#?}");
+    }
+}
+
+/// The plural is chosen by the number: English puts only 1 in `one`, French puts 0 there too.
+/// This file's own process, so switching the language here changes nothing elsewhere.
+#[test]
+fn a_count_takes_the_form_its_language_gives_its_number() {
+    use std::collections::HashMap;
+
+    use heimdall_core::settings::Language;
+
+    let say = |count: usize| {
+        heimdall_ui::i18n::LOADER.get_args("ui-selection-count", HashMap::from([("count", count)]))
+    };
+    heimdall_ui::i18n::apply(Some(Language::English));
+    assert_eq!(say(1), "1 item selected");
+    assert_eq!(say(0), "0 items selected");
+    assert_eq!(say(2), "2 items selected");
+    heimdall_ui::i18n::apply(Some(Language::French));
+    assert_eq!(say(0), "0 élément sélectionné");
+    assert_eq!(say(1), "1 élément sélectionné");
+    assert_eq!(say(2), "2 éléments sélectionnés");
+    heimdall_ui::i18n::apply(Some(Language::English));
+}

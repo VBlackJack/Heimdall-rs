@@ -14,19 +14,23 @@
  * limitations under the License.
  */
 
-//! `WinRM` tabs: a local `PowerShell` entering the remote session the profile describes, or a
-//! tab saying why nothing was started.
+//! `WinRM` tabs: a local `PowerShell` entering the remote session the profile describes and
+//! ending with it, or a tab saying why nothing was started.
 
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use heimdall_app::local_driver::LocalShell;
 use heimdall_app::{App, AppConfig, Effect, Message, Phase, UiError};
 use heimdall_core::profile::{DEFAULT_WINRM_HTTP_PORT, ProfileId, WinRmProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_core::winrm::{POWERSHELL_ARGUMENTS, enter_session};
+use heimdall_core::winrm::{
+    POWERSHELL_ARGUMENTS, REMOTE_SESSION_ENDED_EXIT_CODE, REMOTE_SESSION_NOT_ENTERED_EXIT_CODE,
+    session_command,
+};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_term::local::LocalArguments;
+use heimdall_term::local::{self, LocalArguments, LocalConfig, LocalEvent};
 
 fn profiles_file(dir: &Path) -> PathBuf {
     dir.join("profiles.toml")
@@ -90,7 +94,7 @@ fn a_profile_runs_powershell_entering_its_session() {
         program.display()
     );
     let mut expected: Vec<String> = POWERSHELL_ARGUMENTS.map(str::to_owned).to_vec();
-    expected.push(enter_session(&saved).expect("valid"));
+    expected.push(session_command(&saved).expect("valid"));
     assert_eq!(shell.arguments, LocalArguments::List(expected));
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.tabs[0].phase, Phase::Connecting);
@@ -123,4 +127,129 @@ fn an_unknown_profile_opens_nothing() {
     let effects = app.update(Message::OpenWinRm(ProfileId::new("gone")));
     assert!(effects.is_empty());
     assert!(app.tabs.is_empty());
+}
+
+/// Bound on one launch, paid only when `PowerShell` fails to end: it then sits at a prompt.
+const EXIT_DEADLINE: Duration = Duration::from_secs(60);
+
+/// Written by the double that stands for a session entered then ended.
+const ENTERED_MARKER: &str = "HEIMDALL-TEST-ENTERED";
+
+/// The parameters `Enter-PSSession` is given, so that a double of the same name binds them.
+const DOUBLE_PARAMETERS: &str = "[CmdletBinding()] param($ComputerName, $Port, $Authentication, \
+     [switch]$UseSSL, $SessionOption, $Credential)";
+
+/// A refused connection: a NON-terminating error, as the real cmdlet writes it, so the
+/// command's own `-ErrorAction Stop` is what ends it. No cmdlet is called, so a module path
+/// inherited from another `PowerShell` cannot change the outcome.
+fn failing_double() -> String {
+    format!(
+        "function Enter-PSSession {{ {DOUBLE_PARAMETERS} $PSCmdlet.WriteError(\
+         [System.Management.Automation.ErrorRecord]::new(\
+         [System.Exception]::new('simulated WinRM connection failure'), 'Simulated', \
+         'ConnectionError', $null)) }}"
+    )
+}
+
+/// A session entered and already ended: nothing is pushed, so the next prompt is local at
+/// once, the state a remote `exit` or a dropped connection leaves.
+fn returning_double() -> String {
+    format!(
+        "function Enter-PSSession {{ {DOUBLE_PARAMETERS} $Host.UI.WriteLine('{ENTERED_MARKER}') }}"
+    )
+}
+
+/// The programs a `WinRM` tab can run here: the one the app picks and, on Windows, the
+/// Windows `PowerShell` it falls back to. Empty on a Unix without `pwsh`.
+fn powershells(picked: &str) -> Vec<String> {
+    let mut programs = Vec::new();
+    if local::program_path(Some(picked)).is_ok() {
+        programs.push(picked.to_owned());
+    }
+    #[cfg(windows)]
+    {
+        let system = local::program_path(None)
+            .expect("Windows PowerShell")
+            .to_string_lossy()
+            .into_owned();
+        if !programs.contains(&system) {
+            programs.push(system);
+        }
+    }
+    programs
+}
+
+/// Runs `program` with the arguments the app gave, the double defined ahead of the command;
+/// the output and the exit code.
+async fn run_with_double(
+    program: &str,
+    arguments: &[String],
+    double: &str,
+) -> (String, Option<i32>) {
+    let mut arguments = arguments.to_vec();
+    let command = arguments.pop().expect("the command is last");
+    arguments.push(format!("{double}; {command}"));
+    let mut session = local::spawn(&LocalConfig {
+        program: Some(program.to_owned()),
+        arguments: LocalArguments::List(arguments),
+        working_directory: None,
+        columns: 80,
+        rows: 24,
+    })
+    .expect("spawned");
+    let mut output = Vec::new();
+    let ended = tokio::time::timeout(EXIT_DEADLINE, async {
+        while let Some(event) = session.events.recv().await {
+            match event {
+                LocalEvent::Output(bytes) => output.extend(bytes),
+                LocalEvent::Exited(code) => return Some(code),
+            }
+        }
+        None
+    })
+    .await;
+    let output = String::from_utf8_lossy(&output).into_owned();
+    match ended {
+        Ok(Some(code)) => (output, code),
+        Ok(None) => panic!("{program}: the session ended without an exit: {output:?}"),
+        Err(_) => {
+            session.input.close();
+            panic!(
+                "{program} still runs {EXIT_DEADLINE:?} after start: it sits at a local \
+                 prompt. Output: {output:?}"
+            )
+        }
+    }
+}
+
+#[tokio::test]
+async fn powershell_ends_at_its_first_local_prompt() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &profile("dc01.lab", Some("LAB\\o'neil")));
+    let shell = started(&open(&mut app)).expect("a shell is started");
+    let LocalArguments::List(arguments) = shell.arguments else {
+        panic!("arguments one by one");
+    };
+    let programs = powershells(&shell.program.expect("a program"));
+    if programs.is_empty() {
+        eprintln!("no PowerShell here: the local prompt guard is not run");
+        return;
+    }
+    for program in programs {
+        let (output, code) = run_with_double(&program, &arguments, &failing_double()).await;
+        assert_eq!(
+            code,
+            Some(REMOTE_SESSION_NOT_ENTERED_EXIT_CODE),
+            "{program}, never entered: {output:?}"
+        );
+        assert!(!output.contains(ENTERED_MARKER), "{program}: {output:?}");
+
+        let (output, code) = run_with_double(&program, &arguments, &returning_double()).await;
+        assert_eq!(
+            code,
+            Some(REMOTE_SESSION_ENDED_EXIT_CODE),
+            "{program}, entered then ended: {output:?}"
+        );
+        assert!(output.contains(ENTERED_MARKER), "{program}: {output:?}");
+    }
 }

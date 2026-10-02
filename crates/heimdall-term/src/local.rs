@@ -24,6 +24,7 @@
 
 mod command_line;
 pub use command_line::windows_arguments;
+pub mod module_path;
 pub mod program;
 #[cfg(unix)]
 mod unix;
@@ -221,15 +222,47 @@ fn options(config: &LocalConfig) -> io::Result<Options> {
         working_directory: config.working_directory.clone(),
         drain_on_exit: false,
         // Passed to the child only: `tty::setup_env` would change this process's own.
-        env: HashMap::from([
-            ("TERM".to_owned(), TERMINAL_TYPE.to_owned()),
-            ("COLORTERM".to_owned(), "truecolor".to_owned()),
-        ]),
+        env: environment(&program),
         // The command line is built whole here, by `command_line::windows`: nothing is added
         // to it on the way.
         #[cfg(windows)]
         escape_args: false,
     })
+}
+
+/// The variables set for the child, over what it inherits: the terminal it runs in and, for
+/// Windows `PowerShell`, a module path without `PowerShell` 7's entries
+/// ([`module_path::for_windows_powershell`]).
+fn environment(program: &Path) -> HashMap<String, String> {
+    [
+        ("TERM".to_owned(), TERMINAL_TYPE.to_owned()),
+        ("COLORTERM".to_owned(), "truecolor".to_owned()),
+    ]
+    .into_iter()
+    .chain(
+        windows_powershell_module_path(program)
+            .map(|path| (module_path::VARIABLE.to_owned(), path)),
+    )
+    .collect()
+}
+
+/// The module path `program` gets when it is Windows `PowerShell`.
+#[cfg(windows)]
+fn windows_powershell_module_path(program: &Path) -> Option<String> {
+    if !module_path::is_windows_powershell(&program.to_string_lossy()) {
+        return None;
+    }
+    module_path::for_windows_powershell(
+        std::env::var(module_path::VARIABLE).ok().as_deref(),
+        &module_path::ModuleRoots::for_current_user(),
+        |file| Path::new(file).is_file(),
+    )
+}
+
+/// No Windows `PowerShell` runs here.
+#[cfg(unix)]
+fn windows_powershell_module_path(_program: &Path) -> Option<String> {
+    None
 }
 
 /// What `alacritty_terminal` runs. On Windows the whole command line goes in as the program:

@@ -219,3 +219,22 @@ fn the_file_read_never_appears_in_a_log() {
     );
     assert!(logged.contains("sessions.mxtsessions"));
 }
+
+/// A `WinRM` profile over HTTPS that skips the certificate check, as the C# writes it.
+const WINRM_SKIPPING_CHECKS: &str = r#"[{"id":"w1","displayName":"dc","remoteServer":"dc.lab","connectionType":"WINRM","winRmUseSsl":true,"winRmSkipCertificateCheck":true}]"#;
+
+#[test]
+fn an_imported_winrm_profile_checks_its_host_certificate_whatever_the_file_says() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    read(&mut app, "servers.json", WINRM_SKIPPING_CHECKS, None);
+    app.update(Message::ConfirmDialog);
+    let [dc] = app.winrm_profiles() else {
+        panic!("one profile: {:?}", app.winrm_profiles());
+    };
+    assert!(dc.use_ssl, "HTTPS is kept");
+    assert!(
+        !dc.skip_certificate_check,
+        "a file written elsewhere does not decide that this host's certificate goes unchecked"
+    );
+}
