@@ -28,6 +28,7 @@ use heimdall_core::profile::{
     AudioPlayback, ColorDepth, Forwards, ProfileId, RdpDefaults, RdpOptions, RdpProfile,
 };
 use heimdall_core::store::ProfileStore;
+use heimdall_rdp::Ending;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 
@@ -161,7 +162,7 @@ fn a_reconnect_takes_the_defaults_as_they_are_then() {
         tab,
         attempt,
         event: ConnectionEvent::Ended {
-            reason: "logged off".to_owned(),
+            reason: Ending::Logoff,
         },
     });
     defaults(&mut app, ColorDepth::Bpp24);

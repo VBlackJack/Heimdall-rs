@@ -871,6 +871,22 @@ ui-error-network-timed-out = Connection timed out. Check that the host is reacha
 ui-error-network-unreachable = Host or network is unreachable. Check DNS and routing.
 ui-session-closed-reason = The server said: { $reason }
 
+## Why an RDP server refused a logon or ended a session, as the C# Heimdall says it.
+ui-rdp-severity-warning = Warning:
+ui-rdp-severity-error = Error:
+ui-rdp-reason-bad-credentials = The credentials were not accepted. Verify your username, password, and domain (NetBIOS DOMAIN\user or UPN user@domain.com), then try reconnecting.
+ui-rdp-reason-password-expired = The password has expired and must be changed before connecting.
+ui-rdp-reason-account-locked-out = The account is currently locked out.
+ui-rdp-reason-account-disabled = The account is disabled on the remote computer. Ask your administrator to enable it, then try connecting again.
+ui-rdp-reason-account-expired = The account has expired.
+ui-rdp-reason-time-of-day = The account is not allowed to sign in at this time. A logon-hours restriction on the account ended the session.
+ui-rdp-reason-no-authority = No authentication authority could be reached to validate the account. The remote computer may have lost contact with its domain controller.
+ui-rdp-reason-clock-skew = The clocks of this computer and the remote computer are too far apart for authentication to succeed. Correct the system time on either side, then try reconnecting.
+ui-rdp-reason-security-error = A security error prevented the connection. The remote computer reported that the security data exchanged during the connection was not valid.
+ui-rdp-reason-admin-disconnect = The remote computer ended the session. An administrator may have ended it, the connection may have failed while it was being established, or a network problem may have interrupted it.
+ui-rdp-reason-license = A Remote Desktop licensing error blocked the session. Contact your administrator; the license server may be unreachable or out of CALs.
+ui-rdp-reason-with-severity = { $severity } { $reason }
+
 ## A dropped desktop opening again by itself, as the C# countdown.
 ui-session-reconnecting = Reconnecting (attempt { $attempt }/{ $max })...
 ui-session-reconnecting-in = in { $seconds }s

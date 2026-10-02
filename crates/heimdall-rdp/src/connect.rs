@@ -58,6 +58,7 @@ use crate::certificate::{Fingerprint, ServerCertificate};
 use crate::clipboard::{Offered, Request, TextBackend};
 use crate::drives::{DriveBackend, SharedDrive};
 use crate::known_hosts::{KnownRdpHosts, Verdict};
+use crate::reason::{self, Ending, Refusal};
 use crate::time_zone::TimeZone;
 use crate::{kdc, tls};
 
@@ -239,9 +240,12 @@ pub enum RdpError {
     /// The file of known servers cannot be read or written.
     #[error("known RDP servers: {0}")]
     KnownHosts(#[source] io::Error),
-    /// The credentials were refused.
-    #[error("the server refused the credentials")]
-    Authentication,
+    /// The server refused the logon, and why.
+    #[error("the server refused the logon: {0:?}")]
+    Authentication(Refusal),
+    /// The server ended the connection before its session started, and why.
+    #[error("the server ended the connection: {0:?}")]
+    Ended(Ending),
     /// The server asked for a desktop larger than [`MAX_DESKTOP_SIDE`].
     #[error("the server asked for a {width}x{height} desktop")]
     DesktopTooLarge {
@@ -641,11 +645,18 @@ async fn phase<T>(
 
 /// The category of a connector failure.
 fn failure(error: &ConnectorError) -> RdpError {
+    // A Set Error Info while the connection finishes: a licence, a denied account.
+    if let ConnectorErrorKind::Reason(text) = error.kind()
+        && let Some(ending) = reason::ending_in_failure(text)
+    {
+        return RdpError::Ended(ending);
+    }
     match error.kind() {
-        ConnectorErrorKind::Credssp(_) | ConnectorErrorKind::AccessDenied => {
-            RdpError::Authentication
-        }
+        ConnectorErrorKind::Credssp(error) => RdpError::Authentication(Refusal::of(error)),
+        // Early User Authorization: the account may not open a session there.
+        ConnectorErrorKind::AccessDenied => RdpError::Authentication(Refusal::BadCredentials),
         ConnectorErrorKind::Negotiation(failure) => RdpError::Negotiation(failure.to_string()),
+
         _ => {
             let mut source = std::error::Error::source(error);
             while let Some(cause) = source {
@@ -719,6 +730,9 @@ async fn credssp<S: FramedRead + FramedWrite>(
         server_public_key,
         kerberos,
     )?;
+    // Requests sent: a server closing after the second, which carries the account, refused
+    // it. Servers before `CredSSP` version 3 say nothing else.
+    let mut sent = 0_u32;
     loop {
         let state = {
             let mut generator = sequence.process_ts_request(request);
@@ -747,14 +761,24 @@ async fn credssp<S: FramedRead + FramedWrite>(
                 .write_all(&buf[..length])
                 .await
                 .map_err(|error| ironrdp::connector::custom_err!("write all", error))?;
+            sent += 1;
         }
         let Some(hint) = sequence.next_pdu_hint() else {
             break;
         };
-        let pdu = framed
-            .read_by_hint(hint)
-            .await
-            .map_err(|error| ironrdp::connector::custom_err!("read frame by hint", error))?;
+        let pdu = framed.read_by_hint(hint).await.map_err(|error| {
+            if sent >= ACCOUNT_REQUEST && closed(&error) {
+                ConnectorError::new(
+                    "CredSSP",
+                    ConnectorErrorKind::Credssp(sspi::Error::new(
+                        sspi::ErrorKind::LogonDenied,
+                        "the server closed the connection after the account was sent",
+                    )),
+                )
+            } else {
+                ironrdp::connector::custom_err!("read frame by hint", error)
+            }
+        })?;
         match sequence.decode_server_message(&pdu)? {
             Some(next) => request = next,
             None => break,
@@ -762,6 +786,20 @@ async fn credssp<S: FramedRead + FramedWrite>(
     }
     connector.mark_credssp_as_done();
     Ok(())
+}
+
+/// The `CredSSP` request that carries the account, counted from 1: the NTLM authenticate
+/// message, after the negotiate one.
+const ACCOUNT_REQUEST: u32 = 2;
+
+/// Whether `error` is the server closing the connection.
+fn closed(error: &io::Error) -> bool {
+    matches!(
+        error.kind(),
+        io::ErrorKind::UnexpectedEof
+            | io::ErrorKind::ConnectionReset
+            | io::ErrorKind::ConnectionAborted
+    )
 }
 
 #[cfg(test)]

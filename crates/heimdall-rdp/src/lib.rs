@@ -28,6 +28,7 @@ pub mod drives;
 mod frames;
 mod kdc;
 pub mod known_hosts;
+mod reason;
 pub mod session;
 mod time_zone;
 mod tls;
@@ -41,5 +42,6 @@ pub use connect::{
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use known_hosts::{KnownRdpHost, KnownRdpHosts, Verdict};
+pub use reason::{Ending, Refusal};
 pub use session::{CloseReason, Framebuffer, RdpEvent, RdpSession};
 pub use time_zone::{TimeZone, Transition};

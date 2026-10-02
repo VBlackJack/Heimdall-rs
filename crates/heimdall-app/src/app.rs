@@ -1015,7 +1015,7 @@ pub struct Tab {
     /// The name the user gave the tab, shown instead of its title until reset.
     pub custom_title: Option<String>,
     /// Why the server ended the session, when it said.
-    pub end_reason: Option<String>,
+    pub end_reason: Option<heimdall_rdp::Ending>,
     /// The session waiting to open again by itself, after it dropped.
     pub retry: Option<Retry>,
     /// When the user's input last reached the session: a TMOUT reset waits for an idle shell.

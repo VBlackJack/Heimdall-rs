@@ -827,6 +827,22 @@ ui-error-network-timed-out = Délai de connexion dépassé. Vérifiez que l'hôt
 ui-error-network-unreachable = Hôte ou réseau inaccessible. Vérifiez le DNS et le routage.
 ui-session-closed-reason = Le serveur a indiqué : { $reason }
 
+## Why an RDP server refused a logon or ended a session, as the C# Heimdall says it.
+ui-rdp-severity-warning = Attention :
+ui-rdp-severity-error = Erreur :
+ui-rdp-reason-bad-credentials = Les identifiants n'ont pas été acceptés. Vérifiez votre nom d'utilisateur, mot de passe et domaine (NetBIOS DOMAIN\utilisateur ou UPN utilisateur@domaine.com), puis réessayez.
+ui-rdp-reason-password-expired = Le mot de passe a expiré et doit être changé avant la connexion.
+ui-rdp-reason-account-locked-out = Le compte est actuellement verrouillé.
+ui-rdp-reason-account-disabled = Le compte est désactivé sur l'ordinateur distant. Demandez à votre administrateur de l'activer, puis réessayez de vous connecter.
+ui-rdp-reason-account-expired = Le compte a expiré.
+ui-rdp-reason-time-of-day = Le compte n'est pas autorisé à ouvrir une session à cette heure. Une restriction sur les plages horaires du compte a mis fin à la session.
+ui-rdp-reason-no-authority = Aucune autorité d'authentification n'a pu être jointe pour valider le compte. L'ordinateur distant a peut-être perdu le contact avec son contrôleur de domaine.
+ui-rdp-reason-clock-skew = Les horloges de cet ordinateur et de l'ordinateur distant sont trop éloignées pour que l'authentification aboutisse. Corrigez l'heure système de l'un ou l'autre, puis réessayez de vous connecter.
+ui-rdp-reason-security-error = Une erreur de sécurité a empêché la connexion. L'ordinateur distant a signalé que les données de sécurité échangées pendant la connexion n'étaient pas valides.
+ui-rdp-reason-admin-disconnect = L'ordinateur distant a mis fin à la session. Un administrateur a pu y mettre fin, la connexion a pu échouer pendant son établissement, ou un problème réseau a pu l'interrompre.
+ui-rdp-reason-license = Une erreur de licence Bureau à distance a bloqué la session. Contactez votre administrateur; le serveur de licences est peut-être inaccessible ou n'a plus de CAL disponible.
+ui-rdp-reason-with-severity = { $severity } { $reason }
+
 ui-session-reconnecting = Reconnexion (tentative { $attempt }/{ $max })...
 ui-session-reconnecting-in = dans { $seconds }s
 ui-session-reconnecting-cancel = Annuler

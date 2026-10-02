@@ -45,6 +45,7 @@ use zeroize::Zeroizing;
 use crate::clipboard::{Offered, Request, offered_formats};
 use crate::connect::{ClipboardLink, MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
 use crate::frames::FrameReader;
+use crate::reason::{self, Ending};
 
 /// Events queued before the session waits for the receiver.
 const EVENT_QUEUE: usize = 64;
@@ -103,8 +104,8 @@ pub enum RdpEvent {
 pub enum CloseReason {
     /// The user logged off or the server ended the session.
     Server,
-    /// The server ended the session and said why, in `IronRDP`'s words.
-    Disconnected(String),
+    /// The server ended the session and said why.
+    Disconnected(Ending),
     /// Stopped from this side.
     Local,
     /// The connection failed; a description.
@@ -267,7 +268,12 @@ impl Running {
     ) {
         let reason = match self.serve(result, shared, cancel).await {
             Ok(reason) => reason,
-            Err(description) => CloseReason::Failed(description),
+            // A Set Error Info ending a reactivation is the server ending the session.
+            Err(description) => match reason::ending_in_failure(&description) {
+                Some(Ending::Logoff) => CloseReason::Server,
+                Some(ending) => CloseReason::Disconnected(ending),
+                None => CloseReason::Failed(description),
+            },
         };
         let _ = self.events.send(RdpEvent::Closed(reason)).await;
     }
@@ -357,7 +363,10 @@ impl Running {
                             GracefulDisconnectReason::UserInitiated => CloseReason::Local,
                             GracefulDisconnectReason::ServerInitiated => CloseReason::Server,
                             GracefulDisconnectReason::Other(reason) => {
-                                CloseReason::Disconnected(reason)
+                                match reason::ending(&reason) {
+                                    Ending::Logoff => CloseReason::Server,
+                                    ending => CloseReason::Disconnected(ending),
+                                }
                             }
                         });
                     }

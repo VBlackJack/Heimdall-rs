@@ -25,7 +25,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::{Fingerprint, Framebuffer, KnownRdpHosts, Operation, Scancode};
+use heimdall_rdp::{Ending, Fingerprint, Framebuffer, KnownRdpHosts, Operation, Scancode};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio::sync::mpsc;
@@ -256,12 +256,15 @@ fn a_session_the_server_ended_keeps_its_reason_until_it_opens_again() {
         tab,
         attempt,
         ConnectionEvent::Ended {
-            reason: "Another user connected".to_owned(),
+            reason: Ending::Other("Another user connected".to_owned()),
         },
     );
     let ended = app.tab(tab).expect("tab");
     assert_eq!(ended.phase, Phase::Closed { exit_status: None });
-    assert_eq!(ended.end_reason.as_deref(), Some("Another user connected"));
+    assert_eq!(
+        ended.end_reason,
+        Some(Ending::Other("Another user connected".to_owned()))
+    );
     assert!(app.can_reconnect(ended));
     let effects = app.update(Message::ReconnectTab(tab));
     let [Effect::ConnectRdp { tab: again, .. }] = effects.as_slice() else {
