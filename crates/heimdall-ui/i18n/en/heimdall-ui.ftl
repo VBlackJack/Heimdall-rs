@@ -336,6 +336,7 @@ ui-files-error-session = The SFTP session ended.
 ui-files-error-local = This computer refused: { $detail }
 ui-files-error-unsafe-name = The server's name "{ $name }" cannot be used here: { $reason }.
 ui-files-error-not-a-file = Only files and folders can be transferred, not links or special files.
+ui-files-error-is-link = The permissions of a symbolic link cannot be changed: the server would change those of what it points to.
 ui-files-error-too-large = The folder holds too many entries to walk.
 ui-files-error-invalid-name = That name cannot be used.
 ui-files-error-exists = An entry of that name exists already.

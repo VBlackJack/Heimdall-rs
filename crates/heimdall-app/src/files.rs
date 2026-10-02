@@ -543,6 +543,9 @@ pub enum FilesError {
     },
     /// Not a regular file or a folder: a link, a device.
     NotAFile,
+    /// A symbolic link: its permissions are not changed, the server would change those of
+    /// what it points to.
+    IsLink,
     /// A folder holds more entries than a transfer or a delete walks.
     TooLarge,
     /// The name typed cannot be used.
@@ -564,6 +567,8 @@ impl From<&RemoteError> for FilesError {
                 detail: detail.clone(),
             },
             RemoteError::NotAFile => Self::NotAFile,
+            RemoteError::IsLink => Self::IsLink,
+            RemoteError::LocalExists => Self::Exists,
             RemoteError::TooLarge => Self::TooLarge,
             // A cancel is a state of the transfer, not a failure: callers handle it first.
             RemoteError::SessionClosed | RemoteError::Cancelled => Self::SessionClosed,
@@ -747,8 +752,8 @@ pub struct TransferRequest {
     pub remote: RemotePath,
     /// Local file.
     pub local: PathBuf,
-    /// Replace an existing target (uploads; a download always replaces its target, the
-    /// user having confirmed).
+    /// Replace an existing target, the user having confirmed; without it a target found at
+    /// the end of a file transfer is left as it is.
     pub replace: bool,
     /// A folder with everything in it, rather than one file.
     pub folder: bool,
@@ -780,7 +785,13 @@ pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent
                 Direction::Download => {
                     request
                         .client
-                        .download(&request.remote, &request.local, &request.cancel, progress)
+                        .download_with(
+                            &request.remote,
+                            &request.local,
+                            request.replace,
+                            &request.cancel,
+                            progress,
+                        )
                         .await
                 }
                 Direction::Upload => {

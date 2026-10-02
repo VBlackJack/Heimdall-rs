@@ -72,6 +72,9 @@ pub struct TransferConfig {
     pub in_flight: usize,
     /// Copy the modification time to the new file.
     pub preserve_times: bool,
+    /// A download replaces a local file already there; off, a file found at the end is
+    /// left as it is and the download fails with [`TransferError::LocalExists`].
+    pub replace_local: bool,
 }
 
 impl Default for TransferConfig {
@@ -80,6 +83,7 @@ impl Default for TransferConfig {
             chunk: 32 * 1024,
             in_flight: 64,
             preserve_times: true,
+            replace_local: true,
         }
     }
 }
@@ -102,6 +106,10 @@ pub enum TransferError {
     /// The remote path is not a regular file (a directory, a device such as `/dev/zero`).
     #[error("not a regular file")]
     NotARegularFile,
+    /// A local file appeared at the download's name and replacing it was not agreed: it
+    /// was left as it is, and the complete part file kept.
+    #[error("a local file exists at that name")]
+    LocalExists,
     /// Cancelled; `kept` bytes stay in the part file for a resume.
     #[error("cancelled after {kept} bytes")]
     Cancelled {
@@ -268,7 +276,8 @@ async fn resume_point(download: &mut Download<'_>, earlier: Option<ResumeRecord>
 /// Downloads `remote` to `target`, resuming an earlier attempt when it is safe to.
 /// `progress` receives the number of bytes contiguously written.
 ///
-/// The caller has decided what to do with an existing `target`: it is replaced.
+/// An existing `target` is replaced only with [`TransferConfig::replace_local`]; without it,
+/// a file found there is left as it is, as the C# `AtomicLocalFile.Commit` does.
 ///
 /// # Errors
 ///
@@ -355,9 +364,13 @@ pub async fn download(
         ..
     } = download;
     drop(part);
-    tokio::fs::rename(&part_path, target)
-        .await
-        .map_err(local(target))?;
+    match commit_local(&part_path, target, config.replace_local).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            return Err(TransferError::LocalExists);
+        }
+        Err(error) => return Err(local(target)(error)),
+    }
     let _ = tokio::fs::remove_file(&resume_path).await;
     if config.preserve_times
         && let Some((_, modified)) = attributes.times
@@ -371,6 +384,32 @@ pub async fn download(
         bytes,
         resumed_from: start,
     })
+}
+
+/// Moves a complete download from `part` to `target`. With `replace`, a file there is
+/// replaced; without it, nothing there ever is: the move is a hard link, which fails when
+/// the name is taken, then the part file goes. On a file system without hard links the name
+/// is checked just before the rename, a short window the hard link closes elsewhere.
+///
+/// # Errors
+///
+/// [`io::ErrorKind::AlreadyExists`] when a file was there and `replace` is off; the local
+/// file system's error otherwise.
+pub async fn commit_local(part: &Path, target: &Path, replace: bool) -> io::Result<()> {
+    if replace {
+        return tokio::fs::rename(part, target).await;
+    }
+    match tokio::fs::hard_link(part, target).await {
+        Ok(()) => {
+            let _ = tokio::fs::remove_file(part).await;
+            Ok(())
+        }
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Err(error),
+        Err(_) if tokio::fs::symlink_metadata(target).await.is_ok() => {
+            Err(io::Error::from(io::ErrorKind::AlreadyExists))
+        }
+        Err(_) => tokio::fs::rename(part, target).await,
+    }
 }
 
 /// Reads from `start` to the end of the file; returns the file size, or the mark reached
@@ -706,7 +745,9 @@ fn write_chunk(client: &SftpClient, config: &TransferConfig) -> u32 {
 
 #[cfg(test)]
 mod tests {
-    use super::ResumeRecord;
+    use std::io;
+
+    use super::{ResumeRecord, commit_local};
 
     #[test]
     fn a_resume_record_round_trips_and_garbage_is_refused() {
@@ -727,5 +768,53 @@ mod tests {
         for garbage in ["", "heimdall-resume 2\n", "heimdall-resume 1\nremote zz\n"] {
             assert_eq!(ResumeRecord::parse(garbage), None, "{garbage:?}");
         }
+    }
+
+    #[tokio::test]
+    async fn a_download_commit_replaces_a_local_file_only_when_agreed() {
+        let dir = tempfile::tempdir().expect("dir");
+        let part = dir.path().join("a.part");
+        let target = dir.path().join("a");
+
+        // Nothing there: the part file takes the name, agreed or not.
+        std::fs::write(&part, b"new").expect("part");
+        commit_local(&part, &target, false)
+            .await
+            .expect("committed");
+        assert_eq!(std::fs::read(&target).expect("target"), b"new");
+        assert!(!part.exists(), "no part file left");
+
+        // A file there, not agreed: both are left as they are.
+        std::fs::write(&part, b"newer").expect("part");
+        let refused = commit_local(&part, &target, false).await;
+        assert_eq!(
+            refused.map_err(|e| e.kind()),
+            Err(io::ErrorKind::AlreadyExists)
+        );
+        assert_eq!(std::fs::read(&target).expect("target"), b"new");
+        assert_eq!(std::fs::read(&part).expect("part"), b"newer", "kept");
+
+        // Agreed: replaced.
+        commit_local(&part, &target, true).await.expect("replaced");
+        assert_eq!(std::fs::read(&target).expect("target"), b"newer");
+        assert!(!part.exists(), "no part file left");
+    }
+
+    #[tokio::test]
+    async fn a_commit_that_cannot_link_still_never_takes_a_name_in_use() {
+        let dir = tempfile::tempdir().expect("dir");
+        let missing = dir.path().join("gone.part");
+        let target = dir.path().join("a");
+        // No part file: the hard link fails for another reason than the name.
+        let free = commit_local(&missing, &target, false).await;
+        assert_eq!(free.map_err(|e| e.kind()), Err(io::ErrorKind::NotFound));
+        std::fs::write(&target, b"theirs").expect("target");
+        let taken = commit_local(&missing, &target, false).await;
+        assert_eq!(
+            taken.map_err(|e| e.kind()),
+            Err(io::ErrorKind::AlreadyExists),
+            "the name in use is named, not the link's own failure"
+        );
+        assert_eq!(std::fs::read(&target).expect("target"), b"theirs");
     }
 }

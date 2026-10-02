@@ -244,6 +244,7 @@ pub fn files_error(error: &FilesError) -> String {
             reason = name_reason(reason)
         ),
         FilesError::NotAFile => fl!("ui-files-error-not-a-file"),
+        FilesError::IsLink => fl!("ui-files-error-is-link"),
         FilesError::TooLarge => fl!("ui-files-error-too-large"),
         FilesError::InvalidName => fl!("ui-files-error-invalid-name"),
         FilesError::Exists => fl!("ui-files-error-exists"),
