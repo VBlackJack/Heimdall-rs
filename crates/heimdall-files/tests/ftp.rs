@@ -432,6 +432,32 @@ async fn removing_a_link_removes_the_link_and_never_what_it_points_to() {
     );
 }
 
+#[tokio::test]
+async fn a_download_never_replaces_a_local_file_unasked() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::write(root.path().join("report.txt"), b"theirs").expect("remote");
+    let local = tempfile::tempdir().expect("local");
+    let target = local.path().join("report.txt");
+    std::fs::write(&target, b"mine").expect("local file");
+    let session = session(root.path()).await;
+    let top = session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("top");
+    let cancel = CancellationToken::new();
+
+    let refused = session
+        .download_with(&top.join(b"report.txt"), &target, false, &cancel, |_| {})
+        .await;
+    assert_eq!(refused, Err(RemoteError::LocalExists));
+    assert_eq!(std::fs::read(&target).expect("kept"), b"mine");
+    session
+        .download_with(&top.join(b"report.txt"), &target, true, &cancel, |_| {})
+        .await
+        .expect("replaced when agreed");
+    assert_eq!(std::fs::read(&target).expect("replaced"), b"theirs");
+}
+
 /// An FTPS server on `root` with a fresh certificate for `localhost`; its port and the
 /// certificate, to trust or not.
 async fn serve_ftps(root: &Path, keys: &Path) -> (u16, Vec<u8>) {

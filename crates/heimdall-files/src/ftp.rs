@@ -305,11 +305,19 @@ impl FtpClient {
     ///
     /// # Errors
     ///
-    /// [`RemoteError`] from the server; [`Refusal::Unsupported`] from one without it.
+    /// [`RemoteError`] from the server; [`Refusal::Unsupported`] from one without it;
+    /// [`RemoteError::IsLink`] for a link the listing names so, left as it is.
     pub async fn set_permissions(&self, path: &RemotePath, mode: u32) -> Result<(), RemoteError> {
-        self.control
-            .lock()
-            .await
+        let mut control = self.control.lock().await;
+        // The server's chmod follows a link: what it points to would change instead.
+        if self
+            .entry_locked(&mut control, path)
+            .await?
+            .is_some_and(|entry| entry.kind == ItemKind::Link)
+        {
+            return Err(RemoteError::IsLink);
+        }
+        control
             .site(format!("CHMOD {mode:o} {}", text(path)))
             .await
             .map(|_| ())
@@ -373,8 +381,26 @@ impl FtpClient {
         cancel: &CancellationToken,
         progress: impl FnMut(u64) + Send,
     ) -> Result<u64, RemoteError> {
+        self.download_with(remote, local, true, cancel, progress)
+            .await
+    }
+
+    /// As [`Self::download`], but a local file at `local` is replaced only with `replace`.
+    ///
+    /// # Errors
+    ///
+    /// As [`Self::download`]; [`RemoteError::LocalExists`] for a local file left as it is,
+    /// the part file kept for a resume.
+    pub async fn download_with(
+        &self,
+        remote: &RemotePath,
+        local: &Path,
+        replace: bool,
+        cancel: &CancellationToken,
+        progress: impl FnMut(u64) + Send,
+    ) -> Result<u64, RemoteError> {
         let mut control = self.control.lock().await;
-        download_locked(self, &mut control, remote, local, cancel, progress).await
+        download_locked(self, &mut control, remote, local, replace, cancel, progress).await
     }
 
     /// Uploads `local` to `remote` through a hidden temporary file renamed onto it; an
@@ -444,11 +470,18 @@ impl FtpClient {
                     }
                     ItemKind::File => {
                         let before = done;
-                        let copied =
-                            download_locked(self, &mut control, &child, &target, cancel, |bytes| {
+                        let copied = download_locked(
+                            self,
+                            &mut control,
+                            &child,
+                            &target,
+                            true,
+                            cancel,
+                            |bytes| {
                                 progress(before + bytes);
-                            })
-                            .await;
+                            },
+                        )
+                        .await;
                         match copied {
                             Ok(bytes) => done += bytes,
                             Err(error) if fatal(&error) => return Err(error),
@@ -534,6 +567,7 @@ async fn download_locked(
     control: &mut AsyncRustlsFtpStream,
     remote: &RemotePath,
     local: &Path,
+    replace: bool,
     cancel: &CancellationToken,
     mut progress: impl FnMut(u64) + Send,
 ) -> Result<u64, RemoteError> {
@@ -596,9 +630,13 @@ async fn download_locked(
     finished.map_err(|e| ftp_error(&e))?;
     file.flush().await.map_err(|e| local_error(&e))?;
     drop(file);
-    tokio::fs::rename(&part, local)
-        .await
-        .map_err(|e| local_error(&e))?;
+    match heimdall_sftp::transfer::commit_local(&part, local, replace).await {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            return Err(RemoteError::LocalExists);
+        }
+        Err(error) => return Err(local_error(&error)),
+    }
     let _ = tokio::fs::remove_file(&record).await;
     Ok(total)
 }

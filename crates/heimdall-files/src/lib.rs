@@ -130,6 +130,12 @@ pub enum RemoteError {
     TooLarge,
     /// Stopped by the caller; a download can be resumed by starting it again.
     Cancelled,
+    /// A local file is at a download's name and replacing it was not agreed; it was left as
+    /// it is.
+    LocalExists,
+    /// The entry is a symbolic link: changing its permissions would change what it points
+    /// to.
+    IsLink,
 }
 
 /// How a folder transfer ended.
@@ -205,9 +211,20 @@ impl RemoteSession {
     ///
     /// # Errors
     ///
-    /// [`RemoteError`] from the server.
+    /// [`RemoteError`] from the server; [`RemoteError::IsLink`] for a symbolic link, left as
+    /// it is.
     pub async fn set_permissions(&self, path: &RemotePath, mode: u32) -> Result<(), RemoteError> {
         match self {
+            // SETSTAT follows a link: what it points to would change instead.
+            Self::Sftp(client)
+                if client
+                    .lstat(path)
+                    .await
+                    .map_err(|e| sftp_error(&e))?
+                    .is_symlink() =>
+            {
+                Err(RemoteError::IsLink)
+            }
             Self::Sftp(client) => client
                 .setstat(
                     path,
@@ -239,8 +256,8 @@ impl RemoteSession {
         }
     }
 
-    /// Downloads regular file `remote` to `local`, resuming an earlier attempt; returns its
-    /// size.
+    /// Downloads regular file `remote` to `local`, resuming an earlier attempt and replacing
+    /// a local file there; returns its size.
     ///
     /// # Errors
     ///
@@ -252,19 +269,45 @@ impl RemoteSession {
         cancel: &CancellationToken,
         progress: impl FnMut(u64) + Send,
     ) -> Result<u64, RemoteError> {
+        self.download_with(remote, local, true, cancel, progress)
+            .await
+    }
+
+    /// As [`Self::download`], but a local file at `local` is replaced only with `replace`:
+    /// without it, a file found there when the download ends is left as it is.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`]; [`RemoteError::LocalExists`] for a local file left as it is, the
+    /// download kept to be resumed.
+    pub async fn download_with(
+        &self,
+        remote: &RemotePath,
+        local: &Path,
+        replace: bool,
+        cancel: &CancellationToken,
+        progress: impl FnMut(u64) + Send,
+    ) -> Result<u64, RemoteError> {
         match self {
             Self::Sftp(client) => transfer::download(
                 client,
                 remote,
                 local,
-                &TransferConfig::default(),
+                &TransferConfig {
+                    replace_local: replace,
+                    ..TransferConfig::default()
+                },
                 cancel,
                 progress,
             )
             .await
             .map(|report| report.bytes)
             .map_err(|e| transfer_error(&e)),
-            Self::Ftp(client) => client.download(remote, local, cancel, progress).await,
+            Self::Ftp(client) => {
+                client
+                    .download_with(remote, local, replace, cancel, progress)
+                    .await
+            }
         }
     }
 
@@ -420,6 +463,7 @@ fn transfer_error(error: &TransferError) -> RemoteError {
         TransferError::DestinationNotAFile => RemoteError::DestinationNotAFile,
         TransferError::ReplaceNotSafe => RemoteError::ReplaceNotSafe,
         TransferError::Cancelled { .. } => RemoteError::Cancelled,
+        TransferError::LocalExists => RemoteError::LocalExists,
     }
 }
 
