@@ -96,6 +96,8 @@ pub enum FilesKey {
     Open,
     /// Show the parent folder.
     Parent,
+    /// Show the folder shown before, as the C# Files tab's Backspace.
+    Back,
     /// Give the focus to the other pane.
     SwitchPane,
     /// Give the focus to a pane.
@@ -352,6 +354,80 @@ pub struct Pane<P, E> {
     /// A link being entered: the folder it was opened from, and its name. Its listing tells
     /// whether it points at a folder; when it does not, the pane goes back.
     pub entering_link: Option<(P, String)>,
+    /// The folders left, the most recent last, as the C# Files tab's history: Back goes to
+    /// the last one. At most [`HISTORY_MAX`].
+    pub history: Vec<P>,
+    /// The folder first shown, Home's: the server's home folder, or the local one the tab
+    /// opened in.
+    pub home: Option<P>,
+    /// How the listing on its way was asked for.
+    navigation: Option<Navigation<P>>,
+}
+
+/// Folders a pane's history keeps; older ones are forgotten.
+pub const HISTORY_MAX: usize = 100;
+
+/// How a pane's listing was asked for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Navigation<P> {
+    /// To another folder, leaving this one: kept in the history once the other is shown.
+    Away(P),
+    /// Back to the last folder of the history: taken out of it once shown.
+    Back,
+}
+
+impl<P: Clone + PartialEq, E> Pane<P, E> {
+    /// The folder shown is about to be left for another, by `path` or by a listing: kept in
+    /// the history once the other is shown.
+    pub(crate) fn leave(&mut self) {
+        self.navigation = Some(Navigation::Away(self.path.clone()));
+    }
+
+    /// Goes back to the last folder of the history, taken out of it once shown; `false`
+    /// when there is none.
+    pub(crate) fn back(&mut self) -> bool {
+        let Some(previous) = self.history.last().cloned() else {
+            return false;
+        };
+        self.path = previous;
+        self.navigation = Some(Navigation::Back);
+        true
+    }
+
+    /// Goes to Home; `false` when no folder was shown yet.
+    pub(crate) fn go_home(&mut self) -> bool {
+        let Some(home) = self.home.clone() else {
+            return false;
+        };
+        self.leave();
+        self.path = home;
+        true
+    }
+
+    /// `path` was listed: the history follows how it was asked for, and the first folder
+    /// shown is Home.
+    pub(crate) fn arrived(&mut self, path: &P) {
+        match self.navigation.take() {
+            Some(Navigation::Away(left)) if left != *path => {
+                self.history.push(left);
+                if self.history.len() > HISTORY_MAX {
+                    self.history.remove(0);
+                }
+            }
+            Some(Navigation::Back) => {
+                self.history.pop();
+            }
+            _ => {}
+        }
+        if self.home.is_none() {
+            self.home = Some(path.clone());
+        }
+    }
+
+    /// The listing on its way failed: the history stays as it was.
+    pub(crate) fn not_arrived(&mut self) {
+        self.navigation = None;
+    }
 }
 
 impl<P, E> Pane<P, E> {
@@ -369,7 +445,16 @@ impl<P, E> Pane<P, E> {
             typed: None,
             sort: Sort::default(),
             entering_link: None,
+            history: Vec::new(),
+            home: None,
+            navigation: None,
         }
+    }
+
+    /// Whether Back has a folder to go to.
+    #[must_use]
+    pub fn can_go_back(&self) -> bool {
+        !self.history.is_empty()
     }
 
     /// Selects `index` alone, or nothing.
