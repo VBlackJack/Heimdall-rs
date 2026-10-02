@@ -39,10 +39,24 @@ Also changed, for an RDP profile's session options:
 Why: the published `Config` cannot ask for either, and both are read by the server before
 any channel opens, so they cannot be added from outside.
 
-Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later and its `Config`
-can ask for the administrative session and for sound kept on the server. Then delete this
-directory and the `[patch.crates-io]` entry, map the two options to its fields, and run the
-gates, `crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
+Also changed, for smart-card logon left out of the build:
+
+- `Cargo.toml`: `sspi` no longer asks for its `scard` feature; the crate gains its own
+  `scard` feature, off by default, that turns it on.
+- `src/credssp.rs`: the `Credentials::SmartCard` arm, its imports and the two certificate
+  helpers it uses are built only with `scard`; without it, a smart-card logon fails with
+  "smart card logon is not built in". Heimdall-rs never asks for one.
+
+Why: `scard` pulled thirteen crates into the build for a logon Heimdall-rs does not offer:
+`winscard`, `cryptoki` and `cryptoki-sys` (a PKCS#11 module loader), `libz-sys` (C zlib, which
+the build compiled), and `heapless` 0.7 through `iso7816`, whose `atomic-polyfill` is
+unmaintained (RUSTSEC-2023-0089, ignored in `deny.toml` until then).
+
+Remove when: a published `ironrdp-connector` depends on sspi 0.22 or later, can ask for the
+administrative session and for sound kept on the server, and leaves `scard` to the user (or
+Heimdall-rs offers smart-card logon). Then delete this directory and the
+`[patch.crates-io]` entry, map the two options to its fields, and run the gates,
+`crates/heimdall-rdp/tests/session_options.rs` included: it reads both off the wire.
 
 Checked: `git diff --no-index` against the published package shows only the lines above;
 builds for `x86_64-unknown-linux-gnu` and `x86_64-pc-windows-gnu`.
