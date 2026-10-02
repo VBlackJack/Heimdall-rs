@@ -163,8 +163,6 @@ pub enum Dropped {
     ExternalClient,
     /// X11 forwarding.
     X11Forwarding,
-    /// A `WinRM` session through an SSH gateway.
-    WinRmGateway,
     /// RDP printer redirection.
     RdpPrinters,
     /// RDP serial port redirection.
@@ -510,13 +508,8 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
     let kind = server.connection_type.as_str();
     if kind == RDP_CONNECTION_TYPE {
         RdpChoices::of(server, defaults).dropped
-    } else if kind.eq_ignore_ascii_case(WINRM_CONNECTION_TYPE) {
-        let gateway = non_empty(server.ssh_gateway_id.as_ref()).is_some();
-        turned_on(&[(
-            gateway && !server.use_direct_connection,
-            Dropped::WinRmGateway,
-        )])
     } else if [
+        WINRM_CONNECTION_TYPE,
         LOCAL_CONNECTION_TYPE,
         TELNET_CONNECTION_TYPE,
         VNC_CONNECTION_TYPE,
@@ -671,7 +664,7 @@ pub fn import(
             .connection_type
             .eq_ignore_ascii_case(WINRM_CONNECTION_TYPE)
         {
-            convert_winrm(&server).map(|profile| report.winrm.push(profile))
+            convert_winrm(&server, &known).map(|profile| report.winrm.push(profile))
         } else if server.connection_type == RDP_CONNECTION_TYPE {
             convert_rdp(&server, &known, &settings.rdp_defaults)
                 .map(|profile| report.rdp.push(profile))
@@ -1072,14 +1065,7 @@ fn convert_rdp(
     if server.remote_server.trim().is_empty() {
         return Err(SkipReason::MissingHost);
     }
-    // As `ConnectionService` decides: through the SSH gateway unless the profile asks for a
-    // direct connection or names no gateway.
-    let gateway = match non_empty(server.ssh_gateway_id.as_ref()) {
-        Some(_) if server.use_direct_connection => None,
-        None => None,
-        Some(id) if gateways.contains(id.as_str()) => Some(ProfileId::new(id)),
-        Some(_) => return Err(SkipReason::MissingGateway),
-    };
+    let gateway = routed_gateway(server, gateways)?;
     if server
         .rdp_gateway
         .as_ref()
@@ -1325,7 +1311,26 @@ fn trimmed(value: Option<&str>) -> Option<String> {
 
 /// A `WinRM` profile as `WinRmPowerShellLaunchBuilder` connects it: directly, never through a
 /// gateway. The stored password is not carried over: `PowerShell` asks for it.
-fn convert_winrm(server: &LegacyServer) -> Result<WinRmProfile, SkipReason> {
+/// The SSH gateway `server` goes through, as `ConnectionService` decides: the one it names
+/// unless it asks for a direct connection. A gateway the file does not hold skips the profile.
+fn routed_gateway(
+    server: &LegacyServer,
+    gateways: &HashSet<&str>,
+) -> Result<Option<ProfileId>, SkipReason> {
+    match non_empty(server.ssh_gateway_id.as_ref()) {
+        Some(_) if server.use_direct_connection => Ok(None),
+        None => Ok(None),
+        Some(id) if gateways.contains(id.as_str()) => Ok(Some(ProfileId::new(id))),
+        Some(_) => Err(SkipReason::MissingGateway),
+    }
+}
+
+/// A `WinRM` profile as `WinRmHandler` connects it, through its SSH gateway when it names one.
+/// One over HTTPS keeps it: connecting then says why the C# refuses it, as the C# does.
+fn convert_winrm(
+    server: &LegacyServer,
+    gateways: &HashSet<&str>,
+) -> Result<WinRmProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
     }
@@ -1362,6 +1367,7 @@ fn convert_winrm(server: &LegacyServer) -> Result<WinRmProfile, SkipReason> {
         use_ssl: server.win_rm_use_ssl,
         skip_certificate_check: server.win_rm_use_ssl && server.win_rm_skip_certificate_check,
         username,
+        gateway: routed_gateway(server, gateways)?,
     })
 }
 

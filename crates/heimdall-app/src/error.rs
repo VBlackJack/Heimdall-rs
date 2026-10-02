@@ -21,6 +21,7 @@
 
 use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
+use heimdall_core::winrm::CommandError;
 use heimdall_ssh::{AuthMethod, ConnectError, KeyFileError, KnownHostsError};
 
 /// A server by host and port, as the `known_hosts` file records it.
@@ -60,6 +61,8 @@ pub enum UiError {
     InvalidHost,
     /// The account name cannot be used.
     InvalidUsername,
+    /// `WinRM` over HTTPS through an SSH gateway, which the C# Heimdall refuses.
+    WinRmHttpsThroughGateway,
     /// The network connection failed.
     Network {
         /// How, as far as the operating system tells.
@@ -171,6 +174,16 @@ pub enum UiError {
         /// Technical description.
         detail: String,
     },
+}
+
+impl From<&CommandError> for UiError {
+    fn from(error: &CommandError) -> Self {
+        match error {
+            CommandError::InvalidHost => Self::InvalidHost,
+            CommandError::InvalidUsername => Self::InvalidUsername,
+            CommandError::HttpsThroughGateway => Self::WinRmHttpsThroughGateway,
+        }
+    }
 }
 
 impl From<&KeyFileError> for UiError {

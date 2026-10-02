@@ -92,7 +92,7 @@ fn provider_title(profile: &TabProfile) -> String {
         TabProfile::Rdp(profile) => profile.vault_entry.as_deref(),
         TabProfile::Vnc(profile) => profile.vault_entry.as_deref(),
         TabProfile::Ftp(profile) => profile.vault_entry.as_deref(),
-        TabProfile::Telnet(_) | TabProfile::Local(_) => None,
+        TabProfile::Telnet(_) | TabProfile::Local(_) | TabProfile::WinRm(_) => None,
     };
     entry
         .map(str::trim)

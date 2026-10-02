@@ -42,6 +42,7 @@ pub fn error(error: &UiError) -> String {
     match error {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::InvalidUsername => fl!("ui-error-invalid-username"),
+        UiError::WinRmHttpsThroughGateway => fl!("ui-error-winrm-https-gateway"),
         UiError::Network { failure, detail } => match failure {
             NetworkFailure::Refused => fl!("ui-error-network-refused"),
             NetworkFailure::Reset => fl!("ui-error-network-reset"),
@@ -166,7 +167,6 @@ pub fn dropped_setting(dropped: Dropped) -> String {
     match dropped {
         Dropped::ExternalClient => fl!("ui-import-dropped-external-client"),
         Dropped::X11Forwarding => fl!("ui-import-dropped-x11"),
-        Dropped::WinRmGateway => fl!("ui-import-dropped-winrm-gateway"),
         Dropped::RdpPrinters => fl!("ui-import-dropped-rdp-printers"),
         Dropped::RdpComPorts => fl!("ui-import-dropped-rdp-com-ports"),
         Dropped::RdpSmartCards => fl!("ui-import-dropped-rdp-smart-cards"),

@@ -23,17 +23,19 @@
 //! connection ends the tab's `PowerShell` rather than leaving a prompt that runs on this
 //! machine under the remote host's name; see [`winrm::session_command`].
 
-use heimdall_core::profile::ProfileId;
-use heimdall_core::winrm::{self, CommandError, POWERSHELL_ARGUMENTS};
+use heimdall_core::profile::{ProfileId, SshGateway, WinRmProfile};
+use heimdall_core::winrm::{self, POWERSHELL_ARGUMENTS};
+use heimdall_ssh::ConnectOptions;
 use heimdall_term::local::{self, LocalArguments};
 use tokio_util::sync::CancellationToken;
 
 use super::reconnect::Reopen;
-use super::{App, Effect, Phase, Tab, TabProfile};
+use super::{App, Effect, Phase, Tab, TabProfile, terminal_size};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
 use crate::local_driver::LocalShell;
+use crate::winrm_driver::WinRmRequest;
 
 /// `PowerShell` 7, preferred where it is installed: the only one on Linux.
 const POWERSHELL_CORE: &str = "pwsh";
@@ -44,28 +46,124 @@ impl App {
         let Some(profile) = self.winrm_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
-        let effects = match winrm::session_command(&profile) {
-            Ok(command) => {
-                let mut arguments: Vec<String> = POWERSHELL_ARGUMENTS
-                    .iter()
-                    .map(|argument| (*argument).to_owned())
-                    .collect();
-                arguments.push(command);
-                self.open_local(LocalShell {
-                    name: profile.name,
-                    program: Some(powershell()),
-                    arguments: LocalArguments::List(arguments),
-                    working_directory: None,
-                })
-            }
+        let id = profile.id.clone();
+        let effects = self.open_winrm_profile(profile);
+        // Opened again from the profile, checked again: never the refused tab's empty shell.
+        self.reopened_by(Reopen::Profile(id));
+        effects
+    }
+
+    /// Opens a `WinRM` tab for `profile`: a local `PowerShell` entering the session, through
+    /// the profile's SSH gateway when it names one.
+    pub(super) fn open_winrm_profile(&mut self, profile: WinRmProfile) -> Vec<Effect> {
+        let command = match winrm::session_command(&profile) {
+            Ok(command) => command,
             Err(error) => {
-                self.open_refused(profile.name, command_error(&error));
+                self.open_refused(profile.name, UiError::from(&error));
+                return Vec::new();
+            }
+        };
+        if profile.gateway.is_some() {
+            return self.open_winrm_routed(profile);
+        }
+        let mut arguments: Vec<String> = POWERSHELL_ARGUMENTS
+            .iter()
+            .map(|argument| (*argument).to_owned())
+            .collect();
+        arguments.push(command);
+        self.open_local(LocalShell {
+            name: profile.name,
+            program: Some(powershell()),
+            arguments: LocalArguments::List(arguments),
+            working_directory: None,
+        })
+    }
+
+    /// A tab whose attempt opens the route, the forward, then `PowerShell`.
+    fn open_winrm_routed(&mut self, profile: WinRmProfile) -> Vec<Effect> {
+        let tab_id = TabId::fresh();
+        let attempt = AttemptId::fresh();
+        let cancel = CancellationToken::new();
+        let request = self.winrm_request(&profile, cancel.clone());
+        let mut tab = Tab::new(
+            self.terminal_palette(),
+            tab_id,
+            TabProfile::WinRm(profile),
+            Purpose::Shell,
+            self.viewport,
+            attempt,
+            cancel,
+        );
+        let effects = match request {
+            Ok(request) => vec![Effect::ConnectWinRm {
+                tab: tab_id,
+                attempt,
+                request: Box::new(request),
+            }],
+            Err(error) => {
+                tab.phase = Phase::Failed(error);
                 Vec::new()
             }
         };
-        // Opened again from the profile, checked again: never the refused tab's empty shell.
-        self.reopened_by(Reopen::Profile(profile.id));
+        self.tabs.push(tab);
+        self.active = Some(tab_id);
         effects
+    }
+
+    /// The attempt of `tab_id`'s `WinRM` session again, in place: once a gateway's key is
+    /// trusted.
+    pub(super) fn reconnect_winrm(&mut self, tab_id: TabId) -> Vec<Effect> {
+        let Some(TabProfile::WinRm(profile)) = self.tab(tab_id).map(|tab| tab.profile.clone())
+        else {
+            return Vec::new();
+        };
+        let attempt = AttemptId::fresh();
+        let cancel = CancellationToken::new();
+        let request = self.winrm_request(&profile, cancel.clone());
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        tab.attempt = attempt;
+        tab.cancel = cancel;
+        match request {
+            Ok(request) => {
+                tab.phase = Phase::Connecting;
+                vec![Effect::ConnectWinRm {
+                    tab: tab_id,
+                    attempt,
+                    request: Box::new(request),
+                }]
+            }
+            Err(error) => {
+                tab.phase = Phase::Failed(error);
+                Vec::new()
+            }
+        }
+    }
+
+    /// What reaching `profile` through its gateway needs; an error when the route cannot be
+    /// followed.
+    fn winrm_request(
+        &self,
+        profile: &WinRmProfile,
+        cancel: CancellationToken,
+    ) -> Result<WinRmRequest, UiError> {
+        let route = self
+            .store
+            .route(profile.gateway.as_ref())
+            .map_err(UiError::Route)?;
+        let mut ssh = ConnectOptions::new(self.config.known_hosts.clone());
+        ssh.agent = self.config.agent.clone();
+        ssh.run_trust = self.run_trust.clone();
+        Ok(WinRmRequest {
+            profile: profile.clone(),
+            program: powershell(),
+            route: route.iter().map(SshGateway::as_hop).collect(),
+            ssh,
+            size: terminal_size(self.viewport, None),
+            fallback_directory: self.config.files_start.clone(),
+            cancel,
+        })
     }
 
     /// A tab that says why nothing was started.
@@ -106,11 +204,4 @@ fn powershell() -> String {
             |_| POWERSHELL_CORE.to_owned(),
             |path| path.to_string_lossy().into_owned(),
         )
-}
-
-fn command_error(error: &CommandError) -> UiError {
-    match error {
-        CommandError::InvalidHost => UiError::InvalidHost,
-        CommandError::InvalidUsername => UiError::InvalidUsername,
-    }
 }

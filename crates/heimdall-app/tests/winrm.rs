@@ -61,6 +61,7 @@ fn profile(host: &str, username: Option<&str>) -> WinRmProfile {
         use_ssl: false,
         skip_certificate_check: false,
         username: username.map(str::to_owned),
+        gateway: None,
     }
 }
 

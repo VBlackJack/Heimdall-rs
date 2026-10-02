@@ -45,6 +45,7 @@ pub mod telnet_driver;
 mod text;
 pub mod transcript;
 pub mod vnc_driver;
+pub mod winrm_driver;
 
 pub use app::{
     App, AppConfig, BroadcastMessage, ConflictRow, ConnectAs, Dialog, Effect, ExportOutcome,

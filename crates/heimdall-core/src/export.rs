@@ -439,6 +439,7 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
 
 fn winrm(profile: &WinRmProfile) -> Entry {
     Entry {
+        ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
         win_rm_port: Some(profile.port),
         win_rm_username: profile.username.clone(),
         win_rm_use_ssl: profile.use_ssl,
