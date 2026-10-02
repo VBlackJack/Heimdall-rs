@@ -236,7 +236,10 @@ fn save_new(app: &mut App, program: &str, arguments: &str) {
             value: value.to_owned(),
         });
     }
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
 }
 
 /// The saved local profile named "Written".
@@ -286,7 +289,10 @@ fn an_imported_command_edited_and_saved_from_its_form_is_approved_as_the_csharp_
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &[profile(command("-x"), None)]);
     app.update(Message::EditProfile(ProfileId::new("tool")));
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     let effects = open(&mut app);
     assert!(app.dialog.is_none(), "no question once saved from the form");
     assert_eq!(program(&effects).as_deref(), Some(PROGRAM));

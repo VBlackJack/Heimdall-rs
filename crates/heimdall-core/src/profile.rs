@@ -73,6 +73,10 @@ impl fmt::Display for ProfileId {
 ///
 /// Holds no secret. A password or a key passphrase is asked for when connecting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per SSH option, each saved on its own"
+)]
 pub struct SshProfile {
     /// Stable identifier.
     pub id: ProfileId,
@@ -116,6 +120,11 @@ pub struct SshProfile {
     /// shell. Written down only when it is one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sftp: bool,
+    /// Also offer the older key exchanges, ciphers, MACs and the SHA-1 `ssh-rsa` host key that
+    /// old appliances still speak, after the current ones, as the C# Heimdall always does.
+    /// Off unless turned on, written down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy_algorithms: bool,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -190,6 +199,7 @@ impl SshGateway {
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         }
     }
 }
@@ -368,6 +378,66 @@ pub struct RdpOptions {
     /// by default; off, it gets the tab's size once and is then scaled.
     #[serde(default = "shared", skip_serializing_if = "is_shared")]
     pub dynamic_resolution: bool,
+    /// The visual experience asked of the server, as the C# `RdpPerformanceFlags`: the
+    /// `TS_PERF_*` bits of the [`Experience`] boxes ticked, 0 when none is.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub performance_flags: u32,
+}
+
+/// Whether `value` is 0: a field written down only when set.
+#[expect(
+    clippy::trivially_copy_pass_by_ref,
+    reason = "serde's skip_serializing_if passes a reference"
+)]
+fn is_zero(value: &u32) -> bool {
+    *value == 0
+}
+
+/// A box of the C# "Visual experience" card, each one bit of the performance flags the
+/// server is sent, as MS-RDPBCGR names them.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Experience {
+    /// No desktop wallpaper.
+    DisableWallpaper,
+    /// No visual styles.
+    DisableThemes,
+    /// No menu and window animations.
+    DisableAnimations,
+    /// A window's outline only while it is dragged.
+    DisableDrag,
+    /// No shadow under the pointer.
+    DisableCursorShadow,
+    /// `ClearType` text.
+    EnableFontSmoothing,
+    /// Desktop composition (Aero).
+    EnableComposition,
+}
+
+impl Experience {
+    /// Every box, in the C# card's order.
+    pub const ALL: [Self; 7] = [
+        Self::DisableWallpaper,
+        Self::DisableThemes,
+        Self::DisableAnimations,
+        Self::DisableDrag,
+        Self::DisableCursorShadow,
+        Self::EnableFontSmoothing,
+        Self::EnableComposition,
+    ];
+
+    /// Its `TS_PERF_*` bit.
+    #[must_use]
+    pub const fn bit(self) -> u32 {
+        match self {
+            Self::DisableWallpaper => 0x01,
+            Self::DisableDrag => 0x02,
+            Self::DisableAnimations => 0x04,
+            Self::DisableThemes => 0x08,
+            Self::DisableCursorShadow => 0x20,
+            Self::EnableFontSmoothing => 0x80,
+            Self::EnableComposition => 0x100,
+        }
+    }
 }
 
 impl Default for RdpOptions {
@@ -381,11 +451,27 @@ impl Default for RdpOptions {
             fixed_height: DEFAULT_FIXED_SIZE.1,
             scale_fixed: true,
             dynamic_resolution: true,
+            performance_flags: 0,
         }
     }
 }
 
 impl RdpOptions {
+    /// Whether the box `experience` is ticked.
+    #[must_use]
+    pub fn has(&self, experience: Experience) -> bool {
+        self.performance_flags & experience.bit() != 0
+    }
+
+    /// Ticks or clears the box `experience`, the other bits kept.
+    pub fn set(&mut self, experience: Experience, on: bool) {
+        if on {
+            self.performance_flags |= experience.bit();
+        } else {
+            self.performance_flags &= !experience.bit();
+        }
+    }
+
     /// How the desktop's size is decided while the session runs.
     #[must_use]
     pub fn sizing(&self) -> DesktopSizing {

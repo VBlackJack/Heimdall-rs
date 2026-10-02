@@ -83,6 +83,7 @@ fn ssh() -> Vec<SshProfile> {
         forward_agent: true,
         compression: true,
         sftp: false,
+        legacy_algorithms: false,
     };
     let files = SshProfile {
         id: ProfileId::new("files"),
@@ -99,6 +100,7 @@ fn ssh() -> Vec<SshProfile> {
         forward_agent: false,
         compression: false,
         sftp: true,
+        legacy_algorithms: false,
     };
     vec![base, files]
 }
@@ -126,6 +128,8 @@ fn rdp() -> Vec<RdpProfile> {
                 fixed_height: 720,
                 scale_fixed: false,
                 dynamic_resolution: false,
+                // Wallpaper off, font smoothing on.
+                performance_flags: 0x81,
             },
             vault_entry: Some("Win/DC".to_owned()),
             forwards: Forwards::default(),
@@ -324,6 +328,7 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
     assert_eq!(dc["remotePort"], 3390);
     assert_eq!(dc["rdpAudioMode"], 2);
     assert_eq!(dc["rdpAntiIdle"], true);
+    assert_eq!(dc["rdpPerformanceFlags"], 0x81);
     assert_eq!(dc["rdpColorDepth"], 16);
     assert_eq!(dc["useDirectConnection"], false);
     assert_eq!(by_id("desk")["useDirectConnection"], true);

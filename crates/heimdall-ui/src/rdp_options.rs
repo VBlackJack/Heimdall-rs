@@ -19,7 +19,9 @@
 
 use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField};
 use heimdall_app::{Message as AppMessage, SettingsMessage};
-use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpDefaults, RdpOptions, Resolution};
+use heimdall_core::profile::{
+    AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, Resolution,
+};
 use iced::widget::{checkbox, column, pick_list, row, text};
 use iced::{Element, Length};
 
@@ -100,6 +102,34 @@ fn lists<'a>(
     .spacing(SPACING / 2.0)
     .width(Length::Fill);
     row![audio, depth].spacing(SPACING).into()
+}
+
+/// The C# "Visual experience" card of `options`: one box per performance flag, each change
+/// taken at once.
+#[must_use]
+pub fn experience<'a>(options: RdpOptions) -> Element<'a, Message> {
+    let mut card = column![text(fl!("ui-profile-experience")).size(LABEL_SIZE)].spacing(SPACING);
+    for experience in Experience::ALL {
+        card = card.push(
+            checkbox(options.has(experience))
+                .label(experience_label(experience))
+                .on_toggle(move |on| choice(ProfileChoice::Experience(experience, on))),
+        );
+    }
+    card.into()
+}
+
+/// The C# label of `experience`'s box.
+fn experience_label(experience: Experience) -> String {
+    match experience {
+        Experience::DisableWallpaper => fl!("ui-profile-experience-no-wallpaper"),
+        Experience::DisableThemes => fl!("ui-profile-experience-no-themes"),
+        Experience::DisableAnimations => fl!("ui-profile-experience-no-animations"),
+        Experience::DisableDrag => fl!("ui-profile-experience-no-drag"),
+        Experience::DisableCursorShadow => fl!("ui-profile-experience-no-cursor-shadow"),
+        Experience::EnableFontSmoothing => fl!("ui-profile-experience-font-smoothing"),
+        Experience::EnableComposition => fl!("ui-profile-experience-composition"),
+    }
 }
 
 /// The application's RDP options, as the C# RDP settings: what a profile following them

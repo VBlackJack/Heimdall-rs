@@ -35,12 +35,13 @@
 //! window waits.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use heimdall_core::credentials::{
-    CredentialProtocol, Endpoint, SavedPassword, decode, encode, password_entry, rdp_account,
+    CredentialProtocol, Endpoint, SavedPassphrase, SavedPassword, decode, decode_passphrase,
+    encode, encode_passphrase, passphrase_entry, password_entry, rdp_account,
 };
 use heimdall_core::lockout::Lockout;
 use heimdall_core::profile::ProfileId;
@@ -321,6 +322,9 @@ pub(super) struct VaultState {
     system: SystemCredentials,
     /// Profiles whose saved password a server refused in this session: the user is asked.
     refused: HashSet<ProfileId>,
+    /// Profiles and gateways whose saved key passphrase did not unlock their key in this
+    /// session: the user is asked.
+    refused_passphrases: HashSet<ProfileId>,
     /// Wrong master passwords in a row at the lock screen, for this run only, as the C#
     /// overlay counts them; those at start are kept in the settings.
     lock_screen: Lockout,
@@ -338,6 +342,7 @@ impl VaultState {
             open: None,
             system,
             refused: HashSet::new(),
+            refused_passphrases: HashSet::new(),
             lock_screen: Lockout::default(),
         }
     }
@@ -581,6 +586,12 @@ impl App {
     #[must_use]
     pub(super) fn password_saved(&self, profile: &ProfileId) -> bool {
         self.vault.read(&password_entry(profile)).is_some()
+    }
+
+    /// Whether a key passphrase is saved for `profile`, as far as can be read now.
+    #[must_use]
+    pub(super) fn passphrase_saved(&self, profile: &ProfileId) -> bool {
+        self.vault.read(&passphrase_entry(profile)).is_some()
     }
 
     /// Applies a message about the vault.
@@ -832,6 +843,9 @@ impl App {
 
     /// The saved password answering `kind` in `tab_id`, if the rules allow one.
     pub(super) fn saved_answer(&mut self, tab_id: TabId, kind: &QuestionKind) -> Option<Answer> {
+        if let QuestionKind::Passphrase(question) = kind {
+            return self.saved_passphrase(tab_id, &question.key_path, question.attempt);
+        }
         let tab = self.tab(tab_id)?;
         let (profile, endpoint) =
             usable_endpoint(tab, kind).or_else(|| self.gateway_endpoint(&tab.profile, kind))?;
@@ -934,22 +948,101 @@ impl App {
         }
     }
 
-    /// Saves `from`'s password for `to` as well, a copy of the profile.
+    /// Saves `from`'s password and key passphrase for `to` as well, a copy of the profile.
     pub(super) fn copy_password(&mut self, from: &ProfileId, to: &ProfileId) {
-        if let Some(bytes) = self.vault.read(&password_entry(from))
-            && let Err(error) = self.vault.write(&password_entry(to), Some(&bytes))
-        {
-            self.password_save_failed(&error);
+        for entry in [password_entry, passphrase_entry] {
+            if let Some(bytes) = self.vault.read(&entry(from))
+                && let Err(error) = self.vault.write(&entry(to), Some(&bytes))
+            {
+                self.password_save_failed(&error);
+            }
         }
     }
 
-    /// Forgets the saved password of a profile being deleted.
+    /// Forgets the saved password and key passphrase of a profile being deleted.
     pub(super) fn forget_password(&mut self, profile: &ProfileId) {
-        let entry = password_entry(profile);
-        if self.vault.read(&entry).is_some()
-            && let Err(error) = self.vault.write(&entry, None)
-        {
-            self.password_save_failed(&error);
+        for entry in [password_entry(profile), passphrase_entry(profile)] {
+            if self.vault.read(&entry).is_some()
+                && let Err(error) = self.vault.write(&entry, None)
+            {
+                self.password_save_failed(&error);
+            }
+        }
+    }
+
+    /// The saved passphrase of the key file at `key_path`, for the first question of an
+    /// attempt, when the tab's profile or a gateway on its way has that key and saved it.
+    /// Asked again, the saved passphrase did not unlock the key: the user is asked from then
+    /// on.
+    fn saved_passphrase(&mut self, tab_id: TabId, key_path: &Path, attempt: u32) -> Option<Answer> {
+        let owner = self.key_owner(tab_id, key_path)?;
+        let saved = decode_passphrase(&self.vault.read(&passphrase_entry(&owner))?)?;
+        if Path::new(&saved.key_path) != key_path {
+            return None;
+        }
+        if attempt > 1 {
+            self.vault.refused_passphrases.insert(owner);
+            return None;
+        }
+        if self.vault.refused_passphrases.contains(&owner) {
+            return None;
+        }
+        Some(Answer::Secret(Secret::new(String::clone(
+            &saved.passphrase,
+        ))))
+    }
+
+    /// The profile or gateway whose key file is `key_path`, in `tab_id`'s route.
+    fn key_owner(&self, tab_id: TabId, key_path: &Path) -> Option<ProfileId> {
+        let TabProfile::Ssh(profile) = &self.tab(tab_id)?.profile else {
+            return None;
+        };
+        if profile.key_path.as_deref() == Some(key_path) {
+            return Some(profile.id.clone());
+        }
+        let route = self.store.route(profile.gateway.as_ref()).ok()?;
+        route
+            .into_iter()
+            .find(|hop| hop.key_path.as_deref() == Some(key_path))
+            .map(|hop| hop.id)
+    }
+
+    /// Saves what an editor says about the passphrase of `profile`'s key, now `key_path`: a
+    /// new one typed, the saved one cleared, or the saved one dropped when the profile names
+    /// another key file or none.
+    pub(super) fn save_edited_passphrase(
+        &mut self,
+        profile: &ProfileId,
+        key_path: Option<&Path>,
+        typed: Option<&Secret>,
+        clear: bool,
+    ) {
+        let entry = passphrase_entry(profile);
+        let typed = typed.filter(|typed| !typed.expose().is_empty());
+        // A passphrase typed wins over a clear, as a password typed does.
+        let result = if let (Some(key_path), Some(typed)) = (key_path, typed) {
+            let saved = SavedPassphrase {
+                key_path: key_path.to_string_lossy().into_owned(),
+                passphrase: Zeroizing::new(typed.expose().to_owned()),
+            };
+            self.vault.write(&entry, Some(&encode_passphrase(&saved)))
+        } else {
+            let stale = self
+                .vault
+                .read(&entry)
+                .and_then(|bytes| decode_passphrase(&bytes))
+                .is_some_and(|saved| key_path != Some(Path::new(&saved.key_path)));
+            if clear || stale {
+                self.vault.write(&entry, None)
+            } else {
+                return;
+            }
+        };
+        match result {
+            Ok(()) => {
+                self.vault.refused_passphrases.remove(profile);
+            }
+            Err(error) => self.password_save_failed(&error),
         }
     }
 

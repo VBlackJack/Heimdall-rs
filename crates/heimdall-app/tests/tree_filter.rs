@@ -43,6 +43,7 @@ fn ssh(id: &str, group: &str, gateway: Option<&str>) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 

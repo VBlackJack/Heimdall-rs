@@ -38,6 +38,7 @@ fn ssh(id: &str, group: Option<&str>) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 

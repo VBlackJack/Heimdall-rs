@@ -27,18 +27,21 @@ use std::pin::Pin;
 use std::time::Duration;
 
 use heimdall_core::profile::{AudioPlayback, RdpOptions};
-use ironrdp::connector::sspi::generator::NetworkRequest;
+use ironrdp::connector::credssp::{CredsspSequence, KerberosConfig};
+use ironrdp::connector::sspi::generator::GeneratorState;
+use ironrdp::connector::sspi::{self, credssp::ClientState};
 use ironrdp::connector::{
-    self, BitmapConfig, ClientConnector, ConnectionResult, ConnectorError, ConnectorErrorKind,
-    ConnectorResult, DesktopSize,
+    self, BitmapConfig, ClientConnector, ClientConnectorState, ConnectionResult, ConnectorError,
+    ConnectorErrorKind, ConnectorResult, DesktopSize,
 };
+use ironrdp::core::WriteBuf;
 use ironrdp::displaycontrol::client::DisplayControlClient;
 use ironrdp::dvc::DrdynvcClient;
 use ironrdp::pdu::gcc::KeyboardType;
 use ironrdp::pdu::nego::NegoRequestData;
 use ironrdp::pdu::rdp::capability_sets::{MajorPlatformType, client_codecs_capabilities};
 use ironrdp::pdu::rdp::client_info::{PerformanceFlags, TimezoneInfo};
-use ironrdp_tokio::{MovableTokioFramed, NetworkClient};
+use ironrdp_tokio::{Framed, FramedRead, FramedWrite, MovableTokioFramed};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_rustls::client::TlsStream;
@@ -55,7 +58,7 @@ use crate::certificate::{Fingerprint, ServerCertificate};
 use crate::clipboard::{Offered, Request, TextBackend};
 use crate::drives::{DriveBackend, SharedDrive};
 use crate::known_hosts::{KnownRdpHosts, Verdict};
-use crate::tls;
+use crate::{kdc, tls};
 
 /// Cookie of the X.224 request. Without one, `IronRDP` sends the user name, in clear, before
 /// TLS.
@@ -165,6 +168,10 @@ pub struct RdpConfig {
     pub trusted_for_run: Vec<Fingerprint>,
     /// Colour depth, sound and administrative session asked for.
     pub options: RdpOptions,
+    /// Network Level Authentication may log on with Kerberos, the domain's KDC being reached
+    /// from this computer, as mstsc does; NTLM when no KDC is found or answers. Only for a
+    /// server reached directly: through a tunnel, the KDC is on the far side too.
+    pub kerberos: bool,
 }
 
 /// Why a connection did not open.
@@ -461,19 +468,17 @@ pub async fn connect_over(
     };
     drop(password);
 
-    let upgraded = ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
+    ironrdp_tokio::mark_as_upgraded(should_upgrade, &mut connector);
     let mut framed = MovableTokioFramed::new(tls);
     let result = phase(
         config.timeouts.logon,
         cancel,
-        ironrdp_tokio::connect_finalize(
-            upgraded,
+        finalize(
             connector,
             &mut framed,
-            &mut NoNetwork,
+            config.kerberos,
             connector::ServerName::new(config.host.clone()),
             certificate.public_key,
-            None,
         ),
     )
     .await?
@@ -566,13 +571,24 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         compression_type: None,
         pointer_software_rendering: true,
         multitransport_flags: None,
-        performance_flags: PerformanceFlags::default(),
+        performance_flags: performance_flags(config.options.performance_flags),
         desktop_scale_factor: 0,
         hardware_id: None,
         license_cache: None,
         timezone_info: TimezoneInfo::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
+    }
+}
+
+/// The performance flags the server is sent: the profile's as they are, as the C# control
+/// takes them; when no box is ticked, `IronRDP`'s balance, the experience given so far (font
+/// smoothing on, window contents and menu animations off while they move).
+fn performance_flags(profile: u32) -> PerformanceFlags {
+    if profile == 0 {
+        PerformanceFlags::default()
+    } else {
+        PerformanceFlags::from_bits_retain(profile)
     }
 }
 
@@ -609,20 +625,108 @@ fn failure(error: &ConnectorError) -> RdpError {
     }
 }
 
-/// Kerberos is not offered, so `CredSSP` never needs the network: NTLM runs over the RDP
-/// connection itself.
-struct NoNetwork;
-
-impl NetworkClient for NoNetwork {
-    fn send(
-        &mut self,
-        _request: &NetworkRequest,
-    ) -> impl Future<Output = ConnectorResult<Vec<u8>>> {
-        std::future::ready(Err(ConnectorError::new(
-            "network requests are not supported: Kerberos is not offered",
-            ConnectorErrorKind::General,
-        )))
+/// The connection sequence from Network Level Authentication on, as `IronRDP`'s
+/// `connect_finalize` runs it but for one thing: a KDC that cannot be reached is reported to
+/// sspi, which then logs on with NTLM, instead of ending the connection.
+async fn finalize<S: FramedRead + FramedWrite>(
+    mut connector: ClientConnector,
+    framed: &mut Framed<S>,
+    kerberos: bool,
+    server_name: connector::ServerName,
+    server_public_key: Vec<u8>,
+) -> ConnectorResult<ConnectionResult> {
+    let mut buf = WriteBuf::new();
+    if connector.should_perform_credssp() {
+        credssp(
+            &mut connector,
+            framed,
+            &mut buf,
+            kerberos,
+            server_name,
+            server_public_key,
+        )
+        .await?;
     }
+    loop {
+        ironrdp_tokio::single_sequence_step(framed, &mut connector, &mut buf).await?;
+        if let ClientConnectorState::Connected { result } = connector.state {
+            return Ok(result);
+        }
+    }
+}
+
+/// Network Level Authentication: `CredSSP` over the TLS stream, its KDC requests sent from
+/// here.
+async fn credssp<S: FramedRead + FramedWrite>(
+    connector: &mut ClientConnector,
+    framed: &mut Framed<S>,
+    buf: &mut WriteBuf,
+    kerberos: bool,
+    server_name: connector::ServerName,
+    server_public_key: Vec<u8>,
+) -> ConnectorResult<()> {
+    let ClientConnectorState::Credssp { selected_protocol } = connector.state else {
+        return Err(ConnectorError::new(
+            "CredSSP outside its step",
+            ConnectorErrorKind::General,
+        ));
+    };
+    // Negotiate, Kerberos first, when offered; NTLM alone otherwise.
+    let kerberos = kerberos.then(|| KerberosConfig {
+        kdc_proxy_url: None,
+        hostname: CLIENT_NAME.to_owned(),
+    });
+    let (mut sequence, mut request) = CredsspSequence::init(
+        connector.config.credentials.clone(),
+        connector.config.domain.as_deref(),
+        selected_protocol,
+        server_name,
+        server_public_key,
+        kerberos,
+    )?;
+    loop {
+        let state = {
+            let mut generator = sequence.process_ts_request(request);
+            let mut step = generator.start();
+            loop {
+                match step {
+                    GeneratorState::Suspended(network) => {
+                        let reply = kdc::send(&network).await.map_err(|error| {
+                            sspi::Error::new(
+                                sspi::ErrorKind::NoAuthenticatingAuthority,
+                                error.to_string(),
+                            )
+                        });
+                        step = generator.resume(reply);
+                    }
+                    GeneratorState::Completed(state) => break state,
+                }
+            }
+        };
+        let state: ClientState = state
+            .map_err(|error| ConnectorError::new("CredSSP", ConnectorErrorKind::Credssp(error)))?;
+        buf.clear();
+        let written = sequence.handle_process_result(state, buf)?;
+        if let Some(length) = written.size() {
+            framed
+                .write_all(&buf[..length])
+                .await
+                .map_err(|error| ironrdp::connector::custom_err!("write all", error))?;
+        }
+        let Some(hint) = sequence.next_pdu_hint() else {
+            break;
+        };
+        let pdu = framed
+            .read_by_hint(hint)
+            .await
+            .map_err(|error| ironrdp::connector::custom_err!("read frame by hint", error))?;
+        match sequence.decode_server_message(&pdu)? {
+            Some(next) => request = next,
+            None => break,
+        }
+    }
+    connector.mark_credssp_as_done();
+    Ok(())
 }
 
 #[cfg(test)]

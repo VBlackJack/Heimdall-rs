@@ -298,6 +298,7 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

@@ -65,6 +65,7 @@ fn app(dir: &Path, route: Option<&str>, gateways: Vec<SshGateway>) -> App {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -106,7 +107,10 @@ fn a_gateway_added_from_a_sessions_form_returns_to_it_chosen() {
     app.update(Message::NewGateway);
     assert!(matches!(app.dialog, Some(Dialog::EditGateway { .. })));
     fill_gateway(&mut app, "bastion");
-    app.update(Message::SaveGateway { password: None });
+    app.update(Message::SaveGateway {
+        password: None,
+        passphrase: None,
+    });
     let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
         panic!("back to the form: {:?}", app.dialog);
     };
@@ -116,7 +120,10 @@ fn a_gateway_added_from_a_sessions_form_returns_to_it_chosen() {
         Some(added.clone()),
         "the new gateway is chosen"
     );
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert_eq!(session_gateway(&app), Some(added));
 }
 
@@ -147,7 +154,10 @@ fn a_gateway_reached_through_itself_is_refused() {
     );
     app.update(Message::EditGateway(id("inner")));
     app.update(Message::ChooseParentGateway(Some(id("outer"))));
-    app.update(Message::SaveGateway { password: None });
+    app.update(Message::SaveGateway {
+        password: None,
+        passphrase: None,
+    });
     let Some(Dialog::EditGateway { error, .. }) = &app.dialog else {
         panic!("{:?}", app.dialog);
     };
@@ -181,7 +191,10 @@ fn connect_directly_wins_over_the_gateway_chosen_which_the_form_keeps() {
         Some(id("bastion")),
         "kept, as the C# combo keeps it"
     );
-    app.update(Message::SaveProfile { password: None });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
     assert_eq!(session_gateway(&app), None);
 }
 
@@ -239,10 +252,12 @@ fn both_saved(dir: &Path) -> App {
     app.update(Message::EditGateway(id("bastion")));
     app.update(Message::SaveGateway {
         password: Some(Secret::new("gateway pw".to_owned())),
+        passphrase: None,
     });
     app.update(Message::EditProfile(id("web")));
     app.update(Message::SaveProfile {
         password: Some(Secret::new("server pw".to_owned())),
+        passphrase: None,
     });
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
     app
@@ -274,6 +289,7 @@ fn the_servers_password_never_goes_to_the_gateway() {
     app.update(Message::EditProfile(id("web")));
     app.update(Message::SaveProfile {
         password: Some(Secret::new("server pw".to_owned())),
+        passphrase: None,
     });
     let (tab, attempt) = open(&mut app);
     assert_eq!(ask(&mut app, tab, attempt, "bastion.lab", "jump"), None);
