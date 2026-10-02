@@ -58,8 +58,14 @@ ui-pin-field-confirm = Confirm PIN
 ui-pin-unlock-button = Unlock
 ui-pin-save-button = Save
 ui-pin-remove-button = Remove PIN
-ui-pin-problem-wrong = Incorrect PIN. { $remaining } attempt(s) remaining.
-ui-pin-problem-locked-out = Too many incorrect attempts. Try again in { $minutes } minute(s).
+ui-pin-problem-wrong = Incorrect PIN. { $remaining ->
+    [one] { $remaining } attempt remaining.
+   *[other] { $remaining } attempts remaining.
+}
+ui-pin-problem-locked-out = Too many incorrect attempts. Try again in { $minutes ->
+    [one] { $minutes } minute.
+   *[other] { $minutes } minutes.
+}
 ui-pin-problem-wrong-current = Current PIN is incorrect.
 ui-pin-problem-too-short = PIN must be at least { $min } digits.
 ui-pin-problem-too-long = PIN must be at most { $max } digits.
@@ -347,6 +353,8 @@ ui-files-conflict-destination = Destination
 ui-files-conflict-action = Action
 ui-files-conflict-apply = Apply
 ui-files-conflict-folder-skip = This folder and all of its planned contents will be skipped.
+ui-files-error-destination-not-a-file = Upload refused: the destination already exists and is not a regular file.
+ui-files-error-replace-not-safe = Upload refused: the destination already exists and the server cannot replace it safely, so it was left as it is.
 ui-files-error-too-large = The folder holds too many entries to walk.
 ui-files-error-invalid-name = That name cannot be used.
 ui-files-error-exists = An entry of that name exists already.
@@ -715,7 +723,10 @@ ui-profile-gateway-direct-hint = Direct connection is selected. Clear it to rout
 ui-profile-gateway-explain-tunnel = Traffic will be routed through this SSH gateway.
 ui-profile-socks-title = SOCKS5 Proxy
 ui-dialog-post-connect-title = Run post-connect commands?
-ui-dialog-post-connect-body = "{ $name }" was imported and will automatically run { $count } command(s) in this session. Only continue if you trust this profile. Run them and remember this choice?
+ui-dialog-post-connect-body = { $count ->
+    [one] "{ $name }" was imported and will automatically run { $count } command in this session. Only continue if you trust this profile. Run it and remember this choice?
+   *[other] "{ $name }" was imported and will automatically run { $count } commands in this session. Only continue if you trust this profile. Run them and remember this choice?
+}
 ui-dialog-post-connect-run = Run and remember
 ui-dialog-post-connect-skip = Connect without them
 ui-profile-toggle-forward-agent = Forward SSH agent
@@ -827,12 +838,18 @@ ui-tree-rename-title = Rename Session
 ui-tree-move-to-folder = Move to folder
 
 ## Several profiles selected together, as the C# bulk menu.
-ui-selection-count = { $count } items selected
+ui-selection-count = { $count ->
+    [one] { $count } item selected
+   *[other] { $count } items selected
+}
 ui-selection-connect = Connect selected ({ $count })
 ui-selection-duplicate = Duplicate selected
 ui-selection-delete = Delete selected ({ $count })
 ui-dialog-delete-selection-title = Delete Selected Items
-ui-dialog-delete-selection-body = Are you sure you want to delete { $count } selected item(s)?
+ui-dialog-delete-selection-body = Are you sure you want to delete { $count ->
+    [one] { $count } selected item
+   *[other] { $count } selected items
+}?
 
 ## Quick Connect, as the C# Ctrl+K palette without its tools.
 ui-palette-placeholder = Search host or IP... (Ctrl+K)
@@ -871,7 +888,10 @@ ui-find-nothing = No match
 ui-settings-terminal = Terminal Appearance
 ui-settings-color-scheme = Color scheme
 ui-settings-appearance = Appearance
-ui-vault-problem-locked-out = Too many incorrect attempts. Try again in { $minutes } minute(s).
+ui-vault-problem-locked-out = Too many incorrect attempts. Try again in { $minutes ->
+    [one] { $minutes } minute.
+   *[other] { $minutes } minutes.
+}
 ui-settings-language = Language
 # Each language in its own name, whatever the language shown, as the C# list.
 ui-settings-language-en = English

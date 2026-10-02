@@ -28,6 +28,7 @@ log.workspace = true
 tokio = { workspace = true, features = ["process"] }
 tokio-stream.workspace = true
 tokio-util.workspace = true
+unicode-normalization.workspace = true
 zeroize.workspace = true
 
 [target.'cfg(windows)'.dependencies]

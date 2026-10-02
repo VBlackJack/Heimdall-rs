@@ -21,6 +21,8 @@
 use std::collections::HashSet;
 
 use heimdall_core::profile::{ProfileId, display_address};
+use unicode_normalization::UnicodeNormalization;
+use unicode_normalization::char::is_combining_mark;
 
 use super::gateways::is_missing;
 use super::{App, Dialog, Effect, Message};
@@ -101,17 +103,15 @@ pub struct ProfileSummary {
 }
 
 impl ProfileSummary {
-    /// Whether the tree's search `term` finds this profile, as the C# Heimdall's does: in
-    /// its name, host, folder, account or protocol, whatever the case, and never across two
-    /// of them. An empty term finds every profile.
+    /// Whether the tree's search `term` finds this profile, as the C# Heimdall's does: every
+    /// word of it, each in its name, host, folder, account or protocol, so that "web prod"
+    /// finds web01 filed in Prod; whatever the case and the accents, so that "reseau" finds
+    /// "Réseau" and "Réseau" finds "reseau". A word is never matched across two fields. An
+    /// empty term finds every profile.
     #[must_use]
     pub fn matches(&self, term: &str) -> bool {
-        let term = term.trim().to_uppercase();
-        if term.is_empty() {
-            return true;
-        }
         let host = self.endpoint.as_ref().map(|(host, _)| host.as_str());
-        [
+        let fields: Vec<String> = [
             Some(self.name.as_str()),
             host,
             self.group.as_deref(),
@@ -120,8 +120,24 @@ impl ProfileSummary {
         ]
         .into_iter()
         .flatten()
-        .any(|field| field.to_uppercase().contains(&term))
+        .map(folded)
+        .collect();
+        folded(term)
+            .split_whitespace()
+            .all(|word| fields.iter().any(|field| field.contains(word)))
     }
+}
+
+/// `text` as the search compares it, as the C# `NormalizeSearchTerm`: trimmed, each
+/// character decomposed and its combining marks dropped, so that an accented and a plain
+/// spelling meet on the plain one, then upper-cased.
+fn folded(text: &str) -> String {
+    text.trim()
+        .nfd()
+        .filter(|c| !is_combining_mark(*c))
+        .nfc()
+        .collect::<String>()
+        .to_uppercase()
 }
 
 /// How a session reaches its server, as the C# tree's badge says.

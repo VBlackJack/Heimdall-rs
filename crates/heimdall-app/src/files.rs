@@ -546,6 +546,10 @@ pub enum FilesError {
     /// A symbolic link: its permissions are not changed, the server would change those of
     /// what it points to.
     IsLink,
+    /// The file an upload would replace is not a regular file; it was left as it is.
+    DestinationNotAFile,
+    /// The file an upload would replace was left as it is.
+    ReplaceNotSafe,
     /// A folder holds more entries than a transfer or a delete walks.
     TooLarge,
     /// The name typed cannot be used.
@@ -569,6 +573,8 @@ impl From<&RemoteError> for FilesError {
             RemoteError::NotAFile => Self::NotAFile,
             RemoteError::IsLink => Self::IsLink,
             RemoteError::LocalExists => Self::Exists,
+            RemoteError::DestinationNotAFile => Self::DestinationNotAFile,
+            RemoteError::ReplaceNotSafe => Self::ReplaceNotSafe,
             RemoteError::TooLarge => Self::TooLarge,
             // A cancel is a state of the transfer, not a failure: callers handle it first.
             RemoteError::SessionClosed | RemoteError::Cancelled => Self::SessionClosed,

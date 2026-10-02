@@ -95,6 +95,8 @@ pub enum WindowShortcut {
     Find,
     /// Turn broadcast input on or off: Ctrl+Alt+B, as the C# one.
     Broadcast,
+    /// Show the settings: Ctrl+comma, as the C# one.
+    Settings,
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
@@ -197,6 +199,10 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('f') => {
             Some(WindowShortcut::Find)
+        }
+        // The character, wherever the layout puts it: the C# reads the comma key.
+        keyboard::Key::Character(c) if !shift && c.as_str() == "," => {
+            Some(WindowShortcut::Settings)
         }
         _ => zoom(key, physical, shift).map(WindowShortcut::Zoom),
     }
@@ -333,6 +339,30 @@ mod tests {
         Shortcut, WindowShortcut, Zoom, is_lock_key, is_search_key, key_input, shortcut,
         window_shortcut,
     };
+
+    #[test]
+    fn ctrl_comma_shows_the_settings() {
+        assert_eq!(
+            window_shortcut(&character(","), ANY_PLACE, Modifiers::CTRL),
+            Some(WindowShortcut::Settings)
+        );
+        // On AZERTY the comma is where M is on QWERTY: the character decides.
+        assert_eq!(
+            window_shortcut(&character(","), Physical::Code(Code::KeyM), Modifiers::CTRL),
+            Some(WindowShortcut::Settings)
+        );
+        for modifiers in [
+            Modifiers::empty(),
+            Modifiers::CTRL | Modifiers::SHIFT,
+            Modifiers::CTRL | Modifiers::ALT,
+        ] {
+            assert_eq!(
+                window_shortcut(&character(","), ANY_PLACE, modifiers),
+                None,
+                "{modifiers:?}"
+            );
+        }
+    }
 
     #[test]
     fn ctrl_alt_b_toggles_broadcast_but_never_takes_a_character_typed_with_altgr() {
