@@ -68,6 +68,7 @@ fn app(dir: &Path) -> App {
         use_ssl: false,
         skip_certificate_check: false,
         username: None,
+        gateway: None,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {
@@ -104,7 +105,8 @@ fn connected(app: &mut App, message: Message) -> (TabId, AttemptId) {
         [
             Effect::Connect { tab, attempt, .. }
             | Effect::ConnectTelnet { tab, attempt, .. }
-            | Effect::ConnectLocal { tab, attempt, .. },
+            | Effect::ConnectLocal { tab, attempt, .. }
+            | Effect::ConnectWinRm { tab, attempt, .. },
         ] => (*tab, *attempt),
         other => panic!("{other:?}"),
     };

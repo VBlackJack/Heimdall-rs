@@ -20,7 +20,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use heimdall_app::local_driver::LocalShell;
+use heimdall_app::winrm_driver::{WinRmRequest, shell};
 use heimdall_app::{App, AppConfig, Effect, Message, Phase, UiError};
 use heimdall_core::profile::{DEFAULT_WINRM_HTTP_PORT, ProfileId, WinRmProfile};
 use heimdall_core::store::ProfileStore;
@@ -61,6 +61,7 @@ fn profile(host: &str, username: Option<&str>) -> WinRmProfile {
         use_ssl: false,
         skip_certificate_check: false,
         username: username.map(str::to_owned),
+        gateway: None,
     }
 }
 
@@ -68,9 +69,10 @@ fn open(app: &mut App) -> Vec<Effect> {
     app.update(Message::OpenWinRm(ProfileId::new("w")))
 }
 
-fn started(effects: &[Effect]) -> Option<LocalShell> {
+/// The attempt `effects` start: the server probed, then `PowerShell`.
+fn started(effects: &[Effect]) -> Option<WinRmRequest> {
     effects.iter().find_map(|effect| match effect {
-        Effect::ConnectLocal { request, .. } => Some(request.shell.clone()),
+        Effect::ConnectWinRm { request, .. } => Some(WinRmRequest::clone(request)),
         _ => None,
     })
 }
@@ -80,8 +82,13 @@ fn a_profile_runs_powershell_entering_its_session() {
     let dir = tempfile::tempdir().expect("dir");
     let saved = profile("dc01.lab", Some("LAB\\admin"));
     let mut app = app(dir.path(), &saved);
-    let shell = started(&open(&mut app)).expect("a shell is started");
+    let request = started(&open(&mut app)).expect("an attempt is started");
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(request.route.is_empty(), "reached directly");
+    assert_eq!(request.profile, saved);
+    let shell = shell(request.profile.name.clone(), request.program.clone(), {
+        session_command(&request.profile).expect("valid")
+    });
     assert_eq!(shell.name, "DC");
     let program = PathBuf::from(shell.program.expect("a program"));
     let stem = program
@@ -226,7 +233,9 @@ async fn run_with_double(
 async fn powershell_ends_at_its_first_local_prompt() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &profile("dc01.lab", Some("LAB\\o'neil")));
-    let shell = started(&open(&mut app)).expect("a shell is started");
+    let request = started(&open(&mut app)).expect("an attempt is started");
+    let command = session_command(&request.profile).expect("valid");
+    let shell = shell(request.profile.name, request.program, command);
     let LocalArguments::List(arguments) = shell.arguments else {
         panic!("arguments one by one");
     };

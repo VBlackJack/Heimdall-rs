@@ -50,6 +50,7 @@ fn own(follow_defaults: bool) -> RdpProfile {
         follow_defaults,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }
 }
 
@@ -64,6 +65,7 @@ fn the_csharp_defaults_are_the_application_ones_until_changed() {
             color_depth: ColorDepth::Bpp32,
             audio: AudioPlayback::Off,
             dynamic_resolution: true,
+            auto_reconnect: true,
         }
     );
     assert_eq!(Settings::default().rdp_defaults, RdpDefaults::default());
@@ -78,6 +80,7 @@ fn a_following_profile_takes_the_defaults_and_keeps_what_they_do_not_cover() {
         color_depth: ColorDepth::Bpp24,
         audio: AudioPlayback::OnServer,
         dynamic_resolution: true,
+        auto_reconnect: true,
     };
     let effective = own(true).effective(&defaults);
     assert_eq!(
@@ -151,6 +154,7 @@ fn the_defaults_are_written_in_the_settings_and_read_back() {
             color_depth: ColorDepth::Bpp16,
             audio: AudioPlayback::Local,
             dynamic_resolution: false,
+            auto_reconnect: true,
         },
         ..Settings::default()
     };

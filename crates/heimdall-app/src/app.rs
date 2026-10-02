@@ -24,7 +24,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::import::foreign::FileWarning;
@@ -36,8 +36,8 @@ use heimdall_core::profile::{
 use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
-    Secret, TerminalSize, Verdict, fingerprint, verdict,
+    AgentSource, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust, Secret, TerminalSize,
+    Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
@@ -65,6 +65,7 @@ use crate::steps_draft::StepEdit;
 use crate::telnet_driver::TelnetRequest;
 use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
+use crate::winrm_driver::WinRmRequest;
 
 mod appearance;
 mod auto_reconnect;
@@ -77,6 +78,7 @@ mod folders;
 mod ftp_tab;
 mod gateways;
 mod hostkeys_import;
+mod keep_alive;
 mod local_tab;
 mod pin;
 mod post_connect;
@@ -242,6 +244,8 @@ pub enum Message {
     },
     /// Time for the anti-idle keys of the sessions asking for them.
     AntiIdleTick,
+    /// Time to look at the idle SSH shells for their `TMOUT` reset.
+    TmoutResetTick,
     /// Stop the anti-idle keys of a tab's session, until it connects again.
     StopAntiIdle(TabId),
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
@@ -549,6 +553,7 @@ impl fmt::Debug for Message {
             }
             Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
             Self::AntiIdleTick => f.write_str("AntiIdleTick"),
+            Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
@@ -721,6 +726,16 @@ pub enum Effect {
         /// What to run.
         request: Box<LocalRequest>,
     },
+    /// Start a `WinRM` session through an SSH gateway and feed its events back as
+    /// [`Message::Connection`].
+    ConnectWinRm {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to connect to.
+        request: Box<WinRmRequest>,
+    },
     /// Deliver an answer through the registry.
     Answer {
         /// Question.
@@ -865,6 +880,9 @@ impl fmt::Debug for Effect {
             Self::ConnectLocal { tab, attempt, .. } => {
                 write!(f, "ConnectLocal({}, {})", tab.value(), attempt.value())
             }
+            Self::ConnectWinRm { tab, attempt, .. } => {
+                write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
+            }
             Self::Answer { question, answer } => {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
@@ -995,6 +1013,8 @@ pub struct Tab {
     pub end_reason: Option<String>,
     /// The session waiting to open again by itself, after it dropped.
     pub retry: Option<Retry>,
+    /// When the user's input last reached the session: a TMOUT reset waits for an idle shell.
+    last_input: std::sync::Mutex<Option<Instant>>,
     /// The last search in its history found nothing.
     pub find_missed: bool,
     /// The transcript it keeps, while it keeps one.
@@ -1068,9 +1088,19 @@ impl Tab {
         if let Some(sink) = &self.sink
             && !bytes.is_empty()
         {
+            if let Ok(mut last) = self.last_input.lock() {
+                *last = Some(Instant::now());
+            }
             // A closed session reports itself through its event stream.
             let _ = sink.write(bytes);
         }
+    }
+
+    /// Whether no input of the user's reached the session for `interval`.
+    fn idle_for(&self, interval: Duration) -> bool {
+        self.last_input
+            .lock()
+            .map_or(true, |last| last.is_none_or(|at| at.elapsed() >= interval))
     }
 
     fn new(
@@ -1088,6 +1118,7 @@ impl Tab {
             custom_title: None,
             end_reason: None,
             retry: None,
+            last_input: std::sync::Mutex::new(None),
             find_missed: false,
             transcript: None,
             reopen: reconnect::Reopen::of(&profile),
@@ -1149,6 +1180,9 @@ pub enum TabProfile {
     Ftp(FtpProfile),
     /// A local shell tab.
     Local(LocalShell),
+    /// A `WinRM` session: a local `PowerShell` entering it, directly or through an SSH
+    /// gateway.
+    WinRm(WinRmProfile),
 }
 
 impl TabProfile {
@@ -1163,6 +1197,7 @@ impl TabProfile {
             Self::Vnc(_) => ProfileKind::Vnc,
             Self::Ftp(_) => ProfileKind::Ftp,
             Self::Local(_) => ProfileKind::Local,
+            Self::WinRm(_) => ProfileKind::WinRm,
         }
     }
 
@@ -1176,6 +1211,7 @@ impl TabProfile {
             Self::Vnc(profile) => &profile.name,
             Self::Ftp(profile) => &profile.name,
             Self::Local(shell) => &shell.name,
+            Self::WinRm(profile) => &profile.name,
         }
     }
 
@@ -1189,6 +1225,7 @@ impl TabProfile {
             Self::Vnc(profile) => Some((&profile.host, profile.port)),
             Self::Ftp(profile) => Some((&profile.host, profile.port)),
             Self::Local(_) => None,
+            Self::WinRm(profile) => Some((&profile.host, profile.port)),
         }
     }
 
@@ -1199,6 +1236,7 @@ impl TabProfile {
             Self::Ssh(profile) => profile.username.as_deref(),
             Self::Rdp(profile) => profile.username.as_deref(),
             Self::Ftp(profile) => profile.username.as_deref(),
+            Self::WinRm(profile) => profile.username.as_deref(),
             // Telnet asks for its account in the session; VNC has none; a local shell runs
             // as the user running Heimdall.
             Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) => None,
@@ -1717,6 +1755,7 @@ impl App {
             | Message::DesktopInput { .. }
             | Message::SendKeys { .. }
             | Message::AntiIdleTick
+            | Message::TmoutResetTick
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => self.select_tab(tab),
@@ -1852,7 +1891,7 @@ impl App {
         Vec::new()
     }
 
-    /// Applies a message for a remote desktop.
+    /// Applies a message for a remote desktop, or a session timer's.
     fn desktop_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::DesktopResize { tab, width, height } => {
@@ -1863,6 +1902,8 @@ impl App {
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
             Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
             Message::AntiIdleTick => self.anti_idle_tick(),
+            // Not a desktop's, but a session timer's as anti-idle is.
+            Message::TmoutResetTick => self.tmout_reset_tick(),
             Message::StopAntiIdle(tab) => self.stop_anti_idle(tab),
             _ => {}
         }
@@ -1905,6 +1946,8 @@ impl App {
 
     /// What connecting to `profile` needs, its gateways included; an error when they cannot
     /// be followed, which no attempt could get past.
+    ///
+    /// See [`App::ssh_options`] for what every SSH connection shares.
     fn connect_request(
         &self,
         profile: &SshProfile,
@@ -1916,9 +1959,7 @@ impl App {
             .store
             .route(profile.gateway.as_ref())
             .map_err(UiError::Route)?;
-        let mut options = ConnectOptions::new(self.config.known_hosts.clone());
-        options.agent = self.config.agent.clone();
-        options.run_trust = self.run_trust.clone();
+        let mut options = self.ssh_options();
         options.initial_size = terminal_size(grid, None);
         options.forward_agent = profile.forward_agent;
         options.compression = profile.compression;
@@ -2034,6 +2075,9 @@ impl App {
         };
         let mut effects = self.apply_connection_event(tab_id, event);
         self.follow_transcript(tab_id, was_connected);
+        if !was_connected && self.active == Some(tab_id) {
+            self.warn_winrm(tab_id);
+        }
         if let Some((error, was_live)) = failure {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
@@ -2193,6 +2237,8 @@ impl App {
             TabProfile::Ssh(profile) => profile,
             // A gateway's key, learnt: the RDP connection starts again through it.
             TabProfile::Rdp(_) => return self.reconnect_rdp(tab_id, None),
+            // So does the WinRM one.
+            TabProfile::WinRm(_) => return self.reconnect_winrm(tab_id),
             _ => return Vec::new(),
         };
         let grid = tab.terminal.size();

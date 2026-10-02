@@ -76,6 +76,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     }]);
     store.merge_telnet([TelnetProfile {
         id: id("telnet"),
@@ -122,6 +123,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         use_ssl: false,
         skip_certificate_check: false,
         username: None,
+        gateway: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -144,6 +146,7 @@ fn connect(app: &mut App, profile: &str) -> String {
         [Effect::ConnectTelnet { .. }] => "ConnectTelnet".to_owned(),
         [Effect::ConnectVnc { .. }] => "ConnectVnc".to_owned(),
         [Effect::ConnectLocal { .. }] => "ConnectLocal".to_owned(),
+        [Effect::ConnectWinRm { .. }] => "ConnectWinRm".to_owned(),
         [] if matches!(app.dialog, Some(Dialog::ConfirmLocalCommand(_))) => {
             "ConfirmLocalCommand".to_owned()
         }
@@ -159,8 +162,8 @@ fn connecting_uses_the_profiles_own_protocol() {
     assert_eq!(connect(&mut app, "rdp"), "ConnectRdp");
     assert_eq!(connect(&mut app, "telnet"), "ConnectTelnet");
     assert_eq!(connect(&mut app, "vnc"), "ConnectVnc");
-    // A PowerShell entering the session, in a local tab.
-    assert_eq!(connect(&mut app, "winrm"), "ConnectLocal");
+    // The server probed, then a PowerShell entering the session.
+    assert_eq!(connect(&mut app, "winrm"), "ConnectWinRm");
     assert_eq!(
         app.selected_profile,
         Some(id("winrm")),

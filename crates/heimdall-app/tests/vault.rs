@@ -651,6 +651,7 @@ async fn rdp_vault(dir: &Path, domain: &str) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
+        auto_reconnect: true,
     };
     let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
     store.merge_rdp([rdp("nla", false), rdp("tls", true)]);

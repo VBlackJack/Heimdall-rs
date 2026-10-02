@@ -153,6 +153,14 @@ pub struct Settings {
     /// the C# `AntiIdleIntervalSeconds`: 0 turns them off, else within
     /// [`ANTI_IDLE_INTERVAL_MIN`] and [`ANTI_IDLE_INTERVAL_MAX`].
     pub anti_idle_interval: u32,
+    /// Seconds between two SSH keep-alives of every connection (shells, files, tunnels,
+    /// gateways), as the C# `SshKeepAliveIntervalSeconds`: within
+    /// [`SSH_KEEP_ALIVE_INTERVAL_MIN`] and [`SSH_KEEP_ALIVE_INTERVAL_MAX`].
+    pub ssh_keep_alive_interval: u32,
+    /// Seconds of no input after which an SSH shell is sent a bare carriage return, so a
+    /// remote `TMOUT` does not log the user out, as the C# `SshTmoutResetIntervalSeconds`: 0
+    /// turns it off, at most [`SSH_TMOUT_RESET_INTERVAL_MAX`].
+    pub ssh_tmout_reset_interval: u32,
     /// The RDP options profiles following the application's take.
     pub rdp_defaults: RdpDefaults,
 }
@@ -226,6 +234,36 @@ pub fn anti_idle_interval_accepted(seconds: u32) -> bool {
     seconds == 0 || (ANTI_IDLE_INTERVAL_MIN..=ANTI_IDLE_INTERVAL_MAX).contains(&seconds)
 }
 
+/// Seconds between two SSH keep-alives by default, as the C#
+/// `DefaultSshKeepAliveIntervalSeconds`.
+pub const SSH_KEEP_ALIVE_INTERVAL_DEFAULT: u32 = 30;
+
+/// Shortest SSH keep-alive interval accepted, in seconds, as the C# setting's range.
+pub const SSH_KEEP_ALIVE_INTERVAL_MIN: u32 = 5;
+
+/// Longest SSH keep-alive interval accepted, in seconds, as the C# setting's range.
+pub const SSH_KEEP_ALIVE_INTERVAL_MAX: u32 = 600;
+
+/// Whether `seconds` is an SSH keep-alive interval the settings accept.
+#[must_use]
+pub fn ssh_keep_alive_interval_accepted(seconds: u32) -> bool {
+    (SSH_KEEP_ALIVE_INTERVAL_MIN..=SSH_KEEP_ALIVE_INTERVAL_MAX).contains(&seconds)
+}
+
+/// Seconds of no input before a TMOUT reset by default, as the C#
+/// `DefaultSshTmoutResetIntervalSeconds`.
+pub const SSH_TMOUT_RESET_INTERVAL_DEFAULT: u32 = 240;
+
+/// Longest TMOUT reset interval accepted, in seconds, as the C# setting's range.
+pub const SSH_TMOUT_RESET_INTERVAL_MAX: u32 = 3600;
+
+/// Whether `seconds` is a TMOUT reset interval the settings accept: 0, which turns it off,
+/// up to [`SSH_TMOUT_RESET_INTERVAL_MAX`].
+#[must_use]
+pub fn ssh_tmout_reset_interval_accepted(seconds: u32) -> bool {
+    seconds <= SSH_TMOUT_RESET_INTERVAL_MAX
+}
+
 /// Largest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
 
@@ -251,6 +289,8 @@ impl Default for Settings {
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
+            ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
+            ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
             rdp_defaults: RdpDefaults::default(),
         }
     }
@@ -286,6 +326,10 @@ struct SshSection {
     /// Kept beside the SSH settings, where the C# Settings page shows it.
     #[serde(default)]
     anti_idle_interval: Option<u32>,
+    #[serde(default)]
+    keep_alive_interval: Option<u32>,
+    #[serde(default)]
+    tmout_reset_interval: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -500,6 +544,16 @@ impl Settings {
                 .anti_idle_interval
                 .filter(|seconds| anti_idle_interval_accepted(*seconds))
                 .unwrap_or(ANTI_IDLE_INTERVAL_DEFAULT),
+            ssh_keep_alive_interval: file
+                .ssh
+                .keep_alive_interval
+                .filter(|seconds| ssh_keep_alive_interval_accepted(*seconds))
+                .unwrap_or(SSH_KEEP_ALIVE_INTERVAL_DEFAULT),
+            ssh_tmout_reset_interval: file
+                .ssh
+                .tmout_reset_interval
+                .filter(|seconds| ssh_tmout_reset_interval_accepted(*seconds))
+                .unwrap_or(SSH_TMOUT_RESET_INTERVAL_DEFAULT),
             rdp_defaults: file.rdp,
             // A language not offered is not guessed: the desktop's is followed.
             language: file
@@ -561,6 +615,8 @@ impl Settings {
                 auto_reconnect: self.ssh_auto_reconnect,
                 auto_reconnect_attempts: Some(self.ssh_auto_reconnect_attempts),
                 anti_idle_interval: Some(self.anti_idle_interval),
+                keep_alive_interval: Some(self.ssh_keep_alive_interval),
+                tmout_reset_interval: Some(self.ssh_tmout_reset_interval),
             },
             rdp: self.rdp_defaults,
         })?;

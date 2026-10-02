@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! Auto-reconnect, as the C# Heimdall's for RDP, on unless a setting turns it off there: a
-//! desktop that drops for a reason that may pass (the network, a time-out, the protocol) is
+//! Auto-reconnect, as the C# Heimdall's for RDP, on unless the profile (or the application's
+//! RDP options it follows) turns it off: a desktop that drops for a reason that may pass (the network, a time-out, the protocol) is
 //! opened again in its tab by itself, after 2, 5, then 15 seconds, up to 20 attempts. Cancel
 //! stops it; anything that needs the user (a question, a key to trust) stops it too.
 //!
@@ -90,9 +90,11 @@ impl App {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        // An RDP desktop always; an SSH shell when the setting asks; nothing else.
+        // An RDP desktop whose profile asks; an SSH shell when the setting asks; nothing else.
         let max = match (&tab.profile, tab.purpose) {
-            (_, Purpose::Rdp) => Some(RDP_MAX_ATTEMPTS),
+            (TabProfile::Rdp(profile), Purpose::Rdp) => {
+                profile.auto_reconnect.then_some(RDP_MAX_ATTEMPTS)
+            }
             (TabProfile::Ssh(_), Purpose::Shell) => ssh_attempts,
             _ => None,
         };

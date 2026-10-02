@@ -21,6 +21,7 @@
 
 use heimdall_core::profile::display_address;
 use heimdall_core::store::RouteError;
+use heimdall_core::winrm::CommandError;
 use heimdall_ssh::{AuthMethod, ConnectError, KeyFileError, KnownHostsError};
 
 /// A server by host and port, as the `known_hosts` file records it.
@@ -60,6 +61,27 @@ pub enum UiError {
     InvalidHost,
     /// The account name cannot be used.
     InvalidUsername,
+    /// `WinRM` over HTTPS through an SSH gateway, which the C# Heimdall refuses.
+    WinRmHttpsThroughGateway,
+    /// The `WinRM` server's name does not resolve, as the C# preflight says.
+    WinRmHostUnresolved {
+        /// The name.
+        host: String,
+    },
+    /// The `WinRM` server's port refused or did not answer, as the C# preflight says.
+    WinRmUnreachable {
+        /// The server.
+        host: String,
+        /// Its port.
+        port: u16,
+    },
+    /// The `WinRM` server's TLS handshake failed: a certificate not trusted, or no TLS.
+    WinRmTlsFailed {
+        /// The server.
+        host: String,
+        /// Its port.
+        port: u16,
+    },
     /// The network connection failed.
     Network {
         /// How, as far as the operating system tells.
@@ -171,6 +193,16 @@ pub enum UiError {
         /// Technical description.
         detail: String,
     },
+}
+
+impl From<&CommandError> for UiError {
+    fn from(error: &CommandError) -> Self {
+        match error {
+            CommandError::InvalidHost => Self::InvalidHost,
+            CommandError::InvalidUsername => Self::InvalidUsername,
+            CommandError::HttpsThroughGateway => Self::WinRmHttpsThroughGateway,
+        }
+    }
 }
 
 impl From<&KeyFileError> for UiError {
