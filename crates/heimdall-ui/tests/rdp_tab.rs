@@ -45,9 +45,12 @@ fn app(dir: &Path) -> App {
 
 /// The application with one RDP profile, given `options`.
 fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
-    let profiles_file = dir.join("profiles.toml");
-    let mut store = ProfileStore::open(&profiles_file).expect("store");
-    store.merge_rdp([RdpProfile {
+    app_of(dir, profile(options))
+}
+
+/// The RDP profile "dc", given `options`.
+fn profile(options: heimdall_core::profile::RdpOptions) -> RdpProfile {
+    RdpProfile {
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: Some("Windows".to_owned()),
@@ -64,7 +67,15 @@ fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
         several_servers: false,
-    }]);
+        anti_idle: false,
+    }
+}
+
+/// The application with `profile`, its only one.
+fn app_of(dir: &Path, profile: RdpProfile) -> App {
+    let profiles_file = dir.join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_rdp([profile]);
     store.save().expect("save");
     App::new(AppConfig {
         profiles_file,
@@ -454,6 +465,61 @@ fn ctrl_alt_del_from_the_menu_reaches_the_server_pressed_then_released_in_revers
             (false, ctrl),
         ]
     );
+}
+
+#[test]
+fn the_anti_idle_badge_shows_while_the_keys_go_and_its_click_stops_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app_of(
+        dir.path(),
+        RdpProfile {
+            anti_idle: true,
+            ..profile(heimdall_core::profile::RdpOptions::default())
+        },
+    );
+    let effects = core.update(AppMessage::OpenRdp(ProfileId::new("dc")));
+    let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("one connection");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    let mut shell = Shell::with_app(core);
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Anti-idle").expect("the badge");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::App(AppMessage::StopAntiIdle(stopped)) if *stopped == tab
+            )),
+            "{messages:?}"
+        );
+        for message in messages {
+            let _ = shell.update(message);
+        }
+    }
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Anti-idle").is_err(), "gone once stopped");
+}
+
+#[test]
+fn a_session_asking_for_no_anti_idle_shows_no_badge() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Anti-idle").is_err());
 }
 
 #[test]

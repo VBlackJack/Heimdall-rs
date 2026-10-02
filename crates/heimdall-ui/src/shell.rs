@@ -397,6 +397,10 @@ pub enum Message {
     FontSizeEdited(String),
     /// Apply the font size typed.
     FontSizeApply,
+    /// The anti-idle interval typed in the Settings page.
+    AntiIdleEdited(String),
+    /// Apply the anti-idle interval typed.
+    AntiIdleApply,
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -473,6 +477,8 @@ impl fmt::Debug for Message {
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
             Self::FontSizeEdited(typed) => write!(f, "FontSizeEdited({typed:?})"),
             Self::FontSizeApply => f.write_str("FontSizeApply"),
+            Self::AntiIdleEdited(typed) => write!(f, "AntiIdleEdited({typed:?})"),
+            Self::AntiIdleApply => f.write_str("AntiIdleApply"),
         }
     }
 }
@@ -649,6 +655,8 @@ pub struct Shell {
     log_directory: Option<String>,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
+    /// The anti-idle interval as typed in the Settings page, until applied.
+    anti_idle_typed: Option<String>,
     /// The search typed over the trusted SSH host keys.
     host_key_search: String,
     /// The Settings tab shown, kept while the application runs.
@@ -748,6 +756,7 @@ impl Shell {
             focus_next: None,
             log_directory: None,
             font_size_typed: None,
+            anti_idle_typed: None,
             host_key_search: String::new(),
             settings_tab: SettingsTab::default(),
             certificate_search: String::new(),
@@ -816,17 +825,22 @@ impl Shell {
                 })
             )
         );
+        let mut subscriptions = vec![events];
         if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
-            Subscription::batch([
-                events,
-                iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick),
-            ])
-        } else {
-            events
+            subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
+        if let Some(interval) = self.app.anti_idle_interval() {
+            subscriptions
+                .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
+        }
+        Subscription::batch(subscriptions)
     }
 
     /// Applies a message.
+    #[expect(
+        clippy::too_many_lines,
+        reason = "a dispatcher: one arm per group of messages"
+    )]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
@@ -914,7 +928,9 @@ impl Shell {
             message @ (Message::LogDirectoryEdited(_)
             | Message::LogDirectoryApply
             | Message::FontSizeEdited(_)
-            | Message::FontSizeApply) => self.settings_field_message(message),
+            | Message::FontSizeApply
+            | Message::AntiIdleEdited(_)
+            | Message::AntiIdleApply) => self.settings_field_message(message),
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
@@ -2183,6 +2199,8 @@ impl Shell {
             SettingsTab::Ssh => column![
                 text(fl!("ui-settings-ssh-auto-reconnect")).size(BODY_SIZE),
                 self.ssh_reconnect_settings(),
+                text(fl!("ui-settings-ssh-session")).size(BODY_SIZE),
+                self.ssh_session_settings(),
                 self.trusted_keys_settings(TrustedList::HostKeys),
             ],
             SettingsTab::Rdp => self.rdp_settings(),
@@ -2418,6 +2436,23 @@ impl Shell {
                         size,
                     )))
             }
+            Message::AntiIdleEdited(typed) => {
+                self.anti_idle_typed = Some(typed);
+                Vec::new()
+            }
+            Message::AntiIdleApply => {
+                // Out of the range, it stays typed, the C# message under it.
+                let Some(seconds) = self.typed_anti_idle().filter(|seconds| {
+                    heimdall_core::settings::anti_idle_interval_accepted(*seconds)
+                }) else {
+                    return Vec::new();
+                };
+                self.anti_idle_typed = None;
+                self.app
+                    .update(AppMessage::Settings(SettingsMessage::AntiIdleInterval(
+                        seconds,
+                    )))
+            }
             _ => match self.log_directory.take() {
                 Some(typed) => {
                     self.app
@@ -2433,6 +2468,53 @@ impl Shell {
     /// The font size typed, as a number; `None` when nothing is typed or it is not one.
     fn typed_font_size(&self) -> Option<u16> {
         self.font_size_typed.as_deref()?.trim().parse().ok()
+    }
+
+    /// The anti-idle interval typed, as a number; `None` when nothing is typed or it is not
+    /// one.
+    fn typed_anti_idle(&self) -> Option<u32> {
+        self.anti_idle_typed.as_deref()?.trim().parse().ok()
+    }
+
+    /// The SSH session settings, as the C# SSH/SFTP Session tab: the anti-idle interval,
+    /// applied with Enter, which RDP sessions asking for anti-idle keys follow.
+    fn ssh_session_settings(&self) -> Element<'_, Message> {
+        let shown = self.app.settings().anti_idle_interval.to_string();
+        let typed = self.anti_idle_typed.as_deref().unwrap_or(&shown);
+        let refused = self.anti_idle_typed.is_some()
+            && !self
+                .typed_anti_idle()
+                .is_some_and(heimdall_core::settings::anti_idle_interval_accepted);
+        let mut card = column![
+            row![
+                text(fl!("ui-settings-anti-idle-interval")),
+                iced::widget::space::horizontal(),
+                text_input("", typed)
+                    .width(FONT_SIZE_FIELD_WIDTH)
+                    .on_input(Message::AntiIdleEdited)
+                    .on_submit(Message::AntiIdleApply),
+                text(fl!("ui-settings-anti-idle-unit")),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING);
+        if refused {
+            card = card.push(
+                text(fl!(
+                    "ui-settings-anti-idle-refused",
+                    min = heimdall_core::settings::ANTI_IDLE_INTERVAL_MIN,
+                    max = heimdall_core::settings::ANTI_IDLE_INTERVAL_MAX
+                ))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            );
+        }
+        container(card)
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
     }
 
     /// The terminal's appearance, as the C# Settings page offers it: its font size, applied
@@ -3128,6 +3210,19 @@ impl Shell {
         ]
         .spacing(SPACING)
         .align_y(iced::Alignment::Center);
+        // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
+        if self.app.anti_idle_on(tab_id) {
+            bar = bar.push(
+                tooltip(
+                    button(text(fl!("ui-desktop-anti-idle")).size(SMALL_SIZE))
+                        .style(button::text)
+                        .on_press(Message::App(AppMessage::StopAntiIdle(tab_id))),
+                    text(fl!("ui-desktop-anti-idle-tooltip")).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
         // VNC carries the clipboard in clear: sent on a click only, as the C# Heimdall's
         // noVNC "sync" does. RDP shares it by itself when its profile says so.
         if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
@@ -3958,6 +4053,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
+        ProfileToggle::AntiIdle => fl!("ui-profile-toggle-anti-idle"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
@@ -5452,6 +5548,7 @@ mod tests {
                 forwards: heimdall_core::profile::Forwards::default(),
                 follow_defaults: false,
                 several_servers: false,
+                anti_idle: false,
             })
         };
         let fixed = RdpOptions {

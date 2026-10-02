@@ -179,8 +179,6 @@ pub enum Dropped {
     RdpMicrophone,
     /// RDP across several monitors.
     RdpMultiMonitor,
-    /// RDP anti-idle keep-alive.
-    RdpAntiIdle,
 }
 
 /// A profile imported without some of its settings.
@@ -468,7 +466,6 @@ impl RdpChoices {
                     (defaults.usb, Dropped::RdpUsb),
                     (defaults.audio_capture, Dropped::RdpMicrophone),
                     (defaults.multi_monitor, Dropped::RdpMultiMonitor),
-                    (server.rdp_anti_idle, Dropped::RdpAntiIdle),
                 ]),
             }
         } else {
@@ -490,7 +487,6 @@ impl RdpChoices {
                     (server.rdp_redirect_usb, Dropped::RdpUsb),
                     (server.rdp_audio_capture, Dropped::RdpMicrophone),
                     (server.rdp_multi_monitor, Dropped::RdpMultiMonitor),
-                    (server.rdp_anti_idle, Dropped::RdpAntiIdle),
                 ]),
             }
         }
@@ -1129,6 +1125,8 @@ fn convert_rdp(
         forwards: forwards_of(server)?,
         follow_defaults: false,
         several_servers: false,
+        // Not one of the global defaults in the C# Heimdall either.
+        anti_idle: server.rdp_anti_idle,
     })
 }
 

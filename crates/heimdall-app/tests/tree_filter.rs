@@ -80,6 +80,7 @@ fn app(dir: &Path) -> App {
         forwards: Forwards::default(),
         follow_defaults: false,
         several_servers: false,
+        anti_idle: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

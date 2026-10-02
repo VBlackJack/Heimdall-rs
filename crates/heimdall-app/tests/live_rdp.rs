@@ -62,6 +62,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
                 forwards: heimdall_core::profile::Forwards::default(),
                 follow_defaults: false,
                 several_servers: false,
+                anti_idle: false,
             },
             known_hosts: dir.path().join("known_rdp_hosts"),
             accepted: None,

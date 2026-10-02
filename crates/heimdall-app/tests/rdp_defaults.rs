@@ -53,6 +53,7 @@ fn profile(id: &str, follow_defaults: bool) -> RdpProfile {
         },
         follow_defaults,
         several_servers: false,
+        anti_idle: false,
     }
 }
 

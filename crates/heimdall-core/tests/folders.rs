@@ -59,6 +59,7 @@ fn rdp(id: &str, group: Option<&str>) -> RdpProfile {
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
         several_servers: false,
+        anti_idle: false,
     }
 }
 

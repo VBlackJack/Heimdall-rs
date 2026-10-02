@@ -2112,6 +2112,28 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
 }
 
 #[test]
+fn the_anti_idle_interval_is_typed_in_the_ssh_settings_zero_turning_it_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(heimdall_ui::shell::SettingsTab::Ssh));
+    simulator(&shell)
+        .find("Anti-idle interval (0 = off)")
+        .expect("in the SSH tab, as the C# one");
+    let refusal = "Anti-idle interval must be 0, or between 10 and 3600 seconds.";
+    for (typed, refused) in [("9", true), ("soon", true), ("3601", true), (" 0 ", false)] {
+        let _ = shell.update(Message::AntiIdleEdited(typed.to_owned()));
+        let _ = shell.update(Message::AntiIdleApply);
+        let mut ui = simulator(&shell);
+        assert_eq!(ui.find(refusal).is_ok(), refused, "{typed}");
+    }
+    assert_eq!(shell.app().settings().anti_idle_interval, 0);
+    let _ = shell.update(Message::AntiIdleEdited("120".to_owned()));
+    let _ = shell.update(Message::AntiIdleApply);
+    assert_eq!(shell.app().settings().anti_idle_interval, 120);
+}
+
+#[test]
 fn the_tab_shows_the_post_connect_count_and_a_click_on_it_stops_the_steps() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = connected_shell(dir.path());
