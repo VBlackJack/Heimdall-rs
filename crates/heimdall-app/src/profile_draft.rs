@@ -23,10 +23,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
     AudioPlayback, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT,
-    DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, FIXED_HEIGHT_MAX,
-    FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile, LocalCommand, LocalProfile, ProfileId,
-    RdpOptions, RdpProfile, Resolution, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
-    fixed_desktop,
+    DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Experience,
+    FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile, LocalCommand,
+    LocalProfile, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile, TelnetProfile,
+    VncProfile, WinRmProfile, fixed_desktop,
 };
 
 use crate::local_draft;
@@ -302,6 +302,8 @@ pub enum ProfileChoice {
     ScaleFixed(bool),
     /// Whether the desktop follows the tab's size.
     DynamicResolution(bool),
+    /// A box of the visual experience, ticked or cleared.
+    Experience(Experience, bool),
 }
 
 /// The profile a form saves, of its protocol.
@@ -742,6 +744,7 @@ impl ProfileDraft {
             }
             ProfileChoice::ScaleFixed(on) => self.rdp_options.scale_fixed = on,
             ProfileChoice::DynamicResolution(on) => self.rdp_options.dynamic_resolution = on,
+            ProfileChoice::Experience(experience, on) => self.rdp_options.set(experience, on),
         }
     }
 
@@ -1841,5 +1844,35 @@ mod tests {
         assert!(form.shows(ProfileField::Domain));
         assert!(!ProfileDraft::new_for(DraftProtocol::Ssh).shows(ProfileField::Domain));
         assert!(!ProfileDraft::new_for(DraftProtocol::Vnc).shows(ProfileField::Username));
+    }
+
+    #[test]
+    fn the_experience_boxes_ticked_are_saved_with_the_flags_no_box_shows() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::Rdp);
+        form.name = "dc".to_owned();
+        form.host = "dc.lab".to_owned();
+        // As a C# .rdp import may bring it.
+        form.rdp_options.performance_flags = 0x40;
+        form.choose(ProfileChoice::Experience(
+            Experience::DisableWallpaper,
+            true,
+        ));
+        form.choose(ProfileChoice::Experience(
+            Experience::EnableComposition,
+            true,
+        ));
+        form.choose(ProfileChoice::Experience(
+            Experience::DisableWallpaper,
+            false,
+        ));
+        let Ok(DraftProfile::Rdp(saved)) = form.to_saved(id()) else {
+            panic!("rdp");
+        };
+        assert_eq!(saved.options.performance_flags, 0x40 | 0x100);
+        assert_eq!(
+            ProfileDraft::from_rdp(&saved).rdp_options.performance_flags,
+            0x140,
+            "read back"
+        );
     }
 }

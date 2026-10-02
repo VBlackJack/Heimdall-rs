@@ -173,6 +173,7 @@ struct RdpKeys {
     rdp_fixed_height: u16,
     rdp_initial_smart_sizing: bool,
     rdp_dynamic_resolution: bool,
+    rdp_performance_flags: u32,
 }
 
 /// A post-connect step as the C# writes it.
@@ -353,6 +354,7 @@ fn rdp(profile: &RdpProfile) -> Entry {
             rdp_fixed_height: options.fixed_height,
             rdp_initial_smart_sizing: options.scale_fixed,
             rdp_dynamic_resolution: options.dynamic_resolution,
+            rdp_performance_flags: options.performance_flags,
         }),
         ..server(
             &profile.id,

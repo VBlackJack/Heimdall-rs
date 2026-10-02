@@ -566,13 +566,24 @@ fn connector_config(config: &RdpConfig) -> connector::Config {
         compression_type: None,
         pointer_software_rendering: true,
         multitransport_flags: None,
-        performance_flags: PerformanceFlags::default(),
+        performance_flags: performance_flags(config.options.performance_flags),
         desktop_scale_factor: 0,
         hardware_id: None,
         license_cache: None,
         timezone_info: TimezoneInfo::default(),
         alternate_shell: String::new(),
         work_dir: String::new(),
+    }
+}
+
+/// The performance flags the server is sent: the profile's as they are, as the C# control
+/// takes them; when no box is ticked, `IronRDP`'s balance, the experience given so far (font
+/// smoothing on, window contents and menu animations off while they move).
+fn performance_flags(profile: u32) -> PerformanceFlags {
+    if profile == 0 {
+        PerformanceFlags::default()
+    } else {
+        PerformanceFlags::from_bits_retain(profile)
     }
 }
 

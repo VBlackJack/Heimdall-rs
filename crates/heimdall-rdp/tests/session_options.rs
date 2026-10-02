@@ -29,7 +29,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions};
+use heimdall_core::profile::{AudioPlayback, ColorDepth, Experience, RdpOptions};
 use heimdall_rdp::{KnownRdpHosts, RdpConfig, Security, Timeouts, connect_over, given};
 use ironrdp::pdu::gcc::{
     ClientClusterData, ClientEarlyCapabilityFlags, ClientGccBlocks, ConferenceCreateResponse,
@@ -42,7 +42,7 @@ use ironrdp::pdu::mcs::{
 };
 use ironrdp::pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
 use ironrdp::pdu::rdp::ClientInfoPdu;
-use ironrdp::pdu::rdp::client_info::ClientInfoFlags;
+use ironrdp::pdu::rdp::client_info::{ClientInfoFlags, PerformanceFlags};
 use ironrdp::pdu::x224::{X224, X224Data};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio_rustls::TlsAcceptor;
@@ -286,6 +286,37 @@ async fn sound_played_here_is_asked_for_and_not_kept_on_the_server() {
     let flags = sent.info.client_info.flags;
     assert!(!flags.contains(ClientInfoFlags::NO_AUDIO_PLAYBACK));
     assert!(!flags.contains(ClientInfoFlags::REMOTE_CONSOLE_AUDIO));
+}
+
+/// The performance flags the Client Info PDU carries.
+fn performance_flags(sent: &Sent) -> Option<PerformanceFlags> {
+    sent.info
+        .client_info
+        .extra_info
+        .optional_data
+        .performance_flags()
+}
+
+#[tokio::test]
+async fn the_boxes_ticked_are_the_flags_sent_and_none_keeps_the_experience_given_so_far() {
+    let sent = sent_with(RdpOptions::default()).await;
+    assert_eq!(
+        performance_flags(&sent),
+        Some(
+            PerformanceFlags::DISABLE_FULLWINDOWDRAG
+                | PerformanceFlags::DISABLE_MENUANIMATIONS
+                | PerformanceFlags::ENABLE_FONT_SMOOTHING
+        )
+    );
+    let mut options = RdpOptions::default();
+    options.set(Experience::DisableWallpaper, true);
+    options.set(Experience::EnableComposition, true);
+    let sent = sent_with(options).await;
+    assert_eq!(
+        performance_flags(&sent),
+        Some(PerformanceFlags::DISABLE_WALLPAPER | PerformanceFlags::ENABLE_DESKTOP_COMPOSITION),
+        "exactly the boxes ticked, as the C# control is given them"
+    );
 }
 
 #[tokio::test]
