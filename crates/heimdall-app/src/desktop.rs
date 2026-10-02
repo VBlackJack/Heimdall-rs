@@ -119,10 +119,12 @@ pub enum SpecialKeys {
     AltTab,
     /// Ctrl+Esc: the Start menu.
     CtrlEsc,
-    /// Escape.
-    Escape,
     /// Print Screen.
     PrintScreen,
+    /// Escape.
+    Escape,
+    /// F11, which this computer keeps for its own full screen.
+    F11,
     /// Win+L: lock the workstation.
     WinL,
     /// Win+D: show the desktop.
@@ -144,16 +146,18 @@ const PRINT: KeyNames = ((true, 0x37), 0xFF61);
 const LETTER_L: KeyNames = ((false, 0x26), 0x006C);
 const LETTER_D: KeyNames = ((false, 0x20), 0x0064);
 const LETTER_E: KeyNames = ((false, 0x12), 0x0065);
+const F11: KeyNames = ((false, 0x57), 0xFFC8);
 
 impl SpecialKeys {
-    /// Every combination, in the menu's order.
-    pub const ALL: [Self; 9] = [
+    /// Every combination, in the C# menu's order.
+    pub const ALL: [Self; 10] = [
         Self::CtrlAltDel,
         Self::Windows,
         Self::AltTab,
         Self::CtrlEsc,
-        Self::Escape,
         Self::PrintScreen,
+        Self::Escape,
+        Self::F11,
         Self::WinL,
         Self::WinD,
         Self::WinE,
@@ -168,6 +172,7 @@ impl SpecialKeys {
             Self::CtrlEsc => &[CONTROL, ESCAPE],
             Self::Escape => &[ESCAPE],
             Self::PrintScreen => &[PRINT],
+            Self::F11 => &[F11],
             Self::WinL => &[SUPER, LETTER_L],
             Self::WinD => &[SUPER, LETTER_D],
             Self::WinE => &[SUPER, LETTER_E],
@@ -571,6 +576,35 @@ mod tests {
                 operations.as_slice(),
                 [Operation::KeyPressed(pressed), Operation::KeyReleased(released)]
                     if *pressed == enter && *released == enter
+            ),
+            "{operations:?}"
+        );
+    }
+
+    #[test]
+    fn the_menu_follows_the_cs_order_and_f11_goes_by_its_scancode() {
+        assert_eq!(
+            SpecialKeys::ALL,
+            [
+                SpecialKeys::CtrlAltDel,
+                SpecialKeys::Windows,
+                SpecialKeys::AltTab,
+                SpecialKeys::CtrlEsc,
+                SpecialKeys::PrintScreen,
+                SpecialKeys::Escape,
+                SpecialKeys::F11,
+                SpecialKeys::WinL,
+                SpecialKeys::WinD,
+                SpecialKeys::WinE,
+            ]
+        );
+        let f11 = Scancode::from_u8(false, 0x57);
+        let operations = rdp_operations(&SpecialKeys::F11.inputs());
+        assert!(
+            matches!(
+                operations.as_slice(),
+                [Operation::KeyPressed(pressed), Operation::KeyReleased(released)]
+                    if *pressed == f11 && *released == f11
             ),
             "{operations:?}"
         );
