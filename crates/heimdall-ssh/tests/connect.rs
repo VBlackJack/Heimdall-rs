@@ -252,6 +252,43 @@ async fn a_key_without_the_pinned_fingerprint_is_a_changed_key_not_a_first_conta
 }
 
 #[tokio::test]
+async fn an_old_appliance_is_reached_only_by_a_profile_allowing_legacy_algorithms() {
+    let server = start(Spec {
+        legacy_only: true,
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD, PASSWORD]));
+
+    let refused = tokio::time::timeout(
+        STEP_TIMEOUT,
+        connect(
+            &profile(server.port, None),
+            &options,
+            prompter.clone(),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("in time");
+    assert!(refused.is_err(), "nothing current in common: refused");
+
+    let legacy = heimdall_core::profile::SshProfile {
+        legacy_algorithms: true,
+        ..profile(server.port, None)
+    };
+    let session = tokio::time::timeout(
+        STEP_TIMEOUT,
+        connect(&legacy, &options, prompter, CancellationToken::new()),
+    )
+    .await
+    .expect("in time");
+    assert!(session.is_ok(), "{:?}", session.err());
+}
+
+#[tokio::test]
 async fn a_server_without_the_recorded_algorithm_is_refused() {
     // The server holds only an ed25519 key; an ECDSA key is recorded for it.
     let server = start(Spec::default()).await;

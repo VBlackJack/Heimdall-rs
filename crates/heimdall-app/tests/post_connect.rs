@@ -55,6 +55,7 @@ fn profile(id: &str, post_connect: PostConnect) -> SshProfile {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }
 }
 

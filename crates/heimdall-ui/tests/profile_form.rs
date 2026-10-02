@@ -113,6 +113,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

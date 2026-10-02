@@ -83,6 +83,7 @@ fn ssh() -> Vec<SshProfile> {
         forward_agent: true,
         compression: true,
         sftp: false,
+        legacy_algorithms: false,
     };
     let files = SshProfile {
         id: ProfileId::new("files"),
@@ -99,6 +100,7 @@ fn ssh() -> Vec<SshProfile> {
         forward_agent: false,
         compression: false,
         sftp: true,
+        legacy_algorithms: false,
     };
     vec![base, files]
 }

@@ -50,6 +50,7 @@ fn app(dir: &Path) -> App {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     store.merge_telnet([TelnetProfile {
         id: ProfileId::new("switch"),

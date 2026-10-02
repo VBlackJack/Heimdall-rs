@@ -73,6 +73,10 @@ impl fmt::Display for ProfileId {
 ///
 /// Holds no secret. A password or a key passphrase is asked for when connecting.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per SSH option, each saved on its own"
+)]
 pub struct SshProfile {
     /// Stable identifier.
     pub id: ProfileId,
@@ -116,6 +120,11 @@ pub struct SshProfile {
     /// shell. Written down only when it is one.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub sftp: bool,
+    /// Also offer the older key exchanges, ciphers, MACs and the SHA-1 `ssh-rsa` host key that
+    /// old appliances still speak, after the current ones, as the C# Heimdall always does.
+    /// Off unless turned on, written down only when on.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy_algorithms: bool,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -190,6 +199,7 @@ impl SshGateway {
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         }
     }
 }

@@ -43,6 +43,7 @@ fn app(dir: &Path) -> App {
         forward_agent: false,
         compression: false,
         sftp: false,
+        legacy_algorithms: false,
     }]);
     // Arguments listed, as a profile made on Linux keeps them.
     store.merge_local([LocalProfile {

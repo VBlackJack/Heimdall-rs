@@ -65,7 +65,8 @@ ring = "0.17.14"
 # roxmltree: mRemoteNG and RDCMan files read, a DTD refused; already in the tree through the
 # font stack.
 roxmltree = "0.20.0"
-russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2"] }
+# des: 3DES-CBC, offered only to a profile that allows legacy algorithms.
+russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
 rust-embed = "8.12.0"
 # rustls-native-certs: the system's certificate store, for an FTPS certificate it trusts, as in
 # the C#.

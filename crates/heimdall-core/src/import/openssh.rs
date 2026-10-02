@@ -910,6 +910,7 @@ pub fn plan<S: BuildHasher>(
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         });
     }
     plan.gateways = planner.made;

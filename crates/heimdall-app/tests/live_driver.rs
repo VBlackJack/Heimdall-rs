@@ -64,6 +64,7 @@ fn request(port: u16, known_hosts: std::path::PathBuf) -> ConnectRequest {
             forward_agent: false,
             compression: false,
             sftp: false,
+            legacy_algorithms: false,
         },
         options,
         cancel: CancellationToken::new(),

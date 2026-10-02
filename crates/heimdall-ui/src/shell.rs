@@ -3969,6 +3969,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
         ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
         ProfileToggle::Compression => fl!("ui-profile-toggle-compression"),
+        ProfileToggle::LegacyAlgorithms => fl!("ui-profile-toggle-legacy-algorithms"),
         ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
     }
@@ -4382,6 +4383,15 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
             form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
         }
+    }
+    if matches!(draft.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
+        && draft.is_on(ProfileToggle::LegacyAlgorithms)
+    {
+        form = form.push(
+            text(fl!("ui-profile-legacy-algorithms-hint"))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+        );
     }
     if draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::Nla) {
         form = form.push(
