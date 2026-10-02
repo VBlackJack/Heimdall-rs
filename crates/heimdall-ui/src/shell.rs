@@ -4695,7 +4695,7 @@ fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Me
         text(fl!(
             "ui-dialog-post-connect-body",
             name = confirmation.name.as_str(),
-            count = count.to_string()
+            count = count
         )),
         container(
             scrollable(

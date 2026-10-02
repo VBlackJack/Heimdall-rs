@@ -137,7 +137,7 @@ fn at_start_the_pin_hides_the_window_until_it_is_typed() {
     type_into(&mut shell, 0, "1111");
     click(&mut shell, "Unlock");
     simulator(&shell)
-        .find("Incorrect PIN. 4 attempt(s) remaining.")
+        .find("Incorrect PIN. 4 attempts remaining.")
         .expect("the C# words");
     type_into(&mut shell, 0, PIN);
     click(&mut shell, "Unlock");
@@ -190,7 +190,7 @@ fn locked_out_the_unlock_button_takes_nothing() {
         click(&mut shell, "Unlock");
     }
     simulator(&shell)
-        .find("Too many incorrect attempts. Try again in 5 minute(s).")
+        .find("Too many incorrect attempts. Try again in 5 minutes.")
         .expect("the C# words");
     type_into(&mut shell, 0, PIN);
     let sent = click(&mut shell, "Unlock");

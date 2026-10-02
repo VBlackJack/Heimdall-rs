@@ -26,8 +26,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Message as AppMessage, QuestionId, QuestionKind,
-    TabId, UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Message as AppMessage,
+    PostConnectConfirmation, QuestionId, QuestionKind, TabId, UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -1287,7 +1287,7 @@ fn ctrl_click_selects_several_and_their_right_click_is_the_bulk_menu() {
     )));
     let mut ui = simulator(&shell);
     ui.find("Delete Selected Items").expect("asked");
-    ui.find("Are you sure you want to delete 2 selected item(s)?\n- server a\n- server b")
+    ui.find("Are you sure you want to delete 2 selected items?\n- server a\n- server b")
         .expect("listed");
 }
 
@@ -2892,4 +2892,24 @@ fn the_rdp_tab_sets_the_global_rdp_defaults_as_the_csharp_settings() {
         Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(defaults)))
             if defaults == RdpDefaults { redirect_drives: true, ..RdpDefaults::default() }
     )));
+}
+
+#[test]
+fn one_post_connect_command_is_said_in_the_singular() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ConfirmPostConnect(Box::new(
+        PostConnectConfirmation {
+            profile: profile("a", None),
+            name: "server a".to_owned(),
+            commands: vec!["uptime".to_owned()],
+        },
+    )));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find(
+        "\"server a\" was imported and will automatically run 1 command in this session. Only \
+         continue if you trust this profile. Run it and remember this choice?",
+    )
+    .expect("the singular, chosen by the number");
 }

@@ -58,8 +58,14 @@ ui-pin-field-confirm = Confirmar PIN
 ui-pin-unlock-button = Desbloquear
 ui-pin-save-button = Guardar
 ui-pin-remove-button = Quitar PIN
-ui-pin-problem-wrong = PIN incorrecto. Quedan { $remaining } intento(s).
-ui-pin-problem-locked-out = Demasiados intentos incorrectos. Inténtalo de nuevo en { $minutes } minuto(s).
+ui-pin-problem-wrong = PIN incorrecto. { $remaining ->
+    [one] Queda { $remaining } intento.
+   *[other] Quedan { $remaining } intentos.
+}
+ui-pin-problem-locked-out = Demasiados intentos incorrectos. Inténtalo de nuevo en { $minutes ->
+    [one] { $minutes } minuto.
+   *[other] { $minutes } minutos.
+}
 ui-pin-problem-wrong-current = El PIN actual es incorrecto.
 ui-pin-problem-too-short = El PIN debe tener al menos { $min } dígitos.
 ui-pin-problem-too-long = El PIN debe tener como máximo { $max } dígitos.
@@ -741,7 +747,10 @@ ui-profile-gateway-direct-hint = Está seleccionada la conexión directa. Desmá
 ui-profile-gateway-explain-tunnel = El tráfico se enrutará a través de esta pasarela SSH.
 ui-profile-socks-title = Proxy SOCKS5
 ui-dialog-post-connect-title = ¿Ejecutar comandos posteriores a la conexión?
-ui-dialog-post-connect-body = "{ $name }" se importó y ejecutará automáticamente { $count } comando(s) en esta sesión. Continúa solo si confías en este perfil. ¿Ejecutarlos y recordar esta elección?
+ui-dialog-post-connect-body = { $count ->
+    [one] "{ $name }" se importó y ejecutará automáticamente { $count } comando en esta sesión. Continúa solo si confías en este perfil. ¿Ejecutarlo y recordar esta elección?
+   *[other] "{ $name }" se importó y ejecutará automáticamente { $count } comandos en esta sesión. Continúa solo si confías en este perfil. ¿Ejecutarlos y recordar esta elección?
+}
 ui-dialog-post-connect-run = Ejecutar y recordar
 ui-dialog-post-connect-skip = Conectar sin ellos
 ui-profile-toggle-forward-agent = Reenviar agente SSH
@@ -851,7 +860,10 @@ ui-selection-connect = Conectar seleccionados ({ $count })
 ui-selection-duplicate = Duplicar seleccionados
 ui-selection-delete = Eliminar seleccionados ({ $count })
 ui-dialog-delete-selection-title = Eliminar elementos seleccionados
-ui-dialog-delete-selection-body = ¿Seguro que quieres eliminar { $count } elemento(s) seleccionado(s)?
+ui-dialog-delete-selection-body = ¿Seguro que quieres eliminar { $count ->
+    [one] { $count } elemento seleccionado
+   *[other] { $count } elementos seleccionados
+}?
 
 ui-palette-placeholder = Buscar host o IP... (Ctrl+K)
 ui-palette-ssh-to = [SSH] Conectar a { $target }
@@ -886,7 +898,10 @@ ui-find-nothing = No coincide
 ui-settings-terminal = Apariencia de la terminal
 ui-settings-color-scheme = Esquema de color
 ui-settings-appearance = Apariencia
-ui-vault-problem-locked-out = Demasiados intentos incorrectos. Inténtalo de nuevo en { $minutes } minuto(s).
+ui-vault-problem-locked-out = Demasiados intentos incorrectos. Inténtalo de nuevo en { $minutes ->
+    [one] { $minutes } minuto.
+   *[other] { $minutes } minutos.
+}
 ui-settings-language = Idioma
 ui-settings-language-en = Inglés
 ui-settings-language-fr = Français
@@ -972,7 +987,10 @@ ui-files-type-directory = Directorio
 ui-files-type-link = Enlace simbólico
 ui-files-type-other = Tipo desconocido
 
-ui-files-selected-count = { $count } seleccionado(s)
+ui-files-selected-count = { $count ->
+    [one] { $count } seleccionado
+   *[other] { $count } seleccionados
+}
 ui-dialog-delete-many-body = ¿Eliminar { $count } elementos? Las carpetas se eliminan con todo su contenido. Esto no se puede deshacer.
 
 ui-files-bookmark-button = Marcar esta ruta
