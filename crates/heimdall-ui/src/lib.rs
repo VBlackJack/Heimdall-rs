@@ -35,6 +35,7 @@ pub mod rdp_options;
 pub mod rdp_view;
 mod report;
 mod search_keys;
+pub mod session_settings;
 pub mod sessions_view;
 pub mod shell;
 pub mod status_bar;
