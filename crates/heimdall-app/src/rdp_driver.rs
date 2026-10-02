@@ -274,6 +274,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         trusted_for_run: request.trusted_for_run.clone(),
         options: profile.options,
         several_servers: profile.several_servers,
+        kerberos: request.route.is_empty(),
     }
 }
 
@@ -422,5 +423,9 @@ mod tests {
             several_servers: false,
         }));
         assert_eq!(config.options, options);
+        assert!(
+            config.kerberos,
+            "a server reached directly may log on with Kerberos"
+        );
     }
 }
