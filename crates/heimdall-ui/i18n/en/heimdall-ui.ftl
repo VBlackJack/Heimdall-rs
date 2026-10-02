@@ -653,6 +653,7 @@ ui-profile-options-telnet = Telnet Options
 ui-profile-toggle-clipboard = Redirect clipboard
 ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
+ui-profile-toggle-several-servers = Several servers answer at this address: ask about each new certificate
 ui-profile-rdp-follow-defaults = Use global RDP defaults
 ui-profile-rdp-defaults-banner = This server is using your global RDP defaults. Uncheck "Use global RDP defaults" to set per-server options.
 ui-profile-rdp-defaults-not-in-effect = Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.

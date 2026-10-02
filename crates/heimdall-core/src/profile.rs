@@ -252,6 +252,12 @@ pub struct RdpProfile {
     /// itself; the profile's own values are kept either way.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub follow_defaults: bool,
+    /// Several machines answer at this address (a pool of domain controllers, a farm of
+    /// session hosts): a certificate not trusted yet is asked about and trusted beside the
+    /// others, as the C# keeps a set per profile. Off, a new certificate on a trusted server
+    /// is refused as changed, the alarm of an intercepted connection.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub several_servers: bool,
 }
 
 impl RdpProfile {

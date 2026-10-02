@@ -75,6 +75,7 @@ fn request(
                 ..Forwards::default()
             },
             follow_defaults: false,
+            several_servers: false,
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,

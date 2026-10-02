@@ -232,6 +232,7 @@ impl App {
                     forwards: heimdall_core::profile::Forwards::default(),
                     // Nothing of its own: the application's RDP options.
                     follow_defaults: true,
+                    several_servers: false,
                 }),
                 Purpose::Rdp,
             ),

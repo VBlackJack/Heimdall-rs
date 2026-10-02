@@ -205,6 +205,7 @@ async fn sent_with(options: RdpOptions) -> Sent {
         drives: Vec::new(),
         trusted_for_run: Vec::new(),
         options,
+        several_servers: false,
     };
     let (client, server) = tokio::io::duplex(1 << 16);
     let server = tokio::spawn(serve(server));

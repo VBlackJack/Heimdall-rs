@@ -273,6 +273,7 @@ impl Patch {
             vault_entry: None,
             forwards: Forwards::default(),
             follow_defaults: false,
+            several_servers: false,
         };
         self.apply(&mut profile);
         profile

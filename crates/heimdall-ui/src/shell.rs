@@ -3902,6 +3902,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
     match toggle {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
+        ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
@@ -5359,6 +5360,7 @@ mod tests {
                 vault_entry: None,
                 forwards: heimdall_core::profile::Forwards::default(),
                 follow_defaults: false,
+                several_servers: false,
             })
         };
         let fixed = RdpOptions {
