@@ -842,6 +842,7 @@ ui-rdp-reason-security-error = Une erreur de sécurité a empêché la connexion
 ui-rdp-reason-admin-disconnect = L'ordinateur distant a mis fin à la session. Un administrateur a pu y mettre fin, la connexion a pu échouer pendant son établissement, ou un problème réseau a pu l'interrompre.
 ui-rdp-reason-license = Une erreur de licence Bureau à distance a bloqué la session. Contactez votre administrateur; le serveur de licences est peut-être inaccessible ou n'a plus de CAL disponible.
 ui-rdp-reason-with-severity = { $severity } { $reason }
+ui-rdp-certificate-refused = Connexion annulée : vous n'avez pas approuvé le certificat présenté par ce serveur.
 
 ui-session-reconnecting = Reconnexion (tentative { $attempt }/{ $max })...
 ui-session-reconnecting-in = dans { $seconds }s

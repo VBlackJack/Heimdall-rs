@@ -197,6 +197,7 @@ pub fn error(error: &UiError) -> String {
         UiError::Disconnected { .. } => fl!("ui-error-disconnected"),
         UiError::ConnectionLost => fl!("ui-error-connection-lost"),
         UiError::Cancelled => fl!("ui-error-cancelled"),
+        UiError::CertificateRefused => fl!("ui-rdp-certificate-refused"),
         UiError::PromptTimedOut => fl!("ui-error-prompt-timeout"),
         UiError::PtyRefused => fl!("ui-error-pty-refused"),
         UiError::ShellRefused => fl!("ui-error-shell-refused"),

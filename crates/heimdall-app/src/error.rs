@@ -166,6 +166,8 @@ pub enum UiError {
     ConnectionLost,
     /// Cancelled by the user.
     Cancelled,
+    /// The user did not approve the certificate an RDP server presented.
+    CertificateRefused,
     /// A question was not answered in time.
     PromptTimedOut,
     /// No terminal allocated.
