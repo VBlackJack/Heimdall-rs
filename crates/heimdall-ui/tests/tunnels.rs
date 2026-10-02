@@ -126,11 +126,18 @@ fn the_dialog_names_its_gateway_and_says_what_is_missing_until_nothing_is() {
         field: TunnelField::LocalPort,
         value: "9090".to_owned(),
     }));
+    {
+        let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Local port must be between 1024 and 65535.")
+                .is_err()
+        );
+        ui.click("Open tunnel")
+            .expect("offered once nothing is missing");
+    }
+    // Opened from the window's thread: the attempt starts once its task runs, on the
+    // runtime, and the dialog has closed.
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
     let mut ui = simulator(&shell);
-    assert!(
-        ui.find("Local port must be between 1024 and 65535.")
-            .is_err()
-    );
-    ui.click("Open tunnel")
-        .expect("offered once nothing is missing");
+    assert!(ui.find("New tunnel").is_err(), "closed on Open tunnel");
 }

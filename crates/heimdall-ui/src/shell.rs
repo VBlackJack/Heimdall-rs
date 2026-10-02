@@ -1688,7 +1688,10 @@ impl Shell {
             Effect::OpenTunnel { id, request } => {
                 // Its end is the tunnel's own: closing it cancels the attempt, which ends
                 // the stream.
-                let events = tunnel_events(*request, self.registry.clone());
+                let registry = self.registry.clone();
+                // Started once the task runs, on the runtime, as a connection's.
+                let events =
+                    stream::once(async move { tunnel_events(*request, registry) }).flatten();
                 Task::stream(events).map(move |event| {
                     Message::App(AppMessage::Tunnel(TunnelMessage::Event { id, event }))
                 })
