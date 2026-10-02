@@ -1126,6 +1126,54 @@ fn an_ftp_profile_is_imported_as_the_csharp_one_reads_it() {
 }
 
 #[test]
+fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+    let report = import(
+        &servers(
+            r#"
+            {"id": "s", "displayName": "shell", "remoteServer": "s.lab", "connectionType": "SSH",
+             "sshMode": "External", "sshX11Forwarding": true},
+            {"id": "w", "displayName": "dc", "remoteServer": "dc.lab", "connectionType": "WINRM",
+             "sshGatewayId": "g"},
+            {"id": "r", "displayName": "desk", "remoteServer": "r.lab", "connectionType": "RDP",
+             "rdpUseGlobalDefaults": false, "rdpRedirectPrinters": true,
+             "rdpRedirectSmartCards": true, "rdpAntiIdle": true},
+            {"id": "g1", "displayName": "global", "remoteServer": "g.lab", "connectionType": "RDP"},
+            {"id": "plain", "displayName": "plain", "remoteServer": "p.lab", "connectionType": "SSH",
+             "sshMode": "Embedded"}
+            "#,
+        ),
+        Some(r#"{"rdpDefaultMode": "External", "rdpDefaultMultiMonitor": true}"#),
+    )
+    .expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let dropped = |name: &str, settings: &[Dropped]| DroppedSettings {
+        name: name.to_owned(),
+        settings: settings.to_vec(),
+    };
+    assert_eq!(
+        report.dropped,
+        [
+            dropped("shell", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
+            dropped("dc", &[Dropped::WinRmGateway]),
+            dropped(
+                "desk",
+                &[
+                    Dropped::RdpPrinters,
+                    Dropped::RdpSmartCards,
+                    Dropped::RdpAntiIdle
+                ]
+            ),
+            // On the global defaults: the settings' choices are the ones dropped.
+            dropped(
+                "global",
+                &[Dropped::ExternalClient, Dropped::RdpMultiMonitor]
+            ),
+        ]
+    );
+}
+
+#[test]
 fn the_trusted_ssh_servers_of_settings_are_read_with_their_keys_when_kept() {
     use heimdall_core::import::csharp::TrustedHostKey;
     let pinned = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";

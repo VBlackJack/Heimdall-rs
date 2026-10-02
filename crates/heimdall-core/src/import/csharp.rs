@@ -146,11 +146,50 @@ pub struct ImportReport {
     pub ftp: Vec<FtpProfile>,
     /// SSH gateways ready to be merged into the store; each one's parent is among them.
     pub gateways: Vec<SshGateway>,
+    /// Profiles imported without some of their settings, which Heimdall-rs does not have.
+    pub dropped: Vec<DroppedSettings>,
     /// The SSH servers `settings.json` trusts, and its gateways' fingerprints: for the
     /// migration of this computer's own C# store only, never from a file picked.
     pub host_keys: Vec<TrustedHostKey>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
+}
+
+/// A setting of a C# profile that Heimdall-rs does not have: the profile is imported
+/// without it, and the user is told.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Dropped {
+    /// Opened in an external program (`PuTTY`, `mstsc`) rather than in a tab.
+    ExternalClient,
+    /// X11 forwarding.
+    X11Forwarding,
+    /// A `WinRM` session through an SSH gateway.
+    WinRmGateway,
+    /// RDP printer redirection.
+    RdpPrinters,
+    /// RDP serial port redirection.
+    RdpComPorts,
+    /// RDP smart card redirection.
+    RdpSmartCards,
+    /// RDP webcam redirection.
+    RdpWebcam,
+    /// RDP USB device redirection.
+    RdpUsb,
+    /// RDP microphone capture.
+    RdpMicrophone,
+    /// RDP across several monitors.
+    RdpMultiMonitor,
+    /// RDP anti-idle keep-alive.
+    RdpAntiIdle,
+}
+
+/// A profile imported without some of its settings.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DroppedSettings {
+    /// The profile's display name.
+    pub name: String,
+    /// What was left out, in a fixed order.
+    pub settings: Vec<Dropped>,
 }
 
 /// An SSH server the C# Heimdall trusted.
@@ -260,6 +299,28 @@ struct LegacyServer {
     rdp_initial_smart_sizing: Option<bool>,
     /// Absent means the C# default: the desktop follows the pane.
     rdp_dynamic_resolution: Option<bool>,
+    /// `Embedded` (the C# default) or `External`.
+    ssh_mode: Option<String>,
+    #[serde(default)]
+    ssh_x11_forwarding: bool,
+    /// `Embedded` (the C# default) or `External`.
+    rdp_mode: Option<String>,
+    #[serde(default)]
+    rdp_redirect_printers: bool,
+    #[serde(default)]
+    rdp_redirect_com_ports: bool,
+    #[serde(default)]
+    rdp_redirect_smart_cards: bool,
+    #[serde(default)]
+    rdp_redirect_webcam: bool,
+    #[serde(default)]
+    rdp_redirect_usb: bool,
+    #[serde(default)]
+    rdp_audio_capture: bool,
+    #[serde(default)]
+    rdp_multi_monitor: bool,
+    #[serde(default)]
+    rdp_anti_idle: bool,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
     /// Zero or less means the default port, as `VncHandler` reads it.
@@ -341,6 +402,10 @@ struct LegacySettings {
 /// The RDP choices of `settings.json`, which a profile on the global defaults takes, as
 /// `RdpProfileResolver` does. Absent keys are the C# `AppSettings` defaults.
 #[derive(Debug, Default, Deserialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the shape of the C# settings, one switch per redirection"
+)]
 struct LegacyRdpDefaults {
     #[serde(rename = "rdpDefaultRedirectClipboard")]
     clipboard: Option<bool>,
@@ -352,6 +417,22 @@ struct LegacyRdpDefaults {
     color_depth: Option<i64>,
     #[serde(default, rename = "rdpDefaultAudioMode")]
     audio_mode: i64,
+    #[serde(rename = "rdpDefaultMode")]
+    mode: Option<String>,
+    #[serde(default, rename = "rdpDefaultRedirectPrinters")]
+    printers: bool,
+    #[serde(default, rename = "rdpDefaultRedirectComPorts")]
+    com_ports: bool,
+    #[serde(default, rename = "rdpDefaultRedirectSmartCards")]
+    smart_cards: bool,
+    #[serde(default, rename = "rdpDefaultRedirectWebcam")]
+    webcam: bool,
+    #[serde(default, rename = "rdpDefaultRedirectUsb")]
+    usb: bool,
+    #[serde(default, rename = "rdpDefaultAudioCapture")]
+    audio_capture: bool,
+    #[serde(default, rename = "rdpDefaultMultiMonitor")]
+    multi_monitor: bool,
 }
 
 /// What an RDP profile is given, from its own choices or from the global defaults.
@@ -361,6 +442,8 @@ struct RdpChoices {
     nla: bool,
     color_depth: Option<i64>,
     audio_mode: i64,
+    /// What the choices turn on that Heimdall-rs does not have.
+    dropped: Vec<Dropped>,
 }
 
 impl RdpChoices {
@@ -373,6 +456,20 @@ impl RdpChoices {
                 nla: defaults.nla.unwrap_or(true),
                 color_depth: defaults.color_depth,
                 audio_mode: defaults.audio_mode,
+                dropped: turned_on(&[
+                    (
+                        is_external(defaults.mode.as_deref()),
+                        Dropped::ExternalClient,
+                    ),
+                    (defaults.printers, Dropped::RdpPrinters),
+                    (defaults.com_ports, Dropped::RdpComPorts),
+                    (defaults.smart_cards, Dropped::RdpSmartCards),
+                    (defaults.webcam, Dropped::RdpWebcam),
+                    (defaults.usb, Dropped::RdpUsb),
+                    (defaults.audio_capture, Dropped::RdpMicrophone),
+                    (defaults.multi_monitor, Dropped::RdpMultiMonitor),
+                    (server.rdp_anti_idle, Dropped::RdpAntiIdle),
+                ]),
             }
         } else {
             Self {
@@ -381,6 +478,20 @@ impl RdpChoices {
                 nla: server.rdp_nla.unwrap_or(true),
                 color_depth: server.rdp_color_depth,
                 audio_mode: server.rdp_audio_mode,
+                dropped: turned_on(&[
+                    (
+                        is_external(server.rdp_mode.as_deref()),
+                        Dropped::ExternalClient,
+                    ),
+                    (server.rdp_redirect_printers, Dropped::RdpPrinters),
+                    (server.rdp_redirect_com_ports, Dropped::RdpComPorts),
+                    (server.rdp_redirect_smart_cards, Dropped::RdpSmartCards),
+                    (server.rdp_redirect_webcam, Dropped::RdpWebcam),
+                    (server.rdp_redirect_usb, Dropped::RdpUsb),
+                    (server.rdp_audio_capture, Dropped::RdpMicrophone),
+                    (server.rdp_multi_monitor, Dropped::RdpMultiMonitor),
+                    (server.rdp_anti_idle, Dropped::RdpAntiIdle),
+                ]),
             }
         }
     }
@@ -394,6 +505,55 @@ impl RdpChoices {
         }
     }
 }
+
+/// What an imported profile turned on that Heimdall-rs does not have.
+fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<Dropped> {
+    let kind = server.connection_type.as_str();
+    if kind == RDP_CONNECTION_TYPE {
+        RdpChoices::of(server, defaults).dropped
+    } else if kind.eq_ignore_ascii_case(WINRM_CONNECTION_TYPE) {
+        let gateway = non_empty(server.ssh_gateway_id.as_ref()).is_some();
+        turned_on(&[(
+            gateway && !server.use_direct_connection,
+            Dropped::WinRmGateway,
+        )])
+    } else if [
+        LOCAL_CONNECTION_TYPE,
+        TELNET_CONNECTION_TYPE,
+        VNC_CONNECTION_TYPE,
+        FTP_CONNECTION_TYPE,
+    ]
+    .iter()
+    .any(|other| kind.eq_ignore_ascii_case(other))
+    {
+        Vec::new()
+    } else {
+        turned_on(&[
+            (
+                is_external(server.ssh_mode.as_deref()),
+                Dropped::ExternalClient,
+            ),
+            (server.ssh_x11_forwarding, Dropped::X11Forwarding),
+        ])
+    }
+}
+
+/// The settings whose flag is set, in the order given.
+fn turned_on(flags: &[(bool, Dropped)]) -> Vec<Dropped> {
+    flags
+        .iter()
+        .filter(|(on, _)| *on)
+        .map(|(_, dropped)| *dropped)
+        .collect()
+}
+
+/// Whether a C# mode opens the session in an external program.
+fn is_external(mode: Option<&str>) -> bool {
+    mode.is_some_and(|mode| mode.trim().eq_ignore_ascii_case(EXTERNAL_MODE))
+}
+
+/// The C# mode that opens a session in `PuTTY` or `mstsc`.
+const EXTERNAL_MODE: &str = "External";
 
 /// The C# audio mode "Local playback".
 const CSHARP_AUDIO_LOCAL: i64 = 1;
@@ -535,7 +695,19 @@ pub fn import(
             convert(&server, &known).map(|profile| report.profiles.push(profile))
         };
         match converted {
-            Ok(()) => {}
+            Ok(()) => {
+                let left_out = dropped_settings(&server, &settings.rdp_defaults);
+                if !left_out.is_empty() {
+                    report.dropped.push(DroppedSettings {
+                        name: if server.display_name.is_empty() {
+                            server.remote_server.clone()
+                        } else {
+                            server.display_name.clone()
+                        },
+                        settings: left_out,
+                    });
+                }
+            }
             Err(reason) => report.skipped.push(Skipped {
                 id: server.id,
                 name: server.display_name,

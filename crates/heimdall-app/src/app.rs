@@ -1187,6 +1187,9 @@ pub struct ImportSummary {
     pub warnings: Vec<FileWarning>,
     /// For a `MobaXterm` file, the passwords it stores, which must be entered again.
     pub stored_credentials: Option<usize>,
+    /// Profiles imported without settings Heimdall-rs does not have: the name, made safe,
+    /// and what was left out.
+    pub dropped: Vec<(String, Vec<heimdall_core::import::csharp::Dropped>)>,
     /// For the migration of this computer's C# store, the trusted SSH servers carried over;
     /// or why they could not be.
     pub host_keys: Option<Result<heimdall_ssh::Carried, String>>,
