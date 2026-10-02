@@ -45,8 +45,8 @@ pub mod transcript;
 pub mod vnc_driver;
 
 pub use app::{
-    App, AppConfig, BroadcastMessage, ConnectAs, Dialog, Effect, ExportOutcome, FileKind,
-    FilesMessage, FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
+    App, AppConfig, BroadcastMessage, ConflictRow, ConnectAs, Dialog, Effect, ExportOutcome,
+    FileKind, FilesMessage, FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
     HostKeysMessage, HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary, KeyInput,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,

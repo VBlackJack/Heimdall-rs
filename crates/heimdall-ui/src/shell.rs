@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    Direction, FilesKey, Side, file_operation, list_local, list_remote, transfer_events,
+    FilesKey, Side, file_operation, list_local, list_remote, plan_transfer, transfer_events,
 };
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
@@ -1587,6 +1587,7 @@ impl Shell {
             }
             effect @ (Effect::ListRemote { .. }
             | Effect::ListLocal { .. }
+            | Effect::PlanTransfer { .. }
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
@@ -1691,6 +1692,7 @@ impl Shell {
                         Dialog::SessionsPreview(_)
                             | Dialog::RdpPreview(_)
                             | Dialog::HostKeysPreview(_)
+                            | Dialog::FileConflicts { .. }
                     ) {
                         wide_card(content)
                     } else {
@@ -4758,6 +4760,16 @@ fn files_task(effect: Effect) -> Task<Message> {
         Effect::ListLocal { tab, path } => Task::perform(list_local(path), move |result| {
             Message::App(AppMessage::Files(FilesMessage::LocalListed { tab, result }))
         }),
+        Effect::PlanTransfer { tab, request } => {
+            let planned = (*request).clone();
+            Task::perform(plan_transfer(planned), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::Planned {
+                    tab,
+                    request: request.clone(),
+                    result: result.map(Box::new),
+                }))
+            })
+        }
         Effect::Transfer { tab, id, request } => {
             // Started inside the task, like a connection: spawning needs the runtime.
             let events = stream::once(async move { transfer_events(*request) }).flatten();
@@ -5183,19 +5195,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             let (title, body, action) = window_question(dialog);
             question(title, body, action).into()
         }
-        Dialog::ConfirmOverwrite {
-            direction, name, ..
-        } => question(
-            fl!("ui-dialog-overwrite-title"),
-            match direction {
-                Direction::Download => {
-                    fl!("ui-dialog-overwrite-local-body", name = name.as_str())
-                }
-                Direction::Upload => fl!("ui-dialog-overwrite-remote-body", name = name.as_str()),
-            },
-            fl!("ui-dialog-overwrite-confirm"),
-        )
-        .into(),
+        Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmDeleteProfile { name, .. } => question(

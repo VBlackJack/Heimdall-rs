@@ -51,7 +51,7 @@ use crate::desktop::{DesktopInput, DesktopPane, SpecialKeys};
 use crate::driver::{ConnectRequest, Purpose};
 use crate::error::{ServerAddress, UiError};
 use crate::event::{Answer, ConnectionEvent, PostConnectProgress, QuestionKind};
-use crate::files::{Direction, FileOperation, FilesPane, Side, TransferId, TransferRequest};
+use crate::files::{FileOperation, FilesPane, Side, TransferId, TransferRequest};
 use crate::ftp_driver::FtpRequest;
 use crate::gateway_draft::GatewayDraft;
 use crate::ids::{AttemptId, QuestionId, TabId};
@@ -108,7 +108,7 @@ pub use broadcast::BroadcastMessage;
 pub use connect_as::ConnectAs;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_tab::FilesMessage;
-use files_tab::{PendingOperation, PendingTransfer};
+use files_tab::{PendingOperation, PendingPlan};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
@@ -778,6 +778,13 @@ pub enum Effect {
         /// What to do.
         operation: Box<FileOperation>,
     },
+    /// Plan a transfer whole, then send [`FilesMessage::Planned`].
+    PlanTransfer {
+        /// Tab.
+        tab: TabId,
+        /// What to plan.
+        request: Box<crate::files::PlanRequest>,
+    },
     /// Run a transfer and send its events as [`FilesMessage::TransferEvent`].
     Transfer {
         /// Tab.
@@ -864,6 +871,13 @@ impl fmt::Debug for Effect {
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
+            Self::PlanTransfer { tab, request } => write!(
+                f,
+                "PlanTransfer({}, {:?}, {})",
+                tab.value(),
+                request.direction,
+                request.roots.len()
+            ),
             Self::Transfer { tab, id, request } => write!(
                 f,
                 "Transfer({}, {}, {:?})",
@@ -1189,6 +1203,21 @@ pub struct ImportSummary {
     pub stored_credentials: Option<usize>,
 }
 
+/// One destination in a transfer's way, and the answer picked for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConflictRow {
+    /// The planned entry it is.
+    pub index: usize,
+    /// Its path below the destination folder, made safe.
+    pub target: String,
+    /// A folder: skipping it skips everything planned inside.
+    pub folder: bool,
+    /// The answers it allows.
+    pub allowed: heimdall_files::conflict::Allowed,
+    /// The answer picked.
+    pub choice: heimdall_files::conflict::Choice,
+}
+
 /// A modal decision that concerns the whole window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
@@ -1236,14 +1265,13 @@ pub enum Dialog {
         /// How many entries go.
         count: usize,
     },
-    /// Replace an existing file with a transfer.
-    ConfirmOverwrite {
+    /// What to do with each destination already taken, for a whole transfer, before it
+    /// starts, as the C# file conflict dialog.
+    FileConflicts {
         /// Tab.
         tab: TabId,
-        /// Direction.
-        direction: Direction,
-        /// The file's name, made safe.
-        name: String,
+        /// One per destination in the way.
+        rows: Vec<ConflictRow>,
     },
     /// A profile form: a new profile, or a saved one being edited.
     EditProfile {
@@ -1491,8 +1519,9 @@ pub struct App {
     provider_test: Option<crate::credential_provider::ProviderTest>,
     viewport: GridSize,
     pending_paste: Option<(TabId, String)>,
-    /// Transfers waiting, one after the other, for the user to confirm they replace a file.
-    pending_transfers: std::collections::VecDeque<PendingTransfer>,
+    /// Planned transfers waiting, one after the other, for the user's answers to the
+    /// destinations in their way.
+    pending_plans: std::collections::VecDeque<PendingPlan>,
     pending_operation: Option<PendingOperation>,
     vault: VaultState,
     /// SSH keys trusted for this run only, shared with every connection.
@@ -1549,7 +1578,7 @@ impl App {
             trusted_keys: TrustedKeys::default(),
             provider_test: None,
             pending_paste: None,
-            pending_transfers: std::collections::VecDeque::new(),
+            pending_plans: std::collections::VecDeque::new(),
             pending_operation: None,
             vault,
             run_trust: RunTrust::default(),
@@ -1817,10 +1846,12 @@ impl App {
         if self.dismiss_gateway() {
             return;
         }
-        self.dialog = None;
+        if matches!(self.dialog.take(), Some(Dialog::FileConflicts { .. })) {
+            self.cancel_conflicts();
+        }
         self.pending_paste = None;
-        self.pending_transfers.clear();
         self.pending_operation = None;
+        self.ask_next_conflicts();
     }
 
     /// What connecting to `profile` needs, its gateways included; an error when they cannot
@@ -2407,6 +2438,13 @@ impl App {
     }
 
     fn confirm_dialog(&mut self) -> Vec<Effect> {
+        let effects = self.confirm_open_dialog();
+        // A transfer's question waits for any other to be answered.
+        self.ask_next_conflicts();
+        effects
+    }
+
+    fn confirm_open_dialog(&mut self) -> Vec<Effect> {
         match self.dialog.take() {
             Some(
                 dialog @ (Dialog::SessionsPreview(_)
@@ -2469,7 +2507,7 @@ impl App {
                 }
                 Vec::new()
             }
-            Some(Dialog::ConfirmOverwrite { .. }) => self.confirm_overwrite(),
+            Some(Dialog::FileConflicts { rows, .. }) => self.confirm_conflicts(&rows),
             Some(Dialog::AskName { value, .. }) => self.confirm_operation(Some(&value)),
             Some(Dialog::ConfirmDelete { .. }) => self.confirm_operation(None),
             Some(Dialog::EditProfile { draft, .. }) => {

@@ -20,8 +20,8 @@
 use std::path::{Path, PathBuf};
 
 use heimdall_app::files::{
-    Direction, EntryKind, FileOperation, FilesError, FilesKey, LocalEntry, RemoteEntry, Side,
-    file_operation, typed_name,
+    Direction, EntryKind, FileOperation, FilesError, FilesKey, LocalEntry, PlanRequest,
+    RemoteEntry, Side, file_operation, plan_transfer, typed_name,
 };
 use heimdall_app::{
     App, AppConfig, ConnectionEvent, Dialog, Effect, FilesMessage, Message, NameAction, TabId,
@@ -29,7 +29,8 @@ use heimdall_app::{
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_files::RemoteSession;
-use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
+use heimdall_files::conflict::Kind;
+use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -48,7 +49,25 @@ async fn idle_client() -> RemoteSession {
             extensions: Vec::new(),
         };
         server.write_all(&version.encode()).await.expect("version");
-        std::future::pending::<()>().await;
+        // Nothing is there: every request after the first is refused, so that a transfer's
+        // plan finds its destination empty. The pipe stays open for the life of the test.
+        loop {
+            if server.read_exact(&mut length).await.is_err() {
+                std::future::pending::<()>().await;
+            }
+            let mut body = vec![0; u32::from_be_bytes(length) as usize];
+            server.read_exact(&mut body).await.expect("request");
+            let id = body
+                .get(1..5)
+                .and_then(|id| <[u8; 4]>::try_from(id).ok())
+                .map_or(0, u32::from_be_bytes);
+            let refused = Response::Status {
+                id,
+                code: StatusCode::NoSuchFile,
+                message: Vec::new(),
+            };
+            server.write_all(&refused.encode()).await.expect("status");
+        }
     });
     RemoteSession::Sftp(
         SftpClient::start(client_end, ClientConfig::default())
@@ -151,6 +170,37 @@ fn files(app: &mut App, message: FilesMessage) -> Vec<Effect> {
     app.update(Message::Files(message))
 }
 
+/// The plan a transfer starts with: what it was asked for, before anything is written.
+fn plan_request(effects: &[Effect]) -> &PlanRequest {
+    match effects {
+        [Effect::PlanTransfer { request, .. }] => request,
+        other => panic!("expected a plan, got {other:?}"),
+    }
+}
+
+/// Runs the plans among `effects` as the window does and gives them back to the app; the
+/// other effects are kept, with what the plans started.
+async fn planned(app: &mut App, effects: Vec<Effect>) -> Vec<Effect> {
+    let mut out = Vec::new();
+    for effect in effects {
+        match effect {
+            Effect::PlanTransfer { tab, request } => {
+                let result = plan_transfer((*request).clone()).await.map(Box::new);
+                out.extend(files(
+                    app,
+                    FilesMessage::Planned {
+                        tab,
+                        request,
+                        result,
+                    },
+                ));
+            }
+            other => out.push(other),
+        }
+    }
+    out
+}
+
 fn select(app: &mut App, tab: TabId, side: Side, index: usize) -> Vec<Effect> {
     files(app, FilesMessage::Select { tab, side, index })
 }
@@ -211,12 +261,14 @@ async fn a_selected_folder_is_sent_whole_in_both_directions() {
             direction: Direction::Download,
         },
     );
-    let [Effect::Transfer { request, .. }] = down.as_slice() else {
-        panic!("{down:?}")
+    let request = plan_request(&down);
+    assert_eq!(request.direction, Direction::Download);
+    let [root] = request.roots.as_slice() else {
+        panic!("{request:?}")
     };
-    assert!(request.folder);
-    assert_eq!(request.remote.as_bytes(), b"/srv/logs");
-    assert_eq!(request.local, dir.path().join("logs"));
+    assert_eq!(root.root.kind, Kind::Folder);
+    assert_eq!(root.root.remote.as_bytes(), b"/srv/logs");
+    assert_eq!(root.root.local, dir.path().join("logs"));
     select(&mut app, tab, Side::Local, 0);
     let up = files(
         &mut app,
@@ -225,11 +277,10 @@ async fn a_selected_folder_is_sent_whole_in_both_directions() {
             direction: Direction::Upload,
         },
     );
-    let [Effect::Transfer { request, .. }] = up.as_slice() else {
-        panic!("{up:?}")
-    };
-    assert!(request.folder);
-    assert_eq!(request.remote.as_bytes(), b"/srv/docs");
+    let request = plan_request(&up);
+    assert_eq!(request.direction, Direction::Upload);
+    assert_eq!(request.roots[0].root.kind, Kind::Folder);
+    assert_eq!(request.roots[0].root.remote.as_bytes(), b"/srv/docs");
     let files_pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
     assert!(
         files_pane.transfers.iter().all(|t| t.total.is_none()),
@@ -244,7 +295,7 @@ async fn a_selected_folder_is_sent_whole_in_both_directions() {
             direction: Direction::Download,
         },
     );
-    assert!(matches!(file.as_slice(), [Effect::Transfer { request, .. }] if !request.folder));
+    assert_eq!(plan_request(&file).roots[0].root.kind, Kind::File);
 }
 
 #[tokio::test]
@@ -657,11 +708,7 @@ async fn enter_opens_a_folder_and_sends_a_file() {
     key(&mut app, tab, FilesKey::Focus(Side::Local));
     key(&mut app, tab, FilesKey::Last);
     let sent = key(&mut app, tab, FilesKey::Open);
-    assert!(
-        matches!(sent.as_slice(), [Effect::Transfer { request, .. }]
-            if request.direction == Direction::Upload),
-        "{sent:?}"
-    );
+    assert_eq!(plan_request(&sent).direction, Direction::Upload);
 }
 
 #[tokio::test]
@@ -745,6 +792,8 @@ async fn a_transfer_ends_on_its_full_count_and_a_cancel_is_not_a_failure() {
         local: dir.path().join(target),
         replace: false,
         folder: false,
+        steps: Vec::new(),
+        left_out: 0,
         cancel,
     };
 
@@ -783,13 +832,26 @@ async fn a_folder_with_a_link_ends_incomplete() {
     std::fs::create_dir(&folder).expect("folder");
     std::fs::write(folder.join("kept"), b"kept").expect("file");
     std::os::unix::fs::symlink("kept", folder.join("link")).expect("link");
-    let request = TransferRequest {
-        client: RemoteSession::Sftp(client),
-        direction: Direction::Download,
+    let client = RemoteSession::Sftp(client);
+    let root = heimdall_files::Root {
         remote: common::remote(&folder),
         local: dir.path().join("copy"),
+        kind: Kind::Folder,
+    };
+    let plan =
+        common::step(client.plan_download(std::slice::from_ref(&root), &CancellationToken::new()))
+            .await
+            .expect("planned");
+    let steps = plan.resolve(&[]).expect("resolved").remove(0);
+    let request = TransferRequest {
+        client,
+        direction: Direction::Download,
+        remote: root.remote,
+        local: root.local,
         replace: false,
         folder: true,
+        steps,
+        left_out: plan.left_out(0),
         cancel: CancellationToken::new(),
     };
     let events: Vec<TransferEvent> = common::step(transfer_events(request).collect()).await;
@@ -928,12 +990,10 @@ async fn entries_selected_together_go_together() {
             direction: Direction::Download,
         },
     );
-    let sent: Vec<&[u8]> = effects
+    let sent: Vec<&[u8]> = plan_request(&effects)
+        .roots
         .iter()
-        .filter_map(|effect| match effect {
-            Effect::Transfer { request, .. } => Some(request.remote.as_bytes()),
-            _ => None,
-        })
+        .map(|root| root.root.remote.as_bytes())
         .collect();
     assert_eq!(sent, [&b"/srv/logs"[..], b"/srv/a.txt"]);
 
@@ -1002,125 +1062,43 @@ async fn entries_selected_together_go_together() {
 }
 
 #[tokio::test]
-async fn replacements_are_asked_one_after_the_other_and_cancel_drops_the_rest() {
+async fn transfers_in_the_way_are_asked_one_after_the_other_and_cancel_drops_only_one() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut app, tab) = tab(dir.path()).await;
-    // Both local entries (docs/, b.txt) exist on the server too.
-    let remote = |name: &str, kind| RemoteEntry {
-        name: name.as_bytes().to_vec(),
-        label: name.to_owned(),
-        kind,
-        size: Some(1),
-        modified: None,
-        permissions: None,
-        owner: None,
-        group: None,
-    };
-    files(
-        &mut app,
-        FilesMessage::RemoteListed {
-            tab,
-            result: Ok((
-                RemotePath::from("/srv"),
-                vec![
-                    remote("docs", EntryKind::Directory),
-                    remote("b.txt", EntryKind::File),
-                ],
-            )),
-        },
-    );
+    // The server's a.txt is here too.
+    std::fs::write(dir.path().join("a.txt"), b"mine").expect("local file");
     let asked = |app: &App| match &app.dialog {
-        Some(Dialog::ConfirmOverwrite { name, .. }) => Some(name.clone()),
+        Some(Dialog::FileConflicts { rows, .. }) => rows.first().map(|row| row.target.clone()),
         _ => None,
     };
-    toggle(&mut app, tab, Side::Local, 0);
-    toggle(&mut app, tab, Side::Local, 1);
-    let started = files(
-        &mut app,
-        FilesMessage::Transfer {
-            tab,
-            direction: Direction::Upload,
-        },
-    );
+    select(&mut app, tab, Side::Remote, 1);
+    let download = |app: &mut App| {
+        files(
+            app,
+            FilesMessage::Transfer {
+                tab,
+                direction: Direction::Download,
+            },
+        )
+    };
+    let first = download(&mut app);
+    assert!(planned(&mut app, first).await.is_empty(), "asked first");
+    let second = download(&mut app);
     assert!(
-        started.is_empty(),
-        "each would replace: none starts before asking"
+        planned(&mut app, second).await.is_empty(),
+        "waits for the first question"
     );
-    assert_eq!(asked(&app).as_deref(), Some("docs"));
-    let first = app.update(Message::ConfirmDialog);
-    assert!(matches!(first.as_slice(), [Effect::Transfer { request, .. }] if request.replace));
-    assert_eq!(asked(&app).as_deref(), Some("b.txt"), "then the next");
+    assert_eq!(asked(&app).as_deref(), Some("a.txt"));
+    // Cancelled: that one goes nowhere, the next is asked.
     app.update(Message::DismissDialog);
-    assert_eq!(asked(&app), None);
+    assert_eq!(asked(&app).as_deref(), Some("a.txt"), "then the next");
+    let started = app.update(Message::ConfirmDialog);
     assert!(
-        app.update(Message::ConfirmDialog).is_empty(),
-        "nothing left waiting"
+        matches!(started.as_slice(), [Effect::Transfer { request, .. }] if !request.replace),
+        "{started:?}"
     );
-    // Nor asked again with the next transfer, which replaces nothing.
-    files(
-        &mut app,
-        FilesMessage::RemoteListed {
-            tab,
-            result: Ok((RemotePath::from("/srv"), Vec::new())),
-        },
-    );
-    select(&mut app, tab, Side::Local, 1);
-    let next = files(
-        &mut app,
-        FilesMessage::Transfer {
-            tab,
-            direction: Direction::Upload,
-        },
-    );
-    assert!(matches!(next.as_slice(), [Effect::Transfer { .. }]));
-    assert_eq!(asked(&app), None, "the one cancelled is not asked again");
-}
-
-#[tokio::test]
-async fn an_upload_over_a_hidden_or_filtered_name_is_still_asked_about() {
-    let dir = tempfile::tempdir().expect("dir");
-    let (mut app, tab) = tab(dir.path()).await;
-    // The server holds b.txt, filtered out of sight.
-    files(
-        &mut app,
-        FilesMessage::RemoteListed {
-            tab,
-            result: Ok((
-                RemotePath::from("/srv"),
-                vec![RemoteEntry {
-                    name: b"b.txt".to_vec(),
-                    label: "b.txt".to_owned(),
-                    kind: EntryKind::File,
-                    size: Some(1),
-                    modified: None,
-                    permissions: None,
-                    owner: None,
-                    group: None,
-                }],
-            )),
-        },
-    );
-    files(
-        &mut app,
-        FilesMessage::Filter {
-            tab,
-            side: Side::Remote,
-            text: "nothing".to_owned(),
-        },
-    );
-    select(&mut app, tab, Side::Local, 1);
-    let started = files(
-        &mut app,
-        FilesMessage::Transfer {
-            tab,
-            direction: Direction::Upload,
-        },
-    );
-    assert!(started.is_empty(), "asked first");
-    assert!(matches!(
-        &app.dialog,
-        Some(Dialog::ConfirmOverwrite { name, .. }) if name == "b.txt"
-    ));
+    assert_eq!(asked(&app), None, "nothing left waiting");
+    assert!(app.update(Message::ConfirmDialog).is_empty());
 }
 
 #[tokio::test]
@@ -1141,7 +1119,8 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
             },
         )
     };
-    let sent = drop(&mut app, &file);
+    let dropped = drop(&mut app, &file);
+    let sent = planned(&mut app, dropped).await;
     assert!(
         matches!(sent.as_slice(), [Effect::Transfer { request, .. }]
             if request.remote.as_bytes() == b"/srv/report.pdf"
@@ -1153,7 +1132,8 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
     let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
     assert_eq!(files_pane.transfers.last().map(|t| t.total), Some(Some(5)));
 
-    let sent = drop(&mut app, &folder);
+    let dropped = drop(&mut app, &folder);
+    let sent = planned(&mut app, dropped).await;
     assert!(
         matches!(sent.as_slice(), [Effect::Transfer { request, .. }] if request.folder),
         "{sent:?}"
@@ -1168,18 +1148,5 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
         Some(heimdall_app::files::TransferState::Failed(
             FilesError::NotAFile
         ))
-    ));
-
-    // A name the server's folder lists already: asked first.
-    let taken = outside.path().join("a.txt");
-    std::fs::write(&taken, b"x").expect("written");
-    assert!(drop(&mut app, &taken).is_empty());
-    assert!(matches!(
-        &app.dialog,
-        Some(Dialog::ConfirmOverwrite { name, .. }) if name == "a.txt"
-    ));
-    assert!(matches!(
-        app.update(Message::ConfirmDialog).as_slice(),
-        [Effect::Transfer { request, .. }] if request.replace
     ));
 }

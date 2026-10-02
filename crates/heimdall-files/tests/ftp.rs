@@ -21,8 +21,9 @@ use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
 use std::time::Duration;
 
+use heimdall_files::conflict::{Choice, Kind};
 use heimdall_files::{
-    FtpClient, FtpSecurity, FtpTarget, ItemKind, RemoteError, RemotePath, RemoteSession,
+    FtpClient, FtpSecurity, FtpTarget, ItemKind, RemoteError, RemotePath, RemoteSession, Root,
 };
 use tokio_util::sync::CancellationToken;
 use unftp_sbe_fs::Filesystem;
@@ -299,7 +300,7 @@ async fn only_a_regular_file_is_downloaded() {
 }
 
 #[tokio::test]
-async fn a_folder_goes_up_and_comes_back_whole() {
+async fn a_folder_goes_up_and_comes_back_whole_and_a_second_upload_asks_first() {
     let root = tempfile::tempdir().expect("root");
     let local = tempfile::tempdir().expect("local");
     let source = local.path().join("site");
@@ -312,21 +313,58 @@ async fn a_folder_goes_up_and_comes_back_whole() {
         .await
         .expect("top");
     let cancel = CancellationToken::new();
-    let up = session
-        .upload_folder(&source, &top.join(b"site"), &cancel, |_| {})
+    let up = [Root {
+        remote: top.join(b"site"),
+        local: source.clone(),
+        kind: Kind::Folder,
+    }];
+    let plan = session.plan_upload(&up, &cancel).await.expect("planned");
+    assert!(!plan.has_conflicts());
+    let ready = plan.resolve(&[]).expect("resolved");
+    let sent = session
+        .run(false, &ready[0], &cancel, |_| {})
         .await
         .expect("uploaded");
-    assert_eq!(up.skipped, 0);
+    assert_eq!(sent.skipped, 0);
     assert_eq!(
         std::fs::read(root.path().join("site/css/site.css")).expect("read"),
         b"body{}"
     );
+
+    // Again: the folders are added to, every file is asked about.
+    let again = session.plan_upload(&up, &cancel).await.expect("planned");
+    let answers: Vec<_> = again
+        .conflicts()
+        .map(|(index, _, _)| (index, Choice::AutoRename))
+        .collect();
+    assert_eq!(answers.len(), 2, "the two files, not the folders");
+    let ready = again.resolve(&answers).expect("resolved");
+    session
+        .run(false, &ready[0], &cancel, |_| {})
+        .await
+        .expect("uploaded");
+    assert_eq!(
+        std::fs::read(root.path().join("site/css/site (copy).css")).expect("copy"),
+        b"body{}"
+    );
+    assert!(root.path().join("site/index (copy).html").is_file());
+
     let back = local.path().join("back");
-    let down = session
-        .download_folder(&top.join(b"site"), &back, &cancel, |_| {})
+    let down = [Root {
+        remote: top.join(b"site"),
+        local: back.clone(),
+        kind: Kind::Folder,
+    }];
+    let plan = session
+        .plan_download(&down, &cancel)
+        .await
+        .expect("planned");
+    let ready = plan.resolve(&[]).expect("resolved");
+    let got = session
+        .run(true, &ready[0], &cancel, |_| {})
         .await
         .expect("downloaded");
-    assert_eq!(down.skipped, 0);
+    assert_eq!(got.skipped, 0);
     assert_eq!(
         std::fs::read(back.join("index.html")).expect("read"),
         b"<html>"

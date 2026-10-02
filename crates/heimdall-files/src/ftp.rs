@@ -37,7 +37,6 @@ use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use heimdall_sftp::RemotePath;
-use heimdall_sftp::local_name::{FolderNames, LocalName, Rules};
 use suppaftp::list::{File as Listed, ListParser};
 use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream};
 use suppaftp::types::{FileType, Mode};
@@ -47,7 +46,7 @@ use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::sync::Mutex;
 use tokio_util::sync::CancellationToken;
 
-use crate::{FolderReport, ItemKind, Refusal, RemoteError, RemoteItem};
+use crate::{ItemKind, Refusal, RemoteError, RemoteItem};
 
 /// Suffix of a file being downloaded, as for SFTP.
 const PART_SUFFIX: &str = ".heimdall-part";
@@ -63,9 +62,6 @@ const UPLOAD_PREFIX: &str = ".heimdall-upload-";
 
 /// Bytes moved at a time, and between two progress reports.
 const CHUNK: usize = 64 * 1024;
-
-/// Folders a walk goes into at most, as the SFTP one.
-const MAX_DEPTH: usize = heimdall_sftp::tree::MAX_DEPTH;
 
 /// Entries a walk reads at most, as the SFTP one.
 const MAX_ENTRIES: usize = heimdall_sftp::tree::MAX_ENTRIES;
@@ -421,144 +417,6 @@ impl FtpClient {
         let mut control = self.control.lock().await;
         upload_locked(self, &mut control, local, remote, replace, cancel, progress).await
     }
-
-    /// Downloads folder `remote` with everything in it into `local`, never following a
-    /// link, the names checked as the SFTP walk checks them.
-    ///
-    /// # Errors
-    ///
-    /// [`RemoteError`] when the session ends, the walk is cancelled, or the tree is too
-    /// large; a file that fails alone is counted as skipped.
-    pub async fn download_folder(
-        &self,
-        remote: &RemotePath,
-        local: &Path,
-        cancel: &CancellationToken,
-        mut progress: impl FnMut(u64) + Send,
-    ) -> Result<FolderReport, RemoteError> {
-        let mut control = self.control.lock().await;
-        let mut skipped = 0usize;
-        let mut done = 0u64;
-        let mut visited = 0usize;
-        let mut pending = vec![(remote.clone(), local.to_owned(), 0usize)];
-        while let Some((remote_dir, local_dir, depth)) = pending.pop() {
-            if cancel.is_cancelled() {
-                return Err(RemoteError::Cancelled);
-            }
-            tokio::fs::create_dir_all(&local_dir)
-                .await
-                .map_err(|e| local_error(&e))?;
-            let mut names = FolderNames::new(Rules::native());
-            for entry in self.list_locked(&mut control, &remote_dir).await? {
-                visited += 1;
-                if visited > MAX_ENTRIES {
-                    return Err(RemoteError::TooLarge);
-                }
-                let Ok(name) = LocalName::from_remote(&entry.name, Rules::native()) else {
-                    skipped += 1;
-                    continue;
-                };
-                if names.claim(&name).is_err() {
-                    skipped += 1;
-                    continue;
-                }
-                let child = remote_dir.join(&entry.name);
-                let target = local_dir.join(&name.name);
-                match entry.kind {
-                    ItemKind::Directory if depth < MAX_DEPTH => {
-                        pending.push((child, target, depth + 1));
-                    }
-                    ItemKind::File => {
-                        let before = done;
-                        let copied = download_locked(
-                            self,
-                            &mut control,
-                            &child,
-                            &target,
-                            true,
-                            cancel,
-                            |bytes| {
-                                progress(before + bytes);
-                            },
-                        )
-                        .await;
-                        match copied {
-                            Ok(bytes) => done += bytes,
-                            Err(error) if fatal(&error) => return Err(error),
-                            Err(_) => skipped += 1,
-                        }
-                    }
-                    // Too deep, a link, anything else: left out.
-                    _ => skipped += 1,
-                }
-            }
-        }
-        Ok(FolderReport { skipped })
-    }
-
-    /// Uploads folder `local` with everything in it into `remote`, never following a local
-    /// link; files already there are replaced.
-    ///
-    /// # Errors
-    ///
-    /// As [`FtpClient::download_folder`].
-    pub async fn upload_folder(
-        &self,
-        local: &Path,
-        remote: &RemotePath,
-        cancel: &CancellationToken,
-        mut progress: impl FnMut(u64) + Send,
-    ) -> Result<FolderReport, RemoteError> {
-        let mut control = self.control.lock().await;
-        let mut skipped = 0usize;
-        let mut done = 0u64;
-        let mut visited = 0usize;
-        let mut pending = vec![(local.to_owned(), remote.clone(), 0usize)];
-        while let Some((local_dir, remote_dir, depth)) = pending.pop() {
-            if cancel.is_cancelled() {
-                return Err(RemoteError::Cancelled);
-            }
-            ensure_folder(self, &mut control, &remote_dir).await?;
-            let mut entries = tokio::fs::read_dir(&local_dir)
-                .await
-                .map_err(|e| local_error(&e))?;
-            while let Some(entry) = entries.next_entry().await.map_err(|e| local_error(&e))? {
-                visited += 1;
-                if visited > MAX_ENTRIES {
-                    return Err(RemoteError::TooLarge);
-                }
-                // Not followed: the link itself.
-                let kind = entry.file_type().await.map_err(|e| local_error(&e))?;
-                let name = entry.file_name().to_string_lossy().into_owned();
-                let child = remote_dir.join(name.as_bytes());
-                if kind.is_dir() && depth < MAX_DEPTH {
-                    pending.push((entry.path(), child, depth + 1));
-                } else if kind.is_file() {
-                    let before = done;
-                    let sent = upload_locked(
-                        self,
-                        &mut control,
-                        &entry.path(),
-                        &child,
-                        true,
-                        cancel,
-                        |bytes| {
-                            progress(before + bytes);
-                        },
-                    )
-                    .await;
-                    match sent {
-                        Ok(bytes) => done += bytes,
-                        Err(error) if fatal(&error) => return Err(error),
-                        Err(_) => skipped += 1,
-                    }
-                } else {
-                    skipped += 1;
-                }
-            }
-        }
-        Ok(FolderReport { skipped })
-    }
 }
 
 /// Downloads with the control connection held.
@@ -693,21 +551,6 @@ async fn upload_locked(
     sent
 }
 
-/// Creates remote folder `path`, accepting one already there as a folder.
-async fn ensure_folder(
-    client: &FtpClient,
-    control: &mut AsyncRustlsFtpStream,
-    path: &RemotePath,
-) -> Result<(), RemoteError> {
-    match control.mkdir(text(path)).await {
-        Ok(()) => Ok(()),
-        Err(error) => match client.entry_locked(control, path).await? {
-            Some(entry) if entry.kind == ItemKind::Directory => Ok(()),
-            _ => Err(ftp_error(&error)),
-        },
-    }
-}
-
 /// Copies `from` into `to`, `already` bytes being there, reporting the running total.
 async fn copy(
     from: &mut (impl AsyncRead + Unpin),
@@ -735,14 +578,6 @@ async fn copy(
         total += read as u64;
         progress(total);
     }
-}
-
-/// Whether a failure ends a folder walk: the session is gone, or the user stopped it.
-fn fatal(error: &RemoteError) -> bool {
-    matches!(
-        error,
-        RemoteError::SessionClosed | RemoteError::Cancelled | RemoteError::TooLarge
-    )
 }
 
 /// `path` as FTP commands take it: its bytes, read as UTF-8 as servers now do.

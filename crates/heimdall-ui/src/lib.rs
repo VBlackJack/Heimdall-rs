@@ -16,6 +16,7 @@
 
 //! The Heimdall desktop application: the window, its views and the terminal widget.
 
+mod conflicts_view;
 mod desktop_texture;
 pub mod desktop_view;
 pub mod export_file;

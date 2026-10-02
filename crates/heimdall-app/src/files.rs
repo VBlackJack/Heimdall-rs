@@ -27,8 +27,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
 use heimdall_files::{
-    ItemKind, LocalName, LocalNameError, Refusal, RemoteError, RemoteItem, RemotePath,
-    RemoteSession, Rules, display_bytes,
+    ItemKind, LocalName, LocalNameError, Plan, Ready, Refusal, RemoteError, RemoteItem, RemotePath,
+    RemoteSession, Root, Rules, display_bytes,
 };
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -757,8 +757,54 @@ pub struct TransferRequest {
     pub replace: bool,
     /// A folder with everything in it, rather than one file.
     pub folder: bool,
+    /// A folder's files and folders, in order, as planned and answered.
+    pub steps: Vec<Ready>,
+    /// Entries the folder's plan left out: links, special files, unusable names.
+    pub left_out: usize,
     /// Stops it.
     pub cancel: CancellationToken,
+}
+
+/// The entries a transfer is planned for, before anything is written.
+#[derive(Debug, Clone)]
+pub struct PlanRequest {
+    /// Session.
+    pub client: RemoteSession,
+    /// Direction.
+    pub direction: Direction,
+    /// The entries picked, both ends, with what the transfers list shows of each.
+    pub roots: Vec<PlannedRoot>,
+}
+
+/// One entry picked for a transfer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PlannedRoot {
+    /// Both ends.
+    pub root: Root,
+    /// Its name, made safe.
+    pub label: String,
+    /// Its size when known: a file's, never a folder's.
+    pub total: Option<u64>,
+}
+
+/// Plans `request` whole: every file and folder it would write, checked against what the
+/// destination holds.
+///
+/// # Errors
+///
+/// [`FilesError`] when the session ends or the walk is too large.
+pub async fn plan_transfer(request: PlanRequest) -> Result<Plan, FilesError> {
+    let roots: Vec<Root> = request
+        .roots
+        .into_iter()
+        .map(|planned| planned.root)
+        .collect();
+    let cancel = CancellationToken::new();
+    let plan = match request.direction {
+        Direction::Download => request.client.plan_download(&roots, &cancel).await,
+        Direction::Upload => request.client.plan_upload(&roots, &cancel).await,
+    };
+    plan.map_err(|error| FilesError::from(&error))
 }
 
 /// Runs a transfer on the current tokio runtime; its events arrive on the stream, which
@@ -828,26 +874,17 @@ fn failed(error: &RemoteError) -> TransferState {
     }
 }
 
-/// Runs a folder transfer; returns how many entries it left out.
+/// Runs a folder transfer's planned steps; returns how many entries it left out.
 async fn run_folder(
     request: &TransferRequest,
     progress: impl FnMut(u64) + Send,
 ) -> Result<usize, RemoteError> {
-    let report = match request.direction {
-        Direction::Download => {
-            request
-                .client
-                .download_folder(&request.remote, &request.local, &request.cancel, progress)
-                .await
-        }
-        Direction::Upload => {
-            request
-                .client
-                .upload_folder(&request.local, &request.remote, &request.cancel, progress)
-                .await
-        }
-    }?;
-    Ok(report.skipped)
+    let download = request.direction == Direction::Download;
+    let report = request
+        .client
+        .run(download, &request.steps, &request.cancel, progress)
+        .await?;
+    Ok(report.skipped + request.left_out)
 }
 
 /// A change to a folder's entries.
