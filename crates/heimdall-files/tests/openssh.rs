@@ -152,3 +152,138 @@ async fn a_download_never_replaces_a_local_file_unasked() {
         .expect("replaced when agreed");
     assert_eq!(std::fs::read(&target).expect("target"), b"theirs");
 }
+
+fn root(
+    remote_path: &Path,
+    local: &Path,
+    kind: heimdall_files::conflict::Kind,
+) -> heimdall_files::Root {
+    heimdall_files::Root {
+        remote: remote(remote_path),
+        local: local.to_owned(),
+        kind,
+    }
+}
+
+fn shown(target: &[Vec<u8>]) -> String {
+    target
+        .iter()
+        .map(|name| String::from_utf8_lossy(name).into_owned())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[tokio::test]
+async fn an_upload_asks_for_every_file_in_the_way_and_writes_only_what_was_answered() {
+    use heimdall_files::conflict::{Choice, Kind};
+    let Some((_server, session)) = start().await else {
+        return;
+    };
+    let local = tempfile::tempdir().expect("local");
+    let server = tempfile::tempdir().expect("server");
+    let site = local.path().join("site");
+    std::fs::create_dir_all(site.join("sub")).expect("folders");
+    std::fs::write(site.join("a.txt"), b"new a").expect("a");
+    std::fs::write(site.join("sub/b.txt"), b"new b").expect("b");
+    std::fs::write(site.join("sub/c.txt"), b"new c").expect("c");
+    let there = server.path().join("site");
+    std::fs::create_dir_all(there.join("sub")).expect("folders there");
+    std::fs::write(there.join("a.txt"), b"old a").expect("old a");
+    std::fs::write(there.join("sub/b.txt"), b"old b").expect("old b");
+    let cancel = tokio_util::sync::CancellationToken::new();
+
+    let plan = step(session.plan_upload(&[root(&there, &site, Kind::Folder)], &cancel))
+        .await
+        .expect("planned");
+    let mut asked: Vec<_> = plan
+        .conflicts()
+        .map(|(index, step, _)| (shown(&step.target), index))
+        .collect();
+    asked.sort();
+    let names: Vec<_> = asked.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        ["site/a.txt", "site/sub/b.txt"],
+        "a folder already there is added to, not asked about"
+    );
+    let ready = plan
+        .resolve(&[
+            (asked[0].1, Choice::Replace),
+            (asked[1].1, Choice::AutoRename),
+        ])
+        .expect("resolved");
+    let report = step(session.run(false, &ready[0], &cancel, |_| {}))
+        .await
+        .expect("ran");
+    assert_eq!(report.skipped, 0);
+    assert_eq!(std::fs::read(there.join("a.txt")).expect("a"), b"new a");
+    assert_eq!(std::fs::read(there.join("sub/b.txt")).expect("b"), b"old b");
+    assert_eq!(
+        std::fs::read(there.join("sub/b (copy).txt")).expect("copy"),
+        b"new b"
+    );
+    assert_eq!(std::fs::read(there.join("sub/c.txt")).expect("c"), b"new c");
+}
+
+#[tokio::test]
+async fn a_download_never_writes_inside_a_folder_whose_name_a_local_file_takes() {
+    use heimdall_files::conflict::{Choice, Kind};
+    let Some((_server, session)) = start().await else {
+        return;
+    };
+    let local = tempfile::tempdir().expect("local");
+    let server = tempfile::tempdir().expect("server");
+    let docs = server.path().join("docs");
+    std::fs::create_dir_all(docs.join("deep")).expect("folders");
+    std::fs::write(docs.join("deep/x.txt"), b"x").expect("x");
+    std::fs::write(server.path().join("note.txt"), b"theirs").expect("note");
+    std::fs::write(local.path().join("docs"), b"a file").expect("in the way");
+    std::fs::write(local.path().join("note.txt"), b"mine").expect("mine");
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let roots = [
+        root(&docs, &local.path().join("docs"), Kind::Folder),
+        root(
+            &server.path().join("note.txt"),
+            &local.path().join("note.txt"),
+            Kind::File,
+        ),
+    ];
+
+    let plan = step(session.plan_download(&roots, &cancel))
+        .await
+        .expect("planned");
+    let conflicts: Vec<_> = plan
+        .conflicts()
+        .map(|(index, step, checked)| (index, shown(&step.target), checked.allowed))
+        .collect();
+    assert_eq!(conflicts.len(), 2, "{conflicts:?}");
+    let folder = conflicts
+        .iter()
+        .find(|(_, name, _)| name == "docs")
+        .expect("the folder");
+    let allowed = folder.2.expect("asked");
+    assert!(
+        allowed.skip && !allowed.replace && !allowed.rename,
+        "skip only"
+    );
+    let note = conflicts
+        .iter()
+        .find(|(_, name, _)| name == "note.txt")
+        .expect("the file");
+    assert!(
+        plan.resolve(&[(folder.0, Choice::Skip)]).is_err(),
+        "every conflict needs an answer"
+    );
+    let ready = plan
+        .resolve(&[(folder.0, Choice::Skip), (note.0, Choice::Skip)])
+        .expect("resolved");
+    assert!(ready.iter().all(Vec::is_empty), "{ready:?}");
+    assert_eq!(
+        std::fs::read(local.path().join("docs")).expect("file"),
+        b"a file"
+    );
+    assert_eq!(
+        std::fs::read(local.path().join("note.txt")).expect("note"),
+        b"mine"
+    );
+}

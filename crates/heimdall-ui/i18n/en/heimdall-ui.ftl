@@ -245,10 +245,6 @@ ui-dialog-exit-body = { $count ->
    *[other] { $count } sessions are still open and will be disconnected.
 }
 ui-dialog-exit-confirm = Quit
-ui-dialog-overwrite-title = Replace the file?
-ui-dialog-overwrite-local-body = { $name } already exists in the local folder. The download replaces it.
-ui-dialog-overwrite-remote-body = { $name } already exists on the server. The upload replaces it.
-ui-dialog-overwrite-confirm = Replace
 ui-dialog-new-folder-title = New folder
 ui-dialog-new-folder-confirm = Create
 ui-dialog-rename-title = Rename
@@ -365,6 +361,20 @@ ui-files-error-local = This computer refused: { $detail }
 ui-files-error-unsafe-name = The server's name "{ $name }" cannot be used here: { $reason }.
 ui-files-error-not-a-file = Only files and folders can be transferred, not links or special files.
 ui-files-error-is-link = The permissions of a symbolic link cannot be changed: the server would change those of what it points to.
+ui-files-conflict-title = File conflicts
+ui-files-conflict-hint = Choose what Heimdall should do before the transfer starts.
+ui-files-conflict-summary = { $count ->
+    [one] { $count } conflicting destination
+   *[other] { $count } conflicting destinations
+}
+ui-files-conflict-apply-all = Apply to all:
+ui-files-conflict-skip = Skip
+ui-files-conflict-replace = Replace
+ui-files-conflict-rename = Auto-rename
+ui-files-conflict-destination = Destination
+ui-files-conflict-action = Action
+ui-files-conflict-apply = Apply
+ui-files-conflict-folder-skip = This folder and all of its planned contents will be skipped.
 ui-files-error-destination-not-a-file = Upload refused: the destination already exists and is not a regular file.
 ui-files-error-replace-not-safe = Upload refused: the destination already exists and the server cannot replace it safely, so it was left as it is.
 ui-files-error-too-large = The folder holds too many entries to walk.
