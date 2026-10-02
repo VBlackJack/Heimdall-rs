@@ -18,6 +18,11 @@
 //! `MobaXterm`, `mRemoteNG` or `RDCMan` file, its kind told by its extension; the number of
 //! sessions asked about, then merged, with what was left out and, for `MobaXterm`, that
 //! passwords must be entered again.
+//!
+//! A file can be written by someone else, so a trust decision it carries is not taken: as the
+//! C# `ImportedProfileSanitizer`, a `WinRM` profile comes in checking its host's certificate.
+//! The C# Heimdall's own files on this machine, read by the home page's "Import Connections",
+//! keep theirs: that decision was made here.
 
 use std::fmt;
 
@@ -138,7 +143,7 @@ impl App {
             }
         };
         let kind = FileKind::of(&file.name, &file.text);
-        let pending = match kind {
+        let mut pending = match kind {
             FileKind::Heimdall => match csharp::import(&file.text, file.settings.as_deref()) {
                 Ok(report) => PendingImport {
                     kind,
@@ -157,6 +162,7 @@ impl App {
             FileKind::MRemoteNg => self.pending(kind, &mremoteng::parse(&file.text)),
             FileKind::RdcMan => self.pending(kind, &rdcman::parse(&file.text)),
         };
+        distrust(&mut pending.report);
         self.dialog = Some(if pending.count() == 0 {
             // As the C#: nothing to import is said, with why when the file says it.
             Dialog::ImportNothing {
@@ -246,5 +252,13 @@ impl App {
                 None
             }
         }
+    }
+}
+
+/// `report` without the trust decisions made on the machine that wrote its file: skipping the
+/// check of a `WinRM` host's certificate is decided here, by whoever imports.
+fn distrust(report: &mut ImportReport) {
+    for profile in &mut report.winrm {
+        profile.skip_certificate_check = false;
     }
 }

@@ -907,6 +907,27 @@ fn importing_the_csharp_profiles_merges_and_saves_them() {
 }
 
 #[test]
+fn the_csharp_profiles_of_this_machine_keep_skipping_a_certificate_check() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut config = config(dir.path());
+    let legacy = dir.path().join("legacy");
+    std::fs::create_dir(&legacy).expect("legacy");
+    std::fs::write(
+        legacy.join("servers.json"),
+        r#"{"servers":[{"id":"w","displayName":"W","remoteServer":"w.lab","connectionType":"WINRM",
+            "winRmUseSsl":true,"winRmSkipCertificateCheck":true}]}"#,
+    )
+    .expect("servers");
+    config.legacy_dir = Some(legacy);
+    let mut app = App::new(config);
+    app.update(Message::ImportLegacy);
+    assert!(
+        app.winrm_profiles()[0].skip_certificate_check,
+        "decided on this machine, by this user, in the C# Heimdall"
+    );
+}
+
+#[test]
 fn messages_never_show_what_the_user_typed_or_read() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));
