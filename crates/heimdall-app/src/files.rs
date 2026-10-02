@@ -349,6 +349,9 @@ pub struct Pane<P, E> {
     pub typed: Option<String>,
     /// How its entries are sorted.
     pub sort: Sort,
+    /// A link being entered: the folder it was opened from, and its name. Its listing tells
+    /// whether it points at a folder; when it does not, the pane goes back.
+    pub entering_link: Option<(P, String)>,
 }
 
 impl<P, E> Pane<P, E> {
@@ -365,6 +368,7 @@ impl<P, E> Pane<P, E> {
             error: None,
             typed: None,
             sort: Sort::default(),
+            entering_link: None,
         }
     }
 

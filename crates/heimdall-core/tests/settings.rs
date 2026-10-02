@@ -416,6 +416,65 @@ fn the_anti_idle_interval_is_a_minute_by_default_zero_or_within_the_csharp_range
 }
 
 #[test]
+fn ssh_keep_alive_and_tmout_reset_intervals_are_the_csharp_defaults_and_ranges() {
+    use heimdall_core::settings::{
+        SSH_KEEP_ALIVE_INTERVAL_DEFAULT, SSH_KEEP_ALIVE_INTERVAL_MAX, SSH_KEEP_ALIVE_INTERVAL_MIN,
+        SSH_TMOUT_RESET_INTERVAL_DEFAULT, SSH_TMOUT_RESET_INTERVAL_MAX,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let read = written(dir.path(), "version = 1\n");
+    assert_eq!(
+        (read.ssh_keep_alive_interval, read.ssh_tmout_reset_interval),
+        (30, 240)
+    );
+    assert_eq!(
+        (
+            SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
+            SSH_KEEP_ALIVE_INTERVAL_MIN,
+            SSH_KEEP_ALIVE_INTERVAL_MAX
+        ),
+        (30, 5, 600)
+    );
+    assert_eq!(
+        (
+            SSH_TMOUT_RESET_INTERVAL_DEFAULT,
+            SSH_TMOUT_RESET_INTERVAL_MAX
+        ),
+        (240, 3600)
+    );
+    for (keep_alive, tmout, read) in [
+        (5, 0, (5, 0)),
+        (600, 3600, (600, 3600)),
+        // Out of the range, as the C# load warns and keeps the default.
+        (4, 3601, (30, 240)),
+        (601, 3601, (30, 240)),
+    ] {
+        let text = format!(
+            "version = 1\n[ssh]\nkeep_alive_interval = {keep_alive}\ntmout_reset_interval = {tmout}\n"
+        );
+        let settings = written(dir.path(), &text);
+        assert_eq!(
+            (
+                settings.ssh_keep_alive_interval,
+                settings.ssh_tmout_reset_interval
+            ),
+            read,
+            "{keep_alive} {tmout}"
+        );
+    }
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        ssh_keep_alive_interval: 120,
+        ssh_tmout_reset_interval: 0,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+}
+
+#[test]
 fn ssh_auto_reconnect_is_off_by_default_and_its_attempts_kept_within_the_csharp_range() {
     use heimdall_core::settings::{
         SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,

@@ -24,7 +24,7 @@ use std::collections::VecDeque;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use heimdall_core::import::csharp::{self, SkipReason};
 use heimdall_core::import::foreign::FileWarning;
@@ -36,8 +36,8 @@ use heimdall_core::profile::{
 use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
-    Secret, TerminalSize, Verdict, fingerprint, verdict,
+    AgentSource, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust, Secret, TerminalSize,
+    Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
@@ -78,6 +78,7 @@ mod folders;
 mod ftp_tab;
 mod gateways;
 mod hostkeys_import;
+mod keep_alive;
 mod local_tab;
 mod pin;
 mod post_connect;
@@ -243,6 +244,8 @@ pub enum Message {
     },
     /// Time for the anti-idle keys of the sessions asking for them.
     AntiIdleTick,
+    /// Time to look at the idle SSH shells for their `TMOUT` reset.
+    TmoutResetTick,
     /// Stop the anti-idle keys of a tab's session, until it connects again.
     StopAntiIdle(TabId),
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
@@ -550,6 +553,7 @@ impl fmt::Debug for Message {
             }
             Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
             Self::AntiIdleTick => f.write_str("AntiIdleTick"),
+            Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
@@ -1009,6 +1013,8 @@ pub struct Tab {
     pub end_reason: Option<String>,
     /// The session waiting to open again by itself, after it dropped.
     pub retry: Option<Retry>,
+    /// When the user's input last reached the session: a TMOUT reset waits for an idle shell.
+    last_input: std::sync::Mutex<Option<Instant>>,
     /// The last search in its history found nothing.
     pub find_missed: bool,
     /// The transcript it keeps, while it keeps one.
@@ -1082,9 +1088,19 @@ impl Tab {
         if let Some(sink) = &self.sink
             && !bytes.is_empty()
         {
+            if let Ok(mut last) = self.last_input.lock() {
+                *last = Some(Instant::now());
+            }
             // A closed session reports itself through its event stream.
             let _ = sink.write(bytes);
         }
+    }
+
+    /// Whether no input of the user's reached the session for `interval`.
+    fn idle_for(&self, interval: Duration) -> bool {
+        self.last_input
+            .lock()
+            .map_or(true, |last| last.is_none_or(|at| at.elapsed() >= interval))
     }
 
     fn new(
@@ -1102,6 +1118,7 @@ impl Tab {
             custom_title: None,
             end_reason: None,
             retry: None,
+            last_input: std::sync::Mutex::new(None),
             find_missed: false,
             transcript: None,
             reopen: reconnect::Reopen::of(&profile),
@@ -1730,6 +1747,7 @@ impl App {
             | Message::DesktopInput { .. }
             | Message::SendKeys { .. }
             | Message::AntiIdleTick
+            | Message::TmoutResetTick
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => self.select_tab(tab),
@@ -1865,7 +1883,7 @@ impl App {
         Vec::new()
     }
 
-    /// Applies a message for a remote desktop.
+    /// Applies a message for a remote desktop, or a session timer's.
     fn desktop_message(&mut self, message: Message) -> Vec<Effect> {
         match message {
             Message::DesktopResize { tab, width, height } => {
@@ -1876,6 +1894,8 @@ impl App {
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
             Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
             Message::AntiIdleTick => self.anti_idle_tick(),
+            // Not a desktop's, but a session timer's as anti-idle is.
+            Message::TmoutResetTick => self.tmout_reset_tick(),
             Message::StopAntiIdle(tab) => self.stop_anti_idle(tab),
             _ => {}
         }
@@ -1918,6 +1938,8 @@ impl App {
 
     /// What connecting to `profile` needs, its gateways included; an error when they cannot
     /// be followed, which no attempt could get past.
+    ///
+    /// See [`App::ssh_options`] for what every SSH connection shares.
     fn connect_request(
         &self,
         profile: &SshProfile,
@@ -1929,9 +1951,7 @@ impl App {
             .store
             .route(profile.gateway.as_ref())
             .map_err(UiError::Route)?;
-        let mut options = ConnectOptions::new(self.config.known_hosts.clone());
-        options.agent = self.config.agent.clone();
-        options.run_trust = self.run_trust.clone();
+        let mut options = self.ssh_options();
         options.initial_size = terminal_size(grid, None);
         options.forward_agent = profile.forward_agent;
         options.compression = profile.compression;

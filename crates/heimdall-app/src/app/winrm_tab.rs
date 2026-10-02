@@ -25,7 +25,6 @@
 
 use heimdall_core::profile::{ProfileId, SshGateway, WinRmProfile};
 use heimdall_core::winrm;
-use heimdall_ssh::ConnectOptions;
 use heimdall_term::local::{self, LocalArguments};
 use tokio_util::sync::CancellationToken;
 
@@ -137,9 +136,7 @@ impl App {
             .store
             .route(profile.gateway.as_ref())
             .map_err(UiError::Route)?;
-        let mut ssh = ConnectOptions::new(self.config.known_hosts.clone());
-        ssh.agent = self.config.agent.clone();
-        ssh.run_trust = self.run_trust.clone();
+        let ssh = self.ssh_options();
         Ok(WinRmRequest {
             profile: profile.clone(),
             program: powershell(),
