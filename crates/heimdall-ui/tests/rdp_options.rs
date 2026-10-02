@@ -25,7 +25,7 @@ mod common;
 
 use heimdall_app::Message as AppMessage;
 use heimdall_app::profile_draft::{DraftProtocol, ProfileChoice, ProfileDraft, ProfileField};
-use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
+use heimdall_core::profile::{AudioPlayback, ColorDepth, Experience, RdpOptions, Resolution};
 use heimdall_ui::shell::Message;
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Point, Settings, Size, mouse};
@@ -180,6 +180,66 @@ fn the_fixed_mode_offers_the_csharp_sizes_and_its_own_fields_only_there() {
         message,
         Message::App(AppMessage::ProfileChoice(ProfileChoice::ScaleFixed(false)))
     )));
+}
+
+#[test]
+fn the_visual_experience_boxes_are_the_csharp_ones_each_sending_its_change() {
+    let mut options = RdpOptions::default();
+    options.set(Experience::EnableFontSmoothing, true);
+    let experience = || {
+        let settings = Settings {
+            fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+            ..Settings::default()
+        };
+        common::simulator(
+            settings,
+            WINDOW,
+            heimdall_ui::rdp_options::experience(options),
+        )
+    };
+    experience()
+        .find("Visual experience")
+        .expect("the card's title");
+    for (label, experience_box, on) in [
+        ("Disable wallpaper", Experience::DisableWallpaper, true),
+        ("Disable themes", Experience::DisableThemes, true),
+        (
+            "Disable menu animations",
+            Experience::DisableAnimations,
+            true,
+        ),
+        ("Disable full-window drag", Experience::DisableDrag, true),
+        (
+            "Disable cursor shadow",
+            Experience::DisableCursorShadow,
+            true,
+        ),
+        (
+            "Enable font smoothing (ClearType)",
+            Experience::EnableFontSmoothing,
+            false,
+        ),
+        (
+            "Enable desktop composition",
+            Experience::EnableComposition,
+            true,
+        ),
+    ] {
+        let mut ui = experience();
+        ui.click(label).expect(label);
+        let sent = format!(
+            "{:?}",
+            Message::App(AppMessage::ProfileChoice(ProfileChoice::Experience(
+                experience_box,
+                on,
+            )))
+        );
+        assert!(
+            ui.into_messages()
+                .any(|message| format!("{message:?}") == sent),
+            "{label}"
+        );
+    }
 }
 
 #[test]

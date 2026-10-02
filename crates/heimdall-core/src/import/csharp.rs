@@ -321,6 +321,9 @@ struct LegacyServer {
     rdp_multi_monitor: bool,
     #[serde(default)]
     rdp_anti_idle: bool,
+    /// The C# `int`; kept whole, as the C# passes it to the control.
+    #[serde(default)]
+    rdp_performance_flags: i64,
     /// Zero or less means the default port, as `TelnetHandler` reads it.
     telnet_port: Option<i64>,
     /// Zero or less means the default port, as `VncHandler` reads it.
@@ -1125,6 +1128,9 @@ fn convert_rdp(
             fixed_height,
             scale_fixed: server.rdp_initial_smart_sizing.unwrap_or(true),
             dynamic_resolution: server.rdp_dynamic_resolution.unwrap_or(true),
+            // Always the profile's in the C# Heimdall, never a global default. A negative
+            // value is none the C# dialog writes: taken as no box ticked.
+            performance_flags: u32::try_from(server.rdp_performance_flags).unwrap_or(0),
         },
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
