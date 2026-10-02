@@ -652,6 +652,30 @@ fn an_rdp_profile_on_the_global_defaults_takes_the_settings_not_its_own_choices(
 }
 
 #[test]
+fn the_performance_flags_are_the_profile_s_own_even_on_the_global_defaults() {
+    let json = servers(
+        r#"{"id": "own", "remoteServer": "h", "connectionType": "RDP",
+            "rdpPerformanceFlags": 385},
+           {"id": "global", "remoteServer": "h", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": true, "rdpPerformanceFlags": 1},
+           {"id": "none", "remoteServer": "h", "connectionType": "RDP"},
+           {"id": "odd", "remoteServer": "h", "connectionType": "RDP",
+            "rdpPerformanceFlags": -1}"#,
+    );
+    let report = import(&json, Some("{}")).expect("valid JSON");
+    let flags: Vec<_> = report
+        .rdp
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.options.performance_flags))
+        .collect();
+    assert_eq!(
+        flags,
+        [("own", 0x181), ("global", 0x01), ("none", 0), ("odd", 0)],
+        "kept whole; a negative value, which no C# dialog writes, as none"
+    );
+}
+
+#[test]
 fn the_global_defaults_left_unset_are_the_csharp_ones() {
     use heimdall_core::profile::RdpOptions;
 

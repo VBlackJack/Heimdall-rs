@@ -16,7 +16,7 @@
 
 //! How an RDP profile's options size its desktop, as the C# embedded session does.
 
-use heimdall_core::profile::{DesktopSizing, RdpOptions, Resolution, fixed_desktop};
+use heimdall_core::profile::{DesktopSizing, Experience, RdpOptions, Resolution, fixed_desktop};
 
 #[test]
 fn a_fixed_size_is_brought_within_the_csharp_limits_and_its_width_to_a_multiple_of_4() {
@@ -74,4 +74,26 @@ fn each_mode_sizes_and_shows_the_desktop_as_the_csharp_embedded_session() {
         assert_eq!(options.sizing(), sizing, "{options:?}");
         assert_eq!(options.scaled(), scaled, "{options:?}");
     }
+}
+
+#[test]
+fn each_experience_box_is_its_csharp_flag_and_the_others_are_kept() {
+    assert_eq!(
+        Experience::ALL.map(Experience::bit),
+        [0x01, 0x08, 0x04, 0x02, 0x20, 0x80, 0x100],
+        "the C# constants, in the C# card's order"
+    );
+    // A bit no box shows, as a C# .rdp import may bring: kept through the boxes' changes.
+    let mut options = RdpOptions {
+        performance_flags: 0x40,
+        ..RdpOptions::default()
+    };
+    assert_eq!(RdpOptions::default().performance_flags, 0, "none ticked");
+    options.set(Experience::DisableThemes, true);
+    options.set(Experience::EnableFontSmoothing, true);
+    assert!(options.has(Experience::DisableThemes));
+    assert!(!options.has(Experience::DisableWallpaper));
+    assert_eq!(options.performance_flags, 0x40 | 0x08 | 0x80);
+    options.set(Experience::DisableThemes, false);
+    assert_eq!(options.performance_flags, 0x40 | 0x80);
 }

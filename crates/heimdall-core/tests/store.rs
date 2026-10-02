@@ -490,6 +490,7 @@ fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
         fixed_height: 720,
         scale_fixed: false,
         dynamic_resolution: false,
+        performance_flags: 0,
     };
     store.merge_rdp([rdp("defaults"), chosen.clone()]);
     store.save().expect("saves");
@@ -530,6 +531,7 @@ fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
             fixed_height: 1080,
             scale_fixed: true,
             dynamic_resolution: true,
+            performance_flags: 0,
         },
         "the C# defaults"
     );

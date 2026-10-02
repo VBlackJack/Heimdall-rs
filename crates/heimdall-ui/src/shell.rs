@@ -4523,6 +4523,9 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
                 .style(text::danger),
         );
     }
+    if draft.protocol == DraftProtocol::Rdp {
+        form = form.push(crate::rdp_options::experience(draft.rdp_options));
+    }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(crate::post_connect_form::view(&draft.post_connect));
     }
@@ -5127,6 +5130,7 @@ impl fmt::Display for KeysChoice {
             SpecialKeys::CtrlEsc => fl!("ui-desktop-keys-ctrl-esc"),
             SpecialKeys::Escape => fl!("ui-desktop-keys-escape"),
             SpecialKeys::PrintScreen => fl!("ui-desktop-keys-print-screen"),
+            SpecialKeys::F11 => fl!("ui-desktop-keys-f11"),
             SpecialKeys::WinL => fl!("ui-desktop-keys-win-l"),
             SpecialKeys::WinD => fl!("ui-desktop-keys-win-d"),
             SpecialKeys::WinE => fl!("ui-desktop-keys-win-e"),
