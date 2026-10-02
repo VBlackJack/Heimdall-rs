@@ -21,6 +21,8 @@
 //! opening the list again and clicking lower and lower down, recording the choice each
 //! click makes.
 
+mod common;
+
 use heimdall_app::Message as AppMessage;
 use heimdall_app::profile_draft::{DraftProtocol, ProfileChoice, ProfileDraft, ProfileField};
 use heimdall_core::profile::{AudioPlayback, ColorDepth, RdpOptions, Resolution};
@@ -36,12 +38,12 @@ const INTO_LIST: f32 = 14.0;
 /// Step between the points tried below an open list.
 const STEP: f32 = 4.0;
 
-fn simulator(options: RdpOptions) -> Simulator<'static, Message> {
+fn simulator(options: RdpOptions) -> common::Drawn<'static> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, heimdall_ui::rdp_options::view(options))
+    common::simulator(settings, WINDOW, heimdall_ui::rdp_options::view(options))
 }
 
 /// Moves the pointer to `at`, then clicks: a list's menu picks the entry the pointer moved
@@ -61,7 +63,7 @@ fn choices(label: &str) -> Vec<String> {
 }
 
 /// The choices the list under `label` offers in what `make` draws.
-fn choices_in<'a>(label: &str, make: &dyn Fn() -> Simulator<'a, Message>) -> Vec<String> {
+fn choices_in<'a>(label: &str, make: &dyn Fn() -> common::Drawn<'a>) -> Vec<String> {
     let bounds = make().find(label).expect(label).bounds();
     let list = Point::new(bounds.x + INTO_LIST, bounds.y + bounds.height + INTO_LIST);
     let mut found: Vec<String> = Vec::new();
@@ -85,12 +87,12 @@ fn choices_in<'a>(label: &str, make: &dyn Fn() -> Simulator<'a, Message>) -> Vec
 }
 
 /// The resolution card of `draft`, its size fields as plain boxes.
-fn resolution(draft: &ProfileDraft) -> Simulator<'_, Message> {
+fn resolution(draft: &ProfileDraft) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(
+    common::simulator(
         settings,
         WINDOW,
         heimdall_ui::rdp_options::resolution(draft, |field| {

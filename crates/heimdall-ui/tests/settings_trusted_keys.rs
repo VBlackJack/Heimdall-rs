@@ -16,6 +16,8 @@
 
 //! The keys trusted for servers on the Settings page.
 
+mod common;
+
 use std::path::Path;
 
 use heimdall_app::{
@@ -29,7 +31,6 @@ use heimdall_ui::shell::{Message, SettingsTab, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::trusted_keys_view::TrustedList;
 use iced::{Settings, Size};
-use iced_test::simulator::Simulator;
 
 /// A window tall enough for the whole Settings page.
 const WINDOW: Size = Size::new(1100.0, 1800.0);
@@ -49,12 +50,12 @@ fn shell(dir: &Path) -> Shell {
     }))
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 fn trust(dir: &Path) {
@@ -189,7 +190,7 @@ fn copy_and_remove_ask_the_core_and_the_question_is_the_csharp_one() {
             fonts: FONTS.iter().map(|face| (*face).into()).collect(),
             ..Settings::default()
         };
-        let mut ui = Simulator::with_size(
+        let mut ui = common::simulator(
             settings,
             WINDOW,
             heimdall_ui::trusted_keys_view::forget_question(&web),

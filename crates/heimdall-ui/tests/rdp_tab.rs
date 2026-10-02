@@ -19,9 +19,7 @@
 
 mod common;
 
-use std::ops::{Deref, DerefMut};
 use std::path::Path;
-use std::sync::{Mutex, MutexGuard, PoisonError};
 
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, DesktopInput, Effect, Message as AppMessage,
@@ -35,7 +33,6 @@ use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Point, Settings, Size, Theme, mouse};
-use iced_test::simulator::Simulator;
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
 
@@ -79,61 +76,15 @@ fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
     })
 }
 
-/// One headless renderer at a time in this binary. Its tests draw the desktop through the
-/// texture shader; on the Windows runner's software adapter, renderers created on several
-/// test threads at once once ended the whole binary with `STATUS_ACCESS_VIOLATION` before
-/// any test reported. A test that fails still lets the next one draw.
-static RENDERING: Mutex<()> = Mutex::new(());
-
-/// A simulator holding the turn to render until it is dropped or its messages are taken.
-struct Drawn<'a> {
-    // Declared first: dropped, with its renderer, before the turn is given back.
-    ui: Simulator<'a, Message>,
-    _turn: MutexGuard<'static, ()>,
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
+    common::simulator(settings(), WINDOW, shell.view())
 }
 
-impl Drawn<'_> {
-    fn into_messages(self) -> impl Iterator<Item = Message> {
-        let Drawn { ui, _turn } = self;
-        let messages: Vec<Message> = ui.into_messages().collect();
-        messages.into_iter()
-    }
-}
-
-impl<'a> Deref for Drawn<'a> {
-    type Target = Simulator<'a, Message>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.ui
-    }
-}
-
-impl DerefMut for Drawn<'_> {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.ui
-    }
-}
-
-fn simulator(shell: &Shell) -> Drawn<'_> {
-    let turn = render_turn();
-    Drawn {
-        ui: unguarded_simulator(shell),
-        _turn: turn,
-    }
-}
-
-/// The turn to render, for a test that makes its simulators itself.
-fn render_turn() -> MutexGuard<'static, ()> {
-    RENDERING.lock().unwrap_or_else(PoisonError::into_inner)
-}
-
-/// A simulator made while the caller holds [`render_turn`].
-fn unguarded_simulator(shell: &Shell) -> Simulator<'_, Message> {
-    let settings = Settings {
+fn settings() -> Settings {
+    Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
-    };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    }
 }
 
 /// A shell with the RDP tab open; the tab and its attempt.
@@ -174,8 +125,8 @@ fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
     // As in the C# tree: a click selects, a double click connects.
     drop(ui);
     let messages = {
-        let _turn = render_turn();
-        common::double_click_messages(|| unguarded_simulator(&shell), "Domain controller")
+        let _turn = common::render_turn();
+        common::double_click_messages(|| simulator(&shell), "Domain controller")
     };
     assert!(messages.iter().any(|message| matches!(
         message,
@@ -737,7 +688,7 @@ fn a_session_the_server_ended_says_why() {
 #[tokio::test]
 async fn a_dropped_desktop_counts_down_to_its_next_attempt_and_can_be_stopped() {
     // Held from before the drop: the countdown read below runs on the clock.
-    let _turn = render_turn();
+    let _turn = common::render_turn();
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = opened(dir.path());
     let (input, _received) = tokio::sync::mpsc::unbounded_channel();
@@ -759,7 +710,7 @@ async fn a_dropped_desktop_counts_down_to_its_next_attempt_and_can_be_stopped() 
         ConnectionEvent::Failed(UiError::Timeout),
     );
     {
-        let mut ui = unguarded_simulator(&shell);
+        let mut ui = simulator(&shell);
         ui.find("Reconnecting (attempt 1/20)...")
             .expect("which attempt");
         ui.find("in 2s").expect("how long");
@@ -775,7 +726,7 @@ async fn a_dropped_desktop_counts_down_to_its_next_attempt_and_can_be_stopped() 
     }
     // The attempt itself says it is one.
     let _ = shell.update(Message::App(AppMessage::AutoReconnect { tab, attempt }));
-    let mut ui = unguarded_simulator(&shell);
+    let mut ui = simulator(&shell);
     ui.find("Reconnecting (attempt 1/20)...")
         .expect("while connecting");
 }

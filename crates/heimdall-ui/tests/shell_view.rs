@@ -41,7 +41,6 @@ use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::WindowShortcut;
 use iced::keyboard::key::Named;
 use iced::{Settings, Size, event};
-use iced_test::simulator::Simulator;
 
 const GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
@@ -115,12 +114,12 @@ fn open(app: &mut App, id: &str) -> (TabId, AttemptId) {
     }
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 /// Writes a PNG of the window when `HEIMDALL_SNAPSHOT_DIR` is set.
@@ -1227,7 +1226,7 @@ fn a_profile_renames_and_moves_to_another_folder_from_its_menu() {
         ("Production", None),
         ("Lab", Some(Some("Lab".to_owned()))),
     ] {
-        let mut ui = Simulator::with_size(
+        let mut ui = common::simulator(
             settings.clone(),
             WINDOW,
             heimdall_ui::tree_view::move_profile_entries(&id, &targets),
@@ -2821,7 +2820,7 @@ fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp
         ..Settings::default()
     };
     // Tall enough for the whole page.
-    let mut ui = Simulator::with_size(settings, Size::new(1100.0, 2400.0), shell.view());
+    let mut ui = common::simulator(settings, Size::new(1100.0, 2400.0), shell.view());
     for said in [
         "SSH auto-reconnect",
         "Automatically retry an SSH session that disconnects unexpectedly. Disabled by default.",

@@ -18,6 +18,8 @@
 //! name and delete questions.
 //! Setting `HEIMDALL_SNAPSHOT_DIR` writes a PNG of the tab, for a visual pass.
 
+mod common;
+
 use std::path::{Path, PathBuf};
 
 use heimdall_app::files::{Direction, EntryKind, LocalEntry, RemoteEntry, Side, TransferEvent};
@@ -34,7 +36,6 @@ use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
-use iced_test::simulator::Simulator;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 /// Size of the simulated window, in logical pixels.
@@ -159,12 +160,12 @@ async fn files_tab(dir: &Path) -> (App, TabId) {
     (core, tab)
 }
 
-fn simulator(shell: &Shell) -> Simulator<'_, Message> {
+fn simulator(shell: &Shell) -> common::Drawn<'_> {
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, shell.view())
+    common::simulator(settings, WINDOW, shell.view())
 }
 
 fn snapshot(shell: &Shell, name: &str) {
@@ -191,7 +192,7 @@ fn snapshot(shell: &Shell, name: &str) {
         .expect("written");
 }
 
-fn files_messages(ui: Simulator<'_, Message>) -> Vec<FilesMessage> {
+fn files_messages(ui: common::Drawn<'_>) -> Vec<FilesMessage> {
     ui.into_messages()
         .filter_map(|message| match message {
             Message::App(AppMessage::Files(files)) => Some(files),
@@ -509,7 +510,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
             fonts: FONTS.iter().map(|face| (*face).into()).collect(),
             ..Settings::default()
         };
-        let mut ui = Simulator::with_size(settings, Size::new(1800.0, 800.0), shell.view());
+        let mut ui = common::simulator(settings, Size::new(1800.0, 800.0), shell.view());
         for shown in [
             "2026-09-27 19:15",
             "rwsr-xr-x",
@@ -549,7 +550,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = Simulator::with_size(settings, Size::new(1800.0, 800.0), shell.view());
+    let mut ui = common::simulator(settings, Size::new(1800.0, 800.0), shell.view());
     ui.find("Permissions \u{25bc}").expect("the other way");
     assert!(
         ui.find("Name \u{25b2}").is_ok(),
@@ -638,7 +639,7 @@ async fn this_computers_menu_uploads_what_the_servers_downloads() {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = Simulator::with_size(
+    let mut ui = common::simulator(
         settings,
         WINDOW,
         heimdall_ui::tree_view::files_entry_menu(tab, Side::Local, 0),
@@ -745,7 +746,7 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
             fonts: FONTS.iter().map(|face| (*face).into()).collect(),
             ..Settings::default()
         };
-        let mut ui = Simulator::with_size(
+        let mut ui = common::simulator(
             settings,
             WINDOW,
             heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 1),
@@ -771,7 +772,7 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
         ..Settings::default()
     };
     let menu = |side| {
-        Simulator::with_size(
+        common::simulator(
             settings(),
             WINDOW,
             heimdall_ui::tree_view::files_entry_menu(tab, side, 0),
@@ -953,7 +954,7 @@ async fn the_servers_pane_bookmarks_its_folder_and_lists_the_bookmarks() {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = Simulator::with_size(
+    let mut ui = common::simulator(
         settings,
         WINDOW,
         heimdall_ui::tree_view::files_bookmarks_menu(tab, &["/home/admin".to_owned()]),
@@ -985,7 +986,7 @@ fn pixel_of(view: iced::Element<'_, Message>, x: u32, y: u32) -> [u8; 4] {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    Simulator::with_size(settings, WINDOW, view)
+    common::simulator(settings, WINDOW, view)
         .snapshot(&iced::Theme::Dark)
         .expect("drawn")
         .matches_image(dir.path().join("menu.png"))
