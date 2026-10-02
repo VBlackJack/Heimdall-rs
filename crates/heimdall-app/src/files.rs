@@ -543,6 +543,10 @@ pub enum FilesError {
     },
     /// Not a regular file or a folder: a link, a device.
     NotAFile,
+    /// The file an upload would replace is not a regular file; it was left as it is.
+    DestinationNotAFile,
+    /// The file an upload would replace was left as it is.
+    ReplaceNotSafe,
     /// A folder holds more entries than a transfer or a delete walks.
     TooLarge,
     /// The name typed cannot be used.
@@ -564,6 +568,8 @@ impl From<&RemoteError> for FilesError {
                 detail: detail.clone(),
             },
             RemoteError::NotAFile => Self::NotAFile,
+            RemoteError::DestinationNotAFile => Self::DestinationNotAFile,
+            RemoteError::ReplaceNotSafe => Self::ReplaceNotSafe,
             RemoteError::TooLarge => Self::TooLarge,
             // A cancel is a state of the transfer, not a failure: callers handle it first.
             RemoteError::SessionClosed | RemoteError::Cancelled => Self::SessionClosed,

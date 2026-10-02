@@ -39,8 +39,8 @@ const KNOWN_PATHS: [&str; 2] = [
 /// Bound on each step.
 pub const STEP: Duration = Duration::from_secs(60);
 
-/// A client connected to a fresh `sftp-server`; the server lives as long as the child.
-pub async fn start() -> Option<(Child, SftpClient)> {
+/// The `sftp-server` to run, or `None` when there is none and none is required.
+fn server_binary() -> Option<PathBuf> {
     let binary = std::env::var_os(SERVER_VARIABLE)
         .map(PathBuf::from)
         .or_else(|| {
@@ -57,6 +57,12 @@ pub async fn start() -> Option<(Child, SftpClient)> {
         eprintln!("no sftp-server found; set {SERVER_VARIABLE} to run this test");
         return None;
     };
+    Some(binary)
+}
+
+/// A client connected to a fresh `sftp-server`; the server lives as long as the child.
+pub async fn start() -> Option<(Child, SftpClient)> {
+    let binary = server_binary()?;
     let mut child = Command::new(binary)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -90,4 +96,53 @@ pub fn pattern(length: usize) -> Vec<u8> {
     (0..length)
         .map(|n| u8::try_from(n % 251).expect("below 251"))
         .collect()
+}
+
+/// A client connected to a fresh `sftp-server` that announces no extension: the server's
+/// version reply is rewritten on its way, everything else passes as it is. Stands for a
+/// server without `posix-rename@openssh.com`, `fsync@openssh.com` or `limits@openssh.com`.
+pub async fn start_without_extensions() -> Option<(Child, SftpClient)> {
+    use heimdall_sftp::protocol::Response;
+    use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+
+    let binary = server_binary()?;
+    let mut child = Command::new(binary)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("sftp-server starts");
+    let mut from_server = child.stdout.take().expect("stdout");
+    let mut to_server = child.stdin.take().expect("stdin");
+    let (client_side, relay) = tokio::io::duplex(1 << 20);
+    let (mut from_client, mut to_client) = tokio::io::split(relay);
+    tokio::spawn(async move {
+        let _ = tokio::io::copy(&mut from_client, &mut to_server).await;
+    });
+    tokio::spawn(async move {
+        let mut length = [0; 4];
+        if from_server.read_exact(&mut length).await.is_err() {
+            return;
+        }
+        let mut body = vec![0; u32::from_be_bytes(length) as usize];
+        if from_server.read_exact(&mut body).await.is_err() {
+            return;
+        }
+        let Ok(Response::Version { version, .. }) = Response::decode(&body) else {
+            return;
+        };
+        let bare = Response::Version {
+            version,
+            extensions: Vec::new(),
+        };
+        if to_client.write_all(&bare.encode()).await.is_err() {
+            return;
+        }
+        let _ = tokio::io::copy(&mut from_server, &mut to_client).await;
+    });
+    let client = step(SftpClient::start(client_side, ClientConfig::default()))
+        .await
+        .expect("started");
+    Some((child, client))
 }
