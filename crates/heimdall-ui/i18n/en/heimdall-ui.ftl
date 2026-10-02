@@ -216,6 +216,8 @@ ui-session-close-button = Close the tab
 
 ui-error-invalid-host = The host name is not valid.
 ui-error-invalid-username = The user name is not valid.
+ui-winrm-diagnostic-ntlm-loopback = WinRM authentication failed for the current Windows identity. Use a stored account for localhost or off-domain hosts.
+ui-winrm-diagnostic-wsman-invalid = WinRM received an invalid WSMan response. If this session uses a gateway, verify that WinRM uses HTTP through the tunnel.
 ui-error-winrm-https-gateway = WinRM over an SSH gateway does not support HTTPS. Use HTTP, or connect directly.
 ui-error-winrm-unresolved = Cannot resolve WinRM host '{ $host }'.
 ui-error-winrm-unreachable = WinRM host '{ $host }' is unreachable on port { $port } (connection refused or timed out).
