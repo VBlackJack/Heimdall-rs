@@ -1283,6 +1283,14 @@ pub struct ConflictRow {
 pub enum Dialog {
     /// Close a tab whose session is live.
     ConfirmCloseTab(TabId),
+    /// Close a Files tab whose transfers are running, which closing cancels, as the C#
+    /// "Transfer In Progress" question.
+    ConfirmCloseTransfers {
+        /// Tab.
+        tab: TabId,
+        /// Its name, as the question says it.
+        name: String,
+    },
     /// Start broadcast input to every tab.
     ConfirmBroadcast,
     /// Turn session transcripts on, which keep what is typed.
@@ -2495,6 +2503,13 @@ impl App {
 
     fn request_close(&mut self, tab_id: TabId) -> Vec<Effect> {
         match self.tab(tab_id) {
+            // Its transfers would be cancelled: said, as the C# Files tab says it.
+            Some(tab) if tab.files.as_ref().is_some_and(|files| files.running() > 0) => {
+                self.dialog = Some(Dialog::ConfirmCloseTransfers {
+                    tab: tab_id,
+                    name: tab.display_title().to_owned(),
+                });
+            }
             Some(tab) if tab.is_live() => {
                 self.dialog = Some(Dialog::ConfirmCloseTab(tab_id));
             }
@@ -2546,7 +2561,7 @@ impl App {
                 self.confirm_import(dialog);
                 Vec::new()
             }
-            Some(Dialog::ConfirmCloseTab(tab)) => {
+            Some(Dialog::ConfirmCloseTab(tab) | Dialog::ConfirmCloseTransfers { tab, .. }) => {
                 self.close_tab(tab);
                 Vec::new()
             }

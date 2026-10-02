@@ -659,8 +659,14 @@ async fn a_finished_download_refreshes_the_local_pane_and_closing_cancels_the_re
     );
     assert!(matches!(refreshed.as_slice(), [Effect::ListLocal { .. }]));
 
-    // Connected: closing asks first.
+    // A transfer still running: closing says it cancels it, as the C# "Transfer In Progress".
     app.update(Message::RequestCloseTab(tab));
+    let name = app.tab(tab).expect("tab").display_title().to_owned();
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmCloseTransfers { tab, name }),
+        "not the plain close question"
+    );
     app.update(Message::ConfirmDialog);
     assert!(app.tab(tab).is_none());
     assert!(

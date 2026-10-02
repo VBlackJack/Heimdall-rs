@@ -4932,6 +4932,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-paste-body", count = (*lines)),
             fl!("ui-dialog-paste-confirm"),
         ),
+        Dialog::ConfirmCloseTransfers { name, .. } => (
+            fl!("ui-dialog-close-transfers-title"),
+            fl!("ui-dialog-close-transfers-body", name = name.as_str()),
+            fl!("ui-dialog-close-tab-confirm"),
+        ),
         Dialog::ConfirmCloseTabs { tabs, live } => (
             fl!("ui-dialog-close-tabs-title"),
             fl!(
@@ -5559,6 +5564,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     };
     match dialog {
         Dialog::ConfirmCloseTab(_)
+        | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::ConfirmPaste { .. } => tab_dialog(dialog),

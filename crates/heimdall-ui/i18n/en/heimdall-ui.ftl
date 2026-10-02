@@ -254,6 +254,8 @@ ui-dialog-cancel-button = Cancel
 ui-dialog-close-tab-title = Close this session?
 ui-dialog-close-tab-body = The session is still open. Closing the tab disconnects it.
 ui-dialog-close-tab-confirm = Close
+ui-dialog-close-transfers-title = Transfer In Progress
+ui-dialog-close-transfers-body = A file transfer is running on "{ $name }". Closing now cancels it. Close anyway?
 ui-dialog-exit-title = Quit Heimdall?
 ui-dialog-exit-body = { $count ->
     [one] { $count } session is still open and will be disconnected.
