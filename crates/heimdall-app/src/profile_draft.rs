@@ -229,6 +229,8 @@ pub enum ProfileToggle {
     /// RDP: take the application's RDP options, as the C# "Use global RDP defaults", ticked
     /// for a new profile.
     FollowDefaults,
+    /// RDP: several machines answer at the address; each new certificate is asked about.
+    SeveralServers,
 }
 
 impl ProfileToggle {
@@ -241,6 +243,7 @@ impl ProfileToggle {
                 Self::RedirectDrives,
                 Self::Nla,
                 Self::AdminSession,
+                Self::SeveralServers,
             ],
             DraftProtocol::WinRm => &[
                 Self::StoredCredential,
@@ -558,6 +561,9 @@ impl ProfileDraft {
         }
         if profile.follow_defaults {
             toggles.push(ProfileToggle::FollowDefaults);
+        }
+        if profile.several_servers {
+            toggles.push(ProfileToggle::SeveralServers);
         }
         Self {
             editing: Some(profile.id.clone()),
@@ -993,6 +999,7 @@ impl ProfileDraft {
                 vault_entry: optional(vault_entry),
                 forwards: self.saved_forwards()?,
                 follow_defaults: self.is_on(ProfileToggle::FollowDefaults),
+                several_servers: self.is_on(ProfileToggle::SeveralServers),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -1320,6 +1327,10 @@ mod tests {
             !rdp.is_on(ProfileToggle::AdminSession),
             "the ordinary session unless asked"
         );
+        assert!(
+            !rdp.is_on(ProfileToggle::SeveralServers),
+            "one machine per address unless said"
+        );
         assert_eq!(rdp.rdp_options, RdpOptions::default());
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
@@ -1327,7 +1338,9 @@ mod tests {
                 ProfileToggle::RedirectClipboard,
                 ProfileToggle::RedirectDrives,
                 ProfileToggle::Nla,
-                ProfileToggle::AdminSession
+                ProfileToggle::AdminSession,
+                // Not in the C# dialog, which always asks: after its boxes.
+                ProfileToggle::SeveralServers,
             ],
             "in the C# dialog's order"
         );
@@ -1691,6 +1704,7 @@ mod tests {
                 ..Forwards::default()
             },
             follow_defaults: false,
+            several_servers: true,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),

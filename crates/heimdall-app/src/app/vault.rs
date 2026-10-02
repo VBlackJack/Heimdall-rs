@@ -1020,6 +1020,7 @@ mod tests {
             vault_entry: None,
             forwards: heimdall_core::profile::Forwards::default(),
             follow_defaults: false,
+            several_servers: false,
         })
     }
 
