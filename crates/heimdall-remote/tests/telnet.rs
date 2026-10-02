@@ -187,9 +187,13 @@ async fn closing_ends_the_session_on_both_sides() {
 
 #[tokio::test]
 async fn a_closed_port_is_a_network_error() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
-    let port = listener.local_addr().expect("address").port();
-    drop(listener);
+    // Bound but not listening: the port stays this test's, and refuses. A listener
+    // dropped instead frees it, for a test running beside this one to take.
+    let socket = tokio::net::TcpSocket::new_v4().expect("socket");
+    socket
+        .bind("127.0.0.1:0".parse().expect("address"))
+        .expect("bind");
+    let port = socket.local_addr().expect("address").port();
     let outcome = connect(&config(port), CancellationToken::new()).await;
     assert!(
         matches!(outcome, Err(TelnetError::Network(_))),
