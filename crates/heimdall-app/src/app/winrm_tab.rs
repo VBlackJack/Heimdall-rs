@@ -14,11 +14,14 @@
  * limitations under the License.
  */
 
-//! `WinRM` tabs: a local `PowerShell` in a terminal, entering a remote session.
+//! `WinRM` tabs: a local `PowerShell` in a terminal, entering a remote session and ending
+//! with it.
 //!
 //! Heimdall writes the command from the profile's checked fields, so nothing typed by the
 //! user runs as such and no approval is asked. The password never passes through Heimdall:
-//! `PowerShell` asks for it in the terminal.
+//! `PowerShell` asks for it in the terminal. A failed sign-in, a remote `exit` or a dropped
+//! connection ends the tab's `PowerShell` rather than leaving a prompt that runs on this
+//! machine under the remote host's name; see [`winrm::session_command`].
 
 use heimdall_core::profile::ProfileId;
 use heimdall_core::winrm::{self, CommandError, POWERSHELL_ARGUMENTS};
@@ -41,7 +44,7 @@ impl App {
         let Some(profile) = self.winrm_profiles().iter().find(|p| &p.id == id).cloned() else {
             return Vec::new();
         };
-        let effects = match winrm::enter_session(&profile) {
+        let effects = match winrm::session_command(&profile) {
             Ok(command) => {
                 let mut arguments: Vec<String> = POWERSHELL_ARGUMENTS
                     .iter()
