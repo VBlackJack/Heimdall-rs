@@ -31,3 +31,4 @@ pub mod settings;
 pub mod store;
 pub mod utc;
 pub mod winrm;
+pub mod winrm_diagnostic;

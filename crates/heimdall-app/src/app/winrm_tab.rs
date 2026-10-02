@@ -25,6 +25,7 @@
 
 use heimdall_core::profile::{ProfileId, SshGateway, WinRmProfile};
 use heimdall_core::winrm;
+use heimdall_core::winrm_diagnostic::EarlyOutput;
 use heimdall_term::local::{self, LocalArguments};
 use tokio_util::sync::CancellationToken;
 
@@ -109,6 +110,9 @@ impl App {
         };
         tab.attempt = attempt;
         tab.cancel = cancel;
+        // Read afresh: what the last attempt said is not this one's.
+        tab.early_output = None;
+        tab.winrm_diagnostic = None;
         match request {
             Ok(request) => {
                 tab.phase = Phase::Connecting;
@@ -162,6 +166,25 @@ impl App {
             _ => return,
         };
         self.tell(notice);
+    }
+
+    /// Reads `bytes`, output of `tab_id`'s session, for what a `WinRM` session's start says
+    /// went wrong, until the user types, as the C# `WinRmEarlyOutputDiagnostic` reads it.
+    pub(super) fn read_winrm_output(&mut self, tab_id: TabId, bytes: &[u8]) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        if !matches!(tab.profile, TabProfile::WinRm(_)) {
+            return;
+        }
+        let typed = tab.last_input.lock().map_or(true, |last| last.is_some());
+        let early = tab.early_output.get_or_insert_with(EarlyOutput::new);
+        if typed {
+            early.stop();
+        }
+        if let Some(found) = early.observe(bytes) {
+            tab.winrm_diagnostic = Some(found);
+        }
     }
 
     /// A tab that says why nothing was started.

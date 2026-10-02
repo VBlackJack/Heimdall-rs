@@ -85,6 +85,16 @@ fn with_severity(account: bool, reason: &str) -> String {
     )
 }
 
+/// What a `WinRM` session's first output said went wrong, as the C# says it.
+#[must_use]
+pub fn winrm_diagnostic(found: heimdall_core::winrm_diagnostic::Diagnostic) -> String {
+    use heimdall_core::winrm_diagnostic::Diagnostic;
+    match found {
+        Diagnostic::NtlmLoopback => fl!("ui-winrm-diagnostic-ntlm-loopback"),
+        Diagnostic::WsmanInvalidResponse => fl!("ui-winrm-diagnostic-wsman-invalid"),
+    }
+}
+
 /// The sentence explaining `error`.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "one arm per error the user can meet")]
