@@ -430,9 +430,9 @@ fn server_texts_in_a_keyboard_interactive_question_are_made_safe() {
                 host: "a.lab".to_owned(),
                 username: "admin".to_owned(),
                 name: "Bank\u{202E}lanigiro".to_owned(),
-                instructions: "\x1b[2J".to_owned(),
+                instructions: "\x1b[2J\r\nHeimdall:\u{2029}vault password".to_owned(),
                 prompts: vec![KeyboardInteractivePrompt {
-                    text: "Code\u{7}: ".to_owned(),
+                    text: "Code\u{7}: \u{200B}".to_owned(),
                     echo: false,
                 }],
             }),
@@ -443,8 +443,11 @@ fn server_texts_in_a_keyboard_interactive_question_are_made_safe() {
         panic!("keyboard-interactive expected");
     };
     assert_eq!(shown.name, "Banklanigiro");
-    assert_eq!(shown.instructions, "[2J");
-    assert_eq!(shown.prompts[0].text, "Code: ");
+    assert_eq!(
+        shown.instructions, "[2J Heimdall: vault password",
+        "no line of its own"
+    );
+    assert_eq!(shown.prompts[0].text, "Code :");
 }
 
 // ---- output, input, resize --------------------------------------------------------------

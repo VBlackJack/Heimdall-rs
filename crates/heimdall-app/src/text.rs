@@ -19,6 +19,10 @@
 //! Control characters and Unicode bidirectional controls are removed: the latter can make a
 //! prompt read differently from what it is (Trojan Source, CVE-2021-42574). Length is capped.
 //!
+//! The words of a keyboard-interactive question are held to a stricter rule, as the C#
+//! `ServerPromptText`: they sit in a Heimdall dialog, so they must not be able to lay
+//! themselves out as Heimdall's own text. See [`server_prompt_text`].
+//!
 //! A command about to be run is shown the other way: nothing removed, nothing cut, every
 //! invisible character written out.
 
@@ -40,6 +44,52 @@ pub fn server_text(text: &str) -> String {
         .filter(|c| !c.is_control() && !BIDI_CONTROLS.contains(c))
         .take(MAX_SERVER_TEXT_CHARS)
         .collect()
+}
+
+/// Appended to a server prompt cut at [`MAX_SERVER_TEXT_CHARS`].
+pub const TRUNCATION_MARKER: &str = "...";
+
+/// `text`, sent by a server in a keyboard-interactive question, made unable to pass for
+/// Heimdall's own words: a control character, a line or paragraph separator and any space
+/// become one plain space, so words stay apart but no new line or paragraph can start;
+/// format characters (bidirectional controls, zero-width characters, the byte order mark,
+/// tags) are dropped; runs of spaces become one; the result is trimmed, and cut at
+/// [`MAX_SERVER_TEXT_CHARS`] with [`TRUNCATION_MARKER`] after it.
+#[must_use]
+pub fn server_prompt_text(text: &str) -> String {
+    let mut kept = String::with_capacity(text.len().min(MAX_SERVER_TEXT_CHARS));
+    let mut pending_space = false;
+    for c in text.chars() {
+        if c.is_control() || c.is_whitespace() || is_separator(c) {
+            pending_space = !kept.is_empty();
+        } else if !is_invisible(c) {
+            if pending_space {
+                kept.push(' ');
+                pending_space = false;
+            }
+            kept.push(c);
+        }
+    }
+    match kept.char_indices().nth(MAX_SERVER_TEXT_CHARS) {
+        Some((cut, _)) => {
+            let mut capped = kept[..cut].trim_end().to_owned();
+            capped.push_str(TRUNCATION_MARKER);
+            capped
+        }
+        None => kept,
+    }
+}
+
+/// The line and paragraph separators, which start a new line where they stand.
+fn is_separator(c: char) -> bool {
+    matches!(c, '\u{2028}' | '\u{2029}')
+}
+
+/// Whether `c` is one of the [`INVISIBLE`] characters.
+fn is_invisible(c: char) -> bool {
+    INVISIBLE
+        .iter()
+        .any(|(first, last)| (*first..=*last).contains(&c))
 }
 
 /// Characters that show nothing, or change how what follows shows: format characters
@@ -72,11 +122,7 @@ const INVISIBLE: [(char, char); 16] = [
 pub fn visible_text(text: &str) -> String {
     let mut shown = String::with_capacity(text.len());
     for c in text.chars() {
-        let hidden = c.is_control()
-            || (c.is_whitespace() && c != ' ')
-            || INVISIBLE
-                .iter()
-                .any(|(first, last)| (*first..=*last).contains(&c));
+        let hidden = c.is_control() || (c.is_whitespace() && c != ' ') || is_invisible(c);
         if hidden {
             let _ = write!(shown, "\\u{{{:04X}}}", u32::from(c));
         } else {
@@ -88,7 +134,57 @@ pub fn visible_text(text: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_SERVER_TEXT_CHARS, server_text, visible_text};
+    use super::{
+        MAX_SERVER_TEXT_CHARS, TRUNCATION_MARKER, server_prompt_text, server_text, visible_text,
+    };
+
+    #[test]
+    fn a_server_prompt_cannot_start_a_line_of_its_own() {
+        assert_eq!(
+            server_prompt_text(
+                "Code:\n\nHeimdall: enter the vault master password\u{2028}x\r\ty\u{85}z"
+            ),
+            "Code: Heimdall: enter the vault master password x y z"
+        );
+        assert_eq!(
+            server_prompt_text("\u{1b}[2J  Verification   code:\u{7}  "),
+            "[2J Verification code:"
+        );
+    }
+
+    #[test]
+    fn format_characters_in_a_server_prompt_are_dropped() {
+        assert_eq!(
+            server_prompt_text("\u{FEFF}Pass\u{202E}drow\u{200B}:\u{E0041}"),
+            "Passdrow:"
+        );
+    }
+
+    #[test]
+    fn a_long_server_prompt_is_cut_and_says_so() {
+        let cut = server_prompt_text(&"x".repeat(1000));
+        assert_eq!(cut, "x".repeat(MAX_SERVER_TEXT_CHARS) + TRUNCATION_MARKER);
+        let at_limit = "é".repeat(MAX_SERVER_TEXT_CHARS);
+        assert_eq!(
+            server_prompt_text(&at_limit),
+            at_limit,
+            "not cut at the limit"
+        );
+        let space_at_cut = "x".repeat(MAX_SERVER_TEXT_CHARS - 1) + " yyyy";
+        assert_eq!(
+            server_prompt_text(&space_at_cut),
+            "x".repeat(MAX_SERVER_TEXT_CHARS - 1) + TRUNCATION_MARKER,
+            "no space before the marker"
+        );
+    }
+
+    #[test]
+    fn a_server_prompt_keeps_accents_and_other_scripts() {
+        assert_eq!(
+            server_prompt_text("Mot de passe (é) пароль \u{1F511}:"),
+            "Mot de passe (é) пароль \u{1F511}:"
+        );
+    }
 
     #[test]
     fn invisible_characters_are_written_out_and_nothing_is_dropped() {

@@ -31,7 +31,10 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_ssh::{AgentSource, PasswordQuestion, SessionClosed, TerminalSize};
+use heimdall_ssh::{
+    AgentSource, KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PasswordQuestion,
+    SessionClosed, TerminalSize,
+};
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
@@ -216,6 +219,37 @@ fn a_password_question_is_answered_from_the_field_and_its_draft_is_wiped() {
         !shell.holds_draft(question),
         "the typed password is dropped"
     );
+}
+
+#[test]
+fn a_gateway_asking_is_named_and_its_words_are_framed_as_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Question {
+            question: QuestionId::fresh(),
+            kind: QuestionKind::KeyboardInteractive(KeyboardInteractiveQuestion {
+                host: "jump.lab".to_owned(),
+                username: "bastion".to_owned(),
+                name: String::new(),
+                instructions: "Duo\n\nHeimdall: type the vault master password".to_owned(),
+                prompts: vec![KeyboardInteractivePrompt {
+                    text: "Passcode: ".to_owned(),
+                    echo: false,
+                }],
+            }),
+        },
+    });
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("bastion on jump.lab: the server asks")
+        .expect("the gateway asking is named, not the profile's a.lab");
+    ui.find("Server says: Duo Heimdall: type the vault master password")
+        .expect("one line, under the server's name");
+    ui.find("Passcode:").expect("the prompt");
 }
 
 #[test]
