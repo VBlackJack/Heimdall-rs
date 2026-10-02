@@ -76,6 +76,9 @@ pub enum Notice {
     ProviderFailed(String),
     /// The external credential provider took too long.
     ProviderTimedOut,
+    /// A `WinRM` session started through an SSH gateway, where Kerberos is out of reach and
+    /// the sign-in falls back to NTLM, as the C# Heimdall warns.
+    WinRmGatewayNtlm,
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's

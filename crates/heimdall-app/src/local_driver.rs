@@ -70,7 +70,8 @@ pub fn local_events(request: LocalRequest) -> ReceiverStream<ConnectionEvent> {
     ReceiverStream::new(receiver)
 }
 
-async fn run(request: LocalRequest, events: mpsc::Sender<ConnectionEvent>) {
+/// Runs the shell of `request`, its events sent to `events`, until it ends.
+pub(crate) async fn run(request: LocalRequest, events: mpsc::Sender<ConnectionEvent>) {
     let LocalRequest {
         shell,
         size,

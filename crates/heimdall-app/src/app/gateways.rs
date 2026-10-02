@@ -24,7 +24,7 @@ use heimdall_ssh::Secret;
 
 use super::{App, Dialog, Message};
 use crate::gateway_draft::GatewayDraft;
-use crate::profile_draft::{DraftError, ProfileToggle, SavedSecret};
+use crate::profile_draft::{DraftError, SavedSecret};
 
 impl App {
     /// Saved SSH gateways.
@@ -79,8 +79,7 @@ impl App {
             },
             Message::ChooseGateway(id) => {
                 if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut() {
-                    draft.gateway = Some(id);
-                    draft.toggle(ProfileToggle::DirectConnection, false);
+                    draft.choose_gateway(id);
                     *error = None;
                 }
             }
@@ -157,8 +156,7 @@ impl App {
         if draft.editing.is_none()
             && let Some(Dialog::EditProfile { draft, .. }) = self.dialog.as_mut()
         {
-            draft.gateway = Some(id.clone());
-            draft.toggle(ProfileToggle::DirectConnection, false);
+            draft.choose_gateway(id.clone());
         }
         if self.can_save_passwords() {
             let typed = password.filter(|typed| !typed.expose().is_empty());

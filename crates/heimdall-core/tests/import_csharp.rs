@@ -1167,10 +1167,15 @@ fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped(
              "sshMode": "Embedded"}
             "#,
         ),
-        Some(r#"{"rdpDefaultMode": "External", "rdpDefaultMultiMonitor": true}"#),
+        Some(
+            r#"{"rdpDefaultMode": "External", "rdpDefaultMultiMonitor": true,
+                "sshGateways": [{"id": "g", "name": "Bastion", "host": "bastion.lab"}]}"#,
+        ),
     )
     .expect("valid JSON");
     assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    // A WinRM session through a gateway is carried now, not dropped.
+    assert_eq!(report.winrm[0].gateway, Some(ProfileId::new("g")));
     let dropped = |name: &str, settings: &[Dropped]| DroppedSettings {
         name: name.to_owned(),
         settings: settings.to_vec(),
@@ -1179,7 +1184,6 @@ fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped(
         report.dropped,
         [
             dropped("shell", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
-            dropped("dc", &[Dropped::WinRmGateway]),
             dropped(
                 "desk",
                 &[

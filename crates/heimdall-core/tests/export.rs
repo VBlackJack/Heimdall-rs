@@ -221,6 +221,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             use_ssl: true,
             skip_certificate_check: true,
             username: Some(r"LAB\admin".to_owned()),
+            gateway: None,
         },
         WinRmProfile {
             id: ProfileId::new("ps-me"),
@@ -231,6 +232,8 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             use_ssl: false,
             skip_certificate_check: false,
             username: None,
+            // Through a gateway, HTTP only.
+            gateway: Some(ProfileId::new("edge")),
         },
     ]);
     store

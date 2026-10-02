@@ -721,6 +721,10 @@ pub struct WinRmProfile {
     /// Heimdall.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub username: Option<String>,
+    /// SSH gateway the session goes through, by profile ID, as the C# `SshGatewayId`: HTTP
+    /// only, through a forward of this computer's loopback address.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway: Option<ProfileId>,
 }
 
 /// Port of an FTP server when a profile names none, as the C# `DefaultPorts.Ftp`.

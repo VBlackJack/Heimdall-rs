@@ -78,6 +78,7 @@ fn app(dir: &Path) -> App {
         use_ssl: false,
         skip_certificate_check: false,
         username: None,
+        gateway: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
