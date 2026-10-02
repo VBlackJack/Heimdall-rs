@@ -482,6 +482,7 @@ fn a_saved_password_failing_the_connection_is_not_given_again() {
     for failure in [
         UiError::AuthenticationFailed {
             tried: vec![AuthMethod::Password],
+            agent_keys: None,
         },
         UiError::Disconnected {
             server_message: Some("Too many authentication failures".to_owned()),

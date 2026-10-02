@@ -1174,3 +1174,10 @@ ui-tunnels-count =
        *[other] { $count } tunnels
     }
 ui-tunnels-collapse-button = ▼
+
+## An SSH key file not there, and what the agents offered a gateway that refused, as the C# says them.
+ui-error-key-not-found = SSH key file not found: { $path }
+ui-error-auth-agent-none = No key was loaded in an SSH agent when Heimdall dialled this gateway, so no agent key was offered. If this gateway signs in with an agent key, load it in Pageant or in the Windows OpenSSH Agent and connect again; otherwise check the sign-in details saved for this gateway.
+ui-error-auth-agent-one = One key was loaded in an SSH agent and offered to this gateway; it was not accepted. If this gateway expects a different key, load that one and connect again.
+ui-error-auth-agent-many = { $count } keys were loaded in an SSH agent and offered to this gateway; none of them was accepted. If this gateway expects a different key, load that one and connect again.
+ui-error-auth-with-agent = { $refused } { $agent }

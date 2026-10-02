@@ -1099,3 +1099,10 @@ ui-tunnels-count =
        *[other] { $count } tunnels
     }
 ui-tunnels-collapse-button = ▼
+
+## An SSH key file not there, and what the agents offered a gateway that refused, as the C# says them.
+ui-error-key-not-found = Fichier de clé SSH introuvable : { $path }
+ui-error-auth-agent-none = Aucune clé n'était chargée dans un agent SSH au moment de l'appel de cette passerelle, aucune clé d'agent n'a donc été présentée. Si cette passerelle se connecte avec une clé d'agent, chargez-la dans Pageant ou dans l'agent OpenSSH de Windows puis reconnectez-vous ; sinon, vérifiez les identifiants enregistrés pour cette passerelle.
+ui-error-auth-agent-one = Une clé était chargée dans un agent SSH et a été présentée à cette passerelle ; elle n'a pas été acceptée. Si cette passerelle attend une autre clé, chargez celle-là puis reconnectez-vous.
+ui-error-auth-agent-many = { $count } clés étaient chargées dans un agent SSH et ont été présentées à cette passerelle ; aucune n'a été acceptée. Si cette passerelle attend une autre clé, chargez celle-là puis reconnectez-vous.
+ui-error-auth-with-agent = { $refused } { $agent }

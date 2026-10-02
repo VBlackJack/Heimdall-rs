@@ -40,7 +40,9 @@ mod secret;
 mod session;
 pub mod socks;
 
-pub use client::{Routed, connect, establish, establish_via, establish_via_keeping_gateway};
+pub use client::{
+    Routed, at_gateway, connect, establish, establish_via, establish_via_keeping_gateway,
+};
 pub use connection::{ChannelBytes, Connection, SubsystemStream, Tunnel};
 pub use error::{AuthMethod, ConnectError};
 pub use forward::RemoteForward;

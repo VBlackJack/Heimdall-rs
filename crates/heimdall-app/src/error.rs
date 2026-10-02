@@ -42,6 +42,8 @@ impl std::fmt::Display for ServerAddress {
 /// Why a key file could not be used.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum KeyProblem {
+    /// Not there.
+    NotFound,
     /// Not readable.
     Unreadable,
     /// Not a private key in a known format.
@@ -160,6 +162,9 @@ pub enum UiError {
     AuthenticationFailed {
         /// Methods tried.
         tried: Vec<AuthMethod>,
+        /// How many keys the SSH agents offered, said when a gateway refused, as the C#
+        /// does; `None` otherwise, or when no agent was used.
+        agent_keys: Option<usize>,
     },
     /// The server closed the connection.
     Disconnected {
@@ -225,6 +230,9 @@ impl From<&CommandError> for UiError {
 impl From<&KeyFileError> for UiError {
     fn from(error: &KeyFileError) -> Self {
         let (problem, path) = match error {
+            KeyFileError::Io { path, source } if source.kind() == std::io::ErrorKind::NotFound => {
+                (KeyProblem::NotFound, path)
+            }
             KeyFileError::Io { path, .. } => (KeyProblem::Unreadable, path),
             KeyFileError::UnknownFormat { path } => (KeyProblem::UnknownFormat, path),
             KeyFileError::NeedsPassphrase { path } => (KeyProblem::NeedsPassphrase, path),
@@ -331,7 +339,14 @@ impl From<ConnectError> for UiError {
             ConnectError::HostCertificateRefused => Self::HostCertificateRefused,
             ConnectError::KnownHosts(ref source) => source.into(),
             ConnectError::KeyFile(ref source) => source.into(),
-            ConnectError::AuthenticationFailed { tried } => Self::AuthenticationFailed { tried },
+            ConnectError::AuthenticationFailed {
+                tried,
+                agent_keys,
+                gateway,
+            } => Self::AuthenticationFailed {
+                tried,
+                agent_keys: agent_keys.filter(|_| gateway),
+            },
             ConnectError::Disconnected { server_message } => Self::Disconnected { server_message },
             ConnectError::Cancelled => Self::Cancelled,
             ConnectError::PromptTimedOut => Self::PromptTimedOut,
@@ -361,6 +376,46 @@ mod tests {
     use std::net::{Ipv4Addr, TcpStream};
 
     use super::{NetworkFailure, UiError};
+
+    #[test]
+    fn what_the_agents_offered_is_kept_for_a_gateway_s_refusal_only() {
+        let refused = |gateway| {
+            UiError::from(heimdall_ssh::ConnectError::AuthenticationFailed {
+                tried: Vec::new(),
+                agent_keys: Some(2),
+                gateway,
+            })
+        };
+        assert_eq!(
+            refused(true),
+            UiError::AuthenticationFailed {
+                tried: Vec::new(),
+                agent_keys: Some(2),
+            }
+        );
+        assert_eq!(
+            refused(false),
+            UiError::AuthenticationFailed {
+                tried: Vec::new(),
+                agent_keys: None,
+            }
+        );
+    }
+
+    #[test]
+    fn a_key_file_not_there_is_said_so() {
+        let missing = heimdall_ssh::KeyFileError::Io {
+            path: "id_missing".into(),
+            source: io::Error::from(ErrorKind::NotFound),
+        };
+        assert!(matches!(
+            UiError::from(&missing),
+            UiError::KeyFile {
+                problem: super::KeyProblem::NotFound,
+                ..
+            }
+        ));
+    }
 
     /// A port under 1024, which no test process can take: a port set free and asked again at
     /// once was taken by a test running beside this one, and the connection went through.

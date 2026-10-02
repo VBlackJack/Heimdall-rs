@@ -27,8 +27,8 @@ use common::{
     options_empty, options_trusting, profile, start,
 };
 use heimdall_ssh::{
-    AuthMethod, ConnectError, KnownHosts, Pins, SessionEvent, ShellSession, TerminalSize, connect,
-    fingerprint,
+    AuthMethod, ConnectError, KeyFileError, KnownHosts, Pins, SessionEvent, ShellSession,
+    TerminalSize, connect, fingerprint,
 };
 use russh::MethodKind;
 use russh::keys::{Algorithm, HashAlg};
@@ -694,10 +694,17 @@ async fn every_method_refused_lists_what_was_tried() {
     let error = run(server.port, Some("ed25519-openssh"), &options, prompter)
         .await
         .expect_err("refused");
-    let ConnectError::AuthenticationFailed { tried } = error else {
+    let ConnectError::AuthenticationFailed {
+        tried,
+        agent_keys,
+        gateway,
+    } = error
+    else {
         panic!("expected AuthenticationFailed, got {error:?}");
     };
     assert_eq!(tried, vec![AuthMethod::KeyFile, AuthMethod::Password]);
+    assert_eq!(agent_keys, None, "no agent in these tests");
+    assert!(!gateway, "the server itself refused");
 }
 
 // ---- session ---------------------------------------------------------------------------
@@ -875,4 +882,26 @@ async fn a_large_paste_echoed_back_with_resizes_and_a_slow_reader_does_not_deadl
         "stalled: client received {received}, server received {server_received}"
     );
     assert_eq!(server_received, PASTE_BYTES);
+}
+
+#[tokio::test]
+async fn a_key_file_not_there_is_said_before_anything_is_dialled() {
+    // A port that takes the connection and never answers: a dial would wait there until
+    // the step's time ran out.
+    let silent = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind");
+    let port = silent.local_addr().expect("address").port();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), port, "host-ed25519");
+    let error = run(
+        port,
+        Some("no-such-key"),
+        &options,
+        Arc::new(ScriptedPrompter::passwords(&[])),
+    )
+    .await
+    .expect_err("refused");
+    let ConnectError::KeyFile(KeyFileError::Io { source, .. }) = &error else {
+        panic!("expected the missing key file, got {error:?}");
+    };
+    assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
 }

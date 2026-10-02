@@ -462,6 +462,18 @@ async fn walk<P: Prompter>(
     prompter: &P,
     cancel: &CancellationToken,
 ) -> Result<(Reached, Option<Reached>), ConnectError> {
+    // A key file that is not there is said before anything is dialled, as the C# preflight.
+    for hop in route.iter().chain(std::iter::once(profile)) {
+        if let Some(path) = &hop.key_path
+            && let Err(error) = std::fs::metadata(path)
+            && error.kind() == std::io::ErrorKind::NotFound
+        {
+            return Err(ConnectError::KeyFile(crate::key_file::KeyFileError::Io {
+                path: path.clone(),
+                source: error,
+            }));
+        }
+    }
     // Reached over TCP: the nearest gateway, or the server itself without one.
     let (first, onward): (&SshProfile, Vec<&SshProfile>) = match route.split_first() {
         Some((nearest, rest)) => (
@@ -470,13 +482,34 @@ async fn walk<P: Prompter>(
         ),
         None => (profile, Vec::new()),
     };
-    let mut reached = hop(first, None, options, prompter, cancel).await?;
+    // Every hop but the last is a gateway: a refusal there is the gateway's.
+    let last = onward.len();
+    let mut reached = hop(first, None, options, prompter, cancel)
+        .await
+        .map_err(|error| at_gateway(error, last > 0))?;
     let mut gateway = None;
-    for next in onward {
-        let onward = hop(next, Some(&reached.0), options, prompter, cancel).await?;
+    for (index, next) in onward.into_iter().enumerate() {
+        let onward = hop(next, Some(&reached.0), options, prompter, cancel)
+            .await
+            .map_err(|error| at_gateway(error, index + 1 < last))?;
         gateway = Some(std::mem::replace(&mut reached, onward));
     }
     Ok((reached, gateway))
+}
+
+/// `error`, said of a gateway when `gateway` and it is a refusal.
+#[must_use]
+pub fn at_gateway(error: ConnectError, gateway: bool) -> ConnectError {
+    match error {
+        ConnectError::AuthenticationFailed {
+            tried, agent_keys, ..
+        } if gateway => ConnectError::AuthenticationFailed {
+            tried,
+            agent_keys,
+            gateway: true,
+        },
+        other => other,
+    }
 }
 
 /// Originator address reported to a gateway when it is asked to connect onward: the client
