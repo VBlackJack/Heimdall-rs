@@ -244,6 +244,9 @@ pub enum Message {
     },
     /// Time for the anti-idle keys of the sessions asking for them.
     AntiIdleTick,
+    /// The window's screen draws this many physical pixels per logical one: RDP desktops
+    /// opened from now on ask for that scale.
+    DisplayScale(f32),
     /// Time to look at the idle SSH shells for their `TMOUT` reset.
     TmoutResetTick,
     /// Stop the anti-idle keys of a tab's session, until it connects again.
@@ -553,6 +556,7 @@ impl fmt::Debug for Message {
             }
             Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
             Self::AntiIdleTick => f.write_str("AntiIdleTick"),
+            Self::DisplayScale(scale) => write!(f, "DisplayScale({scale})"),
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
@@ -1589,6 +1593,9 @@ pub struct App {
     /// What the Settings page's provider Test found.
     provider_test: Option<crate::credential_provider::ProviderTest>,
     viewport: GridSize,
+    /// Physical pixels per logical one on the window's screen: RDP desktops ask for that
+    /// scale, as mstsc does on a high-density screen.
+    display_scale: f32,
     pending_paste: Option<(TabId, String)>,
     /// Planned transfers waiting, one after the other, for the user's answers to the
     /// destinations in their way.
@@ -1638,6 +1645,7 @@ impl App {
             transcript_lines: None,
             broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,
+            display_scale: 1.0,
             config,
             store,
             tabs: Vec::new(),
@@ -1755,6 +1763,7 @@ impl App {
             | Message::DesktopInput { .. }
             | Message::SendKeys { .. }
             | Message::AntiIdleTick
+            | Message::DisplayScale(_)
             | Message::TmoutResetTick
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
@@ -1902,6 +1911,10 @@ impl App {
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
             Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
             Message::AntiIdleTick => self.anti_idle_tick(),
+            // A scale no screen has is not taken.
+            Message::DisplayScale(scale) if scale.is_finite() && scale > 0.0 => {
+                self.display_scale = scale;
+            }
             // Not a desktop's, but a session timer's as anti-idle is.
             Message::TmoutResetTick => self.tmout_reset_tick(),
             Message::StopAntiIdle(tab) => self.stop_anti_idle(tab),

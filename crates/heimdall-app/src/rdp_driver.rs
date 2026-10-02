@@ -63,6 +63,9 @@ pub struct RdpRequest {
     pub trusted_for_run: Vec<Fingerprint>,
     /// Desktop size asked for.
     pub desktop: (u16, u16),
+    /// The desktop scale factor asked for, in percent; see
+    /// [`heimdall_rdp::desktop_scale_factor`].
+    pub desktop_scale: u32,
     /// The SSH gateways the server is reached through, nearest first, each as the hop it
     /// is; empty for a direct connection.
     pub route: Vec<SshProfile>,
@@ -276,6 +279,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         several_servers: profile.several_servers,
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),
+        desktop_scale: request.desktop_scale,
     }
 }
 
@@ -391,6 +395,7 @@ mod tests {
             accepted: None,
             trusted_for_run: Vec::new(),
             desktop: (1024, 768),
+            desktop_scale: 100,
             route: Vec::new(),
             ssh: ConnectOptions::new(PathBuf::from("known_hosts")),
             cancel: CancellationToken::new(),

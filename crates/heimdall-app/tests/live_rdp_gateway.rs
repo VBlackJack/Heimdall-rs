@@ -83,6 +83,7 @@ fn request(
         accepted,
         trusted_for_run: Vec::new(),
         desktop: DEFAULT_DESKTOP,
+        desktop_scale: 100,
         route: vec![SshProfile {
             id: ProfileId::new("gw"),
             name: "gw".to_owned(),

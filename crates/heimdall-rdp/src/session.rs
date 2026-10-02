@@ -141,6 +141,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         framed,
         clipboard,
         result,
+        desktop_scale,
     } = connection;
     let framebuffer = Framebuffer::new(result.desktop_size.width, result.desktop_size.height);
     let (events, event_receiver) = mpsc::channel(EVENT_QUEUE);
@@ -161,6 +162,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         wanted: None,
         asked: None,
         settle: None,
+        desktop_scale,
         reader: FrameReader::new(read_half, leftover),
         writer: write_half,
     };
@@ -246,6 +248,8 @@ struct Running {
     size: watch::Receiver<Option<(u16, u16)>>,
     /// A size to ask the server for, once [`Running::settle`] passes.
     wanted: Option<(u32, u32)>,
+    /// The desktop scale factor of the connection, in percent, asked again with each size.
+    desktop_scale: u32,
     /// The last size asked for, kept: a reactivation (the logon after a login screen, a
     /// reconnection) brings the server's own size back, and it is asked again then.
     asked: Option<(u32, u32)>,
@@ -421,7 +425,9 @@ impl Running {
         if (width, height) == current {
             return Ok(());
         }
-        match stage.encode_resize(width, height, None, None) {
+        // The scale asked at the connection, kept: 100 is the server's own, said as none.
+        let scale = (self.desktop_scale > 100).then_some(self.desktop_scale);
+        match stage.encode_resize(width, height, scale, None) {
             Some(Ok(frame)) => self.send(&frame).await,
             // Not encodable: the size stays as it is.
             Some(Err(_)) => Ok(()),

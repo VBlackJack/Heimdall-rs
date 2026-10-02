@@ -215,6 +215,7 @@ async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
         several_servers: false,
         kerberos: false,
         time_zone,
+        desktop_scale: 150,
     };
     let (client, server) = tokio::io::duplex(1 << 16);
     let server = tokio::spawn(serve(server));
@@ -249,6 +250,11 @@ async fn the_defaults_ask_32_bits_no_sound_and_the_ordinary_session() {
     let sent = sent_with(RdpOptions::default()).await;
     assert_eq!(depth_asked(&sent.gcc), (Some(HighColorDepth::Bpp24), true));
     assert_eq!(sent.gcc.cluster, None);
+    assert_eq!(
+        sent.gcc.core.optional_data.desktop_scale_factor,
+        Some(150),
+        "the screen's scale, as mstsc tells it"
+    );
     let flags = sent.info.client_info.flags;
     assert!(flags.contains(ClientInfoFlags::NO_AUDIO_PLAYBACK));
     assert!(!flags.contains(ClientInfoFlags::REMOTE_CONSOLE_AUDIO));

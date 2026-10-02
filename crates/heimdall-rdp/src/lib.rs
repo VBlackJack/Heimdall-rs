@@ -35,8 +35,9 @@ mod tls;
 pub use certificate::{Fingerprint, ServerCertificate};
 pub use clipboard::MAX_REMOTE_TEXT_BYTES;
 pub use connect::{
-    AskCredentials, Credentials, Opening, RdpConfig, RdpConnection, RdpError, Security, Timeouts,
-    Transport, connect, connect_over, connect_through, given,
+    AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, RdpConfig, RdpConnection,
+    RdpError, Security, Timeouts, Transport, connect, connect_over, connect_through,
+    desktop_scale_factor, given,
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use known_hosts::{KnownRdpHost, KnownRdpHosts, Verdict};

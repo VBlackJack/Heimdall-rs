@@ -271,6 +271,26 @@ fn a_session_the_server_ended_keeps_its_reason_until_it_opens_again() {
 }
 
 #[test]
+fn a_desktop_asks_for_the_scale_of_the_windows_screen_as_mstsc() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let scale = |app: &mut App| match app
+        .update(Message::OpenRdp(ProfileId::new("dc")))
+        .as_slice()
+    {
+        [Effect::ConnectRdp { request, .. }] => request.desktop_scale,
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(scale(&mut app), 100, "a screen of one pixel per pixel");
+    app.update(Message::DisplayScale(1.5));
+    assert_eq!(scale(&mut app), 150);
+    // A density no screen has is not taken.
+    app.update(Message::DisplayScale(f32::NAN));
+    app.update(Message::DisplayScale(0.0));
+    assert_eq!(scale(&mut app), 150);
+}
+
+#[test]
 fn input_reaches_a_connected_desktop_and_nothing_else() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
