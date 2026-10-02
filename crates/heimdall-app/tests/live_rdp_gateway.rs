@@ -76,6 +76,7 @@ fn request(
             },
             follow_defaults: false,
             several_servers: false,
+            anti_idle: false,
         },
         known_hosts: dir.join("known_rdp_hosts"),
         accepted,

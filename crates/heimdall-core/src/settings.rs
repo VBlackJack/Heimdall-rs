@@ -149,6 +149,10 @@ pub struct Settings {
     /// Attempts before the reconnect is left to the user, within
     /// [`SSH_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`SSH_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub ssh_auto_reconnect_attempts: u32,
+    /// Seconds between two anti-idle keys of an RDP session whose profile asks for them, as
+    /// the C# `AntiIdleIntervalSeconds`: 0 turns them off, else within
+    /// [`ANTI_IDLE_INTERVAL_MIN`] and [`ANTI_IDLE_INTERVAL_MAX`].
+    pub anti_idle_interval: u32,
     /// The RDP options profiles following the application's take.
     pub rdp_defaults: RdpDefaults,
 }
@@ -206,6 +210,22 @@ pub fn ssh_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
     (SSH_AUTO_RECONNECT_ATTEMPTS_MIN..=SSH_AUTO_RECONNECT_ATTEMPTS_MAX).contains(&attempts)
 }
 
+/// Seconds between two anti-idle keys by default, as the C# `AntiIdleIntervalSeconds`.
+pub const ANTI_IDLE_INTERVAL_DEFAULT: u32 = 60;
+
+/// Shortest anti-idle interval accepted, in seconds, as the C# setting's range.
+pub const ANTI_IDLE_INTERVAL_MIN: u32 = 10;
+
+/// Longest anti-idle interval accepted, in seconds, as the C# setting's range.
+pub const ANTI_IDLE_INTERVAL_MAX: u32 = 3600;
+
+/// Whether `seconds` is an anti-idle interval the settings accept: 0, which turns it off, or
+/// one within the C# range.
+#[must_use]
+pub fn anti_idle_interval_accepted(seconds: u32) -> bool {
+    seconds == 0 || (ANTI_IDLE_INTERVAL_MIN..=ANTI_IDLE_INTERVAL_MAX).contains(&seconds)
+}
+
 /// Largest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
 
@@ -230,6 +250,7 @@ impl Default for Settings {
             credential_provider: ProviderSettings::default(),
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             rdp_defaults: RdpDefaults::default(),
         }
     }
@@ -262,6 +283,9 @@ struct SshSection {
     auto_reconnect: bool,
     #[serde(default)]
     auto_reconnect_attempts: Option<u32>,
+    /// Kept beside the SSH settings, where the C# Settings page shows it.
+    #[serde(default)]
+    anti_idle_interval: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -471,6 +495,11 @@ impl Settings {
                 .auto_reconnect_attempts
                 .filter(|attempts| ssh_auto_reconnect_attempts_accepted(*attempts))
                 .unwrap_or(SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT),
+            anti_idle_interval: file
+                .ssh
+                .anti_idle_interval
+                .filter(|seconds| anti_idle_interval_accepted(*seconds))
+                .unwrap_or(ANTI_IDLE_INTERVAL_DEFAULT),
             rdp_defaults: file.rdp,
             // A language not offered is not guessed: the desktop's is followed.
             language: file
@@ -531,6 +560,7 @@ impl Settings {
             ssh: SshSection {
                 auto_reconnect: self.ssh_auto_reconnect,
                 auto_reconnect_attempts: Some(self.ssh_auto_reconnect_attempts),
+                anti_idle_interval: Some(self.anti_idle_interval),
             },
             rdp: self.rdp_defaults,
         })?;

@@ -21,8 +21,8 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, settings_path, ssh_auto_reconnect_attempts_accepted,
-    terminal_font_size_accepted,
+    ColorScheme, Language, Settings, anti_idle_interval_accepted, settings_path,
+    ssh_auto_reconnect_attempts_accepted, terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -47,6 +47,8 @@ pub enum SettingsMessage {
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
     SshAutoReconnectAttempts(u32),
+    /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
+    AntiIdleInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
 }
@@ -140,6 +142,12 @@ impl App {
                     return Vec::new();
                 }
                 self.settings.ssh_auto_reconnect_attempts = *attempts;
+            }
+            SettingsMessage::AntiIdleInterval(seconds) => {
+                if !anti_idle_interval_accepted(*seconds) {
+                    return Vec::new();
+                }
+                self.settings.anti_idle_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
             SettingsMessage::TrustedKeys(_) => {}

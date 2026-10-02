@@ -234,6 +234,7 @@ impl App {
                     // Nothing of its own: the application's RDP options.
                     follow_defaults: true,
                     several_servers: false,
+                    anti_idle: false,
                 }),
                 Purpose::Rdp,
             ),

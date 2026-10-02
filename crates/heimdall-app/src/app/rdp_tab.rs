@@ -17,6 +17,7 @@
 //! RDP tabs: opening one, the certificate decision, forgetting a server, and input.
 
 use std::path::PathBuf;
+use std::time::Duration;
 
 use heimdall_core::profile::{DesktopSizing, ProfileId, RdpProfile, SshGateway};
 use heimdall_rdp::{Fingerprint, KnownRdpHosts};
@@ -64,12 +65,10 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
                 TabProfile::Rdp(profile) => profile.options.sizing(),
                 _ => DesktopSizing::FollowsTab,
             };
-            tab.desktop = Some(Box::new(DesktopPane::rdp(
-                framebuffer,
-                input,
-                (size, sizing),
-                clipboard,
-            )));
+            let mut pane = DesktopPane::rdp(framebuffer, input, (size, sizing), clipboard);
+            // Started again on each connection, a reconnection included, as the C# one.
+            pane.anti_idle = matches!(&tab.profile, TabProfile::Rdp(profile) if profile.anti_idle);
+            tab.desktop = Some(Box::new(pane));
         }
         ConnectionEvent::DesktopFrame => {
             if let Some(pane) = tab.desktop.as_mut() {
@@ -283,4 +282,45 @@ impl App {
             pane.send(inputs);
         }
     }
+
+    /// How often the sessions asking for anti-idle keys get one; `None` when none does or
+    /// the settings turn them off.
+    #[must_use]
+    pub fn anti_idle_interval(&self) -> Option<Duration> {
+        let seconds = self.settings.anti_idle_interval;
+        (seconds > 0 && self.tabs.iter().any(anti_idle))
+            .then(|| Duration::from_secs(u64::from(seconds)))
+    }
+
+    /// Whether `tab`'s session gets anti-idle keys: its badge shows while it does.
+    #[must_use]
+    pub fn anti_idle_on(&self, tab: TabId) -> bool {
+        self.settings.anti_idle_interval > 0 && self.tab(tab).is_some_and(anti_idle)
+    }
+
+    /// An anti-idle tick: Shift to each session asking for it. Sent while a dialog is open
+    /// too: it is no input of the user's, and the session is kept all the same.
+    pub(super) fn anti_idle_tick(&self) {
+        if self.settings.anti_idle_interval == 0 {
+            return;
+        }
+        let inputs = crate::desktop::anti_idle_inputs();
+        for pane in self.tabs.iter().filter(|tab| anti_idle(tab)) {
+            if let Some(pane) = pane.desktop.as_ref() {
+                pane.send(&inputs);
+            }
+        }
+    }
+
+    /// Stops the anti-idle keys of `tab` for this session, as the C# badge's click does.
+    pub(super) fn stop_anti_idle(&mut self, tab: TabId) {
+        if let Some(pane) = self.tab_mut(tab).and_then(|found| found.desktop.as_mut()) {
+            pane.anti_idle = false;
+        }
+    }
+}
+
+/// Whether `tab`'s connected session asks for anti-idle keys.
+fn anti_idle(tab: &Tab) -> bool {
+    tab.desktop.as_ref().is_some_and(|pane| pane.anti_idle)
 }

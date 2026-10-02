@@ -240,6 +240,9 @@ pub enum ProfileToggle {
     LegacyAlgorithms,
     /// RDP: several machines answer at the address; each new certificate is asked about.
     SeveralServers,
+    /// RDP: keep the server from taking the session for idle, as the C# "Enable anti-idle
+    /// keepalive".
+    AntiIdle,
 }
 
 impl ProfileToggle {
@@ -250,6 +253,7 @@ impl ProfileToggle {
             DraftProtocol::Rdp => &[
                 Self::RedirectClipboard,
                 Self::RedirectDrives,
+                Self::AntiIdle,
                 Self::Nla,
                 Self::AdminSession,
                 Self::SeveralServers,
@@ -603,6 +607,9 @@ impl ProfileDraft {
         }
         if profile.several_servers {
             toggles.push(ProfileToggle::SeveralServers);
+        }
+        if profile.anti_idle {
+            toggles.push(ProfileToggle::AntiIdle);
         }
         Self {
             editing: Some(profile.id.clone()),
@@ -1041,6 +1048,7 @@ impl ProfileDraft {
                 forwards: self.saved_forwards()?,
                 follow_defaults: self.is_on(ProfileToggle::FollowDefaults),
                 several_servers: self.is_on(ProfileToggle::SeveralServers),
+                anti_idle: self.is_on(ProfileToggle::AntiIdle),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -1374,12 +1382,14 @@ mod tests {
             !rdp.is_on(ProfileToggle::SeveralServers),
             "one machine per address unless said"
         );
+        assert!(!rdp.is_on(ProfileToggle::AntiIdle), "off, as the C#");
         assert_eq!(rdp.rdp_options, RdpOptions::default());
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
             [
                 ProfileToggle::RedirectClipboard,
                 ProfileToggle::RedirectDrives,
+                ProfileToggle::AntiIdle,
                 ProfileToggle::Nla,
                 ProfileToggle::AdminSession,
                 // Not in the C# dialog, which always asks: after its boxes.
@@ -1753,6 +1763,7 @@ mod tests {
             },
             follow_defaults: false,
             several_servers: true,
+            anti_idle: true,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),

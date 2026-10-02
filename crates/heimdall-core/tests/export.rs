@@ -135,6 +135,7 @@ fn rdp() -> Vec<RdpProfile> {
             forwards: Forwards::default(),
             follow_defaults: false,
             several_servers: false,
+            anti_idle: true,
         },
         RdpProfile {
             id: ProfileId::new("desk"),
@@ -157,6 +158,7 @@ fn rdp() -> Vec<RdpProfile> {
             forwards: Forwards::default(),
             follow_defaults: false,
             several_servers: false,
+            anti_idle: false,
         },
     ]
 }
@@ -323,6 +325,7 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
     assert_eq!(dc["rdpUseGlobalDefaults"], false, "every choice its own");
     assert_eq!(dc["remotePort"], 3390);
     assert_eq!(dc["rdpAudioMode"], 2);
+    assert_eq!(dc["rdpAntiIdle"], true);
     assert_eq!(dc["rdpPerformanceFlags"], 0x81);
     assert_eq!(dc["rdpColorDepth"], 16);
     assert_eq!(dc["useDirectConnection"], false);

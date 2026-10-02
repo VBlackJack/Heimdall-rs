@@ -52,6 +52,7 @@ fn app(dir: &Path) -> App {
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
         several_servers: false,
+        anti_idle: false,
     }]);
     // The same port on another server.
     store.merge_rdp([RdpProfile {
@@ -71,6 +72,8 @@ fn app(dir: &Path) -> App {
         forwards: heimdall_core::profile::Forwards::default(),
         follow_defaults: false,
         several_servers: false,
+        // Asks for anti-idle keys.
+        anti_idle: true,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -328,6 +331,77 @@ fn input_reaches_a_connected_desktop_and_nothing_else() {
     );
     app.update(press());
     assert!(received.try_recv().is_err());
+}
+
+#[test]
+fn anti_idle_sends_shift_to_the_sessions_asking_for_it_until_stopped() {
+    use heimdall_app::SettingsMessage;
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let connect = |app: &mut App, tab, attempt| {
+        let (input, received) = mpsc::unbounded_channel();
+        event(
+            app,
+            tab,
+            attempt,
+            ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(64, 48),
+                input,
+                size: tokio::sync::watch::channel(None).0,
+                clipboard: None,
+            },
+        );
+        received
+    };
+    // "dc" does not ask for them.
+    let (dc, attempt) = open(&mut app);
+    let mut dc_received = connect(&mut app, dc, attempt);
+    assert_eq!(app.anti_idle_interval(), None, "no session asks");
+    let effects = app.update(Message::OpenRdp(ProfileId::new("web")));
+    let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let web = *tab;
+    assert_eq!(app.anti_idle_interval(), None, "not before the session");
+    let mut web_received = connect(&mut app, web, *attempt);
+    assert_eq!(app.anti_idle_interval(), Some(Duration::from_secs(60)));
+    assert!(app.anti_idle_on(web));
+    assert!(!app.anti_idle_on(dc));
+
+    // No input of the user's: sent behind a dialog too.
+    app.update(Message::WindowCloseRequested);
+    assert!(app.dialog.is_some());
+    app.update(Message::AntiIdleTick);
+    let shift = Scancode::from_u8(false, 0x2A);
+    let sent = web_received.try_recv().expect("shift");
+    assert!(
+        matches!(sent.as_slice(), [Operation::KeyPressed(down), Operation::KeyReleased(up)]
+            if *down == shift && *up == shift),
+        "{sent:?}"
+    );
+    assert!(dc_received.try_recv().is_err(), "only the session asking");
+    app.update(Message::DismissDialog);
+
+    // Off in the settings: nothing, and no badge.
+    app.update(Message::Settings(SettingsMessage::AntiIdleInterval(0)));
+    assert_eq!(app.anti_idle_interval(), None);
+    assert!(!app.anti_idle_on(web));
+    app.update(Message::AntiIdleTick);
+    assert!(web_received.try_recv().is_err());
+    // Out of the C# range: refused, the setting kept.
+    app.update(Message::Settings(SettingsMessage::AntiIdleInterval(5)));
+    assert_eq!(app.settings().anti_idle_interval, 0);
+
+    // On again, then stopped for this session, as the badge's click does.
+    app.update(Message::Settings(SettingsMessage::AntiIdleInterval(30)));
+    assert_eq!(app.anti_idle_interval(), Some(Duration::from_secs(30)));
+    app.update(Message::StopAntiIdle(web));
+    assert!(!app.anti_idle_on(web));
+    assert_eq!(app.anti_idle_interval(), None);
+    app.update(Message::AntiIdleTick);
+    assert!(web_received.try_recv().is_err());
 }
 
 #[test]

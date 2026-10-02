@@ -240,6 +240,10 @@ pub enum Message {
         /// Which.
         keys: SpecialKeys,
     },
+    /// Time for the anti-idle keys of the sessions asking for them.
+    AntiIdleTick,
+    /// Stop the anti-idle keys of a tab's session, until it connects again.
+    StopAntiIdle(TabId),
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
     /// noVNC "sync" does: on a click, never by itself over a clear VNC connection.
     SendClipboard(TabId),
@@ -544,6 +548,8 @@ impl fmt::Debug for Message {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
             Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
+            Self::AntiIdleTick => f.write_str("AntiIdleTick"),
+            Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
@@ -1701,7 +1707,9 @@ impl App {
             | Message::ForgetServer(_)) => self.open_message(message),
             message @ (Message::DesktopResize { .. }
             | Message::DesktopInput { .. }
-            | Message::SendKeys { .. }) => self.desktop_message(message),
+            | Message::SendKeys { .. }
+            | Message::AntiIdleTick
+            | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
             Message::SelectTab(tab) => self.select_tab(tab),
             Message::RequestCloseTab(tab) => self.request_close(tab),
@@ -1846,6 +1854,8 @@ impl App {
             }
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
             Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
+            Message::AntiIdleTick => self.anti_idle_tick(),
+            Message::StopAntiIdle(tab) => self.stop_anti_idle(tab),
             _ => {}
         }
         Vec::new()

@@ -274,6 +274,7 @@ impl Patch {
             forwards: Forwards::default(),
             follow_defaults: false,
             several_servers: false,
+            anti_idle: false,
         };
         self.apply(&mut profile);
         profile
