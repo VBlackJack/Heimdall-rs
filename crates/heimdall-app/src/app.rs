@@ -65,6 +65,7 @@ use crate::steps_draft::StepEdit;
 use crate::telnet_driver::TelnetRequest;
 use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
+use crate::winrm_driver::WinRmRequest;
 
 mod appearance;
 mod auto_reconnect;
@@ -721,6 +722,16 @@ pub enum Effect {
         /// What to run.
         request: Box<LocalRequest>,
     },
+    /// Start a `WinRM` session through an SSH gateway and feed its events back as
+    /// [`Message::Connection`].
+    ConnectWinRm {
+        /// Tab.
+        tab: TabId,
+        /// Attempt.
+        attempt: AttemptId,
+        /// What to connect to.
+        request: Box<WinRmRequest>,
+    },
     /// Deliver an answer through the registry.
     Answer {
         /// Question.
@@ -864,6 +875,9 @@ impl fmt::Debug for Effect {
             }
             Self::ConnectLocal { tab, attempt, .. } => {
                 write!(f, "ConnectLocal({}, {})", tab.value(), attempt.value())
+            }
+            Self::ConnectWinRm { tab, attempt, .. } => {
+                write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
             }
             Self::Answer { question, answer } => {
                 write!(f, "Answer({}, {answer:?})", question.value())
@@ -1149,6 +1163,8 @@ pub enum TabProfile {
     Ftp(FtpProfile),
     /// A local shell tab.
     Local(LocalShell),
+    /// A `WinRM` session through an SSH gateway; one reached directly is a local shell's tab.
+    WinRm(WinRmProfile),
 }
 
 impl TabProfile {
@@ -1163,6 +1179,7 @@ impl TabProfile {
             Self::Vnc(_) => ProfileKind::Vnc,
             Self::Ftp(_) => ProfileKind::Ftp,
             Self::Local(_) => ProfileKind::Local,
+            Self::WinRm(_) => ProfileKind::WinRm,
         }
     }
 
@@ -1176,6 +1193,7 @@ impl TabProfile {
             Self::Vnc(profile) => &profile.name,
             Self::Ftp(profile) => &profile.name,
             Self::Local(shell) => &shell.name,
+            Self::WinRm(profile) => &profile.name,
         }
     }
 
@@ -1189,6 +1207,7 @@ impl TabProfile {
             Self::Vnc(profile) => Some((&profile.host, profile.port)),
             Self::Ftp(profile) => Some((&profile.host, profile.port)),
             Self::Local(_) => None,
+            Self::WinRm(profile) => Some((&profile.host, profile.port)),
         }
     }
 
@@ -1199,6 +1218,7 @@ impl TabProfile {
             Self::Ssh(profile) => profile.username.as_deref(),
             Self::Rdp(profile) => profile.username.as_deref(),
             Self::Ftp(profile) => profile.username.as_deref(),
+            Self::WinRm(profile) => profile.username.as_deref(),
             // Telnet asks for its account in the session; VNC has none; a local shell runs
             // as the user running Heimdall.
             Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) => None,
@@ -2026,6 +2046,13 @@ impl App {
         };
         let mut effects = self.apply_connection_event(tab_id, event);
         self.follow_transcript(tab_id, was_connected);
+        // As the C# warns once the session is launched: through a gateway, NTLM.
+        let routed_winrm = self.tab(tab_id).is_some_and(|tab| {
+            tab.phase == Phase::Connected && matches!(tab.profile, TabProfile::WinRm(_))
+        });
+        if routed_winrm && !was_connected && self.active == Some(tab_id) {
+            self.tell(Notice::WinRmGatewayNtlm);
+        }
         if let Some((error, was_live)) = failure {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
@@ -2185,6 +2212,8 @@ impl App {
             TabProfile::Ssh(profile) => profile,
             // A gateway's key, learnt: the RDP connection starts again through it.
             TabProfile::Rdp(_) => return self.reconnect_rdp(tab_id, None),
+            // So does the WinRM one.
+            TabProfile::WinRm(_) => return self.reconnect_winrm(tab_id),
             _ => return Vec::new(),
         };
         let grid = tab.terminal.size();

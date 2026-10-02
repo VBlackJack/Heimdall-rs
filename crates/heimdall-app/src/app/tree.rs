@@ -245,7 +245,7 @@ impl App {
                 kind: ProfileKind::WinRm,
                 endpoint: Some((profile.host.clone(), profile.port)),
                 username: profile.username.clone(),
-                gateway: None,
+                gateway: self.badge(profile.gateway.as_ref()),
             });
         }
         all

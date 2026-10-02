@@ -563,6 +563,7 @@ fn winrm(id: &str) -> WinRmProfile {
         use_ssl: true,
         skip_certificate_check: true,
         username: Some("LAB\\admin".to_owned()),
+        gateway: None,
     }
 }
 

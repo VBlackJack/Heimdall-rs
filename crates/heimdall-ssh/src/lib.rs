@@ -31,6 +31,7 @@ mod forward;
 mod key_file;
 mod known_hosts;
 pub mod known_hosts_import;
+pub mod local_forward;
 mod options;
 mod pins;
 mod prompter;

@@ -78,6 +78,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::LinkNotAFolder(name) => {
                 fl!("ui-status-link-not-a-folder", name = name.as_str())
             }
+            Notice::WinRmGatewayNtlm => fl!("ui-status-winrm-gateway-ntlm"),
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",
