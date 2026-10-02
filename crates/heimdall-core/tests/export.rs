@@ -136,6 +136,7 @@ fn rdp() -> Vec<RdpProfile> {
             follow_defaults: false,
             several_servers: false,
             anti_idle: true,
+            auto_reconnect: true,
         },
         RdpProfile {
             id: ProfileId::new("desk"),
@@ -159,6 +160,7 @@ fn rdp() -> Vec<RdpProfile> {
             follow_defaults: false,
             several_servers: false,
             anti_idle: false,
+            auto_reconnect: true,
         },
     ]
 }
@@ -223,6 +225,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             use_ssl: true,
             skip_certificate_check: true,
             username: Some(r"LAB\admin".to_owned()),
+            gateway: None,
         },
         WinRmProfile {
             id: ProfileId::new("ps-me"),
@@ -233,6 +236,8 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             use_ssl: false,
             skip_certificate_check: false,
             username: None,
+            // Through a gateway, HTTP only.
+            gateway: Some(ProfileId::new("edge")),
         },
     ]);
     store

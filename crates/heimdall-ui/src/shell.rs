@@ -36,6 +36,7 @@ use heimdall_app::profile_draft::{
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::vnc_driver::vnc_events;
+use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
     DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage, FolderNaming,
@@ -1624,6 +1625,16 @@ impl Shell {
                 let events = stream::once(async move { local_events(*request) }).flatten();
                 self.connection_task(tab, attempt, events)
             }
+            Effect::ConnectWinRm {
+                tab,
+                attempt,
+                request,
+            } => {
+                let registry = self.registry.clone();
+                let events =
+                    stream::once(async move { winrm_events(*request, registry) }).flatten();
+                self.connection_task(tab, attempt, events)
+            }
             _ => Task::none(),
         }
     }
@@ -1636,7 +1647,8 @@ impl Shell {
             | Effect::ConnectTelnet { .. }
             | Effect::ConnectVnc { .. }
             | Effect::ConnectFtp { .. }
-            | Effect::ConnectLocal { .. }) => self.start_attempt(effect),
+            | Effect::ConnectLocal { .. }
+            | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::Answer { question, answer } => {
                 if !self.registry.answer(question, answer) {
                     log::debug!("question {} was no longer waiting", question.value());
@@ -4082,6 +4094,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
         ProfileToggle::AntiIdle => fl!("ui-profile-toggle-anti-idle"),
+        ProfileToggle::AutoReconnect => fl!("ui-profile-toggle-auto-reconnect"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
@@ -4184,6 +4197,11 @@ fn network_section<'a>(
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
+    }
+    // Said where the SSL box was, as the C# dialog says it.
+    if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {
+        section_column =
+            section_column.push(text(fl!("ui-profile-winrm-gateway-http")).size(SMALL_SIZE));
     }
     if draft.shows(ProfileField::SocksPort) {
         section_column = forward_cards(draft, section_column);
@@ -5155,9 +5173,11 @@ fn fits_by_default(profile: &TabProfile) -> bool {
     match profile {
         TabProfile::Vnc(_) => true,
         TabProfile::Rdp(rdp) => rdp.options.scaled(),
-        TabProfile::Ssh(_) | TabProfile::Telnet(_) | TabProfile::Local(_) | TabProfile::Ftp(_) => {
-            false
-        }
+        TabProfile::Ssh(_)
+        | TabProfile::Telnet(_)
+        | TabProfile::Local(_)
+        | TabProfile::Ftp(_)
+        | TabProfile::WinRm(_) => false,
     }
 }
 
@@ -5682,6 +5702,7 @@ mod tests {
                 follow_defaults: false,
                 several_servers: false,
                 anti_idle: false,
+                auto_reconnect: true,
             })
         };
         let fixed = RdpOptions {

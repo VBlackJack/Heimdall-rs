@@ -43,8 +43,10 @@ mod sink;
 pub mod steps_draft;
 pub mod telnet_driver;
 mod text;
+pub mod time_zone;
 pub mod transcript;
 pub mod vnc_driver;
+pub mod winrm_driver;
 
 pub use app::{
     App, AppConfig, BroadcastMessage, ConflictRow, ConnectAs, Dialog, Effect, ExportOutcome,

@@ -888,6 +888,7 @@ impl App {
         let gateway = match profile {
             TabProfile::Ssh(profile) => profile.gateway.as_ref(),
             TabProfile::Rdp(profile) => profile.gateway.as_ref(),
+            TabProfile::WinRm(profile) => profile.gateway.as_ref(),
             _ => None,
         }?;
         let route = self.store.route(Some(gateway)).ok()?;
@@ -1115,6 +1116,7 @@ mod tests {
             follow_defaults: false,
             several_servers: false,
             anti_idle: false,
+            auto_reconnect: true,
         })
     }
 

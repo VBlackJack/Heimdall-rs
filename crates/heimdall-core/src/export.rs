@@ -174,6 +174,7 @@ struct RdpKeys {
     rdp_initial_smart_sizing: bool,
     rdp_dynamic_resolution: bool,
     rdp_anti_idle: bool,
+    rdp_auto_reconnect: bool,
     rdp_performance_flags: u32,
 }
 
@@ -356,6 +357,7 @@ fn rdp(profile: &RdpProfile) -> Entry {
             rdp_initial_smart_sizing: options.scale_fixed,
             rdp_dynamic_resolution: options.dynamic_resolution,
             rdp_anti_idle: profile.anti_idle,
+            rdp_auto_reconnect: profile.auto_reconnect,
             rdp_performance_flags: options.performance_flags,
         }),
         ..server(
@@ -439,6 +441,7 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
 
 fn winrm(profile: &WinRmProfile) -> Entry {
     Entry {
+        ssh_gateway_id: profile.gateway.as_ref().map(|id| id.as_str().to_owned()),
         win_rm_port: Some(profile.port),
         win_rm_username: profile.username.clone(),
         win_rm_use_ssl: profile.use_ssl,

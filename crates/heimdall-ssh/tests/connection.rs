@@ -412,3 +412,39 @@ async fn compression_asked_for_shrinks_what_crosses_the_wire_and_keeps_the_bytes
         "compressed {compressed} bytes against {plain}"
     );
 }
+
+#[tokio::test]
+async fn a_local_forward_carries_its_clients_through_the_gateway_to_the_one_destination() {
+    let server = start(Spec {
+        forwarding: true,
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let destination = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("destination");
+    let port = destination.local_addr().expect("address").port();
+    let forward =
+        heimdall_ssh::local_forward::start(Arc::new(connection), "127.0.0.1".to_owned(), port)
+            .await
+            .expect("forward");
+    for round in [b"first", b"again"] {
+        let mut client = tokio::net::TcpStream::connect(forward.address())
+            .await
+            .expect("client");
+        client.write_all(round).await.expect("sent");
+        let (mut far, _) = tokio::time::timeout(STEP_TIMEOUT, destination.accept())
+            .await
+            .expect("in time")
+            .expect("reached through the gateway");
+        let mut received = [0; 5];
+        far.read_exact(&mut received).await.expect("read");
+        assert_eq!(&received, round);
+        far.write_all(b"back").await.expect("answered");
+        let mut answer = [0; 4];
+        client.read_exact(&mut answer).await.expect("answer");
+        assert_eq!(&answer, b"back");
+    }
+}

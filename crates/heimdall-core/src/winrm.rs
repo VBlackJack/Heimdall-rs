@@ -25,7 +25,7 @@
 //! single-quoted literal, every quote `PowerShell` would end it on doubled. Heimdall never
 //! holds the password: `-Credential` with a name makes `PowerShell` ask for it.
 
-use std::net::IpAddr;
+use std::net::{IpAddr, SocketAddr};
 
 use thiserror::Error;
 
@@ -61,6 +61,10 @@ pub enum CommandError {
     /// Windows account name holds.
     #[error("the account name cannot be used")]
     InvalidUsername,
+    /// HTTPS through an SSH gateway, which the C# Heimdall refuses: the certificate would be
+    /// checked against the forward's address, not the server's name.
+    #[error("WinRM over an SSH gateway does not support HTTPS")]
+    HttpsThroughGateway,
 }
 
 /// The command a `WinRM` tab runs for `profile`: the local prompt guard, then
@@ -84,7 +88,32 @@ pub enum CommandError {
 ///
 /// The host or the account name is refused; see [`CommandError`].
 pub fn session_command(profile: &WinRmProfile) -> Result<String, CommandError> {
-    let enter = enter_session(profile)?;
+    if profile.gateway.is_some() && profile.use_ssl {
+        return Err(CommandError::HttpsThroughGateway);
+    }
+    let host = checked_host(&profile.host)?;
+    command(profile, host, profile.port)
+}
+
+/// [`session_command`] for a profile reached through its SSH gateway: `Enter-PSSession` dials
+/// `forward`, the loopback port that carries to the profile's host and port, as the C#
+/// Heimdall's tunnel does.
+///
+/// # Errors
+///
+/// As [`session_command`].
+pub fn session_command_through(
+    profile: &WinRmProfile,
+    forward: SocketAddr,
+) -> Result<String, CommandError> {
+    // The profile's own checks first: its host is still the one the forward reaches.
+    session_command(profile)?;
+    command(profile, &forward.ip().to_string(), forward.port())
+}
+
+/// The guard, `Enter-PSSession` to `host`:`port`, then the mark.
+fn command(profile: &WinRmProfile, host: &str, port: u16) -> Result<String, CommandError> {
+    let enter = enter_session(profile, host, port)?;
     Ok(format!(
         "{}; {enter} -ErrorAction Stop; {ENTERED_VARIABLE} = $true",
         local_prompt_guard()
@@ -102,13 +131,10 @@ fn local_prompt_guard() -> String {
     )
 }
 
-/// The `Enter-PSSession` command for `profile`.
-fn enter_session(profile: &WinRmProfile) -> Result<String, CommandError> {
-    let host = checked_host(&profile.host)?;
-    let mut command = format!(
-        "Enter-PSSession -ComputerName '{host}' -Port {} -Authentication Negotiate",
-        profile.port
-    );
+/// The `Enter-PSSession` command for `profile`, to `host`:`port`, a host already checked.
+fn enter_session(profile: &WinRmProfile, host: &str, port: u16) -> Result<String, CommandError> {
+    let mut command =
+        format!("Enter-PSSession -ComputerName '{host}' -Port {port} -Authentication Negotiate");
     if profile.use_ssl {
         command.push_str(" -UseSSL");
         if profile.skip_certificate_check {
@@ -178,7 +204,58 @@ mod tests {
             use_ssl: false,
             skip_certificate_check: false,
             username: None,
+            gateway: None,
         }
+    }
+
+    /// `Enter-PSSession` for `profile`, to its own host and port.
+    fn enter(profile: &WinRmProfile) -> Result<String, CommandError> {
+        enter_session(profile, checked_host(&profile.host)?, profile.port)
+    }
+
+    #[test]
+    fn through_a_gateway_the_session_goes_to_the_forward_over_http_only() {
+        let routed = WinRmProfile {
+            gateway: Some(ProfileId::new("bastion")),
+            username: Some("LAB\\admin".to_owned()),
+            ..profile("dc01.lab.local")
+        };
+        let forward: SocketAddr = "127.0.0.1:50123".parse().expect("address");
+        let command = session_command_through(&routed, forward).expect("valid");
+        assert!(
+            command.contains(
+                "Enter-PSSession -ComputerName '127.0.0.1' -Port 50123 -Authentication Negotiate \
+                 -Credential 'LAB\\admin' -ErrorAction Stop"
+            ),
+            "{command}"
+        );
+        assert!(
+            !command.contains("dc01"),
+            "the forward is dialled: {command}"
+        );
+        let https = WinRmProfile {
+            use_ssl: true,
+            port: DEFAULT_WINRM_HTTPS_PORT,
+            ..routed.clone()
+        };
+        assert_eq!(
+            session_command_through(&https, forward),
+            Err(CommandError::HttpsThroughGateway)
+        );
+        assert_eq!(
+            session_command(&https),
+            Err(CommandError::HttpsThroughGateway),
+            "refused before any forward is opened"
+        );
+        // The profile's host is still checked: it is where the forward leads.
+        let bad = WinRmProfile {
+            host: "h$(calc)".to_owned(),
+            ..routed
+        };
+        assert_eq!(
+            session_command_through(&bad, forward),
+            Err(CommandError::InvalidHost)
+        );
     }
 
     #[test]
@@ -201,7 +278,7 @@ mod tests {
             Ok(format!(
                 "{}; {} -ErrorAction Stop; $global:HeimdallWinRmEntered = $true",
                 local_prompt_guard(),
-                enter_session(&profile).expect("valid")
+                enter(&profile).expect("valid")
             ))
         );
     }
@@ -225,7 +302,7 @@ mod tests {
     #[test]
     fn the_current_user_connects_over_http_with_no_credential() {
         assert_eq!(
-            enter_session(&profile("dc01.lab.local")).as_deref(),
+            enter(&profile("dc01.lab.local")).as_deref(),
             Ok(
                 "Enter-PSSession -ComputerName 'dc01.lab.local' -Port 5985 -Authentication Negotiate"
             )
@@ -242,7 +319,7 @@ mod tests {
             ..profile("192.168.31.136")
         };
         assert_eq!(
-            enter_session(&profile).as_deref(),
+            enter(&profile).as_deref(),
             Ok("Enter-PSSession -ComputerName '192.168.31.136' -Port 5986 \
                 -Authentication Negotiate -UseSSL -SessionOption (New-PSSessionOption \
                 -SkipCACheck -SkipCNCheck -SkipRevocationCheck) -Credential 'LAB\\admin'")
@@ -255,7 +332,7 @@ mod tests {
             skip_certificate_check: true,
             ..profile("h")
         };
-        let command = enter_session(&profile).expect("valid");
+        let command = enter(&profile).expect("valid");
         assert!(!command.contains("-SessionOption"), "{command}");
         assert!(!command.contains("-UseSSL"), "{command}");
     }
@@ -273,7 +350,7 @@ mod tests {
             &"a".repeat(MAX_HOST_NAME_LENGTH + 1),
         ] {
             assert_eq!(
-                enter_session(&profile(host)),
+                enter(&profile(host)),
                 Err(CommandError::InvalidHost),
                 "{host:?}"
             );
@@ -283,7 +360,7 @@ mod tests {
     #[test]
     fn names_and_addresses_of_both_families_are_accepted() {
         for host in ["h", "web-01.lab", "10.0.0.1", "fe80::1", "2001:db8::5"] {
-            let command = enter_session(&profile(host)).expect("valid");
+            let command = enter(&profile(host)).expect("valid");
             assert!(
                 command.contains(&format!("-ComputerName '{host}' ")),
                 "{command}"
@@ -297,7 +374,7 @@ mod tests {
             username: Some("o'b\u{2018}c\u{2019}d\u{201A}e\u{201B}f".to_owned()),
             ..profile("h")
         };
-        let command = enter_session(&profile).expect("valid");
+        let command = enter(&profile).expect("valid");
         assert!(
             command.ends_with(
                 " -Credential 'o''b\u{2018}\u{2018}c\u{2019}\u{2019}d\u{201A}\u{201A}e\u{201B}\u{201B}f'"
@@ -314,7 +391,7 @@ mod tests {
                 ..profile("h")
             };
             assert_eq!(
-                enter_session(&profile),
+                enter(&profile),
                 Err(CommandError::InvalidUsername),
                 "{username:?}"
             );

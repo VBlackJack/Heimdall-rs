@@ -35,7 +35,7 @@ use tokio::sync::mpsc;
 fn app(dir: &Path) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
-    store.merge_rdp([RdpProfile {
+    let dc = RdpProfile {
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: None,
@@ -53,7 +53,25 @@ fn app(dir: &Path) -> App {
         follow_defaults: false,
         several_servers: false,
         anti_idle: false,
-    }]);
+        auto_reconnect: true,
+    };
+    store.merge_rdp([
+        dc.clone(),
+        // Auto-reconnect cleared in its profile.
+        RdpProfile {
+            id: ProfileId::new("quiet"),
+            name: "Quiet".to_owned(),
+            auto_reconnect: false,
+            ..dc.clone()
+        },
+        // Following the application's RDP options.
+        RdpProfile {
+            id: ProfileId::new("follows"),
+            name: "Follows".to_owned(),
+            follow_defaults: true,
+            ..dc
+        },
+    ]);
     store.merge([SshProfile {
         id: ProfileId::new("web"),
         name: "web".to_owned(),
@@ -261,6 +279,46 @@ fn only_a_live_desktop_that_dropped_for_a_passing_reason_comes_back() {
         },
     );
     assert!(event(&mut app, tab, attempt, dropped()).is_empty());
+}
+
+#[test]
+fn a_desktop_whose_profile_or_the_options_it_follows_clear_auto_reconnect_stays_down() {
+    use heimdall_app::SettingsMessage;
+    use heimdall_core::profile::RdpDefaults;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let down = |app: &mut App, id: &str| {
+        let (tab, attempt) = connect_rdp(&app.update(Message::OpenRdp(ProfileId::new(id))));
+        ready(app, tab, attempt);
+        let effects = event(app, tab, attempt, dropped());
+        (
+            effects.is_empty(),
+            app.tab(tab).expect("tab").retry.is_none(),
+        )
+    };
+    assert_eq!(
+        down(&mut app, "quiet"),
+        (true, true),
+        "cleared in the profile"
+    );
+    assert_eq!(
+        down(&mut app, "follows"),
+        (false, false),
+        "the options followed have it on"
+    );
+    app.update(Message::Settings(SettingsMessage::RdpDefaults(
+        RdpDefaults {
+            auto_reconnect: false,
+            ..RdpDefaults::default()
+        },
+    )));
+    assert_eq!(
+        down(&mut app, "follows"),
+        (true, true),
+        "cleared in the options followed"
+    );
+    assert_eq!(down(&mut app, "dc"), (false, false), "its own choice kept");
 }
 
 #[test]

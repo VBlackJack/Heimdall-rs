@@ -127,6 +127,7 @@ impl App {
             TabProfile::Vnc(profile) => self.open_vnc_profile(profile),
             TabProfile::Ftp(profile) => self.open_ftp_profile(profile),
             TabProfile::Local(shell) => self.open_local(shell),
+            TabProfile::WinRm(profile) => self.open_winrm_profile(profile),
         }
     }
 }
@@ -182,6 +183,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 follow_defaults: true,
                 several_servers: false,
                 anti_idle: false,
+                auto_reconnect: true,
             }),
             Purpose::Rdp,
         ),

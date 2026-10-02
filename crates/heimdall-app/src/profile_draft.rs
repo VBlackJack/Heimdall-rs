@@ -163,9 +163,10 @@ impl DraftProtocol {
             ProfileField::KeyPath => self.is_ssh_family(),
             // The protocols whose password the external credential provider gives.
             ProfileField::VaultEntry => self.saves_password(),
+            // A WinRM session has the gateway carry it, and no ports of its own to open there.
             ProfileField::SocksPort
             | ProfileField::RemoteBindPort
-            | ProfileField::RemoteLocalPort => self.routes_through_gateway(),
+            | ProfileField::RemoteLocalPort => self.routes_through_gateway() && self != Self::WinRm,
         }
     }
 
@@ -182,7 +183,7 @@ impl DraftProtocol {
     /// Whether this protocol's sessions can go through an SSH gateway.
     #[must_use]
     pub fn routes_through_gateway(self) -> bool {
-        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp)
+        matches!(self, Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm)
     }
 
     /// Whether the protocol's profiles name a key file, whose passphrase can be saved.
@@ -243,6 +244,9 @@ pub enum ProfileToggle {
     /// RDP: keep the server from taking the session for idle, as the C# "Enable anti-idle
     /// keepalive".
     AntiIdle,
+    /// RDP: open a dropped desktop again by itself, as the C# "Automatically reconnect",
+    /// ticked for a new profile.
+    AutoReconnect,
 }
 
 impl ProfileToggle {
@@ -254,6 +258,7 @@ impl ProfileToggle {
                 Self::RedirectClipboard,
                 Self::RedirectDrives,
                 Self::AntiIdle,
+                Self::AutoReconnect,
                 Self::Nla,
                 Self::AdminSession,
                 Self::SeveralServers,
@@ -611,6 +616,9 @@ impl ProfileDraft {
         if profile.anti_idle {
             toggles.push(ProfileToggle::AntiIdle);
         }
+        if profile.auto_reconnect {
+            toggles.push(ProfileToggle::AutoReconnect);
+        }
         Self {
             editing: Some(profile.id.clone()),
             name: profile.name.clone(),
@@ -680,6 +688,7 @@ impl ProfileDraft {
             username: profile.username.clone().unwrap_or_default(),
             protocol: DraftProtocol::WinRm,
             protocol_chosen: true,
+            gateway: profile.gateway.clone(),
             toggles,
             ..Self::default()
         }
@@ -712,6 +721,7 @@ impl ProfileDraft {
                 DraftProtocol::Rdp => vec![
                     ProfileToggle::FollowDefaults,
                     ProfileToggle::RedirectClipboard,
+                    ProfileToggle::AutoReconnect,
                     ProfileToggle::Nla,
                 ],
                 // Passive by default, as a new C# FTP profile.
@@ -743,6 +753,18 @@ impl ProfileDraft {
         }
         let port = self.port.trim();
         if toggle == ProfileToggle::UseSsl && (port.is_empty() || port == before.to_string()) {
+            self.port = self.default_port().to_string();
+        }
+    }
+
+    /// Routes the profile through gateway `id`, "Connect directly" cleared. A `WinRM` port
+    /// still on the HTTPS default goes back to HTTP's, as HTTPS is refused through a gateway.
+    pub fn choose_gateway(&mut self, id: ProfileId) {
+        let before = self.default_port();
+        self.gateway = Some(id);
+        self.toggle(ProfileToggle::DirectConnection, false);
+        let port = self.port.trim();
+        if port.is_empty() || port == before.to_string() {
             self.port = self.default_port().to_string();
         }
     }
@@ -910,7 +932,23 @@ impl ProfileDraft {
     /// Whether `toggle` is shown now: skipping certificate checks only over HTTPS.
     #[must_use]
     pub fn shows_toggle(&self, toggle: ProfileToggle) -> bool {
-        toggle != ProfileToggle::SkipCertificateCheck || self.is_on(ProfileToggle::UseSsl)
+        match toggle {
+            // Through a gateway, HTTP only, as the C# dialog forces it.
+            ProfileToggle::UseSsl => !self.winrm_routed(),
+            ProfileToggle::SkipCertificateCheck => self.uses_ssl(),
+            _ => true,
+        }
+    }
+
+    /// A `WinRM` form with a gateway chosen.
+    fn winrm_routed(&self) -> bool {
+        self.protocol == DraftProtocol::WinRm && self.routed_gateway().is_some()
+    }
+
+    /// `WinRM` over HTTPS: ticked, and no gateway chosen, through which HTTPS is refused.
+    #[must_use]
+    pub fn uses_ssl(&self) -> bool {
+        self.is_on(ProfileToggle::UseSsl) && !self.winrm_routed()
     }
 
     /// The gateway saved with the profile: none when "Connect directly" is ticked, the
@@ -944,7 +982,7 @@ impl ProfileDraft {
             DraftProtocol::Rdp => DEFAULT_RDP_PORT,
             DraftProtocol::Vnc => DEFAULT_VNC_PORT,
             DraftProtocol::Telnet => DEFAULT_TELNET_PORT,
-            DraftProtocol::WinRm if self.is_on(ProfileToggle::UseSsl) => DEFAULT_WINRM_HTTPS_PORT,
+            DraftProtocol::WinRm if self.uses_ssl() => DEFAULT_WINRM_HTTPS_PORT,
             DraftProtocol::WinRm => DEFAULT_WINRM_HTTP_PORT,
             DraftProtocol::Local => NO_PORT,
             DraftProtocol::Ftp => DEFAULT_FTP_PORT,
@@ -1049,6 +1087,7 @@ impl ProfileDraft {
                 follow_defaults: self.is_on(ProfileToggle::FollowDefaults),
                 several_servers: self.is_on(ProfileToggle::SeveralServers),
                 anti_idle: self.is_on(ProfileToggle::AntiIdle),
+                auto_reconnect: self.is_on(ProfileToggle::AutoReconnect),
             }),
             DraftProtocol::Vnc => DraftProfile::Vnc(VncProfile {
                 id,
@@ -1065,7 +1104,7 @@ impl ProfileDraft {
                 if stored && username.is_empty() {
                     return Err(DraftError::UsernameMissing);
                 }
-                let use_ssl = self.is_on(ProfileToggle::UseSsl);
+                let use_ssl = self.uses_ssl();
                 DraftProfile::WinRm(WinRmProfile {
                     id,
                     name,
@@ -1076,6 +1115,7 @@ impl ProfileDraft {
                     skip_certificate_check: use_ssl
                         && self.is_on(ProfileToggle::SkipCertificateCheck),
                     username: stored.then(|| username.to_owned()),
+                    gateway: self.routed_gateway(),
                 })
             }
             DraftProtocol::Local => self.saved_local(id, name, group)?,
@@ -1383,6 +1423,7 @@ mod tests {
             "one machine per address unless said"
         );
         assert!(!rdp.is_on(ProfileToggle::AntiIdle), "off, as the C#");
+        assert!(rdp.is_on(ProfileToggle::AutoReconnect), "on, as the C#");
         assert_eq!(rdp.rdp_options, RdpOptions::default());
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
@@ -1390,6 +1431,7 @@ mod tests {
                 ProfileToggle::RedirectClipboard,
                 ProfileToggle::RedirectDrives,
                 ProfileToggle::AntiIdle,
+                ProfileToggle::AutoReconnect,
                 ProfileToggle::Nla,
                 ProfileToggle::AdminSession,
                 // Not in the C# dialog, which always asks: after its boxes.
@@ -1764,6 +1806,7 @@ mod tests {
             follow_defaults: false,
             several_servers: true,
             anti_idle: true,
+            auto_reconnect: false,
         };
         assert_eq!(
             ProfileDraft::from_rdp(&rdp).to_saved(id()),
@@ -1803,6 +1846,7 @@ mod tests {
             use_ssl: true,
             skip_certificate_check: true,
             username: Some("LAB\\admin".to_owned()),
+            gateway: None,
         };
         assert_eq!(
             ProfileDraft::from_winrm(&winrm).to_saved(id()),
@@ -1831,6 +1875,43 @@ mod tests {
         form.port = "6000".to_owned();
         form.toggle(ProfileToggle::UseSsl, true);
         assert_eq!(form.port, "6000", "a port typed by hand stays");
+    }
+
+    #[test]
+    fn a_winrm_gateway_forces_http_as_the_csharp_dialog_and_reads_back() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::WinRm);
+        form.name = "ps".to_owned();
+        form.host = "ps.lab".to_owned();
+        form.toggle(ProfileToggle::UseSsl, true);
+        form.toggle(ProfileToggle::SkipCertificateCheck, true);
+        assert_eq!(form.port, DEFAULT_WINRM_HTTPS_PORT.to_string());
+        assert!(form.shows_toggle(ProfileToggle::UseSsl));
+        form.choose_gateway(ProfileId::new("bastion"));
+        assert!(!form.shows_toggle(ProfileToggle::UseSsl), "HTTP only");
+        assert!(!form.shows_toggle(ProfileToggle::SkipCertificateCheck));
+        assert_eq!(
+            form.port,
+            DEFAULT_WINRM_HTTP_PORT.to_string(),
+            "the HTTPS default goes back to HTTP's"
+        );
+        // A WinRM session has no ports of its own to open at the gateway.
+        assert!(!form.shows(ProfileField::SocksPort));
+        let Ok(DraftProfile::WinRm(saved)) = form.to_saved(id()) else {
+            panic!("winrm");
+        };
+        assert_eq!(saved.gateway, Some(ProfileId::new("bastion")));
+        assert!(!saved.use_ssl && !saved.skip_certificate_check, "{saved:?}");
+        assert_eq!(saved.port, DEFAULT_WINRM_HTTP_PORT);
+        let back = ProfileDraft::from_winrm(&saved);
+        assert_eq!(back.routed_gateway(), Some(ProfileId::new("bastion")));
+        // Connecting directly again gives HTTPS its box back.
+        form.toggle(ProfileToggle::DirectConnection, true);
+        assert!(form.shows_toggle(ProfileToggle::UseSsl));
+        // A port typed by hand stays when a gateway is chosen.
+        let mut typed = ProfileDraft::new_for(DraftProtocol::WinRm);
+        typed.port = "15985".to_owned();
+        typed.choose_gateway(ProfileId::new("bastion"));
+        assert_eq!(typed.port, "15985");
     }
 
     #[test]
