@@ -2112,26 +2112,66 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
     assert!(same(shell.font_size(tab), 28.0));
 }
 
+/// A field of the session card, the rule said under a value out of its range, and values
+/// typed with whether they are refused.
+type SessionCase<'a> = (
+    heimdall_ui::shell::SessionField,
+    &'a str,
+    &'a [(&'a str, bool)],
+);
+
 #[test]
-fn the_anti_idle_interval_is_typed_in_the_ssh_settings_zero_turning_it_off() {
+fn the_session_numbers_are_typed_in_the_ssh_settings_each_within_its_csharp_range() {
+    use heimdall_ui::shell::SessionField;
+
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, _, _) = connected_shell(dir.path());
     let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::SettingsTab(heimdall_ui::shell::SettingsTab::Ssh));
-    simulator(&shell)
-        .find("Anti-idle interval (0 = off)")
-        .expect("in the SSH tab, as the C# one");
-    let refusal = "Anti-idle interval must be 0, or between 10 and 3600 seconds.";
-    for (typed, refused) in [("9", true), ("soon", true), ("3601", true), (" 0 ", false)] {
-        let _ = shell.update(Message::AntiIdleEdited(typed.to_owned()));
-        let _ = shell.update(Message::AntiIdleApply);
+    {
         let mut ui = simulator(&shell);
-        assert_eq!(ui.find(refusal).is_ok(), refused, "{typed}");
+        for label in [
+            "SSH keep-alive interval",
+            "TMOUT reset interval (0 = off)",
+            "Anti-idle interval (0 = off)",
+        ] {
+            ui.find(label).expect(label);
+        }
     }
-    assert_eq!(shell.app().settings().anti_idle_interval, 0);
-    let _ = shell.update(Message::AntiIdleEdited("120".to_owned()));
-    let _ = shell.update(Message::AntiIdleApply);
-    assert_eq!(shell.app().settings().anti_idle_interval, 120);
+    let cases: [SessionCase<'_>; 3] = [
+        (
+            SessionField::KeepAlive,
+            "SSH keep-alive interval must be between 5 and 600 seconds.",
+            &[("4", true), ("601", true), ("later", true), (" 45 ", false)],
+        ),
+        (
+            SessionField::TmoutReset,
+            "SSH TMOUT reset interval must be between 0 and 3600 seconds.",
+            &[("3601", true), ("-1", true), (" 0 ", false)],
+        ),
+        (
+            SessionField::AntiIdle,
+            "Anti-idle interval must be 0, or between 10 and 3600 seconds.",
+            &[("9", true), ("soon", true), ("3601", true), (" 0 ", false)],
+        ),
+    ];
+    for (field, refusal, typed) in cases {
+        for (typed, refused) in typed {
+            let _ = shell.update(Message::SessionFieldEdited(field, (*typed).to_owned()));
+            let _ = shell.update(Message::SessionFieldApply(field));
+            let mut ui = simulator(&shell);
+            assert_eq!(ui.find(refusal).is_ok(), *refused, "{field:?} {typed}");
+        }
+    }
+    let settings = shell.app().settings();
+    assert_eq!(
+        (
+            settings.ssh_keep_alive_interval,
+            settings.ssh_tmout_reset_interval,
+            settings.anti_idle_interval
+        ),
+        (45, 0, 0)
+    );
 }
 
 #[test]
