@@ -4094,6 +4094,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
         ProfileToggle::AntiIdle => fl!("ui-profile-toggle-anti-idle"),
+        ProfileToggle::AutoReconnect => fl!("ui-profile-toggle-auto-reconnect"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
         ProfileToggle::Nla => fl!("ui-profile-toggle-nla"),
         ProfileToggle::StoredCredential => fl!("ui-profile-winrm-identity-stored"),
@@ -5701,6 +5702,7 @@ mod tests {
                 follow_defaults: false,
                 several_servers: false,
                 anti_idle: false,
+                auto_reconnect: true,
             })
         };
         let fixed = RdpOptions {

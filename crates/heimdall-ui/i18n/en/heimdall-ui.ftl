@@ -701,6 +701,7 @@ ui-profile-toggle-drives = Redirect drives
 ui-profile-toggle-nla = Enable Network Level Authentication
 ui-profile-toggle-several-servers = Several servers answer at this address: ask about each new certificate
 ui-profile-toggle-anti-idle = Enable anti-idle keepalive
+ui-profile-toggle-auto-reconnect = Automatically reconnect
 ui-profile-experience = Visual experience
 ui-profile-experience-no-wallpaper = Disable wallpaper
 ui-profile-experience-no-themes = Disable themes
@@ -714,6 +715,7 @@ ui-profile-rdp-defaults-banner = This server is using your global RDP defaults. 
 ui-profile-rdp-defaults-not-in-effect = Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.
 ui-settings-rdp-defaults = RDP Defaults
 ui-settings-rdp-defaults-hint = The options of every RDP server that uses the global defaults.
+ui-settings-rdp-auto-reconnect = Auto-reconnect
 ui-profile-toggle-admin = Run as administrator session (/admin)
 # An RDP profile's sound and colours, as the C# Display & Audio card.
 ui-profile-audio = Audio mode

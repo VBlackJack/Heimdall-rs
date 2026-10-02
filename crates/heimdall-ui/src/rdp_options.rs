@@ -174,6 +174,11 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
             fl!("ui-profile-resolution-dynamic"),
             |d, on| d.dynamic_resolution = on,
         ),
+        tick(
+            defaults.auto_reconnect,
+            fl!("ui-settings-rdp-auto-reconnect"),
+            |d, on| d.auto_reconnect = on,
+        ),
     ]
     .spacing(SPACING)
     .into()
