@@ -2913,6 +2913,75 @@ fn ctrl_comma_shows_the_settings_with_or_without_a_tab_but_not_over_a_dialog() {
 }
 
 #[test]
+fn enter_in_the_search_opens_the_one_profile_found_and_never_guesses_among_several() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Search("server".to_owned()));
+    let _ = shell.update(Message::SearchSubmit);
+    assert!(shell.app().tabs.is_empty(), "three found: none opened");
+    let _ = shell.update(Message::Search("b.lab".to_owned()));
+    let _ = shell.update(Message::SearchSubmit);
+    assert_eq!(shell.app().tabs.len(), 1, "the only one found is opened");
+    assert_eq!(shell.app().tabs[0].profile.name(), "server b");
+    let _ = shell.update(Message::Search(String::new()));
+    let _ = shell.update(Message::SearchSubmit);
+    assert_eq!(shell.app().tabs.len(), 1, "an empty search opens nothing");
+}
+
+#[test]
+fn escape_and_down_in_the_search_only_while_it_has_the_keyboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Search("production".to_owned()));
+    {
+        // Nobody has the keyboard: the keys are the window's.
+        let mut ui = simulator(&shell);
+        let _ = ui.tap_key(Named::ArrowDown);
+        let _ = ui.tap_key(Named::Escape);
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::SearchDown | Message::Search(_))),
+            "not the search's"
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("production").expect("the search field");
+        let _ = ui.tap_key(Named::ArrowDown);
+        let _ = ui.tap_key(Named::Escape);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::SearchDown)),
+            "{messages:?}"
+        );
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Search(text) if text.is_empty())),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(Message::SearchDown);
+    assert_eq!(
+        shell.app().selected_profile,
+        Some(ProfileId::new("a")),
+        "the first found, in the order shown"
+    );
+    let _ = shell.update(Message::Search(String::new()));
+    let mut ui = simulator(&shell);
+    ui.click("Search")
+        .expect("the empty search field, by its placeholder");
+    let _ = ui.tap_key(Named::Escape);
+    assert!(
+        !ui.into_messages()
+            .any(|message| matches!(message, Message::Search(_))),
+        "an empty search leaves Escape to the rest of the window"
+    );
+}
+
+#[test]
 fn one_post_connect_command_is_said_in_the_singular() {
     let dir = tempfile::tempdir().expect("dir");
     let mut core = app(dir.path());

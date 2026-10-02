@@ -75,6 +75,7 @@ use crate::finder::Finder;
 use crate::i18n::fl;
 use crate::palette::Palette;
 use crate::report;
+use crate::search_keys::SearchKeys;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
@@ -316,6 +317,10 @@ pub enum Message {
     ResetTreeFilters,
     /// Ctrl+F: move to the tree's search.
     FocusSearch,
+    /// Enter in the tree's search: the one profile it finds is opened.
+    SearchSubmit,
+    /// Down in the tree's search: the first profile it finds is selected.
+    SearchDown,
     /// A field of the vault dialog changed.
     VaultField {
         /// Field, in the order the dialog shows them.
@@ -431,6 +436,8 @@ impl fmt::Debug for Message {
             Self::Search(_) => f.write_str("Search(..)"),
             Self::ResetTreeFilters => f.write_str("ResetTreeFilters"),
             Self::FocusSearch => f.write_str("FocusSearch"),
+            Self::SearchSubmit => f.write_str("SearchSubmit"),
+            Self::SearchDown => f.write_str("SearchDown"),
             Self::VaultField { index, .. } => write!(f, "VaultField({index}, ..)"),
             Self::FocusVaultField(index) => write!(f, "FocusVaultField({index})"),
             Self::SubmitVault => f.write_str("SubmitVault"),
@@ -874,6 +881,9 @@ impl Shell {
             Message::FocusSearch => {
                 return operation::focus(search_field_id())
                     .chain(operation::select_all(search_field_id()));
+            }
+            message @ (Message::SearchSubmit | Message::SearchDown) => {
+                return self.search_key(&message);
             }
             Message::SubmitVault => self.submit_vault(),
             Message::SubmitPin => self.submit_pin(),
@@ -2042,13 +2052,19 @@ impl Shell {
     }
 
     /// The tree's search, as the C# sidebar's: typing filters the profiles, Ctrl+F comes
-    /// here, and the clear button empties it.
+    /// here, and the clear button empties it; Escape, Down and Enter as the C# filter box
+    /// ([`SearchKeys`], [`Shell::search_key`]).
     fn search_box(&self) -> Element<'_, Message> {
         let mut search = row![
             tooltip(
-                text_input(&fl!("ui-tree-search-placeholder"), &self.search)
-                    .id(search_field_id())
-                    .on_input(Message::Search),
+                SearchKeys::new(
+                    text_input(&fl!("ui-tree-search-placeholder"), &self.search)
+                        .id(search_field_id())
+                        .on_input(Message::Search)
+                        .on_submit(Message::SearchSubmit),
+                    (!self.search.is_empty()).then(|| Message::Search(String::new())),
+                    Message::SearchDown,
+                ),
                 text(fl!("ui-tree-search-tooltip")).size(SMALL_SIZE),
                 tooltip::Position::Bottom,
             )
@@ -2642,6 +2658,42 @@ impl Shell {
             },
             _ => Vec::new(),
         })
+    }
+
+    /// Enter or Down in the tree's search, as the C# filter box: Enter opens the profile
+    /// found when it is the only one and does nothing rather than guess among several; Down
+    /// gives the tree the keyboard on the first profile found.
+    fn search_key(&mut self, message: &Message) -> Task<Message> {
+        let found = self.search_found();
+        let effects = match (message, found.as_slice()) {
+            (Message::SearchSubmit, [only]) if !self.search.trim().is_empty() => {
+                self.app.update(AppMessage::ConnectProfile(only.clone()))
+            }
+            (Message::SearchDown, [first, ..]) => {
+                self.tree_focused = true;
+                let effects = self.app.update(AppMessage::SelectProfile(first.clone()));
+                let tasks: Vec<Task<Message>> =
+                    effects.into_iter().map(|effect| self.run(effect)).collect();
+                return Task::batch(tasks).chain(iced::advanced::widget::operate(
+                    iced::advanced::widget::operation::focusable::unfocus(),
+                ));
+            }
+            _ => Vec::new(),
+        };
+        Task::batch(effects.into_iter().map(|effect| self.run(effect)))
+    }
+
+    /// The profiles the tree's search finds, in the order shown: while a search is typed
+    /// every folder is open, so these are all of them.
+    fn search_found(&self) -> Vec<ProfileId> {
+        self.app
+            .tree_rows(&self.search)
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Profile { profile, .. } => Some(profile.id),
+                TreeRow::Folder { .. } => None,
+            })
+            .collect()
     }
 
     /// A click on profile `id` in the tree, as the C# tree takes it: alone, with Ctrl added or
