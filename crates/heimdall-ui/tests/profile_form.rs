@@ -281,9 +281,27 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
         toggle: ProfileToggle::StoredCredential,
         on: true,
     }));
-    let mut ui = simulator(&shell);
-    ui.find("Username")
-        .expect("a stored credential names its account");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Username")
+            .expect("a stored credential names its account");
+        ui.find("Uses WinRM over HTTPS, normally port 5986. HTTP normally uses port 5985.")
+            .expect("the C# hint under Use SSL");
+    }
+    // TLS moved back by hand to the plaintext port: said, not corrected.
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::UseSsl,
+        on: true,
+    }));
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::Port,
+        value: "5985".to_owned(),
+    }));
+    let mut ui = tall_simulator(&shell);
+    ui.find(
+        "TLS is enabled but the port is the plaintext default 5985; WinRM over TLS listens on 5986.",
+    )
+    .expect("says TLS is on the HTTP port");
 }
 
 #[test]
