@@ -39,7 +39,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::client::{Handle, SftpClient, SftpError};
 use crate::path::RemotePath;
-use crate::protocol::{Attributes, PLAIN_PERMISSIONS, open_flags};
+use crate::protocol::{Attributes, PLAIN_PERMISSIONS, StatusCode, open_flags};
 
 /// Suffix of a file being downloaded.
 pub const PART_SUFFIX: &str = ".heimdall-part";
@@ -110,6 +110,14 @@ pub enum TransferError {
     /// was left as it is, and the complete part file kept.
     #[error("a local file exists at that name")]
     LocalExists,
+    /// The file to replace is not a regular file (a folder, a link, a device): an upload does
+    /// not replace it.
+    #[error("the destination is not a regular file")]
+    DestinationNotAFile,
+    /// The file to replace was left as it is: the server cannot replace it in one step, or the
+    /// replacing file could not keep its group.
+    #[error("the destination could not be replaced safely")]
+    ReplaceNotSafe,
     /// Cancelled; `kept` bytes stay in the part file for a resume.
     #[error("cancelled after {kept} bytes")]
     Cancelled {
@@ -564,13 +572,17 @@ fn upload_mode(metadata: &std::fs::Metadata) -> u32 {
 /// target in one rename: nobody ever sees a partial file under the real name. An upload
 /// does not resume: a new attempt starts over.
 ///
-/// With `replace`, an existing target is replaced (atomically when the server offers
-/// `posix-rename@openssh.com`); without it, an existing target makes the upload fail and
-/// stay untouched.
+/// With `replace`, an existing target is replaced, as the C# `SftpAtomicUpload` does: only a
+/// regular file, only in one step (`posix-rename@openssh.com`), and keeping its permissions
+/// and its group; otherwise it is left as it is and the upload fails. A server without the
+/// atomic rename can still create a file that does not exist. Without `replace`, an existing
+/// target makes the upload fail and stay untouched.
 ///
 /// # Errors
 ///
-/// [`TransferError`]; the temporary file is removed whatever stopped the upload.
+/// [`TransferError`]; [`TransferError::DestinationNotAFile`] and
+/// [`TransferError::ReplaceNotSafe`] for a target left as it is. The temporary file is removed
+/// whatever stopped the upload.
 pub async fn upload(
     client: &SftpClient,
     source: &Path,
@@ -587,6 +599,18 @@ pub async fn upload(
     if !metadata.file_type().is_file() {
         return Err(TransferError::NotARegularFile);
     }
+    let replaced = if replace {
+        match client.lstat(target).await {
+            Ok(existing) if !existing.is_regular_file() => {
+                return Err(TransferError::DestinationNotAFile);
+            }
+            Ok(existing) => Some(existing),
+            Err(error) if is_missing(&error) => None,
+            Err(error) => return Err(error.into()),
+        }
+    } else {
+        None
+    };
     let file = File::open(source).await.map_err(local(source))?;
     let temp = upload_temp(target);
     let handle = client
@@ -601,9 +625,21 @@ pub async fn upload(
         .await?;
     let sent = send(client, &handle, file, source, config, cancel, &mut progress).await;
     let finished = match sent {
-        Ok(bytes) => finish(client, &handle, &temp, target, &metadata, replace, config)
-            .await
-            .map(|flushed| UploadReport { bytes, flushed }),
+        Ok(bytes) => finish(
+            client,
+            &handle,
+            &temp,
+            target,
+            &metadata,
+            if replace {
+                Commit::Replace(replaced.as_ref())
+            } else {
+                Commit::Create
+            },
+            config,
+        )
+        .await
+        .map(|flushed| UploadReport { bytes, flushed }),
         Err(error) => {
             let _ = client.close(&handle).await;
             Err(error)
@@ -679,15 +715,36 @@ async fn send(
     Ok(offset)
 }
 
+/// Whether `error` says the path does not exist.
+fn is_missing(error: &SftpError) -> bool {
+    matches!(
+        error,
+        SftpError::Status {
+            code: StatusCode::NoSuchFile,
+            ..
+        }
+    )
+}
+
+/// How an upload lands on its target.
+#[derive(Clone, Copy)]
+enum Commit<'a> {
+    /// Only where nothing is: the plain rename refuses an existing name.
+    Create,
+    /// Replacing allowed, with the file found there when there was one: the new file keeps
+    /// its permissions and group.
+    Replace(Option<&'a Attributes>),
+}
+
 /// Flushes and closes the temporary file, gives it its mode and date, and renames it over
-/// the target. Returns whether the server flushed to storage.
+/// the target as `commit` says. Returns whether the server flushed to storage.
 async fn finish(
     client: &SftpClient,
     handle: &Handle,
     temp: &RemotePath,
     target: &RemotePath,
     metadata: &std::fs::Metadata,
-    replace: bool,
+    commit: Commit<'_>,
     config: &TransferConfig,
 ) -> Result<bool, TransferError> {
     let flushed = match client.fsync(handle).await {
@@ -709,25 +766,71 @@ async fn finish(
     } else {
         None
     };
+    let existing = match commit {
+        Commit::Replace(existing) => existing,
+        Commit::Create => None,
+    };
+    // A replaced file keeps its permissions: a private file stays private. Set-user-id,
+    // set-group-id and sticky are never copied, as for any transfer.
+    let permissions = existing
+        .and_then(|existing| existing.permissions)
+        .map_or_else(|| upload_mode(metadata), |mode| mode & PLAIN_PERMISSIONS);
     client
         .setstat(
             temp,
             Attributes {
-                permissions: Some(upload_mode(metadata)),
+                permissions: Some(permissions),
                 times,
                 ..Attributes::default()
             },
         )
         .await?;
-    if replace && client.rename(temp, target, true).await.is_ok() {
+    if let Some((_, group)) = existing.and_then(|existing| existing.uid_gid) {
+        keep_group(client, temp, group).await?;
+    }
+    if matches!(commit, Commit::Create) {
+        client.rename(temp, target, false).await?;
         return Ok(flushed);
     }
-    if replace {
-        // No atomic replace on this server: remove, then rename.
-        let _ = client.remove(target).await;
+    if client.rename(temp, target, true).await.is_ok() {
+        return Ok(flushed);
     }
-    client.rename(temp, target, false).await?;
-    Ok(flushed)
+    // No atomic replace: the file is created only where nothing is, as the C# CommitRename
+    // does; an existing one is never removed first, which would lose it if the rename failed.
+    match client.lstat(target).await {
+        Ok(_) => Err(TransferError::ReplaceNotSafe),
+        Err(error) if is_missing(&error) => {
+            client.rename(temp, target, false).await?;
+            Ok(flushed)
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+/// Gives `temp` the group `group` when it has another: the group a replaced file had, so its
+/// members keep their access. Refused with [`TransferError::ReplaceNotSafe`] when the server
+/// will not.
+async fn keep_group(
+    client: &SftpClient,
+    temp: &RemotePath,
+    group: u32,
+) -> Result<(), TransferError> {
+    let Some((owner, current)) = client.lstat(temp).await?.uid_gid else {
+        return Ok(());
+    };
+    if current == group {
+        return Ok(());
+    }
+    client
+        .setstat(
+            temp,
+            Attributes {
+                uid_gid: Some((owner, group)),
+                ..Attributes::default()
+            },
+        )
+        .await
+        .map_err(|_| TransferError::ReplaceNotSafe)
 }
 
 /// The write size: the configured chunk, lowered to what the server announced.

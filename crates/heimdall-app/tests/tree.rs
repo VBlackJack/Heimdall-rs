@@ -20,7 +20,8 @@
 use std::path::Path;
 
 use heimdall_app::{
-    App, AppConfig, Dialog, Effect, Message, ProfileCopy, ProfileKind, SystemCredentials,
+    App, AppConfig, Dialog, Effect, Message, ProfileCopy, ProfileKind, ProfileSummary,
+    SystemCredentials,
 };
 use heimdall_core::profile::{
     LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile,
@@ -421,19 +422,34 @@ fn a_duplicated_rdp_profile_leaves_its_password_behind_as_in_the_csharp_app() {
 }
 
 #[test]
-fn the_search_finds_a_profile_by_name_host_folder_account_or_protocol_never_across_them() {
+fn the_search_finds_every_word_each_in_name_host_folder_account_or_protocol() {
     let dir = tempfile::tempdir().expect("dir");
     let app = app(dir.path(), &SystemCredentials::memory());
     let web = app.profile_summary(&id("ssh")).expect("web");
     for found in [
-        "", "  ", "web", "WEB", "eb.la", "prod", "admin", "ssh", " Web ",
+        "",
+        "  ",
+        "web",
+        "WEB",
+        "eb.la",
+        "prod",
+        "admin",
+        "ssh",
+        " Web ",
+        // As the C#: each word on its own, in any field, in any order.
+        "web prod",
+        "prod web",
+        "lab prod",
+        "web  admin ssh",
+        "web web",
+        // Accents folded on the search side.
+        "wéb",
+        "PRÔD",
     ] {
         assert!(web.matches(found), "{found:?} finds it");
     }
-    // "web" then the folder "Prod": only one field at a time.
-    for missed in [
-        "webprod", "web prod", "lab prod", "web web", "2222", "dc", "rdp",
-    ] {
+    // A word is never matched across two fields; every word must be found.
+    for missed in ["webprod", "web dc", "2222", "dc", "rdp", "web rdp"] {
         assert!(!web.matches(missed), "{missed:?} does not");
     }
     let dc = app.profile_summary(&id("rdp")).expect("dc");
@@ -449,4 +465,28 @@ fn the_search_finds_a_profile_by_name_host_folder_account_or_protocol_never_acro
         found.contains(&id("telnet")) && found.contains(&id("vnc")),
         "{found:?}"
     );
+}
+
+#[test]
+fn the_search_folds_the_accents_of_the_profile_too() {
+    let summary = ProfileSummary {
+        id: ProfileId::new("r"),
+        name: "Contrôleur Élysée".to_owned(),
+        group: Some("Réseau".to_owned()),
+        kind: ProfileKind::Ssh,
+        endpoint: Some(("dc.lab".to_owned(), 22)),
+        username: Some("hélène".to_owned()),
+        gateway: None,
+    };
+    for found in [
+        "reseau",
+        "RESEAU",
+        "réseau",
+        "controleur elysee",
+        "helene",
+        "Hélène reseau",
+    ] {
+        assert!(summary.matches(found), "{found:?} finds it");
+    }
+    assert!(!summary.matches("reseaux"), "folded, not loosened");
 }
