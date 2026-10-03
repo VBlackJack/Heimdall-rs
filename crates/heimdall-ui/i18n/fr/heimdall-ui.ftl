@@ -1135,3 +1135,11 @@ ui-agent-chip-off = Aucun agent SSH détecté
 ui-agent-chip-warn = Agent SSH : { $agent } (aucune clé chargée)
 ui-agent-chip-ok = Agent SSH : { $agent } ({ $count } clés)
 ui-agent-chip-tooltip = Cliquer pour rescanner les agents SSH
+ui-files-menu-cut = Couper
+ui-files-menu-paste = Coller
+ui-status-files-cut = { $count ->
+    [one] { $count } élément coupé
+   *[other] { $count } éléments coupés
+}
+ui-status-files-pasted = Collage terminé
+ui-status-path-copied = Chemin copié : { $path }

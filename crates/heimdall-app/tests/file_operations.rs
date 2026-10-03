@@ -1151,3 +1151,122 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
         ))
     ));
 }
+
+#[tokio::test]
+async fn cut_entries_are_pasted_by_a_move_into_the_folder_shown() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    assert!(files(&mut app, FilesMessage::Cut { tab }).is_empty());
+    assert!(!app.can_paste(tab), "nothing selected, nothing cut");
+    select(&mut app, tab, Side::Remote, 1);
+    assert!(files(&mut app, FilesMessage::Cut { tab }).is_empty());
+    assert_eq!(app.notice(), Some(&Notice::FilesCut(1)));
+    assert!(app.can_paste(tab));
+
+    // Pasted where it is already: nothing moves, and the paste is done.
+    assert!(files(&mut app, FilesMessage::Paste { tab }).is_empty());
+    assert_eq!(app.notice(), Some(&Notice::FilesPasted));
+    assert!(!app.can_paste(tab));
+
+    select(&mut app, tab, Side::Remote, 1);
+    files(&mut app, FilesMessage::Cut { tab });
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv/logs"), Vec::new())),
+        },
+    );
+    let effects = files(&mut app, FilesMessage::Paste { tab });
+    let moves = match effects.as_slice() {
+        [Effect::MoveRemote { moves, .. }] => moves.clone(),
+        other => panic!("expected a move, got {other:?}"),
+    };
+    assert_eq!(
+        moves,
+        vec![(
+            RemotePath::from("/srv/a.txt"),
+            RemotePath::from("/srv/logs/a.txt")
+        )]
+    );
+
+    // A failure keeps the entry to paste again, and says why on the server's pane.
+    let failed = files(
+        &mut app,
+        FilesMessage::Moved {
+            tab,
+            results: vec![(RemotePath::from("/srv/a.txt"), Err(FilesError::IsLink))],
+        },
+    );
+    assert!(matches!(failed.as_slice(), [Effect::ListRemote { .. }]));
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::IsLink)
+    );
+    assert!(app.can_paste(tab));
+
+    let done = files(
+        &mut app,
+        FilesMessage::Moved {
+            tab,
+            results: vec![(RemotePath::from("/srv/a.txt"), Ok(()))],
+        },
+    );
+    assert!(matches!(done.as_slice(), [Effect::ListRemote { .. }]));
+    assert_eq!(app.notice(), Some(&Notice::FilesPasted));
+    assert!(!app.can_paste(tab), "everything cut was moved");
+}
+
+#[tokio::test]
+async fn ctrl_c_copies_the_path_of_the_focused_panes_entry() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    assert!(
+        key(&mut app, tab, FilesKey::CopyPath).is_empty(),
+        "nothing selected"
+    );
+    select(&mut app, tab, Side::Remote, 1);
+    let effects = key(&mut app, tab, FilesKey::CopyPath);
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == "/srv/a.txt"),
+        "{effects:?}"
+    );
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn a_move_goes_on_past_one_that_fails_and_never_replaces() {
+    use heimdall_app::files::move_remote;
+
+    let Some((_server, client)) = common::start().await else {
+        return;
+    };
+    let client = RemoteSession::Sftp(client);
+    let dir = tempfile::tempdir().expect("dir");
+    let into = dir.path().join("into");
+    std::fs::create_dir(&into).expect("folder");
+    std::fs::write(dir.path().join("one"), b"one").expect("one");
+    std::fs::write(dir.path().join("two"), b"two").expect("two");
+    std::fs::write(into.join("one"), b"keep").expect("taken");
+    let results = common::step(move_remote(
+        client,
+        vec![
+            (
+                common::remote(&dir.path().join("one")),
+                common::remote(&into.join("one")),
+            ),
+            (
+                common::remote(&dir.path().join("two")),
+                common::remote(&into.join("two")),
+            ),
+        ],
+    ))
+    .await;
+    assert!(results[0].1.is_err(), "a move never replaces");
+    assert!(results[1].1.is_ok());
+    assert_eq!(std::fs::read(into.join("one")).expect("kept"), b"keep");
+    assert_eq!(std::fs::read(into.join("two")).expect("moved"), b"two");
+    assert!(!dir.path().join("two").exists());
+}
