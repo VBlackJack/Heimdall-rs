@@ -156,10 +156,29 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
-    /// Move the entries cut into the server's folder shown, as the C# "Paste".
+    /// Hold the server's selected entries to be copied when pasted, as the C# "Copy".
+    Copy {
+        /// Tab.
+        tab: TabId,
+    },
+    /// Move or copy the entries held into the server's folder shown, as the C# "Paste".
     Paste {
         /// Tab.
         tab: TabId,
+    },
+    /// Copy the server's selected entries into their own folder, as the C# "Duplicate".
+    Duplicate {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The copies of a paste or a duplicate ended.
+    Copied {
+        /// Tab.
+        tab: TabId,
+        /// Each entry, by its path, and the copy made of it, or why not.
+        results: Vec<(RemotePath, Result<RemotePath, FilesError>)>,
+        /// A duplicate, rather than a paste.
+        duplicate: bool,
     },
     /// The moves of a paste ended.
     Moved {
@@ -352,6 +371,11 @@ impl std::fmt::Debug for FilesMessage {
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Cut { tab } => write!(f, "Cut({})", tab.value()),
             Self::Paste { tab } => write!(f, "Paste({})", tab.value()),
+            Self::Copy { tab } => write!(f, "Copy({})", tab.value()),
+            Self::Duplicate { tab } => write!(f, "Duplicate({})", tab.value()),
+            Self::Copied { tab, results, .. } => {
+                write!(f, "Copied({}, {})", tab.value(), results.len())
+            }
             Self::Moved { tab, results } => write!(f, "Moved({}, {})", tab.value(), results.len()),
             Self::Bookmark { tab } => write!(f, "Bookmark({})", tab.value()),
             Self::Dropped { tab, .. } => write!(f, "Dropped({}, ..)", tab.value()),
@@ -613,9 +637,16 @@ impl App {
             FilesMessage::Back { tab, side } => self.go_back(tab, side),
             FilesMessage::Home { tab, side } => self.go_home(tab, side),
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
-            FilesMessage::Cut { tab } => self.cut_entries(tab),
-            FilesMessage::Paste { tab } => self.paste_cut(tab),
-            FilesMessage::Moved { tab, results } => self.moved_cut(tab, results),
+            FilesMessage::Cut { tab } => self.hold_entries(tab, super::ClipMode::Cut),
+            FilesMessage::Copy { tab } => self.hold_entries(tab, super::ClipMode::Copy),
+            FilesMessage::Paste { tab } => self.paste_held(tab),
+            FilesMessage::Duplicate { tab } => self.duplicate(tab),
+            FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
+            FilesMessage::Copied {
+                tab,
+                results,
+                duplicate,
+            } => self.copied(tab, results, duplicate),
             message @ (FilesMessage::PathEdited { .. }
             | FilesMessage::GoTo { .. }
             | FilesMessage::SortBy { .. }

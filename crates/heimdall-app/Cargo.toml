@@ -43,6 +43,8 @@ libunftp.workspace = true
 rcgen = { workspace = true, features = ["pem"] }
 # The exported document read back as JSON.
 serde_json.workspace = true
+# The in-process SSH server of the heimdall-ssh tests, run here for the server-side copy.
+russh.workspace = true
 tempfile.workspace = true
 # macros, rt: async tests; process: the reference sftp-server.
 tokio = { workspace = true, features = ["macros", "process", "rt-multi-thread"] }

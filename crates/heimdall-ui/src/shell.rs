@@ -25,8 +25,8 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    FilesKey, Side, file_operation, list_local, list_remote, move_remote, plan_transfer,
-    transfer_events,
+    FilesKey, Side, copy_remote, file_operation, list_local, list_remote, move_remote,
+    plan_transfer, transfer_events,
 };
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
@@ -1760,7 +1760,8 @@ impl Shell {
             | Effect::PlanTransfer { .. }
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }
-            | Effect::MoveRemote { .. }) => files_task(effect),
+            | Effect::MoveRemote { .. }
+            | Effect::CopyRemote { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
@@ -1969,7 +1970,13 @@ impl Shell {
             if index >= listed {
                 return None;
             }
-            tree_view::files_entry_menu(tab, side, index, self.app.can_paste(tab))
+            tree_view::files_entry_menu(
+                tab,
+                side,
+                index,
+                self.app.can_paste(tab),
+                self.app.can_copy(tab),
+            )
         } else if let TreeMenu::Folder(path) = menu {
             tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
         } else if let TreeMenu::MoveFolder(path) = menu {
@@ -5450,6 +5457,24 @@ fn files_task(effect: Effect) -> Task<Message> {
                 Message::App(AppMessage::Files(FilesMessage::Moved { tab, results }))
             })
         }
+        Effect::CopyRemote {
+            tab,
+            client,
+            shell,
+            sources,
+            folder,
+            cancel,
+            duplicate,
+        } => Task::perform(
+            copy_remote(client, Some(shell), sources, folder, cancel),
+            move |results| {
+                Message::App(AppMessage::Files(FilesMessage::Copied {
+                    tab,
+                    results,
+                    duplicate,
+                }))
+            },
+        ),
         _ => Task::none(),
     }
 }

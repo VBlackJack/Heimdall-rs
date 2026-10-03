@@ -649,6 +649,14 @@ pub enum FilesError {
     Exists,
     /// The permissions typed are not an octal mode, 755 or 4755.
     InvalidPermissions,
+    /// The server did not carry out a server-side copy: it runs no POSIX shell with GNU
+    /// tools for this account, or the copy failed there. Nothing is copied any other way.
+    CopyRefused,
+    /// A folder pasted into itself or one of its own folders.
+    PasteIntoItself {
+        /// The folder's name, made safe.
+        name: String,
+    },
 }
 
 impl From<&RemoteError> for FilesError {
@@ -692,6 +700,8 @@ pub struct FilesPane {
     /// The server's folders bookmarked in this tab, in the order they were, as the C#
     /// Files tab keeps them: for the session.
     pub bookmarks: Vec<RemotePath>,
+    /// What stops the server-side copy running, while one runs: one at a time.
+    pub copying: Option<CancellationToken>,
 }
 
 impl FilesPane {
@@ -706,6 +716,7 @@ impl FilesPane {
             transfers: Vec::new(),
             focus: Side::Local,
             bookmarks: Vec::new(),
+            copying: None,
         }
     }
 
@@ -722,6 +733,9 @@ impl FilesPane {
     pub(crate) fn stop(&mut self) {
         for transfer in &self.transfers {
             transfer.cancel.cancel();
+        }
+        if let Some(copying) = self.copying.take() {
+            copying.cancel();
         }
         self.client = None;
         self.shell = None;
@@ -1162,6 +1176,121 @@ pub async fn move_remote(
         results.push((from, result));
     }
     results
+}
+
+/// An entry of the server to copy on the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CopySource {
+    /// Its full path.
+    pub path: RemotePath,
+    /// A folder, copied whole; otherwise a regular file.
+    pub folder: bool,
+}
+
+/// Longest one server-side copy may run, as the C# allows.
+pub const COPY_TIMEOUT: Duration = Duration::from_mins(10);
+
+/// What a copy script is given to: a POSIX shell reading it on its input, whatever the
+/// account's login shell.
+const COPY_SHELL: &str = "sh -s";
+
+/// Copies each of `sources` into `folder` on the server itself, one after another, under
+/// its own name or, taken, its first free copy name ("a (copy).txt"); the first failure
+/// stops the rest, as the C# does. Each result names the copy made.
+pub async fn copy_remote(
+    client: RemoteSession,
+    shell: Option<heimdall_ssh::Connection>,
+    sources: Vec<CopySource>,
+    folder: RemotePath,
+    cancel: CancellationToken,
+) -> Vec<(RemotePath, Result<RemotePath, FilesError>)> {
+    let mut results = Vec::with_capacity(sources.len());
+    for source in sources {
+        let result = copy_one(&client, shell.as_ref(), &source, &folder, &cancel).await;
+        let failed = result.is_err();
+        results.push((source.path, result));
+        if failed {
+            break;
+        }
+    }
+    results
+}
+
+async fn copy_one(
+    client: &RemoteSession,
+    shell: Option<&heimdall_ssh::Connection>,
+    source: &CopySource,
+    folder: &RemotePath,
+    cancel: &CancellationToken,
+) -> Result<RemotePath, FilesError> {
+    use heimdall_files::server_copy::{CopyKind, copy_script, is_same_or_inside, random_token};
+
+    let shell = shell.ok_or(FilesError::CopyRefused)?;
+    let name = source.path.file_name().ok_or(FilesError::NotAFile)?;
+    if source.folder && is_same_or_inside(source.path.as_bytes(), folder.as_bytes()) {
+        return Err(FilesError::PasteIntoItself {
+            name: server_text(&display_bytes(name)),
+        });
+    }
+    let listed = |items: Vec<RemoteItem>| -> Vec<(Vec<u8>, ItemKind)> {
+        items
+            .into_iter()
+            .map(|item| (item.name, item.kind))
+            .collect()
+    };
+    let taken = listed(
+        client
+            .list(folder)
+            .await
+            .map_err(|e| FilesError::from(&e))?,
+    );
+    let is_taken = |name: &[u8]| taken.iter().any(|(found, _)| found == name);
+    let free = if is_taken(name) {
+        heimdall_files::conflict::copy_names(name)
+            .find(|candidate| !is_taken(candidate))
+            .ok_or(FilesError::Exists)?
+    } else {
+        name.to_vec()
+    };
+    let destination = folder.join(&free);
+    let (kind, expected) = if source.folder {
+        (CopyKind::Folder, ItemKind::Directory)
+    } else {
+        (CopyKind::File, ItemKind::File)
+    };
+    let marker = random_token().ok_or(FilesError::CopyRefused)?;
+    let script = copy_script(source.path.as_bytes(), destination.as_bytes(), kind, marker)
+        .map_err(|_| FilesError::InvalidName)?;
+    let ended = shell
+        .run_command(COPY_SHELL, &script.script, COPY_TIMEOUT, cancel.clone())
+        .await
+        .map_err(|error| match error {
+            heimdall_ssh::ConnectError::CommandRefused | heimdall_ssh::ConnectError::Timeout => {
+                FilesError::CopyRefused
+            }
+            _ => FilesError::SessionClosed,
+        })?;
+    if ended.status != Some(0) || ended.stdout != script.done {
+        log::warn!(
+            "server-side copy refused: status {:?}, {}",
+            ended.status,
+            String::from_utf8_lossy(&ended.stderr).trim()
+        );
+        return Err(FilesError::CopyRefused);
+    }
+    // The script's word is checked against the server's listing: the copy is there, and is
+    // what it should be.
+    let listed = listed(
+        client
+            .list(folder)
+            .await
+            .map_err(|e| FilesError::from(&e))?,
+    );
+    if listed.contains(&(free, expected)) {
+        Ok(destination)
+    } else {
+        Err(FilesError::CopyRefused)
+    }
 }
 
 /// A name typed for a new or renamed entry, checked for `side`.
