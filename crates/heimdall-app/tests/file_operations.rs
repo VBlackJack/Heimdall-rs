@@ -1508,3 +1508,68 @@ async fn a_refused_save_is_said_on_the_pane_and_the_editor_reopens_without_a_new
         );
     }
 }
+
+#[tokio::test]
+async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
+    use heimdall_app::Purpose;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let typed = |effects: &[Effect]| match effects {
+        [Effect::Connect { request, .. }] => {
+            assert_eq!(request.purpose, Purpose::Shell);
+            request
+                .profile
+                .post_connect
+                .to_run()
+                .into_iter()
+                .map(|step| step.input)
+                .collect::<Vec<_>>()
+        }
+        other => panic!("expected a shell, got {other:?}"),
+    };
+    let open = |app: &mut App| files(app, FilesMessage::OpenInTerminal { tab });
+
+    assert_eq!(typed(&open(&mut app)), ["cd -- '/srv'"], "the folder shown");
+    assert_eq!(
+        app.active,
+        app.tabs.last().map(|t| t.id),
+        "the shell is shown"
+    );
+    select(&mut app, tab, Side::Remote, 0);
+    assert_eq!(
+        typed(&open(&mut app)),
+        ["cd -- '/srv/logs'"],
+        "the folder selected"
+    );
+    select(&mut app, tab, Side::Remote, 1);
+    assert_eq!(
+        typed(&open(&mut app)),
+        ["cd -- '/srv'"],
+        "a file: its folder"
+    );
+
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv/it's"), Vec::new())),
+        },
+    );
+    assert_eq!(
+        typed(&open(&mut app)),
+        [r"cd -- '/srv/it'\''s'"],
+        "quoted for sh"
+    );
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv/a\nrm -rf ~"), Vec::new())),
+        },
+    );
+    assert!(
+        open(&mut app).is_empty(),
+        "a line a shell cannot carry as it is"
+    );
+}
