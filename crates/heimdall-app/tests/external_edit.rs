@@ -191,7 +191,7 @@ async fn a_save_is_sent_once_it_holds_still_and_never_over_a_change_on_the_serve
         "the user's only"
     );
     let look = async |session: &mut heimdall_app::external_edit::EditSession| {
-        let check = sftp::step(check_edit(&client, session)).await;
+        let check = sftp::step(check_edit(&client, session, None)).await;
         session.apply(&check);
         check
     };

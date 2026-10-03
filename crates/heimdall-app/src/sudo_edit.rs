@@ -29,8 +29,33 @@ use heimdall_files::server_copy::random_token;
 use heimdall_ssh::{CommandEnd, ConnectError, Connection};
 use tokio_util::sync::CancellationToken;
 
-use crate::external_edit::{EDIT_SIZE_LIMIT, hash};
-use crate::files::FilesError;
+use crate::external_edit::{EDIT_SIZE_LIMIT, EditCheck, EditSession, Editor, hash, open_copy};
+use crate::files::{FilesError, download_name};
+
+/// The password sudo asked for, kept for a tab while it is open: never shown, never
+/// logged, its bytes wiped when dropped.
+#[derive(Clone)]
+pub struct SudoPassword(zeroize::Zeroizing<Vec<u8>>);
+
+impl SudoPassword {
+    /// The password typed.
+    #[must_use]
+    pub fn new(typed: &str) -> Self {
+        Self(zeroize::Zeroizing::new(typed.as_bytes().to_vec()))
+    }
+
+    /// Its bytes, for the script.
+    #[must_use]
+    pub fn bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SudoPassword {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("SudoPassword(..)")
+    }
+}
 
 /// What a sudo script is given to: a POSIX shell reading it on its input.
 const SHELL: &str = "sh -s";
@@ -155,5 +180,102 @@ fn connection_error(error: &ConnectError) -> FilesError {
     match error {
         ConnectError::CommandRefused | ConnectError::Timeout => FilesError::SudoFailed,
         _ => FilesError::SessionClosed,
+    }
+}
+
+/// Opens the server's `remote` file through sudo, as "Edit with sudo": read with sudo,
+/// copied into a folder of the user's own and opened in `editor`; a privileged edit, each
+/// save sent with sudo.
+///
+/// # Errors
+///
+/// As [`sudo_read`], and as the copy of [`crate::external_edit::start_edit`].
+pub async fn start_sudo_edit(
+    shell: Connection,
+    remote: RemotePath,
+    editor: Editor,
+    folders: (std::path::PathBuf, Vec<std::path::PathBuf>),
+    password: Option<SudoPassword>,
+) -> Result<EditSession, FilesError> {
+    let file_name = remote.file_name().ok_or(FilesError::NotAFile)?.to_vec();
+    let local_name = download_name(&file_name)?;
+    let (data, sent) = sudo_read(
+        &shell,
+        &remote,
+        password.as_ref().map(SudoPassword::bytes),
+        Sudo::System,
+    )
+    .await?;
+    let (local, seen) = open_copy(local_name, data, editor, folders).await?;
+    Ok(EditSession {
+        name: crate::text::server_text(&heimdall_files::display_bytes(&file_name)),
+        remote,
+        local,
+        sent,
+        // Not read: a privileged edit is checked by its content, with sudo.
+        fingerprint: heimdall_files::Fingerprint {
+            size: None,
+            modified: None,
+            permissions: None,
+            uid_gid: None,
+        },
+        seen,
+        candidate: None,
+        refused: None,
+        privileged: true,
+    })
+}
+
+/// Sends `session`'s local copy through sudo, as "Save with sudo" asks the first time:
+/// read now, then [`send_with_sudo`].
+pub async fn save_with_sudo(
+    shell: &Connection,
+    session: &EditSession,
+    password: Option<&SudoPassword>,
+) -> EditCheck {
+    let local = async {
+        let modified = tokio::fs::metadata(&session.local).await?.modified()?;
+        let data = tokio::fs::read(&session.local).await?;
+        Ok::<_, std::io::Error>((modified, data))
+    };
+    match local.await {
+        Ok((modified, data)) => send_with_sudo(shell, session, password, (modified, &data)).await,
+        Err(error) => EditCheck::Failed(FilesError::Local {
+            detail: error.to_string(),
+        }),
+    }
+}
+
+/// Sends `data`, `session`'s save of `modified`, through sudo, only over the content the
+/// server has from us.
+pub(crate) async fn send_with_sudo(
+    shell: &Connection,
+    session: &EditSession,
+    password: Option<&SudoPassword>,
+    (modified, data): (std::time::SystemTime, &[u8]),
+) -> EditCheck {
+    if data.len() as u64 > EDIT_SIZE_LIMIT {
+        return EditCheck::Refused {
+            modified,
+            error: FilesError::FileTooLarge,
+        };
+    }
+    match sudo_replace(
+        shell,
+        &session.remote,
+        data,
+        &session.sent,
+        password.map(SudoPassword::bytes),
+        Sudo::System,
+    )
+    .await
+    {
+        Ok(()) => EditCheck::Sent {
+            modified,
+            sent: hash(data),
+            fingerprint: session.fingerprint,
+        },
+        Err(FilesError::SessionClosed) => EditCheck::Failed(FilesError::SessionClosed),
+        Err(error) => EditCheck::Refused { modified, error },
     }
 }

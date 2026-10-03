@@ -736,6 +736,9 @@ pub struct FilesPane {
     pub edits: Vec<crate::external_edit::EditSession>,
     /// A look at the files being edited runs: one at a time.
     pub checking_edits: bool,
+    /// The password sudo took for this tab, kept until the tab's session ends or sudo
+    /// refuses it, as the user chose; never shown, wiped when dropped.
+    pub sudo_password: Option<crate::sudo_edit::SudoPassword>,
 }
 
 impl FilesPane {
@@ -753,6 +756,7 @@ impl FilesPane {
             copying: None,
             edits: Vec::new(),
             checking_edits: false,
+            sudo_password: None,
         }
     }
 
@@ -775,6 +779,7 @@ impl FilesPane {
         }
         self.client = None;
         self.shell = None;
+        self.sudo_password = None;
     }
 
     /// Transfers still running.

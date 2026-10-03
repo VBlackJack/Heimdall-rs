@@ -121,6 +121,8 @@ pub enum Notice {
     FilesEditing(String),
     /// A save of a file being edited was sent.
     FilesAutoUploaded(String),
+    /// A save of a file being edited was sent with sudo.
+    FilesSavedWithSudo(String),
     /// A save of a file being edited was not sent, and is not tried again until saved
     /// again.
     FilesAutoUploadRefused {
