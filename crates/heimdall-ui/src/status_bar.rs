@@ -58,6 +58,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-broadcast-on", scope = scope_label(*scope, targets))
             }
             Notice::BroadcastOff => fl!("ui-broadcast-off"),
+            Notice::ResolutionInvalid => fl!("ui-resolution-custom-invalid"),
+            Notice::ResolutionSaved => fl!("ui-resolution-save-default-done"),
+            Notice::ResolutionSaveUnavailable => fl!("ui-resolution-save-default-unavailable"),
             Notice::ReachabilityTesting { host, port } => fl!(
                 "ui-status-reachability-testing",
                 host = server_text(host),

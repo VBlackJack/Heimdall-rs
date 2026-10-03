@@ -1161,6 +1161,22 @@ ui-status-reachability-testing = Test de { $host }:{ $port } ...
 ui-status-reachability-success = { $host }:{ $port } accessible en { $millis } ms
 ui-status-reachability-failed = { $host }:{ $port } inaccessible : { $reason }
 
+## An RDP tab's "Resolution" menu, as the C# one.
+ui-resolution-menu = Résolution
+ui-resolution-active-mode = Mode actif
+ui-resolution-header = { $label } : { $mode }
+ui-resolution-header-size = { $label } : { $mode } ({ $width }x{ $height })
+ui-resolution-mode-fit-window = Adapter à la fenêtre
+ui-resolution-mode-fixed = Fixe
+ui-resolution-match-window = Adapter à la fenêtre
+ui-resolution-custom = Personnalisé...
+ui-resolution-custom-title = Résolution personnalisée
+ui-resolution-custom-prompt = Saisissez la résolution au format LARGEURxHAUTEUR.
+ui-resolution-custom-invalid = Résolution invalide. Utilisez LARGEURxHAUTEUR.
+ui-resolution-save-default = Enregistrer comme défaut pour ce serveur
+ui-resolution-save-default-done = Résolution RDP par défaut enregistrée pour ce serveur.
+ui-resolution-save-default-unavailable = Impossible d'enregistrer une résolution par défaut pour cette session.
+
 ## The SSH agent chip of the profile form, as the C# one.
 ui-agent-chip-off = Aucun agent SSH détecté
 ui-agent-chip-warn = Agent SSH : { $agent } (aucune clé chargée)

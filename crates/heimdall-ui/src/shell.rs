@@ -702,7 +702,7 @@ pub struct Shell {
     /// search bar's, just opened.
     focus_next: Option<iced::widget::Id>,
     /// Desktops shown otherwise than their protocol's default: fitted or matched.
-    desktop_fit: HashMap<TabId, bool>,
+    desktop_fit: HashMap<TabId, (bool, Option<(u16, u16)>)>,
     /// What the tree's search holds: the profiles it finds are shown.
     search: String,
 }
@@ -1040,7 +1040,13 @@ impl Shell {
     fn view_message(&mut self, message: &Message) -> Task<Message> {
         match message {
             Message::DesktopFit { tab, fit } => {
-                self.desktop_fit.insert(*tab, *fit);
+                // Kept for the size the desktop has now: another chosen later makes it stale.
+                let fixed = self
+                    .app
+                    .tab(*tab)
+                    .and_then(|found| found.desktop.as_deref())
+                    .and_then(DesktopPane::fixed_size);
+                self.desktop_fit.insert(*tab, (*fit, fixed));
                 Task::none()
             }
             Message::WindowOpened(id) => window::scale_factor(*id).map(Message::Rescaled),
@@ -1564,6 +1570,7 @@ impl Shell {
             Some(
                 Dialog::AskName { .. }
                 | Dialog::RenameTab { .. }
+                | Dialog::CustomResolution { .. }
                 | Dialog::FolderName { .. }
                 | Dialog::RenameProfile { .. },
             ) => (Some(DialogFocus::Name), name_field_id()),
@@ -1936,6 +1943,15 @@ impl Shell {
             // Only while the tunnel is open.
             self.app.tunnel(id)?;
             tree_view::tunnel_menu_entries(id)
+        } else if let TreeMenu::Resolution(tab) = *menu {
+            // Only while its desktop is shown.
+            let found = self.app.tab(tab)?;
+            let pane = found.desktop.as_deref()?;
+            tree_view::resolution_entries(&tree_view::ResolutionMenuState {
+                tab,
+                fixed: pane.fixed_size(),
+                saved: self.app.tab_profile(found).is_some(),
+            })
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
             // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
@@ -1978,6 +1994,7 @@ impl Shell {
                 | TreeMenu::MoveSelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
+                | TreeMenu::Resolution(_)
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -3029,6 +3046,7 @@ impl Shell {
             profile,
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
+            resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -3323,10 +3341,19 @@ impl Shell {
     /// The remote desktop of a connected tab.
     /// Whether `tab`'s desktop is fitted to the tab: as chosen, else as its profile asks.
     fn fits(&self, tab: &Tab) -> bool {
-        self.desktop_fit
-            .get(&tab.id)
-            .copied()
-            .unwrap_or_else(|| fits_by_default(&tab.profile))
+        let pane = tab.desktop.as_deref();
+        let fixed = pane.and_then(DesktopPane::fixed_size);
+        match self.desktop_fit.get(&tab.id) {
+            Some((fit, made_for)) if *made_for == fixed => *fit,
+            // A size chosen larger than the tab is scaled to fit, as the C# turns smart
+            // sizing on then only.
+            _ => match (fixed, pane.and_then(DesktopPane::tab_size)) {
+                (Some((width, height)), Some((shown_width, shown_height))) => {
+                    width > shown_width || height > shown_height
+                }
+                _ => fits_by_default(&tab.profile),
+            },
+        }
     }
 
     /// A remote desktop under its bar, as the C# session's: the keys this computer keeps for
@@ -5132,6 +5159,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::CustomResolution { value, .. } => return custom_resolution_dialog(value),
         Dialog::ConfirmPaste {
             command: Some(command),
             ..
@@ -5216,6 +5244,30 @@ fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
 
 /// A name for a tab, as the C# "Rename Tab" asks it: the present one written in, an empty
 /// one giving the tab its own title back.
+/// The C# "Custom resolution" of an RDP tab: the size typed as `WIDTHxHEIGHT`.
+fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
+    column![
+        text(fl!("ui-resolution-custom-title")).size(HEADING_SIZE),
+        text(fl!("ui-resolution-custom-prompt")),
+        text_input("", value)
+            .id(name_field_id())
+            .on_input(|value| {
+                Message::App(AppMessage::TabMenu(TabMenuMessage::ResolutionEdited(value)))
+            })
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-ok-button")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
 fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
     column![
         text(fl!("ui-dialog-rename-tab-title")).size(HEADING_SIZE),
@@ -5783,6 +5835,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
+        | Dialog::CustomResolution { .. }
         | Dialog::ConfirmPaste { .. } => tab_dialog(dialog),
         Dialog::FolderName { .. }
         | Dialog::ConfirmDeleteFolder { .. }
