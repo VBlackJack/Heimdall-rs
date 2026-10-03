@@ -1277,3 +1277,7 @@ ui-files-error-paste-into-itself = Cannot paste { $name } into itself or its own
 ui-error-key-not-absolute = SSH key path must be absolute: { $path }
 ui-files-error-changed-on-server = The file changed on the server since it was opened: it was left as it is.
 ui-files-error-file-too-large = Files larger than 16 MiB must be downloaded instead.
+ui-resolution-mode-smart-sizing = Smart sizing
+ui-resolution-tooltip = Change resolution - { $mode }
+ui-resolution-tooltip-size = Change resolution - { $mode } ({ $width }x{ $height })
+ui-resolution-larger-than-window = Larger than window - image will be scaled.
