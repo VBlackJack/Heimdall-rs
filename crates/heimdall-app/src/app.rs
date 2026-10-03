@@ -1252,6 +1252,21 @@ impl Tab {
         self.custom_title.as_deref().unwrap_or(&self.title)
     }
 
+    /// The resolution mode an RDP tab's desktop is in, as its "Resolution" menu names it:
+    /// a size chosen for the session, else its profile's mode.
+    #[must_use]
+    pub fn resolution_mode(&self) -> Option<heimdall_core::profile::Resolution> {
+        use heimdall_core::profile::{DesktopSizing, Resolution};
+        let TabProfile::Rdp(profile) = &self.profile else {
+            return None;
+        };
+        Some(match self.desktop_sizing {
+            Some(DesktopSizing::Fixed { .. }) => Resolution::Fixed,
+            Some(DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce) => Resolution::FitWindow,
+            None => profile.options.resolution,
+        })
+    }
+
     /// Whether a live session would be lost by closing the tab. An attempt still
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]

@@ -110,6 +110,8 @@ pub enum Notice {
     /// The desktop was connected again at the size asked, the server unable to take it
     /// live.
     ResolutionReconnected,
+    /// The size chosen is larger than the tab: the desktop is shown scaled.
+    ResolutionScaled,
     /// The entries cut or copied were pasted.
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.

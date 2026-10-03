@@ -116,6 +116,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             }
             Notice::WinRmGatewayNtlm => fl!("ui-status-winrm-gateway-ntlm"),
             Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
+            Notice::ResolutionScaled => fl!("ui-resolution-larger-than-window"),
             Notice::WinRmCertificateSkipped => fl!("ui-status-winrm-certificate-skipped"),
             Notice::BroadcastScope(scope) => {
                 fl!(
