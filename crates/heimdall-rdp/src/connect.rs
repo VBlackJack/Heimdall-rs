@@ -55,7 +55,7 @@ use ironrdp::rdpsnd::client::{NoopRdpsndBackend, Rdpsnd, RdpsndClientHandler};
 use tokio::sync::mpsc;
 
 use crate::certificate::{Fingerprint, ServerCertificate};
-use crate::clipboard::{Offered, Request, TextBackend};
+use crate::clipboard::{ClipboardBackend, Offered, Request};
 use crate::drives::{DriveBackend, SharedDrive};
 use crate::known_hosts::{KnownRdpHosts, Verdict};
 use crate::reason::{self, Ending, Refusal};
@@ -437,7 +437,7 @@ pub async fn connect_over(
     let clipboard = config.clipboard.then(|| {
         let (requests, received) = mpsc::unbounded_channel();
         let offered = Offered::default();
-        connector.attach_static_channel(CliprdrClient::new(Box::new(TextBackend::new(
+        connector.attach_static_channel(CliprdrClient::new(Box::new(ClipboardBackend::new(
             requests,
             offered.clone(),
         ))));

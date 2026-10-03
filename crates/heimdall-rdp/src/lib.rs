@@ -23,6 +23,7 @@
 pub mod audio;
 pub mod certificate;
 mod clipboard;
+mod clipboard_files;
 pub mod connect;
 pub mod drives;
 mod frames;
@@ -35,6 +36,7 @@ mod tls;
 
 pub use certificate::{Fingerprint, ServerCertificate};
 pub use clipboard::MAX_REMOTE_TEXT_BYTES;
+pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
 pub use connect::{
     AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, RdpConfig, RdpConnection,
     RdpError, Security, Timeouts, Transport, connect, connect_over, connect_through,
@@ -43,5 +45,5 @@ pub use connect::{
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
 pub use known_hosts::{KnownRdpHost, KnownRdpHosts, Verdict};
 pub use reason::{Ending, Refusal};
-pub use session::{CloseReason, Framebuffer, RdpEvent, RdpSession};
+pub use session::{CloseReason, Framebuffer, LocalClipboard, RdpEvent, RdpSession};
 pub use time_zone::{TimeZone, Transition};

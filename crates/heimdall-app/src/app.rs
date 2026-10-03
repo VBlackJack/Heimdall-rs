@@ -390,6 +390,13 @@ pub enum Message {
         /// Text, if the clipboard held any.
         text: Option<String>,
     },
+    /// The files copied in Explorer arrived for the desktop of `tab`.
+    ClipboardFiles {
+        /// Tab whose desktop shares the clipboard.
+        tab: TabId,
+        /// The files and folders copied.
+        paths: Vec<PathBuf>,
+    },
     /// A synchronized update may have reached its deadline.
     SyncDeadline {
         /// Tab.
@@ -678,6 +685,9 @@ impl fmt::Debug for Message {
             Self::Copy(tab) => write!(f, "Copy({})", tab.value()),
             Self::PasteRequest(tab) => write!(f, "PasteRequest({})", tab.value()),
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
+            Self::ClipboardFiles { tab, paths } => {
+                write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
+            }
             Self::SyncDeadline { tab, generation } => {
                 write!(f, "SyncDeadline({}, {generation})", tab.value())
             }
@@ -903,6 +913,13 @@ pub enum Effect {
     /// Read the clipboard, then send [`Message::ClipboardText`] for `tab`.
     ReadClipboard {
         /// Tab the paste is for.
+        tab: TabId,
+    },
+    /// Read the clipboard for the desktop of `tab`, which shares it: the files copied in
+    /// Explorer, sent as [`Message::ClipboardFiles`], or else its text, sent as
+    /// [`Message::ClipboardText`].
+    ReadDesktopClipboard {
+        /// Tab.
         tab: TabId,
     },
     /// At `deadline`, send [`Message::SyncDeadline`].
@@ -1154,6 +1171,9 @@ impl fmt::Debug for Effect {
             Self::PickKnownHosts => f.write_str("PickKnownHosts"),
             Self::ReadRdpFiles(paths) => write!(f, "ReadRdpFiles({})", paths.len()),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
+            Self::ReadDesktopClipboard { tab } => {
+                write!(f, "ReadDesktopClipboard({})", tab.value())
+            }
             Self::WakeAt {
                 tab, generation, ..
             } => write!(f, "WakeAt({}, {generation})", tab.value()),
@@ -1219,7 +1239,7 @@ fn clipboard_offer(tab: &Tab) -> Vec<Effect> {
         .as_deref()
         .is_some_and(DesktopPane::shares_clipboard)
     {
-        vec![Effect::ReadClipboard { tab: tab.id }]
+        vec![Effect::ReadDesktopClipboard { tab: tab.id }]
     } else {
         Vec::new()
     }
@@ -2177,7 +2197,8 @@ impl App {
             | Message::Copy(_)
             | Message::PasteRequest(_)
             | Message::SendClipboard(_)
-            | Message::ClipboardText { .. }) => self.clipboard_message(message),
+            | Message::ClipboardText { .. }
+            | Message::ClipboardFiles { .. }) => self.clipboard_message(message),
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
@@ -2534,6 +2555,7 @@ impl App {
             ConnectionEvent::RemoteClipboard(text) => {
                 vec![Effect::WriteClipboard(String::clone(&text))]
             }
+            ConnectionEvent::RdpFilesRefused(refusal) => self.files_refused(refusal),
             event @ ConnectionEvent::VncReady { .. } => {
                 vnc_tab::apply(tab, event);
                 Vec::new()
@@ -2821,10 +2843,26 @@ impl App {
                 .tab(tab)
                 .and_then(|found| found.desktop.as_deref())
                 .filter(|pane| pane.accepts_clipboard())
-                .map(|_| Effect::ReadClipboard { tab })
+                .map(|pane| {
+                    if pane.shares_clipboard() {
+                        Effect::ReadDesktopClipboard { tab }
+                    } else {
+                        Effect::ReadClipboard { tab }
+                    }
+                })
                 .into_iter()
                 .collect(),
             Message::ClipboardText { tab, text } => self.clipboard_text(tab, text),
+            Message::ClipboardFiles { tab, paths } => {
+                if let Some(pane) = self
+                    .tab(tab)
+                    .and_then(|found| found.desktop.as_deref())
+                    .filter(|pane| pane.shares_clipboard())
+                {
+                    pane.offer_files(paths);
+                }
+                Vec::new()
+            }
             message => self.history_message(message),
         }
     }

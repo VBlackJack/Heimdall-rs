@@ -25,7 +25,7 @@ use heimdall_ssh::{
 };
 
 use heimdall_files::RemoteSession;
-use heimdall_rdp::{Ending, Fingerprint, Framebuffer, Operation};
+use heimdall_rdp::{CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -118,11 +118,13 @@ pub enum ConnectionEvent {
         input: mpsc::UnboundedSender<Vec<Operation>>,
         /// The desktop size the tab wants.
         size: watch::Sender<Option<(u16, u16)>>,
-        /// Where this side's clipboard text goes, when the clipboard is shared.
-        clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
+        /// Where this side's clipboard goes, when the clipboard is shared.
+        clipboard: Option<mpsc::UnboundedSender<LocalClipboard>>,
     },
     /// The server copied this text: it goes to this side's clipboard.
     RemoteClipboard(Zeroizing<String>),
+    /// The files copied on this side were not offered to the RDP server.
+    RdpFilesRefused(CopyRefusal),
     /// The VNC session is open.
     VncReady {
         /// The desktop, drawn by the UI.
@@ -236,6 +238,7 @@ impl fmt::Debug for ConnectionEvent {
             Self::RdpReady { .. } => f.write_str("RdpReady"),
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
+            Self::RdpFilesRefused(refusal) => write!(f, "RdpFilesRefused({refusal:?})"),
             Self::VncReady { .. } => f.write_str("VncReady"),
             Self::DesktopFrame => f.write_str("DesktopFrame"),
             Self::DesktopResizeRefused { width, height } => {

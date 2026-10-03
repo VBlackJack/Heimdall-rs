@@ -64,8 +64,26 @@ fn files_notice(notice: &Notice) -> String {
     }
 }
 
+/// What the bar says of a desktop: its size, or the files copied not offered to it.
+fn desktop_notice(notice: &Notice) -> String {
+    match notice {
+        Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
+        Notice::ResolutionScaled => fl!("ui-resolution-larger-than-window"),
+        Notice::RdpFilesTooMany => fl!(
+            "ui-status-rdp-files-too-many",
+            count = heimdall_rdp::MAX_COPY_ENTRIES
+        ),
+        Notice::RdpFilesTooLarge => fl!(
+            "ui-status-rdp-files-too-large",
+            size = crate::texts::size(heimdall_rdp::MAX_COPY_BYTES)
+        ),
+        _ => String::new(),
+    }
+}
+
 /// What the left of the bar says; `targets` the tabs marked for broadcast input.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "one arm per notice")]
 pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usize) -> String {
     if let Some(notice) = notice {
         return match notice {
@@ -144,8 +162,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             }
             Notice::WinRmGatewayNtlm => fl!("ui-status-winrm-gateway-ntlm"),
             Notice::ExplorerHoldsNoFiles => fl!("ui-status-explorer-no-files"),
-            Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
-            Notice::ResolutionScaled => fl!("ui-resolution-larger-than-window"),
+            notice @ (Notice::ResolutionReconnected
+            | Notice::ResolutionScaled
+            | Notice::RdpFilesTooMany
+            | Notice::RdpFilesTooLarge) => desktop_notice(notice),
             Notice::WinRmCertificateSkipped => fl!("ui-status-winrm-certificate-skipped"),
             Notice::BroadcastScope(scope) => {
                 fl!(
@@ -231,6 +251,19 @@ mod tests {
                 failure: heimdall_app::reachability::Unreached::DnsNoResults,
             }),
             "web.lab:22 unreachable: DNS lookup returned no addresses."
+        );
+    }
+
+    #[test]
+    fn files_not_offered_to_a_desktop_are_said_with_the_limit_they_pass() {
+        let said = |notice: Notice| status_text(&SessionStatus::Ready, Some(&notice), 0);
+        assert_eq!(
+            said(Notice::RdpFilesTooMany),
+            "Files not copied to the server: one copy takes 10000 files and folders at most."
+        );
+        assert_eq!(
+            said(Notice::RdpFilesTooLarge),
+            "Files not copied to the server: one copy takes 2.0 GiB at most."
         );
     }
 

@@ -1826,6 +1826,7 @@ impl Shell {
             Effect::PickRdpFiles => pick_rdp(),
             Effect::PickUploads { tab } => pick_uploads(tab),
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
+            Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
             Effect::PickSessionsFile => pick_sessions_file(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
@@ -3880,6 +3881,27 @@ fn read_explorer_files(tab: TabId) -> Task<Message> {
             }))
         },
     )
+}
+
+/// This side's clipboard for the desktop of `tab`, read off the window's thread: the files
+/// copied in Explorer, or else its text.
+fn read_desktop_clipboard(tab: TabId) -> Task<Message> {
+    Task::perform(
+        async {
+            tokio::task::spawn_blocking(explorer_files)
+                .await
+                .unwrap_or_default()
+        },
+        std::convert::identity,
+    )
+    .then(move |paths| {
+        if paths.is_empty() {
+            iced::clipboard::read()
+                .map(move |text| Message::App(AppMessage::ClipboardText { tab, text }))
+        } else {
+            Task::done(Message::App(AppMessage::ClipboardFiles { tab, paths }))
+        }
+    })
 }
 
 /// The files copied in Explorer, as the clipboard lists them; none elsewhere than on

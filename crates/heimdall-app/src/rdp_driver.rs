@@ -153,6 +153,7 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
     match event {
         RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
         RdpEvent::RemoteClipboard(text) => ConnectionEvent::RemoteClipboard(text),
+        RdpEvent::FilesRefused(refusal) => ConnectionEvent::RdpFilesRefused(refusal),
         RdpEvent::ResizeRefused { width, height } => {
             log::info!("RDP session to {target} cannot take {width}x{height} live");
             ConnectionEvent::DesktopResizeRefused { width, height }

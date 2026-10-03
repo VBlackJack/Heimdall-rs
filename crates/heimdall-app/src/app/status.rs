@@ -112,6 +112,11 @@ pub enum Notice {
     ResolutionReconnected,
     /// The size chosen is larger than the tab: the desktop is shown scaled.
     ResolutionScaled,
+    /// The files copied were not offered to the RDP server: more files and folders than
+    /// one copy takes.
+    RdpFilesTooMany,
+    /// The files copied were not offered to the RDP server: more bytes than one copy takes.
+    RdpFilesTooLarge,
     /// A server's file is open in the external editor: each save is sent.
     FilesEditing(String),
     /// A save of a file being edited was sent.
