@@ -122,6 +122,9 @@ pub enum ConnectError {
     /// The server refused to start a shell.
     #[error("shell refused")]
     ShellRefused,
+    /// The server refused to run a command.
+    #[error("command refused")]
+    CommandRefused,
     /// The server refused to start a subsystem, such as `sftp`.
     #[error("subsystem {name} refused")]
     SubsystemRefused {

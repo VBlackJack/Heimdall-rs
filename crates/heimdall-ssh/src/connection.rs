@@ -32,7 +32,7 @@ use std::task::{Context, Poll};
 use std::time::Duration;
 
 use russh::client::{Handle, Msg};
-use russh::{ChannelMsg, ChannelStream, Disconnect};
+use russh::{ChannelMsg, ChannelStream, Disconnect, Sig};
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 use tokio_util::sync::CancellationToken;
 
@@ -201,6 +201,69 @@ impl Connection {
         })
     }
 
+    /// Runs `command` on the server, gives it `input` then the end of its input, and waits
+    /// for it to end, for at most `timeout`. What it writes is kept up to [`OUTPUT_LIMIT`]
+    /// bytes a stream and read to the end beyond: the other channels never stall on it.
+    ///
+    /// On timeout or `cancel`, the command is asked to stop (`TERM`) and its channel closed.
+    ///
+    /// # Errors
+    ///
+    /// [`ConnectError::CommandRefused`] when the server will not run it,
+    /// [`ConnectError::Timeout`], [`ConnectError::Cancelled`], or a protocol error.
+    pub async fn run_command(
+        &self,
+        command: &str,
+        input: &[u8],
+        timeout: Duration,
+        cancel: CancellationToken,
+    ) -> Result<CommandEnd, ConnectError> {
+        let mut channel = self
+            .handle()
+            .channel_open_session()
+            .await
+            .map_err(ConnectError::Protocol)?;
+        let running = async {
+            channel
+                .exec(true, command)
+                .await
+                .map_err(ConnectError::Protocol)?;
+            let mut end = CommandEnd::default();
+            let mut started = false;
+            loop {
+                match channel.wait().await {
+                    Some(ChannelMsg::Success) if !started => {
+                        started = true;
+                        channel.data(input).await.map_err(ConnectError::Protocol)?;
+                        channel.eof().await.map_err(ConnectError::Protocol)?;
+                    }
+                    Some(ChannelMsg::Failure) if !started => {
+                        return Err(ConnectError::CommandRefused);
+                    }
+                    Some(ChannelMsg::Data { data }) => keep(&mut end.stdout, &data),
+                    Some(ChannelMsg::ExtendedData { data, ext }) if ext == STDERR => {
+                        keep(&mut end.stderr, &data);
+                    }
+                    Some(ChannelMsg::ExitStatus { exit_status }) => {
+                        end.status = Some(exit_status);
+                    }
+                    Some(ChannelMsg::Close) | None => return Ok(end),
+                    Some(_) => {}
+                }
+            }
+        };
+        let stopped = tokio::select! {
+            ended = tokio::time::timeout(timeout, running) => match ended {
+                Ok(ended) => return ended,
+                Err(_) => ConnectError::Timeout,
+            },
+            () = cancel.cancelled() => ConnectError::Cancelled,
+        };
+        let _ = channel.signal(Sig::TERM).await;
+        let _ = channel.close().await;
+        Err(stopped)
+    }
+
     /// Asks the server to connect onward to `host:port` and carry the bytes both ways: a TCP
     /// connection made from the server, as a gateway makes one. The server resolves `host`
     /// itself, so it may be a name only the server knows.
@@ -226,6 +289,29 @@ impl Connection {
             _connection: self.clone(),
         })
     }
+}
+
+/// Bytes kept of each stream a command writes; the rest is read and dropped.
+pub const OUTPUT_LIMIT: usize = 64 * 1024;
+
+/// The extended data type of a command's error stream (RFC 4254, 5.2).
+const STDERR: u32 = 1;
+
+/// How a command run on the server ended.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommandEnd {
+    /// Its exit status; `None` when it gave none, ended by a signal or its channel closed.
+    pub status: Option<u32>,
+    /// What it wrote on its output, up to [`OUTPUT_LIMIT`] bytes.
+    pub stdout: Vec<u8>,
+    /// What it wrote on its error stream, up to [`OUTPUT_LIMIT`] bytes.
+    pub stderr: Vec<u8>,
+}
+
+/// Adds `data` to `kept` up to [`OUTPUT_LIMIT`] bytes.
+fn keep(kept: &mut Vec<u8>, data: &[u8]) {
+    let room = OUTPUT_LIMIT.saturating_sub(kept.len());
+    kept.extend(data.iter().take(room));
 }
 
 /// Originator address reported with a tunnel: there is no address of this side to give.

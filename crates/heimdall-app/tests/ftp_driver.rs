@@ -104,7 +104,7 @@ async fn an_anonymous_profile_opens_a_files_session() {
     let dir = tempfile::tempdir().expect("dir");
     let port = serve(root.path(), None).await;
     let event = first(request(port, false, &dir.path().join("known_ftps_hosts"))).await;
-    let ConnectionEvent::FilesReady { client } = event else {
+    let ConnectionEvent::FilesReady { client, .. } = event else {
         panic!("{event:?}");
     };
     let top = client

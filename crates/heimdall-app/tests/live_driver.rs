@@ -170,7 +170,7 @@ async fn the_driver_opens_an_sftp_session_that_lists_the_home_folder() {
     let mut files_request = request(port, known_hosts);
     files_request.purpose = heimdall_app::Purpose::Files;
     let mut events = connection_events(files_request, registry.clone());
-    let client = tokio::time::timeout(STEP_TIMEOUT, async {
+    let (client, shell) = tokio::time::timeout(STEP_TIMEOUT, async {
         while let Some(event) = events.next().await {
             match event {
                 ConnectionEvent::Question { question, kind } => {
@@ -183,7 +183,7 @@ async fn the_driver_opens_an_sftp_session_that_lists_the_home_folder() {
                     };
                     assert!(registry.answer(question, Some(answer)), "someone waits");
                 }
-                ConnectionEvent::FilesReady { client } => return client,
+                ConnectionEvent::FilesReady { client, shell } => return (client, shell),
                 other => panic!("unexpected {other:?}"),
             }
         }
@@ -202,5 +202,20 @@ async fn the_driver_opens_an_sftp_session_that_lists_the_home_folder() {
         home.as_bytes(),
         b"/home/pwuser",
         "the session starts in the home folder"
+    );
+    // The connection under the session runs commands beside it.
+    let ran = shell
+        .expect("an SFTP session keeps its connection")
+        .run_command(
+            "sh -s",
+            b"printf ran",
+            STEP_TIMEOUT,
+            CancellationToken::new(),
+        )
+        .await
+        .expect("ran");
+    assert_eq!(
+        (ran.status, ran.stdout.as_slice()),
+        (Some(0), b"ran".as_slice())
     );
 }

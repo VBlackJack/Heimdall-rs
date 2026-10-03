@@ -138,6 +138,7 @@ async fn files_tab(dir: &Path) -> (App, TabId) {
         attempt,
         event: ConnectionEvent::FilesReady {
             client: idle_client().await,
+            shell: None,
         },
     });
     core.update(AppMessage::Files(FilesMessage::RemoteListed {

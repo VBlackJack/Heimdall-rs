@@ -165,6 +165,7 @@ async fn ready(app: &mut App, tab: TabId, attempt: AttemptId) -> Vec<Effect> {
         attempt,
         event: ConnectionEvent::FilesReady {
             client: idle_client().await,
+            shell: None,
         },
     })
 }

@@ -678,6 +678,9 @@ impl From<&RemoteError> for FilesError {
 pub struct FilesPane {
     /// The session with the server, once open.
     pub client: Option<RemoteSession>,
+    /// The SSH connection under an SFTP session, to run commands on the server; none for
+    /// FTP.
+    pub shell: Option<heimdall_ssh::Connection>,
     /// Server side.
     pub remote: RemotePane,
     /// Local side.
@@ -697,6 +700,7 @@ impl FilesPane {
     pub fn new(local: PathBuf) -> Self {
         Self {
             client: None,
+            shell: None,
             remote: Pane::new(RemotePath::from(".")),
             local: Pane::new(local),
             transfers: Vec::new(),
@@ -720,6 +724,7 @@ impl FilesPane {
             transfer.cancel.cancel();
         }
         self.client = None;
+        self.shell = None;
     }
 
     /// Transfers still running.
