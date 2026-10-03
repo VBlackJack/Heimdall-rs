@@ -743,6 +743,10 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
             format!("{:?}", FilesMessage::Duplicate { tab }),
         ),
         (
+            "Open in terminal",
+            format!("{:?}", FilesMessage::OpenInTerminal { tab }),
+        ),
+        (
             "Copy path",
             format!(
                 "{:?}",
