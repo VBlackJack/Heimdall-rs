@@ -172,7 +172,7 @@ pub fn random_token() -> Option<[u8; 16]> {
 
 /// `path` as one word of `sh`: in single quotes, each quote of it closed, escaped and
 /// opened again.
-fn quote(path: &[u8]) -> Result<Vec<u8>, Unquotable> {
+pub(crate) fn quote(path: &[u8]) -> Result<Vec<u8>, Unquotable> {
     if path.is_empty() {
         return Err(Unquotable::Empty);
     }
