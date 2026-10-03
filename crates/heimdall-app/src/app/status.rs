@@ -68,6 +68,12 @@ pub enum Notice {
     },
     /// Every tunnel was closed.
     AllTunnelsClosed,
+    /// A size typed in "Custom resolution" was not one.
+    ResolutionInvalid,
+    /// The session's size was kept as its profile's own.
+    ResolutionSaved,
+    /// The session has no saved profile to keep its size in.
+    ResolutionSaveUnavailable,
     /// A profile's address is being tested.
     ReachabilityTesting {
         /// Address.

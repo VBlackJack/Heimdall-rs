@@ -94,6 +94,7 @@ mod quick_connect;
 mod rdp_import;
 mod rdp_tab;
 mod reconnect;
+mod resolution;
 mod route_test;
 mod selection;
 mod sessions_import;
@@ -130,6 +131,7 @@ pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::QuickResult;
 pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
+pub use resolution::ResolutionChoice;
 pub use selection::SelectionMessage;
 pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
@@ -1436,6 +1438,13 @@ pub struct ConflictRow {
 /// A modal decision that concerns the whole window.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Dialog {
+    /// The C# "Custom resolution" of an RDP tab: the size typed, as `WIDTHxHEIGHT`.
+    CustomResolution {
+        /// The tab.
+        tab: TabId,
+        /// What is typed.
+        value: String,
+    },
     /// The C# "New tunnel" dialog, as filled.
     NewTunnel(crate::tunnel::TunnelForm),
     /// A gateway on a tunnel's way presented a key never seen: trusted, or the tunnel
@@ -2787,6 +2796,10 @@ impl App {
                 | Dialog::ConfirmImportFile(_)),
             ) => {
                 self.confirm_import(dialog);
+                Vec::new()
+            }
+            Some(Dialog::CustomResolution { tab, value }) => {
+                self.confirm_custom_resolution(tab, &value);
                 Vec::new()
             }
             Some(Dialog::ConfirmCloseTab(tab) | Dialog::ConfirmCloseTransfers { tab, .. }) => {

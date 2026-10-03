@@ -562,6 +562,33 @@ pub fn fixed_desktop(width: u16, height: u16) -> (u16, u16) {
     )
 }
 
+/// The sizes the C# resolution menus offer by default, in the C# order.
+pub const RESOLUTION_PRESETS: [(u16, u16); 10] = [
+    (1920, 1080),
+    (1680, 1050),
+    (1600, 900),
+    (1440, 900),
+    (1366, 768),
+    (1280, 1024),
+    (1280, 720),
+    (1024, 768),
+    (2560, 1440),
+    (3840, 2160),
+];
+
+/// A size typed as `WIDTHxHEIGHT`, as the C# "Custom..." reads it: `x` or `X`, spaces around
+/// the numbers allowed, each side within the C# limits, the width brought down to a multiple
+/// of 4; `None` when it is not one.
+#[must_use]
+pub fn parse_resolution(typed: &str) -> Option<(u16, u16)> {
+    let (width, height) = typed.split_once(['x', 'X'])?;
+    let width: u16 = width.trim().parse().ok()?;
+    let height: u16 = height.trim().parse().ok()?;
+    let fits = (FIXED_SIDE_MIN..=FIXED_WIDTH_MAX).contains(&width)
+        && (FIXED_SIDE_MIN..=FIXED_HEIGHT_MAX).contains(&height);
+    fits.then(|| fixed_desktop(width, height))
+}
+
 fn default_fixed_width() -> u16 {
     DEFAULT_FIXED_SIZE.0
 }
@@ -998,5 +1025,26 @@ mod tests {
         };
         assert!(!arguments_only.is_default());
         assert!(!profile(arguments_only, None).may_run(Path::new("/bin/sh")));
+    }
+}
+
+#[cfg(test)]
+mod resolution_tests {
+    use super::parse_resolution;
+
+    #[test]
+    fn a_size_is_read_as_the_csharp_custom_one() {
+        assert_eq!(parse_resolution("1920x1080"), Some((1920, 1080)));
+        assert_eq!(parse_resolution(" 1600 X 900 "), Some((1600, 900)));
+        assert_eq!(
+            parse_resolution("1366x768"),
+            Some((1364, 768)),
+            "width to a multiple of 4"
+        );
+        assert_eq!(parse_resolution("199x768"), None, "under the limits");
+        assert_eq!(parse_resolution("7681x768"), None, "over them");
+        assert_eq!(parse_resolution("1920x4321"), None);
+        assert_eq!(parse_resolution("1920*1080"), None);
+        assert_eq!(parse_resolution("wide x tall"), None);
     }
 }
