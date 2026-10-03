@@ -47,6 +47,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
         return match notice {
             Notice::Copied(copied) => fl!("ui-status-copied", text = copied.as_str()),
             Notice::FolderCreated(path) => fl!("ui-status-folder-created", path = path.as_str()),
+            Notice::PathCopied(path) => fl!("ui-status-path-copied", path = path.as_str()),
+            Notice::FilesCut(count) => fl!("ui-status-files-cut", count = (*count)),
+            Notice::FilesPasted => fl!("ui-status-files-pasted"),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
             }
@@ -58,6 +61,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-broadcast-on", scope = scope_label(*scope, targets))
             }
             Notice::BroadcastOff => fl!("ui-broadcast-off"),
+            Notice::ResolutionInvalid => fl!("ui-resolution-custom-invalid"),
+            Notice::ResolutionSaved => fl!("ui-resolution-save-default-done"),
+            Notice::ResolutionSaveUnavailable => fl!("ui-resolution-save-default-unavailable"),
             Notice::ReachabilityTesting { host, port } => fl!(
                 "ui-status-reachability-testing",
                 host = server_text(host),

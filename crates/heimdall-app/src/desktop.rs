@@ -215,6 +215,8 @@ enum DesktopSink {
         size: watch::Sender<Option<(u16, u16)>>,
         /// Which of the tab's sizes the server is asked for.
         sizing: DesktopSizing,
+        /// The tab's last size, kept to be asked again when the user goes back to it.
+        tab: std::sync::Mutex<Option<(u16, u16)>>,
     },
     Vnc(VncSink),
 }
@@ -268,6 +270,7 @@ impl DesktopPane {
                 input,
                 size,
                 sizing,
+                tab: std::sync::Mutex::new(None),
             },
             clipboard,
             anti_idle: false,
@@ -277,10 +280,61 @@ impl DesktopPane {
     /// The size the tab shows the desktop at, in pixels: the RDP session asks the server for
     /// it once it settles, as its profile's sizing allows. VNC keeps the server's size.
     pub(crate) fn resize(&self, width: u16, height: u16) {
+        if let DesktopSink::Rdp { tab, .. } = &self.sink {
+            *tab.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
+        }
         if self.asks_tab_size()
             && let DesktopSink::Rdp { size, .. } = &self.sink
         {
             size.send_replace(Some((width, height)));
+        }
+    }
+
+    /// The size the user chose from the tab's menu, as the C# "Resolution" one: a size of
+    /// its own, asked of the server now and kept; or `None`, the tab's size again, followed
+    /// from then on.
+    pub(crate) fn choose_size(&mut self, chosen: Option<(u16, u16)>) {
+        let DesktopSink::Rdp {
+            size, sizing, tab, ..
+        } = &mut self.sink
+        else {
+            return;
+        };
+        if let Some((width, height)) = chosen {
+            *sizing = DesktopSizing::Fixed { width, height };
+            size.send_replace(Some((width, height)));
+        } else {
+            *sizing = DesktopSizing::FollowsTab;
+            let last = *tab
+                .get_mut()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Some(last) = last {
+                size.send_replace(Some(last));
+            }
+        }
+    }
+
+    /// The size the RDP desktop keeps, whatever the tab's: `None` when it follows the tab.
+    #[must_use]
+    pub fn fixed_size(&self) -> Option<(u16, u16)> {
+        match &self.sink {
+            DesktopSink::Rdp {
+                sizing: DesktopSizing::Fixed { width, height },
+                ..
+            } => Some((*width, *height)),
+            _ => None,
+        }
+    }
+
+    /// The tab's last size, in pixels.
+    #[must_use]
+    pub fn tab_size(&self) -> Option<(u16, u16)> {
+        match &self.sink {
+            DesktopSink::Rdp { tab, .. } => *tab
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            DesktopSink::Vnc(_) => None,
         }
     }
 
@@ -538,6 +592,45 @@ fn rdp_operations(inputs: &[DesktopInput]) -> Vec<Operation> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_size_chosen_is_asked_and_kept_then_the_tab_s_asked_again_and_followed() {
+        let (size, watched) = watch::channel(None);
+        let (input, _received) = mpsc::unbounded_channel();
+        let mut pane = DesktopPane::rdp(
+            heimdall_rdp::Framebuffer::new(64, 48),
+            input,
+            (size, DesktopSizing::FollowsTab),
+            None,
+        );
+        pane.resize(1200, 800);
+        assert_eq!(*watched.borrow(), Some((1200, 800)));
+        assert_eq!(pane.fixed_size(), None);
+
+        pane.choose_size(Some((1920, 1080)));
+        assert_eq!(*watched.borrow(), Some((1920, 1080)));
+        assert_eq!(pane.fixed_size(), Some((1920, 1080)));
+        pane.resize(1000, 700);
+        assert_eq!(
+            *watched.borrow(),
+            Some((1920, 1080)),
+            "kept whatever the tab's size"
+        );
+        assert_eq!(
+            pane.tab_size(),
+            Some((1000, 700)),
+            "the tab's size is remembered"
+        );
+
+        pane.choose_size(None);
+        assert_eq!(
+            *watched.borrow(),
+            Some((1000, 700)),
+            "the tab's last size asked again"
+        );
+        pane.resize(900, 600);
+        assert_eq!(*watched.borrow(), Some((900, 600)), "and followed");
+    }
 
     #[test]
     fn a_press_moves_there_first_and_a_release_does_not() {

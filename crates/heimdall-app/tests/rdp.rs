@@ -645,3 +645,88 @@ fn every_key_combination_releases_what_it_pressed_modifiers_last() {
         }
     );
 }
+
+#[test]
+fn the_resolution_menu_sizes_the_live_desktop_and_keeps_it_as_the_profile_s_own() {
+    use heimdall_app::{Dialog, Notice, ResolutionChoice, TabMenuMessage};
+    use heimdall_core::profile::Resolution;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (input, _received) = mpsc::unbounded_channel();
+    let (size, watched) = tokio::sync::watch::channel(None);
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(64, 48),
+            input,
+            size,
+            clipboard: None,
+        },
+    });
+    let choose = |app: &mut App, choice| {
+        app.update(Message::TabMenu(TabMenuMessage::Resolution { tab, choice }));
+    };
+    // What the profiles file holds now.
+    let saved = || {
+        let store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+        let profile = store
+            .rdp_profiles()
+            .iter()
+            .find(|profile| profile.id == ProfileId::new("dc"))
+            .cloned()
+            .expect("saved");
+        profile.options
+    };
+
+    choose(
+        &mut app,
+        ResolutionChoice::Fixed {
+            width: 1366,
+            height: 768,
+        },
+    );
+    assert_eq!(
+        *watched.borrow(),
+        Some((1364, 768)),
+        "asked of the server, width to 4"
+    );
+    choose(&mut app, ResolutionChoice::SaveDefault);
+    let options = saved();
+    assert_eq!(
+        (
+            options.resolution,
+            options.fixed_width,
+            options.fixed_height
+        ),
+        (Resolution::Fixed, 1364, 768)
+    );
+    assert_eq!(app.notice(), Some(&Notice::ResolutionSaved));
+
+    // "Custom...": the C# line when what is typed is not a size.
+    choose(&mut app, ResolutionChoice::Custom);
+    assert!(
+        matches!(&app.dialog, Some(Dialog::CustomResolution { value, .. }) if value == "1920x1080")
+    );
+    app.update(Message::TabMenu(TabMenuMessage::ResolutionEdited(
+        "big".to_owned(),
+    )));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.notice(), Some(&Notice::ResolutionInvalid));
+    choose(&mut app, ResolutionChoice::Custom);
+    app.update(Message::TabMenu(TabMenuMessage::ResolutionEdited(
+        "2560x1440".to_owned(),
+    )));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(*watched.borrow(), Some((2560, 1440)));
+
+    choose(&mut app, ResolutionChoice::MatchWindow);
+    choose(&mut app, ResolutionChoice::SaveDefault);
+    let options = saved();
+    assert_eq!(
+        (options.resolution, options.dynamic_resolution),
+        (Resolution::FitWindow, true)
+    );
+}

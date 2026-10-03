@@ -878,3 +878,43 @@ fn an_rdp_profile_connects_as_the_other_protocols() {
         }) if *asked == id
     )));
 }
+
+#[test]
+fn an_rdp_tab_s_menu_offers_the_csharp_resolution_menu() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = connected(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Resolution").expect("the C# submenu");
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    {
+        let mut ui = simulator(&shell);
+        for entry in [
+            "Active mode: Fit window",
+            "Match window",
+            "1920 x 1080",
+            "3840 x 2160",
+            "Custom...",
+            "Save as default for this server",
+        ] {
+            ui.find(entry).expect(entry);
+        }
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::TabMenu(
+        heimdall_app::TabMenuMessage::Resolution {
+            tab,
+            choice: heimdall_app::ResolutionChoice::Fixed {
+                width: 1280,
+                height: 720,
+            },
+        },
+    )));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    let mut ui = simulator(&shell);
+    ui.find("Active mode: Fixed (1280x720)")
+        .expect("the size chosen");
+}

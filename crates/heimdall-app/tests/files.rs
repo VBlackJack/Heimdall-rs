@@ -858,7 +858,7 @@ async fn copy_path_copies_the_selected_entry_whole_and_says_so() {
     );
     assert_eq!(
         app.notice(),
-        Some(&Notice::Copied("/srv/run.sh".to_owned()))
+        Some(&Notice::PathCopied("/srv/run.sh".to_owned()))
     );
 
     files(
