@@ -1121,6 +1121,37 @@ ui-address-test-tcp-failed = No se pudo conectar con { $address }: { $reason }
 ui-address-test-cancelled = Prueba cancelada.
 ui-address-test-scoped = { $verdict } { $scope }
 
+## The gateway dialog's "Test route", as the C# card.
+ui-route-test-title = Probar y entender esta ruta
+ui-route-test-workstation = Este equipo
+ui-route-test-target-host = Host de destino opcional (déjalo vacío para probar solo las pasarelas)
+ui-route-test-target-port = Puerto TCP de destino
+ui-route-test-test = Probar ruta
+ui-route-test-stop = Detener prueba
+ui-route-test-copy = Copiar informe de diagnóstico
+ui-route-test-running = Probando la ruta. Los resultados aparecen después de cada paso.
+ui-route-test-hop-step = Pasarela { $number }: conexión SSH y autenticación
+ui-route-test-target-step = Acceso TCP al destino
+ui-route-test-passed = Correcto
+ui-route-test-trust-required = No probado: no hay clave de host de confianza. Verifícala y regístrala antes en las claves de host SSH de confianza.
+ui-route-test-trust-changed = La clave de host es distinta. Verifica la identidad del servidor antes de actualizar las claves de host SSH de confianza.
+ui-route-test-network = Conexión no disponible. Comprueba el host, el puerto, la VPN y el cortafuegos.
+ui-route-test-forwarding = No se confirmó el acceso al destino. Comprueba la dirección, el puerto y los permisos de reenvío TCP en la pasarela.
+ui-route-test-cancelled = Cancelado.
+ui-route-test-interactive = Se requiere autenticación interactiva. Usa una conexión SSH interactiva para investigar el método requerido.
+ui-route-test-auth = Fallo de autenticación. Comprueba la cuenta, la clave, la contraseña de la clave y el agente SSH.
+ui-route-test-unavailable = Diagnóstico no disponible o fallo sin clasificar. Comprueba la configuración y los requisitos de autenticación.
+ui-route-test-invalid-route = Ruta no válida: comprueba padres faltantes, ciclos y la profundidad máxima de la cadena.
+ui-route-test-invalid-target = Introduce un nombre de host o dirección IP de destino válido y un puerto TCP entre 1 y 65535.
+ui-route-test-report-header = Diagnóstico de ruta SSH de Heimdall (anonimizado: sin nombres de host, cuentas, rutas de clave ni errores en bruto)
+ui-route-test-tcp-only = El paso de destino solo comprueba el acceso TCP. No valida el protocolo de la aplicación ni un inicio de sesión en el destino.
+ui-route-test-no-target = No se especificó ningún destino. Solo se probaron las conexiones SSH de las pasarelas.
+ui-route-test-hop = { $name } ({ $host }:{ $port })
+ui-route-test-step-line = { $step }: { $outcome } ({ $millis } ms)
+ui-route-test-hint = Prueba el formulario actual sin guardarlo. Usa solo claves de host de confianza. Las sesiones existentes permanecen abiertas.
+ui-route-test-timeout = Tiempo de espera agotado. Comprueba la VPN, el enrutamiento y el cortafuegos.
+ui-route-test-separator = {" "}→{" "}
+
 ## "Test reachability" in a profile's menu, as the C# tree says it in the status bar.
 ui-tree-test-reachability = Probar accesibilidad
 ui-status-reachability-testing = Probando { $host }:{ $port } ...

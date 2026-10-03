@@ -787,3 +787,34 @@ fn the_form_offers_to_test_its_address_and_says_while_it_runs() {
     let mut ui = simulator(&shell);
     ui.find("Testing the address...").expect("the C# chip");
 }
+
+#[test]
+fn the_gateway_dialog_tests_its_route_and_says_while_it_runs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewGateway));
+    for (field, value) in [
+        (ProfileField::Name, "bastion"),
+        (ProfileField::Host, "bastion.lab"),
+        (ProfileField::Username, "jump"),
+    ] {
+        let _ = shell.update(app(AppMessage::GatewayField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("Test and understand this route")
+            .expect("the C# card");
+        ui.find("This workstation \u{2192} bastion (bastion.lab:22)")
+            .expect("the route line");
+        ui.find("Test route").expect("its button");
+    }
+    // Applied through the shell: the test's task is built, not run, on the window's thread.
+    let _ = shell.update(Message::TestRouteForm);
+    let mut ui = tall_simulator(&shell);
+    ui.find("Testing the route. Results appear after each step.")
+        .expect("said while it runs");
+    ui.find("Stop test").expect("Stop while it runs");
+}

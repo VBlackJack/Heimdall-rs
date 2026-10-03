@@ -36,6 +36,7 @@ mod provider_view;
 pub mod rdp_options;
 pub mod rdp_view;
 mod report;
+pub mod route_test_view;
 mod search_keys;
 pub mod session_settings;
 pub mod sessions_view;
