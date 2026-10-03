@@ -1126,3 +1126,19 @@ ui-tree-test-reachability = Probar accesibilidad
 ui-status-reachability-testing = Probando { $host }:{ $port } ...
 ui-status-reachability-success = { $host }:{ $port } accesible en { $millis } ms
 ui-status-reachability-failed = { $host }:{ $port } no accesible: { $reason }
+
+## An RDP tab's "Resolution" menu, as the C# one.
+ui-resolution-menu = Resolución
+ui-resolution-active-mode = Modo activo
+ui-resolution-header = { $label }: { $mode }
+ui-resolution-header-size = { $label }: { $mode } ({ $width }x{ $height })
+ui-resolution-mode-fit-window = Ajustar a la ventana
+ui-resolution-mode-fixed = Fija
+ui-resolution-match-window = Igualar a la ventana
+ui-resolution-custom = Personalizada...
+ui-resolution-custom-title = Resolución personalizada
+ui-resolution-custom-prompt = Introduce la resolución como ANCHOxALTO.
+ui-resolution-custom-invalid = Resolución no válida. Usa ANCHOxALTO.
+ui-resolution-save-default = Guardar como predeterminada para este servidor
+ui-resolution-save-default-done = Resolución RDP predeterminada guardada para este servidor.
+ui-resolution-save-default-unavailable = No se puede guardar una resolución predeterminada para esta sesión.

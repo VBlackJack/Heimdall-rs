@@ -39,6 +39,15 @@ pub enum TabMenuMessage {
     StartTranscript(TabId),
     /// Stop keeping it.
     StopTranscript(TabId),
+    /// A choice of an RDP tab's "Resolution" menu.
+    Resolution {
+        /// The tab.
+        tab: TabId,
+        /// What was chosen.
+        choice: super::ResolutionChoice,
+    },
+    /// The size typed so far in "Custom resolution".
+    ResolutionEdited(String),
     /// Close the tabs of a group, asking first when a live session would end.
     Close {
         /// The tab the menu is for.
@@ -91,6 +100,16 @@ impl App {
             }
             TabMenuMessage::Close { tab, group } => {
                 self.close_group(tab, group);
+                Vec::new()
+            }
+            TabMenuMessage::Resolution { tab, choice } => {
+                self.choose_resolution(tab, choice);
+                Vec::new()
+            }
+            TabMenuMessage::ResolutionEdited(value) => {
+                if let Some(Dialog::CustomResolution { value: typed, .. }) = self.dialog.as_mut() {
+                    *typed = value;
+                }
                 Vec::new()
             }
         }

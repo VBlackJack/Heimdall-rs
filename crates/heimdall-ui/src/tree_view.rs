@@ -24,10 +24,10 @@ use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
     Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
-    RdpMessage, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage,
-    TreeFilter,
+    RdpMessage, ResolutionChoice, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId,
+    TabMenuMessage, TreeFilter,
 };
-use heimdall_core::profile::ProfileId;
+use heimdall_core::profile::{ProfileId, RESOLUTION_PRESETS, fixed_desktop};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
@@ -94,6 +94,8 @@ pub enum TreeMenu {
     FilesBookmarks(TabId),
     /// The menu of a row of the tunnels panel, as the C# one.
     Tunnel(heimdall_app::tunnel::TunnelId),
+    /// An RDP tab's "Resolution" menu, as the C# one.
+    Resolution(TabId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
     FilesEntry {
         /// The tab.
@@ -724,6 +726,94 @@ pub struct TabMenuState {
     pub right: bool,
     /// Its transcript entry.
     pub transcript: TranscriptEntry,
+    /// It shows a remote desktop whose size can be chosen: an RDP one.
+    pub resolution: bool,
+}
+
+/// What an RDP tab's "Resolution" menu shows.
+#[derive(Debug, Clone, Copy)]
+pub struct ResolutionMenuState {
+    /// The tab.
+    pub tab: TabId,
+    /// The size its desktop keeps; `None` while it follows the tab.
+    pub fixed: Option<(u16, u16)>,
+    /// It was opened from a saved profile, which can keep the size.
+    pub saved: bool,
+}
+
+/// What a checked entry shows before its label, and an unchecked one.
+const CHECKED: &str = "\u{2713}";
+
+/// Width of the column a checked entry's mark is in, so labels line up.
+const CHECK_WIDTH: f32 = 18.0;
+
+/// An entry that is the current choice or not, as the C# checked menu items.
+fn checked_entry<'a>(label: String, checked: bool, message: AppMessage) -> Element<'a, Message> {
+    button(
+        row![
+            text(if checked { CHECKED } else { "" })
+                .size(MENU_TEXT_SIZE)
+                .width(CHECK_WIDTH),
+            text(label).size(MENU_TEXT_SIZE),
+        ]
+        .align_y(iced::Alignment::Center),
+    )
+    .width(Length::Fill)
+    .style(menu_style)
+    .on_press(Message::MenuChoice(message))
+    .into()
+}
+
+/// An RDP tab's "Resolution" menu, as the C# one: the active mode, "Match window", the
+/// presets, "Custom...", then "Save as default for this server".
+pub fn resolution_entries<'a>(state: &ResolutionMenuState) -> Element<'a, Message> {
+    let tab = state.tab;
+    let choose = |choice| AppMessage::TabMenu(TabMenuMessage::Resolution { tab, choice });
+    let header = match state.fixed {
+        Some((width, height)) => fl!(
+            "ui-resolution-header-size",
+            label = fl!("ui-resolution-active-mode"),
+            mode = fl!("ui-resolution-mode-fixed"),
+            width = width,
+            height = height
+        ),
+        None => fl!(
+            "ui-resolution-header",
+            label = fl!("ui-resolution-active-mode"),
+            mode = fl!("ui-resolution-mode-fit-window")
+        ),
+    };
+    let mut entries = column![
+        container(text(header).size(MENU_TEXT_SIZE).style(text::secondary)).padding(MENU_PADDING),
+        separator(),
+        checked_entry(
+            fl!("ui-resolution-match-window"),
+            state.fixed.is_none(),
+            choose(ResolutionChoice::MatchWindow),
+        ),
+    ]
+    .spacing(0.0)
+    .width(MENU_WIDTH);
+    for (width, height) in RESOLUTION_PRESETS {
+        let size = fixed_desktop(width, height);
+        entries = entries.push(checked_entry(
+            format!("{width} x {height}"),
+            state.fixed == Some(size),
+            choose(ResolutionChoice::Fixed { width, height }),
+        ));
+    }
+    entries = entries
+        .push(separator())
+        .push(entry(
+            fl!("ui-resolution-custom"),
+            Some(choose(ResolutionChoice::Custom)),
+        ))
+        .push(separator())
+        .push(entry(
+            fl!("ui-resolution-save-default"),
+            state.saved.then(|| choose(ResolutionChoice::SaveDefault)),
+        ));
+    menu_card(entries).into()
 }
 
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
@@ -747,6 +837,14 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             fl!("ui-tab-menu-reset-title"),
             menu(TabMenuMessage::ResetTitle(tab)),
         ));
+    }
+    if state.resolution {
+        entries = entries.push(separator()).push(
+            button(text(fl!("ui-resolution-menu")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab))),
+        );
     }
     entries = entries
         .push(separator())
