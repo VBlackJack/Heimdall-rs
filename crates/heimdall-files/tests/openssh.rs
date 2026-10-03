@@ -287,3 +287,70 @@ async fn a_download_never_writes_inside_a_folder_whose_name_a_local_file_takes()
         b"mine"
     );
 }
+
+#[tokio::test]
+async fn a_file_is_read_whole_and_replaced_only_while_unchanged_keeping_its_mode() {
+    use heimdall_files::RemoteError;
+    use tokio_util::sync::CancellationToken;
+
+    let Some((_server, session)) = start().await else {
+        return;
+    };
+    let cancel = CancellationToken::new();
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("config.ini");
+    std::fs::write(&file, b"old").expect("file");
+    std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o640)).expect("mode");
+
+    let (data, fingerprint) = step(session.read_whole(&remote(&file), 1024, &cancel))
+        .await
+        .expect("read");
+    assert_eq!(data, b"old");
+    assert_eq!(
+        step(session.fingerprint(&remote(&file))).await,
+        Ok(fingerprint),
+        "the fingerprint of what was read"
+    );
+    assert_eq!(
+        step(session.read_whole(&remote(&file), 2, &cancel)).await,
+        Err(RemoteError::FileTooLarge)
+    );
+
+    let replaced = step(session.replace_if(&remote(&file), b"new content", &fingerprint, &cancel))
+        .await
+        .expect("replaced");
+    assert_eq!(std::fs::read(&file).expect("read back"), b"new content");
+    assert_eq!(
+        std::fs::metadata(&file)
+            .expect("there")
+            .permissions()
+            .mode()
+            & 0o777,
+        0o640,
+        "its mode kept"
+    );
+    assert_eq!(replaced.size, Some(11));
+
+    // Changed on the server meanwhile: left as it is.
+    std::fs::write(&file, b"someone else's").expect("changed");
+    assert_eq!(
+        step(session.replace_if(&remote(&file), b"mine", &replaced, &cancel)).await,
+        Err(RemoteError::Changed)
+    );
+    assert_eq!(std::fs::read(&file).expect("kept"), b"someone else's");
+    let leftovers = std::fs::read_dir(dir.path())
+        .expect("listed")
+        .filter(|entry| {
+            entry
+                .as_ref()
+                .is_ok_and(|entry| entry.file_name().to_string_lossy().contains("heimdall"))
+        })
+        .count();
+    assert_eq!(leftovers, 0, "no temporary file left");
+
+    // A folder is not read as a file.
+    assert_eq!(
+        step(session.read_whole(&remote(dir.path()), 1024, &cancel)).await,
+        Err(RemoteError::NotAFile)
+    );
+}

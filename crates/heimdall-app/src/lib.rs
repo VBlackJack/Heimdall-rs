@@ -27,6 +27,7 @@ mod desktop;
 mod driver;
 mod error;
 mod event;
+pub mod external_edit;
 pub mod files;
 pub mod ftp_driver;
 pub mod gateway_draft;

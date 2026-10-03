@@ -76,6 +76,7 @@ mod broadcast;
 mod connect_as;
 mod file_import;
 mod files_clipboard;
+mod files_edit;
 mod files_tab;
 mod files_terminal;
 mod folder_menu;
@@ -946,6 +947,42 @@ pub enum Effect {
         /// Each entry and its new path.
         moves: Vec<(heimdall_files::RemotePath, heimdall_files::RemotePath)>,
     },
+    /// Copy the server's file into a folder of the user's own and start the editor on it,
+    /// then send [`FilesMessage::EditStarted`].
+    StartEdit {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The server's file.
+        remote: heimdall_files::RemotePath,
+        /// The editor.
+        editor: crate::external_edit::Editor,
+        /// The folder edits go under.
+        base: PathBuf,
+        /// Stops the copy.
+        cancel: tokio_util::sync::CancellationToken,
+    },
+    /// Start the editor again on a file being edited, then send
+    /// [`FilesMessage::EditorLaunched`].
+    LaunchEditor {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        editor: crate::external_edit::Editor,
+        /// The local copy.
+        file: PathBuf,
+    },
+    /// Look at the files being edited, send their saves, then send
+    /// [`FilesMessage::EditsChecked`].
+    CheckEdits {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The files, as they were.
+        edits: Vec<crate::external_edit::EditSession>,
+    },
     /// Copy entries of the server on the server, one after another, then send
     /// [`FilesMessage::Copied`].
     CopyRemote {
@@ -1064,6 +1101,13 @@ impl fmt::Debug for Effect {
             Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
+            }
+            Self::StartEdit { tab, remote, .. } => {
+                write!(f, "StartEdit({}, {remote:?})", tab.value())
+            }
+            Self::LaunchEditor { tab, .. } => write!(f, "LaunchEditor({})", tab.value()),
+            Self::CheckEdits { tab, edits, .. } => {
+                write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
             }
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
@@ -1792,6 +1836,8 @@ pub struct App {
     agent_chip: AgentChip,
     /// The entries cut in a Files tab, waiting to be pasted.
     files_clipboard: Option<FilesClipboard>,
+    /// Where a server's files are edited: the user's own local folder.
+    edit_dir: Option<PathBuf>,
     /// The address test running in the profile form, and what stops it.
     address_test: Option<(u64, CancellationToken)>,
     /// The number of the next address test.
@@ -1887,6 +1933,7 @@ impl App {
             next_route_test: 0,
             agent_chip: AgentChip::Unknown,
             files_clipboard: None,
+            edit_dir: heimdall_core::paths::edit_dir(),
             address_test: None,
             next_address_test: 0,
             tunnels: Vec::new(),
