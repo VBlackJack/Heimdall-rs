@@ -1103,3 +1103,20 @@ ui-error-auth-agent-none = No había ninguna clave cargada en un agente SSH cuan
 ui-error-auth-agent-one = Se cargó una clave en un agente SSH y se ofreció a esta pasarela; no fue aceptada. Si esta pasarela espera una clave distinta, cárgala y vuelve a conectar.
 ui-error-auth-agent-many = Se cargaron { $count } claves en un agente SSH y se ofrecieron a esta pasarela; ninguna fue aceptada. Si esta pasarela espera una clave distinta, cárgala y vuelve a conectar.
 ui-error-auth-with-agent = { $refused } { $agent }
+
+## "Test address" in the profile form, as the C# dialog says it.
+ui-address-test-button = Probar dirección
+ui-address-test-hint = Comprueba que la dirección y el puerto respondan. No comprueba tu usuario ni contraseña.
+ui-address-test-running = Probando la dirección...
+ui-address-test-success = La dirección responde: { $address } ({ $millis } ms). No se comprobaron las credenciales.
+ui-address-test-success-ssh = La dirección responde y un servidor SSH contestó: { $banner }. No se comprobaron las credenciales.
+ui-address-test-failure = La dirección no respondió: { $reason }
+ui-address-test-direct-scope = Probado directamente desde este equipo, no a través de { $gateway }.
+ui-address-test-cancel = Cancelar
+ui-address-test-dns-timeout = Se agotó el tiempo de espera de la búsqueda DNS.
+ui-address-test-dns-failed = Falló la búsqueda DNS: { $reason }
+ui-address-test-dns-no-results = La búsqueda DNS no devolvió ninguna dirección.
+ui-address-test-tcp-timeout = Se agotó el tiempo de espera de la conexión TCP (host: { $address }). El host podría estar apagado, ser inaccesible, o el puerto podría estar bloqueado.
+ui-address-test-tcp-failed = No se pudo conectar con { $address }: { $reason }
+ui-address-test-cancelled = Prueba cancelada.
+ui-address-test-scoped = { $verdict } { $scope }

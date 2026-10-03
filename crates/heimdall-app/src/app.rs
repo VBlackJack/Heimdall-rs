@@ -68,6 +68,7 @@ use crate::text::{server_prompt_text, server_text};
 use crate::vnc_driver::VncRequest;
 use crate::winrm_driver::WinRmRequest;
 
+mod address_test;
 mod appearance;
 mod auto_reconnect;
 mod broadcast;
@@ -410,6 +411,17 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
+    /// Test whether the profile form's address answers.
+    TestAddress,
+    /// Stop the address test running.
+    CancelAddressTest,
+    /// What an address test found.
+    AddressTested {
+        /// Which test.
+        test: u64,
+        /// What it found.
+        result: Result<crate::reachability::Reached, crate::reachability::Unreached>,
+    },
     /// Save the profile form, with the password and key passphrase typed into it, if any.
     SaveProfile {
         /// The password typed; `None` or empty leaves the saved one as it is.
@@ -632,6 +644,9 @@ impl fmt::Debug for Message {
             Self::SkipPostConnect => f.write_str("SkipPostConnect"),
             Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
+            Self::TestAddress => f.write_str("TestAddress"),
+            Self::CancelAddressTest => f.write_str("CancelAddressTest"),
+            Self::AddressTested { test, .. } => write!(f, "AddressTested({test})"),
             Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
             Self::ClearPassword => f.write_str("ClearPassword"),
             Self::ClearPassphrase => f.write_str("ClearPassphrase"),
@@ -735,6 +750,19 @@ pub enum Effect {
         attempt: AttemptId,
         /// What to run.
         request: Box<LocalRequest>,
+    },
+    /// Test whether an address answers, and say it as [`Message::AddressTested`].
+    TestAddress {
+        /// Which test.
+        test: u64,
+        /// Address.
+        host: String,
+        /// Port.
+        port: u16,
+        /// Whether to read an SSH server's banner.
+        ssh: bool,
+        /// Stops it.
+        cancel: CancellationToken,
     },
     /// Open a tunnel the user asked for and feed its events back as [`TunnelMessage::Event`].
     OpenTunnel {
@@ -898,6 +926,7 @@ impl fmt::Debug for Effect {
                 write!(f, "ConnectLocal({}, {})", tab.value(), attempt.value())
             }
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
+            Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
             }
@@ -1606,6 +1635,10 @@ pub struct App {
     pub active: Option<TabId>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
+    /// The address test running in the profile form, and what stops it.
+    address_test: Option<(u64, CancellationToken)>,
+    /// The number of the next address test.
+    next_address_test: u64,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// Whether the tunnels panel is shown under the sessions.
@@ -1693,6 +1726,8 @@ impl App {
             tabs: Vec::new(),
             active: None,
             dialog,
+            address_test: None,
+            next_address_test: 0,
             tunnels: Vec::new(),
             tunnels_panel: false,
             tunnel_runs: Vec::new(),
@@ -1790,6 +1825,7 @@ impl App {
     }
 
     /// Applies a message.
+    #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         self.forget_stale_notice();
         match message {
@@ -1815,6 +1851,9 @@ impl App {
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
+            message @ (Message::TestAddress
+            | Message::CancelAddressTest
+            | Message::AddressTested { .. }) => self.address_test_message(message),
             Message::SelectTab(tab) => self.select_tab(tab),
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::TabMenu(message) => self.tab_menu(message),

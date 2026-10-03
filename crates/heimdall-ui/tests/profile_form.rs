@@ -32,7 +32,7 @@ use iced::{Settings, Size};
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
 /// Height of a window showing a whole form: RDP, or SSH with its post-connect steps.
-const TALL_HEIGHT: f32 = 1100.0;
+const TALL_HEIGHT: f32 = 1180.0;
 
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
@@ -762,4 +762,28 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
             .is_err(),
         "its own options are the ones in effect"
     );
+}
+
+#[test]
+fn the_form_offers_to_test_its_address_and_says_while_it_runs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Test address").expect("the C# button");
+        ui.find(
+            "Checks that the address and port answer. Does not check your username or password.",
+        )
+        .expect("the C# hint");
+    }
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::Host,
+        value: "web.lab".to_owned(),
+    }));
+    // Applied through the shell: the test's task is built, not run, on the window's thread.
+    let _ = shell.update(app(AppMessage::TestAddress));
+    let mut ui = simulator(&shell);
+    ui.find("Testing the address...").expect("the C# chip");
 }

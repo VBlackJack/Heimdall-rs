@@ -30,6 +30,7 @@ use heimdall_core::profile::{
 };
 
 use crate::local_draft;
+use crate::reachability::{Reached, Unreached};
 use crate::steps_draft::StepsDraft;
 
 /// The port of a local shell, which has none.
@@ -398,6 +399,20 @@ pub struct ProfileDraft {
     pub local_arguments: String,
     /// Local: the folder it starts in, as typed.
     pub working_directory: String,
+    /// "Test address": not run, running, or what it found for the address shown.
+    pub address_test: AddressTest,
+}
+
+/// The form's "Test address", as the C# chip.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum AddressTest {
+    /// Not run since the address last changed.
+    #[default]
+    Idle,
+    /// Running.
+    Running,
+    /// What it found.
+    Done(Result<Reached, Unreached>),
 }
 
 /// The fields every protocol's profile takes from the form, once checked.
@@ -974,6 +989,23 @@ impl ProfileDraft {
         }
     }
 
+    /// The address and port "Test address" dials: what the form holds, checked as a save
+    /// checks them; `None` for a local shell, which has no address, or while they are wrong.
+    #[must_use]
+    pub fn test_target(&self) -> Option<(String, u16)> {
+        if self.protocol == DraftProtocol::Local {
+            return None;
+        }
+        Some((host(&self.host).ok()?, self.typed_port().ok()?))
+    }
+
+    /// Whether "Test address" reads an SSH server's banner too, as the C# does for the SSH
+    /// family.
+    #[must_use]
+    pub fn tests_ssh(&self) -> bool {
+        matches!(self.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
+    }
+
     /// The port an empty field stands for.
     #[must_use]
     pub fn default_port(&self) -> u16 {
@@ -1165,6 +1197,10 @@ impl ProfileDraft {
 
     /// Replaces the text of `field`.
     pub fn set(&mut self, field: ProfileField, value: String) {
+        // What the test found was about the address it dialled, not this one.
+        if matches!(field, ProfileField::Host | ProfileField::Port) {
+            self.address_test = AddressTest::Idle;
+        }
         *match field {
             ProfileField::Name => &mut self.name,
             ProfileField::Group => &mut self.group,

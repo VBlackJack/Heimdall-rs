@@ -1181,3 +1181,20 @@ ui-error-auth-agent-none = No key was loaded in an SSH agent when Heimdall diall
 ui-error-auth-agent-one = One key was loaded in an SSH agent and offered to this gateway; it was not accepted. If this gateway expects a different key, load that one and connect again.
 ui-error-auth-agent-many = { $count } keys were loaded in an SSH agent and offered to this gateway; none of them was accepted. If this gateway expects a different key, load that one and connect again.
 ui-error-auth-with-agent = { $refused } { $agent }
+
+## "Test address" in the profile form, as the C# dialog says it.
+ui-address-test-button = Test address
+ui-address-test-hint = Checks that the address and port answer. Does not check your username or password.
+ui-address-test-running = Testing the address...
+ui-address-test-success = Address answers: { $address } ({ $millis } ms). Credentials were not checked.
+ui-address-test-success-ssh = Address answers and an SSH server replied: { $banner }. Credentials were not checked.
+ui-address-test-failure = The address did not answer: { $reason }
+ui-address-test-direct-scope = Tested directly from this computer, not through { $gateway }.
+ui-address-test-cancel = Cancel
+ui-address-test-dns-timeout = DNS lookup timed out.
+ui-address-test-dns-failed = DNS lookup failed: { $reason }
+ui-address-test-dns-no-results = DNS lookup returned no addresses.
+ui-address-test-tcp-timeout = TCP connect timed out (host: { $address }). The host may be off, unreachable, or the port may be blocked.
+ui-address-test-tcp-failed = Could not connect to { $address }: { $reason }
+ui-address-test-cancelled = Test cancelled.
+ui-address-test-scoped = { $verdict } { $scope }
