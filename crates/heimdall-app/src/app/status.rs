@@ -107,6 +107,9 @@ pub enum Notice {
     PathCopied(String),
     /// This many entries of a Files tab were cut.
     FilesCut(usize),
+    /// The desktop was connected again at the size asked, the server unable to take it
+    /// live.
+    ResolutionReconnected,
     /// The size chosen is larger than the tab: the desktop is shown scaled.
     ResolutionScaled,
     /// A server's file is open in the external editor: each save is sent.

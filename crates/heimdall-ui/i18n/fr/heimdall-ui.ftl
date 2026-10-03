@@ -1202,6 +1202,7 @@ ui-files-error-paste-into-itself = Impossible de coller { $name } dans lui-même
 ui-error-key-not-absolute = Le chemin de la clé SSH doit être absolu : { $path }
 ui-files-error-changed-on-server = Le fichier a changé sur le serveur depuis son ouverture : il a été laissé tel quel.
 ui-files-error-file-too-large = Les fichiers de plus de 16 Mio doivent être téléchargés.
+ui-status-resolution-reconnected = Le changement de résolution a nécessité une reconnexion.
 ui-resolution-mode-smart-sizing = Mise à l'échelle intelligente
 ui-resolution-tooltip = Changer la résolution - { $mode }
 ui-resolution-tooltip-size = Changer la résolution - { $mode } ({ $width }x{ $height })

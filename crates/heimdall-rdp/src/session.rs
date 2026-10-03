@@ -95,6 +95,14 @@ pub enum RdpEvent {
     },
     /// The server's clipboard, as text: the server copied it.
     RemoteClipboard(Zeroizing<String>),
+    /// The server cannot change the desktop's size while connected: it has no display
+    /// channel, or refused the size. Only a new connection at that size brings it.
+    ResizeRefused {
+        /// Width asked.
+        width: u16,
+        /// Height asked.
+        height: u16,
+    },
     /// The session ended; nothing follows.
     Closed(CloseReason),
 }
@@ -135,6 +143,22 @@ pub const RESIZE_SETTLE: Duration = Duration::from_millis(300);
 /// How soon a size is asked again when the server's display channel was not open yet.
 const RESIZE_RETRY: Duration = Duration::from_millis(500);
 
+/// How long a size is asked again for a display channel that does not open: a server
+/// without one never changes size while connected.
+const RESIZE_GIVE_UP: Duration = Duration::from_secs(10);
+
+/// Whether a size still waiting for the display channel, first asked at `since`, is asked
+/// again at `now`; `since` starts on the first wait and ends on giving up.
+fn asks_again(since: &mut Option<Instant>, now: Instant) -> bool {
+    let first = *since.get_or_insert(now);
+    if now.duration_since(first) < RESIZE_GIVE_UP {
+        true
+    } else {
+        *since = None;
+        false
+    }
+}
+
 /// Starts the session of `connection`; `cancel` ends it.
 #[must_use]
 pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession {
@@ -163,6 +187,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
         wanted: None,
         asked: None,
         settle: None,
+        waiting_since: None,
         desktop_scale,
         reader: FrameReader::new(read_half, leftover),
         writer: write_half,
@@ -255,6 +280,8 @@ struct Running {
     /// reconnection) brings the server's own size back, and it is asked again then.
     asked: Option<(u32, u32)>,
     settle: Option<Instant>,
+    /// Since when a size waits for the display channel to open.
+    waiting_since: Option<Instant>,
     reader: FrameReader<ReadHalf<Upgraded>>,
     writer: WriteHalf<Upgraded>,
 }
@@ -421,7 +448,8 @@ impl Running {
     }
 
     /// Asks the server for the wanted size, unless the desktop has it already; when the
-    /// display channel is not open yet, asks again a little later.
+    /// display channel is not open yet, asks again a little later, for
+    /// [`RESIZE_GIVE_UP`] at most. A size the server cannot take is said.
     async fn ask_for_size(&mut self, stage: &mut ActiveStage) -> Result<(), String> {
         let Some((width, height)) = self.wanted.take() else {
             return Ok(());
@@ -437,12 +465,25 @@ impl Running {
         // The scale asked at the connection, kept: 100 is the server's own, said as none.
         let scale = (self.desktop_scale > 100).then_some(self.desktop_scale);
         match stage.encode_resize(width, height, scale, None) {
-            Some(Ok(frame)) => self.send(&frame).await,
-            // Not encodable: the size stays as it is.
-            Some(Err(_)) => Ok(()),
-            None => {
+            Some(Ok(frame)) => {
+                self.waiting_since = None;
+                self.send(&frame).await
+            }
+            None if asks_again(&mut self.waiting_since, Instant::now()) => {
                 self.wanted = Some((width, height));
                 self.settle = Some(Instant::now() + RESIZE_RETRY);
+                Ok(())
+            }
+            // Not encodable, or no display channel after all this time.
+            Some(Err(_)) | None => {
+                self.waiting_since = None;
+                let (Ok(width), Ok(height)) = (u16::try_from(width), u16::try_from(height)) else {
+                    return Ok(());
+                };
+                let _ = self
+                    .events
+                    .send(RdpEvent::ResizeRefused { width, height })
+                    .await;
                 Ok(())
             }
         }
@@ -537,6 +578,31 @@ impl Running {
             })
             .await;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod resize_tests {
+    use super::{RESIZE_GIVE_UP, asks_again};
+    use std::time::Duration;
+    use tokio::time::Instant;
+
+    #[test]
+    fn a_size_waits_for_the_display_channel_then_is_given_up_and_waits_afresh() {
+        let start = Instant::now();
+        let mut since = None;
+        assert!(asks_again(&mut since, start));
+        assert!(asks_again(
+            &mut since,
+            start + RESIZE_GIVE_UP - Duration::from_millis(1)
+        ));
+        assert!(!asks_again(&mut since, start + RESIZE_GIVE_UP), "given up");
+        assert_eq!(since, None);
+        let later = start + RESIZE_GIVE_UP * 3;
+        assert!(
+            asks_again(&mut since, later),
+            "a new size waits its own time"
+        );
     }
 }
 

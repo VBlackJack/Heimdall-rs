@@ -89,3 +89,38 @@ fn a_count_takes_the_form_its_language_gives_its_number() {
     assert_eq!(say(2), "2 éléments sélectionnés");
     heimdall_ui::i18n::apply(Some(Language::English));
 }
+
+/// The language files merge by union (`.gitattributes`): two branches adding keys at the end
+/// keep both, without a conflict. The same key added by both would then be there twice, the
+/// second one hiding the first: refused here.
+#[test]
+fn no_language_file_holds_a_key_twice() {
+    let languages = Path::new(env!("CARGO_MANIFEST_DIR")).join("i18n");
+    let mut read = 0;
+    for language in std::fs::read_dir(&languages).expect("languages") {
+        let file = language
+            .expect("language")
+            .path()
+            .join(concat!(env!("CARGO_PKG_NAME"), ".ftl"));
+        let text = std::fs::read_to_string(&file).expect("language file");
+        let mut seen = std::collections::BTreeSet::new();
+        for line in text.lines() {
+            // A message starts a line with its identifier; attributes, variants and
+            // continuations are indented, comments start with #.
+            let Some((id, _)) = line.split_once('=') else {
+                continue;
+            };
+            let id = id.trim_end();
+            let is_id = id.starts_with(|c: char| c.is_ascii_alphabetic())
+                && id
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_');
+            if is_id {
+                assert!(seen.insert(id.to_owned()), "{}: {id} twice", file.display());
+            }
+        }
+        assert!(!seen.is_empty(), "{}: no key read", file.display());
+        read += 1;
+    }
+    assert!(read >= 3, "English, French and Spanish read, got {read}");
+}
