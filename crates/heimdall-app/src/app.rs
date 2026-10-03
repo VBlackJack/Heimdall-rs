@@ -1608,6 +1608,8 @@ pub struct App {
     pub dialog: Option<Dialog>,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
+    /// Whether the tunnels panel is shown under the sessions.
+    pub tunnels_panel: bool,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -1692,6 +1694,7 @@ impl App {
             active: None,
             dialog,
             tunnels: Vec::new(),
+            tunnels_panel: false,
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,

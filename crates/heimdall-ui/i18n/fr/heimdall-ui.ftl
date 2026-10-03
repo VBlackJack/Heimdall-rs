@@ -1076,3 +1076,26 @@ ui-tunnels-all-closed = Tous les tunnels fermés.
 ui-tunnel-port-copied = Port { $port } copié dans le presse-papiers.
 ui-tunnel-closed-reason = { $closed } ({ $reason })
 ui-error-local-port-unavailable = Le port local { $port } est déjà utilisé, ou réservé par le système.
+
+## The tunnels panel and its status-bar button, as the C# ones.
+ui-tunnels-header = Tunnels ({ $count })
+ui-tunnels-close-all = Tout fermer
+ui-tunnels-new = + Nouveau
+ui-tunnels-collapse-tooltip = Réduire le panneau des tunnels
+ui-tunnels-toggle-tooltip = Afficher/masquer le panneau des tunnels
+ui-tunnels-column-gateway = Passerelle
+ui-tunnels-column-label = Étiquette
+ui-tunnels-column-local = Local
+ui-tunnels-column-remote = Distant
+ui-tunnels-column-port = Port
+ui-tunnels-close-tooltip = Fermer le tunnel
+ui-tunnels-menu-close = Fermer le tunnel
+ui-tunnels-menu-copy-port = Copier le port local
+ui-tunnels-menu-close-all = Fermer tous les tunnels
+ui-tunnels-empty = Aucun tunnel actif
+ui-tunnels-count =
+    { $count ->
+        [one] { $count } tunnel
+       *[other] { $count } tunnels
+    }
+ui-tunnels-collapse-button = ▼

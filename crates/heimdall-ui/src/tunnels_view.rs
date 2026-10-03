@@ -15,25 +15,51 @@
  */
 
 //! The tunnels the user opens by hand, in the window: the C# "New tunnel" dialog, the
-//! question about a gateway's unknown key on the way, and what the status bar says of them.
+//! question about a gateway's unknown key on the way, the panel listing them under the
+//! sessions, and what the status bar says of them.
 
 use heimdall_app::tunnel::{
-    LOCAL_PORT_MIN, PORT_MAX, REMOTE_PORT_MIN, TunnelField, TunnelForm, TunnelProblem,
+    LOCAL_PORT_MIN, PORT_MAX, REMOTE_PORT_MIN, Tunnel, TunnelField, TunnelForm, TunnelProblem,
 };
 use heimdall_app::{Message as AppMessage, Notice, TunnelMessage, server_text};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
-use iced::widget::{button, column, pick_list, row, text, text_input};
-use iced::{Element, Font};
+use iced::widget::{
+    Column, button, column, container, mouse_area, pick_list, row, rule, scrollable, space, text,
+    text_input, tooltip,
+};
+use iced::{Alignment, Border, Element, Font, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::texts;
+use crate::tree_view::TreeMenu;
 
 /// Room between a dialog's parts.
 const SPACING: f32 = 8.0;
 
 /// Size of a dialog's title.
 const HEADING_SIZE: f32 = 20.0;
+
+/// Height of the tunnels panel, within the C# panel's 120 to 300.
+const PANEL_HEIGHT: f32 = 160.0;
+
+/// Size of the panel's text, the C# caption font.
+const PANEL_TEXT_SIZE: f32 = 12.0;
+
+/// Room around the panel's content.
+const PANEL_PADDING: [f32; 2] = [4.0, 8.0];
+
+/// Side of a row's health dot, as the C# one.
+const DOT_SIDE: f32 = 7.0;
+
+/// Widths of the Label, Local and Port columns, as the C# grid's; Gateway and Remote share
+/// what is left.
+const LABEL_WIDTH: f32 = 90.0;
+const LOCAL_WIDTH: f32 = 60.0;
+const PORT_WIDTH: f32 = 50.0;
+
+/// Width of the column holding a row's close button.
+const CLOSE_WIDTH: f32 = 28.0;
 
 /// A gateway in the dialog's list: "Name  user@host:port", as the C# combo shows one.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,6 +211,127 @@ pub fn host_key<'a>(host: &'a str, port: u16, fingerprint: &'a str) -> Element<'
     ]
     .spacing(SPACING)
     .into()
+}
+
+fn tunnel(message: TunnelMessage) -> Message {
+    Message::App(AppMessage::Tunnel(message))
+}
+
+/// A ghost button, its text the theme's danger colour, as the C# "Close All".
+fn danger_text(theme: &Theme, status: button::Status) -> button::Style {
+    button::Style {
+        text_color: theme.extended_palette().danger.base.color,
+        ..button::text(theme, status)
+    }
+}
+
+/// The tunnels panel under the sessions, as the C# one: its header with Close All, "+ New"
+/// and the chevron that collapses it, then a row per open tunnel, or that there is none.
+#[must_use]
+pub fn panel(tunnels: &[Tunnel]) -> Element<'_, Message> {
+    let header = row![
+        text(fl!("ui-tunnels-header", count = tunnels.len())).size(PANEL_TEXT_SIZE),
+        space::horizontal(),
+        button(text(fl!("ui-tunnels-close-all")).size(PANEL_TEXT_SIZE))
+            .style(danger_text)
+            .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll))),
+        button(text(fl!("ui-tunnels-new")).size(PANEL_TEXT_SIZE))
+            .style(button::text)
+            .on_press(tunnel(TunnelMessage::New)),
+        tooltip(
+            button(text(fl!("ui-tunnels-collapse-button")).size(PANEL_TEXT_SIZE))
+                .style(button::text)
+                .on_press(tunnel(TunnelMessage::TogglePanel)),
+            text(fl!("ui-tunnels-collapse-tooltip")).size(PANEL_TEXT_SIZE),
+            tooltip::Position::Top,
+        )
+        .style(container::rounded_box),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center);
+    let body: Element<'_, Message> = if tunnels.is_empty() {
+        text(fl!("ui-tunnels-empty"))
+            .size(PANEL_TEXT_SIZE)
+            .style(text::secondary)
+            .into()
+    } else {
+        let rows = tunnels.iter().map(tunnel_row);
+        scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
+            .height(Length::Fill)
+            .into()
+    };
+    container(
+        column![header, columns(), rule::horizontal(1), body]
+            .spacing(SPACING / 2.0)
+            .width(Length::Fill),
+    )
+    .padding(PANEL_PADDING)
+    .height(PANEL_HEIGHT)
+    .width(Length::Fill)
+    .style(container::bordered_box)
+    .into()
+}
+
+/// The panel's column titles, as the C# grid's.
+fn columns<'a>() -> Element<'a, Message> {
+    let title = |label: String| text(label).size(PANEL_TEXT_SIZE).style(text::secondary);
+    row![
+        space().width(DOT_SIDE),
+        title(fl!("ui-tunnels-column-gateway")).width(Length::Fill),
+        title(fl!("ui-tunnels-column-label")).width(LABEL_WIDTH),
+        title(fl!("ui-tunnels-column-local")).width(LOCAL_WIDTH),
+        title(fl!("ui-tunnels-column-remote")).width(Length::Fill),
+        title(fl!("ui-tunnels-column-port")).width(PORT_WIDTH),
+        space().width(CLOSE_WIDTH),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// A tunnel's row: its health dot, gateway, label, local port, remote host and port, and the
+/// button closing it; a right click opens its menu.
+fn tunnel_row(open: &Tunnel) -> Element<'_, Message> {
+    let cell = |value: String| text(value).size(PANEL_TEXT_SIZE);
+    // A row is a tunnel that listens: one whose gateway went is gone.
+    let dot = container(space().width(DOT_SIDE).height(DOT_SIDE)).style(|theme: &Theme| {
+        container::Style {
+            background: Some(theme.extended_palette().success.base.color.into()),
+            border: Border {
+                radius: (DOT_SIDE / 2.0).into(),
+                ..Border::default()
+            },
+            ..container::Style::default()
+        }
+    });
+    let line = row![
+        dot,
+        cell(server_text(&open.gateway_name)).width(Length::Fill),
+        cell(
+            open.spec
+                .label
+                .as_deref()
+                .map(server_text)
+                .unwrap_or_default()
+        )
+        .width(LABEL_WIDTH),
+        cell(open.local.port().to_string()).width(LOCAL_WIDTH),
+        cell(server_text(&open.spec.remote_host)).width(Length::Fill),
+        cell(open.spec.remote_port.to_string()).width(PORT_WIDTH),
+        tooltip(
+            button(text(fl!("ui-tab-close-button")).size(PANEL_TEXT_SIZE))
+                .style(button::text)
+                .width(CLOSE_WIDTH)
+                .on_press(tunnel(TunnelMessage::Close(open.id))),
+            text(fl!("ui-tunnels-close-tooltip")).size(PANEL_TEXT_SIZE),
+            tooltip::Position::Left,
+        )
+        .style(container::rounded_box),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center);
+    mouse_area(line)
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::Tunnel(open.id)))
+        .into()
 }
 
 /// What the status bar says of a tunnel `notice`; `None` when it is not one.

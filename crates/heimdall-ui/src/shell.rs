@@ -1787,6 +1787,11 @@ impl Shell {
                 row![
                     self.sidebar(),
                     column![self.tab_bar(), self.focusable_content()]
+                        .push(
+                            self.app
+                                .tunnels_panel
+                                .then(|| crate::tunnels_view::panel(&self.app.tunnels)),
+                        )
                         .width(Length::Fill)
                         .height(Length::Fill)
                 ]
@@ -1853,12 +1858,18 @@ impl Shell {
             layers = layers.push(overlay);
         }
         if let Some((entries, at)) = open_menu {
+            // A tunnel row is at the window's foot: its menu opens above the cursor.
+            let y = if matches!(self.menu, Some((TreeMenu::Tunnel(_), _))) {
+                (at.y - tree_view::TUNNEL_MENU_HEIGHT).max(0.0)
+            } else {
+                at.y
+            };
             // Opaque: what is under the menu is neither hovered nor clicked.
             layers = layers.push(opaque(
                 mouse_area(
                     pin(entries)
                         .x(at.x)
-                        .y(at.y)
+                        .y(y)
                         .width(Length::Fill)
                         .height(Length::Fill),
                 )
@@ -1881,6 +1892,10 @@ impl Shell {
                 .map(|path| heimdall_app::server_text(&path.display()))
                 .collect();
             tree_view::files_bookmarks_menu(tab, &shown)
+        } else if let TreeMenu::Tunnel(id) = *menu {
+            // Only while the tunnel is open.
+            self.app.tunnel(id)?;
+            tree_view::tunnel_menu_entries(id)
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
             // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
@@ -1922,7 +1937,8 @@ impl Shell {
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
                 | TreeMenu::FilesEntry { .. }
-                | TreeMenu::FilesBookmarks(_) => None,
+                | TreeMenu::FilesBookmarks(_)
+                | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
             let connect_as = profile
@@ -1975,8 +1991,27 @@ impl Shell {
         crate::status_bar::view(
             crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
-            self.broadcast_controls(targets),
+            row![self.tunnels_toggle(), self.broadcast_controls(targets)]
+                .align_y(iced::Alignment::Center)
+                .into(),
         )
+    }
+
+    /// The tunnels panel's button, with how many tunnels are open, as the C# bar's.
+    fn tunnels_toggle(&self) -> Element<'_, Message> {
+        tooltip(
+            button(text(fl!("ui-tunnels-count", count = self.app.tunnels.len())).size(SMALL_SIZE))
+                .style(if self.app.tunnels_panel {
+                    button::primary
+                } else {
+                    button::text
+                })
+                .on_press(Message::App(AppMessage::Tunnel(TunnelMessage::TogglePanel))),
+            text(fl!("ui-tunnels-toggle-tooltip")).size(SMALL_SIZE),
+            tooltip::Position::Top,
+        )
+        .style(container::rounded_box)
+        .into()
     }
 
     /// Broadcast input's toggle and scope, as the C# bar's: lit while on.

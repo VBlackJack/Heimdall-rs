@@ -1151,3 +1151,26 @@ ui-tunnels-all-closed = All tunnels closed.
 ui-tunnel-port-copied = Port { $port } copied to clipboard.
 ui-tunnel-closed-reason = { $closed } ({ $reason })
 ui-error-local-port-unavailable = Local port { $port } is already in use, or reserved by the system.
+
+## The tunnels panel and its status-bar button, as the C# ones.
+ui-tunnels-header = Tunnels ({ $count })
+ui-tunnels-close-all = Close All
+ui-tunnels-new = + New
+ui-tunnels-collapse-tooltip = Collapse tunnel panel
+ui-tunnels-toggle-tooltip = Toggle tunnel panel
+ui-tunnels-column-gateway = Gateway
+ui-tunnels-column-label = Label
+ui-tunnels-column-local = Local
+ui-tunnels-column-remote = Remote
+ui-tunnels-column-port = Port
+ui-tunnels-close-tooltip = Close tunnel
+ui-tunnels-menu-close = Close Tunnel
+ui-tunnels-menu-copy-port = Copy Local Port
+ui-tunnels-menu-close-all = Close All Tunnels
+ui-tunnels-empty = No active tunnels
+ui-tunnels-count =
+    { $count ->
+        [one] { $count } tunnel
+       *[other] { $count } tunnels
+    }
+ui-tunnels-collapse-button = ▼
