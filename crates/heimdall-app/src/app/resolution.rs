@@ -81,10 +81,19 @@ impl App {
             return;
         };
         pane.choose_size(size);
+        // Larger than the tab: shown scaled, and said so, as the C# toast.
+        let scaled = matches!(
+            (size, pane.tab_size()),
+            (Some((width, height)), Some((shown_width, shown_height)))
+                if width > shown_width || height > shown_height
+        );
         tab.desktop_sizing = Some(match size {
             Some((width, height)) => DesktopSizing::Fixed { width, height },
             None => DesktopSizing::FollowsTab,
         });
+        if scaled {
+            self.tell(Notice::ResolutionScaled);
+        }
     }
 
     /// Keeps the size `tab_id`'s session has now as its saved profile's own, as the C#
