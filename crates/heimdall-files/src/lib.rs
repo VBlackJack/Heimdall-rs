@@ -47,6 +47,7 @@ pub use ftp::{FtpClient, FtpConnectError, FtpSecurity, FtpTarget};
 pub use heimdall_sftp::RemotePath;
 pub use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 pub use heimdall_sftp::path::display_bytes;
+pub use heimdall_sftp::transfer::Fingerprint;
 pub use plan::{Plan, Ready, Root, Step};
 
 /// The permission bits of a mode, set-user, set-group and sticky included.
@@ -140,6 +141,10 @@ pub enum RemoteError {
     /// The entry is a symbolic link: changing its permissions would change what it points
     /// to.
     IsLink,
+    /// The file changed on the server since it was read: it was left as it is.
+    Changed,
+    /// The file is larger than what is read whole.
+    FileTooLarge,
 }
 
 /// How a folder transfer ended.
@@ -240,6 +245,76 @@ impl RemoteSession {
                 .await
                 .map_err(|e| sftp_error(&e)),
             Self::Ftp(client) => client.set_permissions(path, mode).await,
+        }
+    }
+
+    /// What the server says of `path` itself, a link not followed: what tells a file left
+    /// as it was from one changed.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server; [`Refusal::Unsupported`] over FTP, which says too
+    /// little of a file to tell.
+    pub async fn fingerprint(&self, path: &RemotePath) -> Result<Fingerprint, RemoteError> {
+        match self {
+            Self::Sftp(client) => client
+                .lstat(path)
+                .await
+                .map(|attributes| Fingerprint::of(&attributes))
+                .map_err(|e| sftp_error(&e)),
+            Self::Ftp(_) => Err(unsupported()),
+        }
+    }
+
+    /// The regular file `path` read whole, `cap` bytes at most, with the fingerprint of
+    /// that very content: a file changing while read is refused.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError::FileTooLarge`], [`RemoteError::Changed`], [`RemoteError::NotAFile`],
+    /// [`RemoteError::Cancelled`], or the server's; [`Refusal::Unsupported`] over FTP.
+    pub async fn read_whole(
+        &self,
+        path: &RemotePath,
+        cap: u64,
+        cancel: &CancellationToken,
+    ) -> Result<(Vec<u8>, Fingerprint), RemoteError> {
+        match self {
+            Self::Sftp(client) => transfer::read_whole(client, path, cap, cancel)
+                .await
+                .map_err(|e| transfer_error(&e)),
+            Self::Ftp(_) => Err(unsupported()),
+        }
+    }
+
+    /// Replaces the regular file `path` with `data`, only while it still has the
+    /// fingerprint `expected`; returns its fingerprint once replaced.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError::Changed`] with the file left as it is,
+    /// [`RemoteError::DestinationNotAFile`], [`RemoteError::ReplaceNotSafe`],
+    /// [`RemoteError::Cancelled`], or the server's; [`Refusal::Unsupported`] over FTP, which
+    /// cannot replace a file only while it is unchanged.
+    pub async fn replace_if(
+        &self,
+        path: &RemotePath,
+        data: &[u8],
+        expected: &Fingerprint,
+        cancel: &CancellationToken,
+    ) -> Result<Fingerprint, RemoteError> {
+        match self {
+            Self::Sftp(client) => transfer::replace_if(
+                client,
+                data,
+                path,
+                expected,
+                &TransferConfig::default(),
+                cancel,
+            )
+            .await
+            .map_err(|e| transfer_error(&e)),
+            Self::Ftp(_) => Err(unsupported()),
         }
     }
 
@@ -404,6 +479,16 @@ fn transfer_error(error: &TransferError) -> RemoteError {
         TransferError::ReplaceNotSafe => RemoteError::ReplaceNotSafe,
         TransferError::Cancelled { .. } => RemoteError::Cancelled,
         TransferError::LocalExists => RemoteError::LocalExists,
+        TransferError::Changed => RemoteError::Changed,
+        TransferError::TooLarge => RemoteError::FileTooLarge,
+    }
+}
+
+/// What a protocol without an operation says of it.
+fn unsupported() -> RemoteError {
+    RemoteError::Refused {
+        refusal: Refusal::Unsupported,
+        message: Vec::new(),
     }
 }
 

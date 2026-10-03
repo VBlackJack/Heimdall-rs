@@ -652,6 +652,10 @@ pub enum FilesError {
     /// The server did not carry out a server-side copy: it runs no POSIX shell with GNU
     /// tools for this account, or the copy failed there. Nothing is copied any other way.
     CopyRefused,
+    /// The file changed on the server since it was opened: it was left as it is.
+    ChangedOnServer,
+    /// The file is larger than what is edited: it is downloaded instead.
+    FileTooLarge,
     /// A folder pasted into itself or one of its own folders.
     PasteIntoItself {
         /// The folder's name, made safe.
@@ -674,6 +678,8 @@ impl From<&RemoteError> for FilesError {
             RemoteError::LocalExists => Self::Exists,
             RemoteError::DestinationNotAFile => Self::DestinationNotAFile,
             RemoteError::ReplaceNotSafe => Self::ReplaceNotSafe,
+            RemoteError::Changed => Self::ChangedOnServer,
+            RemoteError::FileTooLarge => Self::FileTooLarge,
             RemoteError::TooLarge => Self::TooLarge,
             // A cancel is a state of the transfer, not a failure: callers handle it first.
             RemoteError::SessionClosed | RemoteError::Cancelled => Self::SessionClosed,
