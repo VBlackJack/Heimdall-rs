@@ -484,14 +484,21 @@ async fn walk<P: Prompter>(
     };
     // Every hop but the last is a gateway: a refusal there is the gateway's.
     let last = onward.len();
-    let mut reached = hop(first, None, options, prompter, cancel)
+    let mut reached = hop(first, None, options, prompter, cancel, Pinning::Record)
         .await
         .map_err(|error| at_gateway(error, last > 0))?;
     let mut gateway = None;
     for (index, next) in onward.into_iter().enumerate() {
-        let onward = hop(next, Some(&reached.0), options, prompter, cancel)
-            .await
-            .map_err(|error| at_gateway(error, index + 1 < last))?;
+        let onward = hop(
+            next,
+            Some(&reached.0),
+            options,
+            prompter,
+            cancel,
+            Pinning::Record,
+        )
+        .await
+        .map_err(|error| at_gateway(error, index + 1 < last))?;
         gateway = Some(std::mem::replace(&mut reached, onward));
     }
     Ok((reached, gateway))
@@ -514,16 +521,26 @@ pub fn at_gateway(error: ConnectError, gateway: bool) -> ConnectError {
 
 /// Originator address reported to a gateway when it is asked to connect onward: the client
 /// has no address of its own to give inside the tunnel.
-const ORIGINATOR_ADDRESS: &str = "127.0.0.1";
+pub(crate) const ORIGINATOR_ADDRESS: &str = "127.0.0.1";
+
+/// What a hop does with a key that matched a pinned fingerprint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Pinning {
+    /// Records it in full and drops the pin: a connection.
+    Record,
+    /// Leaves both files as they are: a diagnosis writes nothing.
+    Leave,
+}
 
 /// Connects to `profile` and authenticates, over TCP or, when `carrier` is given, over a
 /// connection it opens onward.
-async fn hop<P: Prompter>(
+pub(crate) async fn hop<P: Prompter>(
     profile: &SshProfile,
     carrier: Option<&client::Handle<ClientHandler>>,
     options: &ConnectOptions,
     prompter: &P,
     cancel: &CancellationToken,
+    pinning: Pinning,
 ) -> Result<Reached, ConnectError> {
     let host = validate_host(&profile.host)?;
     let port = profile.port;
@@ -584,7 +601,9 @@ async fn hop<P: Prompter>(
             Ok(Ok(handle)) => handle,
         },
     };
-    record_pinned(&known_hosts, &pins, &host, port, &pinned);
+    if pinning == Pinning::Record {
+        record_pinned(&known_hosts, &pins, &host, port, &pinned);
+    }
 
     let username = if let Some(username) = profile.username.clone() {
         username
