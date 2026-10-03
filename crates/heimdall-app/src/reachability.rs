@@ -220,7 +220,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_closed_port_is_a_failed_connection_named_by_its_address() {
+    async fn a_closed_port_does_not_answer_and_is_named_by_its_address() {
         // Reserved, not listening: nothing else can take it while the test runs.
         let socket = tokio::net::TcpSocket::new_v4().expect("socket");
         socket
@@ -230,8 +230,14 @@ mod tests {
         let failed = run("127.0.0.1".to_owned(), port, false, SHORT)
             .await
             .expect_err("closed");
+        // Refused at once on Linux; Windows tries a closed port again for about two seconds
+        // before it refuses, which the budget may not wait for.
         assert!(
-            matches!(&failed, Unreached::TcpFailed { address, .. } if address == "127.0.0.1"),
+            matches!(
+                &failed,
+                Unreached::TcpFailed { address, .. } | Unreached::TcpTimeout(address)
+                    if address == "127.0.0.1"
+            ),
             "{failed:?}"
         );
     }
