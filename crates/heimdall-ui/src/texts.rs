@@ -375,6 +375,10 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::InvalidName => fl!("ui-files-error-invalid-name"),
         FilesError::Exists => fl!("ui-files-error-exists"),
         FilesError::InvalidPermissions => fl!("ui-files-error-invalid-permissions"),
+        FilesError::CopyRefused => fl!("ui-files-error-copy-refused"),
+        FilesError::PasteIntoItself { name } => {
+            fl!("ui-files-error-paste-into-itself", name = name.as_str())
+        }
     }
 }
 
