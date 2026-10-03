@@ -73,6 +73,56 @@ pub(crate) async fn connect_all(source: &AgentSource) -> Vec<Agent> {
     agents
 }
 
+/// Name of the OpenSSH agent service shipped with Windows, as the C# Heimdall names it.
+const OPENSSH_AGENT_NAME: &str = "Windows OpenSSH Agent";
+
+/// Name of `PuTTY`'s agent, as the C# Heimdall names it.
+const PAGEANT_NAME: &str = "Pageant";
+
+/// Name of the agent `SSH_AUTH_SOCK` designates on Unix.
+const UNIX_AGENT_NAME: &str = "ssh-agent";
+
+/// An agent that answered, and how many keys it holds.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AgentSurvey {
+    /// Its name: "Pageant", "Windows OpenSSH Agent", or the socket or pipe it answers on.
+    pub name: String,
+    /// The public keys it holds; certificates are not counted.
+    pub keys: usize,
+}
+
+/// Every agent `source` designates that answers, in the order their keys would be offered,
+/// with how many keys each holds, as the C# agent chip asks them.
+pub async fn survey(source: &AgentSource) -> Vec<AgentSurvey> {
+    let mut found = Vec::new();
+    for place in places(source) {
+        if let Some(mut agent) = bounded(reach(&place)).await {
+            let keys = identities(&mut agent).await.len();
+            found.push(AgentSurvey {
+                name: name(&place),
+                keys,
+            });
+        }
+    }
+    found
+}
+
+/// What the user knows `place` as.
+fn name(place: &Place) -> String {
+    match place {
+        Place::Path(path) if path.as_os_str() == OPENSSH_AGENT_PIPE => {
+            OPENSSH_AGENT_NAME.to_owned()
+        }
+        Place::Path(path) => path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy()
+            .into_owned(),
+        Place::Environment => UNIX_AGENT_NAME.to_owned(),
+        Place::Pageant => PAGEANT_NAME.to_owned(),
+    }
+}
+
 async fn bounded(connecting: impl Future<Output = Option<Agent>>) -> Option<Agent> {
     tokio::time::timeout(AGENT_CONNECT_TIMEOUT, connecting)
         .await
@@ -194,7 +244,23 @@ async fn connect_pageant() -> Option<Agent> {
 
 #[cfg(test)]
 mod tests {
-    use super::{OPENSSH_AGENT_PIPE, candidate_pipes};
+    use std::path::PathBuf;
+
+    use super::{OPENSSH_AGENT_PIPE, Place, candidate_pipes, name};
+
+    #[test]
+    fn the_agents_are_named_as_the_csharp_names_them() {
+        assert_eq!(
+            name(&Place::Path(PathBuf::from(OPENSSH_AGENT_PIPE))),
+            "Windows OpenSSH Agent"
+        );
+        assert_eq!(name(&Place::Pageant), "Pageant");
+        assert_eq!(name(&Place::Environment), "ssh-agent");
+        assert_eq!(
+            name(&Place::Path(PathBuf::from("/run/user/1000/agent.sock"))),
+            "agent.sock"
+        );
+    }
 
     #[test]
     fn a_pipe_in_ssh_auth_sock_is_tried_first() {
