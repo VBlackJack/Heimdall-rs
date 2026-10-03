@@ -108,6 +108,8 @@ pub enum FilesKey {
     Delete,
     /// List the folder again.
     Refresh,
+    /// Copy the full path of the selected entry, as the C# Files tab's Ctrl+C.
+    CopyPath,
 }
 
 /// What an entry is.
@@ -1143,6 +1145,23 @@ pub async fn file_operation(operation: FileOperation) -> Result<(), FilesError> 
                 })
             }),
     }
+}
+
+/// Moves each entry of the server to its new path, one after another, by a rename that
+/// never replaces what is there; one failing leaves the others to go on.
+pub async fn move_remote(
+    client: RemoteSession,
+    moves: Vec<(RemotePath, RemotePath)>,
+) -> Vec<(RemotePath, Result<(), FilesError>)> {
+    let mut results = Vec::with_capacity(moves.len());
+    for (from, to) in moves {
+        let result = client
+            .rename(&from, &to)
+            .await
+            .map_err(|e| FilesError::from(&e));
+        results.push((from, result));
+    }
+    results
 }
 
 /// A name typed for a new or renamed entry, checked for `side`.
