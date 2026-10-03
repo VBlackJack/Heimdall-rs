@@ -128,11 +128,51 @@ pub fn replace_script(
     token: [u8; 16],
     sudo: Sudo<'_>,
 ) -> Result<SudoScript, Unquotable> {
+    let target = quote(target)?;
+    let token = hex(&token);
+    let mut script = prelude(password, sudo)?;
+    let mut line = |text: &[u8]| {
+        script.extend_from_slice(text);
+        script.push(b'\n');
+    };
+    // The content, decoded by the server from lines of base64.
+    line(b"content() {");
+    let encoded = base64(content);
+    for chunk in encoded.as_bytes().chunks(LINE) {
+        line(&[b"printf %s '", chunk, b"'"].concat());
+    }
+    line(b"}");
+    let replace = [
+        b"-- sh -c '",
+        REPLACE.as_bytes(),
+        b"' sh ",
+        target.as_slice(),
+        format!(" {} {token}", hex(expected)).as_bytes(),
+    ]
+    .concat();
+    line(b"if [ \"$m\" = S ]; then");
+    line(
+        &[
+            b"{ printf '%s\\n' \"$pw\"; content | base64 -d; } | \"$s\" -S -k -p '' ",
+            replace.as_slice(),
+        ]
+        .concat(),
+    );
+    line(b"else");
+    line(&[b"content | base64 -d | \"$s\" -n ", replace.as_slice()].concat());
+    line(b"fi");
+    Ok(SudoScript {
+        script,
+        done: format!("saved {token}\n").into_bytes(),
+    })
+}
+
+/// The start of every sudo script: the system's `PATH` and sudo, then sudo asked without a
+/// password, else with `password` alone, once; `m` says how it answered (`n` or `S`).
+fn prelude(password: Option<&[u8]>, sudo: Sudo<'_>) -> Result<Vec<u8>, Unquotable> {
     if password.is_some_and(|password| password.contains(&b'\n') || password.contains(&b'\r')) {
         return Err(Unquotable::Control);
     }
-    let target = quote(target)?;
-    let token = hex(&token);
     let mut script = Vec::new();
     let mut line = |text: &[u8]| {
         script.extend_from_slice(text);
@@ -167,36 +207,114 @@ pub fn replace_script(
         format!("elif printf '%s\\n' \"$pw\" | \"$s\" -S -k -p '' true; then m=S; else exit {AUTHENTICATION}; fi")
             .as_bytes(),
     );
-    // The content, decoded by the server from lines of base64.
-    line(b"content() {");
-    let encoded = base64(content);
-    for chunk in encoded.as_bytes().chunks(LINE) {
-        line(&[b"printf %s '", chunk, b"'"].concat());
-    }
-    line(b"}");
-    let replace = [
+    Ok(script)
+}
+
+/// What the root side runs to read: `$1` the file, `$2` the most bytes it may hold, `$3` the
+/// token to say done with. The file is held open by a link of its own, never followed, so
+/// what is read is the file found, all of it, whatever is renamed meanwhile.
+const READ: &str = concat!(
+    "set -eu; umask 077; target=$1; cap=$2; token=$3; ",
+    "for t in stat ln mktemp chmod rm rmdir base64; do ",
+    "command -v \"$t\" >/dev/null 2>&1 || { echo \"missing: $t\" >&2; exit 77; }; done; ",
+    "case \"$(stat --version 2>/dev/null)\" in *GNU*) ;; *) echo \"GNU coreutils needed\" >&2; exit 77;; esac; ",
+    "case \"$target\" in */*) dir=${target%/*}; [ -n \"$dir\" ] || dir=/ ;; *) dir=. ;; esac; ",
+    "work=$(mktemp -d -- \"$dir/.heimdall-read.XXXXXXXXXX\"); chmod 700 -- \"$work\"; cd -- \"$work\"; ",
+    "cleanup() { rm -f -- source; cd /; rmdir -- \"$work\" 2>/dev/null || :; }; ",
+    "trap cleanup EXIT HUP INT TERM; ",
+    "ln -P -- \"$target\" source 2>/dev/null || exit 73; ",
+    "if [ -L source ] || [ ! -f source ]; then exit 73; fi; ",
+    "exec 3< source; rm -f -- source; ",
+    "[ \"$(stat -Lc %s /proc/self/fd/3)\" -le \"$cap\" ] || exit 75; ",
+    "base64 <&3; exec 3<&-; ",
+    "cd /; rmdir -- \"$work\" 2>/dev/null || :; trap - EXIT HUP INT TERM; ",
+    "printf \"read %s\\n\" \"$token\"",
+);
+
+/// Exit status: the file is larger than what is read.
+pub const TOO_LARGE: u32 = 75;
+
+/// The script reading `target`, an absolute path on the server, of `cap` bytes at most, with
+/// `password` when the account's sudo asks for one; its output is the content in base64,
+/// then the line [`SudoScript::done`], which [`read_output`] takes apart.
+///
+/// # Errors
+///
+/// As [`replace_script`].
+pub fn read_script(
+    target: &[u8],
+    cap: u64,
+    password: Option<&[u8]>,
+    token: [u8; 16],
+    sudo: Sudo<'_>,
+) -> Result<SudoScript, Unquotable> {
+    let target = quote(target)?;
+    let token = hex(&token);
+    let mut script = prelude(password, sudo)?;
+    let mut line = |text: &[u8]| {
+        script.extend_from_slice(text);
+        script.push(b'\n');
+    };
+    let read = [
         b"-- sh -c '",
-        REPLACE.as_bytes(),
+        READ.as_bytes(),
         b"' sh ",
         target.as_slice(),
-        format!(" {} {token}", hex(expected)).as_bytes(),
+        format!(" {cap} {token}").as_bytes(),
     ]
     .concat();
     line(b"if [ \"$m\" = S ]; then");
     line(
         &[
-            b"{ printf '%s\\n' \"$pw\"; content | base64 -d; } | \"$s\" -S -k -p '' ",
-            replace.as_slice(),
+            b"printf '%s\\n' \"$pw\" | \"$s\" -S -k -p '' ",
+            read.as_slice(),
         ]
         .concat(),
     );
     line(b"else");
-    line(&[b"content | base64 -d | \"$s\" -n ", replace.as_slice()].concat());
+    line(&[b"\"$s\" -n ", read.as_slice(), b" </dev/null"].concat());
     line(b"fi");
     Ok(SudoScript {
         script,
-        done: format!("saved {token}\n").into_bytes(),
+        done: format!("read {token}\n").into_bytes(),
     })
+}
+
+/// The content a read script's `output` brings: its base64 before the line `done`, which
+/// must end it; `None` when it does not, or the base64 is not.
+#[must_use]
+pub fn read_output(output: &[u8], done: &[u8]) -> Option<Vec<u8>> {
+    let encoded = output.strip_suffix(done)?;
+    let mut out = Vec::with_capacity(encoded.len() / 4 * 3);
+    let mut group = 0u32;
+    let mut held = 0;
+    let mut padding = 0;
+    for byte in encoded.iter().filter(|byte| !byte.is_ascii_whitespace()) {
+        let value = match byte {
+            b'A'..=b'Z' => byte - b'A',
+            b'a'..=b'z' => byte - b'a' + 26,
+            b'0'..=b'9' => byte - b'0' + 52,
+            b'+' => 62,
+            b'/' => 63,
+            b'=' => {
+                padding += 1;
+                0
+            }
+            _ => return None,
+        };
+        if padding > 0 && *byte != b'=' {
+            return None;
+        }
+        group = group << 6 | u32::from(value);
+        held += 1;
+        if held == 4 {
+            let bytes = group.to_be_bytes();
+            out.extend_from_slice(&bytes[1..4 - padding.min(2)]);
+            group = 0;
+            held = 0;
+        }
+    }
+    (held == 0).then_some(out)
 }
 
 /// `bytes` in lowercase hexadecimal.
@@ -230,7 +348,28 @@ fn base64(bytes: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::base64;
+    use super::{base64, read_output};
+
+    #[test]
+    fn read_output_is_the_base64_before_the_line_that_ends_it() {
+        let done = b"read 00\n";
+        for content in [
+            &b""[..],
+            b"f",
+            b"fo",
+            b"foo",
+            b"foobar",
+            &[0xff, 0xfe, 0x00, 0x01],
+        ] {
+            let mut output = base64(content).into_bytes();
+            output.push(b'\n');
+            output.extend_from_slice(done);
+            assert_eq!(read_output(&output, done).as_deref(), Some(content));
+        }
+        assert_eq!(read_output(b"Zm9v\n", done), None, "not done");
+        assert_eq!(read_output(b"Zm9!\nread 00\n", done), None, "not base64");
+        assert_eq!(read_output(b"Zm9\nread 00\n", done), None, "cut short");
+    }
 
     #[test]
     fn base64_is_the_standard_padded_one() {

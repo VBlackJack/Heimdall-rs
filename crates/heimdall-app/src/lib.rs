@@ -44,6 +44,7 @@ pub mod reachability;
 pub mod route_test;
 mod sink;
 pub mod steps_draft;
+pub mod sudo_edit;
 pub mod telnet_driver;
 mod text;
 pub mod time_zone;

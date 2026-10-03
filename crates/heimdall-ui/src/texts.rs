@@ -383,6 +383,12 @@ pub fn files_error(error: &FilesError) -> String {
             fl!("ui-files-error-editor-failed", detail = detail.as_str())
         }
         FilesError::EditorRunsFiles => fl!("ui-files-error-editor-runs-files"),
+        FilesError::SudoPasswordNeeded => fl!("ui-files-error-sudo-password-needed"),
+        FilesError::SudoPasswordRejected => fl!("ui-files-error-sudo-password-rejected"),
+        FilesError::SudoNeedsTerminal => fl!("ui-files-error-sudo-needs-terminal"),
+        FilesError::SudoUntrusted => fl!("ui-files-error-sudo-untrusted"),
+        FilesError::SudoToolingMissing => fl!("ui-files-error-sudo-tooling"),
+        FilesError::SudoFailed => fl!("ui-files-error-sudo-failed"),
         FilesError::PasteIntoItself { name } => {
             fl!("ui-files-error-paste-into-itself", name = name.as_str())
         }

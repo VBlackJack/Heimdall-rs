@@ -218,6 +218,25 @@ impl Connection {
         timeout: Duration,
         cancel: CancellationToken,
     ) -> Result<CommandEnd, ConnectError> {
+        self.run_command_keeping(command, input, OUTPUT_LIMIT, timeout, cancel)
+            .await
+    }
+
+    /// [`Connection::run_command`], keeping up to `kept` bytes of its output rather than
+    /// [`OUTPUT_LIMIT`]: for a command whose output is what it brings back, a file's content.
+    /// Its error stream is kept up to [`OUTPUT_LIMIT`] still.
+    ///
+    /// # Errors
+    ///
+    /// As [`Connection::run_command`].
+    pub async fn run_command_keeping(
+        &self,
+        command: &str,
+        input: &[u8],
+        kept: usize,
+        timeout: Duration,
+        cancel: CancellationToken,
+    ) -> Result<CommandEnd, ConnectError> {
         let mut channel = self
             .handle()
             .channel_open_session()
@@ -240,9 +259,9 @@ impl Connection {
                     Some(ChannelMsg::Failure) if !started => {
                         return Err(ConnectError::CommandRefused);
                     }
-                    Some(ChannelMsg::Data { data }) => keep(&mut end.stdout, &data),
+                    Some(ChannelMsg::Data { data }) => keep(&mut end.stdout, &data, kept),
                     Some(ChannelMsg::ExtendedData { data, ext }) if ext == STDERR => {
-                        keep(&mut end.stderr, &data);
+                        keep(&mut end.stderr, &data, OUTPUT_LIMIT);
                     }
                     Some(ChannelMsg::ExitStatus { exit_status }) => {
                         end.status = Some(exit_status);
@@ -308,9 +327,9 @@ pub struct CommandEnd {
     pub stderr: Vec<u8>,
 }
 
-/// Adds `data` to `kept` up to [`OUTPUT_LIMIT`] bytes.
-fn keep(kept: &mut Vec<u8>, data: &[u8]) {
-    let room = OUTPUT_LIMIT.saturating_sub(kept.len());
+/// Adds `data` to `kept` up to `limit` bytes.
+fn keep(kept: &mut Vec<u8>, data: &[u8], limit: usize) {
+    let room = limit.saturating_sub(kept.len());
     kept.extend(data.iter().take(room));
 }
 

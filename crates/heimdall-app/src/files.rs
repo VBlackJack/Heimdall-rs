@@ -667,6 +667,18 @@ pub enum FilesError {
     /// The external editor set is a shell, a script host or an interpreter: it would run
     /// the file, not show it.
     EditorRunsFiles,
+    /// sudo asks for a password and none was given.
+    SudoPasswordNeeded,
+    /// sudo refused the password.
+    SudoPasswordRejected,
+    /// sudo on the server wants a terminal (`requiretty`), which is not given to it.
+    SudoNeedsTerminal,
+    /// The `sudo` found on the server is not the system's: nothing ran as root.
+    SudoUntrusted,
+    /// The server lacks a GNU coreutils tool the privileged script needs.
+    SudoToolingMissing,
+    /// sudo did not do it, for a reason it gave in the log.
+    SudoFailed,
     /// A folder pasted into itself or one of its own folders.
     PasteIntoItself {
         /// The folder's name, made safe.
