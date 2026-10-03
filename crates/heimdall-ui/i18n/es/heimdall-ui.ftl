@@ -1187,3 +1187,4 @@ ui-status-files-cut = { $count ->
 }
 ui-status-files-pasted = Pegado completo
 ui-status-path-copied = Ruta copiada: { $path }
+ui-error-key-not-absolute = La ruta de la clave SSH debe ser absoluta: { $path }

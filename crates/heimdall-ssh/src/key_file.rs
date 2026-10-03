@@ -62,6 +62,13 @@ pub enum KeyFileError {
         #[source]
         source: io::Error,
     },
+    /// The path is relative: it would name a file found from wherever Heimdall was
+    /// started, so it is refused, as the C# Heimdall refuses it.
+    #[error("{path}: not an absolute path")]
+    NotAbsolute {
+        /// File concerned.
+        path: PathBuf,
+    },
     /// The file is not a private key in a known format.
     #[error("{path}: not a supported private key")]
     UnknownFormat {

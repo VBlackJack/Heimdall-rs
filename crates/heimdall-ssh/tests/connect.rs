@@ -905,3 +905,33 @@ async fn a_key_file_not_there_is_said_before_anything_is_dialled() {
     };
     assert_eq!(source.kind(), std::io::ErrorKind::NotFound);
 }
+
+#[tokio::test]
+async fn a_relative_key_path_is_refused_before_anything_is_dialled() {
+    let silent = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind");
+    let port = silent.local_addr().expect("address").port();
+    let dir = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(dir.path(), port, "host-ed25519");
+    let mut relative = profile(port, None);
+    relative.key_path = Some(std::path::PathBuf::from("keys").join("id_ed25519"));
+    let error = tokio::time::timeout(
+        STEP_TIMEOUT,
+        connect(
+            &relative,
+            &options,
+            Arc::new(ScriptedPrompter::passwords(&[])),
+            CancellationToken::new(),
+        ),
+    )
+    .await
+    .expect("in time")
+    .expect_err("refused");
+    assert!(
+        matches!(
+            &error,
+            ConnectError::KeyFile(KeyFileError::NotAbsolute { path })
+                if path == &std::path::PathBuf::from("keys").join("id_ed25519")
+        ),
+        "{error:?}"
+    );
+}
