@@ -16,6 +16,7 @@
 
 //! A running RDP session: the server's graphics decoded into a framebuffer, input sent back.
 
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -39,10 +40,11 @@ use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
 use ironrdp::cliprdr::CliprdrClient;
-use ironrdp::cliprdr::pdu::ClipboardFormatId;
+use ironrdp::cliprdr::pdu::{ClipboardFormatId, FileContentsRequest, FileContentsResponse};
 use zeroize::Zeroizing;
 
-use crate::clipboard::{Offered, Request, offered_formats};
+use crate::clipboard::{ClipboardBackend, Request, offered_formats};
+use crate::clipboard_files::{COPY_LIMITS, CopyRefusal, Entry, FileList};
 use crate::connect::{ClipboardLink, MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
 use crate::frames::FrameReader;
 use crate::reason::{self, Ending};
@@ -95,6 +97,9 @@ pub enum RdpEvent {
     },
     /// The server's clipboard, as text: the server copied it.
     RemoteClipboard(Zeroizing<String>),
+    /// The files copied on this side were not offered to the server: too many, or too
+    /// large.
+    FilesRefused(CopyRefusal),
     /// The server cannot change the desktop's size while connected: it has no display
     /// channel, or refused the size. Only a new connection at that size brings it.
     ResizeRefused {
@@ -132,10 +137,24 @@ pub struct RdpSession {
     /// The desktop size wanted: the session asks the server for it once it has not changed
     /// for [`RESIZE_SETTLE`], so dragging a window edge sends one request, not hundreds.
     pub size: watch::Sender<Option<(u16, u16)>>,
-    /// Text this side's clipboard holds, to offer the server; `None` when the clipboard is
+    /// What this side's clipboard holds, to offer the server; `None` when the clipboard is
     /// not shared.
-    pub clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
+    pub clipboard: Option<mpsc::UnboundedSender<LocalClipboard>>,
 }
+
+/// What this side's clipboard holds, offered to the server.
+#[derive(Debug)]
+pub enum LocalClipboard {
+    /// Text.
+    Text(Zeroizing<String>),
+    /// Files and folders copied, as Explorer lists them: offered when the server takes
+    /// files, walked and read off the session's task.
+    Files(Vec<PathBuf>),
+}
+
+/// How often the clipboard's locks and file requests are looked at, so a lock the server
+/// left is released.
+const CLIPBOARD_TIMEOUTS: Duration = Duration::from_secs(5);
 
 /// How long a wanted size must hold before the server is asked for it.
 pub const RESIZE_SETTLE: Duration = Duration::from_millis(300);
@@ -173,10 +192,7 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
     let (input, input_receiver) = mpsc::unbounded_channel();
     let (size, size_receiver) = watch::channel(None);
     let (offers, offer_receiver) = mpsc::unbounded_channel();
-    let shared = clipboard.map(|link| Shared {
-        link,
-        offers: offer_receiver,
-    });
+    let shared = clipboard.map(|link| Shared::new(link, offer_receiver));
     let (stream, leftover) = framed.into_inner();
     let (read_half, write_half) = tokio::io::split(stream);
     let running = Running {
@@ -206,31 +222,117 @@ pub fn start(connection: RdpConnection, cancel: CancellationToken) -> RdpSession
 /// The session's side of a shared clipboard.
 struct Shared {
     link: ClipboardLink,
-    /// Text offered from this side.
-    offers: mpsc::UnboundedReceiver<Zeroizing<String>>,
+    /// What this side offers.
+    offers: mpsc::UnboundedReceiver<LocalClipboard>,
+    /// Files walked off the session's task.
+    walked: (
+        mpsc::UnboundedSender<Walked>,
+        mpsc::UnboundedReceiver<Walked>,
+    ),
+    /// Answers to the server's file requests, read off the session's task.
+    read: (
+        mpsc::UnboundedSender<FileContentsResponse<'static>>,
+        mpsc::UnboundedReceiver<FileContentsResponse<'static>>,
+    ),
+    /// The files last offered, or being walked: the same copy, offered again each time the
+    /// tab is shown, is not walked again.
+    files: Option<Vec<PathBuf>>,
+    /// Counts what this side offers: a walk that ends after a newer offer is dropped.
+    generation: u64,
+    timeouts: tokio::time::Interval,
+}
+
+/// Files walked for the offer numbered `generation`.
+struct Walked {
+    generation: u64,
+    result: Result<FileList, CopyRefusal>,
 }
 
 /// What the loop has to do for the clipboard next.
 enum ClipboardStep {
     Request(Request),
-    Offer(Zeroizing<String>),
+    Offer(LocalClipboard),
+    Walked(Walked),
+    Read(FileContentsResponse<'static>),
+    Timeouts,
 }
 
 impl Shared {
-    async fn next(&mut self) -> Option<ClipboardStep> {
-        tokio::select! {
-            Some(request) = self.link.requests.recv() => Some(ClipboardStep::Request(request)),
-            Some(text) = self.offers.recv() => Some(ClipboardStep::Offer(text)),
-            else => None,
+    fn new(link: ClipboardLink, offers: mpsc::UnboundedReceiver<LocalClipboard>) -> Self {
+        let mut timeouts = tokio::time::interval(CLIPBOARD_TIMEOUTS);
+        timeouts.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        Self {
+            link,
+            offers,
+            walked: mpsc::unbounded_channel(),
+            read: mpsc::unbounded_channel(),
+            files: None,
+            generation: 0,
+            timeouts,
         }
+    }
+
+    async fn next(&mut self) -> ClipboardStep {
+        tokio::select! {
+            Some(request) = self.link.requests.recv() => ClipboardStep::Request(request),
+            Some(offer) = self.offers.recv() => ClipboardStep::Offer(offer),
+            Some(walked) = self.walked.1.recv() => ClipboardStep::Walked(walked),
+            Some(read) = self.read.1.recv() => ClipboardStep::Read(read),
+            _ = self.timeouts.tick() => ClipboardStep::Timeouts,
+        }
+    }
+
+    /// Something other than files is offered: a walk under way is dropped, and the same
+    /// files copied again are walked again.
+    fn forget_files(&mut self) {
+        self.generation += 1;
+        self.files = None;
+    }
+
+    /// Walks `paths` off the session's task, unless they are the files offered already.
+    fn walk(&mut self, paths: Vec<PathBuf>) {
+        if self.files.as_ref() == Some(&paths) {
+            return;
+        }
+        self.generation += 1;
+        self.files = Some(paths.clone());
+        let generation = self.generation;
+        let walked = self.walked.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let result = crate::clipboard_files::walk(&paths, COPY_LIMITS);
+            let _ = walked.send(Walked { generation, result });
+        });
+    }
+
+    /// Reads what the server asked of `entry` off the session's task; the answer comes back
+    /// as [`ClipboardStep::Read`].
+    fn read(&self, request: FileContentsRequest, entry: Option<Entry>) {
+        let read = self.read.0.clone();
+        tokio::task::spawn_blocking(move || {
+            let _ = read.send(crate::clipboard_files::answer(&request, entry.as_ref()));
+        });
     }
 }
 
 /// Waits for the next clipboard step; forever when the clipboard is not shared.
-async fn next_clipboard_step(shared: &mut Option<Shared>) -> Option<ClipboardStep> {
+async fn next_clipboard_step(shared: &mut Option<Shared>) -> ClipboardStep {
     match shared {
         Some(shared) => shared.next().await,
         None => std::future::pending().await,
+    }
+}
+
+/// Whether the server of `channel` takes files.
+fn takes_files(channel: &CliprdrClient) -> bool {
+    channel
+        .downcast_backend::<ClipboardBackend>()
+        .is_some_and(ClipboardBackend::takes_files)
+}
+
+/// Tells the backend of `channel` which files are offered from now on.
+fn offer_files(channel: &mut CliprdrClient, files: Option<Arc<[Entry]>>) {
+    if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
+        backend.offer_files(files);
     }
 }
 
@@ -365,9 +467,10 @@ impl Running {
                         .process_fastpath_input(&mut image, &events)
                         .map_err(|error| described(&error))?
                 }
-                Some(step) = next_clipboard_step(&mut shared) => {
-                    let offered = shared.as_ref().map(|shared| shared.link.offered.clone());
-                    self.clipboard(&mut stage, step, offered).await?;
+                step = next_clipboard_step(&mut shared) => {
+                    if let Some(shared) = shared.as_mut() {
+                        self.clipboard(&mut stage, step, shared).await?;
+                    }
                     Vec::new()
                 }
             };
@@ -410,16 +513,15 @@ impl Running {
         }
     }
 
-    /// Does what the clipboard channel asked, or offers this side's new text.
+    /// Does what the clipboard channel asked, offers what this side copied, or sends the
+    /// server what was read for it.
     async fn clipboard(
         &mut self,
         stage: &mut ActiveStage,
         step: ClipboardStep,
-        offered: Option<Offered>,
+        shared: &mut Shared,
     ) -> Result<(), String> {
-        let Some(offered) = offered else {
-            return Ok(());
-        };
+        let offered = shared.link.offered.clone();
         let Some(channel) = stage.get_svc_processor_mut::<CliprdrClient>() else {
             return Ok(());
         };
@@ -428,22 +530,70 @@ impl Running {
                 let _ = self.events.send(RdpEvent::RemoteClipboard(text)).await;
                 return Ok(());
             }
+            ClipboardStep::Request(Request::FileContents { request, entry }) => {
+                shared.read(request, entry);
+                return Ok(());
+            }
             ClipboardStep::Request(Request::Paste) => {
                 channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
             }
             ClipboardStep::Request(Request::Answer(answer)) => channel.submit_format_data(answer),
             ClipboardStep::Request(Request::Offer) => {
+                shared.forget_files();
+                offer_files(channel, None);
                 channel.initiate_copy(&offered_formats(&offered))
             }
-            ClipboardStep::Offer(text) => {
+            ClipboardStep::Offer(LocalClipboard::Text(text)) => {
+                shared.forget_files();
+                offer_files(channel, None);
                 *offered.lock().unwrap_or_else(PoisonError::into_inner) = Some(text);
                 channel.initiate_copy(&offered_formats(&offered))
             }
+            ClipboardStep::Offer(LocalClipboard::Files(paths)) => {
+                if takes_files(channel) {
+                    shared.walk(paths);
+                }
+                return Ok(());
+            }
+            ClipboardStep::Walked(walked) => {
+                if walked.generation != shared.generation {
+                    return Ok(());
+                }
+                match walked.result {
+                    Ok(list) if list.entries.is_empty() => return Ok(()),
+                    Ok(list) => {
+                        offer_files(channel, Some(list.entries.into()));
+                        match channel.initiate_file_copy(list.descriptors) {
+                            Ok(messages) => {
+                                *offered.lock().unwrap_or_else(PoisonError::into_inner) = None;
+                                Ok(messages)
+                            }
+                            // The channel not ready yet: the copy is offered again the next
+                            // time the tab is shown, the session kept.
+                            Err(error) => {
+                                log::warn!("clipboard files not offered: {error}");
+                                offer_files(channel, None);
+                                shared.forget_files();
+                                return Ok(());
+                            }
+                        }
+                    }
+                    Err(refusal) => {
+                        let _ = self.events.send(RdpEvent::FilesRefused(refusal)).await;
+                        return Ok(());
+                    }
+                }
+            }
+            ClipboardStep::Read(answer) => channel.submit_file_contents(answer),
+            ClipboardStep::Timeouts => channel.drive_timeouts(),
         }
         .map_err(|error| error.to_string())?;
         let frame = stage
             .process_svc_processor_messages(messages)
             .map_err(|error| described(&error))?;
+        if frame.is_empty() {
+            return Ok(());
+        }
         self.send(&frame).await
     }
 

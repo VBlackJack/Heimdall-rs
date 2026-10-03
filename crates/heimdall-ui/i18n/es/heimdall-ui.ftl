@@ -1230,3 +1230,5 @@ ui-files-error-sudo-tooling = Transferencia privilegiada rechazada: al servidor 
 ui-files-error-sudo-failed = Falló la autenticación de sudo.
 ui-files-menu-paste-explorer = Pegar desde el Explorador
 ui-status-explorer-no-files = No hay archivos copiados en el Explorador.
+ui-status-rdp-files-too-many = Archivos no copiados al servidor: una copia admite { $count } archivos y carpetas como máximo.
+ui-status-rdp-files-too-large = Archivos no copiados al servidor: una copia admite { $size } como máximo.

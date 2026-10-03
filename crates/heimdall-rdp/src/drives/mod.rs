@@ -625,7 +625,7 @@ fn list(root: &std::path::Path, query: &str) -> Result<VecDeque<(String, Metadat
 }
 
 /// FILETIME of `time`: hundreds of nanoseconds since 1601; 0 when unknown.
-fn filetime(time: Option<SystemTime>) -> i64 {
+pub(crate) fn filetime(time: Option<SystemTime>) -> i64 {
     let Some(time) = time else {
         return 0;
     };

@@ -15,14 +15,15 @@
  */
 
 //! The clipboard of an RDP tab: what the server copies reaches this side, and this side's
-//! text is offered to the server when its desktop comes up or comes back into view.
+//! text, or the files copied in Explorer, are offered to the server when its desktop comes
+//! up or comes back into view.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use heimdall_app::{App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, TabId};
+use heimdall_app::{App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Notice, TabId};
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::Framebuffer;
+use heimdall_rdp::{CopyRefusal, Framebuffer, LocalClipboard};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio::sync::mpsc;
@@ -80,7 +81,7 @@ fn ready(
     tab: TabId,
     attempt: AttemptId,
     shared: bool,
-) -> (mpsc::UnboundedReceiver<Zeroizing<String>>, Vec<Effect>) {
+) -> (mpsc::UnboundedReceiver<LocalClipboard>, Vec<Effect>) {
     let (input, _) = mpsc::unbounded_channel();
     let (offers, received) = mpsc::unbounded_channel();
     let effects = app.update(Message::Connection {
@@ -97,7 +98,7 @@ fn ready(
 }
 
 fn reads_for(effects: &[Effect], wanted: TabId) -> bool {
-    matches!(effects, [Effect::ReadClipboard { tab }] if *tab == wanted)
+    matches!(effects, [Effect::ReadDesktopClipboard { tab }] if *tab == wanted)
 }
 
 #[test]
@@ -111,7 +112,9 @@ fn a_desktop_that_comes_up_is_offered_this_sides_clipboard() {
         tab,
         text: Some("copied here".to_owned()),
     });
-    assert_eq!(offers.try_recv().expect("offered").as_str(), "copied here");
+    assert!(
+        matches!(offers.try_recv(), Ok(LocalClipboard::Text(text)) if text.as_str() == "copied here")
+    );
     // Nothing to offer: nothing sent.
     app.update(Message::ClipboardText {
         tab,
@@ -160,4 +163,43 @@ fn coming_back_to_the_desktop_offers_what_was_copied_meanwhile() {
         app.update(Message::WindowFocus(false)).is_empty(),
         "leaving the window offers nothing"
     );
+}
+
+#[test]
+fn the_files_copied_in_explorer_are_offered_to_the_desktop() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (mut offers, _) = ready(&mut app, tab, attempt, true);
+    let copied = vec![PathBuf::from("C:/Users/me/report.docx")];
+    assert!(
+        app.update(Message::ClipboardFiles {
+            tab,
+            paths: copied.clone(),
+        })
+        .is_empty()
+    );
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::Files(paths)) if paths == copied));
+    // The button sending the clipboard reads the files first, as coming back does.
+    assert!(reads_for(&app.update(Message::SendClipboard(tab)), tab));
+}
+
+#[test]
+fn files_the_session_could_not_offer_are_said() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let _ = ready(&mut app, tab, attempt, true);
+    for (refusal, notice) in [
+        (CopyRefusal::TooManyEntries, Notice::RdpFilesTooMany),
+        (CopyRefusal::TooLarge, Notice::RdpFilesTooLarge),
+    ] {
+        let effects = app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::RdpFilesRefused(refusal),
+        });
+        assert!(effects.is_empty(), "{effects:?}");
+        assert_eq!(app.notice(), Some(&notice));
+    }
 }

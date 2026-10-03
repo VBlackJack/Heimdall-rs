@@ -359,6 +359,15 @@ pub struct ResizeFallback {
 
 impl App {
     /// A certificate question, a desktop ready or a desktop drawn again, for `tab_id`.
+    /// The files copied were not offered to the server: said, with why.
+    pub(super) fn files_refused(&mut self, refusal: heimdall_rdp::CopyRefusal) -> Vec<Effect> {
+        self.tell(match refusal {
+            heimdall_rdp::CopyRefusal::TooManyEntries => super::Notice::RdpFilesTooMany,
+            heimdall_rdp::CopyRefusal::TooLarge => super::Notice::RdpFilesTooLarge,
+        });
+        Vec::new()
+    }
+
     pub(super) fn rdp_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();

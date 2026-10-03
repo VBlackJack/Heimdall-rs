@@ -190,10 +190,18 @@ async fn a_desktop_comes_up_through_the_lab_gateway() {
                 }
                 ConnectionEvent::RdpReady { clipboard, .. } => {
                     // The clipboard channel, negotiated with a real server, must keep the
-                    // session up, an offer of this side's text included.
+                    // session up, offers of this side's text and files included.
                     let offers = clipboard.expect("the profile shares the clipboard");
                     offers
-                        .send(zeroize::Zeroizing::new("heimdall-offer".to_owned()))
+                        .send(heimdall_rdp::LocalClipboard::Text(zeroize::Zeroizing::new(
+                            "heimdall-offer".to_owned(),
+                        )))
+                        .expect("offered");
+                    let copied = tempfile::tempdir().expect("copied");
+                    let file = copied.path().join("heimdall-offer.txt");
+                    std::fs::write(&file, b"heimdall").expect("file");
+                    offers
+                        .send(heimdall_rdp::LocalClipboard::Files(vec![file]))
                         .expect("offered");
                     let settle = tokio::time::sleep(CLIPBOARD_SETTLE);
                     tokio::pin!(settle);

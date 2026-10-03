@@ -21,7 +21,9 @@ use std::fmt;
 use std::sync::atomic::{AtomicU8, AtomicU32, Ordering};
 
 use heimdall_core::profile::DesktopSizing;
-use heimdall_rdp::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
+use heimdall_rdp::{
+    LocalClipboard, MouseButton, MousePosition, Operation, Scancode, WheelRotations,
+};
 use heimdall_remote::vnc::VncInput;
 use tokio::sync::{mpsc, watch};
 use zeroize::Zeroizing;
@@ -239,8 +241,8 @@ pub struct DesktopPane {
     /// Grows each time the desktop changes: tells the view to draw it again.
     pub generation: u64,
     sink: DesktopSink,
-    /// Where this side's clipboard text goes, when the clipboard is shared.
-    clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
+    /// Where this side's clipboard goes, when the clipboard is shared.
+    clipboard: Option<mpsc::UnboundedSender<LocalClipboard>>,
     /// The session gets anti-idle keys: its profile asks for them and the user has not
     /// stopped them for this session.
     pub anti_idle: bool,
@@ -261,7 +263,7 @@ impl DesktopPane {
         framebuffer: heimdall_rdp::Framebuffer,
         input: mpsc::UnboundedSender<Vec<Operation>>,
         (size, sizing): (watch::Sender<Option<(u16, u16)>>, DesktopSizing),
-        clipboard: Option<mpsc::UnboundedSender<Zeroizing<String>>>,
+        clipboard: Option<mpsc::UnboundedSender<LocalClipboard>>,
     ) -> Self {
         Self {
             framebuffer: DesktopFramebuffer::Rdp(framebuffer),
@@ -408,12 +410,21 @@ impl DesktopPane {
     /// of a desktop that [accepts it](Self::accepts_clipboard).
     pub(crate) fn offer_clipboard(&self, text: String) -> bool {
         match &self.sink {
-            DesktopSink::Rdp { .. } => self
-                .clipboard
-                .as_ref()
-                .is_some_and(|clipboard| clipboard.send(Zeroizing::new(text)).is_ok()),
+            DesktopSink::Rdp { .. } => self.clipboard.as_ref().is_some_and(|clipboard| {
+                clipboard
+                    .send(LocalClipboard::Text(Zeroizing::new(text)))
+                    .is_ok()
+            }),
             DesktopSink::Vnc(sink) => sink.input.cut_text(text).is_ok(),
         }
+    }
+
+    /// Offers `paths`, the files copied in Explorer, to the server; whether they could be.
+    /// Only an RDP desktop that [shares the clipboard](Self::shares_clipboard) takes them.
+    pub(crate) fn offer_files(&self, paths: Vec<std::path::PathBuf>) -> bool {
+        self.clipboard
+            .as_ref()
+            .is_some_and(|clipboard| clipboard.send(LocalClipboard::Files(paths)).is_ok())
     }
 
     /// The desktop of a VNC session; `view_only` sends it nothing.

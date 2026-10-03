@@ -1233,3 +1233,5 @@ ui-files-error-sudo-tooling = Transfert privilégié refusé : il manque sur le 
 ui-files-error-sudo-failed = Échec de l'authentification sudo.
 ui-files-menu-paste-explorer = Coller depuis l'Explorateur
 ui-status-explorer-no-files = Aucun fichier n'est copié dans l'Explorateur.
+ui-status-rdp-files-too-many = Fichiers non copiés vers le serveur : une copie prend { $count } fichiers et dossiers au plus.
+ui-status-rdp-files-too-large = Fichiers non copiés vers le serveur : une copie prend { $size } au plus.

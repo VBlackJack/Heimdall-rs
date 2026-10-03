@@ -1308,3 +1308,5 @@ ui-files-error-sudo-tooling = Privileged transfer refused: the server is missing
 ui-files-error-sudo-failed = Sudo authentication failed.
 ui-files-menu-paste-explorer = Paste from Explorer
 ui-status-explorer-no-files = No files are copied in Explorer.
+ui-status-rdp-files-too-many = Files not copied to the server: one copy takes { $count } files and folders at most.
+ui-status-rdp-files-too-large = Files not copied to the server: one copy takes { $size } at most.
