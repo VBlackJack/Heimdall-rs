@@ -78,12 +78,19 @@ pub const FLOOD_BYTES: usize = 256 * 1024;
 /// A command that never ends.
 pub const COMMAND_HANG: &str = "hang";
 
+/// A POSIX shell reading its script on its input: this computer's own `sh`, run on its own
+/// file system, as a server's would be.
+pub const COMMAND_SHELL: &str = "sh -s";
+
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 /// Server-side delay after a refused attempt; small so tests stay fast.
 const AUTH_REJECTION_TIME: Duration = Duration::from_millis(10);
 
+/// The fixtures, found from any crate of the workspace that includes this module.
 pub fn fixtures() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("heimdall-ssh")
         .join("tests")
         .join("fixtures")
 }
@@ -608,6 +615,14 @@ impl server::Handler for Connection {
                 session.exit_status_request(channel, self.spec.exit_status)?;
             }
             COMMAND_FLOOD => session.data(channel, vec![b'x'; FLOOD_BYTES])?,
+            COMMAND_SHELL => {
+                let ran = run_shell(&input);
+                session.data(channel, ran.stdout)?;
+                session.extended_data(channel, 1, ran.stderr)?;
+                if let Some(code) = ran.status.code().and_then(|code| u32::try_from(code).ok()) {
+                    session.exit_status_request(channel, code)?;
+                }
+            }
             _ => return Ok(()),
         }
         self.commands.remove(&channel);
@@ -679,6 +694,24 @@ impl server::Handler for Connection {
         }
         session.data(channel, data.to_vec())
     }
+}
+
+/// Runs `script` with this computer's `sh`, as [`COMMAND_SHELL`] does on the server.
+fn run_shell(script: &[u8]) -> std::process::Output {
+    use std::io::Write as _;
+    use std::process::{Command, Stdio};
+
+    let mut child = Command::new("sh")
+        .arg("-s")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("sh");
+    let mut input = child.stdin.take().expect("stdin");
+    input.write_all(script).expect("script");
+    drop(input);
+    child.wait_with_output().expect("ran")
 }
 
 /// Answers questions from queues filled by the test; an empty queue answers "cancel".

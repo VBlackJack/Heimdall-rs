@@ -1265,6 +1265,15 @@ ui-status-files-cut = { $count ->
 }
 ui-status-files-pasted = Paste complete
 ui-status-path-copied = Path copied: { $path }
+ui-files-menu-copy = Copy
+ui-files-menu-duplicate = Duplicate
+ui-status-files-copied = { $count ->
+    [one] { $count } item copied
+   *[other] { $count } items copied
+}
+ui-status-files-duplicated = Duplicate complete
+ui-files-error-copy-refused = Copy refused: this server did not perform the server-side copy, and Heimdall will not fall back to a transfer that could overwrite an existing destination. Copy the file locally, or check that the server allows running cp, ln and mkdir.
+ui-files-error-paste-into-itself = Cannot paste { $name } into itself or its own subfolder.
 ui-error-key-not-absolute = SSH key path must be absolute: { $path }
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }

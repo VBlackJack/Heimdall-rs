@@ -633,14 +633,17 @@ pub enum TranscriptEntry {
 
 /// The menu of an entry of a Files tab's pane, in the C# order, limited to what this
 /// version does: open it, send it to the other pane, rename, delete, cut, copy its path;
-/// then what applies to the folder shown. Paste is offered while what was cut can be
-/// pasted in this tab, `can_paste`.
+/// then what applies to the folder shown. Paste is offered while what was cut or copied
+/// can be pasted in this tab, `can_paste`; Copy and Duplicate while the tab copies on its
+/// server, `can_copy`.
 pub fn files_entry_menu<'a>(
     tab: TabId,
     side: Side,
     index: usize,
     can_paste: bool,
+    can_copy: bool,
 ) -> Element<'a, Message> {
+    let copies = side == Side::Remote && can_copy;
     let files = |message| Some(AppMessage::Files(message));
     let server = |entry: Element<'a, Message>| (side == Side::Remote).then_some(entry);
     let (send, direction) = match side {
@@ -672,9 +675,14 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-cut"),
             files(FilesMessage::Cut { tab })
         )),
+        copies.then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
         (side == Side::Remote && can_paste).then(|| entry(
             fl!("ui-files-menu-paste"),
             files(FilesMessage::Paste { tab })
+        )),
+        copies.then(|| entry(
+            fl!("ui-files-menu-duplicate"),
+            files(FilesMessage::Duplicate { tab })
         )),
         entry(
             fl!("ui-files-menu-copy-path"),

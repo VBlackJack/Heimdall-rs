@@ -117,7 +117,7 @@ pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
 pub use connect_as::ConnectAs;
 pub use file_import::{FileKind, ImportFile, PendingImport};
-pub use files_clipboard::FilesClipboard;
+pub use files_clipboard::{ClipMode, FilesClipboard};
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingPlan};
 pub use folder_menu::{FolderMessage, FolderNaming};
@@ -944,6 +944,24 @@ pub enum Effect {
         /// Each entry and its new path.
         moves: Vec<(heimdall_files::RemotePath, heimdall_files::RemotePath)>,
     },
+    /// Copy entries of the server on the server, one after another, then send
+    /// [`FilesMessage::Copied`].
+    CopyRemote {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The SSH connection the copies run on.
+        shell: heimdall_ssh::Connection,
+        /// What to copy.
+        sources: Vec<crate::files::CopySource>,
+        /// Into this folder.
+        folder: heimdall_files::RemotePath,
+        /// Stops the copy running.
+        cancel: tokio_util::sync::CancellationToken,
+        /// A duplicate, rather than a paste.
+        duplicate: bool,
+    },
     /// Plan a transfer whole, then send [`FilesMessage::Planned`].
     PlanTransfer {
         /// Tab.
@@ -1044,6 +1062,9 @@ impl fmt::Debug for Effect {
             Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
+            }
+            Self::CopyRemote { tab, sources, .. } => {
+                write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
             }
             Self::MoveRemote { tab, moves, .. } => {
                 write!(f, "MoveRemote({}, {})", tab.value(), moves.len())

@@ -109,8 +109,12 @@ pub enum Notice {
     FilesCut(usize),
     /// The size chosen is larger than the tab: the desktop is shown scaled.
     ResolutionScaled,
-    /// The entries cut were pasted.
+    /// The entries cut or copied were pasted.
     FilesPasted,
+    /// This many entries of a Files tab were copied, to be pasted.
+    FilesCopied(usize),
+    /// The entries chosen were duplicated.
+    FilesDuplicated,
     /// A transcript was started, in this file.
     TranscriptStarted(String),
     /// A transcript was stopped.
