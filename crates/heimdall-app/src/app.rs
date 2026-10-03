@@ -239,6 +239,16 @@ pub enum Message {
         /// Height.
         height: u16,
     },
+    /// The size a tab shows its remote desktop in, in pixels, kept without asking the server
+    /// for it: the desktop keeps a size of its own, or is shown scaled.
+    DesktopShown {
+        /// Tab.
+        tab: TabId,
+        /// Width.
+        width: u16,
+        /// Height.
+        height: u16,
+    },
     /// Keyboard or mouse input for the remote desktop of a tab.
     DesktopInput {
         /// Tab.
@@ -609,6 +619,9 @@ impl fmt::Debug for Message {
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
                 write!(f, "DesktopResize({}, {width}x{height})", tab.value())
+            }
+            Self::DesktopShown { tab, width, height } => {
+                write!(f, "DesktopShown({}, {width}x{height})", tab.value())
             }
             Self::DesktopInput { tab, inputs } => {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
@@ -1143,6 +1156,9 @@ pub struct Tab {
     pub end_reason: Option<heimdall_rdp::Ending>,
     /// The session waiting to open again by itself, after it dropped.
     pub retry: Option<Retry>,
+    /// The desktop size the user chose from the tab's "Resolution" menu, kept for the
+    /// session's reconnections; `None`, as its profile says.
+    pub(crate) desktop_sizing: Option<heimdall_core::profile::DesktopSizing>,
     /// When the user's input last reached the session: a TMOUT reset waits for an idle shell.
     last_input: std::sync::Mutex<Option<Instant>>,
     /// A `WinRM` session's first output, read for what it says went wrong.
@@ -1252,6 +1268,7 @@ impl Tab {
             custom_title: None,
             end_reason: None,
             retry: None,
+            desktop_sizing: None,
             last_input: std::sync::Mutex::new(None),
             early_output: None,
             winrm_diagnostic: None,
@@ -1946,6 +1963,7 @@ impl App {
             | Message::QuickConnect(_)
             | Message::ForgetServer(_)) => self.open_message(message),
             message @ (Message::DesktopResize { .. }
+            | Message::DesktopShown { .. }
             | Message::DesktopInput { .. }
             | Message::SendKeys { .. }
             | Message::AntiIdleTick
@@ -2103,6 +2121,11 @@ impl App {
             Message::DesktopResize { tab, width, height } => {
                 if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
                     pane.resize(width, height);
+                }
+            }
+            Message::DesktopShown { tab, width, height } => {
+                if let Some(pane) = self.tab(tab).and_then(|found| found.desktop.as_ref()) {
+                    pane.shown_at(width, height);
                 }
             }
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),

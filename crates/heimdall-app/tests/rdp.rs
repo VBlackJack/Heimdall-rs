@@ -730,3 +730,83 @@ fn the_resolution_menu_sizes_the_live_desktop_and_keeps_it_as_the_profile_s_own(
         (Resolution::FitWindow, true)
     );
 }
+
+#[test]
+fn a_size_chosen_for_the_session_outlives_its_reconnections_and_the_tab_s_is_known_meanwhile() {
+    use heimdall_app::{ResolutionChoice, TabMenuMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let ready = |app: &mut App, attempt| {
+        let (input, _received) = mpsc::unbounded_channel();
+        let (size, watched) = tokio::sync::watch::channel(None);
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(64, 48),
+                input,
+                size,
+                clipboard: None,
+            },
+        });
+        watched
+    };
+    let choose = |app: &mut App, choice| {
+        app.update(Message::TabMenu(TabMenuMessage::Resolution { tab, choice }));
+    };
+    let watched = ready(&mut app, attempt);
+    choose(
+        &mut app,
+        ResolutionChoice::Fixed {
+            width: 1280,
+            height: 720,
+        },
+    );
+    // The tab's size is kept while the desktop keeps its own, and is the one asked again.
+    app.update(Message::DesktopShown {
+        tab,
+        width: 1000,
+        height: 700,
+    });
+    assert_eq!(
+        *watched.borrow(),
+        Some((1280, 720)),
+        "nothing asked meanwhile"
+    );
+    let pane = app.tabs[0].desktop.as_ref().expect("pane");
+    assert_eq!(pane.tab_size(), Some((1000, 700)));
+    choose(&mut app, ResolutionChoice::MatchWindow);
+    assert_eq!(*watched.borrow(), Some((1000, 700)), "the tab's size, now");
+
+    choose(
+        &mut app,
+        ResolutionChoice::Fixed {
+            width: 1280,
+            height: 720,
+        },
+    );
+    // The connection drops and opens again by itself, in its place.
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(heimdall_app::UiError::Network {
+            failure: heimdall_app::NetworkFailure::Reset,
+            detail: "reset".to_owned(),
+        }),
+    });
+    let effects = app.update(Message::AutoReconnect { tab, attempt });
+    let (again, desktop) = match effects.as_slice() {
+        [
+            Effect::ConnectRdp {
+                attempt, request, ..
+            },
+        ] => (*attempt, request.desktop),
+        other => panic!("expected a connection, got {other:?}"),
+    };
+    assert_eq!(desktop, (1280, 720), "asked at the size chosen");
+    ready(&mut app, again);
+    let pane = app.tabs[0].desktop.as_ref().expect("pane");
+    assert_eq!(pane.fixed_size(), Some((1280, 720)), "and kept");
+}
