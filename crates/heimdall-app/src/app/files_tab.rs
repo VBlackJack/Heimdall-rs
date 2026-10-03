@@ -748,7 +748,6 @@ impl App {
         Vec::new()
     }
 
-    #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         if let Some((tab, side)) = message.gesture()
             && let Some(files) = self.files_mut(tab)
