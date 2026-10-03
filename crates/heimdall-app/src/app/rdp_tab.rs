@@ -60,8 +60,12 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             // Back: the attempts stop.
             tab.retry = None;
             tab.phase = Phase::Connected;
+            // The size chosen for the session, its reconnections included; else its
+            // profile's.
             let sizing = match &tab.profile {
-                TabProfile::Rdp(profile) => profile.options.sizing(),
+                TabProfile::Rdp(profile) => tab
+                    .desktop_sizing
+                    .unwrap_or_else(|| profile.options.sizing()),
                 _ => DesktopSizing::FollowsTab,
             };
             let mut pane = DesktopPane::rdp(framebuffer, input, (size, sizing), clipboard);
@@ -100,7 +104,7 @@ impl App {
     fn rdp_request(
         &self,
         profile: &RdpProfile,
-        accepted: Option<Fingerprint>,
+        (accepted, chosen): (Option<Fingerprint>, Option<DesktopSizing>),
         cancel: CancellationToken,
     ) -> Result<RdpRequest, UiError> {
         let route = self
@@ -113,7 +117,7 @@ impl App {
             known_hosts: self.known_rdp_hosts(),
             accepted,
             trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
-            desktop: match profile.options.sizing() {
+            desktop: match chosen.unwrap_or_else(|| profile.options.sizing()) {
                 DesktopSizing::Fixed { width, height } => (width, height),
                 // Replaced by the tab's size as soon as it is shown.
                 DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => DEFAULT_DESKTOP,
@@ -140,7 +144,7 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.rdp_request(&profile, None, cancel.clone());
+        let request = self.rdp_request(&profile, (None, None), cancel.clone());
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -189,7 +193,8 @@ impl App {
         tab.cancel = cancel.clone();
         tab.phase = Phase::Connecting;
         tab.desktop = None;
-        match self.rdp_request(&profile, accepted, cancel) {
+        let chosen = tab.desktop_sizing;
+        match self.rdp_request(&profile, (accepted, chosen), cancel) {
             Ok(request) => vec![Effect::ConnectRdp {
                 tab: tab_id,
                 attempt,

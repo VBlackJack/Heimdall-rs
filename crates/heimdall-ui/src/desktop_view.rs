@@ -53,8 +53,10 @@ struct State {
     tab: Option<TabId>,
     /// The picture last built, and the generation it shows.
     picture: RefCell<Option<(u64, image::Handle)>>,
-    /// The size last reported for the desktop, so a change is reported once.
+    /// The size last asked of the server for the desktop, so a change is asked once.
     reported: Option<(u16, u16)>,
+    /// The size last reported for the tab, asked or kept only, so a change is said once.
+    shown: Option<(u16, u16)>,
     /// Keys held, with the keysym sent when each went down: a release sends the same one,
     /// or Shift released first would turn a held `!` into a `1` and leave `!` stuck.
     held: Vec<(Physical, u32)>,
@@ -139,7 +141,15 @@ impl<'a, M> DesktopView<'a, M> {
 
     /// Reports the size the desktop is shown at, in whole pixels, when it changed: the server
     /// is asked to match it.
-    fn report_size(&self, state: &mut State, shell: &mut Shell<'_, M>, bounds: Rectangle) {
+    /// Says the tab's size: asked of the server when `ask`, else kept only, so the tab's size
+    /// is known whatever the desktop's own.
+    fn report_size(
+        &self,
+        state: &mut State,
+        shell: &mut Shell<'_, M>,
+        bounds: Rectangle,
+        ask: bool,
+    ) {
         #[allow(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -150,9 +160,20 @@ impl<'a, M> DesktopView<'a, M> {
             (bounds.width * self.density).clamp(0.0, f32::from(u16::MAX)) as u16,
             (bounds.height * self.density).clamp(0.0, f32::from(u16::MAX)) as u16,
         );
-        if state.reported != Some(size) && size.0 > 0 && size.1 > 0 {
+        if size.0 == 0 || size.1 == 0 {
+            return;
+        }
+        if ask && state.reported != Some(size) {
             state.reported = Some(size);
+            state.shown = Some(size);
             shell.publish((self.wrap)(AppMessage::DesktopResize {
+                tab: self.tab,
+                width: size.0,
+                height: size.1,
+            }));
+        } else if !ask && state.shown != Some(size) {
+            state.shown = Some(size);
+            shell.publish((self.wrap)(AppMessage::DesktopShown {
                 tab: self.tab,
                 width: size.0,
                 height: size.1,
@@ -362,9 +383,8 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
         let bounds = layout.bounds();
         // Fitted, the server keeps its own size, once it has had the tab's when its profile
         // asks for it once; a desktop of a size of its own is never asked another.
-        if self.pane.asks_tab_size() && (!self.fit || self.pane.wants_first_size()) {
-            self.report_size(state, shell, bounds);
-        }
+        let ask = self.pane.asks_tab_size() && (!self.fit || self.pane.wants_first_size());
+        self.report_size(state, shell, bounds, ask);
         if !self.interactive {
             return;
         }

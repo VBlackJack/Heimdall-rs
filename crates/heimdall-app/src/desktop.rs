@@ -291,6 +291,16 @@ impl DesktopPane {
         }
     }
 
+    /// The size the tab shows the desktop in, kept without asking the server for it: the
+    /// tab's size is known whatever the desktop's own, to scale a larger one and to go back
+    /// to the tab's.
+    pub(crate) fn shown_at(&self, width: u16, height: u16) {
+        if let DesktopSink::Rdp { tab, .. } = &self.sink {
+            *tab.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
+        }
+    }
+
     /// The size the user chose from the tab's menu, as the C# "Resolution" one: a size of
     /// its own, asked of the server now and kept; or `None`, the tab's size again, followed
     /// from then on.
