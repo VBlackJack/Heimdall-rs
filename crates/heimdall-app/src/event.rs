@@ -25,7 +25,9 @@ use heimdall_ssh::{
 };
 
 use heimdall_files::RemoteSession;
-use heimdall_rdp::{CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation};
+use heimdall_rdp::{
+    CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation, SaveEnd,
+};
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
@@ -125,6 +127,17 @@ pub enum ConnectionEvent {
     RemoteClipboard(Zeroizing<String>),
     /// The files copied on this side were not offered to the RDP server.
     RdpFilesRefused(CopyRefusal),
+    /// The RDP server's clipboard holds files to save here, or no longer.
+    RdpRemoteFiles(bool),
+    /// Saving the RDP server's files: this many entries of all are saved so far.
+    RdpSaveProgress {
+        /// Entries saved.
+        saved: usize,
+        /// Entries in the copy.
+        total: usize,
+    },
+    /// Saving the RDP server's files ended.
+    RdpSaveEnded(SaveEnd),
     /// The VNC session is open.
     VncReady {
         /// The desktop, drawn by the UI.
@@ -239,6 +252,11 @@ impl fmt::Debug for ConnectionEvent {
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
             Self::RdpFilesRefused(refusal) => write!(f, "RdpFilesRefused({refusal:?})"),
+            Self::RdpRemoteFiles(available) => write!(f, "RdpRemoteFiles({available})"),
+            Self::RdpSaveProgress { saved, total } => {
+                write!(f, "RdpSaveProgress({saved}/{total})")
+            }
+            Self::RdpSaveEnded(end) => write!(f, "RdpSaveEnded({end:?})"),
             Self::VncReady { .. } => f.write_str("VncReady"),
             Self::DesktopFrame => f.write_str("DesktopFrame"),
             Self::DesktopResizeRefused { width, height } => {

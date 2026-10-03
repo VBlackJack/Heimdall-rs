@@ -279,6 +279,18 @@ pub enum Message {
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
     /// noVNC "sync" does: on a click, never by itself over a clear VNC connection.
     SendClipboard(TabId),
+    /// Save the files the RDP server of a tab copied: a folder is asked for.
+    SaveRemoteFiles(TabId),
+    /// The folder picked to save the RDP server's files into; `None` when the dialog was
+    /// closed.
+    SaveFolderPicked {
+        /// Tab.
+        tab: TabId,
+        /// The folder.
+        folder: Option<PathBuf>,
+    },
+    /// Stop saving the RDP server's files: what was saved stays.
+    CancelSave(TabId),
     /// Forget the recorded key of the server of a tab whose key changed, and connect again.
     ForgetServer(TabId),
     /// Open the session of a tab again, in its place: a failed or ended one, or, from the
@@ -643,6 +655,11 @@ impl fmt::Debug for Message {
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
+            Self::SaveRemoteFiles(tab) => write!(f, "SaveRemoteFiles({})", tab.value()),
+            Self::SaveFolderPicked { tab, folder } => {
+                write!(f, "SaveFolderPicked({}, {})", tab.value(), folder.is_some())
+            }
+            Self::CancelSave(tab) => write!(f, "CancelSave({})", tab.value()),
             Self::ForgetServer(tab) => write!(f, "ForgetServer({})", tab.value()),
             Self::ReconnectTab(tab) => write!(f, "ReconnectTab({})", tab.value()),
             Self::Files(message) => write!(f, "Files({message:?})"),
@@ -970,6 +987,12 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Ask the user for a folder to save the RDP server's files into, then send
+    /// [`Message::SaveFolderPicked`].
+    PickSaveFolder {
+        /// Tab.
+        tab: TabId,
+    },
     /// Ask the user for files of this computer to upload, then send
     /// [`FilesMessage::UploadPicked`].
     PickUploads {
@@ -1185,6 +1208,7 @@ impl fmt::Debug for Effect {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
             Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
+            Self::PickSaveFolder { tab } => write!(f, "PickSaveFolder({})", tab.value()),
             Self::ReadExplorerFiles { tab } => write!(f, "ReadExplorerFiles({})", tab.value()),
             Self::StartEdit { tab, remote, .. } => {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
@@ -1237,7 +1261,8 @@ fn clipboard_offer(tab: &Tab) -> Vec<Effect> {
     if tab
         .desktop
         .as_deref()
-        .is_some_and(DesktopPane::shares_clipboard)
+        // Not while the server's files are saved: offering would take its clipboard back.
+        .is_some_and(|pane| pane.shares_clipboard() && pane.save_state().is_none())
     {
         vec![Effect::ReadDesktopClipboard { tab: tab.id }]
     } else {
@@ -2199,6 +2224,9 @@ impl App {
             | Message::SendClipboard(_)
             | Message::ClipboardText { .. }
             | Message::ClipboardFiles { .. }) => self.clipboard_message(message),
+            message @ (Message::SaveRemoteFiles(_)
+            | Message::SaveFolderPicked { .. }
+            | Message::CancelSave(_)) => self.save_message(message),
             Message::SyncDeadline { tab, generation } => self.sync_deadline(tab, generation),
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
@@ -2555,7 +2583,10 @@ impl App {
             ConnectionEvent::RemoteClipboard(text) => {
                 vec![Effect::WriteClipboard(String::clone(&text))]
             }
-            ConnectionEvent::RdpFilesRefused(refusal) => self.files_refused(refusal),
+            event @ (ConnectionEvent::RdpFilesRefused(_)
+            | ConnectionEvent::RdpRemoteFiles(_)
+            | ConnectionEvent::RdpSaveProgress { .. }
+            | ConnectionEvent::RdpSaveEnded(_)) => self.clipboard_files_event(tab_id, event),
             event @ ConnectionEvent::VncReady { .. } => {
                 vnc_tab::apply(tab, event);
                 Vec::new()

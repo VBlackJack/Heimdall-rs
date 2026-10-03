@@ -71,7 +71,9 @@ pub use app::{
     TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob,
     VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
-pub use desktop::{DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SpecialKeys};
+pub use desktop::{
+    DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
+};
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};
 pub use event::{

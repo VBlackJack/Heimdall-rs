@@ -64,6 +64,34 @@ fn files_notice(notice: &Notice) -> String {
     }
 }
 
+/// How saving the server's files ended, in the bar's words.
+fn save_ended(end: heimdall_rdp::SaveEnd) -> String {
+    match end {
+        heimdall_rdp::SaveEnd::Saved(count) => fl!("ui-status-rdp-files-saved", count = count),
+        heimdall_rdp::SaveEnd::Failed { saved, total } => fl!(
+            "ui-status-rdp-files-save-failed",
+            saved = saved,
+            total = total
+        ),
+        heimdall_rdp::SaveEnd::Cancelled { saved, total } => fl!(
+            "ui-status-rdp-files-save-cancelled",
+            saved = saved,
+            total = total
+        ),
+        heimdall_rdp::SaveEnd::Refused(heimdall_rdp::SaveRefusal::TooManyEntries) => fl!(
+            "ui-status-rdp-files-not-saved-too-many",
+            count = heimdall_rdp::MAX_COPY_ENTRIES
+        ),
+        heimdall_rdp::SaveEnd::Refused(heimdall_rdp::SaveRefusal::TooLarge) => fl!(
+            "ui-status-rdp-files-not-saved-too-large",
+            size = crate::texts::size(heimdall_rdp::MAX_COPY_BYTES)
+        ),
+        heimdall_rdp::SaveEnd::Refused(heimdall_rdp::SaveRefusal::UnknownSize) => {
+            fl!("ui-status-rdp-files-not-saved-unknown-size")
+        }
+    }
+}
+
 /// What the bar says of a desktop: its size, or the files copied not offered to it.
 fn desktop_notice(notice: &Notice) -> String {
     match notice {
@@ -77,6 +105,7 @@ fn desktop_notice(notice: &Notice) -> String {
             "ui-status-rdp-files-too-large",
             size = crate::texts::size(heimdall_rdp::MAX_COPY_BYTES)
         ),
+        Notice::RdpFilesSaveEnded(end) => save_ended(*end),
         _ => String::new(),
     }
 }
@@ -165,7 +194,8 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::ResolutionReconnected
             | Notice::ResolutionScaled
             | Notice::RdpFilesTooMany
-            | Notice::RdpFilesTooLarge) => desktop_notice(notice),
+            | Notice::RdpFilesTooLarge
+            | Notice::RdpFilesSaveEnded(_)) => desktop_notice(notice),
             Notice::WinRmCertificateSkipped => fl!("ui-status-winrm-certificate-skipped"),
             Notice::BroadcastScope(scope) => {
                 fl!(
@@ -251,6 +281,31 @@ mod tests {
                 failure: heimdall_app::reachability::Unreached::DnsNoResults,
             }),
             "web.lab:22 unreachable: DNS lookup returned no addresses."
+        );
+    }
+
+    #[test]
+    fn how_saving_the_servers_files_ended_is_said() {
+        let said = |end| {
+            status_text(
+                &SessionStatus::Ready,
+                Some(&Notice::RdpFilesSaveEnded(end)),
+                0,
+            )
+        };
+        assert_eq!(
+            said(heimdall_rdp::SaveEnd::Saved(3)),
+            "Server's files saved: 3."
+        );
+        assert_eq!(
+            said(heimdall_rdp::SaveEnd::Failed { saved: 1, total: 4 }),
+            "Server's files not all saved: 1 of 4 saved before it failed."
+        );
+        assert_eq!(
+            said(heimdall_rdp::SaveEnd::Refused(
+                heimdall_rdp::SaveRefusal::UnknownSize
+            )),
+            "Server's files not saved: the server did not say their size."
         );
     }
 

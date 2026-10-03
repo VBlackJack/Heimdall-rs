@@ -24,6 +24,7 @@ pub mod audio;
 pub mod certificate;
 mod clipboard;
 mod clipboard_files;
+mod clipboard_save;
 pub mod connect;
 pub mod drives;
 mod frames;
@@ -37,6 +38,7 @@ mod tls;
 pub use certificate::{Fingerprint, ServerCertificate};
 pub use clipboard::MAX_REMOTE_TEXT_BYTES;
 pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
+pub use clipboard_save::{SaveEnd, SaveRefusal};
 pub use connect::{
     AskCredentials, Credentials, DESKTOP_SCALE_FACTORS, Opening, RdpConfig, RdpConnection,
     RdpError, Security, Timeouts, Transport, connect, connect_over, connect_through,

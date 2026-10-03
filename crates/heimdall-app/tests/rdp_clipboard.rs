@@ -20,10 +20,12 @@
 
 use std::path::{Path, PathBuf};
 
-use heimdall_app::{App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Notice, TabId};
+use heimdall_app::{
+    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, Notice, SaveState, TabId,
+};
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::{CopyRefusal, Framebuffer, LocalClipboard};
+use heimdall_rdp::{CopyRefusal, Framebuffer, LocalClipboard, SaveEnd};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio::sync::mpsc;
@@ -202,4 +204,126 @@ fn files_the_session_could_not_offer_are_said() {
         assert!(effects.is_empty(), "{effects:?}");
         assert_eq!(app.notice(), Some(&notice));
     }
+}
+
+fn save_state(app: &App, tab: TabId) -> (bool, Option<SaveState>) {
+    let pane = app
+        .tab(tab)
+        .and_then(|found| found.desktop.as_deref())
+        .expect("a desktop");
+    (pane.can_save_files(), pane.save_state())
+}
+
+fn event(app: &mut App, tab: TabId, attempt: AttemptId, event: ConnectionEvent) {
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event,
+    });
+    assert!(effects.is_empty(), "{effects:?}");
+}
+
+#[test]
+fn the_servers_copied_files_are_saved_into_the_folder_picked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (mut offers, _) = ready(&mut app, tab, attempt, true);
+    assert!(
+        app.update(Message::SaveRemoteFiles(tab)).is_empty(),
+        "nothing copied on the server"
+    );
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpRemoteFiles(true),
+    );
+    assert_eq!(save_state(&app, tab), (true, None));
+
+    let effects = app.update(Message::SaveRemoteFiles(tab));
+    assert!(
+        matches!(effects.as_slice(), [Effect::PickSaveFolder { tab: asked }] if *asked == tab),
+        "{effects:?}"
+    );
+    assert_eq!(save_state(&app, tab), (false, Some(SaveState::Picking)));
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::HoldOffers)));
+    // The dialog gives the focus back: offering this side's clipboard then would take the
+    // server's away, and what was read before is not offered either.
+    assert!(app.update(Message::WindowFocus(true)).is_empty());
+    app.update(Message::ClipboardText {
+        tab,
+        text: Some("read before".to_owned()),
+    });
+    assert!(offers.try_recv().is_err());
+
+    let folder = dir.path().join("saved");
+    app.update(Message::SaveFolderPicked {
+        tab,
+        folder: Some(folder.clone()),
+    });
+    assert!(
+        matches!(offers.try_recv(), Ok(LocalClipboard::SaveRemoteFiles(asked)) if asked == folder)
+    );
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpSaveProgress { saved: 1, total: 3 },
+    );
+    assert_eq!(
+        save_state(&app, tab),
+        (false, Some(SaveState::Running { saved: 1, total: 3 }))
+    );
+
+    app.update(Message::CancelSave(tab));
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::CancelSave)));
+    let ended = SaveEnd::Cancelled { saved: 1, total: 3 };
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::RdpSaveEnded(ended),
+    });
+    assert!(
+        reads_for(&effects, tab),
+        "what was copied meanwhile is offered: {effects:?}"
+    );
+    assert_eq!(app.notice(), Some(&Notice::RdpFilesSaveEnded(ended)));
+    assert_eq!(
+        save_state(&app, tab),
+        (true, None),
+        "the files can be saved again"
+    );
+}
+
+#[test]
+fn closing_the_folder_dialog_saves_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (mut offers, _) = ready(&mut app, tab, attempt, true);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpRemoteFiles(true),
+    );
+    app.update(Message::SaveRemoteFiles(tab));
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::HoldOffers)));
+    let effects = app.update(Message::SaveFolderPicked { tab, folder: None });
+    assert!(
+        matches!(offers.try_recv(), Ok(LocalClipboard::CancelSave)),
+        "the offers held are released"
+    );
+    assert!(reads_for(&effects, tab), "{effects:?}");
+    assert_eq!(save_state(&app, tab), (true, None));
+
+    // The server copies something else: nothing to save any more.
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpRemoteFiles(false),
+    );
+    assert_eq!(save_state(&app, tab), (false, None));
 }
