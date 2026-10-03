@@ -1407,6 +1407,7 @@ async fn editing(dir: &Path) -> (App, TabId, PathBuf, heimdall_files::Fingerprin
                 seen: None,
                 candidate: None,
                 refused: None,
+                privileged: false,
             })),
         },
     );

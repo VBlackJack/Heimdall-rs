@@ -323,6 +323,9 @@ pub struct EditSession {
     pub candidate: Option<SystemTime>,
     /// Why the last save was not sent, until one is.
     pub refused: Option<FilesError>,
+    /// Saved with sudo, as the user asked: every save goes through it, only over the content
+    /// the server has from us (its SHA-256, [`EditSession::sent`]).
+    pub privileged: bool,
 }
 
 /// SHA-256 of `data`.
@@ -355,11 +358,34 @@ pub async fn start_edit(
         .await
         .map_err(|error| FilesError::from(&error))?;
     let sent = hash(&data);
-    let written = tokio::task::spawn_blocking(
+    let (local, seen) = open_copy(local_name, data, editor, (base, keep)).await?;
+    Ok(EditSession {
+        name: crate::text::server_text(&heimdall_files::display_bytes(&file_name)),
+        remote,
+        local,
+        sent,
+        fingerprint,
+        seen,
+        candidate: None,
+        refused: None,
+        privileged: false,
+    })
+}
+
+/// Writes `data` as `name` in a new folder of the user's own under `base`, readable by the
+/// user only, the old folders but `keep` swept, and starts `editor` on it: the copy, and
+/// its modification time as written.
+pub(crate) async fn open_copy(
+    name: heimdall_files::LocalName,
+    data: Vec<u8>,
+    editor: Editor,
+    (base, keep): (PathBuf, Vec<PathBuf>),
+) -> Result<(PathBuf, Option<SystemTime>), FilesError> {
+    tokio::task::spawn_blocking(
         move || -> Result<(PathBuf, Option<SystemTime>), FilesError> {
             let folder = edit_folder(&base).map_err(|_| FilesError::WorkingFolderUnprotected)?;
             sweep(&base, &keep);
-            let local = folder.join(&local_name.name);
+            let local = folder.join(&name.name);
             write_new(&local, &data).map_err(|error| FilesError::Local {
                 detail: error.to_string(),
             })?;
@@ -375,18 +401,7 @@ pub async fn start_edit(
     .await
     .map_err(|error| FilesError::Local {
         detail: error.to_string(),
-    })??;
-    let (local, seen) = written;
-    Ok(EditSession {
-        name: crate::text::server_text(&heimdall_files::display_bytes(&file_name)),
-        remote,
-        local,
-        sent,
-        fingerprint,
-        seen,
-        candidate: None,
-        refused: None,
-    })
+    })?
 }
 
 /// Writes `data` to a file that must not exist yet, readable by the user only.
@@ -434,8 +449,16 @@ pub enum EditCheck {
 }
 
 /// Looks at `session`'s local copy and sends a save that holds still, only while the
-/// server's file is still the one it replaces.
-pub async fn check_edit(client: &RemoteSession, session: &EditSession) -> EditCheck {
+/// server's file is still the one it replaces: through sudo for a privileged edit, over the
+/// tab's SSH connection with the password kept for the tab, `sudo`.
+pub async fn check_edit(
+    client: &RemoteSession,
+    session: &EditSession,
+    sudo: Option<(
+        &heimdall_ssh::Connection,
+        Option<&crate::sudo_edit::SudoPassword>,
+    )>,
+) -> EditCheck {
     // Missing for a moment, or locked, while an editor saves by rename: not saved yet.
     let Ok(modified) = tokio::fs::metadata(&session.local)
         .await
@@ -461,6 +484,14 @@ pub async fn check_edit(client: &RemoteSession, session: &EditSession) -> EditCh
     let sent = hash(&data);
     if sent == session.sent {
         return EditCheck::Same(modified);
+    }
+    if session.privileged {
+        return match sudo {
+            Some((shell, password)) => {
+                crate::sudo_edit::send_with_sudo(shell, session, password, (modified, &data)).await
+            }
+            None => EditCheck::Failed(FilesError::SessionClosed),
+        };
     }
     match client
         .replace_if(

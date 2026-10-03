@@ -66,8 +66,8 @@ pub use app::{
     ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult, RDP_EXTENSION, RDP_MAX_ATTEMPTS,
     RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice, Retry,
     SelectionMessage, SessionState, SessionStatus, SessionsCounts, SessionsMessage,
-    SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SystemCredentials, Tab,
-    TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey, TrustedKeys,
+    SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction, SystemCredentials,
+    Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey, TrustedKeys,
     TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob,
     VaultMode, VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };

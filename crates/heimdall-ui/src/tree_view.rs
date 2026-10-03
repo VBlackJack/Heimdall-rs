@@ -659,6 +659,10 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-edit-external"),
             files(FilesMessage::EditExternal { tab })
         )),
+        copies.then(|| entry(
+            fl!("ui-files-menu-edit-sudo"),
+            files(FilesMessage::EditWithSudo { tab })
+        )),
         entry(send, files(FilesMessage::Transfer { tab, direction })),
         separator(),
         entry(

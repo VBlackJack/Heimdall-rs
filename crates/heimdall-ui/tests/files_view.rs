@@ -1215,3 +1215,31 @@ async fn a_transfer_with_something_in_its_way_asks_about_every_destination_at_on
         [FilesMessage::ConflictAll(Choice::Replace)]
     ));
 }
+
+#[tokio::test]
+async fn sudo_s_question_gives_the_password_typed_and_keeps_none_of_it() {
+    use heimdall_app::{Dialog, SudoAction};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    core.dialog = Some(Dialog::SudoPassword {
+        tab,
+        name: "sshd_config".to_owned(),
+        action: SudoAction::Save(dir.path().join("sshd_config")),
+    });
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("sudo password").expect("asked");
+    }
+    let _ = shell.update(Message::SudoPasswordEdited("hunter2".to_owned()));
+    let _ = shell.update(Message::SudoPasswordConfirm);
+    assert!(shell.app().dialog.is_none(), "answered");
+    let kept = shell
+        .app()
+        .tab(tab)
+        .and_then(|t| t.files.as_ref())
+        .and_then(|files| files.sudo_password.as_ref())
+        .map(|password| password.bytes().to_vec());
+    assert_eq!(kept.as_deref(), Some(&b"hunter2"[..]), "kept for the tab");
+}
