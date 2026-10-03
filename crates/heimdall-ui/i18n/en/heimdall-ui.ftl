@@ -1235,3 +1235,9 @@ ui-tree-test-reachability = Test reachability
 ui-status-reachability-testing = Testing { $host }:{ $port } ...
 ui-status-reachability-success = { $host }:{ $port } reachable in { $millis } ms
 ui-status-reachability-failed = { $host }:{ $port } unreachable: { $reason }
+
+## The SSH agent chip of the profile form, as the C# one.
+ui-agent-chip-off = No SSH agent detected
+ui-agent-chip-warn = SSH agent: { $agent } (no keys loaded)
+ui-agent-chip-ok = SSH agent: { $agent } ({ $count } keys)
+ui-agent-chip-tooltip = Click to re-scan SSH agents

@@ -69,6 +69,7 @@ use crate::vnc_driver::VncRequest;
 use crate::winrm_driver::WinRmRequest;
 
 mod address_test;
+mod agent_chip;
 mod appearance;
 mod auto_reconnect;
 mod broadcast;
@@ -108,6 +109,7 @@ mod vnc_tab;
 mod winrm_tab;
 
 use crate::transcript::{Transcript, TranscriptLines};
+pub use agent_chip::AgentChip;
 pub use appearance::SettingsMessage;
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
@@ -443,6 +445,10 @@ pub enum Message {
         /// Which test.
         run: u64,
     },
+    /// Ask the SSH agents again what they hold, for the profile form's chip.
+    RefreshAgents,
+    /// What the SSH agents answered.
+    AgentsSurveyed(Vec<heimdall_ssh::AgentSurvey>),
     /// Test whether the profile form's address answers.
     TestAddress,
     /// Stop the address test running.
@@ -683,6 +689,8 @@ impl fmt::Debug for Message {
             Self::ForgetRouteTest => f.write_str("ForgetRouteTest"),
             Self::RouteStep { run, step } => write!(f, "RouteStep({run}, {step:?})"),
             Self::RouteTestDone { run } => write!(f, "RouteTestDone({run})"),
+            Self::RefreshAgents => f.write_str("RefreshAgents"),
+            Self::AgentsSurveyed(found) => write!(f, "AgentsSurveyed({})", found.len()),
             Self::CancelAddressTest => f.write_str("CancelAddressTest"),
             Self::AddressTested { test, .. } => write!(f, "AddressTested({test})"),
             Self::SaveProfile { .. } => f.write_str("SaveProfile(..)"),
@@ -797,6 +805,8 @@ pub enum Effect {
         /// What to test.
         request: Box<crate::route_test::RouteTestRequest>,
     },
+    /// Ask the SSH agents of `0` what they hold, and say it as [`Message::AgentsSurveyed`].
+    SurveyAgents(AgentSource),
     /// Test whether a profile's address answers, from the tree, and say it as
     /// [`ProfileMenuMessage::Tested`].
     TestReachability {
@@ -983,6 +993,7 @@ impl fmt::Debug for Effect {
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
+            Self::SurveyAgents(_) => f.write_str("SurveyAgents"),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
             }
@@ -1695,6 +1706,8 @@ pub struct App {
     route_test: Option<(u64, CancellationToken)>,
     /// The number of the next route test.
     next_route_test: u64,
+    /// What the profile form's SSH agent chip knows.
+    agent_chip: AgentChip,
     /// The address test running in the profile form, and what stops it.
     address_test: Option<(u64, CancellationToken)>,
     /// The number of the next address test.
@@ -1788,6 +1801,7 @@ impl App {
             dialog,
             route_test: None,
             next_route_test: 0,
+            agent_chip: AgentChip::Unknown,
             address_test: None,
             next_address_test: 0,
             tunnels: Vec::new(),
@@ -1971,9 +1985,9 @@ impl App {
             | Message::ClearGatewayPassword
             | Message::ClearGatewayPassphrase
             | Message::SaveGateway { .. }
-            | Message::ChooseGateway(_)) => {
-                self.profile_message(message);
-                Vec::new()
+            | Message::ChooseGateway(_)) => self.profile_form_message(message),
+            message @ (Message::RefreshAgents | Message::AgentsSurveyed(_)) => {
+                self.agent_chip_message(message)
             }
             message @ (Message::ConfirmDialog
             | Message::DismissDialog

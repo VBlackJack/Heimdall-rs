@@ -225,3 +225,31 @@ async fn a_profile_key_held_by_the_second_agent_is_signed_by_it_without_a_passph
     assert!(result.is_ok(), "{:?}", result.err());
     assert!(prompter.asked().is_empty(), "asked {:?}", prompter.asked());
 }
+
+#[tokio::test]
+async fn the_agents_answering_are_named_with_how_many_keys_each_holds() {
+    let dir = tempfile::tempdir().expect("dir");
+    let holding = start_named_agent(
+        dir.path(),
+        "holding.sock",
+        &[fixture_private_key("ed25519-openssh")],
+    )
+    .await;
+    let empty = start_named_agent(dir.path(), "empty.sock", &[]).await;
+    let gone = dir.path().join("gone.sock");
+    let found = heimdall_ssh::survey_agents(&AgentSource::Paths(vec![empty, gone, holding])).await;
+    let seen: Vec<(&str, usize)> = found
+        .iter()
+        .map(|agent| (agent.name.as_str(), agent.keys))
+        .collect();
+    assert_eq!(
+        seen,
+        [("empty.sock", 0), ("holding.sock", 1)],
+        "an agent not there is left out"
+    );
+    assert!(
+        heimdall_ssh::survey_agents(&AgentSource::Disabled)
+            .await
+            .is_empty()
+    );
+}
