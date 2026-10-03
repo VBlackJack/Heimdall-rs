@@ -1685,6 +1685,16 @@ impl Shell {
             | Effect::ConnectFtp { .. }
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
+            Effect::TestAddress {
+                test,
+                host,
+                port,
+                ssh,
+                cancel,
+            } => Task::perform(
+                heimdall_app::reachability::test(host, port, ssh, cancel),
+                move |result| Message::App(AppMessage::AddressTested { test, result }),
+            ),
             Effect::OpenTunnel { id, request } => {
                 // Its end is the tunnel's own: closing it cancels the attempt, which ends
                 // the stream.
@@ -4821,13 +4831,15 @@ fn profile_form<'a>(
     .spacing(SPACING);
     // A local shell has no server.
     if draft.shows(ProfileField::Host) {
-        form = form.push(
-            row![
-                container(form_field(draft, ProfileField::Host)).width(Length::Fill),
-                container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
-            ]
-            .spacing(SPACING),
-        );
+        form = form
+            .push(
+                row![
+                    container(form_field(draft, ProfileField::Host)).width(Length::Fill),
+                    container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
+                ]
+                .spacing(SPACING),
+            )
+            .push(crate::address_test_view::view(draft, forms.gateways));
     }
 
     form = form

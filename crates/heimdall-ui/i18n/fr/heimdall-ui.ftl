@@ -1106,3 +1106,20 @@ ui-error-auth-agent-none = Aucune clé n'était chargée dans un agent SSH au mo
 ui-error-auth-agent-one = Une clé était chargée dans un agent SSH et a été présentée à cette passerelle ; elle n'a pas été acceptée. Si cette passerelle attend une autre clé, chargez celle-là puis reconnectez-vous.
 ui-error-auth-agent-many = { $count } clés étaient chargées dans un agent SSH et ont été présentées à cette passerelle ; aucune n'a été acceptée. Si cette passerelle attend une autre clé, chargez celle-là puis reconnectez-vous.
 ui-error-auth-with-agent = { $refused } { $agent }
+
+## "Test address" in the profile form, as the C# dialog says it.
+ui-address-test-button = Tester l'adresse
+ui-address-test-hint = Vérifie que l'adresse et le port répondent. Ne vérifie ni votre identifiant ni votre mot de passe.
+ui-address-test-running = Test de l'adresse en cours...
+ui-address-test-success = L'adresse répond : { $address } ({ $millis } ms). Les identifiants n'ont pas été vérifiés.
+ui-address-test-success-ssh = L'adresse répond et un serveur SSH a répondu : { $banner }. Les identifiants n'ont pas été vérifiés.
+ui-address-test-failure = L'adresse n'a pas répondu : { $reason }
+ui-address-test-direct-scope = Test effectué directement depuis cet ordinateur, pas via { $gateway }.
+ui-address-test-cancel = Annuler
+ui-address-test-dns-timeout = La résolution DNS a expiré.
+ui-address-test-dns-failed = La résolution DNS a échoué : { $reason }
+ui-address-test-dns-no-results = La résolution DNS n'a retourné aucune adresse.
+ui-address-test-tcp-timeout = Le connect TCP a expiré (hôte : { $address }). L'hôte est peut-être éteint, inaccessible, ou le port est bloqué.
+ui-address-test-tcp-failed = Impossible de se connecter à { $address } : { $reason }
+ui-address-test-cancelled = Test annulé.
+ui-address-test-scoped = { $verdict } { $scope }
