@@ -72,7 +72,8 @@ mod run {
 
     use super::{TOKEN, sha256};
     use heimdall_files::privileged::{
-        AUTHENTICATION, CHANGED, NOT_A_FILE, PASSWORD_NEEDED, Sudo, replace_script,
+        AUTHENTICATION, CHANGED, NOT_A_FILE, PASSWORD_NEEDED, Sudo, TOO_LARGE, read_output,
+        read_script, replace_script,
     };
 
     const PASSWORD: &str = "s3cret";
@@ -160,6 +161,43 @@ exec "$@"
             assert!(output.stdout.is_empty(), "never done when it is not");
         }
         output
+    }
+
+    /// Runs `script` as the server would: `sh -s` reading it on its input.
+    fn run(script: &[u8]) -> Output {
+        let mut child = Command::new("sh")
+            .arg("-s")
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .expect("sh");
+        let mut input = child.stdin.take().expect("stdin");
+        input.write_all(script).expect("script");
+        drop(input);
+        child.wait_with_output().expect("ran")
+    }
+
+    /// Reads the bench's file through sudo, `cap` bytes at most: its content, or the exit
+    /// status.
+    fn read(bench: &Bench, cap: u64, password: Option<&str>) -> Result<Vec<u8>, Option<i32>> {
+        use std::os::unix::ffi::OsStrExt as _;
+        let sudo = bench.bin.join("sudo");
+        let read = read_script(
+            bench.file.as_os_str().as_bytes(),
+            cap,
+            password.map(str::as_bytes),
+            TOKEN,
+            Sudo::Unchecked(sudo.to_str().expect("utf-8")),
+        )
+        .expect("script");
+        let output = run(&read.script);
+        if output.status.success() {
+            Ok(read_output(&output.stdout, &read.done).expect("the content, then done"))
+        } else {
+            assert!(output.stdout.is_empty() || read_output(&output.stdout, &read.done).is_none());
+            Err(output.status.code())
+        }
     }
 
     fn mode(path: &Path) -> u32 {
@@ -260,5 +298,34 @@ exec "$@"
         let output = save(&bench, &content, b"old\n", Some(PASSWORD));
         assert!(output.status.success(), "{output:?}");
         assert_eq!(std::fs::read(&bench.file).expect("saved"), content);
+    }
+
+    #[test]
+    fn a_file_is_read_whole_through_sudo_capped_and_never_through_a_link() {
+        let content: Vec<u8> = (0..70_000u32)
+            .map(|i| u8::try_from(i % 253).unwrap_or_default())
+            .collect();
+        let bench = bench(&content, 0o600);
+        assert_eq!(read(&bench, 1 << 20, Some(PASSWORD)), Ok(content.clone()));
+        assert_eq!(
+            read(&bench, 1000, Some(PASSWORD)),
+            Err(i32::try_from(TOO_LARGE).ok())
+        );
+        assert_eq!(
+            read(&bench, 1 << 20, None),
+            Err(i32::try_from(PASSWORD_NEEDED).ok())
+        );
+        std::fs::write(bench.bin.join("nopasswd"), b"").expect("nopasswd");
+        assert_eq!(read(&bench, 1 << 20, None), Ok(content));
+        assert!(!work_left(&bench.file));
+
+        let elsewhere = bench.file.with_file_name("elsewhere");
+        std::fs::write(&elsewhere, b"secret").expect("elsewhere");
+        std::fs::remove_file(&bench.file).expect("removed");
+        std::os::unix::fs::symlink(&elsewhere, &bench.file).expect("link");
+        assert_eq!(
+            read(&bench, 1 << 20, None),
+            Err(i32::try_from(NOT_A_FILE).ok())
+        );
     }
 }
