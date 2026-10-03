@@ -17,7 +17,7 @@
 //! An RDP tab's "Resolution" menu, as the C# one: the desktop matched to the tab again, a
 //! size of its own from the presets or typed, and the size kept as the profile's own.
 
-use heimdall_core::profile::{Resolution, fixed_desktop, parse_resolution};
+use heimdall_core::profile::{DesktopSizing, Resolution, fixed_desktop, parse_resolution};
 
 use super::{App, Dialog, Notice, TabProfile};
 use crate::ids::TabId;
@@ -71,13 +71,20 @@ impl App {
         }
     }
 
+    /// Sizes `tab_id`'s desktop as chosen, and keeps the choice for the session's
+    /// reconnections, as the C# view keeps it while its control connects again.
     fn size_desktop(&mut self, tab_id: TabId, size: Option<(u16, u16)>) {
-        if let Some(pane) = self
-            .tab_mut(tab_id)
-            .and_then(|tab| tab.desktop.as_deref_mut())
-        {
-            pane.choose_size(size);
-        }
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        let Some(pane) = tab.desktop.as_deref_mut() else {
+            return;
+        };
+        pane.choose_size(size);
+        tab.desktop_sizing = Some(match size {
+            Some((width, height)) => DesktopSizing::Fixed { width, height },
+            None => DesktopSizing::FollowsTab,
+        });
     }
 
     /// Keeps the size `tab_id`'s session has now as its saved profile's own, as the C#

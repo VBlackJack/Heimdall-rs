@@ -918,3 +918,35 @@ fn an_rdp_tab_s_menu_offers_the_csharp_resolution_menu() {
     ui.find("Active mode: Fixed (1280x720)")
         .expect("the size chosen");
 }
+
+#[test]
+fn a_fixed_desktop_still_tells_the_tab_s_size_without_asking_it_of_the_server() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab) = small_desktop(
+        dir.path(),
+        RdpOptions {
+            resolution: Resolution::Fixed,
+            scale_fixed: false,
+            ..RdpOptions::default()
+        },
+    );
+    let mut ui = simulator(&shell);
+    let _ = ui.snapshot(&Theme::Dark).expect("drawn");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::DesktopResize { .. }))),
+        "its own size"
+    );
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::DesktopShown { tab: shown, width, height })
+                if *shown == tab && *width > 0 && *height > 0
+        )),
+        "the tab's size is known"
+    );
+}
