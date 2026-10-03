@@ -1188,3 +1188,7 @@ ui-status-files-cut = { $count ->
 ui-status-files-pasted = Pegado completo
 ui-status-path-copied = Ruta copiada: { $path }
 ui-error-key-not-absolute = La ruta de la clave SSH debe ser absoluta: { $path }
+ui-resolution-mode-smart-sizing = Ajuste de tamaño inteligente
+ui-resolution-tooltip = Cambiar resolución - { $mode }
+ui-resolution-tooltip-size = Cambiar resolución - { $mode } ({ $width }x{ $height })
+ui-resolution-larger-than-window = Mayor que la ventana; la imagen se escalará.

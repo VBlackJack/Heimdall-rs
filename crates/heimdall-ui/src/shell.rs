@@ -1952,13 +1952,7 @@ impl Shell {
             tree_view::tunnel_menu_entries(id)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
-            let found = self.app.tab(tab)?;
-            let pane = found.desktop.as_deref()?;
-            tree_view::resolution_entries(&tree_view::ResolutionMenuState {
-                tab,
-                fixed: pane.fixed_size(),
-                saved: self.app.tab_profile(found).is_some(),
-            })
+            tree_view::resolution_entries(&self.resolution_state(self.app.tab(tab)?)?)
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
             // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
@@ -3345,6 +3339,19 @@ impl Shell {
             .into()
     }
 
+    /// What `tab`'s "Resolution" menu and its button on the session bar show, while its
+    /// RDP desktop is.
+    fn resolution_state(&self, tab: &Tab) -> Option<tree_view::ResolutionMenuState> {
+        let pane = tab.desktop.as_deref()?;
+        Some(tree_view::ResolutionMenuState {
+            tab: tab.id,
+            fixed: pane.fixed_size(),
+            saved: self.app.tab_profile(tab).is_some(),
+            mode: tab.resolution_mode()?,
+            shown: pane.tab_size(),
+        })
+    }
+
     /// The remote desktop of a connected tab.
     /// Whether `tab`'s desktop is fitted to the tab: as chosen, else as its profile asks.
     fn fits(&self, tab: &Tab) -> bool {
@@ -3415,6 +3422,25 @@ impl Shell {
         ]
         .spacing(SPACING)
         .align_y(iced::Alignment::Center);
+        // The C# session bar's resolution button: the tab's menu, its tip naming the mode,
+        // in the accent colour while a size of its own is kept.
+        if let Some(state) = self.resolution_state(tab) {
+            let style = if state.fixed.is_some() {
+                button::primary
+            } else {
+                button::secondary
+            };
+            bar = bar.push(
+                tooltip(
+                    button(text(fl!("ui-resolution-menu")).size(SMALL_SIZE))
+                        .style(style)
+                        .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab_id))),
+                    text(state.tooltip()).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
         // Shown while the session gets anti-idle keys; a click stops them, as the C# badge.
         if self.app.anti_idle_on(tab_id) {
             bar = bar.push(

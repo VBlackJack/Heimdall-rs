@@ -27,7 +27,7 @@ use heimdall_app::{
     RdpMessage, ResolutionChoice, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId,
     TabMenuMessage, TreeFilter,
 };
-use heimdall_core::profile::{ProfileId, RESOLUTION_PRESETS, fixed_desktop};
+use heimdall_core::profile::{ProfileId, RESOLUTION_PRESETS, Resolution, fixed_desktop};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
@@ -753,6 +753,59 @@ pub struct ResolutionMenuState {
     pub fixed: Option<(u16, u16)>,
     /// It was opened from a saved profile, which can keep the size.
     pub saved: bool,
+    /// The mode its desktop is in: chosen for the session, else its profile's.
+    pub mode: Resolution,
+    /// The tab's size, when known: a size larger than it is shown scaled.
+    pub shown: Option<(u16, u16)>,
+}
+
+impl ResolutionMenuState {
+    /// "Active mode: Fixed (1920x1080)", as the C# menu's header.
+    fn header(&self) -> String {
+        match self.fixed {
+            Some((width, height)) => fl!(
+                "ui-resolution-header-size",
+                label = fl!("ui-resolution-active-mode"),
+                mode = mode_name(self.mode),
+                width = width,
+                height = height
+            ),
+            None => fl!(
+                "ui-resolution-header",
+                label = fl!("ui-resolution-active-mode"),
+                mode = mode_name(self.mode)
+            ),
+        }
+    }
+
+    /// The session bar's button tip: "Change resolution - Fixed (1920x1080)", as the C#.
+    #[must_use]
+    pub fn tooltip(&self) -> String {
+        match self.fixed {
+            Some((width, height)) => fl!(
+                "ui-resolution-tooltip-size",
+                mode = mode_name(self.mode),
+                width = width,
+                height = height
+            ),
+            None => fl!("ui-resolution-tooltip", mode = mode_name(self.mode)),
+        }
+    }
+
+    /// Whether `size` is larger than the tab, and so shown scaled.
+    fn larger_than_tab(&self, (width, height): (u16, u16)) -> bool {
+        self.shown
+            .is_some_and(|(shown_width, shown_height)| width > shown_width || height > shown_height)
+    }
+}
+
+/// A resolution mode's name, as the C# lists it.
+fn mode_name(mode: Resolution) -> String {
+    match mode {
+        Resolution::FitWindow => fl!("ui-resolution-mode-fit-window"),
+        Resolution::Fixed => fl!("ui-resolution-mode-fixed"),
+        Resolution::SmartSizing => fl!("ui-resolution-mode-smart-sizing"),
+    }
 }
 
 /// What a checked entry shows before its label, and an unchecked one.
@@ -783,20 +836,7 @@ fn checked_entry<'a>(label: String, checked: bool, message: AppMessage) -> Eleme
 pub fn resolution_entries<'a>(state: &ResolutionMenuState) -> Element<'a, Message> {
     let tab = state.tab;
     let choose = |choice| AppMessage::TabMenu(TabMenuMessage::Resolution { tab, choice });
-    let header = match state.fixed {
-        Some((width, height)) => fl!(
-            "ui-resolution-header-size",
-            label = fl!("ui-resolution-active-mode"),
-            mode = fl!("ui-resolution-mode-fixed"),
-            width = width,
-            height = height
-        ),
-        None => fl!(
-            "ui-resolution-header",
-            label = fl!("ui-resolution-active-mode"),
-            mode = fl!("ui-resolution-mode-fit-window")
-        ),
-    };
+    let header = state.header();
     let mut entries = column![
         container(text(header).size(MENU_TEXT_SIZE).style(text::secondary)).padding(MENU_PADDING),
         separator(),
@@ -810,11 +850,23 @@ pub fn resolution_entries<'a>(state: &ResolutionMenuState) -> Element<'a, Messag
     .width(MENU_WIDTH);
     for (width, height) in RESOLUTION_PRESETS {
         let size = fixed_desktop(width, height);
-        entries = entries.push(checked_entry(
+        let preset = checked_entry(
             format!("{width} x {height}"),
             state.fixed == Some(size),
             choose(ResolutionChoice::Fixed { width, height }),
-        ));
+        );
+        // A size the tab cannot show whole says so, as the C# preset tooltip.
+        entries = entries.push(if state.larger_than_tab(size) {
+            tooltip(
+                preset,
+                text(fl!("ui-resolution-larger-than-window")).size(MENU_TEXT_SIZE),
+                tooltip::Position::Left,
+            )
+            .style(container::rounded_box)
+            .into()
+        } else {
+            preset
+        });
     }
     entries = entries
         .push(separator())
