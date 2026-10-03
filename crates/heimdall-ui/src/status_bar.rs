@@ -113,6 +113,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-status-link-not-a-folder", name = name.as_str())
             }
             Notice::WinRmGatewayNtlm => fl!("ui-status-winrm-gateway-ntlm"),
+            Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
             Notice::WinRmCertificateSkipped => fl!("ui-status-winrm-certificate-skipped"),
             Notice::BroadcastScope(scope) => {
                 fl!(

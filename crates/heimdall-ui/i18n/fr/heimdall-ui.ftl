@@ -1191,3 +1191,4 @@ ui-status-files-cut = { $count ->
 ui-status-files-pasted = Collage terminé
 ui-status-path-copied = Chemin copié : { $path }
 ui-error-key-not-absolute = Le chemin de la clé SSH doit être absolu : { $path }
+ui-status-resolution-reconnected = Le changement de résolution a nécessité une reconnexion.

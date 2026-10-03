@@ -131,6 +131,7 @@ pub use provider::{ProviderMessage, UNLOCK_SECRET_ENTRY};
 pub use provider_connect::{ProviderAnswer, ProviderRequest};
 pub use quick_connect::QuickResult;
 pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
+use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;
 pub use selection::SelectionMessage;
 pub use sessions_import::{
@@ -1159,6 +1160,9 @@ pub struct Tab {
     /// The desktop size the user chose from the tab's "Resolution" menu, kept for the
     /// session's reconnections; `None`, as its profile says.
     pub(crate) desktop_sizing: Option<heimdall_core::profile::DesktopSizing>,
+    /// The desktop size the session connected again for, the server unable to take it
+    /// live: asked at the next connection, then kept so the same refusal never loops.
+    pub(crate) resize_fallback: Option<ResizeFallback>,
     /// When the user's input last reached the session: a TMOUT reset waits for an idle shell.
     last_input: std::sync::Mutex<Option<Instant>>,
     /// A `WinRM` session's first output, read for what it says went wrong.
@@ -1269,6 +1273,7 @@ impl Tab {
             end_reason: None,
             retry: None,
             desktop_sizing: None,
+            resize_fallback: None,
             last_input: std::sync::Mutex::new(None),
             early_output: None,
             winrm_diagnostic: None,
@@ -2348,13 +2353,12 @@ impl App {
                 };
                 Vec::new()
             }
+            ConnectionEvent::DesktopResizeRefused { width, height } => {
+                self.resize_refused(tab_id, (width, height))
+            }
             event @ (ConnectionEvent::UnknownRdpCertificate { .. }
             | ConnectionEvent::RdpReady { .. }
-            | ConnectionEvent::DesktopFrame) => {
-                rdp_tab::apply(tab, event);
-                // A new desktop is offered this side's clipboard at once.
-                clipboard_offer(tab)
-            }
+            | ConnectionEvent::DesktopFrame) => self.rdp_event(tab_id, event),
             ConnectionEvent::RemoteClipboard(text) => {
                 vec![Effect::WriteClipboard(String::clone(&text))]
             }

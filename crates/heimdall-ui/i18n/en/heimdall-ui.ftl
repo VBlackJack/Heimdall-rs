@@ -1266,3 +1266,4 @@ ui-status-files-cut = { $count ->
 ui-status-files-pasted = Paste complete
 ui-status-path-copied = Path copied: { $path }
 ui-error-key-not-absolute = SSH key path must be absolute: { $path }
+ui-status-resolution-reconnected = Resolution change required reconnect.

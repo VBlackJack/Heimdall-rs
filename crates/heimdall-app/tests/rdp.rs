@@ -810,3 +810,56 @@ fn a_size_chosen_for_the_session_outlives_its_reconnections_and_the_tab_s_is_kno
     let pane = app.tabs[0].desktop.as_ref().expect("pane");
     assert_eq!(pane.fixed_size(), Some((1280, 720)), "and kept");
 }
+
+#[test]
+fn a_size_the_server_cannot_take_live_connects_again_at_it_once_and_says_so() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let ready = |app: &mut App, attempt| {
+        let (input, _received) = mpsc::unbounded_channel();
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(64, 48),
+                input,
+                size: tokio::sync::watch::channel(None).0,
+                clipboard: None,
+            },
+        });
+    };
+    let refused = |app: &mut App, attempt, (width, height)| {
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::DesktopResizeRefused { width, height },
+        })
+    };
+    let connected_again = |effects: &[Effect]| match effects {
+        [
+            Effect::ConnectRdp {
+                attempt, request, ..
+            },
+        ] => (*attempt, request.desktop),
+        other => panic!("expected a connection, got {other:?}"),
+    };
+    ready(&mut app, attempt);
+
+    let (again, desktop) = connected_again(&refused(&mut app, attempt, (1600, 900)));
+    assert_eq!(desktop, (1600, 900), "asked as the connection opens");
+    assert_eq!(app.notice(), None, "said once back, not before");
+    ready(&mut app, again);
+    assert_eq!(app.notice(), Some(&Notice::ResolutionReconnected));
+
+    // The server keeps a size of its own even then: no second connection for it.
+    assert!(
+        refused(&mut app, again, (1600, 900)).is_empty(),
+        "never a loop"
+    );
+    // Another size gets its own.
+    let (_, desktop) = connected_again(&refused(&mut app, again, (1280, 720)));
+    assert_eq!(desktop, (1280, 720));
+}

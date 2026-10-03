@@ -107,6 +107,9 @@ pub enum Notice {
     PathCopied(String),
     /// This many entries of a Files tab were cut.
     FilesCut(usize),
+    /// The desktop was connected again at the size asked, the server unable to take it
+    /// live.
+    ResolutionReconnected,
     /// The entries cut were pasted.
     FilesPasted,
     /// A transcript was started, in this file.
