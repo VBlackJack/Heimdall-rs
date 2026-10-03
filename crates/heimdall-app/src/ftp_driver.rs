@@ -174,6 +174,7 @@ async fn connect(
 fn refused() -> UiError {
     UiError::AuthenticationFailed {
         tried: vec![AuthMethod::Password],
+        agent_keys: None,
     }
 }
 

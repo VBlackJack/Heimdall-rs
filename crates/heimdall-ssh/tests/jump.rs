@@ -261,3 +261,47 @@ async fn dropping_the_connection_ends_the_gateways_too() {
     .await
     .expect("the gateway's connection ended");
 }
+
+#[tokio::test]
+async fn a_refusal_says_whether_the_gateway_or_the_server_refused() {
+    let gateway = start(password_only(GATEWAY_EXIT, true)).await;
+    let server = start(password_only(SERVER_EXIT, false)).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let options = trusting(dir.path(), &[&gateway, &server]);
+
+    // The gateway is given a wrong password at each of its tries.
+    let refused = through(
+        &[profile(gateway.port, None)],
+        &server,
+        &options,
+        Arc::new(ScriptedPrompter::passwords(&["wrong"; 3])),
+    )
+    .await
+    .expect_err("refused");
+    assert!(
+        matches!(
+            refused,
+            ConnectError::AuthenticationFailed { gateway: true, .. }
+        ),
+        "{refused:?}"
+    );
+
+    // The gateway lets the client in; the server behind it refuses.
+    let refused = through(
+        &[profile(gateway.port, None)],
+        &server,
+        &options,
+        Arc::new(ScriptedPrompter::passwords(&[
+            PASSWORD, "wrong", "wrong", "wrong",
+        ])),
+    )
+    .await
+    .expect_err("refused");
+    assert!(
+        matches!(
+            refused,
+            ConnectError::AuthenticationFailed { gateway: false, .. }
+        ),
+        "{refused:?}"
+    );
+}

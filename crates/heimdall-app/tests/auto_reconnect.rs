@@ -260,7 +260,10 @@ fn only_a_live_desktop_that_dropped_for_a_passing_reason_comes_back() {
 
     // A reason that will not pass by itself.
     let (tab, attempt) = live(&mut app);
-    let refused = ConnectionEvent::Failed(UiError::AuthenticationFailed { tried: Vec::new() });
+    let refused = ConnectionEvent::Failed(UiError::AuthenticationFailed {
+        tried: Vec::new(),
+        agent_keys: None,
+    });
     assert!(event(&mut app, tab, attempt, refused).is_empty());
     assert_eq!(app.tab(tab).expect("tab").retry, None);
 
@@ -515,7 +518,10 @@ fn a_shell_back_ends_its_chain_and_a_clean_end_or_a_refusal_never_starts_one() {
 
     // A refusal needs the user.
     let (tab, attempt) = live_ssh(&mut app);
-    let refused = ConnectionEvent::Failed(UiError::AuthenticationFailed { tried: Vec::new() });
+    let refused = ConnectionEvent::Failed(UiError::AuthenticationFailed {
+        tried: Vec::new(),
+        agent_keys: None,
+    });
     assert!(event(&mut app, tab, attempt, refused).is_empty());
     assert_eq!(app.tab(tab).expect("tab").retry, None);
 }

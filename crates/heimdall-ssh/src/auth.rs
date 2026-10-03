@@ -40,7 +40,7 @@ use crate::agent::{self, Agent};
 use crate::client::{ClientHandler, ServerMessage, ask};
 use crate::error::{AuthMethod, ConnectError};
 use crate::key_file::{KeyFile, KeyFileError};
-use crate::options::ConnectOptions;
+use crate::options::{AgentSource, ConnectOptions};
 use crate::prompter::{
     KeyboardInteractivePrompt, KeyboardInteractiveQuestion, PassphraseQuestion, PasswordQuestion,
     Prompter,
@@ -195,9 +195,19 @@ impl<P: Prompter> Attempts<'_, P> {
                 break;
             }
         }
-        Err(ConnectError::AuthenticationFailed {
+        Err(self.refused())
+    }
+
+    /// The refusal, with what the agents offered.
+    fn refused(&mut self) -> ConnectError {
+        let agent_keys = (self.agents_loaded
+            && !matches!(self.ctx.options.agent, AgentSource::Disabled))
+        .then_some(self.agent_keys.len());
+        ConnectError::AuthenticationFailed {
             tried: std::mem::take(&mut self.tried),
-        })
+            agent_keys,
+            gateway: false,
+        }
     }
 
     /// One pass over the methods the server allows and not tried yet; `true` on success.
@@ -266,9 +276,7 @@ impl<P: Prompter> Attempts<'_, P> {
             Some(message) => Err(ConnectError::Disconnected {
                 server_message: Some(message),
             }),
-            None if self.methods.is_empty() => Err(ConnectError::AuthenticationFailed {
-                tried: std::mem::take(&mut self.tried),
-            }),
+            None if self.methods.is_empty() => Err(self.refused()),
             None => Err(ConnectError::Disconnected {
                 server_message: None,
             }),

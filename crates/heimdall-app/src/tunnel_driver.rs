@@ -24,7 +24,7 @@
 use std::sync::Arc;
 
 use heimdall_core::profile::SshProfile;
-use heimdall_ssh::{ConnectOptions, establish_via, local_forward};
+use heimdall_ssh::{ConnectOptions, at_gateway, establish_via, local_forward};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 use tokio_stream::{Stream, StreamExt as _};
@@ -94,7 +94,8 @@ async fn run(
     .await
     {
         Ok(gateway) => Arc::new(gateway),
-        Err(error) => return report_failure(error, &route, &target).await,
+        // The tunnel's own end is a gateway: a refusal there is said as one.
+        Err(error) => return report_failure(at_gateway(error, true), &route, &target).await,
     };
     let listening = local_forward::start_on(
         Arc::clone(&gateway),

@@ -95,6 +95,15 @@ pub fn winrm_diagnostic(found: heimdall_core::winrm_diagnostic::Diagnostic) -> S
     }
 }
 
+/// What the SSH agents offered a gateway that refused, as the C# says it after the refusal.
+fn agent_context(count: usize) -> String {
+    match count {
+        0 => fl!("ui-error-auth-agent-none"),
+        1 => fl!("ui-error-auth-agent-one"),
+        _ => fl!("ui-error-auth-agent-many", count = count),
+    }
+}
+
 /// The sentence explaining `error`.
 #[must_use]
 #[expect(clippy::too_many_lines, reason = "one arm per error the user can meet")]
@@ -179,18 +188,29 @@ pub fn error(error: &UiError) -> String {
         UiError::HostCertificateRefused => fl!("ui-error-host-certificate"),
         UiError::KnownHosts { detail } => fl!("ui-error-known-hosts", detail = server_text(detail)),
         UiError::KeyFile { problem, path } => key_problem(problem, path),
-        UiError::AuthenticationFailed { tried } if tried.is_empty() => {
-            fl!("ui-error-auth-failed-none")
+        UiError::AuthenticationFailed { tried, agent_keys } => {
+            let refused = if tried.is_empty() {
+                fl!("ui-error-auth-failed-none")
+            } else {
+                fl!(
+                    "ui-error-auth-failed",
+                    methods = tried
+                        .iter()
+                        .copied()
+                        .map(auth_method)
+                        .collect::<Vec<_>>()
+                        .join(LIST_SEPARATOR)
+                )
+            };
+            match agent_keys {
+                None => refused,
+                Some(count) => fl!(
+                    "ui-error-auth-with-agent",
+                    refused = refused,
+                    agent = agent_context(*count)
+                ),
+            }
         }
-        UiError::AuthenticationFailed { tried } => fl!(
-            "ui-error-auth-failed",
-            methods = tried
-                .iter()
-                .copied()
-                .map(auth_method)
-                .collect::<Vec<_>>()
-                .join(LIST_SEPARATOR)
-        ),
         UiError::Disconnected {
             server_message: Some(message),
         } if !server_text(message).is_empty() => fl!(
@@ -227,6 +247,7 @@ pub fn error(error: &UiError) -> String {
 
 fn key_problem(problem: &KeyProblem, path: &str) -> String {
     match problem {
+        KeyProblem::NotFound => fl!("ui-error-key-not-found", path = path),
         KeyProblem::Unreadable => fl!("ui-error-key-unreadable", path = path),
         KeyProblem::UnknownFormat => fl!("ui-error-key-unknown-format", path = path),
         KeyProblem::NeedsPassphrase => fl!("ui-error-key-needs-passphrase", path = path),
@@ -416,6 +437,23 @@ mod tests {
     use super::{error, skip_reason};
 
     #[test]
+    fn a_gateway_s_refusal_says_what_the_agents_offered_as_the_csharp() {
+        let refused = |agent_keys| {
+            error(&UiError::AuthenticationFailed {
+                tried: vec![AuthMethod::Agent],
+                agent_keys,
+            })
+        };
+        let plain = refused(None);
+        assert!(!plain.contains("loaded in an SSH agent"), "{plain}");
+        let none = refused(Some(0));
+        assert!(none.starts_with(&plain), "the refusal first: {none}");
+        assert!(none.contains("No key was loaded in an SSH agent"), "{none}");
+        assert!(refused(Some(1)).contains("One key was loaded in an SSH agent"));
+        assert!(refused(Some(3)).contains("3 keys were loaded in an SSH agent"));
+    }
+
+    #[test]
     fn an_rdp_refusal_warns_of_the_account_and_errs_on_the_rest_as_the_csharp() {
         use heimdall_rdp::Refusal;
 
@@ -499,9 +537,13 @@ mod tests {
     fn tried_methods_are_named_in_the_language() {
         let text = error(&UiError::AuthenticationFailed {
             tried: vec![AuthMethod::Agent, AuthMethod::Password],
+            agent_keys: None,
         });
         assert!(text.contains("SSH agent, password"), "{text}");
-        let none = error(&UiError::AuthenticationFailed { tried: Vec::new() });
+        let none = error(&UiError::AuthenticationFailed {
+            tried: Vec::new(),
+            agent_keys: None,
+        });
         assert_ne!(none, text);
     }
 

@@ -98,6 +98,11 @@ pub enum ConnectError {
     AuthenticationFailed {
         /// Methods attempted, in order.
         tried: Vec<AuthMethod>,
+        /// How many keys the SSH agents held and offered, when they were asked; `None` when
+        /// no agent was used.
+        agent_keys: Option<usize>,
+        /// Whether a gateway on the way refused, rather than the server itself.
+        gateway: bool,
     },
     /// The server closed the connection.
     #[error("disconnected by the server")]

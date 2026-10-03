@@ -307,6 +307,7 @@ fn a_failed_attempt_takes_every_saved_password_it_gave_as_refused() {
         attempt,
         event: ConnectionEvent::Failed(UiError::AuthenticationFailed {
             tried: vec![AuthMethod::Password],
+            agent_keys: None,
         }),
     });
     let (tab, attempt) = open(&mut app);

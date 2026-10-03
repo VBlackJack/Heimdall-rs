@@ -153,6 +153,7 @@ fn ui_error(error: VncError) -> UiError {
         VncError::Cancelled => UiError::Cancelled,
         VncError::Rfb(RfbError::AuthenticationFailed(_)) => UiError::AuthenticationFailed {
             tried: vec![AuthMethod::Password],
+            agent_keys: None,
         },
         VncError::Rfb(RfbError::NoAcceptableSecurity(offered)) => UiError::SecurityRefused {
             detail: format!("security types offered: {offered:?}"),

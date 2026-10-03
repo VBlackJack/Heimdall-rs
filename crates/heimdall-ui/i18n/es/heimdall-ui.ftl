@@ -1096,3 +1096,10 @@ ui-tunnels-count =
        *[other] { $count } túneles
     }
 ui-tunnels-collapse-button = ▼
+
+## An SSH key file not there, and what the agents offered a gateway that refused, as the C# says them.
+ui-error-key-not-found = No se encontró el archivo de clave SSH: { $path }
+ui-error-auth-agent-none = No había ninguna clave cargada en un agente SSH cuando Heimdall marcó esta pasarela, así que no se ofreció ninguna clave del agente. Si esta pasarela inicia sesión con una clave de agente, cárgala en Pageant o en el agente OpenSSH de Windows y vuelve a conectar; si no, comprueba los datos de inicio de sesión guardados para esta pasarela.
+ui-error-auth-agent-one = Se cargó una clave en un agente SSH y se ofreció a esta pasarela; no fue aceptada. Si esta pasarela espera una clave distinta, cárgala y vuelve a conectar.
+ui-error-auth-agent-many = Se cargaron { $count } claves en un agente SSH y se ofrecieron a esta pasarela; ninguna fue aceptada. Si esta pasarela espera una clave distinta, cárgala y vuelve a conectar.
+ui-error-auth-with-agent = { $refused } { $agent }
