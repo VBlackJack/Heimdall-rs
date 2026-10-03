@@ -76,6 +76,7 @@ mod broadcast;
 mod connect_as;
 mod file_import;
 mod files_clipboard;
+mod files_edit;
 mod files_tab;
 mod files_terminal;
 mod folder_menu;
@@ -952,6 +953,62 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Copy the server's file into a folder of the user's own and start the editor on it,
+    /// then send [`FilesMessage::EditStarted`].
+    StartEdit {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The server's file.
+        remote: heimdall_files::RemotePath,
+        /// The editor.
+        editor: crate::external_edit::Editor,
+        /// The folder edits go under.
+        base: PathBuf,
+        /// The folders of the edits open, kept when old ones are removed.
+        keep: Vec<PathBuf>,
+        /// Stops the copy.
+        cancel: tokio_util::sync::CancellationToken,
+    },
+    /// Start the editor again on a file being edited, then send
+    /// [`FilesMessage::EditorLaunched`].
+    LaunchEditor {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        editor: crate::external_edit::Editor,
+        /// The local copy.
+        file: PathBuf,
+    },
+    /// Send an edit's refused save over the server's file as it is now, then send
+    /// [`FilesMessage::EditSentAnyway`].
+    SendEditAnyway {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The edit.
+        edit: Box<crate::external_edit::EditSession>,
+    },
+    /// Open a folder in the system's file manager; a failure sends
+    /// [`FilesMessage::EditorLaunched`].
+    OpenFolder {
+        /// Tab.
+        tab: TabId,
+        /// The folder.
+        folder: PathBuf,
+    },
+    /// Look at the files being edited, send their saves, then send
+    /// [`FilesMessage::EditsChecked`].
+    CheckEdits {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The files, as they were.
+        edits: Vec<crate::external_edit::EditSession>,
+    },
     /// Copy entries of the server on the server, one after another, then send
     /// [`FilesMessage::Copied`].
     CopyRemote {
@@ -1072,6 +1129,15 @@ impl fmt::Debug for Effect {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
             Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
+            Self::StartEdit { tab, remote, .. } => {
+                write!(f, "StartEdit({}, {remote:?})", tab.value())
+            }
+            Self::LaunchEditor { tab, .. } => write!(f, "LaunchEditor({})", tab.value()),
+            Self::SendEditAnyway { tab, .. } => write!(f, "SendEditAnyway({})", tab.value()),
+            Self::OpenFolder { tab, .. } => write!(f, "OpenFolder({})", tab.value()),
+            Self::CheckEdits { tab, edits, .. } => {
+                write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
+            }
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
             }
@@ -1512,6 +1578,14 @@ pub enum Dialog {
         /// Its name, as the question says it.
         name: String,
     },
+    /// Close a Files tab with files open in an external editor, whose next saves would
+    /// no longer be sent, as the C# close guard asks.
+    ConfirmCloseEdits {
+        /// Tab.
+        tab: TabId,
+        /// Its name, as the question says it.
+        name: String,
+    },
     /// Start broadcast input to every tab.
     ConfirmBroadcast,
     /// Turn session transcripts on, which keep what is typed.
@@ -1799,6 +1873,8 @@ pub struct App {
     agent_chip: AgentChip,
     /// The entries cut in a Files tab, waiting to be pasted.
     files_clipboard: Option<FilesClipboard>,
+    /// Where a server's files are edited: the user's own local folder.
+    edit_dir: Option<PathBuf>,
     /// The address test running in the profile form, and what stops it.
     address_test: Option<(u64, CancellationToken)>,
     /// The number of the next address test.
@@ -1894,6 +1970,7 @@ impl App {
             next_route_test: 0,
             agent_chip: AgentChip::Unknown,
             files_clipboard: None,
+            edit_dir: heimdall_core::paths::edit_dir(),
             address_test: None,
             next_address_test: 0,
             tunnels: Vec::new(),
@@ -2793,6 +2870,18 @@ impl App {
                     name: tab.display_title().to_owned(),
                 });
             }
+            // Its edits' next saves would no longer be sent: said, as the C# close guard.
+            Some(tab)
+                if tab
+                    .files
+                    .as_ref()
+                    .is_some_and(|files| !files.edits.is_empty()) =>
+            {
+                self.dialog = Some(Dialog::ConfirmCloseEdits {
+                    tab: tab_id,
+                    name: tab.display_title().to_owned(),
+                });
+            }
             Some(tab) if tab.is_live() => {
                 self.dialog = Some(Dialog::ConfirmCloseTab(tab_id));
             }
@@ -2852,7 +2941,11 @@ impl App {
                 self.confirm_custom_resolution(tab, &value);
                 Vec::new()
             }
-            Some(Dialog::ConfirmCloseTab(tab) | Dialog::ConfirmCloseTransfers { tab, .. }) => {
+            Some(
+                Dialog::ConfirmCloseTab(tab)
+                | Dialog::ConfirmCloseTransfers { tab, .. }
+                | Dialog::ConfirmCloseEdits { tab, .. },
+            ) => {
                 self.close_tab(tab);
                 Vec::new()
             }

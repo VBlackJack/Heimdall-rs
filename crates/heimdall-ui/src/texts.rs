@@ -376,6 +376,13 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::Exists => fl!("ui-files-error-exists"),
         FilesError::InvalidPermissions => fl!("ui-files-error-invalid-permissions"),
         FilesError::CopyRefused => fl!("ui-files-error-copy-refused"),
+        FilesError::ChangedOnServer => fl!("ui-files-error-changed-on-server"),
+        FilesError::FileTooLarge => fl!("ui-files-error-file-too-large"),
+        FilesError::WorkingFolderUnprotected => fl!("ui-files-error-working-folder-unprotected"),
+        FilesError::EditorFailed { detail } => {
+            fl!("ui-files-error-editor-failed", detail = detail.as_str())
+        }
+        FilesError::EditorRunsFiles => fl!("ui-files-error-editor-runs-files"),
         FilesError::PasteIntoItself { name } => {
             fl!("ui-files-error-paste-into-itself", name = name.as_str())
         }

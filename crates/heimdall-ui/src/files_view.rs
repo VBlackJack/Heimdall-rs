@@ -27,6 +27,7 @@
 use std::collections::BTreeSet;
 use std::time::SystemTime;
 
+use heimdall_app::external_edit::EditSession;
 use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
     SortColumn, Transfer, TransferState, symbolic_mode,
@@ -535,6 +536,51 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         .into()
 }
 
+/// A file edited with the external editor: its state, its folder, a refused save sent
+/// anyway, and stopping.
+fn edit_row(tab: TabId, edit: &EditSession) -> Element<'_, Message> {
+    let local = || edit.local.clone();
+    let state = match &edit.refused {
+        Some(error) => text(texts::files_error(error))
+            .size(SMALL_SIZE)
+            .style(text::danger),
+        None => text(fl!("ui-files-edit-watching")).size(SMALL_SIZE),
+    };
+    let mut line = row![
+        text(edit.name.as_str()).width(Length::FillPortion(2)),
+        state.width(Length::FillPortion(3)),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center);
+    if edit.refused.is_some() {
+        line = line.push(
+            button(text(fl!("ui-files-edit-send-anyway")).size(SMALL_SIZE)).on_press(files(
+                FilesMessage::EditSendAnyway {
+                    tab,
+                    local: local(),
+                },
+            )),
+        );
+    }
+    line.push(
+        button(text(fl!("ui-files-edit-open-folder")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(FilesMessage::EditOpenFolder {
+                tab,
+                local: local(),
+            })),
+    )
+    .push(
+        button(text(fl!("ui-files-edit-stop")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(FilesMessage::EditStop {
+                tab,
+                local: local(),
+            })),
+    )
+    .into()
+}
+
 fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
     let what = match transfer.direction {
         Direction::Download => {
@@ -653,6 +699,17 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
         .spacing(SPACING)
         .height(Length::Fill);
     let mut content = column![panes].spacing(SPACING).padding(PADDING);
+    if !files_pane.edits.is_empty() {
+        let list = files_pane
+            .edits
+            .iter()
+            .fold(Column::new().spacing(4.0), |list, edit| {
+                list.push(edit_row(tab, edit))
+            });
+        content = content
+            .push(text(fl!("ui-files-edits-title")).size(TITLE_SIZE))
+            .push(list);
+    }
     if !files_pane.transfers.is_empty() {
         let list = files_pane
             .transfers

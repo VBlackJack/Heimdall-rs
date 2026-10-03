@@ -652,6 +652,21 @@ pub enum FilesError {
     /// The server did not carry out a server-side copy: it runs no POSIX shell with GNU
     /// tools for this account, or the copy failed there. Nothing is copied any other way.
     CopyRefused,
+    /// The file changed on the server since it was opened: it was left as it is.
+    ChangedOnServer,
+    /// The file is larger than what is edited: it is downloaded instead.
+    FileTooLarge,
+    /// The folder a file is edited in could not be kept the user's own: the file was not
+    /// opened, as the C# refuses it.
+    WorkingFolderUnprotected,
+    /// The external editor could not be started.
+    EditorFailed {
+        /// What the system said, or the path set.
+        detail: String,
+    },
+    /// The external editor set is a shell, a script host or an interpreter: it would run
+    /// the file, not show it.
+    EditorRunsFiles,
     /// A folder pasted into itself or one of its own folders.
     PasteIntoItself {
         /// The folder's name, made safe.
@@ -674,6 +689,8 @@ impl From<&RemoteError> for FilesError {
             RemoteError::LocalExists => Self::Exists,
             RemoteError::DestinationNotAFile => Self::DestinationNotAFile,
             RemoteError::ReplaceNotSafe => Self::ReplaceNotSafe,
+            RemoteError::Changed => Self::ChangedOnServer,
+            RemoteError::FileTooLarge => Self::FileTooLarge,
             RemoteError::TooLarge => Self::TooLarge,
             // A cancel is a state of the transfer, not a failure: callers handle it first.
             RemoteError::SessionClosed | RemoteError::Cancelled => Self::SessionClosed,
@@ -702,6 +719,11 @@ pub struct FilesPane {
     pub bookmarks: Vec<RemotePath>,
     /// What stops the server-side copy running, while one runs: one at a time.
     pub copying: Option<CancellationToken>,
+    /// The server's files being edited with an external editor; kept while the tab is
+    /// open, connected or not.
+    pub edits: Vec<crate::external_edit::EditSession>,
+    /// A look at the files being edited runs: one at a time.
+    pub checking_edits: bool,
 }
 
 impl FilesPane {
@@ -717,6 +739,8 @@ impl FilesPane {
             focus: Side::Local,
             bookmarks: Vec::new(),
             copying: None,
+            edits: Vec::new(),
+            checking_edits: false,
         }
     }
 

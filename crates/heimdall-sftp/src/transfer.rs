@@ -33,7 +33,7 @@ use std::time::{Duration, SystemTime};
 
 use thiserror::Error;
 use tokio::fs::{File, OpenOptions};
-use tokio::io::{AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _};
+use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncSeekExt as _, AsyncWriteExt as _};
 use tokio::task::JoinSet;
 use tokio_util::sync::CancellationToken;
 
@@ -124,6 +124,172 @@ pub enum TransferError {
         /// Bytes kept.
         kept: u64,
     },
+    /// The remote file changed since its fingerprint was taken: it was left as it is.
+    #[error("the remote file changed meanwhile")]
+    Changed,
+    /// The remote file is larger than what is read whole.
+    #[error("the remote file is too large")]
+    TooLarge,
+}
+
+/// What a server says of a file that changes when it is written: its size, modification
+/// time, permissions, owner and group. Read without the file's content, it tells a file left
+/// as it was from one changed meanwhile; a write within the same second keeping the size,
+/// mode and owner escapes it, which a caller rules out by reading the content again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Fingerprint {
+    /// Size in bytes.
+    pub size: Option<u64>,
+    /// Modification time, seconds since the epoch.
+    pub modified: Option<u32>,
+    /// POSIX mode bits, file type included.
+    pub permissions: Option<u32>,
+    /// Owner and group ids.
+    pub uid_gid: Option<(u32, u32)>,
+}
+
+impl Fingerprint {
+    /// The fingerprint of a file the server described as `attributes`.
+    #[must_use]
+    pub fn of(attributes: &Attributes) -> Self {
+        Self {
+            size: attributes.size,
+            modified: attributes.times.map(|(_, modified)| modified),
+            permissions: attributes.permissions,
+            uid_gid: attributes.uid_gid,
+        }
+    }
+}
+
+/// Reads the regular file `source` whole, `cap` bytes at most, and its fingerprint; the
+/// file is described before and after, and any change between the two refuses the read: what
+/// is returned is the content the fingerprint describes.
+///
+/// # Errors
+///
+/// [`TransferError::NotARegularFile`], [`TransferError::TooLarge`] past `cap` (said by its
+/// size, or found while reading), [`TransferError::Changed`], [`TransferError::Cancelled`],
+/// or the server's.
+pub async fn read_whole(
+    client: &SftpClient,
+    source: &RemotePath,
+    cap: u64,
+    cancel: &CancellationToken,
+) -> Result<(Vec<u8>, Fingerprint), TransferError> {
+    let before = client.lstat(source).await?;
+    if !before.is_regular_file() {
+        return Err(TransferError::NotARegularFile);
+    }
+    if before.size.is_some_and(|size| size > cap) {
+        return Err(TransferError::TooLarge);
+    }
+    let handle = client
+        .open(source, open_flags::READ, Attributes::default())
+        .await?;
+    let chunk = chunk_size(client, &TransferConfig::default());
+    let mut data = Vec::new();
+    let read = async {
+        loop {
+            let at = data.len() as u64;
+            match client.read(&handle, at, chunk).await? {
+                None => return Ok(()),
+                Some(bytes) if bytes.is_empty() => return Ok(()),
+                Some(bytes) => {
+                    data.extend_from_slice(&bytes);
+                    if data.len() as u64 > cap {
+                        return Err(TransferError::TooLarge);
+                    }
+                }
+            }
+        }
+    };
+    let read = tokio::select! {
+        () = cancel.cancelled() => Err(TransferError::Cancelled { kept: 0 }),
+        read = read => read,
+    };
+    let _ = client.close(&handle).await;
+    read?;
+    let after = client.lstat(source).await?;
+    let fingerprint = Fingerprint::of(&after);
+    if fingerprint != Fingerprint::of(&before) || after.size != Some(data.len() as u64) {
+        return Err(TransferError::Changed);
+    }
+    Ok((data, fingerprint))
+}
+
+/// Replaces the regular file `target` with `data`, only while it still has the fingerprint
+/// `expected`: checked first, and again just before the rename that replaces it, the new file
+/// keeping its permissions and group. The check and the rename are two requests: a write
+/// landing between them, milliseconds apart, is not seen. Returns the fingerprint of the file
+/// as it is once replaced.
+///
+/// # Errors
+///
+/// [`TransferError::Changed`] with `target` left as it is, [`TransferError::DestinationNotAFile`],
+/// [`TransferError::ReplaceNotSafe`], [`TransferError::Cancelled`], or the server's. The
+/// temporary file is removed whatever stopped the replace.
+pub async fn replace_if(
+    client: &SftpClient,
+    data: &[u8],
+    target: &RemotePath,
+    expected: &Fingerprint,
+    config: &TransferConfig,
+    cancel: &CancellationToken,
+) -> Result<Fingerprint, TransferError> {
+    let existing = client.lstat(target).await?;
+    if !existing.is_regular_file() {
+        return Err(TransferError::DestinationNotAFile);
+    }
+    if Fingerprint::of(&existing) != *expected {
+        return Err(TransferError::Changed);
+    }
+    let temp = upload_temp(target);
+    let handle = client
+        .open(
+            &temp,
+            open_flags::WRITE | open_flags::CREATE | open_flags::EXCLUSIVE,
+            Attributes {
+                permissions: Some(UPLOAD_TEMP_MODE),
+                ..Attributes::default()
+            },
+        )
+        .await?;
+    let sent = send(
+        client,
+        &handle,
+        data,
+        Path::new(""),
+        config,
+        cancel,
+        &mut |_| {},
+    )
+    .await;
+    let finished = match sent {
+        // Dated now: the server's own time says when it was written.
+        Ok(_) => {
+            finish(
+                client,
+                &handle,
+                &temp,
+                target,
+                Landing {
+                    times: None,
+                    mode: UPLOAD_TEMP_MODE,
+                },
+                Commit::ReplaceIf(&existing, expected),
+            )
+            .await
+        }
+        Err(error) => {
+            let _ = client.close(&handle).await;
+            Err(error)
+        }
+    };
+    if let Err(error) = finished {
+        let _ = client.remove(&temp).await;
+        return Err(error);
+    }
+    Ok(Fingerprint::of(&client.lstat(target).await?))
 }
 
 /// How a download went.
@@ -624,19 +790,31 @@ pub async fn upload(
         )
         .await?;
     let sent = send(client, &handle, file, source, config, cancel, &mut progress).await;
+    let times = if config.preserve_times {
+        metadata
+            .modified()
+            .ok()
+            .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .and_then(|since| u32::try_from(since.as_secs()).ok())
+            .map(|seconds| (seconds, seconds))
+    } else {
+        None
+    };
     let finished = match sent {
         Ok(bytes) => finish(
             client,
             &handle,
             &temp,
             target,
-            &metadata,
+            Landing {
+                times,
+                mode: upload_mode(&metadata),
+            },
             if replace {
                 Commit::Replace(replaced.as_ref())
             } else {
                 Commit::Create
             },
-            config,
         )
         .await
         .map(|flushed| UploadReport { bytes, flushed }),
@@ -651,11 +829,12 @@ pub async fn upload(
     finished
 }
 
-/// Sends the file's bytes with writes in flight; returns the size sent.
+/// Sends the bytes of `file`, read from `source`, with writes in flight; returns the size
+/// sent.
 async fn send(
     client: &SftpClient,
     handle: &Handle,
-    mut file: File,
+    mut file: impl AsyncRead + Unpin + Send,
     source: &Path,
     config: &TransferConfig,
     cancel: &CancellationToken,
@@ -734,6 +913,17 @@ enum Commit<'a> {
     /// Replacing allowed, with the file found there when there was one: the new file keeps
     /// its permissions and group.
     Replace(Option<&'a Attributes>),
+    /// Replacing the file found there, only while it still has this fingerprint, checked
+    /// just before the rename; never creating one.
+    ReplaceIf(&'a Attributes, &'a Fingerprint),
+}
+
+/// What a new file gets before it takes its name: its dates, when kept, and its mode when
+/// it replaces nothing.
+#[derive(Clone, Copy)]
+struct Landing {
+    times: Option<(u32, u32)>,
+    mode: u32,
 }
 
 /// Flushes and closes the temporary file, gives it its mode and date, and renames it over
@@ -743,9 +933,8 @@ async fn finish(
     handle: &Handle,
     temp: &RemotePath,
     target: &RemotePath,
-    metadata: &std::fs::Metadata,
+    landing: Landing,
     commit: Commit<'_>,
-    config: &TransferConfig,
 ) -> Result<bool, TransferError> {
     let flushed = match client.fsync(handle).await {
         Ok(flushed) => flushed,
@@ -756,31 +945,22 @@ async fn finish(
     };
     // A server may report a failed write (quota, NFS) only when the file is closed.
     client.close(handle).await?;
-    let times = if config.preserve_times {
-        metadata
-            .modified()
-            .ok()
-            .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
-            .and_then(|since| u32::try_from(since.as_secs()).ok())
-            .map(|seconds| (seconds, seconds))
-    } else {
-        None
-    };
     let existing = match commit {
         Commit::Replace(existing) => existing,
+        Commit::ReplaceIf(existing, _) => Some(existing),
         Commit::Create => None,
     };
     // A replaced file keeps its permissions: a private file stays private. Set-user-id,
     // set-group-id and sticky are never copied, as for any transfer.
     let permissions = existing
         .and_then(|existing| existing.permissions)
-        .map_or_else(|| upload_mode(metadata), |mode| mode & PLAIN_PERMISSIONS);
+        .map_or(landing.mode, |mode| mode & PLAIN_PERMISSIONS);
     client
         .setstat(
             temp,
             Attributes {
                 permissions: Some(permissions),
-                times,
+                times: landing.times,
                 ..Attributes::default()
             },
         )
@@ -788,9 +968,23 @@ async fn finish(
     if let Some((_, group)) = existing.and_then(|existing| existing.uid_gid) {
         keep_group(client, temp, group).await?;
     }
-    if matches!(commit, Commit::Create) {
-        client.rename(temp, target, false).await?;
-        return Ok(flushed);
+    match commit {
+        Commit::Create => {
+            client.rename(temp, target, false).await?;
+            return Ok(flushed);
+        }
+        Commit::ReplaceIf(_, expected) => {
+            // Checked again as late as SFTP allows: just before the rename.
+            if Fingerprint::of(&client.lstat(target).await?) != *expected {
+                return Err(TransferError::Changed);
+            }
+            return client
+                .rename(temp, target, true)
+                .await
+                .map(|()| flushed)
+                .map_err(|_| TransferError::ReplaceNotSafe);
+        }
+        Commit::Replace(_) => {}
     }
     if client.rename(temp, target, true).await.is_ok() {
         return Ok(flushed);

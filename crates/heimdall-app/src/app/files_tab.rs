@@ -179,6 +179,65 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Open the server's selected file in the external editor, as the C# "Edit with
+    /// external editor".
+    EditExternal {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The file is open in the editor, or why not.
+    EditStarted {
+        /// Tab.
+        tab: TabId,
+        /// The file being edited; or why not.
+        result: Result<Box<crate::external_edit::EditSession>, FilesError>,
+    },
+    /// The editor was started again on a file being edited, or why not.
+    EditorLaunched {
+        /// Tab.
+        tab: TabId,
+        /// Whether it started.
+        result: Result<(), FilesError>,
+    },
+    /// Time to look at the files being edited.
+    EditTick,
+    /// Send a refused save over the server's file as it is now.
+    EditSendAnyway {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
+    /// The save sent anyway, or why not.
+    EditSentAnyway {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+        /// What happened.
+        check: crate::external_edit::EditCheck,
+    },
+    /// Show the folder of an edit's local copy.
+    EditOpenFolder {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
+    /// Stop watching an edit: its next saves are not sent.
+    EditStop {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
+    /// A look at the files being edited ended.
+    EditsChecked {
+        /// Tab.
+        tab: TabId,
+        /// Each file, by its local copy, and what was found.
+        results: Vec<(PathBuf, crate::external_edit::EditCheck)>,
+    },
     /// Copy the server's selected entries into their own folder, as the C# "Duplicate".
     Duplicate {
         /// Tab.
@@ -359,6 +418,7 @@ impl FilesMessage {
 }
 
 impl std::fmt::Debug for FilesMessage {
+    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::RemoteListed { tab, result } => write!(
@@ -396,6 +456,21 @@ impl std::fmt::Debug for FilesMessage {
             Self::Paste { tab } => write!(f, "Paste({})", tab.value()),
             Self::Copy { tab } => write!(f, "Copy({})", tab.value()),
             Self::Duplicate { tab } => write!(f, "Duplicate({})", tab.value()),
+            Self::EditExternal { tab } => write!(f, "EditExternal({})", tab.value()),
+            Self::EditStarted { tab, result } => {
+                write!(f, "EditStarted({}, {})", tab.value(), result.is_ok())
+            }
+            Self::EditorLaunched { tab, result } => {
+                write!(f, "EditorLaunched({}, {})", tab.value(), result.is_ok())
+            }
+            Self::EditTick => f.write_str("EditTick"),
+            Self::EditSendAnyway { tab, .. } => write!(f, "EditSendAnyway({})", tab.value()),
+            Self::EditSentAnyway { tab, .. } => write!(f, "EditSentAnyway({})", tab.value()),
+            Self::EditOpenFolder { tab, .. } => write!(f, "EditOpenFolder({})", tab.value()),
+            Self::EditStop { tab, .. } => write!(f, "EditStop({})", tab.value()),
+            Self::EditsChecked { tab, results } => {
+                write!(f, "EditsChecked({}, {})", tab.value(), results.len())
+            }
             Self::OpenInTerminal { tab } => write!(f, "OpenInTerminal({})", tab.value()),
             Self::Copied { tab, results, .. } => {
                 write!(f, "Copied({}, {})", tab.value(), results.len())
@@ -666,6 +741,15 @@ impl App {
             FilesMessage::Copy { tab } => self.hold_entries(tab, super::ClipMode::Copy),
             FilesMessage::Paste { tab } => self.paste_held(tab),
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
+            message @ (FilesMessage::EditExternal { .. }
+            | FilesMessage::EditStarted { .. }
+            | FilesMessage::EditorLaunched { .. }
+            | FilesMessage::EditTick
+            | FilesMessage::EditsChecked { .. }
+            | FilesMessage::EditSendAnyway { .. }
+            | FilesMessage::EditSentAnyway { .. }
+            | FilesMessage::EditOpenFolder { .. }
+            | FilesMessage::EditStop { .. }) => self.edit_message(message),
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::Copied {

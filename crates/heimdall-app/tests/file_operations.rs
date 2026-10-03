@@ -1368,6 +1368,148 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
     assert!(files(&mut app, FilesMessage::Paste { tab: behind }).is_empty());
 }
 
+/// A Files tab editing the server's "/srv/a.txt", opened as `EditExternal` asks: the app, the
+/// tab, the local copy and the fingerprint it was opened with.
+async fn editing(dir: &Path) -> (App, TabId, PathBuf, heimdall_files::Fingerprint) {
+    use heimdall_app::Notice;
+    use heimdall_app::external_edit::EditSession;
+
+    let (mut app, tab) = tab(dir).await;
+    app.set_edit_dir(dir.join("edits"));
+    select(&mut app, tab, Side::Remote, 0);
+    assert!(
+        files(&mut app, FilesMessage::EditExternal { tab }).is_empty(),
+        "a folder is not edited"
+    );
+    select(&mut app, tab, Side::Remote, 1);
+    let started = files(&mut app, FilesMessage::EditExternal { tab });
+    assert!(
+        matches!(started.as_slice(), [Effect::StartEdit { remote, .. }] if remote.as_bytes() == b"/srv/a.txt"),
+        "{started:?}"
+    );
+    let local = dir.join("edits").join("a.txt");
+    let fingerprint = heimdall_files::Fingerprint {
+        size: Some(1),
+        modified: Some(1),
+        permissions: Some(0o100_644),
+        uid_gid: Some((1000, 1000)),
+    };
+    files(
+        &mut app,
+        FilesMessage::EditStarted {
+            tab,
+            result: Ok(Box::new(EditSession {
+                remote: RemotePath::from("/srv/a.txt"),
+                name: "a.txt".to_owned(),
+                local: local.clone(),
+                sent: [0; 32],
+                fingerprint,
+                seen: None,
+                candidate: None,
+                refused: None,
+            })),
+        },
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FilesEditing("a.txt".to_owned()))
+    );
+    assert!(app.has_edits());
+    (app, tab, local, fingerprint)
+}
+
+#[tokio::test]
+async fn a_file_edited_externally_is_watched_one_look_at_a_time_and_its_saves_said() {
+    use heimdall_app::Notice;
+    use heimdall_app::external_edit::EditCheck;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, local, fingerprint) = editing(dir.path()).await;
+    let tick = |app: &mut App| files(app, FilesMessage::EditTick);
+    assert!(
+        matches!(tick(&mut app).as_slice(), [Effect::CheckEdits { edits, .. }] if edits.len() == 1)
+    );
+    assert!(tick(&mut app).is_empty(), "one look at a time");
+    let now = std::time::SystemTime::now();
+    let sent = files(
+        &mut app,
+        FilesMessage::EditsChecked {
+            tab,
+            results: vec![(
+                local,
+                EditCheck::Sent {
+                    modified: now,
+                    sent: [1; 32],
+                    fingerprint,
+                },
+            )],
+        },
+    );
+    assert!(
+        matches!(sent.as_slice(), [Effect::ListRemote { .. }]),
+        "listed again"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FilesAutoUploaded("a.txt".to_owned()))
+    );
+}
+
+#[tokio::test]
+async fn a_refused_save_is_said_on_the_pane_and_the_editor_reopens_without_a_new_copy() {
+    use heimdall_app::external_edit::EditCheck;
+    use heimdall_app::{Notice, SettingsMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, local, _) = editing(dir.path()).await;
+    let tick = |app: &mut App| files(app, FilesMessage::EditTick);
+    let edit = |app: &mut App| files(app, FilesMessage::EditExternal { tab });
+    let now = std::time::SystemTime::now();
+    assert_eq!(tick(&mut app).len(), 1, "looked at");
+    files(
+        &mut app,
+        FilesMessage::EditsChecked {
+            tab,
+            results: vec![(
+                local,
+                EditCheck::Refused {
+                    modified: now,
+                    error: FilesError::ChangedOnServer,
+                },
+            )],
+        },
+    );
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::ChangedOnServer)
+    );
+    assert!(matches!(
+        app.notice(),
+        Some(Notice::FilesAutoUploadRefused {
+            error: FilesError::ChangedOnServer,
+            ..
+        })
+    ));
+
+    // Edited already: the editor opens it again, nothing copied anew.
+    assert!(matches!(
+        edit(&mut app).as_slice(),
+        [Effect::LaunchEditor { .. }]
+    ));
+
+    // A shell set as the editor is refused before anything runs.
+    if cfg!(unix) {
+        app.update(Message::Settings(SettingsMessage::ExternalEditor(
+            "/bin/sh".to_owned(),
+        )));
+        assert!(edit(&mut app).is_empty());
+        assert_eq!(
+            pane_error(&app, tab, Side::Remote),
+            Some(FilesError::EditorRunsFiles)
+        );
+    }
+}
+
 #[tokio::test]
 async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
     use heimdall_app::Purpose;
@@ -1430,6 +1572,100 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
     assert!(
         open(&mut app).is_empty(),
         "a line a shell cannot carry as it is"
+    );
+}
+
+#[tokio::test]
+async fn closing_a_tab_with_files_in_an_external_editor_asks_first() {
+    use heimdall_app::Dialog;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, _, _) = editing(dir.path()).await;
+    app.update(Message::RequestCloseTab(tab));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::ConfirmCloseEdits { tab: asked, .. }) if *asked == tab),
+        "{:?}",
+        app.dialog
+    );
+    assert!(app.tab(tab).is_some(), "still open until answered");
+}
+
+#[tokio::test]
+async fn a_refused_save_can_be_sent_anyway_and_an_edit_stopped() {
+    use heimdall_app::external_edit::EditCheck;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, local, fingerprint) = editing(dir.path()).await;
+    let now = std::time::SystemTime::now();
+    let refused = EditCheck::Refused {
+        modified: now,
+        error: FilesError::ChangedOnServer,
+    };
+    files(&mut app, FilesMessage::EditTick);
+    files(
+        &mut app,
+        FilesMessage::EditsChecked {
+            tab,
+            results: vec![(local.clone(), refused)],
+        },
+    );
+    let edit = |app: &App| {
+        app.tab(tab)
+            .and_then(|t| t.files.as_ref())
+            .and_then(|files| files.edits.first().cloned())
+    };
+    assert_eq!(
+        edit(&app).and_then(|edit| edit.refused),
+        Some(FilesError::ChangedOnServer),
+        "the refusal is kept to be shown"
+    );
+
+    let sending = files(
+        &mut app,
+        FilesMessage::EditSendAnyway {
+            tab,
+            local: local.clone(),
+        },
+    );
+    assert!(matches!(
+        sending.as_slice(),
+        [Effect::SendEditAnyway { .. }]
+    ));
+    files(
+        &mut app,
+        FilesMessage::EditSentAnyway {
+            tab,
+            local: local.clone(),
+            check: EditCheck::Sent {
+                modified: now,
+                sent: [2; 32],
+                fingerprint,
+            },
+        },
+    );
+    assert_eq!(edit(&app).and_then(|edit| edit.refused), None, "sent");
+
+    let opening = files(
+        &mut app,
+        FilesMessage::EditOpenFolder {
+            tab,
+            local: local.clone(),
+        },
+    );
+    assert!(
+        matches!(opening.as_slice(), [Effect::OpenFolder { folder, .. }] if Some(folder.as_path()) == local.parent()),
+        "{opening:?}"
+    );
+
+    files(&mut app, FilesMessage::EditStop { tab, local });
+    assert!(!app.has_edits(), "no longer watched");
+    app.update(Message::RequestCloseTab(tab));
+    assert!(
+        !matches!(
+            app.dialog,
+            Some(heimdall_app::Dialog::ConfirmCloseEdits { .. })
+        ),
+        "nothing left to ask about"
     );
 }
 

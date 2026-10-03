@@ -112,6 +112,18 @@ pub enum Notice {
     ResolutionReconnected,
     /// The size chosen is larger than the tab: the desktop is shown scaled.
     ResolutionScaled,
+    /// A server's file is open in the external editor: each save is sent.
+    FilesEditing(String),
+    /// A save of a file being edited was sent.
+    FilesAutoUploaded(String),
+    /// A save of a file being edited was not sent, and is not tried again until saved
+    /// again.
+    FilesAutoUploadRefused {
+        /// The file.
+        name: String,
+        /// Why.
+        error: crate::files::FilesError,
+    },
     /// The entries cut or copied were pasted.
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.

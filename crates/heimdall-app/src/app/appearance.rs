@@ -38,6 +38,8 @@ pub enum SettingsMessage {
     SessionLogging(bool),
     /// The folder transcripts go to.
     SessionLogDirectory(String),
+    /// The program a server's file is edited with; empty takes the system's own.
+    ExternalEditor(String),
     /// The lists of keys trusted for servers.
     TrustedKeys(TrustedKeysMessage),
     /// The size a new terminal's text starts at; one out of the accepted range is ignored.
@@ -134,6 +136,9 @@ impl App {
                 directory
                     .trim()
                     .clone_into(&mut self.settings.session_log_directory);
+            }
+            SettingsMessage::ExternalEditor(editor) => {
+                editor.trim().clone_into(&mut self.settings.external_editor);
             }
             SettingsMessage::TerminalFontSize(size) => {
                 if !terminal_font_size_accepted(*size) {
