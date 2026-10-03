@@ -16,7 +16,7 @@
 
 //! What the application decides in a Files tab.
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use heimdall_files::conflict::{Choice, Kind};
 use heimdall_files::{Plan, RemotePath, Root};
@@ -150,6 +150,19 @@ pub enum FilesMessage {
         tab: TabId,
         /// Pane.
         side: Side,
+    },
+    /// Pick files of this computer to upload into the server's folder shown, as the C#
+    /// "Upload here...".
+    UploadHere {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The files picked to upload; none when the picker was closed.
+    UploadPicked {
+        /// Tab.
+        tab: TabId,
+        /// The files.
+        paths: Vec<PathBuf>,
     },
     /// Hold the server's selected entries to be pasted, as the C# "Cut".
     Cut {
@@ -376,6 +389,10 @@ impl std::fmt::Debug for FilesMessage {
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Cut { tab } => write!(f, "Cut({})", tab.value()),
+            Self::UploadHere { tab } => write!(f, "UploadHere({})", tab.value()),
+            Self::UploadPicked { tab, paths } => {
+                write!(f, "UploadPicked({}, {})", tab.value(), paths.len())
+            }
             Self::Paste { tab } => write!(f, "Paste({})", tab.value()),
             Self::Copy { tab } => write!(f, "Copy({})", tab.value()),
             Self::Duplicate { tab } => write!(f, "Duplicate({})", tab.value()),
@@ -645,6 +662,7 @@ impl App {
             FilesMessage::Home { tab, side } => self.go_home(tab, side),
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
             FilesMessage::Cut { tab } => self.hold_entries(tab, super::ClipMode::Cut),
+            FilesMessage::UploadHere { tab } => self.upload_here(tab),
             FilesMessage::Copy { tab } => self.hold_entries(tab, super::ClipMode::Copy),
             FilesMessage::Paste { tab } => self.paste_held(tab),
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
@@ -667,7 +685,8 @@ impl App {
             | FilesMessage::OpenBookmark { .. }
             | FilesMessage::Filter { .. }
             | FilesMessage::ToggleHidden { .. }
-            | FilesMessage::Dropped { .. }) => self.pane_message(message),
+            | FilesMessage::Dropped { .. }
+            | FilesMessage::UploadPicked { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -704,7 +723,8 @@ impl App {
                 Vec::new()
             }
             FilesMessage::OpenBookmark { tab, index } => self.open_bookmark(tab, index),
-            FilesMessage::Dropped { tab, path } => self.upload_dropped(tab, &path),
+            FilesMessage::Dropped { tab, path } => self.upload_paths(tab, &[path]),
+            FilesMessage::UploadPicked { tab, paths } => self.upload_paths(tab, &paths),
             FilesMessage::Filter { tab, side, text } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -758,39 +778,64 @@ impl App {
 
     /// Sends `path`, dropped on the tab, to the server's folder shown; asked first when it
     /// would replace a name listed there.
-    fn upload_dropped(&mut self, tab: TabId, path: &Path) -> Vec<Effect> {
+    /// "Upload here...": the files to upload asked of the user, while connected.
+    fn upload_here(&self, tab: TabId) -> Vec<Effect> {
+        let connected = self
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .is_some_and(|files| files.client.is_some());
+        if connected {
+            vec![Effect::PickUploads { tab }]
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Uploads `paths`, files and folders of this computer, into the server's folder shown,
+    /// in one plan: one question for whatever is in the way. What is neither a file nor a
+    /// folder is said failed, the others go.
+    fn upload_paths(&mut self, tab: TabId, paths: &[PathBuf]) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        let (Some(client), Some(name)) = (files.client.clone(), path.file_name()) else {
+        let Some(client) = files.client.clone() else {
             return Vec::new();
         };
-        let folder = path.is_dir();
-        if !folder && !path.is_file() {
-            let label = name.to_string_lossy().into_owned();
-            files
-                .transfers
-                .push(failed(Direction::Upload, label, FilesError::NotAFile));
+        let mut roots = Vec::new();
+        for path in paths {
+            let Some(name) = path.file_name() else {
+                continue;
+            };
+            let folder = path.is_dir();
+            if !folder && !path.is_file() {
+                let label = name.to_string_lossy().into_owned();
+                files
+                    .transfers
+                    .push(failed(Direction::Upload, label, FilesError::NotAFile));
+                continue;
+            }
+            let size = (!folder)
+                .then(|| path.metadata().map(|meta| meta.len()).ok())
+                .flatten();
+            roots.push(PlannedRoot {
+                root: Root {
+                    remote: files.remote.path.join(&name_bytes(name)),
+                    local: path.clone(),
+                    kind: if folder { Kind::Folder } else { Kind::File },
+                },
+                label: name.to_string_lossy().into_owned(),
+                total: size,
+            });
+        }
+        if roots.is_empty() {
             return Vec::new();
         }
-        let size = (!folder)
-            .then(|| path.metadata().map(|meta| meta.len()).ok())
-            .flatten();
-        let root = PlannedRoot {
-            root: Root {
-                remote: files.remote.path.join(&name_bytes(name)),
-                local: path.to_owned(),
-                kind: if folder { Kind::Folder } else { Kind::File },
-            },
-            label: name.to_string_lossy().into_owned(),
-            total: size,
-        };
         vec![Effect::PlanTransfer {
             tab,
             request: Box::new(PlanRequest {
                 client,
                 direction: Direction::Upload,
-                roots: vec![root],
+                roots,
             }),
         }]
     }

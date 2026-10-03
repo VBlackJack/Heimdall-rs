@@ -1281,3 +1281,4 @@ ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }
 ui-resolution-tooltip-size = Change resolution - { $mode } ({ $width }x{ $height })
 ui-resolution-larger-than-window = Larger than window - image will be scaled.
+ui-files-menu-upload-here = Upload here...

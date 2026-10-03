@@ -946,6 +946,12 @@ pub enum Effect {
         /// Each entry and its new path.
         moves: Vec<(heimdall_files::RemotePath, heimdall_files::RemotePath)>,
     },
+    /// Ask the user for files of this computer to upload, then send
+    /// [`FilesMessage::UploadPicked`].
+    PickUploads {
+        /// Tab.
+        tab: TabId,
+    },
     /// Copy entries of the server on the server, one after another, then send
     /// [`FilesMessage::Copied`].
     CopyRemote {
@@ -1065,6 +1071,7 @@ impl fmt::Debug for Effect {
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
+            Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
             }

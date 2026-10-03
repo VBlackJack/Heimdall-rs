@@ -1432,3 +1432,54 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
         "a line a shell cannot carry as it is"
     );
 }
+
+#[tokio::test]
+async fn upload_here_picks_files_and_sends_them_together_into_the_folder_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    assert!(matches!(
+        files(&mut app, FilesMessage::UploadHere { tab }).as_slice(),
+        [Effect::PickUploads { tab: asked }] if *asked == tab
+    ));
+
+    let first = dir.path().join("one.txt");
+    let second = dir.path().join("two.txt");
+    std::fs::write(&first, b"1").expect("one");
+    std::fs::write(&second, b"22").expect("two");
+    // Selected in the server's pane, a folder is not where they go: the folder shown is.
+    select(&mut app, tab, Side::Remote, 0);
+    let planned = files(
+        &mut app,
+        FilesMessage::UploadPicked {
+            tab,
+            paths: vec![first, second, dir.path().join("gone")],
+        },
+    );
+    let request = plan_request(&planned);
+    let targets: Vec<&[u8]> = request
+        .roots
+        .iter()
+        .map(|root| root.root.remote.as_bytes())
+        .collect();
+    assert_eq!(targets, [&b"/srv/one.txt"[..], b"/srv/two.txt"]);
+    assert_eq!(request.direction, Direction::Upload);
+    let files_pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+    assert!(
+        files_pane.transfers.iter().any(|transfer| matches!(
+            transfer.state,
+            heimdall_app::files::TransferState::Failed(FilesError::NotAFile)
+        )),
+        "what is not there is said, the others still go"
+    );
+    assert!(
+        files(
+            &mut app,
+            FilesMessage::UploadPicked {
+                tab,
+                paths: Vec::new()
+            }
+        )
+        .is_empty(),
+        "nothing picked"
+    );
+}

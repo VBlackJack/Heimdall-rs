@@ -672,6 +672,10 @@ pub fn files_entry_menu<'a>(
         )),
         separator(),
         server(entry(
+            fl!("ui-files-menu-upload-here"),
+            files(FilesMessage::UploadHere { tab })
+        )),
+        server(entry(
             fl!("ui-files-menu-cut"),
             files(FilesMessage::Cut { tab })
         )),
