@@ -1217,3 +1217,4 @@ ui-files-error-editor-runs-files = Le lancement d'interpréteurs de commandes ou
 ui-settings-external-editor = Éditeur externe
 ui-settings-external-editor-path = Chemin de l'éditeur externe
 ui-settings-external-editor-hint = Chemin vers l'éditeur de texte pour l'édition SFTP distante (laisser vide pour le programme par défaut)
+ui-dialog-close-edits-body = "{ $name }" a un fichier ouvert dans un éditeur externe. Fermer le panneau quand même ? L'éditeur reste ouvert, mais plus rien n'enverra sa prochaine sauvegarde au serveur.

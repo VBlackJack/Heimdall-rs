@@ -208,6 +208,39 @@ pub fn launch(editor: &Editor, file: &Path) -> io::Result<()> {
         .map(drop)
 }
 
+/// How long an edit's folder is kept after its last change, as the C# sweeper.
+pub const EDIT_FOLDER_KEPT: std::time::Duration = std::time::Duration::from_hours(24);
+
+/// Removes the folders under `base` whose newest file changed more than
+/// [`EDIT_FOLDER_KEPT`] ago, but those in `keep`: edits left behind by a tab closed, or a
+/// run that ended. A folder in use by another run is kept as long as its file changes.
+pub fn sweep(base: &Path, keep: &[PathBuf]) {
+    let Ok(folders) = std::fs::read_dir(base) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for folder in folders.flatten() {
+        let path = folder.path();
+        if keep.contains(&path) || !folder.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let newest = std::fs::read_dir(&path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|file| file.metadata().and_then(|found| found.modified()).ok())
+            .chain(folder.metadata().and_then(|found| found.modified()).ok())
+            .max();
+        let old = newest.is_some_and(|newest| {
+            now.duration_since(newest)
+                .is_ok_and(|age| age > EDIT_FOLDER_KEPT)
+        });
+        if old {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
 /// A new folder of the user's own under `base` for one edit: `base` made, or found, the
 /// user's only (unix: mode 0700, never a link; Windows: never a reparse point, and under
 /// the user's profile), the folder created anew, never taken over.
@@ -310,7 +343,7 @@ pub async fn start_edit(
     client: RemoteSession,
     remote: RemotePath,
     editor: Editor,
-    base: PathBuf,
+    (base, keep): (PathBuf, Vec<PathBuf>),
     cancel: CancellationToken,
 ) -> Result<EditSession, FilesError> {
     let file_name = remote.file_name().ok_or(FilesError::NotAFile)?.to_vec();
@@ -323,6 +356,7 @@ pub async fn start_edit(
     let written = tokio::task::spawn_blocking(
         move || -> Result<(PathBuf, Option<SystemTime>), FilesError> {
             let folder = edit_folder(&base).map_err(|_| FilesError::WorkingFolderUnprotected)?;
+            sweep(&base, &keep);
             let local = folder.join(&local_name.name);
             write_new(&local, &data).map_err(|error| FilesError::Local {
                 detail: error.to_string(),

@@ -108,6 +108,40 @@ mod unix {
 }
 
 #[cfg(unix)]
+#[test]
+fn old_edit_folders_are_swept_but_the_ones_in_use_and_the_recent_ones() {
+    use std::time::{Duration, SystemTime};
+
+    use heimdall_app::external_edit::{EDIT_FOLDER_KEPT, sweep};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let base = dir.path();
+    let long_ago = SystemTime::now() - EDIT_FOLDER_KEPT - Duration::from_secs(60);
+    let folder = |name: &str, old: bool| {
+        let folder = base.join(name);
+        std::fs::create_dir(&folder).expect("folder");
+        let file = folder.join("a.conf");
+        std::fs::write(&file, b"x").expect("file");
+        if old {
+            for path in [&file, &folder] {
+                std::fs::File::open(path)
+                    .expect("open")
+                    .set_modified(long_ago)
+                    .expect("dated");
+            }
+        }
+        folder
+    };
+    let old = folder("old", true);
+    let in_use = folder("in-use", true);
+    let recent = folder("recent", false);
+    sweep(base, std::slice::from_ref(&in_use));
+    assert!(!old.exists(), "swept");
+    assert!(in_use.exists(), "an edit open in this run");
+    assert!(recent.exists(), "changed lately");
+}
+
+#[cfg(unix)]
 #[path = "../../heimdall-sftp/tests/common/mod.rs"]
 mod sftp;
 
@@ -138,7 +172,7 @@ async fn a_save_is_sent_once_it_holds_still_and_never_over_a_change_on_the_serve
         client.clone(),
         sftp::remote(&file),
         quiet,
-        base,
+        (base, Vec::new()),
         CancellationToken::new(),
     ))
     .await

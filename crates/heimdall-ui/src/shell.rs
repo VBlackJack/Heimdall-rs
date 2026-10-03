@@ -5281,6 +5281,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-close-transfers-body", name = name.as_str()),
             fl!("ui-dialog-close-tab-confirm"),
         ),
+        Dialog::ConfirmCloseEdits { name, .. } => (
+            fl!("ui-dialog-close-tab-title"),
+            fl!("ui-dialog-close-edits-body", name = name.as_str()),
+            fl!("ui-dialog-close-tab-confirm"),
+        ),
         Dialog::ConfirmCloseTabs { tabs, live } => (
             fl!("ui-dialog-close-tabs-title"),
             fl!(
@@ -5502,9 +5507,10 @@ fn edit_task(effect: Effect) -> Task<Message> {
             remote,
             editor,
             base,
+            keep,
             cancel,
         } => Task::perform(
-            heimdall_app::external_edit::start_edit(client, remote, editor, base, cancel),
+            heimdall_app::external_edit::start_edit(client, remote, editor, (base, keep), cancel),
             move |result| {
                 Message::App(AppMessage::Files(FilesMessage::EditStarted {
                     tab,
@@ -6018,6 +6024,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     match dialog {
         Dialog::ConfirmCloseTab(_)
         | Dialog::ConfirmCloseTransfers { .. }
+        | Dialog::ConfirmCloseEdits { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::CustomResolution { .. }

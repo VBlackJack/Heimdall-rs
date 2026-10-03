@@ -109,12 +109,21 @@ impl App {
             files.remote.error = Some(FilesError::WorkingFolderUnprotected);
             return Vec::new();
         };
+        // The folders of every edit open in this run are kept by the sweep.
+        let keep = self
+            .tabs
+            .iter()
+            .filter_map(|tab| tab.files.as_deref())
+            .flat_map(|files| &files.edits)
+            .filter_map(|edit| edit.local.parent().map(std::path::Path::to_path_buf))
+            .collect();
         vec![Effect::StartEdit {
             tab: tab_id,
             client,
             remote,
             editor,
             base,
+            keep,
             cancel: CancellationToken::new(),
         }]
     }

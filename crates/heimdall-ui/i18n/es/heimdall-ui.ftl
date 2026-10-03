@@ -1214,3 +1214,4 @@ ui-files-error-editor-runs-files = Iniciar intérpretes de shell u hosts de scri
 ui-settings-external-editor = Editor externo
 ui-settings-external-editor-path = Ruta del editor externo
 ui-settings-external-editor-hint = Ruta al editor de texto para la edición remota SFTP (déjalo vacío para el predeterminado del sistema)
+ui-dialog-close-edits-body = "{ $name }" tiene un archivo abierto en un editor externo. ¿Cerrar el panel de todos modos? El editor permanece abierto, pero nada enviará su próximo guardado al servidor.

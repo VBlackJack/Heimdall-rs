@@ -1508,3 +1508,18 @@ async fn a_refused_save_is_said_on_the_pane_and_the_editor_reopens_without_a_new
         );
     }
 }
+
+#[tokio::test]
+async fn closing_a_tab_with_files_in_an_external_editor_asks_first() {
+    use heimdall_app::Dialog;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, _, _) = editing(dir.path()).await;
+    app.update(Message::RequestCloseTab(tab));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::ConfirmCloseEdits { tab: asked, .. }) if *asked == tab),
+        "{:?}",
+        app.dialog
+    );
+    assert!(app.tab(tab).is_some(), "still open until answered");
+}

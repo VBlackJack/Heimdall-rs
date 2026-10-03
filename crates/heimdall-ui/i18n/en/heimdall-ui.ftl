@@ -1292,3 +1292,4 @@ ui-files-error-editor-runs-files = Launching shell interpreters or script hosts 
 ui-settings-external-editor = External editor
 ui-settings-external-editor-path = External editor path
 ui-settings-external-editor-hint = Path to text editor for SFTP remote editing (leave empty for system default)
+ui-dialog-close-edits-body = "{ $name }" has a file open in an external editor. Close the pane anyway? The editor stays open, but nothing will send its next save to the server.
