@@ -129,7 +129,9 @@ async fn a_trusted_server_draws_its_login_screen() {
                     }
                 }
                 RdpEvent::Closed(reason) => panic!("closed: {reason:?}"),
-                RdpEvent::Resized { .. } | RdpEvent::RemoteClipboard(_) => {}
+                RdpEvent::Resized { .. }
+                | RdpEvent::RemoteClipboard(_)
+                | RdpEvent::ResizeRefused { .. } => {}
             }
         }
         false

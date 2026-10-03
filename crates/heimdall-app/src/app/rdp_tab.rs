@@ -104,7 +104,11 @@ impl App {
     fn rdp_request(
         &self,
         profile: &RdpProfile,
-        (accepted, chosen): (Option<Fingerprint>, Option<DesktopSizing>),
+        (accepted, chosen, at): (
+            Option<Fingerprint>,
+            Option<DesktopSizing>,
+            Option<(u16, u16)>,
+        ),
         cancel: CancellationToken,
     ) -> Result<RdpRequest, UiError> {
         let route = self
@@ -117,7 +121,10 @@ impl App {
             known_hosts: self.known_rdp_hosts(),
             accepted,
             trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
-            desktop: match chosen.unwrap_or_else(|| profile.options.sizing()) {
+            desktop: match at.map_or_else(
+                || chosen.unwrap_or_else(|| profile.options.sizing()),
+                |(width, height)| DesktopSizing::Fixed { width, height },
+            ) {
                 DesktopSizing::Fixed { width, height } => (width, height),
                 // Replaced by the tab's size as soon as it is shown.
                 DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => DEFAULT_DESKTOP,
@@ -144,7 +151,7 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.rdp_request(&profile, (None, None), cancel.clone());
+        let request = self.rdp_request(&profile, (None, None, None), cancel.clone());
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -194,7 +201,12 @@ impl App {
         tab.phase = Phase::Connecting;
         tab.desktop = None;
         let chosen = tab.desktop_sizing;
-        match self.rdp_request(&profile, (accepted, chosen), cancel) {
+        // A size the server could not take live is asked as the connection opens.
+        let at = tab
+            .resize_fallback
+            .as_mut()
+            .and_then(|fallback| fallback.pending.take());
+        match self.rdp_request(&profile, (accepted, chosen, at), cancel) {
             Ok(request) => vec![Effect::ConnectRdp {
                 tab: tab_id,
                 attempt,
@@ -331,4 +343,64 @@ impl App {
 /// Whether `tab`'s connected session asks for anti-idle keys.
 fn anti_idle(tab: &Tab) -> bool {
     tab.desktop.as_ref().is_some_and(|pane| pane.anti_idle)
+}
+
+/// A connection made again for a size the server could not take live, as the C# reconnects
+/// when a resize throws.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ResizeFallback {
+    /// The size connected again for.
+    pub(super) size: (u16, u16),
+    /// That size, until the new connection asks it.
+    pub(super) pending: Option<(u16, u16)>,
+    /// Said once the new connection is ready: said before, it would go with the state.
+    pub(super) announce: bool,
+}
+
+impl App {
+    /// A certificate question, a desktop ready or a desktop drawn again, for `tab_id`.
+    pub(super) fn rdp_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        let ready = matches!(event, ConnectionEvent::RdpReady { .. });
+        apply(tab, event);
+        // A new desktop is offered this side's clipboard at once.
+        let effects = super::clipboard_offer(tab);
+        // Back at the size the server could not take live: said now it holds.
+        let announce = ready
+            && tab
+                .resize_fallback
+                .as_mut()
+                .is_some_and(|fallback| std::mem::take(&mut fallback.announce));
+        if announce {
+            self.tell(super::Notice::ResolutionReconnected);
+        }
+        effects
+    }
+
+    /// The server of `tab_id` could not take `size` live: the session connects again at
+    /// that size, once per size, and says so once back, as the C# by default (it asks first
+    /// only when a hidden setting says so). A server that cannot take it even then keeps
+    /// its own.
+    pub(super) fn resize_refused(&mut self, tab_id: TabId, size: (u16, u16)) -> Vec<Effect> {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        if tab.phase != Phase::Connected
+            || tab
+                .resize_fallback
+                .is_some_and(|fallback| fallback.size == size)
+        {
+            return Vec::new();
+        }
+        tab.resize_fallback = Some(ResizeFallback {
+            size,
+            pending: Some(size),
+            announce: true,
+        });
+        // The live session ends: its own end is not this attempt's any more.
+        tab.cancel.cancel();
+        self.reconnect_rdp(tab_id, None)
+    }
 }

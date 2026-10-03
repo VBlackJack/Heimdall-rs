@@ -132,6 +132,14 @@ pub enum ConnectionEvent {
     },
     /// The RDP desktop changed: redraw it.
     DesktopFrame,
+    /// The server cannot change the desktop's size while connected: only a new
+    /// connection at that size brings it.
+    DesktopResizeRefused {
+        /// Width asked.
+        width: u16,
+        /// Height asked.
+        height: u16,
+    },
     /// The shell is open.
     Connected {
         /// Where input goes.
@@ -230,6 +238,9 @@ impl fmt::Debug for ConnectionEvent {
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
             Self::VncReady { .. } => f.write_str("VncReady"),
             Self::DesktopFrame => f.write_str("DesktopFrame"),
+            Self::DesktopResizeRefused { width, height } => {
+                write!(f, "DesktopResizeRefused({width}x{height})")
+            }
             Self::Connected { .. } => f.write_str("Connected"),
             Self::FilesReady { .. } => f.write_str("FilesReady"),
             Self::Output(bytes) => write!(f, "Output({} bytes)", bytes.len()),
