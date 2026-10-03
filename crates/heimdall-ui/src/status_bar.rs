@@ -83,6 +83,7 @@ fn desktop_notice(notice: &Notice) -> String {
 
 /// What the left of the bar says; `targets` the tabs marked for broadcast input.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "one arm per notice")]
 pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usize) -> String {
     if let Some(notice) = notice {
         return match notice {
