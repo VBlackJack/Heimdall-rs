@@ -94,6 +94,7 @@ mod rdp_import;
 mod rdp_tab;
 mod reconnect;
 mod resolution;
+mod route_test;
 mod selection;
 mod sessions_import;
 mod status;
@@ -415,6 +416,37 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
+    /// Test the gateway dialog's route, signed in with the password and passphrase typed in
+    /// it.
+    TestRoute {
+        /// Password typed, if any.
+        password: Option<Secret>,
+        /// Key passphrase typed, if any.
+        passphrase: Option<Secret>,
+    },
+    /// Stop the route test running.
+    StopRouteTest,
+    /// A field of the "Test route" card changed.
+    RouteTarget {
+        /// Which.
+        field: crate::gateway_draft::TargetField,
+        /// Its text.
+        value: String,
+    },
+    /// What the route test found no longer holds: a password of the dialog changed.
+    ForgetRouteTest,
+    /// A step of a route test ended.
+    RouteStep {
+        /// Which test.
+        run: u64,
+        /// The step.
+        step: heimdall_ssh::Step,
+    },
+    /// A route test ended.
+    RouteTestDone {
+        /// Which test.
+        run: u64,
+    },
     /// Ask the SSH agents again what they hold, for the profile form's chip.
     RefreshAgents,
     /// What the SSH agents answered.
@@ -653,6 +685,12 @@ impl fmt::Debug for Message {
             Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
             Self::TestAddress => f.write_str("TestAddress"),
+            Self::TestRoute { .. } => f.write_str("TestRoute(..)"),
+            Self::StopRouteTest => f.write_str("StopRouteTest"),
+            Self::RouteTarget { field, .. } => write!(f, "RouteTarget({field:?})"),
+            Self::ForgetRouteTest => f.write_str("ForgetRouteTest"),
+            Self::RouteStep { run, step } => write!(f, "RouteStep({run}, {step:?})"),
+            Self::RouteTestDone { run } => write!(f, "RouteTestDone({run})"),
             Self::RefreshAgents => f.write_str("RefreshAgents"),
             Self::AgentsSurveyed(found) => write!(f, "AgentsSurveyed({})", found.len()),
             Self::CancelAddressTest => f.write_str("CancelAddressTest"),
@@ -760,6 +798,14 @@ pub enum Effect {
         attempt: AttemptId,
         /// What to run.
         request: Box<LocalRequest>,
+    },
+    /// Test a gateway route, and say each step as [`Message::RouteStep`], then
+    /// [`Message::RouteTestDone`].
+    TestRoute {
+        /// Which test.
+        run: u64,
+        /// What to test.
+        request: Box<crate::route_test::RouteTestRequest>,
     },
     /// Ask the SSH agents of `0` what they hold, and say it as [`Message::AgentsSurveyed`].
     SurveyAgents(AgentSource),
@@ -947,6 +993,7 @@ impl fmt::Debug for Effect {
             }
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
+            Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::SurveyAgents(_) => f.write_str("SurveyAgents"),
             Self::ConnectWinRm { tab, attempt, .. } => {
@@ -1664,6 +1711,10 @@ pub struct App {
     pub active: Option<TabId>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
+    /// The route test running in the gateway dialog, and what stops it.
+    route_test: Option<(u64, CancellationToken)>,
+    /// The number of the next route test.
+    next_route_test: u64,
     /// What the profile form's SSH agent chip knows.
     agent_chip: AgentChip,
     /// The address test running in the profile form, and what stops it.
@@ -1757,6 +1808,8 @@ impl App {
             tabs: Vec::new(),
             active: None,
             dialog,
+            route_test: None,
+            next_route_test: 0,
             agent_chip: AgentChip::Unknown,
             address_test: None,
             next_address_test: 0,
@@ -1860,6 +1913,7 @@ impl App {
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         self.forget_stale_notice();
+        self.stop_orphan_route_test();
         match message {
             message @ (Message::OpenProfile(_)
             | Message::OpenFiles(_)
@@ -1883,6 +1937,12 @@ impl App {
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
+            message @ (Message::TestRoute { .. }
+            | Message::StopRouteTest
+            | Message::RouteTarget { .. }
+            | Message::ForgetRouteTest
+            | Message::RouteStep { .. }
+            | Message::RouteTestDone { .. }) => self.route_test_message(message),
             message @ (Message::TestAddress
             | Message::CancelAddressTest
             | Message::AddressTested { .. }) => self.address_test_message(message),

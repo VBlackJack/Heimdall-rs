@@ -68,6 +68,8 @@ impl App {
                     draft.passphrase = SavedSecret::Cleared;
                 }
             }
+            // Not while its route is being tested: what is tested is what is saved.
+            Message::SaveGateway { .. } if self.route_test_running() => {}
             Message::SaveGateway {
                 password,
                 passphrase,
@@ -171,7 +173,7 @@ impl App {
     }
 
     /// `gateway`, unless its parents lead back to it.
-    fn without_loop(&self, gateway: SshGateway) -> Result<SshGateway, DraftError> {
+    pub(super) fn without_loop(&self, gateway: SshGateway) -> Result<SshGateway, DraftError> {
         let mut next = gateway.parent.clone();
         let mut steps = 0;
         while let Some(parent) = next {

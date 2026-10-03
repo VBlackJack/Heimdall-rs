@@ -40,6 +40,7 @@ pub mod profile_draft;
 pub mod putty_store;
 pub mod rdp_driver;
 pub mod reachability;
+pub mod route_test;
 mod sink;
 pub mod steps_draft;
 pub mod telnet_driver;

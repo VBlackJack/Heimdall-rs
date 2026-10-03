@@ -18,8 +18,10 @@
 //! port, username, key, and the gateway it is reached through.
 
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use heimdall_core::profile::{ProfileId, SshGateway};
+use heimdall_ssh::Step;
 
 use crate::profile_draft::{DEFAULT_SSH_PORT, DraftError, ProfileField, SavedSecret, host};
 
@@ -55,6 +57,50 @@ pub struct GatewayDraft {
     pub clear_password: bool,
     /// The key passphrase saved for the gateway, as the dialog shows it.
     pub passphrase: SavedSecret,
+    /// "Test route": the destination to reach through the gateway, as typed; empty tests
+    /// the gateways only.
+    pub target_host: String,
+    /// The destination's TCP port, as typed.
+    pub target_port: String,
+    /// "Test route": not run, refused, running, or what it found.
+    pub route_test: RouteTest,
+}
+
+/// The gateway dialog's "Test route", as the C# card.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum RouteTest {
+    /// Not run since the route last changed.
+    #[default]
+    Idle,
+    /// Not run: what is wrong with the form.
+    Refused(RouteProblem),
+    /// Running: the steps ended so far.
+    Running(Vec<Step>),
+    /// Ended: its steps, and when it ended.
+    Done {
+        /// The steps, in order.
+        steps: Vec<Step>,
+        /// When it ended.
+        at: SystemTime,
+    },
+}
+
+/// Why "Test route" did not run, as the C# card says.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RouteProblem {
+    /// The gateway, or its chain, is not a route.
+    Route,
+    /// The destination is not a host and a port.
+    Target,
+}
+
+/// A field of the "Test route" card.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TargetField {
+    /// The destination's host.
+    Host,
+    /// Its port.
+    Port,
 }
 
 impl Default for GatewayDraft {
@@ -71,6 +117,9 @@ impl Default for GatewayDraft {
             password_saved: false,
             clear_password: false,
             passphrase: SavedSecret::Absent,
+            target_host: String::new(),
+            target_port: DEFAULT_SSH_PORT.to_string(),
+            route_test: RouteTest::Idle,
         }
     }
 }
@@ -91,9 +140,7 @@ impl GatewayDraft {
                 .map(|path| path.display().to_string())
                 .unwrap_or_default(),
             parent: gateway.parent.clone(),
-            password_saved: false,
-            clear_password: false,
-            passphrase: SavedSecret::Absent,
+            ..Self::default()
         }
     }
 
@@ -122,6 +169,8 @@ impl GatewayDraft {
 
     /// Replaces the text of `field`; a field the dialog does not have is ignored.
     pub fn set(&mut self, field: ProfileField, value: String) {
+        // What the test found was about the route it walked, not this one.
+        self.forget_route_test();
         match field {
             ProfileField::Name => self.name = value,
             ProfileField::Host => self.host = value,
@@ -140,6 +189,43 @@ impl GatewayDraft {
             | ProfileField::LocalArguments
             | ProfileField::WorkingDirectory => {}
         }
+    }
+
+    /// Replaces the text of the "Test route" card's `field`.
+    pub fn set_target(&mut self, field: TargetField, value: String) {
+        self.forget_route_test();
+        match field {
+            TargetField::Host => self.target_host = value,
+            TargetField::Port => self.target_port = value,
+        }
+    }
+
+    /// Clears what "Test route" found, the route or what signs in to it having changed; a
+    /// test running goes on.
+    pub fn forget_route_test(&mut self) {
+        if !matches!(self.route_test, RouteTest::Running(_)) {
+            self.route_test = RouteTest::Idle;
+        }
+    }
+
+    /// The destination "Test route" reaches through the gateway: `None` when none is typed.
+    ///
+    /// # Errors
+    ///
+    /// [`RouteProblem::Target`] when a host is typed and the host or the port is not valid.
+    pub fn target(&self) -> Result<Option<(String, u16)>, RouteProblem> {
+        if self.target_host.trim().is_empty() {
+            return Ok(None);
+        }
+        let host = host(&self.target_host).map_err(|_| RouteProblem::Target)?;
+        let port = self
+            .target_port
+            .trim()
+            .parse::<u16>()
+            .ok()
+            .filter(|port| *port != 0)
+            .ok_or(RouteProblem::Target)?;
+        Ok(Some((host, port)))
     }
 
     /// The gateway this dialog describes, under `id`. As in the C# dialog, the name, host
