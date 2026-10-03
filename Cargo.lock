@@ -2314,7 +2314,7 @@ dependencies = [
  "argon2",
  "data-encoding",
  "directories",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "roxmltree 0.21.1",
  "serde",
  "serde_json",
@@ -5704,7 +5704,7 @@ version = "0.1.0"
 dependencies = [
  "aes-gcm",
  "argon2",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "tempfile",
  "thiserror 2.0.21",
  "zeroize",

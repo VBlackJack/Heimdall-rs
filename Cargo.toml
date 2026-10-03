@@ -88,7 +88,7 @@ tempfile = "3.27.0"
 des = "0.9.0"
 # flate2: the zlib stream of VNC ZRLE, pure Rust backend.
 flate2 = "1.1.10"
-getrandom = "0.3.4"
+getrandom = "0.4.3"
 # png: reading test snapshots back, pixel by pixel.
 png = "0.18.1"
 # polling: the ConPTY pipes of a local shell post to it (Windows).
