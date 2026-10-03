@@ -950,3 +950,30 @@ fn a_fixed_desktop_still_tells_the_tab_s_size_without_asking_it_of_the_server() 
         "the tab's size is known"
     );
 }
+
+#[test]
+fn the_session_bar_opens_the_resolution_menu_which_names_the_profile_s_mode() {
+    use heimdall_core::profile::{RdpOptions, Resolution};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = small_desktop(
+        dir.path(),
+        RdpOptions {
+            resolution: Resolution::SmartSizing,
+            ..RdpOptions::default()
+        },
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Resolution").expect("on the session bar");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::OpenTreeMenu(TreeMenu::Resolution(opened)) if opened == tab
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    let mut ui = simulator(&shell);
+    ui.find("Active mode: Smart sizing")
+        .expect("the profile's own mode");
+}

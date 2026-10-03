@@ -810,3 +810,38 @@ fn a_size_chosen_for_the_session_outlives_its_reconnections_and_the_tab_s_is_kno
     let pane = app.tabs[0].desktop.as_ref().expect("pane");
     assert_eq!(pane.fixed_size(), Some((1280, 720)), "and kept");
 }
+
+#[test]
+fn a_size_chosen_larger_than_the_tab_says_it_is_shown_scaled() {
+    use heimdall_app::{Notice, ResolutionChoice, TabMenuMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (input, _received) = mpsc::unbounded_channel();
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(64, 48),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    });
+    app.update(Message::DesktopShown {
+        tab,
+        width: 1000,
+        height: 700,
+    });
+    let choose = |app: &mut App, width, height| {
+        app.update(Message::TabMenu(TabMenuMessage::Resolution {
+            tab,
+            choice: ResolutionChoice::Fixed { width, height },
+        }));
+    };
+    choose(&mut app, 800, 600);
+    assert_eq!(app.notice(), None, "it fits");
+    choose(&mut app, 1920, 1080);
+    assert_eq!(app.notice(), Some(&Notice::ResolutionScaled));
+}

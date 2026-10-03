@@ -107,6 +107,8 @@ pub enum Notice {
     PathCopied(String),
     /// This many entries of a Files tab were cut.
     FilesCut(usize),
+    /// The size chosen is larger than the tab: the desktop is shown scaled.
+    ResolutionScaled,
     /// The entries cut or copied were pasted.
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.

@@ -1201,3 +1201,7 @@ ui-files-error-copy-refused = Copie refusée : ce serveur n'a pas effectué la c
 ui-files-error-paste-into-itself = Impossible de coller { $name } dans lui-même ou dans son propre sous-dossier.
 ui-error-key-not-absolute = Le chemin de la clé SSH doit être absolu : { $path }
 ui-files-menu-open-in-terminal = Ouvrir dans le terminal
+ui-resolution-mode-smart-sizing = Mise à l'échelle intelligente
+ui-resolution-tooltip = Changer la résolution - { $mode }
+ui-resolution-tooltip-size = Changer la résolution - { $mode } ({ $width }x{ $height })
+ui-resolution-larger-than-window = Plus grand que la fenêtre - l'image sera mise à l'échelle.
