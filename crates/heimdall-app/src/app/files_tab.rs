@@ -188,6 +188,36 @@ pub enum FilesMessage {
     },
     /// Time to look at the files being edited.
     EditTick,
+    /// Send a refused save over the server's file as it is now.
+    EditSendAnyway {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
+    /// The save sent anyway, or why not.
+    EditSentAnyway {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+        /// What happened.
+        check: crate::external_edit::EditCheck,
+    },
+    /// Show the folder of an edit's local copy.
+    EditOpenFolder {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
+    /// Stop watching an edit: its next saves are not sent.
+    EditStop {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
     /// A look at the files being edited ended.
     EditsChecked {
         /// Tab.
@@ -417,6 +447,10 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "EditorLaunched({}, {})", tab.value(), result.is_ok())
             }
             Self::EditTick => f.write_str("EditTick"),
+            Self::EditSendAnyway { tab, .. } => write!(f, "EditSendAnyway({})", tab.value()),
+            Self::EditSentAnyway { tab, .. } => write!(f, "EditSentAnyway({})", tab.value()),
+            Self::EditOpenFolder { tab, .. } => write!(f, "EditOpenFolder({})", tab.value()),
+            Self::EditStop { tab, .. } => write!(f, "EditStop({})", tab.value()),
             Self::EditsChecked { tab, results } => {
                 write!(f, "EditsChecked({}, {})", tab.value(), results.len())
             }
@@ -693,7 +727,11 @@ impl App {
             | FilesMessage::EditStarted { .. }
             | FilesMessage::EditorLaunched { .. }
             | FilesMessage::EditTick
-            | FilesMessage::EditsChecked { .. }) => self.edit_message(message),
+            | FilesMessage::EditsChecked { .. }
+            | FilesMessage::EditSendAnyway { .. }
+            | FilesMessage::EditSentAnyway { .. }
+            | FilesMessage::EditOpenFolder { .. }
+            | FilesMessage::EditStop { .. }) => self.edit_message(message),
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::Copied {

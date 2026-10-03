@@ -960,6 +960,8 @@ pub enum Effect {
         editor: crate::external_edit::Editor,
         /// The folder edits go under.
         base: PathBuf,
+        /// The folders of the edits open, kept when old ones are removed.
+        keep: Vec<PathBuf>,
         /// Stops the copy.
         cancel: tokio_util::sync::CancellationToken,
     },
@@ -972,6 +974,24 @@ pub enum Effect {
         editor: crate::external_edit::Editor,
         /// The local copy.
         file: PathBuf,
+    },
+    /// Send an edit's refused save over the server's file as it is now, then send
+    /// [`FilesMessage::EditSentAnyway`].
+    SendEditAnyway {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The edit.
+        edit: Box<crate::external_edit::EditSession>,
+    },
+    /// Open a folder in the system's file manager; a failure sends
+    /// [`FilesMessage::EditorLaunched`].
+    OpenFolder {
+        /// Tab.
+        tab: TabId,
+        /// The folder.
+        folder: PathBuf,
     },
     /// Look at the files being edited, send their saves, then send
     /// [`FilesMessage::EditsChecked`].
@@ -1106,6 +1126,8 @@ impl fmt::Debug for Effect {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
             }
             Self::LaunchEditor { tab, .. } => write!(f, "LaunchEditor({})", tab.value()),
+            Self::SendEditAnyway { tab, .. } => write!(f, "SendEditAnyway({})", tab.value()),
+            Self::OpenFolder { tab, .. } => write!(f, "OpenFolder({})", tab.value()),
             Self::CheckEdits { tab, edits, .. } => {
                 write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
             }
@@ -1544,6 +1566,14 @@ pub enum Dialog {
     /// Close a Files tab whose transfers are running, which closing cancels, as the C#
     /// "Transfer In Progress" question.
     ConfirmCloseTransfers {
+        /// Tab.
+        tab: TabId,
+        /// Its name, as the question says it.
+        name: String,
+    },
+    /// Close a Files tab with files open in an external editor, whose next saves would
+    /// no longer be sent, as the C# close guard asks.
+    ConfirmCloseEdits {
         /// Tab.
         tab: TabId,
         /// Its name, as the question says it.
@@ -2833,6 +2863,18 @@ impl App {
                     name: tab.display_title().to_owned(),
                 });
             }
+            // Its edits' next saves would no longer be sent: said, as the C# close guard.
+            Some(tab)
+                if tab
+                    .files
+                    .as_ref()
+                    .is_some_and(|files| !files.edits.is_empty()) =>
+            {
+                self.dialog = Some(Dialog::ConfirmCloseEdits {
+                    tab: tab_id,
+                    name: tab.display_title().to_owned(),
+                });
+            }
             Some(tab) if tab.is_live() => {
                 self.dialog = Some(Dialog::ConfirmCloseTab(tab_id));
             }
@@ -2892,7 +2934,11 @@ impl App {
                 self.confirm_custom_resolution(tab, &value);
                 Vec::new()
             }
-            Some(Dialog::ConfirmCloseTab(tab) | Dialog::ConfirmCloseTransfers { tab, .. }) => {
+            Some(
+                Dialog::ConfirmCloseTab(tab)
+                | Dialog::ConfirmCloseTransfers { tab, .. }
+                | Dialog::ConfirmCloseEdits { tab, .. },
+            ) => {
                 self.close_tab(tab);
                 Vec::new()
             }

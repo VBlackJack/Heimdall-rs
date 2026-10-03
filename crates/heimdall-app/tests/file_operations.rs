@@ -1406,6 +1406,7 @@ async fn editing(dir: &Path) -> (App, TabId, PathBuf, heimdall_files::Fingerprin
                 fingerprint,
                 seen: None,
                 candidate: None,
+                refused: None,
             })),
         },
     );
@@ -1571,5 +1572,99 @@ async fn open_in_terminal_opens_a_shell_of_the_profile_in_the_folder_chosen() {
     assert!(
         open(&mut app).is_empty(),
         "a line a shell cannot carry as it is"
+    );
+}
+
+#[tokio::test]
+async fn closing_a_tab_with_files_in_an_external_editor_asks_first() {
+    use heimdall_app::Dialog;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, _, _) = editing(dir.path()).await;
+    app.update(Message::RequestCloseTab(tab));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::ConfirmCloseEdits { tab: asked, .. }) if *asked == tab),
+        "{:?}",
+        app.dialog
+    );
+    assert!(app.tab(tab).is_some(), "still open until answered");
+}
+
+#[tokio::test]
+async fn a_refused_save_can_be_sent_anyway_and_an_edit_stopped() {
+    use heimdall_app::external_edit::EditCheck;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, local, fingerprint) = editing(dir.path()).await;
+    let now = std::time::SystemTime::now();
+    let refused = EditCheck::Refused {
+        modified: now,
+        error: FilesError::ChangedOnServer,
+    };
+    files(&mut app, FilesMessage::EditTick);
+    files(
+        &mut app,
+        FilesMessage::EditsChecked {
+            tab,
+            results: vec![(local.clone(), refused)],
+        },
+    );
+    let edit = |app: &App| {
+        app.tab(tab)
+            .and_then(|t| t.files.as_ref())
+            .and_then(|files| files.edits.first().cloned())
+    };
+    assert_eq!(
+        edit(&app).and_then(|edit| edit.refused),
+        Some(FilesError::ChangedOnServer),
+        "the refusal is kept to be shown"
+    );
+
+    let sending = files(
+        &mut app,
+        FilesMessage::EditSendAnyway {
+            tab,
+            local: local.clone(),
+        },
+    );
+    assert!(matches!(
+        sending.as_slice(),
+        [Effect::SendEditAnyway { .. }]
+    ));
+    files(
+        &mut app,
+        FilesMessage::EditSentAnyway {
+            tab,
+            local: local.clone(),
+            check: EditCheck::Sent {
+                modified: now,
+                sent: [2; 32],
+                fingerprint,
+            },
+        },
+    );
+    assert_eq!(edit(&app).and_then(|edit| edit.refused), None, "sent");
+
+    let opening = files(
+        &mut app,
+        FilesMessage::EditOpenFolder {
+            tab,
+            local: local.clone(),
+        },
+    );
+    assert!(
+        matches!(opening.as_slice(), [Effect::OpenFolder { folder, .. }] if Some(folder.as_path()) == local.parent()),
+        "{opening:?}"
+    );
+
+    files(&mut app, FilesMessage::EditStop { tab, local });
+    assert!(!app.has_edits(), "no longer watched");
+    app.update(Message::RequestCloseTab(tab));
+    assert!(
+        !matches!(
+            app.dialog,
+            Some(heimdall_app::Dialog::ConfirmCloseEdits { .. })
+        ),
+        "nothing left to ask about"
     );
 }

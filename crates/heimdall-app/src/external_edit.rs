@@ -208,6 +208,39 @@ pub fn launch(editor: &Editor, file: &Path) -> io::Result<()> {
         .map(drop)
 }
 
+/// How long an edit's folder is kept after its last change, as the C# sweeper.
+pub const EDIT_FOLDER_KEPT: std::time::Duration = std::time::Duration::from_hours(24);
+
+/// Removes the folders under `base` whose newest file changed more than
+/// [`EDIT_FOLDER_KEPT`] ago, but those in `keep`: edits left behind by a tab closed, or a
+/// run that ended. A folder in use by another run is kept as long as its file changes.
+pub fn sweep(base: &Path, keep: &[PathBuf]) {
+    let Ok(folders) = std::fs::read_dir(base) else {
+        return;
+    };
+    let now = SystemTime::now();
+    for folder in folders.flatten() {
+        let path = folder.path();
+        if keep.contains(&path) || !folder.file_type().is_ok_and(|kind| kind.is_dir()) {
+            continue;
+        }
+        let newest = std::fs::read_dir(&path)
+            .into_iter()
+            .flatten()
+            .flatten()
+            .filter_map(|file| file.metadata().and_then(|found| found.modified()).ok())
+            .chain(folder.metadata().and_then(|found| found.modified()).ok())
+            .max();
+        let old = newest.is_some_and(|newest| {
+            now.duration_since(newest)
+                .is_ok_and(|age| age > EDIT_FOLDER_KEPT)
+        });
+        if old {
+            let _ = std::fs::remove_dir_all(&path);
+        }
+    }
+}
+
 /// A new folder of the user's own under `base` for one edit: `base` made, or found, the
 /// user's only (unix: mode 0700, never a link; Windows: never a reparse point, and under
 /// the user's profile), the folder created anew, never taken over.
@@ -288,6 +321,8 @@ pub struct EditSession {
     pub seen: Option<SystemTime>,
     /// A newer modification time, seen once: dealt with when seen again unchanged.
     pub candidate: Option<SystemTime>,
+    /// Why the last save was not sent, until one is.
+    pub refused: Option<FilesError>,
 }
 
 /// SHA-256 of `data`.
@@ -310,7 +345,7 @@ pub async fn start_edit(
     client: RemoteSession,
     remote: RemotePath,
     editor: Editor,
-    base: PathBuf,
+    (base, keep): (PathBuf, Vec<PathBuf>),
     cancel: CancellationToken,
 ) -> Result<EditSession, FilesError> {
     let file_name = remote.file_name().ok_or(FilesError::NotAFile)?.to_vec();
@@ -323,6 +358,7 @@ pub async fn start_edit(
     let written = tokio::task::spawn_blocking(
         move || -> Result<(PathBuf, Option<SystemTime>), FilesError> {
             let folder = edit_folder(&base).map_err(|_| FilesError::WorkingFolderUnprotected)?;
+            sweep(&base, &keep);
             let local = folder.join(&local_name.name);
             write_new(&local, &data).map_err(|error| FilesError::Local {
                 detail: error.to_string(),
@@ -349,6 +385,7 @@ pub async fn start_edit(
         fingerprint,
         seen,
         candidate: None,
+        refused: None,
     })
 }
 
@@ -450,15 +487,80 @@ pub async fn check_edit(client: &RemoteSession, session: &EditSession) -> EditCh
     }
 }
 
+/// Sends `session`'s local copy over the server's file as it is now, after the user saw
+/// the refusal: still only while the server's file stays as it was just read.
+pub async fn send_anyway(client: &RemoteSession, session: &EditSession) -> EditCheck {
+    let local = async {
+        let modified = tokio::fs::metadata(&session.local).await?.modified()?;
+        let data = tokio::fs::read(&session.local).await?;
+        Ok::<_, io::Error>((modified, data))
+    };
+    let (modified, data) = match local.await {
+        Ok(local) => local,
+        Err(error) => {
+            return EditCheck::Failed(FilesError::Local {
+                detail: error.to_string(),
+            });
+        }
+    };
+    let now = match client.fingerprint(&session.remote).await {
+        Ok(now) => now,
+        Err(error) => return EditCheck::Failed(FilesError::from(&error)),
+    };
+    let sent = hash(&data);
+    match client
+        .replace_if(&session.remote, &data, &now, &CancellationToken::new())
+        .await
+    {
+        Ok(fingerprint) => EditCheck::Sent {
+            modified,
+            sent,
+            fingerprint,
+        },
+        Err(error) => EditCheck::Refused {
+            modified,
+            error: FilesError::from(&error),
+        },
+    }
+}
+
+/// Opens `folder` in the system's file manager.
+///
+/// # Errors
+///
+/// What the system said when it could not start.
+pub fn open_folder(folder: &Path) -> io::Result<()> {
+    let manager = if cfg!(windows) {
+        "explorer.exe"
+    } else if cfg!(target_os = "macos") {
+        "/usr/bin/open"
+    } else {
+        "xdg-open"
+    };
+    std::process::Command::new(manager)
+        .arg(folder)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(drop)
+}
+
 impl EditSession {
     /// Takes what a look found: what was dealt with, what was sent.
     pub fn apply(&mut self, check: &EditCheck) {
         match check {
             EditCheck::Unchanged | EditCheck::Failed(_) => {}
             EditCheck::Saving(modified) => self.candidate = Some(*modified),
-            EditCheck::Same(modified) | EditCheck::Refused { modified, .. } => {
+            EditCheck::Same(modified) => {
                 self.seen = Some(*modified);
                 self.candidate = None;
+                self.refused = None;
+            }
+            EditCheck::Refused { modified, error } => {
+                self.seen = Some(*modified);
+                self.candidate = None;
+                self.refused = Some(error.clone());
             }
             EditCheck::Sent {
                 modified,
@@ -469,6 +571,7 @@ impl EditSession {
                 self.candidate = None;
                 self.sent = *sent;
                 self.fingerprint = *fingerprint;
+                self.refused = None;
             }
         }
     }
