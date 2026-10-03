@@ -44,6 +44,8 @@ impl std::fmt::Display for ServerAddress {
 pub enum KeyProblem {
     /// Not there.
     NotFound,
+    /// Named by a relative path.
+    NotAbsolute,
     /// Not readable.
     Unreadable,
     /// Not a private key in a known format.
@@ -234,6 +236,7 @@ impl From<&KeyFileError> for UiError {
                 (KeyProblem::NotFound, path)
             }
             KeyFileError::Io { path, .. } => (KeyProblem::Unreadable, path),
+            KeyFileError::NotAbsolute { path } => (KeyProblem::NotAbsolute, path),
             KeyFileError::UnknownFormat { path } => (KeyProblem::UnknownFormat, path),
             KeyFileError::NeedsPassphrase { path } => (KeyProblem::NeedsPassphrase, path),
             KeyFileError::WrongPassphrase { path } => (KeyProblem::WrongPassphrase, path),

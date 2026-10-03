@@ -462,8 +462,16 @@ async fn walk<P: Prompter>(
     prompter: &P,
     cancel: &CancellationToken,
 ) -> Result<(Reached, Option<Reached>), ConnectError> {
-    // A key file that is not there is said before anything is dialled, as the C# preflight.
+    // A key file that is not there, or named by a relative path, is said before anything is
+    // dialled, as the C# preflight.
     for hop in route.iter().chain(std::iter::once(profile)) {
+        if let Some(path) = &hop.key_path
+            && !path.is_absolute()
+        {
+            return Err(ConnectError::KeyFile(
+                crate::key_file::KeyFileError::NotAbsolute { path: path.clone() },
+            ));
+        }
         if let Some(path) = &hop.key_path
             && let Err(error) = std::fs::metadata(path)
             && error.kind() == std::io::ErrorKind::NotFound
