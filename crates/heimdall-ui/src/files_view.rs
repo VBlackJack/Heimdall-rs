@@ -34,6 +34,7 @@ use heimdall_app::files::{
 };
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use heimdall_core::utc::UtcTime;
+use heimdall_files::Refusal;
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
@@ -552,7 +553,28 @@ fn edit_row(tab: TabId, edit: &EditSession) -> Element<'_, Message> {
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
-    if edit.refused.is_some() {
+    // Refused by the server's permissions, or by sudo for its password: sudo is offered.
+    let sudo_helps = matches!(
+        edit.refused,
+        Some(
+            FilesError::Server {
+                refusal: Refusal::PermissionDenied,
+                ..
+            } | FilesError::SudoPasswordNeeded
+                | FilesError::SudoPasswordRejected
+        )
+    );
+    if sudo_helps {
+        line = line.push(
+            button(text(fl!("ui-files-edit-save-sudo")).size(SMALL_SIZE)).on_press(files(
+                FilesMessage::EditSaveWithSudo {
+                    tab,
+                    local: local(),
+                },
+            )),
+        );
+    }
+    if edit.refused.is_some() && !edit.privileged {
         line = line.push(
             button(text(fl!("ui-files-edit-send-anyway")).size(SMALL_SIZE)).on_press(files(
                 FilesMessage::EditSendAnyway {

@@ -204,6 +204,43 @@ pub enum FilesMessage {
         /// What happened.
         check: crate::external_edit::EditCheck,
     },
+    /// Open the server's selected file with sudo, as "Edit with sudo".
+    EditWithSudo {
+        /// Tab.
+        tab: TabId,
+    },
+    /// Send an edit's refused save with sudo, as "Save with sudo".
+    EditSaveWithSudo {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+    },
+    /// The file opened with sudo, or why not.
+    SudoOpened {
+        /// Tab.
+        tab: TabId,
+        /// The server's file.
+        remote: RemotePath,
+        /// The file being edited; or why not.
+        result: Result<Box<crate::external_edit::EditSession>, FilesError>,
+    },
+    /// The save sent with sudo, or why not.
+    SudoSaved {
+        /// Tab.
+        tab: TabId,
+        /// The edit, by its local copy.
+        local: PathBuf,
+        /// What happened.
+        check: crate::external_edit::EditCheck,
+    },
+    /// The password typed for sudo, as the question asked.
+    SudoPasswordGiven {
+        /// Tab.
+        tab: TabId,
+        /// The password.
+        password: crate::sudo_edit::SudoPassword,
+    },
     /// Show the folder of an edit's local copy.
     EditOpenFolder {
         /// Tab.
@@ -450,6 +487,15 @@ impl std::fmt::Debug for FilesMessage {
             Self::EditSendAnyway { tab, .. } => write!(f, "EditSendAnyway({})", tab.value()),
             Self::EditSentAnyway { tab, .. } => write!(f, "EditSentAnyway({})", tab.value()),
             Self::EditOpenFolder { tab, .. } => write!(f, "EditOpenFolder({})", tab.value()),
+            Self::EditWithSudo { tab } => write!(f, "EditWithSudo({})", tab.value()),
+            Self::EditSaveWithSudo { tab, .. } => write!(f, "EditSaveWithSudo({})", tab.value()),
+            Self::SudoOpened { tab, result, .. } => {
+                write!(f, "SudoOpened({}, {})", tab.value(), result.is_ok())
+            }
+            Self::SudoSaved { tab, .. } => write!(f, "SudoSaved({})", tab.value()),
+            Self::SudoPasswordGiven { tab, .. } => {
+                write!(f, "SudoPasswordGiven({}, ..)", tab.value())
+            }
             Self::EditStop { tab, .. } => write!(f, "EditStop({})", tab.value()),
             Self::EditsChecked { tab, results } => {
                 write!(f, "EditsChecked({}, {})", tab.value(), results.len())
@@ -723,15 +769,6 @@ impl App {
             FilesMessage::Copy { tab } => self.hold_entries(tab, super::ClipMode::Copy),
             FilesMessage::Paste { tab } => self.paste_held(tab),
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
-            message @ (FilesMessage::EditExternal { .. }
-            | FilesMessage::EditStarted { .. }
-            | FilesMessage::EditorLaunched { .. }
-            | FilesMessage::EditTick
-            | FilesMessage::EditsChecked { .. }
-            | FilesMessage::EditSendAnyway { .. }
-            | FilesMessage::EditSentAnyway { .. }
-            | FilesMessage::EditOpenFolder { .. }
-            | FilesMessage::EditStop { .. }) => self.edit_message(message),
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::Copied {
@@ -766,6 +803,8 @@ impl App {
                 }
                 Vec::new()
             }
+            // What is left is about a file edited with the external editor.
+            message => self.edit_message(message),
         }
     }
 

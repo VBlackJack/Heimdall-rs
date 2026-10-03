@@ -21,10 +21,11 @@ use std::path::PathBuf;
 
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Effect, Notice};
+use super::{App, Dialog, Effect, Notice};
 use crate::external_edit::{EDIT_SIZE_LIMIT, EditCheck, EditSession, EditorRefused, editor};
 use crate::files::{EntryKind, FilesError, Side};
 use crate::ids::TabId;
+use crate::sudo_edit::SudoPassword;
 
 impl App {
     /// A message of a file edited with the external editor.
@@ -54,6 +55,17 @@ impl App {
                     }]
                 })
                 .unwrap_or_default(),
+            FilesMessage::EditWithSudo { tab } => self.edit_with_sudo(tab),
+            FilesMessage::EditSaveWithSudo { tab, local } => self.save_with_sudo(tab, &local),
+            FilesMessage::SudoOpened {
+                tab,
+                remote,
+                result,
+            } => self.sudo_opened(tab, remote, result),
+            FilesMessage::SudoSaved { tab, local, check } => self.sudo_saved(tab, local, check),
+            FilesMessage::SudoPasswordGiven { tab, password } => {
+                self.sudo_password_given(tab, password)
+            }
             FilesMessage::EditStop { tab, local } => {
                 if let Some(files) = self.files_mut(tab) {
                     files.edits.retain(|edit| edit.local != local);
@@ -225,6 +237,8 @@ impl App {
             effects.push(Effect::CheckEdits {
                 tab: tab.id,
                 client,
+                shell: files.shell.clone(),
+                password: files.sudo_password.clone(),
                 edits: files.edits.clone(),
             });
         }
@@ -266,6 +280,228 @@ impl App {
             self.list(tab_id, Side::Remote)
         } else {
             Vec::new()
+        }
+    }
+
+    /// "Edit with sudo": the selected file of the server opened with sudo, with the password
+    /// kept for the tab, if any; one already being edited is opened in the editor again.
+    fn edit_with_sudo(&mut self, tab_id: TabId) -> Vec<Effect> {
+        let setting = self.settings.external_editor.clone();
+        let base = self.edit_dir.clone();
+        let keep = self.edit_folders();
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let Some(entry) = files
+            .remote
+            .selected
+            .and_then(|index| files.remote.entries.get(index))
+        else {
+            return Vec::new();
+        };
+        if entry.kind != EntryKind::File {
+            return Vec::new();
+        }
+        let remote = files.remote.path.join(&entry.name);
+        let editor = match editor(&setting) {
+            Ok(editor) => editor,
+            Err(refused) => {
+                files.remote.error = Some(editor_error(refused));
+                return Vec::new();
+            }
+        };
+        if let Some(open) = files.edits.iter().find(|edit| edit.remote == remote) {
+            return vec![Effect::LaunchEditor {
+                tab: tab_id,
+                editor,
+                file: open.local.clone(),
+            }];
+        }
+        let (Some(shell), Some(base)) = (files.shell.clone(), base) else {
+            files.remote.error = Some(FilesError::WorkingFolderUnprotected);
+            return Vec::new();
+        };
+        vec![Effect::SudoOpen {
+            tab: tab_id,
+            shell,
+            remote,
+            editor,
+            folders: (base, keep),
+            password: files.sudo_password.clone(),
+        }]
+    }
+
+    /// The folders of every edit open in this run: kept by the sweep.
+    fn edit_folders(&self) -> Vec<PathBuf> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| tab.files.as_deref())
+            .flat_map(|files| &files.edits)
+            .filter_map(|edit| edit.local.parent().map(std::path::Path::to_path_buf))
+            .collect()
+    }
+
+    /// The file opened with sudo; a password asked when sudo wants one.
+    fn sudo_opened(
+        &mut self,
+        tab_id: TabId,
+        remote: heimdall_files::RemotePath,
+        result: Result<Box<EditSession>, FilesError>,
+    ) -> Vec<Effect> {
+        let name = remote
+            .file_name()
+            .map(|name| crate::text::server_text(&heimdall_files::display_bytes(name)))
+            .unwrap_or_default();
+        match result {
+            Ok(session) => self.edit_started(tab_id, Ok(session)),
+            Err(error) => {
+                self.sudo_refused(tab_id, name, SudoAction::Open(remote), error);
+                Vec::new()
+            }
+        }
+    }
+
+    /// "Save with sudo": an edit's save sent with sudo, with the password kept for the tab.
+    fn save_with_sudo(&mut self, tab_id: TabId, local: &std::path::Path) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let Some(shell) = files.shell.clone() else {
+            return Vec::new();
+        };
+        let Some(edit) = files.edits.iter().find(|edit| edit.local == local) else {
+            return Vec::new();
+        };
+        vec![Effect::SudoSave {
+            tab: tab_id,
+            shell,
+            edit: Box::new(edit.clone()),
+            password: files.sudo_password.clone(),
+        }]
+    }
+
+    /// A save sent with sudo: from then on the edit is privileged; a password asked when
+    /// sudo wants one.
+    fn sudo_saved(&mut self, tab_id: TabId, local: PathBuf, check: EditCheck) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let Some(session) = files.edits.iter_mut().find(|edit| edit.local == local) else {
+            return Vec::new();
+        };
+        let name = session.name.clone();
+        match check {
+            EditCheck::Sent { .. } => {
+                session.privileged = true;
+                session.apply(&check);
+                self.tell(Notice::FilesSavedWithSudo(name));
+                self.list(tab_id, Side::Remote)
+            }
+            EditCheck::Refused { ref error, .. } if is_password_error(error) => {
+                let error = error.clone();
+                self.sudo_refused(tab_id, name, SudoAction::Save(local), error);
+                Vec::new()
+            }
+            check => {
+                session.apply(&check);
+                if let EditCheck::Refused { error, .. } | EditCheck::Failed(error) = check {
+                    files.remote.error = Some(error);
+                }
+                Vec::new()
+            }
+        }
+    }
+
+    /// sudo did not do `action`: a password it wants is asked, one it refused forgotten
+    /// and asked again; anything else said on the pane.
+    fn sudo_refused(&mut self, tab_id: TabId, name: String, action: SudoAction, error: FilesError) {
+        let Some(files) = self.files_mut(tab_id) else {
+            return;
+        };
+        if is_password_error(&error) {
+            files.sudo_password = None;
+            if error == FilesError::SudoPasswordRejected {
+                files.remote.error = Some(error);
+            }
+            self.dialog = Some(Dialog::SudoPassword {
+                tab: tab_id,
+                name,
+                action,
+            });
+        } else {
+            files.remote.error = Some(error);
+        }
+    }
+
+    /// The password typed for the question asked: kept for the tab, and what it was asked
+    /// for done again with it.
+    fn sudo_password_given(&mut self, tab_id: TabId, password: SudoPassword) -> Vec<Effect> {
+        let Some(Dialog::SudoPassword { tab, action, .. }) = self.dialog.take() else {
+            return Vec::new();
+        };
+        if tab != tab_id {
+            return Vec::new();
+        }
+        if let Some(files) = self.files_mut(tab_id) {
+            files.sudo_password = Some(password);
+            files.remote.error = None;
+        }
+        match action {
+            SudoAction::Save(local) => self.save_with_sudo(tab_id, &local),
+            SudoAction::Open(remote) => self.reopen_with_sudo(tab_id, remote),
+        }
+    }
+
+    /// Opens `remote` with sudo again, now a password is kept.
+    fn reopen_with_sudo(
+        &mut self,
+        tab_id: TabId,
+        remote: heimdall_files::RemotePath,
+    ) -> Vec<Effect> {
+        let setting = self.settings.external_editor.clone();
+        let base = self.edit_dir.clone();
+        let keep = self.edit_folders();
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let (Ok(editor), Some(shell), Some(base)) = (editor(&setting), files.shell.clone(), base)
+        else {
+            return Vec::new();
+        };
+        vec![Effect::SudoOpen {
+            tab: tab_id,
+            shell,
+            remote,
+            editor,
+            folders: (base, keep),
+            password: files.sudo_password.clone(),
+        }]
+    }
+}
+
+/// What the password asked for sudo is for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SudoAction {
+    /// Opening the server's file.
+    Open(heimdall_files::RemotePath),
+    /// Saving the edit with this local copy.
+    Save(PathBuf),
+}
+
+/// Whether sudo's refusal is about the password: one is wanted, or the one given refused.
+fn is_password_error(error: &FilesError) -> bool {
+    matches!(
+        error,
+        FilesError::SudoPasswordNeeded | FilesError::SudoPasswordRejected
+    )
+}
+
+/// What the pane says of an editor that is not run.
+fn editor_error(refused: EditorRefused) -> FilesError {
+    match refused {
+        EditorRefused::Runs(_) => FilesError::EditorRunsFiles,
+        EditorRefused::NotFound(path) | EditorRefused::NotAProgram(path) => {
+            FilesError::EditorFailed { detail: path }
         }
     }
 }
