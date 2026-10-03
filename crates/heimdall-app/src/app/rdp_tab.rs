@@ -360,12 +360,70 @@ pub struct ResizeFallback {
 impl App {
     /// A certificate question, a desktop ready or a desktop drawn again, for `tab_id`.
     /// The files copied were not offered to the server: said, with why.
-    pub(super) fn files_refused(&mut self, refusal: heimdall_rdp::CopyRefusal) -> Vec<Effect> {
-        self.tell(match refusal {
-            heimdall_rdp::CopyRefusal::TooManyEntries => super::Notice::RdpFilesTooMany,
-            heimdall_rdp::CopyRefusal::TooLarge => super::Notice::RdpFilesTooLarge,
-        });
+    pub(super) fn clipboard_files_event(
+        &mut self,
+        tab_id: TabId,
+        event: ConnectionEvent,
+    ) -> Vec<Effect> {
+        let pane = self
+            .tab_mut(tab_id)
+            .and_then(|tab| tab.desktop.as_deref_mut());
+        let notice = match (event, pane) {
+            (ConnectionEvent::RdpFilesRefused(refusal), _) => Some(match refusal {
+                heimdall_rdp::CopyRefusal::TooManyEntries => super::Notice::RdpFilesTooMany,
+                heimdall_rdp::CopyRefusal::TooLarge => super::Notice::RdpFilesTooLarge,
+            }),
+            (ConnectionEvent::RdpRemoteFiles(available), Some(pane)) => {
+                pane.set_remote_files(available);
+                None
+            }
+            (ConnectionEvent::RdpSaveProgress { saved, total }, Some(pane)) => {
+                pane.save_progress(saved, total);
+                None
+            }
+            (ConnectionEvent::RdpSaveEnded(end), pane) => {
+                if let Some(pane) = pane {
+                    pane.save_ended();
+                }
+                Some(super::Notice::RdpFilesSaveEnded(end))
+            }
+            _ => None,
+        };
+        if let Some(notice) = notice {
+            self.tell(notice);
+        }
         Vec::new()
+    }
+
+    /// The user saves the RDP server's copied files: a folder asked for, then given to the
+    /// session; or stops.
+    pub(super) fn save_message(&mut self, message: super::Message) -> Vec<Effect> {
+        let tab = match &message {
+            super::Message::SaveRemoteFiles(tab)
+            | super::Message::CancelSave(tab)
+            | super::Message::SaveFolderPicked { tab, .. } => *tab,
+            _ => return Vec::new(),
+        };
+        let Some(pane) = self
+            .tab_mut(tab)
+            .and_then(|found| found.desktop.as_deref_mut())
+        else {
+            return Vec::new();
+        };
+        match message {
+            super::Message::SaveRemoteFiles(_) if pane.ask_save() => {
+                vec![Effect::PickSaveFolder { tab }]
+            }
+            super::Message::SaveFolderPicked { folder, .. } => {
+                pane.save_into(folder);
+                Vec::new()
+            }
+            super::Message::CancelSave(_) => {
+                pane.cancel_save();
+                Vec::new()
+            }
+            _ => Vec::new(),
+        }
     }
 
     pub(super) fn rdp_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {

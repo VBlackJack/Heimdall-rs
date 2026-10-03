@@ -246,6 +246,24 @@ pub struct DesktopPane {
     /// The session gets anti-idle keys: its profile asks for them and the user has not
     /// stopped them for this session.
     pub anti_idle: bool,
+    /// The server's clipboard holds files to save here.
+    remote_files: bool,
+    /// Saving the server's files, from the folder asked for until it ends.
+    save: Option<SaveState>,
+}
+
+/// Where saving an RDP server's copied files is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SaveState {
+    /// The folder is asked for.
+    Picking,
+    /// The files are fetched: this many entries of all saved so far, the total once known.
+    Running {
+        /// Entries saved.
+        saved: usize,
+        /// Entries in the copy; 0 until known.
+        total: usize,
+    },
 }
 
 impl fmt::Debug for DesktopPane {
@@ -276,6 +294,8 @@ impl DesktopPane {
             },
             clipboard,
             anti_idle: false,
+            remote_files: false,
+            save: None,
         }
     }
 
@@ -419,6 +439,74 @@ impl DesktopPane {
         }
     }
 
+    /// Whether the server's copied files can be saved now: an RDP desktop sharing the
+    /// clipboard, files copied there, no save under way.
+    #[must_use]
+    pub fn can_save_files(&self) -> bool {
+        self.clipboard.is_some() && self.remote_files && self.save.is_none()
+    }
+
+    /// Where saving the server's files is, while under way.
+    #[must_use]
+    pub fn save_state(&self) -> Option<SaveState> {
+        self.save
+    }
+
+    /// The server's clipboard holds files to save, or no longer.
+    pub(crate) fn set_remote_files(&mut self, available: bool) {
+        self.remote_files = available;
+    }
+
+    /// The user asks to save the server's files: whether a folder is to be asked for.
+    pub(crate) fn ask_save(&mut self) -> bool {
+        if !self.can_save_files() {
+            return false;
+        }
+        self.save = Some(SaveState::Picking);
+        true
+    }
+
+    /// The folder picked for the server's files, `None` when the dialog was closed: the
+    /// session saves them there.
+    pub(crate) fn save_into(&mut self, folder: Option<std::path::PathBuf>) {
+        if self.save != Some(SaveState::Picking) {
+            return;
+        }
+        let sent = folder.is_some_and(|folder| {
+            self.clipboard.as_ref().is_some_and(|clipboard| {
+                clipboard
+                    .send(LocalClipboard::SaveRemoteFiles(folder))
+                    .is_ok()
+            })
+        });
+        self.save = sent.then_some(SaveState::Running { saved: 0, total: 0 });
+    }
+
+    /// The user stops saving the server's files: what was saved stays.
+    pub(crate) fn cancel_save(&mut self) {
+        match self.save {
+            Some(SaveState::Picking) => self.save = None,
+            Some(SaveState::Running { .. }) => {
+                if let Some(clipboard) = &self.clipboard {
+                    let _ = clipboard.send(LocalClipboard::CancelSave);
+                }
+            }
+            None => {}
+        }
+    }
+
+    /// How far saving the server's files is.
+    pub(crate) fn save_progress(&mut self, saved: usize, total: usize) {
+        if let Some(SaveState::Running { .. }) = self.save {
+            self.save = Some(SaveState::Running { saved, total });
+        }
+    }
+
+    /// Saving the server's files ended.
+    pub(crate) fn save_ended(&mut self) {
+        self.save = None;
+    }
+
     /// Offers `paths`, the files copied in Explorer, to the server; whether they could be.
     /// Only an RDP desktop that [shares the clipboard](Self::shares_clipboard) takes them.
     pub(crate) fn offer_files(&self, paths: Vec<std::path::PathBuf>) -> bool {
@@ -438,6 +526,8 @@ impl DesktopPane {
             generation: 0,
             // Not by itself: VNC carries text in clear, sent on a click only.
             clipboard: None,
+            remote_files: false,
+            save: None,
             sink: DesktopSink::Vnc(VncSink {
                 input,
                 buttons: AtomicU8::new(0),

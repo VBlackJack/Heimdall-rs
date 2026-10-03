@@ -45,11 +45,11 @@ use heimdall_app::{
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
-    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SelectionMessage, SessionState,
-    SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
-    TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem, open_vault,
-    server_text,
+    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, SelectionMessage,
+    SessionState, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
+    TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog,
+    VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem,
+    open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -1776,6 +1776,7 @@ impl Shell {
     }
 
     /// Turns an effect into a task.
+    #[expect(clippy::too_many_lines, reason = "one arm per effect")]
     fn run(&mut self, effect: Effect) -> Task<Message> {
         match effect {
             effect @ (Effect::Connect { .. }
@@ -1827,6 +1828,7 @@ impl Shell {
             Effect::PickUploads { tab } => pick_uploads(tab),
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
+            Effect::PickSaveFolder { tab } => pick_save_folder(tab),
             Effect::PickSessionsFile => pick_sessions_file(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
@@ -3561,6 +3563,9 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
+        if let Some(control) = save_files_control(pane, tab_id) {
+            bar = bar.push(control);
+        }
         // VNC carries the clipboard in clear: sent on a click only, as the C# Heimdall's
         // noVNC "sync" does. RDP shares it by itself when its profile says so.
         if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
@@ -3881,6 +3886,70 @@ fn read_explorer_files(tab: TabId) -> Task<Message> {
             }))
         },
     )
+}
+
+/// The desktop bar's control for the server's copied files: a button to save them while
+/// the server's clipboard holds some, then how far saving them is, with a way to stop.
+fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, Message>> {
+    if pane.can_save_files() {
+        return Some(
+            tooltip(
+                button(text(fl!("ui-desktop-save-files")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::SaveRemoteFiles(tab_id))),
+                text(fl!("ui-desktop-save-files-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into(),
+        );
+    }
+    let Some(SaveState::Running { saved, total }) = pane.save_state() else {
+        return None;
+    };
+    Some(
+        row![
+            text(fl!("ui-desktop-saving-files", saved = saved, total = total)).size(SMALL_SIZE),
+            button(text(fl!("ui-desktop-save-files-cancel")).size(SMALL_SIZE))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::CancelSave(tab_id))),
+        ]
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center)
+        .into(),
+    )
+}
+
+/// The folder dialog of "Save copied files...", held by the window: the folder picked
+/// goes to the session of `tab`.
+fn pick_save_folder(tab: TabId) -> Task<Message> {
+    type PickFolder =
+        std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>;
+    let title = fl!("ui-desktop-save-files");
+    window::latest().then(move |id| {
+        let title = title.clone();
+        let pick = match id {
+            Some(id) => window::run(id, move |window| {
+                Box::pin(
+                    rfd::AsyncFileDialog::new()
+                        .set_title(title)
+                        .set_parent(&window)
+                        .pick_folder(),
+                ) as PickFolder
+            }),
+            None => Task::done(
+                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_folder()) as PickFolder,
+            ),
+        };
+        pick.then(move |pick| {
+            Task::future(pick).map(move |picked| {
+                Message::App(AppMessage::SaveFolderPicked {
+                    tab,
+                    folder: picked.map(|folder| folder.path().to_owned()),
+                })
+            })
+        })
+    })
 }
 
 /// This side's clipboard for the desktop of `tab`, read off the window's thread: the files

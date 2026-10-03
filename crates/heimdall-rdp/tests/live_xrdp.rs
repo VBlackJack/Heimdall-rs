@@ -132,6 +132,9 @@ async fn a_trusted_server_draws_its_login_screen() {
                 RdpEvent::Resized { .. }
                 | RdpEvent::RemoteClipboard(_)
                 | RdpEvent::FilesRefused(_)
+                | RdpEvent::RemoteFiles(_)
+                | RdpEvent::SaveProgress { .. }
+                | RdpEvent::SaveEnded(_)
                 | RdpEvent::ResizeRefused { .. } => {}
             }
         }

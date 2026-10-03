@@ -154,6 +154,14 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
         RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
         RdpEvent::RemoteClipboard(text) => ConnectionEvent::RemoteClipboard(text),
         RdpEvent::FilesRefused(refusal) => ConnectionEvent::RdpFilesRefused(refusal),
+        RdpEvent::RemoteFiles(available) => ConnectionEvent::RdpRemoteFiles(available),
+        RdpEvent::SaveProgress { saved, total } => {
+            ConnectionEvent::RdpSaveProgress { saved, total }
+        }
+        RdpEvent::SaveEnded(end) => {
+            log::info!("saving the files of {target} ended: {end:?}");
+            ConnectionEvent::RdpSaveEnded(end)
+        }
         RdpEvent::ResizeRefused { width, height } => {
             log::info!("RDP session to {target} cannot take {width}x{height} live");
             ConnectionEvent::DesktopResizeRefused { width, height }

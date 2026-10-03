@@ -117,6 +117,8 @@ pub enum Notice {
     RdpFilesTooMany,
     /// The files copied were not offered to the RDP server: more bytes than one copy takes.
     RdpFilesTooLarge,
+    /// Saving the RDP server's files ended so.
+    RdpFilesSaveEnded(heimdall_rdp::SaveEnd),
     /// A server's file is open in the external editor: each save is sent.
     FilesEditing(String),
     /// A save of a file being edited was sent.
