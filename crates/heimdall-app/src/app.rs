@@ -947,6 +947,12 @@ pub enum Effect {
         /// Each entry and its new path.
         moves: Vec<(heimdall_files::RemotePath, heimdall_files::RemotePath)>,
     },
+    /// Ask the user for files of this computer to upload, then send
+    /// [`FilesMessage::UploadPicked`].
+    PickUploads {
+        /// Tab.
+        tab: TabId,
+    },
     /// Copy the server's file into a folder of the user's own and start the editor on it,
     /// then send [`FilesMessage::EditStarted`].
     StartEdit {
@@ -1122,6 +1128,7 @@ impl fmt::Debug for Effect {
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
+            Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
             Self::StartEdit { tab, remote, .. } => {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
             }

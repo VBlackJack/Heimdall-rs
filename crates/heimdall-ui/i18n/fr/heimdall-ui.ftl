@@ -1208,6 +1208,7 @@ ui-resolution-mode-smart-sizing = Mise à l'échelle intelligente
 ui-resolution-tooltip = Changer la résolution - { $mode }
 ui-resolution-tooltip-size = Changer la résolution - { $mode } ({ $width }x{ $height })
 ui-resolution-larger-than-window = Plus grand que la fenêtre - l'image sera mise à l'échelle.
+ui-files-menu-upload-here = Envoyer ici...
 ui-files-menu-edit-external = Éditer avec un éditeur externe
 ui-status-files-editing = Édition : { $name } - enregistrez dans votre éditeur pour envoyer automatiquement
 ui-status-files-auto-uploaded = Envoyé automatiquement : { $name }

@@ -1789,6 +1789,7 @@ impl Shell {
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
             Effect::PickRdpFiles => pick_rdp(),
+            Effect::PickUploads { tab } => pick_uploads(tab),
             Effect::PickSessionsFile => pick_sessions_file(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
@@ -3822,6 +3823,40 @@ fn pick_rdp() -> Task<Message> {
         pick.then(|pick| {
             Task::future(crate::rdp_view::read_picked(pick)).then(|read| match read {
                 Some(files) => Task::done(rdp_read(files)),
+                None => Task::none(),
+            })
+        })
+    })
+}
+
+/// The open dialog of "Upload here...", held by the window: the files picked go to the
+/// tab; nothing when none is.
+fn pick_uploads(tab: TabId) -> Task<Message> {
+    let title = fl!("ui-files-menu-upload-here");
+    window::latest().then(move |id| {
+        let title = title.clone();
+        let pick = match id {
+            Some(id) => window::run(id, move |window| {
+                Box::pin(
+                    rfd::AsyncFileDialog::new()
+                        .set_title(title)
+                        .set_parent(&window)
+                        .pick_files(),
+                ) as crate::rdp_view::Pick
+            }),
+            None => Task::done(
+                Box::pin(rfd::AsyncFileDialog::new().set_title(title).pick_files())
+                    as crate::rdp_view::Pick,
+            ),
+        };
+        pick.then(move |pick| {
+            Task::future(pick).then(move |picked| match picked {
+                Some(files) => Task::done(Message::App(AppMessage::Files(
+                    FilesMessage::UploadPicked {
+                        tab,
+                        paths: files.iter().map(|file| file.path().to_owned()).collect(),
+                    },
+                ))),
                 None => Task::none(),
             })
         })
