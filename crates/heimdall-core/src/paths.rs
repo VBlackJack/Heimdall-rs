@@ -73,6 +73,16 @@ pub fn log_dir() -> Option<PathBuf> {
         .map(|dirs| dirs.data_local_dir().join(LOG_DIR_NAME))
 }
 
+/// Name of the folder a server's files are edited in, inside the local data directory.
+const EDIT_DIR_NAME: &str = "edit";
+
+/// Folder a server's file is copied to while edited: local to the machine, the user's own.
+#[must_use]
+pub fn edit_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_local_dir().join(EDIT_DIR_NAME))
+}
+
 /// The user's home folder, where a Files tab starts; `None` when the platform reports none.
 #[must_use]
 pub fn home_dir() -> Option<PathBuf> {

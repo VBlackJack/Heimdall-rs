@@ -656,6 +656,17 @@ pub enum FilesError {
     ChangedOnServer,
     /// The file is larger than what is edited: it is downloaded instead.
     FileTooLarge,
+    /// The folder a file is edited in could not be kept the user's own: the file was not
+    /// opened, as the C# refuses it.
+    WorkingFolderUnprotected,
+    /// The external editor could not be started.
+    EditorFailed {
+        /// What the system said, or the path set.
+        detail: String,
+    },
+    /// The external editor set is a shell, a script host or an interpreter: it would run
+    /// the file, not show it.
+    EditorRunsFiles,
     /// A folder pasted into itself or one of its own folders.
     PasteIntoItself {
         /// The folder's name, made safe.
@@ -708,6 +719,11 @@ pub struct FilesPane {
     pub bookmarks: Vec<RemotePath>,
     /// What stops the server-side copy running, while one runs: one at a time.
     pub copying: Option<CancellationToken>,
+    /// The server's files being edited with an external editor; kept while the tab is
+    /// open, connected or not.
+    pub edits: Vec<crate::external_edit::EditSession>,
+    /// A look at the files being edited runs: one at a time.
+    pub checking_edits: bool,
 }
 
 impl FilesPane {
@@ -723,6 +739,8 @@ impl FilesPane {
             focus: Side::Local,
             bookmarks: Vec::new(),
             copying: None,
+            edits: Vec::new(),
+            checking_edits: false,
         }
     }
 

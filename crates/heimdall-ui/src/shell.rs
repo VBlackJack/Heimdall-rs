@@ -25,7 +25,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    FilesKey, Side, copy_remote, file_operation, list_local, list_remote, move_remote,
+    FilesError, FilesKey, Side, copy_remote, file_operation, list_local, list_remote, move_remote,
     plan_transfer, transfer_events,
 };
 use heimdall_app::ftp_driver::ftp_events;
@@ -412,6 +412,10 @@ pub enum Message {
     FilesHovered(bool),
     /// A file or folder dropped on the window.
     FileDropped(std::path::PathBuf),
+    /// The external editor typed in the Settings page.
+    EditorEdited(String),
+    /// Apply the external editor typed.
+    EditorApply,
     /// The transcripts' folder typed in the Settings page.
     LogDirectoryEdited(String),
     /// Apply the folder typed.
@@ -501,6 +505,8 @@ impl fmt::Debug for Message {
             Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
             Self::FinderClose => f.write_str("FinderClose"),
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
+            Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
+            Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
@@ -691,6 +697,8 @@ pub struct Shell {
     finder: Option<Finder>,
     /// The transcripts' folder as typed in the Settings page, until applied.
     log_directory: Option<String>,
+    /// The external editor typed in the Settings page, until applied.
+    editor_typed: Option<String>,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -797,6 +805,7 @@ impl Shell {
             finder: None,
             focus_next: None,
             log_directory: None,
+            editor_typed: None,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -883,6 +892,13 @@ impl Shell {
         if let Some(interval) = self.app.anti_idle_interval() {
             subscriptions
                 .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
+        }
+        // Saves of files edited in an external editor, looked at while there are some.
+        if self.app.has_edits() {
+            subscriptions.push(
+                iced::time::every(heimdall_app::external_edit::EDIT_LOOK)
+                    .map(|_| Message::App(AppMessage::Files(FilesMessage::EditTick))),
+            );
         }
         Subscription::batch(subscriptions)
     }
@@ -975,6 +991,8 @@ impl Shell {
             }
             message @ (Message::LogDirectoryEdited(_)
             | Message::LogDirectoryApply
+            | Message::EditorEdited(_)
+            | Message::EditorApply
             | Message::FontSizeEdited(_)
             | Message::FontSizeApply
             | Message::SessionFieldEdited(..)
@@ -1761,7 +1779,10 @@ impl Shell {
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }
             | Effect::MoveRemote { .. }
-            | Effect::CopyRemote { .. }) => files_task(effect),
+            | Effect::CopyRemote { .. }
+            | Effect::StartEdit { .. }
+            | Effect::LaunchEditor { .. }
+            | Effect::CheckEdits { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
@@ -2384,6 +2405,8 @@ impl Shell {
                 self.ssh_reconnect_settings(),
                 text(fl!("ui-settings-ssh-session")).size(BODY_SIZE),
                 self.ssh_session_settings(),
+                text(fl!("ui-settings-external-editor")).size(BODY_SIZE),
+                self.editor_settings(),
                 self.trusted_keys_settings(TrustedList::HostKeys),
             ],
             SettingsTab::Rdp => self.rdp_settings(),
@@ -2480,6 +2503,33 @@ impl Shell {
                 .spacing(SPACING)
                 .align_y(iced::Alignment::Center),
                 text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
+    }
+
+    /// The program a server's file is edited with, as the C# Settings page's "External
+    /// editor": applied with Enter; empty takes the system's own.
+    fn editor_settings(&self) -> Element<'_, Message> {
+        let typed = self
+            .editor_typed
+            .as_deref()
+            .unwrap_or(&self.app.settings().external_editor);
+        container(
+            column![
+                row![
+                    text(fl!("ui-settings-external-editor-path")),
+                    text_input("", typed)
+                        .on_input(Message::EditorEdited)
+                        .on_submit(Message::EditorApply),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+                text(fl!("ui-settings-external-editor-hint")).size(SMALL_SIZE),
             ]
             .spacing(SPACING),
         )
@@ -2601,6 +2651,16 @@ impl Shell {
                 self.log_directory = Some(typed);
                 Vec::new()
             }
+            Message::EditorEdited(typed) => {
+                self.editor_typed = Some(typed);
+                Vec::new()
+            }
+            Message::EditorApply => match self.editor_typed.take() {
+                Some(typed) => self
+                    .app
+                    .update(AppMessage::Settings(SettingsMessage::ExternalEditor(typed))),
+                None => Vec::new(),
+            },
             Message::FontSizeEdited(typed) => {
                 self.font_size_typed = Some(typed);
                 Vec::new()
@@ -5432,6 +5492,65 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
     .into()
 }
 
+/// The work of a file edited with the external editor: opening it, starting the editor
+/// again, looking at its saves.
+fn edit_task(effect: Effect) -> Task<Message> {
+    match effect {
+        Effect::StartEdit {
+            tab,
+            client,
+            remote,
+            editor,
+            base,
+            cancel,
+        } => Task::perform(
+            heimdall_app::external_edit::start_edit(client, remote, editor, base, cancel),
+            move |result| {
+                Message::App(AppMessage::Files(FilesMessage::EditStarted {
+                    tab,
+                    result: result.map(Box::new),
+                }))
+            },
+        ),
+        Effect::LaunchEditor { tab, editor, file } => Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    heimdall_app::external_edit::launch(&editor, &file)
+                })
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|launched| launched)
+                .map_err(|error| FilesError::EditorFailed {
+                    detail: error.to_string(),
+                })
+            },
+            move |result| {
+                Message::App(AppMessage::Files(FilesMessage::EditorLaunched {
+                    tab,
+                    result,
+                }))
+            },
+        ),
+        Effect::CheckEdits { tab, client, edits } => Task::perform(
+            async move {
+                let mut results = Vec::with_capacity(edits.len());
+                for edit in &edits {
+                    let check = heimdall_app::external_edit::check_edit(&client, edit).await;
+                    results.push((edit.local.clone(), check));
+                }
+                results
+            },
+            move |results| {
+                Message::App(AppMessage::Files(FilesMessage::EditsChecked {
+                    tab,
+                    results,
+                }))
+            },
+        ),
+        _ => Task::none(),
+    }
+}
+
 /// The work of a Files tab: listing, transferring, changing entries.
 fn files_task(effect: Effect) -> Task<Message> {
     match effect {
@@ -5483,6 +5602,9 @@ fn files_task(effect: Effect) -> Task<Message> {
                 Message::App(AppMessage::Files(FilesMessage::Moved { tab, results }))
             })
         }
+        effect @ (Effect::StartEdit { .. }
+        | Effect::LaunchEditor { .. }
+        | Effect::CheckEdits { .. }) => edit_task(effect),
         Effect::CopyRemote {
             tab,
             client,

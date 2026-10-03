@@ -163,6 +163,9 @@ pub struct Settings {
     pub ssh_tmout_reset_interval: u32,
     /// The RDP options profiles following the application's take.
     pub rdp_defaults: RdpDefaults,
+    /// The program a server's file is edited with, as the C# `ExternalEditorPath`; empty
+    /// takes the system's own text editor.
+    pub external_editor: String,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -292,6 +295,7 @@ impl Default for Settings {
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
             ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
             rdp_defaults: RdpDefaults::default(),
+            external_editor: String::new(),
         }
     }
 }
@@ -315,6 +319,14 @@ struct SettingsFile {
     ssh: SshSection,
     #[serde(default)]
     rdp: RdpDefaults,
+    #[serde(default)]
+    files: FilesSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct FilesSection {
+    #[serde(default)]
+    external_editor: String,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -555,6 +567,7 @@ impl Settings {
                 .filter(|seconds| ssh_tmout_reset_interval_accepted(*seconds))
                 .unwrap_or(SSH_TMOUT_RESET_INTERVAL_DEFAULT),
             rdp_defaults: file.rdp,
+            external_editor: file.files.external_editor.trim().to_owned(),
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -619,6 +632,9 @@ impl Settings {
                 tmout_reset_interval: Some(self.ssh_tmout_reset_interval),
             },
             rdp: self.rdp_defaults,
+            files: FilesSection {
+                external_editor: self.external_editor.clone(),
+            },
         })?;
         write_atomic(path, &text)
     }

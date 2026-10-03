@@ -655,6 +655,10 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-open"),
             files(FilesMessage::Open { tab, side, index })
         ),
+        copies.then(|| entry(
+            fl!("ui-files-menu-edit-external"),
+            files(FilesMessage::EditExternal { tab })
+        )),
         entry(send, files(FilesMessage::Transfer { tab, direction })),
         separator(),
         entry(

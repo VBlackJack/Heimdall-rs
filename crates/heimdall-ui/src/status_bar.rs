@@ -40,6 +40,27 @@ pub fn scope_label(scope: BroadcastScope, targets: usize) -> String {
     }
 }
 
+/// What a Files tab's notice says.
+fn files_notice(notice: &Notice) -> String {
+    match notice {
+        Notice::PathCopied(path) => fl!("ui-status-path-copied", path = path.as_str()),
+        Notice::FilesCut(count) => fl!("ui-status-files-cut", count = (*count)),
+        Notice::FilesPasted => fl!("ui-status-files-pasted"),
+        Notice::FilesEditing(name) => fl!("ui-status-files-editing", name = name.as_str()),
+        Notice::FilesAutoUploaded(name) => {
+            fl!("ui-status-files-auto-uploaded", name = name.as_str())
+        }
+        Notice::FilesAutoUploadRefused { name, error } => fl!(
+            "ui-status-files-auto-upload-refused",
+            name = name.as_str(),
+            reason = crate::texts::files_error(error)
+        ),
+        Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
+        Notice::FilesDuplicated => fl!("ui-status-files-duplicated"),
+        _ => String::new(),
+    }
+}
+
 /// What the left of the bar says; `targets` the tabs marked for broadcast input.
 #[must_use]
 pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usize) -> String {
@@ -47,11 +68,14 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
         return match notice {
             Notice::Copied(copied) => fl!("ui-status-copied", text = copied.as_str()),
             Notice::FolderCreated(path) => fl!("ui-status-folder-created", path = path.as_str()),
-            Notice::PathCopied(path) => fl!("ui-status-path-copied", path = path.as_str()),
-            Notice::FilesCut(count) => fl!("ui-status-files-cut", count = (*count)),
-            Notice::FilesPasted => fl!("ui-status-files-pasted"),
-            Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
-            Notice::FilesDuplicated => fl!("ui-status-files-duplicated"),
+            notice @ (Notice::PathCopied(_)
+            | Notice::FilesCut(_)
+            | Notice::FilesPasted
+            | Notice::FilesEditing(_)
+            | Notice::FilesAutoUploaded(_)
+            | Notice::FilesAutoUploadRefused { .. }
+            | Notice::FilesCopied(_)
+            | Notice::FilesDuplicated) => files_notice(notice),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
             }
