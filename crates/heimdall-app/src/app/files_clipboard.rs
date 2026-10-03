@@ -21,6 +21,7 @@
 //! What was moved leaves the clipboard; what could not stays, to be pasted again, as the C#
 //! keeps it. Pasting where an entry already is changes nothing and counts as done.
 
+use heimdall_core::profile::ProfileId;
 use heimdall_files::RemotePath;
 
 use super::{App, Effect, Notice, TabProfile};
@@ -42,15 +43,26 @@ impl App {
     fn files_endpoint(&self, tab_id: TabId) -> Option<String> {
         let tab = self.tab(tab_id)?;
         tab.files.as_ref()?;
-        let (protocol, host, port, user) = match &tab.profile {
-            TabProfile::Ssh(profile) => ("sftp", &profile.host, profile.port, &profile.username),
-            TabProfile::Ftp(profile) => ("ftp", &profile.host, profile.port, &profile.username),
+        // The gateway is part of the server: one address behind two gateways can be two
+        // machines, and a paste must never rename on the wrong one.
+        let (protocol, host, port, user, gateway) = match &tab.profile {
+            TabProfile::Ssh(profile) => (
+                "sftp",
+                &profile.host,
+                profile.port,
+                &profile.username,
+                profile.gateway.as_ref().map(ProfileId::as_str),
+            ),
+            TabProfile::Ftp(profile) => {
+                ("ftp", &profile.host, profile.port, &profile.username, None)
+            }
             _ => return None,
         };
         Some(format!(
-            "{protocol}://{}@{}:{port}",
+            "{protocol}://{}@{}:{port} via {}",
             user.as_deref().unwrap_or_default(),
-            host.to_ascii_lowercase()
+            host.to_ascii_lowercase(),
+            gateway.unwrap_or_default()
         ))
     }
 

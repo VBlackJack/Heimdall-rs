@@ -1270,3 +1270,98 @@ async fn a_move_goes_on_past_one_that_fails_and_never_replaces() {
     assert_eq!(std::fs::read(into.join("two")).expect("moved"), b"two");
     assert!(!dir.path().join("two").exists());
 }
+
+#[tokio::test]
+async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    let profile = |id: &str, gateway: Option<&str>| SshProfile {
+        id: ProfileId::new(id),
+        name: format!("server {id}"),
+        group: None,
+        host: "a.lab".to_owned(),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: gateway.map(ProfileId::new),
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+    };
+    store.merge([
+        profile("direct", None),
+        profile("again", None),
+        profile("behind", Some("gw")),
+    ]);
+    store.merge_gateways([heimdall_core::profile::SshGateway {
+        id: ProfileId::new("gw"),
+        name: "GW".to_owned(),
+        host: "gw.lab".to_owned(),
+        port: 22,
+        username: Some("ops".to_owned()),
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file,
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    let open = async |app: &mut App, id: &str| {
+        let (tab, attempt) = match app
+            .update(Message::OpenFiles(ProfileId::new(id)))
+            .as_slice()
+        {
+            [Effect::Connect { tab, attempt, .. }, ..] => (*tab, *attempt),
+            other => panic!("{other:?}"),
+        };
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::FilesReady {
+                client: idle_client().await,
+            },
+        });
+        files(
+            app,
+            FilesMessage::RemoteListed {
+                tab,
+                result: Ok((
+                    RemotePath::from("/srv"),
+                    vec![RemoteEntry {
+                        name: b"a.txt".to_vec(),
+                        label: "a.txt".to_owned(),
+                        kind: EntryKind::File,
+                        size: Some(1),
+                        modified: None,
+                        permissions: None,
+                        owner: None,
+                        group: None,
+                    }],
+                )),
+            },
+        );
+        tab
+    };
+    let direct = open(&mut app, "direct").await;
+    let again = open(&mut app, "again").await;
+    let behind = open(&mut app, "behind").await;
+    select(&mut app, direct, Side::Remote, 0);
+    files(&mut app, FilesMessage::Cut { tab: direct });
+    assert!(app.can_paste(again), "the same server, another tab");
+    assert!(
+        !app.can_paste(behind),
+        "the same address behind a gateway can be another machine"
+    );
+    assert!(files(&mut app, FilesMessage::Paste { tab: behind }).is_empty());
+}
