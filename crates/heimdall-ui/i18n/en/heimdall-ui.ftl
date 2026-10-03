@@ -1275,3 +1275,4 @@ ui-status-files-duplicated = Duplicate complete
 ui-files-error-copy-refused = Copy refused: this server did not perform the server-side copy, and Heimdall will not fall back to a transfer that could overwrite an existing destination. Copy the file locally, or check that the server allows running cp, ln and mkdir.
 ui-files-error-paste-into-itself = Cannot paste { $name } into itself or its own subfolder.
 ui-error-key-not-absolute = SSH key path must be absolute: { $path }
+ui-files-menu-open-in-terminal = Open in terminal

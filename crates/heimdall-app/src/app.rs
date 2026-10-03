@@ -77,6 +77,7 @@ mod connect_as;
 mod file_import;
 mod files_clipboard;
 mod files_tab;
+mod files_terminal;
 mod folder_menu;
 mod folders;
 mod ftp_tab;
