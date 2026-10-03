@@ -7,3 +7,8 @@
 *.icns binary
 *.otf binary
 *.ttf binary
+
+# Every change appends its texts at the end of the language files: merged by union, two
+# branches adding keys keep both instead of conflicting. A key added twice is refused by
+# heimdall-ui's no_language_file_holds_a_key_twice test.
+*.ftl merge=union
