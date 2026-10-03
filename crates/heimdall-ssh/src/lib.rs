@@ -26,6 +26,7 @@ mod agent;
 mod auth;
 mod client;
 mod connection;
+mod diagnose;
 mod error;
 mod forward;
 mod key_file;
@@ -44,6 +45,7 @@ pub use client::{
     Routed, at_gateway, connect, establish, establish_via, establish_via_keeping_gateway,
 };
 pub use connection::{ChannelBytes, Connection, SubsystemStream, Tunnel};
+pub use diagnose::{HopSecrets, Outcome, Step, StepOf, diagnose_route, has_trusted_key};
 pub use error::{AuthMethod, ConnectError};
 pub use forward::RemoteForward;
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
