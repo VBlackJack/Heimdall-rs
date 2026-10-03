@@ -50,6 +50,8 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::PathCopied(path) => fl!("ui-status-path-copied", path = path.as_str()),
             Notice::FilesCut(count) => fl!("ui-status-files-cut", count = (*count)),
             Notice::FilesPasted => fl!("ui-status-files-pasted"),
+            Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
+            Notice::FilesDuplicated => fl!("ui-status-files-duplicated"),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
             }

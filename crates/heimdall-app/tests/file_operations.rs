@@ -1331,6 +1331,7 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
             attempt,
             event: ConnectionEvent::FilesReady {
                 client: idle_client().await,
+                shell: None,
             },
         });
         files(

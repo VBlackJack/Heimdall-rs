@@ -161,6 +161,15 @@ pub fn copy_script(
     Ok(CopyScript { script, done })
 }
 
+/// A fresh token for [`copy_script`], from the system's random source; `None` when it
+/// cannot give one.
+#[must_use]
+pub fn random_token() -> Option<[u8; 16]> {
+    ring::rand::generate(&ring::rand::SystemRandom::new())
+        .ok()
+        .map(ring::rand::Random::expose)
+}
+
 /// `path` as one word of `sh`: in single quotes, each quote of it closed, escaped and
 /// opened again.
 fn quote(path: &[u8]) -> Result<Vec<u8>, Unquotable> {

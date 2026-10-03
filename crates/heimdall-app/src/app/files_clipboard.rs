@@ -14,27 +14,43 @@
  * limitations under the License.
  */
 
-//! Cut and Paste in a Files tab, as the C# SFTP view's: the entries cut are held for every
-//! Files tab, and pasted, on the same server, into the folder a tab shows, each moved by a
-//! rename that never replaces what is there.
+//! Cut, Copy, Paste and Duplicate in a Files tab, as the C# SFTP view's: the entries cut or
+//! copied are held for every Files tab, and pasted, on the same server, into the folder a
+//! tab shows.
 //!
-//! What was moved leaves the clipboard; what could not stays, to be pasted again, as the C#
-//! keeps it. Pasting where an entry already is changes nothing and counts as done.
+//! - Cut entries are moved by a rename that never replaces what is there. What was moved
+//!   leaves the clipboard; what could not stays, to be pasted again, as the C# keeps it.
+//!   Pasting where an entry already is changes nothing and counts as done.
+//! - Copied entries are copied on the server itself, under their own name or their first
+//!   free copy name, and stay on the clipboard to be pasted again. Duplicate copies the
+//!   chosen entries into their own folder, the clipboard left as it is. Only an SFTP tab,
+//!   which can run the copy on its SSH connection, copies; one copy runs at a time.
 
 use heimdall_core::profile::ProfileId;
 use heimdall_files::RemotePath;
 
 use super::{App, Effect, Notice, TabProfile};
-use crate::files::FilesError;
+use crate::files::{CopySource, EntryKind, FilesError, Side};
 use crate::ids::TabId;
 
-/// Entries cut in a Files tab, waiting to be pasted.
+/// Entries cut or copied in a Files tab, waiting to be pasted.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FilesClipboard {
-    /// Each entry, by its full path on the server.
-    pub entries: Vec<RemotePath>,
-    /// The server they are on: protocol, account, host and port.
+    /// Each entry, by its full path on the server, and whether it is a folder.
+    pub entries: Vec<CopySource>,
+    /// Moved or copied when pasted.
+    pub mode: ClipMode,
+    /// The server they are on: protocol, account, host, port and gateway.
     endpoint: String,
+}
+
+/// What a paste does with the entries held.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ClipMode {
+    /// Moves them.
+    Cut,
+    /// Copies them on the server.
+    Copy,
 }
 
 impl App {
@@ -66,53 +82,89 @@ impl App {
         ))
     }
 
-    /// "Cut": the remote entries chosen in `tab_id`, held to be pasted.
-    pub(super) fn cut_entries(&mut self, tab_id: TabId) -> Vec<Effect> {
-        let Some(endpoint) = self.files_endpoint(tab_id) else {
-            return Vec::new();
-        };
+    /// The remote entries chosen in `tab_id`, with whether each is a folder; links and
+    /// special files only when `any_kind`, as only a move takes them.
+    fn chosen_sources(&mut self, tab_id: TabId, any_kind: bool) -> Vec<CopySource> {
         let Some(files) = self.files_mut(tab_id) else {
             return Vec::new();
         };
-        let entries: Vec<RemotePath> = files
+        files
             .remote
             .chosen()
             .into_iter()
             .filter_map(|index| files.remote.entries.get(index))
-            .map(|entry| files.remote.path.join(&entry.name))
-            .collect();
+            .filter(|entry| {
+                any_kind || matches!(entry.kind, EntryKind::File | EntryKind::Directory)
+            })
+            .map(|entry| CopySource {
+                path: files.remote.path.join(&entry.name),
+                folder: entry.kind == EntryKind::Directory,
+            })
+            .collect()
+    }
+
+    /// "Cut" or "Copy": the remote entries chosen in `tab_id`, held to be pasted.
+    pub(super) fn hold_entries(&mut self, tab_id: TabId, mode: ClipMode) -> Vec<Effect> {
+        if mode == ClipMode::Copy && !self.can_copy(tab_id) {
+            return Vec::new();
+        }
+        let Some(endpoint) = self.files_endpoint(tab_id) else {
+            return Vec::new();
+        };
+        let entries = self.chosen_sources(tab_id, mode == ClipMode::Cut);
         if entries.is_empty() {
             return Vec::new();
         }
         let count = entries.len();
-        self.files_clipboard = Some(FilesClipboard { entries, endpoint });
-        self.tell(Notice::FilesCut(count));
+        self.files_clipboard = Some(FilesClipboard {
+            entries,
+            mode,
+            endpoint,
+        });
+        self.tell(match mode {
+            ClipMode::Cut => Notice::FilesCut(count),
+            ClipMode::Copy => Notice::FilesCopied(count),
+        });
         Vec::new()
     }
 
-    /// Whether `tab_id` can paste what is cut: something is, on its own server.
+    /// Whether `tab_id` copies on its server: an SFTP tab with its SSH connection.
+    #[must_use]
+    pub fn can_copy(&self, tab_id: TabId) -> bool {
+        self.tab(tab_id)
+            .and_then(|tab| tab.files.as_deref())
+            .is_some_and(|files| files.shell.is_some())
+    }
+
+    /// Whether `tab_id` can paste what is held: something is, on its own server.
     #[must_use]
     pub fn can_paste(&self, tab_id: TabId) -> bool {
         match (&self.files_clipboard, self.files_endpoint(tab_id)) {
             (Some(clipboard), Some(endpoint)) => {
-                !clipboard.entries.is_empty() && clipboard.endpoint == endpoint
+                !clipboard.entries.is_empty()
+                    && clipboard.endpoint == endpoint
+                    && (clipboard.mode == ClipMode::Cut || self.can_copy(tab_id))
             }
             _ => false,
         }
     }
 
-    /// "Paste": the entries cut moved into the folder `tab_id` shows, one after another.
-    pub(super) fn paste_cut(&mut self, tab_id: TabId) -> Vec<Effect> {
+    /// "Paste": the entries held moved or copied into the folder `tab_id` shows, one after
+    /// another.
+    pub(super) fn paste_held(&mut self, tab_id: TabId) -> Vec<Effect> {
         if !self.can_paste(tab_id) {
             return Vec::new();
         }
-        let Some(entries) = self
-            .files_clipboard
-            .as_ref()
-            .map(|clip| clip.entries.clone())
-        else {
+        let Some(clipboard) = self.files_clipboard.clone() else {
             return Vec::new();
         };
+        match clipboard.mode {
+            ClipMode::Cut => self.move_held(tab_id, clipboard.entries),
+            ClipMode::Copy => self.copy_into_shown(tab_id, clipboard.entries, false),
+        }
+    }
+
+    fn move_held(&mut self, tab_id: TabId, entries: Vec<CopySource>) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab_id) else {
             return Vec::new();
         };
@@ -122,10 +174,10 @@ impl App {
         let folder = files.remote.path.clone();
         let moves: Vec<(RemotePath, RemotePath)> = entries
             .into_iter()
-            .filter_map(|from| {
-                let to = folder.join(from.file_name()?);
+            .filter_map(|entry| {
+                let to = folder.join(entry.path.file_name()?);
                 // Already there: nothing to move, and done.
-                (to != from).then_some((from, to))
+                (to != entry.path).then_some((entry.path, to))
             })
             .collect();
         if moves.is_empty() {
@@ -140,9 +192,50 @@ impl App {
         }]
     }
 
+    /// "Duplicate": the entries chosen in `tab_id` copied into their own folder.
+    pub(super) fn duplicate(&mut self, tab_id: TabId) -> Vec<Effect> {
+        if !self.can_copy(tab_id) {
+            return Vec::new();
+        }
+        let sources = self.chosen_sources(tab_id, false);
+        self.copy_into_shown(tab_id, sources, true)
+    }
+
+    /// Copies `sources` into the folder `tab_id` shows, unless a copy runs there already.
+    fn copy_into_shown(
+        &mut self,
+        tab_id: TabId,
+        sources: Vec<CopySource>,
+        duplicate: bool,
+    ) -> Vec<Effect> {
+        if sources.is_empty() {
+            return Vec::new();
+        }
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let (Some(client), Some(shell)) = (files.client.clone(), files.shell.clone()) else {
+            return Vec::new();
+        };
+        if files.copying.is_some() {
+            return Vec::new();
+        }
+        let cancel = tokio_util::sync::CancellationToken::new();
+        files.copying = Some(cancel.clone());
+        vec![Effect::CopyRemote {
+            tab: tab_id,
+            client,
+            shell,
+            sources,
+            folder: files.remote.path.clone(),
+            cancel,
+            duplicate,
+        }]
+    }
+
     /// The moves of a paste ended: what moved leaves the clipboard, the first failure is
     /// said, and the folder is listed again.
-    pub(super) fn moved_cut(
+    pub(super) fn moved_held(
         &mut self,
         tab_id: TabId,
         results: Vec<(RemotePath, Result<(), FilesError>)>,
@@ -151,8 +244,12 @@ impl App {
         for (from, result) in results {
             match result {
                 Ok(()) => {
-                    if let Some(clipboard) = self.files_clipboard.as_mut() {
-                        clipboard.entries.retain(|entry| *entry != from);
+                    if let Some(clipboard) = self
+                        .files_clipboard
+                        .as_mut()
+                        .filter(|clipboard| clipboard.mode == ClipMode::Cut)
+                    {
+                        clipboard.entries.retain(|entry| entry.path != from);
                     }
                 }
                 Err(error) => {
@@ -167,14 +264,43 @@ impl App {
         {
             self.files_clipboard = None;
         }
+        self.ended_with(tab_id, failure, Notice::FilesPasted)
+    }
+
+    /// The copies of a paste or a duplicate ended: the first failure is said, and the
+    /// folder is listed again. What was copied stays on the clipboard.
+    pub(super) fn copied(
+        &mut self,
+        tab_id: TabId,
+        results: Vec<(RemotePath, Result<RemotePath, FilesError>)>,
+        duplicate: bool,
+    ) -> Vec<Effect> {
+        if let Some(files) = self.files_mut(tab_id) {
+            files.copying = None;
+        }
+        let failure = results.into_iter().find_map(|(_, result)| result.err());
+        let done = if duplicate {
+            Notice::FilesDuplicated
+        } else {
+            Notice::FilesPasted
+        };
+        self.ended_with(tab_id, failure, done)
+    }
+
+    fn ended_with(
+        &mut self,
+        tab_id: TabId,
+        failure: Option<FilesError>,
+        done: Notice,
+    ) -> Vec<Effect> {
         match failure {
-            None => self.tell(Notice::FilesPasted),
+            None => self.tell(done),
             Some(error) => {
                 if let Some(files) = self.files_mut(tab_id) {
                     files.remote.error = Some(error);
                 }
             }
         }
-        self.list(tab_id, crate::files::Side::Remote)
+        self.list(tab_id, Side::Remote)
     }
 }

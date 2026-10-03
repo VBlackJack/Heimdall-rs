@@ -101,8 +101,12 @@ pub enum Notice {
     PathCopied(String),
     /// This many entries of a Files tab were cut.
     FilesCut(usize),
-    /// The entries cut were pasted.
+    /// The entries cut or copied were pasted.
     FilesPasted,
+    /// This many entries of a Files tab were copied, to be pasted.
+    FilesCopied(usize),
+    /// The entries chosen were duplicated.
+    FilesDuplicated,
     /// A transcript was started, in this file.
     TranscriptStarted(String),
     /// A transcript was stopped.

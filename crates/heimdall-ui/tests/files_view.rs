@@ -657,7 +657,7 @@ async fn this_computers_menu_uploads_what_the_servers_downloads() {
     let mut ui = common::simulator(
         settings,
         WINDOW,
-        heimdall_ui::tree_view::files_entry_menu(tab, Side::Local, 0, false),
+        heimdall_ui::tree_view::files_entry_menu(tab, Side::Local, 0, false, false),
     );
     assert!(ui.find("Download").is_err());
     ui.click("Upload").expect("Upload");
@@ -736,7 +736,12 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
             ),
         ),
         ("Cut", format!("{:?}", FilesMessage::Cut { tab })),
+        ("Copy", format!("{:?}", FilesMessage::Copy { tab })),
         ("Paste", format!("{:?}", FilesMessage::Paste { tab })),
+        (
+            "Duplicate",
+            format!("{:?}", FilesMessage::Duplicate { tab }),
+        ),
         (
             "Copy path",
             format!(
@@ -766,7 +771,7 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
         let mut ui = common::simulator(
             settings,
             WINDOW,
-            heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 1, true),
+            heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 1, true, true),
         );
         ui.click(label).expect(label);
         let chosen: Vec<String> = ui
@@ -792,7 +797,7 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
         common::simulator(
             settings(),
             WINDOW,
-            heimdall_ui::tree_view::files_entry_menu(tab, side, 0, false),
+            heimdall_ui::tree_view::files_entry_menu(tab, side, 0, false, false),
         )
     };
     let mut remote = menu(Side::Remote);
@@ -818,6 +823,10 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
     assert!(local.find("Properties").is_err());
     assert!(local.find("Cut").is_err(), "the server's only");
     assert!(menu(Side::Remote).find("Paste").is_err(), "nothing cut");
+    assert!(
+        menu(Side::Remote).find("Duplicate").is_err(),
+        "a tab that cannot copy on its server"
+    );
 
     let mut shell = Shell::with_app(core);
     let _ = shell.update(Message::App(AppMessage::Files(
@@ -1035,7 +1044,7 @@ async fn the_files_menus_are_drawn_on_a_card_that_hides_what_is_under_them() {
     // In the card's margin, left of the entries: the card's colour, not the window's, or
     // the listing under the menu shows through its entries.
     let entry_menu = pixel_of(
-        heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 0, false),
+        heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 0, false, false),
         2,
         20,
     );

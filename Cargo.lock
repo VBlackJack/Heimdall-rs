@@ -2293,6 +2293,7 @@ dependencies = [
  "libunftp",
  "log",
  "rcgen",
+ "russh",
  "sealvault",
  "serde_json",
  "shlex",
