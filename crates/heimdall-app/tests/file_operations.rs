@@ -1719,3 +1719,40 @@ async fn upload_here_picks_files_and_sends_them_together_into_the_folder_shown()
         "nothing picked"
     );
 }
+
+#[tokio::test]
+async fn paste_from_explorer_uploads_the_files_copied_or_says_there_are_none() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    assert!(matches!(
+        files(&mut app, FilesMessage::PasteFromExplorer { tab }).as_slice(),
+        [Effect::ReadExplorerFiles { tab: asked }] if *asked == tab
+    ));
+    assert!(
+        files(
+            &mut app,
+            FilesMessage::ExplorerFilesRead {
+                tab,
+                paths: Vec::new()
+            }
+        )
+        .is_empty()
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&heimdall_app::Notice::ExplorerHoldsNoFiles)
+    );
+
+    let copied = dir.path().join("report.pdf");
+    std::fs::write(&copied, b"%PDF").expect("copied");
+    let planned = files(
+        &mut app,
+        FilesMessage::ExplorerFilesRead {
+            tab,
+            paths: vec![copied],
+        },
+    );
+    let request = plan_request(&planned);
+    assert_eq!(request.roots.len(), 1);
+    assert_eq!(request.roots[0].root.remote.as_bytes(), b"/srv/report.pdf");
+}

@@ -679,6 +679,11 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-upload-here"),
             files(FilesMessage::UploadHere { tab })
         )),
+        // Explorer's copied files are read on Windows only.
+        (side == Side::Remote && cfg!(windows)).then(|| entry(
+            fl!("ui-files-menu-paste-explorer"),
+            files(FilesMessage::PasteFromExplorer { tab })
+        )),
         server(entry(
             fl!("ui-files-menu-cut"),
             files(FilesMessage::Cut { tab })

@@ -157,6 +157,19 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Upload the files copied in Explorer into the server's folder shown, as the C# "Paste
+    /// from Explorer".
+    PasteFromExplorer {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The files copied in Explorer, read; none when the clipboard holds none.
+    ExplorerFilesRead {
+        /// Tab.
+        tab: TabId,
+        /// The files.
+        paths: Vec<PathBuf>,
+    },
     /// The files picked to upload; none when the picker was closed.
     UploadPicked {
         /// Tab.
@@ -450,6 +463,10 @@ impl std::fmt::Debug for FilesMessage {
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Cut { tab } => write!(f, "Cut({})", tab.value()),
             Self::UploadHere { tab } => write!(f, "UploadHere({})", tab.value()),
+            Self::PasteFromExplorer { tab } => write!(f, "PasteFromExplorer({})", tab.value()),
+            Self::ExplorerFilesRead { tab, paths } => {
+                write!(f, "ExplorerFilesRead({}, {})", tab.value(), paths.len())
+            }
             Self::UploadPicked { tab, paths } => {
                 write!(f, "UploadPicked({}, {})", tab.value(), paths.len())
             }
@@ -685,6 +702,7 @@ impl App {
         Vec::new()
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         if let Some((tab, side)) = message.gesture()
             && let Some(files) = self.files_mut(tab)
@@ -738,6 +756,7 @@ impl App {
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
             FilesMessage::Cut { tab } => self.hold_entries(tab, super::ClipMode::Cut),
             FilesMessage::UploadHere { tab } => self.upload_here(tab),
+            FilesMessage::PasteFromExplorer { tab } => self.paste_from_explorer(tab),
             FilesMessage::Copy { tab } => self.hold_entries(tab, super::ClipMode::Copy),
             FilesMessage::Paste { tab } => self.paste_held(tab),
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
@@ -770,7 +789,8 @@ impl App {
             | FilesMessage::Filter { .. }
             | FilesMessage::ToggleHidden { .. }
             | FilesMessage::Dropped { .. }
-            | FilesMessage::UploadPicked { .. }) => self.pane_message(message),
+            | FilesMessage::UploadPicked { .. }
+            | FilesMessage::ExplorerFilesRead { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
@@ -808,7 +828,12 @@ impl App {
             }
             FilesMessage::OpenBookmark { tab, index } => self.open_bookmark(tab, index),
             FilesMessage::Dropped { tab, path } => self.upload_paths(tab, &[path]),
-            FilesMessage::UploadPicked { tab, paths } => self.upload_paths(tab, &paths),
+            FilesMessage::ExplorerFilesRead { paths, .. } if paths.is_empty() => {
+                self.tell(super::Notice::ExplorerHoldsNoFiles);
+                Vec::new()
+            }
+            FilesMessage::UploadPicked { tab, paths }
+            | FilesMessage::ExplorerFilesRead { tab, paths } => self.upload_paths(tab, &paths),
             FilesMessage::Filter { tab, side, text } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -862,6 +887,19 @@ impl App {
 
     /// Sends `path`, dropped on the tab, to the server's folder shown; asked first when it
     /// would replace a name listed there.
+    /// "Paste from Explorer": the files copied in Explorer read, while connected.
+    fn paste_from_explorer(&self, tab: TabId) -> Vec<Effect> {
+        let connected = self
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .is_some_and(|files| files.client.is_some());
+        if connected {
+            vec![Effect::ReadExplorerFiles { tab }]
+        } else {
+            Vec::new()
+        }
+    }
+
     /// "Upload here...": the files to upload asked of the user, while connected.
     fn upload_here(&self, tab: TabId) -> Vec<Effect> {
         let connected = self

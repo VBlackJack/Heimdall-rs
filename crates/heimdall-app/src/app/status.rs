@@ -124,6 +124,8 @@ pub enum Notice {
         /// Why.
         error: crate::files::FilesError,
     },
+    /// "Paste from Explorer" found no files copied.
+    ExplorerHoldsNoFiles,
     /// The entries cut or copied were pasted.
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.

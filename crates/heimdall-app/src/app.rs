@@ -947,6 +947,11 @@ pub enum Effect {
         /// Each entry and its new path.
         moves: Vec<(heimdall_files::RemotePath, heimdall_files::RemotePath)>,
     },
+    /// Read the files copied in Explorer, then send [`FilesMessage::ExplorerFilesRead`].
+    ReadExplorerFiles {
+        /// Tab.
+        tab: TabId,
+    },
     /// Ask the user for files of this computer to upload, then send
     /// [`FilesMessage::UploadPicked`].
     PickUploads {
@@ -1129,6 +1134,7 @@ impl fmt::Debug for Effect {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
             Self::PickUploads { tab } => write!(f, "PickUploads({})", tab.value()),
+            Self::ReadExplorerFiles { tab } => write!(f, "ReadExplorerFiles({})", tab.value()),
             Self::StartEdit { tab, remote, .. } => {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
             }

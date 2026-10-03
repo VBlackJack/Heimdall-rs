@@ -2443,6 +2443,7 @@ version = "0.1.0"
 name = "heimdall-ui"
 version = "0.1.0"
 dependencies = [
+ "clipboard-win",
  "heimdall-app",
  "heimdall-core",
  "heimdall-files",

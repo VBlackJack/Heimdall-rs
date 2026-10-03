@@ -1231,3 +1231,5 @@ ui-files-error-sudo-needs-terminal = sudo exige un terminal sur ce serveur (requ
 ui-files-error-sudo-untrusted = Le sudo trouvé sur le serveur n'est pas celui du système (pas set-user-id root) : rien n'a été exécuté en root.
 ui-files-error-sudo-tooling = Transfert privilégié refusé : il manque sur le serveur un outil nécessaire (GNU coreutils : stat, cp, sync, mv). Le journal nomme l'outil.
 ui-files-error-sudo-failed = Échec de l'authentification sudo.
+ui-files-menu-paste-explorer = Coller depuis l'Explorateur
+ui-status-explorer-no-files = Aucun fichier n'est copié dans l'Explorateur.
