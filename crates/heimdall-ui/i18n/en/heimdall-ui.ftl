@@ -1220,3 +1220,9 @@ ui-resolution-custom-invalid = Invalid resolution. Use WIDTHxHEIGHT.
 ui-resolution-save-default = Save as default for this server
 ui-resolution-save-default-done = RDP resolution default saved for this server.
 ui-resolution-save-default-unavailable = Cannot save a default resolution for this session.
+
+## The SSH agent chip of the profile form, as the C# one.
+ui-agent-chip-off = No SSH agent detected
+ui-agent-chip-warn = SSH agent: { $agent } (no keys loaded)
+ui-agent-chip-ok = SSH agent: { $agent } ({ $count } keys)
+ui-agent-chip-tooltip = Click to re-scan SSH agents

@@ -41,6 +41,7 @@ mod secret;
 mod session;
 pub mod socks;
 
+pub use agent::{AgentSurvey, survey as survey_agents};
 pub use client::{
     Routed, at_gateway, connect, establish, establish_via, establish_via_keeping_gateway,
 };

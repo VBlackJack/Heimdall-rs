@@ -1154,6 +1154,7 @@ impl Shell {
             gateway_passphrase: &self.gateway_passphrase,
             gateways: self.app.gateways(),
             tunnel_problem: self.app.tunnel_problem(),
+            agent_chip: self.app.agent_chip(),
             passwords: if self.app.can_save_passwords() {
                 PasswordStore::Ready
             } else if self.app.vault_status() == VaultStatus::Locked {
@@ -1692,9 +1693,9 @@ impl Shell {
             | Effect::ConnectFtp { .. }
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
-            effect @ (Effect::TestReachability { .. } | Effect::TestAddress { .. }) => {
-                reachability_task(effect)
-            }
+            effect @ (Effect::TestReachability { .. }
+            | Effect::TestAddress { .. }
+            | Effect::SurveyAgents(_)) => probe_task(effect),
             Effect::OpenTunnel { id, request } => {
                 // Its end is the tunnel's own: closing it cancels the attempt, which ends
                 // the stream.
@@ -3943,6 +3944,8 @@ struct Forms<'a> {
     gateways: &'a [SshGateway],
     /// What stops the "New tunnel" dialog's tunnel from opening, if anything.
     tunnel_problem: Option<heimdall_app::tunnel::TunnelProblem>,
+    /// What the SSH agent chip knows.
+    agent_chip: &'a heimdall_app::AgentChip,
     /// Whether a password typed now can be saved.
     passwords: PasswordStore,
     /// The most a dialog's scrolling fields may take, so its buttons stay in the window.
@@ -4248,9 +4251,14 @@ fn toggle_label(toggle: ProfileToggle) -> String {
     }
 }
 
-/// The task testing whether an address answers: the tree's, or the profile form's.
-fn reachability_task(effect: Effect) -> Task<Message> {
+/// The task asking what answers: an address, from the tree or the profile form, or the SSH
+/// agents, for the form's chip.
+fn probe_task(effect: Effect) -> Task<Message> {
     match effect {
+        Effect::SurveyAgents(source) => Task::perform(
+            async move { heimdall_ssh::survey_agents(&source).await },
+            |found| Message::App(AppMessage::AgentsSurveyed(found)),
+        ),
         Effect::TestReachability { host, port } => Task::perform(
             heimdall_app::reachability::test_from_tree(host.clone(), port),
             move |result| {
@@ -4720,6 +4728,11 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
     }
     if draft.shows(ProfileField::KeyPath) {
         form = form.push(key_field(draft));
+        if matches!(draft.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
+            && let Some(chip) = crate::agent_chip_view::view(forms.agent_chip)
+        {
+            form = form.push(chip);
+        }
         if draft.protocol.has_key_file() {
             form = form.push(passphrase_field(
                 &Passphrase {
