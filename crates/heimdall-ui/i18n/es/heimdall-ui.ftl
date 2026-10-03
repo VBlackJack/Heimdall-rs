@@ -1199,6 +1199,7 @@ ui-files-error-paste-into-itself = No se puede pegar { $name } dentro de sí mis
 ui-error-key-not-absolute = La ruta de la clave SSH debe ser absoluta: { $path }
 ui-files-error-changed-on-server = El archivo cambió en el servidor desde que se abrió: se dejó como estaba.
 ui-files-error-file-too-large = Los archivos de más de 16 MiB deben descargarse.
+ui-files-menu-open-in-terminal = Abrir en terminal
 ui-status-resolution-reconnected = El cambio de resolución requirió reconexión.
 ui-resolution-mode-smart-sizing = Ajuste de tamaño inteligente
 ui-resolution-tooltip = Cambiar resolución - { $mode }

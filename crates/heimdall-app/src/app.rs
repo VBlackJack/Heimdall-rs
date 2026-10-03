@@ -78,6 +78,7 @@ mod file_import;
 mod files_clipboard;
 mod files_edit;
 mod files_tab;
+mod files_terminal;
 mod folder_menu;
 mod folders;
 mod ftp_tab;

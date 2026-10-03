@@ -1277,6 +1277,7 @@ ui-files-error-paste-into-itself = Cannot paste { $name } into itself or its own
 ui-error-key-not-absolute = SSH key path must be absolute: { $path }
 ui-files-error-changed-on-server = The file changed on the server since it was opened: it was left as it is.
 ui-files-error-file-too-large = Files larger than 16 MiB must be downloaded instead.
+ui-files-menu-open-in-terminal = Open in terminal
 ui-status-resolution-reconnected = Resolution change required reconnect.
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }

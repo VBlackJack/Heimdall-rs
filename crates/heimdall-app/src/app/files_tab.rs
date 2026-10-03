@@ -230,6 +230,12 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Open a shell on the server in the selected folder, else the folder shown, as the C#
+    /// "Open in terminal".
+    OpenInTerminal {
+        /// Tab.
+        tab: TabId,
+    },
     /// The copies of a paste or a duplicate ended.
     Copied {
         /// Tab.
@@ -448,6 +454,7 @@ impl std::fmt::Debug for FilesMessage {
             Self::EditsChecked { tab, results } => {
                 write!(f, "EditsChecked({}, {})", tab.value(), results.len())
             }
+            Self::OpenInTerminal { tab } => write!(f, "OpenInTerminal({})", tab.value()),
             Self::Copied { tab, results, .. } => {
                 write!(f, "Copied({}, {})", tab.value(), results.len())
             }
@@ -725,6 +732,7 @@ impl App {
             | FilesMessage::EditSentAnyway { .. }
             | FilesMessage::EditOpenFolder { .. }
             | FilesMessage::EditStop { .. }) => self.edit_message(message),
+            FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::Copied {
                 tab,
