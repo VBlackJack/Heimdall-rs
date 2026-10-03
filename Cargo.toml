@@ -104,7 +104,7 @@ tokio-util = "0.7.19"
 toml = "1.1.6"
 # unicode-normalization: accents folded out of the tree's search, as the C# FormD fold.
 unicode-normalization = "0.1.25"
-x509-cert = "0.2.5"
+x509-cert = "0.3.0"
 zeroize = "1.9.0"
 
 [workspace.lints.rust]
