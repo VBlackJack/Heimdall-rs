@@ -415,3 +415,188 @@ async fn a_copy_on_the_server_keeps_modes_takes_a_free_name_and_never_copies_int
     );
     assert!(!folder.join("inner/a.txt").exists());
 }
+
+#[tokio::test]
+async fn a_file_is_opened_with_sudo_asking_its_password_once_and_forgetting_a_refused_one() {
+    use heimdall_app::sudo_edit::SudoPassword;
+    use heimdall_app::{Dialog, SudoAction};
+
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), idle_client().await, Some(connection));
+    app.set_edit_dir(dir.path().join("edits"));
+    files(
+        &mut app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Remote,
+            index: 1,
+        },
+    );
+    let remote = RemotePath::from("/srv/a.txt");
+    let opening = files(&mut app, FilesMessage::EditWithSudo { tab });
+    assert!(
+        matches!(opening.as_slice(), [Effect::SudoOpen { remote: asked, password: None, .. }] if *asked == remote),
+        "{opening:?}"
+    );
+    let opened = |app: &mut App, result| {
+        files(
+            app,
+            FilesMessage::SudoOpened {
+                tab,
+                remote: remote.clone(),
+                result,
+            },
+        )
+    };
+    let password = |app: &App| {
+        app.tab(tab)
+            .and_then(|t| t.files.as_ref())
+            .is_some_and(|files| files.sudo_password.is_some())
+    };
+
+    opened(&mut app, Err(FilesError::SudoPasswordNeeded));
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::SudoPassword { action: SudoAction::Open(asked), .. }) if *asked == remote
+    ));
+    // A bare confirm, Enter elsewhere, never answers it: only the password typed does.
+    app.update(Message::ConfirmDialog);
+    assert!(matches!(&app.dialog, Some(Dialog::SudoPassword { .. })));
+    let again = files(
+        &mut app,
+        FilesMessage::SudoPasswordGiven {
+            tab,
+            password: SudoPassword::new("wrong"),
+        },
+    );
+    assert!(matches!(
+        again.as_slice(),
+        [Effect::SudoOpen {
+            password: Some(_),
+            ..
+        }]
+    ));
+    assert!(app.dialog.is_none() && password(&app), "kept for the tab");
+    assert_eq!(
+        format!("{:?}", SudoPassword::new("hunter2")),
+        "SudoPassword(..)",
+        "never shown"
+    );
+
+    opened(&mut app, Err(FilesError::SudoPasswordRejected));
+    assert!(!password(&app), "a refused one is forgotten");
+    assert!(
+        matches!(&app.dialog, Some(Dialog::SudoPassword { .. })),
+        "and asked again"
+    );
+    files(
+        &mut app,
+        FilesMessage::SudoPasswordGiven {
+            tab,
+            password: SudoPassword::new("right"),
+        },
+    );
+}
+
+#[tokio::test]
+async fn a_file_opened_with_sudo_is_watched_with_the_password_and_its_save_said() {
+    use heimdall_app::external_edit::{EditCheck, EditSession};
+    use heimdall_app::sudo_edit::SudoPassword;
+
+    let server = ssh::start(ssh::Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = shell(&server, dir.path()).await;
+    let (mut app, tab) = tab(dir.path(), idle_client().await, Some(connection));
+    app.set_edit_dir(dir.path().join("edits"));
+    let remote = RemotePath::from("/srv/a.txt");
+    let opened = |app: &mut App, result| {
+        files(
+            app,
+            FilesMessage::SudoOpened {
+                tab,
+                remote: remote.clone(),
+                result,
+            },
+        )
+    };
+    opened(&mut app, Err(FilesError::SudoPasswordNeeded));
+    files(
+        &mut app,
+        FilesMessage::SudoPasswordGiven {
+            tab,
+            password: SudoPassword::new("right"),
+        },
+    );
+
+    let local = dir.path().join("edits").join("a.txt");
+    let session = EditSession {
+        remote: remote.clone(),
+        name: "a.txt".to_owned(),
+        local: local.clone(),
+        sent: [0; 32],
+        fingerprint: heimdall_files::Fingerprint {
+            size: None,
+            modified: None,
+            permissions: None,
+            uid_gid: None,
+        },
+        seen: None,
+        candidate: None,
+        refused: None,
+        privileged: true,
+    };
+    opened(&mut app, Ok(Box::new(session)));
+    assert!(app.has_edits());
+    let looked = files(&mut app, FilesMessage::EditTick);
+    assert!(
+        matches!(
+            looked.as_slice(),
+            [Effect::CheckEdits {
+                shell: Some(_),
+                password: Some(_),
+                ..
+            }]
+        ),
+        "a privileged edit is looked at with the connection and the password"
+    );
+    files(
+        &mut app,
+        FilesMessage::EditsChecked {
+            tab,
+            results: Vec::new(),
+        },
+    );
+
+    // Saved with sudo from the row: said so.
+    let saving = files(
+        &mut app,
+        FilesMessage::EditSaveWithSudo {
+            tab,
+            local: local.clone(),
+        },
+    );
+    assert!(matches!(saving.as_slice(), [Effect::SudoSave { .. }]));
+    files(
+        &mut app,
+        FilesMessage::SudoSaved {
+            tab,
+            local,
+            check: EditCheck::Sent {
+                modified: std::time::SystemTime::now(),
+                sent: [1; 32],
+                fingerprint: heimdall_files::Fingerprint {
+                    size: None,
+                    modified: None,
+                    permissions: None,
+                    uid_gid: None,
+                },
+            },
+        },
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FilesSavedWithSudo("a.txt".to_owned()))
+    );
+}

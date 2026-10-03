@@ -120,6 +120,7 @@ pub use broadcast::BroadcastMessage;
 pub use connect_as::ConnectAs;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
+pub use files_edit::SudoAction;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingPlan};
 pub use folder_menu::{FolderMessage, FolderNaming};
@@ -1011,8 +1012,38 @@ pub enum Effect {
         tab: TabId,
         /// Session.
         client: heimdall_files::RemoteSession,
+        /// The SSH connection, for the saves sent with sudo.
+        shell: Option<heimdall_ssh::Connection>,
+        /// The password sudo took for the tab.
+        password: Option<crate::sudo_edit::SudoPassword>,
         /// The files, as they were.
         edits: Vec<crate::external_edit::EditSession>,
+    },
+    /// Open the server's file with sudo, then send [`FilesMessage::SudoOpened`].
+    SudoOpen {
+        /// Tab.
+        tab: TabId,
+        /// The SSH connection.
+        shell: heimdall_ssh::Connection,
+        /// The server's file.
+        remote: heimdall_files::RemotePath,
+        /// The editor.
+        editor: crate::external_edit::Editor,
+        /// The folder edits go under, and those kept.
+        folders: (PathBuf, Vec<PathBuf>),
+        /// The password sudo took for the tab.
+        password: Option<crate::sudo_edit::SudoPassword>,
+    },
+    /// Send an edit's save with sudo, then send [`FilesMessage::SudoSaved`].
+    SudoSave {
+        /// Tab.
+        tab: TabId,
+        /// The SSH connection.
+        shell: heimdall_ssh::Connection,
+        /// The edit.
+        edit: Box<crate::external_edit::EditSession>,
+        /// The password sudo took for the tab.
+        password: Option<crate::sudo_edit::SudoPassword>,
     },
     /// Copy entries of the server on the server, one after another, then send
     /// [`FilesMessage::Copied`].
@@ -1144,6 +1175,10 @@ impl fmt::Debug for Effect {
             Self::CheckEdits { tab, edits, .. } => {
                 write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
             }
+            Self::SudoOpen { tab, remote, .. } => {
+                write!(f, "SudoOpen({}, {remote:?})", tab.value())
+            }
+            Self::SudoSave { tab, .. } => write!(f, "SudoSave({})", tab.value()),
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
             }
@@ -1583,6 +1618,16 @@ pub enum Dialog {
         tab: TabId,
         /// Its name, as the question says it.
         name: String,
+    },
+    /// The password sudo asks for on a Files tab's server, to open or save a file with it;
+    /// typed in the window, never held here.
+    SudoPassword {
+        /// Tab.
+        tab: TabId,
+        /// The file, as the question names it.
+        name: String,
+        /// What the password is for.
+        action: SudoAction,
     },
     /// Close a Files tab with files open in an external editor, whose next saves would
     /// no longer be sent, as the C# close guard asks.
@@ -3016,7 +3061,14 @@ impl App {
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
             Some(Dialog::ConfirmPostConnect(confirmation)) => self.run_post_connect(*confirmation),
-            Some(dialog @ (Dialog::Vault(_) | Dialog::Pin(_) | Dialog::EditGateway { .. })) => {
+            // sudo's question is answered with the password the window holds, never by a
+            // bare confirm.
+            Some(
+                dialog @ (Dialog::Vault(_)
+                | Dialog::Pin(_)
+                | Dialog::EditGateway { .. }
+                | Dialog::SudoPassword { .. }),
+            ) => {
                 self.dialog = Some(dialog);
                 Vec::new()
             }

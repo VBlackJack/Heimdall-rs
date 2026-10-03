@@ -50,6 +50,9 @@ fn files_notice(notice: &Notice) -> String {
         Notice::FilesAutoUploaded(name) => {
             fl!("ui-status-files-auto-uploaded", name = name.as_str())
         }
+        Notice::FilesSavedWithSudo(name) => {
+            fl!("ui-status-files-saved-sudo", name = name.as_str())
+        }
         Notice::FilesAutoUploadRefused { name, error } => fl!(
             "ui-status-files-auto-upload-refused",
             name = name.as_str(),
@@ -73,6 +76,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::FilesPasted
             | Notice::FilesEditing(_)
             | Notice::FilesAutoUploaded(_)
+            | Notice::FilesSavedWithSudo(_)
             | Notice::FilesAutoUploadRefused { .. }
             | Notice::FilesCopied(_)
             | Notice::FilesDuplicated) => files_notice(notice),

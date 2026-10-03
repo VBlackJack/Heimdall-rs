@@ -357,6 +357,10 @@ pub enum Message {
     SaveProviderUnlock,
     /// The password field of the profile form changed.
     ProfilePassword(String),
+    /// The sudo password typed in its question.
+    SudoPasswordEdited(String),
+    /// Give the sudo password typed to the question.
+    SudoPasswordConfirm,
     /// The key passphrase field of the profile form changed.
     ProfilePassphrase(String),
     /// Save the profile form, with the password typed into it.
@@ -479,6 +483,8 @@ impl fmt::Debug for Message {
             Self::ProviderUnlock(_) => f.write_str("ProviderUnlock(..)"),
             Self::SaveProviderUnlock => f.write_str("SaveProviderUnlock"),
             Self::ProfilePassword(_) => f.write_str("ProfilePassword(..)"),
+            Self::SudoPasswordEdited(_) => f.write_str("SudoPasswordEdited(..)"),
+            Self::SudoPasswordConfirm => f.write_str("SudoPasswordConfirm"),
             Self::ProfilePassphrase(_) => f.write_str("ProfilePassphrase(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
@@ -668,6 +674,8 @@ pub struct Shell {
     vault_fields: [Zeroizing<String>; 3],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
+    /// The password typed in sudo's question, until given.
+    sudo_password: Zeroizing<String>,
     /// What is typed into the key passphrase field of the profile form.
     profile_passphrase: Zeroizing<String>,
     /// The credential provider's unlock secret typed, not saved yet.
@@ -790,6 +798,7 @@ impl Shell {
             dialog_focus: None,
             vault_fields: Default::default(),
             profile_password: Zeroizing::default(),
+            sudo_password: Zeroizing::default(),
             profile_passphrase: Zeroizing::default(),
             provider_unlock: Zeroizing::default(),
             gateway_password: Zeroizing::default(),
@@ -927,6 +936,8 @@ impl Shell {
             | Message::Search(_)
             | Message::SettingsTab(_)
             | Message::ProfilePassword(_)
+            | Message::SudoPasswordEdited(_)
+            | Message::SudoPasswordConfirm
             | Message::ProfilePassphrase(_)
             | Message::GatewayPassword(_)
             | Message::GatewayPassphrase(_)
@@ -1003,6 +1014,12 @@ impl Shell {
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
+        // sudo's question gone, answered or not: what was typed for it goes too.
+        if !matches!(self.app.dialog, Some(Dialog::SudoPassword { .. }))
+            && !self.sudo_password.is_empty()
+        {
+            self.sudo_password = Zeroizing::default();
+        }
         self.forget_finished();
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
@@ -1036,6 +1053,21 @@ impl Shell {
             Message::Search(term) => self.search = term,
             Message::SettingsTab(tab) => self.settings_tab = tab,
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
+            Message::SudoPasswordEdited(value) => self.sudo_password = Zeroizing::new(value),
+            Message::SudoPasswordConfirm => {
+                let typed = std::mem::take(&mut self.sudo_password);
+                let Some(Dialog::SudoPassword { tab, .. }) = self.app.dialog else {
+                    return Task::none();
+                };
+                let password = heimdall_app::sudo_edit::SudoPassword::new(&typed);
+                let effects = self
+                    .app
+                    .update(AppMessage::Files(FilesMessage::SudoPasswordGiven {
+                        tab,
+                        password,
+                    }));
+                return Task::batch(effects.into_iter().map(|effect| self.run(effect)));
+            }
             Message::ProviderUnlock(value) => self.provider_unlock = Zeroizing::new(value),
             Message::GatewayPassword(value) => {
                 self.gateway_password = Zeroizing::new(value);
@@ -1208,6 +1240,7 @@ impl Shell {
             fields_height: (height - DIALOG_RESERVED_HEIGHT).max(0.0),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
+            sudo_password: &self.sudo_password,
             profile_passphrase: &self.profile_passphrase,
             gateway_password: &self.gateway_password,
             gateway_passphrase: &self.gateway_passphrase,
@@ -1783,6 +1816,8 @@ impl Shell {
             | Effect::StartEdit { .. }
             | Effect::LaunchEditor { .. }
             | Effect::CheckEdits { .. }
+            | Effect::SudoOpen { .. }
+            | Effect::SudoSave { .. }
             | Effect::SendEditAnyway { .. }
             | Effect::OpenFolder { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
@@ -4142,6 +4177,8 @@ struct Forms<'a> {
     vault: &'a [Zeroizing<String>; 3],
     /// The profile form's password.
     profile_password: &'a str,
+    /// The password typed in sudo's question.
+    sudo_password: &'a str,
     /// The profile form's key passphrase.
     profile_passphrase: &'a str,
     /// The gateway dialog's password.
@@ -5422,6 +5459,28 @@ fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
 /// A name for a tab, as the C# "Rename Tab" asks it: the present one written in, an empty
 /// one giving the tab its own title back.
 /// The C# "Custom resolution" of an RDP tab: the size typed as `WIDTHxHEIGHT`.
+/// sudo's question: its password, typed hidden, kept for the tab once sudo takes it.
+fn sudo_password_dialog<'a>(name: &str, typed: &'a str) -> Element<'a, Message> {
+    column![
+        text(fl!("ui-dialog-sudo-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-sudo-body", name = name)),
+        text_input("", typed)
+            .id(name_field_id())
+            .secure(true)
+            .on_input(Message::SudoPasswordEdited)
+            .on_submit(Message::SudoPasswordConfirm),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-ok-button"))).on_press(Message::SudoPasswordConfirm),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
 fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
     column![
         text(fl!("ui-resolution-custom-title")).size(HEADING_SIZE),
@@ -5569,10 +5628,62 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
     .into()
 }
 
+/// The work of a file edited with sudo: opening it, saving it.
+fn sudo_task(effect: Effect) -> Task<Message> {
+    match effect {
+        Effect::SudoOpen {
+            tab,
+            shell,
+            remote,
+            editor,
+            folders,
+            password,
+        } => Task::perform(
+            {
+                let remote = remote.clone();
+                async move {
+                    heimdall_app::sudo_edit::start_sudo_edit(
+                        shell, remote, editor, folders, password,
+                    )
+                    .await
+                }
+            },
+            move |result| {
+                Message::App(AppMessage::Files(FilesMessage::SudoOpened {
+                    tab,
+                    remote: remote.clone(),
+                    result: result.map(Box::new),
+                }))
+            },
+        ),
+        Effect::SudoSave {
+            tab,
+            shell,
+            edit,
+            password,
+        } => Task::perform(
+            async move {
+                let check =
+                    heimdall_app::sudo_edit::save_with_sudo(&shell, &edit, password.as_ref()).await;
+                (edit.local, check)
+            },
+            move |(local, check)| {
+                Message::App(AppMessage::Files(FilesMessage::SudoSaved {
+                    tab,
+                    local,
+                    check,
+                }))
+            },
+        ),
+        _ => Task::none(),
+    }
+}
+
 /// The work of a file edited with the external editor: opening it, starting the editor
 /// again, looking at its saves.
 fn edit_task(effect: Effect) -> Task<Message> {
     match effect {
+        effect @ (Effect::SudoOpen { .. } | Effect::SudoSave { .. }) => sudo_task(effect),
         Effect::SendEditAnyway { tab, client, edit } => Task::perform(
             async move {
                 let check = heimdall_app::external_edit::send_anyway(&client, &edit).await;
@@ -5641,11 +5752,18 @@ fn edit_task(effect: Effect) -> Task<Message> {
                 }))
             },
         ),
-        Effect::CheckEdits { tab, client, edits } => Task::perform(
+        Effect::CheckEdits {
+            tab,
+            client,
+            shell,
+            password,
+            edits,
+        } => Task::perform(
             async move {
                 let mut results = Vec::with_capacity(edits.len());
                 for edit in &edits {
-                    let check = heimdall_app::external_edit::check_edit(&client, edit).await;
+                    let sudo = shell.as_ref().map(|shell| (shell, password.as_ref()));
+                    let check = heimdall_app::external_edit::check_edit(&client, edit, sudo).await;
                     results.push((edit.local.clone(), check));
                 }
                 results
@@ -5715,6 +5833,8 @@ fn files_task(effect: Effect) -> Task<Message> {
         effect @ (Effect::StartEdit { .. }
         | Effect::LaunchEditor { .. }
         | Effect::CheckEdits { .. }
+        | Effect::SudoOpen { .. }
+        | Effect::SudoSave { .. }
         | Effect::SendEditAnyway { .. }
         | Effect::OpenFolder { .. }) => edit_task(effect),
         Effect::CopyRemote {
@@ -6128,6 +6248,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         .spacing(SPACING)
     };
     match dialog {
+        Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
         Dialog::ConfirmCloseTab(_)
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseEdits { .. }
