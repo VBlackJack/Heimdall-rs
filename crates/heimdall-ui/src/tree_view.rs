@@ -584,6 +584,12 @@ fn profile_entries<'a>(
                 copy(ProfileCopy::SshCommand),
             ));
         }
+        entries = entries.push(entry(
+            fl!("ui-tree-test-reachability"),
+            Some(AppMessage::ProfileMenu(
+                ProfileMenuMessage::TestReachability(id.clone()),
+            )),
+        ));
     }
     entries = entries.push(separator()).push(
         button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))

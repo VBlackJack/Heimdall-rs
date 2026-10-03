@@ -1120,3 +1120,9 @@ ui-address-test-tcp-timeout = Se agotó el tiempo de espera de la conexión TCP 
 ui-address-test-tcp-failed = No se pudo conectar con { $address }: { $reason }
 ui-address-test-cancelled = Prueba cancelada.
 ui-address-test-scoped = { $verdict } { $scope }
+
+## "Test reachability" in a profile's menu, as the C# tree says it in the status bar.
+ui-tree-test-reachability = Probar accesibilidad
+ui-status-reachability-testing = Probando { $host }:{ $port } ...
+ui-status-reachability-success = { $host }:{ $port } accesible en { $millis } ms
+ui-status-reachability-failed = { $host }:{ $port } no accesible: { $reason }
