@@ -1825,6 +1825,7 @@ impl Shell {
             Effect::PickOpenSshConfig => pick_openssh(),
             Effect::PickRdpFiles => pick_rdp(),
             Effect::PickUploads { tab } => pick_uploads(tab),
+            Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::PickSessionsFile => pick_sessions_file(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
@@ -3862,6 +3863,40 @@ fn pick_rdp() -> Task<Message> {
             })
         })
     })
+}
+
+/// The files copied in Explorer read off the window's thread, for `tab`.
+fn read_explorer_files(tab: TabId) -> Task<Message> {
+    Task::perform(
+        async {
+            tokio::task::spawn_blocking(explorer_files)
+                .await
+                .unwrap_or_default()
+        },
+        move |paths| {
+            Message::App(AppMessage::Files(FilesMessage::ExplorerFilesRead {
+                tab,
+                paths,
+            }))
+        },
+    )
+}
+
+/// The files copied in Explorer, as the clipboard lists them; none elsewhere than on
+/// Windows, or when it holds none.
+fn explorer_files() -> Vec<std::path::PathBuf> {
+    #[cfg(windows)]
+    {
+        clipboard_win::get_clipboard::<Vec<String>, _>(clipboard_win::formats::FileList)
+            .unwrap_or_default()
+            .into_iter()
+            .map(std::path::PathBuf::from)
+            .collect()
+    }
+    #[cfg(not(windows))]
+    {
+        Vec::new()
+    }
 }
 
 /// The open dialog of "Upload here...", held by the window: the files picked go to the

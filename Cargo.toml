@@ -81,6 +81,9 @@ suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-ru
 # rfd: the system's save dialog for "Export Sessions", as the C# SaveFileDialog; on Linux
 # through the desktop portal (zbus, already in the tree), no GTK.
 rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] }
+# clipboard-win: the files copied in Explorer (CF_HDROP), read on Windows for "Paste from
+# Explorer" and the RDP file copy; already in the tree through iced's clipboard.
+clipboard-win = "5.4.1"
 # windows-registry: PuTTY's saved sessions, read-only, on Windows; already in the tree.
 windows-registry = "0.100.0"
 tempfile = "3.27.0"
