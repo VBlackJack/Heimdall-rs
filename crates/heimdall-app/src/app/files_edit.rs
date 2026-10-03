@@ -41,6 +41,25 @@ impl App {
             }
             FilesMessage::EditTick => self.edit_tick(),
             FilesMessage::EditsChecked { tab, results } => self.edits_checked(tab, results),
+            FilesMessage::EditSendAnyway { tab, local } => self.edit_send_anyway(tab, &local),
+            FilesMessage::EditSentAnyway { tab, local, check } => {
+                self.edit_sent_anyway(tab, local, check)
+            }
+            FilesMessage::EditOpenFolder { tab, local } => local
+                .parent()
+                .map(|folder| {
+                    vec![Effect::OpenFolder {
+                        tab,
+                        folder: folder.to_path_buf(),
+                    }]
+                })
+                .unwrap_or_default(),
+            FilesMessage::EditStop { tab, local } => {
+                if let Some(files) = self.files_mut(tab) {
+                    files.edits.retain(|edit| edit.local != local);
+                }
+                Vec::new()
+            }
             _ => Vec::new(),
         }
     }
@@ -153,6 +172,38 @@ impl App {
         if let Some(files) = self.files_mut(tab_id) {
             files.remote.error = Some(error);
         }
+    }
+
+    /// "Send my version": a refused save sent over the server's file as it is now.
+    fn edit_send_anyway(&mut self, tab_id: TabId, local: &std::path::Path) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let Some(client) = files.client.clone() else {
+            return Vec::new();
+        };
+        let Some(edit) = files.edits.iter().find(|edit| edit.local == local) else {
+            return Vec::new();
+        };
+        vec![Effect::SendEditAnyway {
+            tab: tab_id,
+            client,
+            edit: Box::new(edit.clone()),
+        }]
+    }
+
+    /// The save sent anyway, or why not: said as a look's would be.
+    fn edit_sent_anyway(&mut self, tab_id: TabId, local: PathBuf, check: EditCheck) -> Vec<Effect> {
+        let checking = self
+            .tab(tab_id)
+            .and_then(|tab| tab.files.as_deref())
+            .is_some_and(|files| files.checking_edits);
+        // A look running meanwhile ends on its own: its flag stays as it is.
+        let effects = self.edits_checked(tab_id, vec![(local, check)]);
+        if let Some(files) = self.files_mut(tab_id) {
+            files.checking_edits = checking;
+        }
+        effects
     }
 
     /// Time to look at the files being edited: in each connected tab with some, unless a

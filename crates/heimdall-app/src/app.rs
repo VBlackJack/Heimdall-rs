@@ -974,6 +974,24 @@ pub enum Effect {
         /// The local copy.
         file: PathBuf,
     },
+    /// Send an edit's refused save over the server's file as it is now, then send
+    /// [`FilesMessage::EditSentAnyway`].
+    SendEditAnyway {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The edit.
+        edit: Box<crate::external_edit::EditSession>,
+    },
+    /// Open a folder in the system's file manager; a failure sends
+    /// [`FilesMessage::EditorLaunched`].
+    OpenFolder {
+        /// Tab.
+        tab: TabId,
+        /// The folder.
+        folder: PathBuf,
+    },
     /// Look at the files being edited, send their saves, then send
     /// [`FilesMessage::EditsChecked`].
     CheckEdits {
@@ -1107,6 +1125,8 @@ impl fmt::Debug for Effect {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
             }
             Self::LaunchEditor { tab, .. } => write!(f, "LaunchEditor({})", tab.value()),
+            Self::SendEditAnyway { tab, .. } => write!(f, "SendEditAnyway({})", tab.value()),
+            Self::OpenFolder { tab, .. } => write!(f, "OpenFolder({})", tab.value()),
             Self::CheckEdits { tab, edits, .. } => {
                 write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
             }

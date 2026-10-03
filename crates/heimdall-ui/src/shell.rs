@@ -1782,7 +1782,9 @@ impl Shell {
             | Effect::CopyRemote { .. }
             | Effect::StartEdit { .. }
             | Effect::LaunchEditor { .. }
-            | Effect::CheckEdits { .. }) => files_task(effect),
+            | Effect::CheckEdits { .. }
+            | Effect::SendEditAnyway { .. }
+            | Effect::OpenFolder { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
@@ -5501,6 +5503,38 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
 /// again, looking at its saves.
 fn edit_task(effect: Effect) -> Task<Message> {
     match effect {
+        Effect::SendEditAnyway { tab, client, edit } => Task::perform(
+            async move {
+                let check = heimdall_app::external_edit::send_anyway(&client, &edit).await;
+                (edit.local, check)
+            },
+            move |(local, check)| {
+                Message::App(AppMessage::Files(FilesMessage::EditSentAnyway {
+                    tab,
+                    local,
+                    check,
+                }))
+            },
+        ),
+        Effect::OpenFolder { tab, folder } => Task::perform(
+            async move {
+                tokio::task::spawn_blocking(move || {
+                    heimdall_app::external_edit::open_folder(&folder)
+                })
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|opened| opened)
+                .map_err(|error| FilesError::EditorFailed {
+                    detail: error.to_string(),
+                })
+            },
+            move |result| {
+                Message::App(AppMessage::Files(FilesMessage::EditorLaunched {
+                    tab,
+                    result,
+                }))
+            },
+        ),
         Effect::StartEdit {
             tab,
             client,
@@ -5610,7 +5644,9 @@ fn files_task(effect: Effect) -> Task<Message> {
         }
         effect @ (Effect::StartEdit { .. }
         | Effect::LaunchEditor { .. }
-        | Effect::CheckEdits { .. }) => edit_task(effect),
+        | Effect::CheckEdits { .. }
+        | Effect::SendEditAnyway { .. }
+        | Effect::OpenFolder { .. }) => edit_task(effect),
         Effect::CopyRemote {
             tab,
             client,
