@@ -1685,16 +1685,9 @@ impl Shell {
             | Effect::ConnectFtp { .. }
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
-            Effect::TestAddress {
-                test,
-                host,
-                port,
-                ssh,
-                cancel,
-            } => Task::perform(
-                heimdall_app::reachability::test(host, port, ssh, cancel),
-                move |result| Message::App(AppMessage::AddressTested { test, result }),
-            ),
+            effect @ (Effect::TestReachability { .. } | Effect::TestAddress { .. }) => {
+                reachability_task(effect)
+            }
             Effect::OpenTunnel { id, request } => {
                 // Its end is the tunnel's own: closing it cancels the attempt, which ends
                 // the stream.
@@ -4225,6 +4218,33 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::LegacyAlgorithms => fl!("ui-profile-toggle-legacy-algorithms"),
         ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
+    }
+}
+
+/// The task testing whether an address answers: the tree's, or the profile form's.
+fn reachability_task(effect: Effect) -> Task<Message> {
+    match effect {
+        Effect::TestReachability { host, port } => Task::perform(
+            heimdall_app::reachability::test_from_tree(host.clone(), port),
+            move |result| {
+                Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::Tested {
+                    host: host.clone(),
+                    port,
+                    result,
+                }))
+            },
+        ),
+        Effect::TestAddress {
+            test,
+            host,
+            port,
+            ssh,
+            cancel,
+        } => Task::perform(
+            heimdall_app::reachability::test(host, port, ssh, cancel),
+            move |result| Message::App(AppMessage::AddressTested { test, result }),
+        ),
+        _ => Task::none(),
     }
 }
 

@@ -82,7 +82,7 @@ pub fn chip(test: &AddressTest, gateway: Option<&str>) -> Option<(String, Tone)>
 }
 
 /// Why the address did not answer, in the C# words.
-fn reason(failure: &Unreached) -> String {
+pub(crate) fn reason(failure: &Unreached) -> String {
     match failure {
         Unreached::DnsTimeout => fl!("ui-address-test-dns-timeout"),
         Unreached::DnsFailed(detail) => {

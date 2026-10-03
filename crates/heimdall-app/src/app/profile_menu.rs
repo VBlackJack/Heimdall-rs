@@ -19,7 +19,7 @@
 use heimdall_core::folder;
 use heimdall_core::profile::ProfileId;
 
-use super::{App, Dialog, Effect};
+use super::{App, Dialog, Effect, Notice};
 
 /// Something from a profile's menu about its name or its folder.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,6 +34,17 @@ pub enum ProfileMenuMessage {
         id: ProfileId,
         /// The folder.
         to: Option<String>,
+    },
+    /// Test whether a profile's address answers, as the C# tree's "Test reachability".
+    TestReachability(ProfileId),
+    /// What that test found.
+    Tested {
+        /// The address tested.
+        host: String,
+        /// Its port.
+        port: u16,
+        /// What it found.
+        result: Result<crate::reachability::Reached, crate::reachability::Unreached>,
     },
 }
 
@@ -53,6 +64,33 @@ impl App {
                 if let Some(Dialog::RenameProfile { value: typed, .. }) = self.dialog.as_mut() {
                     *typed = value;
                 }
+            }
+            ProfileMenuMessage::TestReachability(id) => {
+                let Some((host, port)) = self
+                    .profile_summary(&id)
+                    .and_then(|profile| profile.endpoint)
+                else {
+                    return Vec::new();
+                };
+                self.tell(Notice::ReachabilityTesting {
+                    host: host.clone(),
+                    port,
+                });
+                return vec![Effect::TestReachability { host, port }];
+            }
+            ProfileMenuMessage::Tested { host, port, result } => {
+                self.tell(match result {
+                    Ok(reached) => Notice::Reachable {
+                        host,
+                        port,
+                        millis: reached.millis,
+                    },
+                    Err(failure) => Notice::Unreachable {
+                        host,
+                        port,
+                        failure,
+                    },
+                });
             }
             ProfileMenuMessage::Move { id, to } => {
                 if let Err(error) = self.store.apply(|store| store.set_group(&id, to)) {

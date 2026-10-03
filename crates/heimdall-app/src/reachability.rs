@@ -30,6 +30,9 @@ use tokio_util::sync::CancellationToken;
 /// as the C# five seconds.
 pub const TEST_BUDGET: Duration = Duration::from_secs(5);
 
+/// The time the tree's "Test reachability" has, as the C# two seconds.
+pub const TREE_BUDGET: Duration = Duration::from_secs(2);
+
 /// Most bytes read for an SSH banner, as the C# probe: a server's identification line comes
 /// first, after at most a few lines of its own.
 const BANNER_LIMIT: usize = 512;
@@ -81,11 +84,35 @@ pub async fn test(
     ssh: bool,
     cancel: CancellationToken,
 ) -> Result<Reached, Unreached> {
+    test_within(host, port, ssh, TEST_BUDGET, cancel).await
+}
+
+/// The tree's "Test reachability": TCP only, within [`TREE_BUDGET`], as the C# one.
+///
+/// # Errors
+///
+/// Why it did not answer.
+pub async fn test_from_tree(host: String, port: u16) -> Result<Reached, Unreached> {
+    test_within(host, port, false, TREE_BUDGET, CancellationToken::new()).await
+}
+
+/// [`test`], with `budget` instead of [`TEST_BUDGET`].
+///
+/// # Errors
+///
+/// Why it did not answer, or [`Unreached::Cancelled`] once `cancel` fires.
+pub async fn test_within(
+    host: String,
+    port: u16,
+    ssh: bool,
+    budget: Duration,
+    cancel: CancellationToken,
+) -> Result<Reached, Unreached> {
     tokio::select! {
         // A stop already asked for wins over an answer arriving at the same time.
         biased;
         () = cancel.cancelled() => Err(Unreached::Cancelled),
-        result = run(host, port, ssh, TEST_BUDGET) => result,
+        result = run(host, port, ssh, budget) => result,
     }
 }
 
