@@ -151,6 +151,23 @@ pub enum FilesMessage {
         /// Pane.
         side: Side,
     },
+    /// Hold the server's selected entries to be pasted, as the C# "Cut".
+    Cut {
+        /// Tab.
+        tab: TabId,
+    },
+    /// Move the entries cut into the server's folder shown, as the C# "Paste".
+    Paste {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The moves of a paste ended.
+    Moved {
+        /// Tab.
+        tab: TabId,
+        /// Each entry moved, by its path before, and how it went.
+        results: Vec<(RemotePath, Result<(), FilesError>)>,
+    },
     /// Go to the folder typed in a pane's path bar.
     GoTo {
         /// Tab.
@@ -333,6 +350,9 @@ impl std::fmt::Debug for FilesMessage {
             }
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
+            Self::Cut { tab } => write!(f, "Cut({})", tab.value()),
+            Self::Paste { tab } => write!(f, "Paste({})", tab.value()),
+            Self::Moved { tab, results } => write!(f, "Moved({}, {})", tab.value(), results.len()),
             Self::Bookmark { tab } => write!(f, "Bookmark({})", tab.value()),
             Self::Dropped { tab, .. } => write!(f, "Dropped({}, ..)", tab.value()),
             Self::Filter { tab, side, .. } => write!(f, "Filter({}, {side:?}, ..)", tab.value()),
@@ -431,7 +451,7 @@ fn name_bytes(name: &std::ffi::OsStr) -> Vec<u8> {
 }
 
 impl App {
-    fn files_mut(&mut self, tab: TabId) -> Option<&mut FilesPane> {
+    pub(super) fn files_mut(&mut self, tab: TabId) -> Option<&mut FilesPane> {
         self.tab_mut(tab)?.files.as_deref_mut()
     }
 
@@ -455,7 +475,7 @@ impl App {
         effects
     }
 
-    fn list(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+    pub(super) fn list(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -593,6 +613,9 @@ impl App {
             FilesMessage::Back { tab, side } => self.go_back(tab, side),
             FilesMessage::Home { tab, side } => self.go_home(tab, side),
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
+            FilesMessage::Cut { tab } => self.cut_entries(tab),
+            FilesMessage::Paste { tab } => self.paste_cut(tab),
+            FilesMessage::Moved { tab, results } => self.moved_cut(tab, results),
             message @ (FilesMessage::PathEdited { .. }
             | FilesMessage::GoTo { .. }
             | FilesMessage::SortBy { .. }
@@ -784,7 +807,7 @@ impl App {
         let Some(path) = path else {
             return Vec::new();
         };
-        self.tell(super::Notice::Copied(path.clone()));
+        self.tell(super::Notice::PathCopied(path.clone()));
         vec![Effect::WriteClipboard(path)]
     }
 
@@ -933,6 +956,7 @@ impl App {
             FilesKey::Rename => return self.ask(tab, side, NameAction::Rename),
             FilesKey::Delete => return self.ask_delete(tab, side),
             FilesKey::Refresh => return self.list(tab, side),
+            FilesKey::CopyPath => return self.copy_path(tab, side),
         };
         match side {
             Side::Remote => files.remote.select_only(target),

@@ -103,6 +103,12 @@ pub enum Notice {
     PortCopied(u16),
     /// This folder was created.
     FolderCreated(String),
+    /// The full path of an entry of a Files tab was copied, as the C# says it.
+    PathCopied(String),
+    /// This many entries of a Files tab were cut.
+    FilesCut(usize),
+    /// The entries cut were pasted.
+    FilesPasted,
     /// A transcript was started, in this file.
     TranscriptStarted(String),
     /// A transcript was stopped.

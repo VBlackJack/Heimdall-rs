@@ -75,6 +75,7 @@ mod auto_reconnect;
 mod broadcast;
 mod connect_as;
 mod file_import;
+mod files_clipboard;
 mod files_tab;
 mod folder_menu;
 mod folders;
@@ -116,6 +117,7 @@ pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
 pub use connect_as::ConnectAs;
 pub use file_import::{FileKind, ImportFile, PendingImport};
+pub use files_clipboard::FilesClipboard;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingPlan};
 pub use folder_menu::{FolderMessage, FolderNaming};
@@ -920,6 +922,15 @@ pub enum Effect {
         /// What to do.
         operation: Box<FileOperation>,
     },
+    /// Move entries of the server one after another, then send [`FilesMessage::Moved`].
+    MoveRemote {
+        /// Tab.
+        tab: TabId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// Each entry and its new path.
+        moves: Vec<(heimdall_files::RemotePath, heimdall_files::RemotePath)>,
+    },
     /// Plan a transfer whole, then send [`FilesMessage::Planned`].
     PlanTransfer {
         /// Tab.
@@ -1020,6 +1031,9 @@ impl fmt::Debug for Effect {
             Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
+            }
+            Self::MoveRemote { tab, moves, .. } => {
+                write!(f, "MoveRemote({}, {})", tab.value(), moves.len())
             }
             Self::PlanTransfer { tab, request } => write!(
                 f,
@@ -1717,6 +1731,8 @@ pub struct App {
     next_route_test: u64,
     /// What the profile form's SSH agent chip knows.
     agent_chip: AgentChip,
+    /// The entries cut in a Files tab, waiting to be pasted.
+    files_clipboard: Option<FilesClipboard>,
     /// The address test running in the profile form, and what stops it.
     address_test: Option<(u64, CancellationToken)>,
     /// The number of the next address test.
@@ -1811,6 +1827,7 @@ impl App {
             route_test: None,
             next_route_test: 0,
             agent_chip: AgentChip::Unknown,
+            files_clipboard: None,
             address_test: None,
             next_address_test: 0,
             tunnels: Vec::new(),

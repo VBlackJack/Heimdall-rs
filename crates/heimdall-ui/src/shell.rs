@@ -25,7 +25,8 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    FilesKey, Side, file_operation, list_local, list_remote, plan_transfer, transfer_events,
+    FilesKey, Side, file_operation, list_local, list_remote, move_remote, plan_transfer,
+    transfer_events,
 };
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
@@ -253,6 +254,11 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
+                // Ctrl+C copies the selected entry's path, as the C# Files tab; a
+                // terminal or a field took it first.
+                None if ctrl_letter(&key, physical_key, modifiers) == Some('c') => {
+                    Some(Message::FilesKey(FilesKey::CopyPath))
+                }
                 None => files_view::files_key(&key, modifiers).map(Message::FilesKey),
             }
         }
@@ -1753,7 +1759,8 @@ impl Shell {
             | Effect::ListLocal { .. }
             | Effect::PlanTransfer { .. }
             | Effect::Transfer { .. }
-            | Effect::FileOperation { .. }) => files_task(effect),
+            | Effect::FileOperation { .. }
+            | Effect::MoveRemote { .. }) => files_task(effect),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
@@ -1962,7 +1969,7 @@ impl Shell {
             if index >= listed {
                 return None;
             }
-            tree_view::files_entry_menu(tab, side, index)
+            tree_view::files_entry_menu(tab, side, index, self.app.can_paste(tab))
         } else if let TreeMenu::Folder(path) = menu {
             tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
         } else if let TreeMenu::MoveFolder(path) = menu {
@@ -5438,6 +5445,11 @@ fn files_task(effect: Effect) -> Task<Message> {
                 result,
             }))
         }),
+        Effect::MoveRemote { tab, client, moves } => {
+            Task::perform(move_remote(client, moves), move |results| {
+                Message::App(AppMessage::Files(FilesMessage::Moved { tab, results }))
+            })
+        }
         _ => Task::none(),
     }
 }
