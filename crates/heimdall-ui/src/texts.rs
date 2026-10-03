@@ -248,6 +248,7 @@ pub fn error(error: &UiError) -> String {
 fn key_problem(problem: &KeyProblem, path: &str) -> String {
     match problem {
         KeyProblem::NotFound => fl!("ui-error-key-not-found", path = path),
+        KeyProblem::NotAbsolute => fl!("ui-error-key-not-absolute", path = path),
         KeyProblem::Unreadable => fl!("ui-error-key-unreadable", path = path),
         KeyProblem::UnknownFormat => fl!("ui-error-key-unknown-format", path = path),
         KeyProblem::NeedsPassphrase => fl!("ui-error-key-needs-passphrase", path = path),

@@ -1196,3 +1196,4 @@ ui-status-files-copied = { $count ->
 ui-status-files-duplicated = Duplicado completo
 ui-files-error-copy-refused = Copia rechazada: este servidor no realizó la copia del lado del servidor, y Heimdall no recurrirá a una transferencia que podría sobrescribir un destino existente. Copia el archivo localmente, o comprueba que el servidor permite ejecutar cp, ln y mkdir.
 ui-files-error-paste-into-itself = No se puede pegar { $name } dentro de sí mismo o de su propia subcarpeta.
+ui-error-key-not-absolute = La ruta de la clave SSH debe ser absoluta: { $path }
