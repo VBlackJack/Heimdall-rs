@@ -88,7 +88,7 @@ impl ServerCertificate {
     /// [`CertificateError`] when the DER does not parse, or the key bits are not whole bytes.
     pub fn from_der(der: &[u8]) -> Result<Self, CertificateError> {
         let certificate = Certificate::from_der(der).map_err(|_| CertificateError)?;
-        let info = &certificate.tbs_certificate.subject_public_key_info;
+        let info = certificate.tbs_certificate().subject_public_key_info();
         let spki = info.to_der().map_err(|_| CertificateError)?;
         let hash = digest(&SHA256, &spki);
         let fingerprint = Fingerprint(hash.as_ref().try_into().map_err(|_| CertificateError)?);
@@ -100,7 +100,7 @@ impl ServerCertificate {
         Ok(Self {
             fingerprint,
             public_key,
-            subject: shown(&certificate.tbs_certificate.subject.to_string()),
+            subject: shown(&certificate.tbs_certificate().subject().to_string()),
         })
     }
 }
