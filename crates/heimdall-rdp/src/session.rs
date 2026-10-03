@@ -39,6 +39,8 @@ use tokio::sync::{mpsc, watch};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
 
+use ring::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
+
 use ironrdp::cliprdr::CliprdrClient;
 use ironrdp::cliprdr::pdu::{ClipboardFormatId, FileContentsRequest, FileContentsResponse};
 use zeroize::Zeroizing;
@@ -234,12 +236,63 @@ struct Shared {
         mpsc::UnboundedSender<FileContentsResponse<'static>>,
         mpsc::UnboundedReceiver<FileContentsResponse<'static>>,
     ),
-    /// The files last offered, or being walked: the same copy, offered again each time the
-    /// tab is shown, is not walked again.
-    files: Option<Vec<PathBuf>>,
+    /// What the server's clipboard holds from this side, or gave it.
+    held: Held,
     /// Counts what this side offers: a walk that ends after a newer offer is dropped.
     generation: u64,
     timeouts: tokio::time::Interval,
+}
+
+/// What the server's clipboard last held from this side, or gave this side: this side's
+/// clipboard is offered each time the tab is shown, and offering the same again would take
+/// the clipboard back from the server, a copy made there since included.
+#[derive(Debug, Default)]
+struct Held {
+    /// SHA-256 of the text offered, or received from the server.
+    text: Option<[u8; SHA256_OUTPUT_LEN]>,
+    /// The files offered, or being walked.
+    files: Option<Vec<PathBuf>>,
+}
+
+impl Held {
+    /// Whether `text` is new to the server; remembered when it is.
+    fn new_text(&mut self, text: &str) -> bool {
+        let seen = fingerprint(text);
+        if self.text == Some(seen) {
+            return false;
+        }
+        self.text = Some(seen);
+        self.files = None;
+        true
+    }
+
+    /// Whether `paths` are new to the server; remembered when they are.
+    fn new_files(&mut self, paths: &[PathBuf]) -> bool {
+        if self.files.as_deref() == Some(paths) {
+            return false;
+        }
+        self.files = Some(paths.to_vec());
+        self.text = None;
+        true
+    }
+
+    /// The server copied `text`: it reaches this side's clipboard, and is not offered back.
+    fn received(&mut self, text: &str) {
+        self.text = Some(fingerprint(text));
+        self.files = None;
+    }
+
+    /// The files are no longer offered: the same copied again is offered again.
+    fn forget_files(&mut self) {
+        self.files = None;
+    }
+}
+
+/// SHA-256 of `text`, so the text itself is not kept.
+fn fingerprint(text: &str) -> [u8; SHA256_OUTPUT_LEN] {
+    let mut seen = [0; SHA256_OUTPUT_LEN];
+    seen.copy_from_slice(digest(&SHA256, text.as_bytes()).as_ref());
+    seen
 }
 
 /// Files walked for the offer numbered `generation`.
@@ -266,7 +319,7 @@ impl Shared {
             offers,
             walked: mpsc::unbounded_channel(),
             read: mpsc::unbounded_channel(),
-            files: None,
+            held: Held::default(),
             generation: 0,
             timeouts,
         }
@@ -286,16 +339,15 @@ impl Shared {
     /// files copied again are walked again.
     fn forget_files(&mut self) {
         self.generation += 1;
-        self.files = None;
+        self.held.forget_files();
     }
 
     /// Walks `paths` off the session's task, unless they are the files offered already.
     fn walk(&mut self, paths: Vec<PathBuf>) {
-        if self.files.as_ref() == Some(&paths) {
+        if !self.held.new_files(&paths) {
             return;
         }
         self.generation += 1;
-        self.files = Some(paths.clone());
         let generation = self.generation;
         let walked = self.walked.0.clone();
         tokio::task::spawn_blocking(move || {
@@ -527,6 +579,7 @@ impl Running {
         };
         let messages = match step {
             ClipboardStep::Request(Request::Received(text)) => {
+                shared.held.received(&text);
                 let _ = self.events.send(RdpEvent::RemoteClipboard(text)).await;
                 return Ok(());
             }
@@ -544,6 +597,9 @@ impl Running {
                 channel.initiate_copy(&offered_formats(&offered))
             }
             ClipboardStep::Offer(LocalClipboard::Text(text)) => {
+                if !shared.held.new_text(&text) {
+                    return Ok(());
+                }
                 shared.forget_files();
                 offer_files(channel, None);
                 *offered.lock().unwrap_or_else(PoisonError::into_inner) = Some(text);
@@ -759,6 +815,48 @@ mod resize_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn what_the_server_holds_from_this_side_is_not_offered_again() {
+        let mut held = Held::default();
+        assert!(held.new_text("copied here"));
+        assert!(
+            !held.new_text("copied here"),
+            "the tab shown again: the server's copy made since is kept"
+        );
+        assert!(held.new_text("copied again"));
+
+        let copied = vec![PathBuf::from("report.docx")];
+        assert!(held.new_files(&copied));
+        assert!(!held.new_files(&copied));
+        assert!(
+            held.new_text("copied again"),
+            "files offered since: the same text is new again"
+        );
+        assert!(
+            held.new_files(&copied),
+            "text offered since: the files are new again"
+        );
+
+        held.forget_files();
+        assert!(held.new_files(&copied), "a failed offer is tried again");
+    }
+
+    #[test]
+    fn the_servers_text_is_not_offered_back_to_it() {
+        let mut held = Held::default();
+        let copied = vec![PathBuf::from("report.docx")];
+        assert!(held.new_files(&copied));
+        held.received("from the server");
+        assert!(
+            !held.new_text("from the server"),
+            "written to this side's clipboard, then read when the tab is shown"
+        );
+        assert!(
+            held.new_files(&copied),
+            "the server took its clipboard back since"
+        );
+    }
 
     #[test]
     fn the_server_s_disconnect_ultimatum_is_a_close_and_data_is_not() {
