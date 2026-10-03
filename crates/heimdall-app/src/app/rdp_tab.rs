@@ -389,10 +389,27 @@ impl App {
             }
             _ => None,
         };
-        if let Some(notice) = notice {
-            self.tell(notice);
+        let Some(notice) = notice else {
+            return Vec::new();
+        };
+        let ended = matches!(notice, super::Notice::RdpFilesSaveEnded(_));
+        self.tell(notice);
+        if ended {
+            self.offer_again(tab_id)
+        } else {
+            Vec::new()
         }
-        Vec::new()
+    }
+
+    /// This side's clipboard, held while the server's files were saved, offered again to
+    /// the desktop shown: what was copied meanwhile reaches it.
+    fn offer_again(&self, tab_id: TabId) -> Vec<Effect> {
+        if self.active != Some(tab_id) {
+            return Vec::new();
+        }
+        self.tab(tab_id)
+            .map(super::clipboard_offer)
+            .unwrap_or_default()
     }
 
     /// The user saves the RDP server's copied files: a folder asked for, then given to the
@@ -416,10 +433,16 @@ impl App {
             }
             super::Message::SaveFolderPicked { folder, .. } => {
                 pane.save_into(folder);
+                if pane.save_state().is_none() {
+                    return self.offer_again(tab);
+                }
                 Vec::new()
             }
             super::Message::CancelSave(_) => {
                 pane.cancel_save();
+                if pane.save_state().is_none() {
+                    return self.offer_again(tab);
+                }
                 Vec::new()
             }
             _ => Vec::new(),

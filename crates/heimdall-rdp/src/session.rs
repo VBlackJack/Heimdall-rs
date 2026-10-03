@@ -164,6 +164,10 @@ pub enum LocalClipboard {
     /// Files and folders copied, as Explorer lists them: offered when the server takes
     /// files, walked and read off the session's task.
     Files(Vec<PathBuf>),
+    /// Hold this side's offers: the user is about to save the server's files, and
+    /// offering would take the server's clipboard back. Released by
+    /// [`LocalClipboard::SaveRemoteFiles`] or [`LocalClipboard::CancelSave`].
+    HoldOffers,
     /// Save the files the server copied into this folder.
     SaveRemoteFiles(PathBuf),
     /// Stop saving the server's files: what is saved stays.
@@ -267,6 +271,10 @@ struct Shared {
     save: Option<Saving>,
     /// Counts the saves: what the writer of an earlier one says is dropped.
     saves: u64,
+    /// The number of the last request for the server's bytes, across saves.
+    streams: u32,
+    /// This side's offers held while the user picks where to save the server's files.
+    held_back: bool,
     /// What the writer did, for the save it writes.
     written: (
         mpsc::UnboundedSender<WriterReport>,
@@ -295,6 +303,8 @@ enum ToWriter {
     Do(Command),
     /// Stop: the file being written is deleted.
     Abandon,
+    /// The copy is complete.
+    Finish,
 }
 
 /// What saving the server's files has to send or say.
@@ -388,6 +398,8 @@ impl Shared {
             timeouts,
             save: None,
             saves: 0,
+            streams: 0,
+            held_back: false,
             written: mpsc::unbounded_channel(),
         }
     }
@@ -401,6 +413,12 @@ impl Shared {
             _ = self.timeouts.tick() => ClipboardStep::Timeouts,
             Some((save, ok)) = self.written.1.recv() => ClipboardStep::Written(save, ok),
         }
+    }
+
+    /// Whether this side's offers are held: the server's files are being saved, or about
+    /// to be.
+    fn holds_offers(&self) -> bool {
+        self.save.is_some() || self.held_back
     }
 
     /// The download of the save running.
@@ -434,6 +452,10 @@ impl Shared {
                         writer.abandon();
                         break;
                     }
+                    ToWriter::Finish => {
+                        writer.finish();
+                        break;
+                    }
                 }
             }
         });
@@ -443,16 +465,14 @@ impl Shared {
     /// Stops the save: the list no longer waited for, or the writer told to abandon. What
     /// was saved, of all, when one was under way.
     fn stop_save(&mut self, channel: &mut CliprdrClient) -> Option<(usize, usize)> {
+        // A list still asked for is dropped when it comes: no save is listing any more.
+        let _ = channel;
         match self.save.take()? {
-            Saving::Listing { .. } => {
-                if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
-                    backend.give_up_files();
-                }
-                Some((0, 0))
-            }
+            Saving::Listing { .. } => Some((0, 0)),
             Saving::Running {
                 download, writer, ..
             } => {
+                self.streams = download.stream();
                 let _ = writer.send(ToWriter::Abandon);
                 Some((download.saved(), download.total()))
             }
@@ -461,6 +481,10 @@ impl Shared {
 
     /// The list of the server's files, waited for too long: the save stops.
     fn overdue(&mut self, channel: &mut CliprdrClient) -> Option<SaveEnd> {
+        // An answer of the server's clipboard that never came is no longer waited for.
+        if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
+            backend.expire();
+        }
         let Some(Saving::Listing { since, .. }) = &self.save else {
             return None;
         };
@@ -473,33 +497,42 @@ impl Shared {
 
     /// Starts saving the server's files into `folder`: their list asked for.
     fn begin_save(&mut self, channel: &mut CliprdrClient, folder: PathBuf) -> SaveOutcome {
-        let mut outcome = SaveOutcome::default();
         if self.save.is_some() {
+            return SaveOutcome::default();
+        }
+        self.save = Some(Saving::Listing {
+            folder,
+            since: Instant::now(),
+        });
+        self.list_files(channel)
+    }
+
+    /// Asks for the list of the server's files, unless something else asked of its
+    /// clipboard is unanswered: then once it is, as [`Request::ListFiles`].
+    fn list_files(&mut self, channel: &mut CliprdrClient) -> SaveOutcome {
+        let mut outcome = SaveOutcome::default();
+        if !matches!(self.save, Some(Saving::Listing { .. })) {
             return outcome;
         }
         let format = channel
             .downcast_backend::<ClipboardBackend>()
             .and_then(ClipboardBackend::remote_files);
         let Some(format) = format else {
+            self.save = None;
             outcome.ended = Some(SaveEnd::Failed { saved: 0, total: 0 });
             return outcome;
         };
-        if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
-            backend.ask(Asked::Files);
+        if !ask(channel, Asked::Files) {
+            return outcome;
         }
         match channel.initiate_paste(format) {
-            Ok(messages) => {
-                self.save = Some(Saving::Listing {
-                    folder,
-                    since: Instant::now(),
-                });
-                outcome.messages = Some(messages);
-            }
+            Ok(messages) => outcome.messages = Some(messages),
             Err(error) => {
                 log::warn!("server's files not listed: {error}");
                 if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
-                    backend.give_up_files();
+                    backend.withdraw();
                 }
+                self.save = None;
                 outcome.ended = Some(SaveEnd::Failed { saved: 0, total: 0 });
             }
         }
@@ -519,7 +552,7 @@ impl Shared {
         match crate::clipboard_save::plan(files, COPY_LIMITS) {
             Ok(items) => {
                 let writer = self.start_writer(folder);
-                let mut download = Download::new(items, lock);
+                let mut download = Download::new(items, lock, self.streams);
                 let first = download.start();
                 self.save = Some(Saving::Running {
                     download,
@@ -548,6 +581,7 @@ impl Shared {
             else {
                 return outcome;
             };
+            self.streams = download.stream();
             action = match action {
                 SaveStep::Write(command) => {
                     let starts = matches!(command, Command::Open(_) | Command::Folder(_));
@@ -571,6 +605,7 @@ impl Shared {
                     }
                 },
                 SaveStep::Done { saved } => {
+                    let _ = writer.send(ToWriter::Finish);
                     self.save = None;
                     outcome.ended = Some(SaveEnd::Saved(saved));
                     return outcome;
@@ -623,6 +658,14 @@ async fn next_clipboard_step(shared: &mut Option<Shared>) -> ClipboardStep {
         Some(shared) => shared.next().await,
         None => std::future::pending().await,
     }
+}
+
+/// Whether `asked` can be asked of the server's clipboard now; else it waits for the
+/// answer to what was asked before.
+fn ask(channel: &mut CliprdrClient, asked: Asked) -> bool {
+    channel
+        .downcast_backend_mut::<ClipboardBackend>()
+        .is_some_and(|backend| backend.ask(asked))
 }
 
 /// This side took the clipboard: whether the server's files were there to save.
@@ -850,8 +893,8 @@ impl Running {
                 return Ok(());
             }
             ClipboardStep::Request(Request::Paste) => {
-                if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
-                    backend.ask(Asked::Text);
+                if !ask(channel, Asked::Text) {
+                    return Ok(());
                 }
                 channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
             }
@@ -862,7 +905,8 @@ impl Running {
                 channel.initiate_copy(&offered_formats(&offered))
             }
             ClipboardStep::Offer(LocalClipboard::Text(text)) => {
-                if !shared.held.new_text(&text) {
+                // Held: not remembered, so offered again once the save ends.
+                if shared.holds_offers() || !shared.held.new_text(&text) {
                     return Ok(());
                 }
                 shared.forget_files();
@@ -876,7 +920,7 @@ impl Running {
             }
             ClipboardStep::Offer(LocalClipboard::Files(paths)) => {
                 // Offering files would release the lock on the server's copy being saved.
-                if takes_files(channel) && shared.save.is_none() {
+                if takes_files(channel) && !shared.holds_offers() {
                     shared.walk(paths);
                 }
                 return Ok(());
@@ -885,7 +929,7 @@ impl Running {
                 if walked.generation != shared.generation {
                     return Ok(());
                 }
-                if shared.save.is_some() {
+                if shared.holds_offers() {
                     shared.forget_files();
                     return Ok(());
                 }
@@ -950,19 +994,26 @@ impl Running {
         let mut outcome = SaveOutcome::default();
         match step {
             ClipboardStep::Offer(LocalClipboard::SaveRemoteFiles(folder)) => {
+                shared.held_back = false;
                 outcome = shared.begin_save(channel, folder);
             }
+            ClipboardStep::Request(Request::ListFiles) => outcome = shared.list_files(channel),
+            ClipboardStep::Offer(LocalClipboard::HoldOffers) => {
+                shared.held_back = true;
+                // A walk under way is dropped.
+                shared.forget_files();
+            }
             ClipboardStep::Offer(LocalClipboard::CancelSave) => {
+                shared.held_back = false;
                 outcome.ended = shared
                     .stop_save(channel)
                     .map(|(saved, total)| SaveEnd::Cancelled { saved, total });
             }
             ClipboardStep::Request(Request::RemoteFiles(available)) => {
                 let _ = self.events.send(RdpEvent::RemoteFiles(available)).await;
-                // Without a lock, the copy being read went with the server's new one.
-                if let Some(download) = shared.running()
-                    && download.lock().is_none()
-                {
+                // The server copied again: a server keeping no lock, or not honouring it,
+                // would read the new copy in place of the one being saved.
+                if let Some(download) = shared.running() {
                     let lost = download.lost();
                     outcome = shared.act(channel, lost);
                 }
@@ -1182,6 +1233,8 @@ mod resize_tests {
 
 #[cfg(test)]
 mod tests {
+    use ironrdp::cliprdr::backend::CliprdrBackend as _;
+
     use super::*;
 
     /// A clipboard channel not ready yet, as before the server's Monitor Ready, and the
@@ -1232,6 +1285,24 @@ mod tests {
             "the channel is not ready: refused, the session kept"
         );
         assert!(shared.save.is_none());
+    }
+
+    #[tokio::test]
+    async fn the_list_waits_for_the_servers_text_asked_before() {
+        let (mut channel, mut shared) = unready();
+        if let Some(backend) = channel.downcast_backend_mut::<ClipboardBackend>() {
+            backend.on_remote_copy(&[ironrdp::cliprdr::pdu::ClipboardFormat::new(
+                ClipboardFormatId::new(0xC0A1),
+            )
+            .with_name(ironrdp::cliprdr::pdu::ClipboardFormatName::FILE_LIST)]);
+            assert!(backend.ask(Asked::Text));
+        }
+        let outcome = shared.begin_save(&mut channel, PathBuf::from("saved"));
+        assert!(outcome.messages.is_none() && outcome.ended.is_none());
+        assert!(
+            matches!(shared.save, Some(Saving::Listing { .. })),
+            "asked later"
+        );
     }
 
     #[tokio::test]

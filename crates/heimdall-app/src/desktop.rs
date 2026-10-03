@@ -429,6 +429,10 @@ impl DesktopPane {
     /// Offers `text`, this side's clipboard, to the server; whether it could be. Asked only
     /// of a desktop that [accepts it](Self::accepts_clipboard).
     pub(crate) fn offer_clipboard(&self, text: String) -> bool {
+        // Read before a save began: offering would take the server's clipboard back.
+        if self.save.is_some() {
+            return false;
+        }
         match &self.sink {
             DesktopSink::Rdp { .. } => self.clipboard.as_ref().is_some_and(|clipboard| {
                 clipboard
@@ -462,6 +466,10 @@ impl DesktopPane {
         if !self.can_save_files() {
             return false;
         }
+        // The session drops what it was about to offer: the server's clipboard is kept.
+        if let Some(clipboard) = &self.clipboard {
+            let _ = clipboard.send(LocalClipboard::HoldOffers);
+        }
         self.save = Some(SaveState::Picking);
         true
     }
@@ -472,23 +480,31 @@ impl DesktopPane {
         if self.save != Some(SaveState::Picking) {
             return;
         }
-        let sent = folder.is_some_and(|folder| {
-            self.clipboard.as_ref().is_some_and(|clipboard| {
-                clipboard
-                    .send(LocalClipboard::SaveRemoteFiles(folder))
-                    .is_ok()
-            })
-        });
+        let Some(clipboard) = &self.clipboard else {
+            self.save = None;
+            return;
+        };
+        let sent = if let Some(folder) = folder {
+            clipboard
+                .send(LocalClipboard::SaveRemoteFiles(folder))
+                .is_ok()
+        } else {
+            // The offers held are released.
+            let _ = clipboard.send(LocalClipboard::CancelSave);
+            false
+        };
         self.save = sent.then_some(SaveState::Running { saved: 0, total: 0 });
     }
 
     /// The user stops saving the server's files: what was saved stays.
     pub(crate) fn cancel_save(&mut self) {
         match self.save {
-            Some(SaveState::Picking) => self.save = None,
-            Some(SaveState::Running { .. }) => {
+            Some(SaveState::Picking | SaveState::Running { .. }) => {
                 if let Some(clipboard) = &self.clipboard {
                     let _ = clipboard.send(LocalClipboard::CancelSave);
+                }
+                if self.save == Some(SaveState::Picking) {
+                    self.save = None;
                 }
             }
             None => {}
@@ -510,6 +526,9 @@ impl DesktopPane {
     /// Offers `paths`, the files copied in Explorer, to the server; whether they could be.
     /// Only an RDP desktop that [shares the clipboard](Self::shares_clipboard) takes them.
     pub(crate) fn offer_files(&self, paths: Vec<std::path::PathBuf>) -> bool {
+        if self.save.is_some() {
+            return false;
+        }
         self.clipboard
             .as_ref()
             .is_some_and(|clipboard| clipboard.send(LocalClipboard::Files(paths)).is_ok())

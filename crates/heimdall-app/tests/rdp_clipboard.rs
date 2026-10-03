@@ -247,9 +247,15 @@ fn the_servers_copied_files_are_saved_into_the_folder_picked() {
         "{effects:?}"
     );
     assert_eq!(save_state(&app, tab), (false, Some(SaveState::Picking)));
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::HoldOffers)));
     // The dialog gives the focus back: offering this side's clipboard then would take the
-    // server's away.
+    // server's away, and what was read before is not offered either.
     assert!(app.update(Message::WindowFocus(true)).is_empty());
+    app.update(Message::ClipboardText {
+        tab,
+        text: Some("read before".to_owned()),
+    });
+    assert!(offers.try_recv().is_err());
 
     let folder = dir.path().join("saved");
     app.update(Message::SaveFolderPicked {
@@ -273,14 +279,21 @@ fn the_servers_copied_files_are_saved_into_the_folder_picked() {
     app.update(Message::CancelSave(tab));
     assert!(matches!(offers.try_recv(), Ok(LocalClipboard::CancelSave)));
     let ended = SaveEnd::Cancelled { saved: 1, total: 3 };
-    event(&mut app, tab, attempt, ConnectionEvent::RdpSaveEnded(ended));
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::RdpSaveEnded(ended),
+    });
+    assert!(
+        reads_for(&effects, tab),
+        "what was copied meanwhile is offered: {effects:?}"
+    );
     assert_eq!(app.notice(), Some(&Notice::RdpFilesSaveEnded(ended)));
     assert_eq!(
         save_state(&app, tab),
         (true, None),
         "the files can be saved again"
     );
-    assert!(reads_for(&app.update(Message::WindowFocus(true)), tab));
 }
 
 #[test]
@@ -296,8 +309,13 @@ fn closing_the_folder_dialog_saves_nothing() {
         ConnectionEvent::RdpRemoteFiles(true),
     );
     app.update(Message::SaveRemoteFiles(tab));
-    app.update(Message::SaveFolderPicked { tab, folder: None });
-    assert!(offers.try_recv().is_err());
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::HoldOffers)));
+    let effects = app.update(Message::SaveFolderPicked { tab, folder: None });
+    assert!(
+        matches!(offers.try_recv(), Ok(LocalClipboard::CancelSave)),
+        "the offers held are released"
+    );
+    assert!(reads_for(&effects, tab), "{effects:?}");
     assert_eq!(save_state(&app, tab), (true, None));
 
     // The server copies something else: nothing to save any more.

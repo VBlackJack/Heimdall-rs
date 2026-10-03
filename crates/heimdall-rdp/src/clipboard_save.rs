@@ -209,6 +209,8 @@ pub(crate) struct Writer {
     made: Vec<PathBuf>,
     /// The file being written, until complete.
     open: Option<(std::fs::File, PathBuf)>,
+    /// The copy is complete: what it made stays, empty folders of the server's included.
+    finished: bool,
 }
 
 impl Writer {
@@ -218,7 +220,13 @@ impl Writer {
             folders: HashMap::new(),
             made: Vec::new(),
             open: None,
+            finished: false,
         }
+    }
+
+    /// The copy is complete.
+    pub(crate) fn finish(&mut self) {
+        self.finished = true;
     }
 
     /// Does `command`.
@@ -244,7 +252,11 @@ impl Writer {
                 None => Err(std::io::ErrorKind::InvalidInput.into()),
             },
             Command::Close => match self.open.take() {
-                Some((file, _)) => file.sync_all(),
+                Some((file, path)) => {
+                    file.sync_all()?;
+                    mark_from_elsewhere(&path);
+                    Ok(())
+                }
                 None => Err(std::io::ErrorKind::InvalidInput.into()),
             },
         }
@@ -288,13 +300,26 @@ impl Writer {
 
 impl Drop for Writer {
     fn drop(&mut self) {
-        // A file never completed is not left half written.
-        if let Some((file, path)) = self.open.take() {
-            drop(file);
-            let _ = std::fs::remove_file(path);
+        // A copy never completed, the session gone with it: no file left half written, no
+        // folder of its own left empty.
+        if !self.finished {
+            self.abandon();
         }
     }
 }
+
+/// Marks the file at `path` as come from elsewhere, as a browser marks a download, so
+/// Windows warns before running it and opens documents in protected view.
+#[cfg(windows)]
+fn mark_from_elsewhere(path: &Path) {
+    let mut stream = path.as_os_str().to_owned();
+    stream.push(":Zone.Identifier");
+    let _ = std::fs::write(stream, "[ZoneTransfer]\r\nZoneId=3\r\n");
+}
+
+/// Only Windows keeps where a file came from.
+#[cfg(not(windows))]
+fn mark_from_elsewhere(_: &Path) {}
 
 /// Makes `name` in `parent` with `create`, or "name (2)" and so on while the name is taken.
 fn create_unique<T>(
@@ -307,6 +332,10 @@ fn create_unique<T>(
         match create(&path) {
             Ok(made) => return Ok((path, made)),
             Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            // Windows refuses a new file over a folder as a denial, not as a name taken.
+            Err(error)
+                if error.kind() == std::io::ErrorKind::PermissionDenied
+                    && std::fs::symlink_metadata(&path).is_ok() => {}
             Err(error) => return Err(error),
         }
     }
@@ -376,16 +405,23 @@ pub(crate) struct Download {
 }
 
 impl Download {
-    pub(crate) fn new(items: Vec<Item>, lock: Option<u32>) -> Self {
+    /// The download of `items`, under the server's `lock`; its requests numbered after
+    /// `stream`, the last of an earlier save, so a late answer to one is never taken.
+    pub(crate) fn new(items: Vec<Item>, lock: Option<u32>, stream: u32) -> Self {
         Self {
             items,
             current: 0,
             position: 0,
             waiting: Waiting::Over,
-            stream: 0,
+            stream,
             saved: 0,
             lock,
         }
+    }
+
+    /// The number of the last request.
+    pub(crate) fn stream(&self) -> u32 {
+        self.stream
     }
 
     /// The server's lock on its copy, when locks were agreed on.
@@ -751,6 +787,7 @@ mod tests {
                 },
             ],
             Some(9),
+            0,
         );
         assert_eq!(
             download.start(),
@@ -797,6 +834,55 @@ mod tests {
     }
 
     #[test]
+    fn requests_go_on_from_the_last_save() {
+        let mut download = Download::new(
+            vec![Item {
+                index: 0,
+                components: names(&["f"]),
+                directory: false,
+                size: 10,
+            }],
+            None,
+            40,
+        );
+        download.start();
+        let first = download.written(true).expect("asked");
+        assert_eq!(asked(&first).0, 41);
+        assert_eq!(download.stream(), 41);
+        assert_eq!(
+            download.answered(1, Some(vec![0])),
+            None,
+            "an earlier save's"
+        );
+    }
+
+    #[test]
+    fn a_copy_never_completed_leaves_no_folder_of_its_own_and_one_completed_keeps_them() {
+        let dir = tempfile::tempdir().expect("dir");
+        {
+            let mut writer = Writer::new(dir.path().to_path_buf());
+            writer
+                .apply(Command::Folder(names(&["gone"])))
+                .expect("folder");
+        }
+        assert!(
+            !dir.path().join("gone").exists(),
+            "the session ended mid copy"
+        );
+        {
+            let mut writer = Writer::new(dir.path().to_path_buf());
+            writer
+                .apply(Command::Folder(names(&["empty"])))
+                .expect("folder");
+            writer.finish();
+        }
+        assert!(
+            dir.path().join("empty").is_dir(),
+            "the server's empty folder"
+        );
+    }
+
+    #[test]
     fn a_server_that_cannot_be_followed_stops_the_copy() {
         let item = Item {
             index: 0,
@@ -805,7 +891,7 @@ mod tests {
             size: 10,
         };
         for answer in [None, Some(Vec::new()), Some(vec![0; 11])] {
-            let mut download = Download::new(vec![item.clone()], None);
+            let mut download = Download::new(vec![item.clone()], None, 0);
             download.start();
             download.written(true).expect("asked");
             assert_eq!(
@@ -813,7 +899,7 @@ mod tests {
                 Some(SaveStep::Failed { saved: 0 })
             );
         }
-        let mut download = Download::new(vec![item], None);
+        let mut download = Download::new(vec![item], None, 0);
         download.start();
         assert_eq!(download.written(false), Some(SaveStep::Failed { saved: 0 }));
     }
@@ -828,6 +914,7 @@ mod tests {
                 size: 0,
             }],
             None,
+            0,
         );
         download.start();
         assert_eq!(

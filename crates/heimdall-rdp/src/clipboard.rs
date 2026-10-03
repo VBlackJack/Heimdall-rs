@@ -24,7 +24,7 @@
 //! No other format: text and files are what a connection manager needs, and each other
 //! format is more that a server could send.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use ironrdp::cliprdr::backend::CliprdrBackend;
@@ -37,6 +37,10 @@ use tokio::sync::mpsc;
 use zeroize::Zeroizing;
 
 use crate::clipboard_files::Entry;
+
+/// How long an answer of the server's clipboard is waited for, in milliseconds, before
+/// what waits behind it is asked.
+const ANSWER_WAIT_MS: u64 = 30_000;
 
 /// Longest text taken from the server, in bytes of UTF-16: a larger one is dropped, not cut.
 pub const MAX_REMOTE_TEXT_BYTES: usize = 8 * 1024 * 1024;
@@ -71,6 +75,9 @@ pub(crate) enum Request {
     },
     /// The list of the server's files did not come.
     FileListFailed,
+    /// The list of the server's files, held back while something else was asked, can be
+    /// asked for now.
+    ListFiles,
     /// The server answered a request for a file's bytes.
     Contents {
         /// The request answered.
@@ -109,10 +116,11 @@ pub(crate) struct ClipboardBackend {
     locked: HashMap<u32, Arc<[Entry]>>,
     /// The server's id for its list of files, while its clipboard holds some.
     remote_files: Option<ClipboardFormatId>,
-    /// What was asked of the server's clipboard, until it answers.
-    asked: Option<Asked>,
-    /// The server's text, asked for once the list of its files has come.
-    paste_waiting: bool,
+    /// What was asked of the server's clipboard, and when, until it answers: one thing at a
+    /// time, as `IronRDP` matches an answer with the last request only.
+    asked: Option<(Asked, u64)>,
+    /// What waits to be asked once the server answers, in order.
+    waiting: VecDeque<Asked>,
 }
 
 impl ClipboardBackend {
@@ -125,7 +133,7 @@ impl ClipboardBackend {
             locked: HashMap::new(),
             remote_files: None,
             asked: None,
-            paste_waiting: false,
+            waiting: VecDeque::new(),
         }
     }
 
@@ -140,24 +148,50 @@ impl ClipboardBackend {
         self.remote_files = None;
     }
 
-    /// `asked` is being asked of the server's clipboard.
-    pub(crate) fn ask(&mut self, asked: Asked) {
-        self.asked = Some(asked);
+    /// Whether `asked` can be asked of the server now. While something else is unanswered
+    /// it waits, and is posted again once that is answered: [`Request::Paste`] or
+    /// [`Request::ListFiles`].
+    pub(crate) fn ask(&mut self, asked: Asked) -> bool {
+        if self.asked.is_some() {
+            if !self.waiting.contains(&asked) {
+                self.waiting.push_back(asked);
+            }
+            return false;
+        }
+        self.asked = Some((asked, self.now_ms()));
+        true
     }
 
-    /// The list of the server's files is no longer waited for: its text, held back
-    /// meanwhile, is asked for.
-    pub(crate) fn give_up_files(&mut self) {
-        if self.asked == Some(Asked::Files) {
-            self.asked = None;
-        }
-        self.release_paste();
+    /// What was asked could not be sent: it is no longer waited for.
+    pub(crate) fn withdraw(&mut self) {
+        self.answered();
     }
 
-    fn release_paste(&mut self) {
-        if std::mem::take(&mut self.paste_waiting) {
-            self.post(Request::Paste);
+    /// An answer that does not come in time is no longer waited for.
+    pub(crate) fn expire(&mut self) {
+        self.expire_at(self.now_ms());
+    }
+
+    /// As [`Self::expire`], at `now`.
+    fn expire_at(&mut self, now: u64) {
+        if self
+            .asked
+            .is_some_and(|(_, since)| now.saturating_sub(since) >= ANSWER_WAIT_MS)
+        {
+            self.answered();
         }
+    }
+
+    /// The server answered: what it answered, and what waited is asked next.
+    fn answered(&mut self) -> Option<Asked> {
+        let asked = self.asked.take().map(|(asked, _)| asked);
+        if let Some(next) = self.waiting.pop_front() {
+            self.post(match next {
+                Asked::Text => Request::Paste,
+                Asked::Files => Request::ListFiles,
+            });
+        }
+        asked
     }
 
     /// Whether the server takes files.
@@ -248,12 +282,7 @@ impl CliprdrBackend for ClipboardBackend {
             .iter()
             .any(|format| format.id() == ClipboardFormatId::CF_UNICODETEXT)
         {
-            // One question at a time: the list of files asked for comes first.
-            if self.asked == Some(Asked::Files) {
-                self.paste_waiting = true;
-            } else {
-                self.post(Request::Paste);
-            }
+            self.post(Request::Paste);
         }
     }
 
@@ -273,31 +302,27 @@ impl CliprdrBackend for ClipboardBackend {
     }
 
     fn on_format_data_response(&mut self, response: FormatDataResponse<'_>) {
-        match self.asked.take() {
+        match self.answered() {
             Some(Asked::Text) => {
                 if let Some(text) = text_of(&response) {
                     self.post(Request::Received(text));
                 }
             }
             // Not a list `IronRDP` could read: never taken for text.
-            Some(Asked::Files) => {
-                self.post(Request::FileListFailed);
-                self.release_paste();
-            }
+            Some(Asked::Files) => self.post(Request::FileListFailed),
             None => {}
         }
     }
 
     fn on_remote_file_list(&mut self, files: &[FileDescriptor], clip_data_id: Option<u32>) {
-        if self.asked != Some(Asked::Files) {
+        if !matches!(self.asked, Some((Asked::Files, _))) {
             return;
         }
-        self.asked = None;
+        self.answered();
         self.post(Request::RemoteFileList {
             files: files.to_vec(),
             lock: clip_data_id,
         });
-        self.release_paste();
     }
 
     // The files of a lock, or those offered now: as `IronRDP` chose the list it checked
@@ -559,21 +584,58 @@ mod tests {
     #[test]
     fn a_list_of_files_that_does_not_come_is_never_taken_for_text() {
         let (mut backend, mut requests, _) = backend(None);
-        backend.ask(super::Asked::Files);
+        assert!(backend.ask(super::Asked::Files));
         // The server copies text meanwhile: asked for once the list has come.
         backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
         assert!(matches!(
             requests.try_recv(),
             Ok(Request::RemoteFiles(false))
         ));
-        assert!(requests.try_recv().is_err(), "the text waits");
+        assert!(matches!(requests.try_recv(), Ok(Request::Paste)));
+        assert!(!backend.ask(super::Asked::Text), "the text waits");
 
         let raw = OwnedFormatDataResponse::new_unicode_string("not a list");
         backend.on_format_data_response(raw);
+        assert!(
+            matches!(requests.try_recv(), Ok(Request::Paste)),
+            "asked again"
+        );
         assert!(matches!(requests.try_recv(), Ok(Request::FileListFailed)));
-        assert!(matches!(requests.try_recv(), Ok(Request::Paste)));
         assert!(requests.try_recv().is_err(), "nothing taken for text");
-        assert_eq!(backend.asked, None);
+        assert!(backend.asked.is_none());
+    }
+
+    #[test]
+    fn one_question_at_a_time_so_the_servers_newer_text_is_not_lost() {
+        let (mut backend, mut requests, _) = backend(None);
+        assert!(backend.ask(super::Asked::Text));
+        // The server copies again before answering: its new text is asked afterwards.
+        assert!(!backend.ask(super::Asked::Text));
+        assert!(!backend.ask(super::Asked::Files));
+        backend.on_format_data_response(FormatDataResponse::new_error());
+        assert!(matches!(requests.try_recv(), Ok(Request::Paste)));
+        assert!(
+            requests.try_recv().is_err(),
+            "the failed answer gives no text"
+        );
+        assert!(backend.ask(super::Asked::Text));
+        backend.on_format_data_response(OwnedFormatDataResponse::new_unicode_string("newer"));
+        assert!(matches!(requests.try_recv(), Ok(Request::ListFiles)));
+        assert!(
+            matches!(requests.try_recv(), Ok(Request::Received(text)) if text.as_str() == "newer")
+        );
+    }
+
+    #[test]
+    fn an_answer_that_never_comes_is_given_up() {
+        let (mut backend, mut requests, _) = backend(None);
+        assert!(backend.ask(super::Asked::Files));
+        assert!(!backend.ask(super::Asked::Text));
+        backend.expire();
+        assert!(requests.try_recv().is_err(), "not yet");
+        backend.expire_at(u64::MAX);
+        assert!(matches!(requests.try_recv(), Ok(Request::Paste)));
+        assert!(backend.asked.is_none());
     }
 
     #[test]
@@ -583,7 +645,7 @@ mod tests {
         backend.on_remote_file_list(&files, Some(4));
         assert!(requests.try_recv().is_err(), "not asked for: dropped");
 
-        backend.ask(super::Asked::Files);
+        assert!(backend.ask(super::Asked::Files));
         backend.on_remote_file_list(&files, Some(4));
         let Ok(Request::RemoteFileList { files, lock }) = requests.try_recv() else {
             panic!("the list");
@@ -613,7 +675,7 @@ mod tests {
         let text = OwnedFormatDataResponse::new_unicode_string("copied there");
         backend.on_format_data_response(text.clone());
         assert!(requests.try_recv().is_err(), "not asked for");
-        backend.ask(super::Asked::Text);
+        assert!(backend.ask(super::Asked::Text));
         backend.on_format_data_response(text);
         assert!(
             matches!(requests.try_recv(), Ok(Request::Received(text)) if text.as_str() == "copied there")
