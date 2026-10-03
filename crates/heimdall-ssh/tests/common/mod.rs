@@ -58,6 +58,26 @@ pub const SUBSYSTEM_ACCEPTED: &str = "sftp";
 /// Subsystem the test server never answers.
 pub const SUBSYSTEM_SILENT: &str = "silent";
 /// Upper bound for any single test step; generous, it only catches hangs.
+/// A command the server refuses to run.
+pub const COMMAND_REFUSED: &str = "refuse";
+
+/// A command that, once its input ends, writes it back on its output, writes
+/// [`COMMAND_ERROR`] on its error stream, and exits with the spec's status.
+pub const COMMAND_ECHO: &str = "echo";
+
+/// What [`COMMAND_ECHO`] writes on its error stream.
+pub const COMMAND_ERROR: &[u8] = b"on stderr";
+
+/// A command that, once its input ends, writes [`FLOOD_BYTES`] bytes and exits with no
+/// status.
+pub const COMMAND_FLOOD: &str = "flood";
+
+/// How much [`COMMAND_FLOOD`] writes: well past what a reader keeps.
+pub const FLOOD_BYTES: usize = 256 * 1024;
+
+/// A command that never ends.
+pub const COMMAND_HANG: &str = "hang";
+
 pub const STEP_TIMEOUT: Duration = Duration::from_secs(60);
 /// Server-side delay after a refused attempt; small so tests stay fast.
 const AUTH_REJECTION_TIME: Duration = Duration::from_millis(10);
@@ -173,6 +193,10 @@ pub struct Observed {
     pub agent_opens: Vec<bool>,
     /// What the client's agent answered through the forwarded channel.
     pub agent_reply: Vec<u8>,
+    /// Each command run, and the input it was given.
+    pub commands: Vec<(String, Vec<u8>)>,
+    /// Signals clients sent to their commands.
+    pub signals: Vec<String>,
 }
 
 /// An agent request for the identities it holds: length 1, `SSH_AGENTC_REQUEST_IDENTITIES`.
@@ -229,6 +253,7 @@ pub async fn start(spec: Spec) -> TestServer {
                 observed: shared.clone(),
                 kbd_round: 0,
                 relayed: std::collections::HashSet::new(),
+                commands: std::collections::HashMap::new(),
             };
             let config = config.clone();
             tokio::spawn(async move {
@@ -252,6 +277,8 @@ struct Connection {
     kbd_round: usize,
     /// Channels relayed onward: their data goes to the relay, never to the echo.
     relayed: std::collections::HashSet<ChannelId>,
+    /// Channels running a command: its name and the input given so far.
+    commands: std::collections::HashMap<ChannelId, (String, Vec<u8>)>,
 }
 
 fn reject() -> Auth {
@@ -550,6 +577,54 @@ impl server::Handler for Connection {
         }
     }
 
+    async fn exec_request(
+        &mut self,
+        channel: ChannelId,
+        data: &[u8],
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let command = String::from_utf8_lossy(data).into_owned();
+        if command == COMMAND_REFUSED {
+            return session.channel_failure(channel);
+        }
+        self.commands.insert(channel, (command, Vec::new()));
+        session.channel_success(channel)
+    }
+
+    /// The end of a command's input: it answers as its name says, and is recorded.
+    async fn channel_eof(
+        &mut self,
+        channel: ChannelId,
+        session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        let Some((command, input)) = self.commands.get(&channel).cloned() else {
+            return Ok(());
+        };
+        self.observe(|o| o.commands.push((command.clone(), input.clone())));
+        match command.as_str() {
+            COMMAND_ECHO => {
+                session.data(channel, input)?;
+                session.extended_data(channel, 1, COMMAND_ERROR.to_vec())?;
+                session.exit_status_request(channel, self.spec.exit_status)?;
+            }
+            COMMAND_FLOOD => session.data(channel, vec![b'x'; FLOOD_BYTES])?,
+            _ => return Ok(()),
+        }
+        self.commands.remove(&channel);
+        session.eof(channel)?;
+        session.close(channel)
+    }
+
+    async fn signal(
+        &mut self,
+        _channel: ChannelId,
+        signal: russh::Sig,
+        _session: &mut Session,
+    ) -> Result<(), Self::Error> {
+        self.observe(|o| o.signals.push(format!("{signal:?}")));
+        Ok(())
+    }
+
     async fn window_change_request(
         &mut self,
         _channel: ChannelId,
@@ -570,6 +645,10 @@ impl server::Handler for Connection {
         session: &mut Session,
     ) -> Result<(), Self::Error> {
         if self.relayed.contains(&channel) {
+            return Ok(());
+        }
+        if let Some((_, input)) = self.commands.get_mut(&channel) {
+            input.extend_from_slice(data);
             return Ok(());
         }
         self.observe(|o| o.bytes_received += data.len());

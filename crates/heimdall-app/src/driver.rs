@@ -439,14 +439,18 @@ async fn open_files(
         Ok(stream) => stream,
         Err(error) => return report_failure(error, events, target).await,
     };
-    // The session holds the stream, which holds the connection: dropping the session
-    // closes both.
-    drop(connection);
+    // The session holds the stream, which holds the connection: the connection ends with
+    // the session and the tab's own clone, kept to run commands on the server.
     match SftpClient::start(stream, ClientConfig::default()).await {
         Ok(client) => {
             log::info!("SFTP session open to {target}");
             let client = RemoteSession::Sftp(client);
-            let _ = events.send(ConnectionEvent::FilesReady { client }).await;
+            let _ = events
+                .send(ConnectionEvent::FilesReady {
+                    client,
+                    shell: Some(connection),
+                })
+                .await;
         }
         Err(error) => {
             log::warn!("SFTP session to {target} failed: {error:?}");

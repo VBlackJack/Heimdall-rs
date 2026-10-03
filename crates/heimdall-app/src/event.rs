@@ -141,6 +141,9 @@ pub enum ConnectionEvent {
     FilesReady {
         /// The session.
         client: RemoteSession,
+        /// The SSH connection under an SFTP session, to run commands on the server; none
+        /// for FTP.
+        shell: Option<heimdall_ssh::Connection>,
     },
     /// Output from the shell.
     Output(Vec<u8>),

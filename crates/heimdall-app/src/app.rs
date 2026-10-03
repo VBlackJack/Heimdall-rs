@@ -2324,10 +2324,11 @@ impl App {
                 tab.sink = Some(input);
                 Vec::new()
             }
-            ConnectionEvent::FilesReady { client } => {
+            ConnectionEvent::FilesReady { client, shell } => {
                 tab.phase = Phase::Connected;
                 if let Some(files) = tab.files.as_mut() {
                     files.client = Some(client);
+                    files.shell = shell;
                 }
                 self.files_ready(tab_id)
             }

@@ -119,6 +119,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         attempt,
         event: ConnectionEvent::FilesReady {
             client: idle_client().await,
+            shell: None,
         },
     });
     let remote = |name: &str, kind| RemoteEntry {

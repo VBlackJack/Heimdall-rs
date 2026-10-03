@@ -23,10 +23,11 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use common::{
-    DROP_COMMAND, FORWARDED_GREETING, PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT,
+    COMMAND_ECHO, COMMAND_ERROR, COMMAND_FLOOD, COMMAND_HANG, COMMAND_REFUSED, DROP_COMMAND,
+    FORWARDED_GREETING, PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT,
     ScriptedPrompter, Spec, TestServer, options_trusting, profile, start,
 };
-use heimdall_ssh::{ConnectError, Connection, SessionEvent, establish};
+use heimdall_ssh::{CommandEnd, ConnectError, Connection, OUTPUT_LIMIT, SessionEvent, establish};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio_util::sync::CancellationToken;
 
@@ -472,4 +473,106 @@ async fn a_local_forward_carries_its_clients_through_the_gateway_to_the_one_dest
         client.read_exact(&mut answer).await.expect("answer");
         assert_eq!(&answer, b"back");
     }
+}
+
+/// Bound on a command in these tests.
+const COMMAND_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Bound on a command that never ends, before it is stopped.
+const HANG_TIMEOUT: Duration = Duration::from_millis(300);
+
+async fn run(
+    connection: &Connection,
+    command: &str,
+    input: &[u8],
+) -> Result<CommandEnd, ConnectError> {
+    tokio::time::timeout(
+        STEP_TIMEOUT,
+        connection.run_command(command, input, COMMAND_TIMEOUT, CancellationToken::new()),
+    )
+    .await
+    .expect("in time")
+}
+
+#[tokio::test]
+async fn a_command_gets_its_input_and_gives_its_output_and_status() {
+    let server = start(Spec {
+        exit_status: 3,
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let ended = run(&connection, COMMAND_ECHO, b"set -C\n")
+        .await
+        .expect("ran");
+    assert_eq!(
+        ended,
+        CommandEnd {
+            status: Some(3),
+            stdout: b"set -C\n".to_vec(),
+            stderr: COMMAND_ERROR.to_vec(),
+        }
+    );
+    let observed = server.observed.lock().expect("observed").commands.clone();
+    assert_eq!(observed, [(COMMAND_ECHO.to_owned(), b"set -C\n".to_vec())]);
+}
+
+#[tokio::test]
+async fn a_refused_command_says_so() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    assert!(matches!(
+        run(&connection, COMMAND_REFUSED, b"").await,
+        Err(ConnectError::CommandRefused)
+    ));
+}
+
+#[tokio::test]
+async fn a_flood_is_kept_up_to_the_limit_and_the_other_channels_go_on() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let mut sftp = connection
+        .open_subsystem(SUBSYSTEM_ACCEPTED, ANSWER_TIMEOUT)
+        .await
+        .expect("subsystem");
+    let ended = run(&connection, COMMAND_FLOOD, b"").await.expect("ran");
+    assert_eq!(ended.stdout.len(), OUTPUT_LIMIT);
+    assert_eq!(ended.status, None, "ended without a status");
+    echoes(&mut sftp, b"still here\n").await;
+}
+
+#[tokio::test]
+async fn a_command_that_never_ends_is_stopped_on_timeout_or_cancel() {
+    let server = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let timed_out = connection
+        .run_command(COMMAND_HANG, b"", HANG_TIMEOUT, CancellationToken::new())
+        .await;
+    assert!(
+        matches!(timed_out, Err(ConnectError::Timeout)),
+        "{timed_out:?}"
+    );
+
+    let cancel = CancellationToken::new();
+    let stopping = cancel.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(HANG_TIMEOUT).await;
+        stopping.cancel();
+    });
+    let cancelled = connection
+        .run_command(COMMAND_HANG, b"", COMMAND_TIMEOUT, cancel)
+        .await;
+    assert!(
+        matches!(cancelled, Err(ConnectError::Cancelled)),
+        "{cancelled:?}"
+    );
+    assert!(
+        observed_until(&server, |o| o.signals.len() == 2).await,
+        "each was asked to stop"
+    );
+    assert!(!connection.is_closed(), "the connection stays");
 }

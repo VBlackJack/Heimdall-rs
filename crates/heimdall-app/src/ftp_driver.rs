@@ -90,6 +90,7 @@ async fn run(request: FtpRequest, registry: AnswerRegistry, events: mpsc::Sender
             log::info!("FTP session open to {target}");
             ConnectionEvent::FilesReady {
                 client: RemoteSession::Ftp(client),
+                shell: None,
             }
         }
         // The certificate question was sent: the attempt ends there.

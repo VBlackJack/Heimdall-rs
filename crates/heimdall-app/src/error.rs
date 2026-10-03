@@ -351,7 +351,8 @@ impl From<ConnectError> for UiError {
             ConnectError::Cancelled => Self::Cancelled,
             ConnectError::PromptTimedOut => Self::PromptTimedOut,
             ConnectError::PtyRefused => Self::PtyRefused,
-            ConnectError::ShellRefused => Self::ShellRefused,
+            // A command is run by the server's shell: refused, the shell was.
+            ConnectError::ShellRefused | ConnectError::CommandRefused => Self::ShellRefused,
             ConnectError::SubsystemRefused { name } => Self::SubsystemRefused { name },
             ConnectError::JumpRefused { host, port } => Self::JumpRefused { host, port },
             ConnectError::RemoteForwardRefused { port } => Self::RemoteForwardRefused { port },
