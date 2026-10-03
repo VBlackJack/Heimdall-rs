@@ -1081,6 +1081,37 @@ impl App {
         }
     }
 
+    /// `profile`'s saved password, for `endpoint` only, read without counting it as given:
+    /// a route test signs in with it and nothing is learnt from the outcome.
+    pub(super) fn saved_password_for(
+        &self,
+        profile: &ProfileId,
+        endpoint: &Endpoint,
+    ) -> Option<Secret> {
+        if self.vault.refused.contains(profile) {
+            return None;
+        }
+        let saved = decode(&self.vault.read(&password_entry(profile))?)?;
+        saved
+            .endpoint
+            .is(endpoint)
+            .then(|| Secret::new(String::clone(&saved.password)))
+    }
+
+    /// `owner`'s saved passphrase, for the key file at `key_path` only, read the same way.
+    pub(super) fn saved_passphrase_for(
+        &self,
+        owner: &ProfileId,
+        key_path: &Path,
+    ) -> Option<Secret> {
+        if self.vault.refused_passphrases.contains(owner) {
+            return None;
+        }
+        let saved = decode_passphrase(&self.vault.read(&passphrase_entry(owner))?)?;
+        (Path::new(&saved.key_path) == key_path)
+            .then(|| Secret::new(String::clone(&saved.passphrase)))
+    }
+
     /// Takes `profiles`' saved passwords as refused: the user is asked for them next time.
     pub(super) fn refuse_saved(&mut self, profiles: Vec<ProfileId>) {
         self.vault.refused.extend(profiles);

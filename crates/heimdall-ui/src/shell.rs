@@ -365,6 +365,10 @@ pub enum Message {
     GatewayPassphrase(String),
     /// Save the gateway dialog, with the password typed into it.
     SaveGatewayForm,
+    /// "Test route" in the gateway dialog: its typed secrets copied, not taken.
+    TestRouteForm,
+    /// "Copy diagnostic report" in the gateway dialog.
+    CopyRouteReport,
     /// Open a menu of the profile tree at the pointer.
     OpenTreeMenu(TreeMenu),
     /// Close the open menu.
@@ -472,6 +476,8 @@ impl fmt::Debug for Message {
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
             Self::GatewayPassphrase(_) => f.write_str("GatewayPassphrase(..)"),
             Self::SaveGatewayForm => f.write_str("SaveGatewayForm"),
+            Self::TestRouteForm => f.write_str("TestRouteForm"),
+            Self::CopyRouteReport => f.write_str("CopyRouteReport"),
             Self::OpenTreeMenu(menu) => write!(f, "OpenTreeMenu({menu:?})"),
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
@@ -876,6 +882,7 @@ impl Shell {
     }
 
     /// Applies a message.
+    #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Task<Message> {
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
@@ -900,7 +907,8 @@ impl Shell {
             | Message::ProfilePassword(_)
             | Message::ProfilePassphrase(_)
             | Message::GatewayPassword(_)
-            | Message::GatewayPassphrase(_)) => return self.input_message(message),
+            | Message::GatewayPassphrase(_)
+            | Message::CopyRouteReport) => return self.input_message(message),
             Message::Submit(tab) => self.reply(tab, true),
             Message::Decline(tab) => self.reply(tab, false),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
@@ -941,6 +949,7 @@ impl Shell {
             Message::SaveProviderUnlock => self.save_provider_unlock(),
             Message::SaveProfileForm => self.save_profile_form(),
             Message::SaveGatewayForm => self.save_gateway_form(),
+            Message::TestRouteForm => self.test_route_form(),
             message @ (Message::OpenTreeMenu(_)
             | Message::CloseTreeMenu
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
@@ -1004,9 +1013,23 @@ impl Shell {
             Message::SettingsTab(tab) => self.settings_tab = tab,
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::ProviderUnlock(value) => self.provider_unlock = Zeroizing::new(value),
-            Message::GatewayPassword(value) => self.gateway_password = Zeroizing::new(value),
+            Message::GatewayPassword(value) => {
+                self.gateway_password = Zeroizing::new(value);
+                // What the route test found was signed in with another password.
+                let _ = self.app.update(AppMessage::ForgetRouteTest);
+            }
             Message::ProfilePassphrase(value) => self.profile_passphrase = Zeroizing::new(value),
-            Message::GatewayPassphrase(value) => self.gateway_passphrase = Zeroizing::new(value),
+            Message::GatewayPassphrase(value) => {
+                self.gateway_passphrase = Zeroizing::new(value);
+                let _ = self.app.update(AppMessage::ForgetRouteTest);
+            }
+            Message::CopyRouteReport => {
+                if let Some(Dialog::EditGateway { draft, .. }) = &self.app.dialog
+                    && let Some(report) = crate::route_test_view::finished_report(draft)
+                {
+                    return iced::clipboard::write(report);
+                }
+            }
             _ => {}
         }
         Task::none()
@@ -1116,6 +1139,18 @@ impl Shell {
 
     /// Hands the gateway dialog to the core with the password and passphrase typed, which
     /// leave the window.
+    /// Hands "Test route" to the core with copies of the secrets typed in the gateway
+    /// dialog: they stay in its fields, to be saved or tested again.
+    fn test_route_form(&mut self) -> Vec<Effect> {
+        let copy = |field: &str| (!field.is_empty()).then(|| Secret::new(field.to_owned()));
+        let password = copy(&self.gateway_password);
+        let passphrase = copy(&self.gateway_passphrase);
+        self.app.update(AppMessage::TestRoute {
+            password,
+            passphrase,
+        })
+    }
+
     fn save_gateway_form(&mut self) -> Vec<Effect> {
         let password = typed_secret(&mut self.gateway_password);
         let passphrase = typed_secret(&mut self.gateway_passphrase);
@@ -1685,6 +1720,7 @@ impl Shell {
             | Effect::ConnectFtp { .. }
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
+            Effect::TestRoute { run, request } => route_test_task(run, *request),
             Effect::TestAddress {
                 test,
                 host,
@@ -4228,6 +4264,19 @@ fn toggle_label(toggle: ProfileToggle) -> String {
     }
 }
 
+/// The task running a gateway route test: each step, then its end.
+fn route_test_task(run: u64, request: heimdall_app::route_test::RouteTestRequest) -> Task<Message> {
+    // Started once the task runs, on the runtime.
+    let events =
+        stream::once(async move { heimdall_app::route_test::route_test_events(request) }).flatten();
+    Task::stream(events).map(move |step| {
+        Message::App(match step {
+            Some(step) => AppMessage::RouteStep { run, step },
+            None => AppMessage::RouteTestDone { run },
+        })
+    })
+}
+
 /// A gateway in a list: "Name (host:port)", as the C# combo shows one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct GatewayChoice {
@@ -4416,17 +4465,24 @@ fn gateway_dialog<'a>(
             },
             forms,
         ))
-        .push(parent_gateway(draft, forms));
+        .push(parent_gateway(draft, forms))
+        .push(crate::route_test_view::card(draft, forms.gateways));
     if let Some(error) = error {
         form = form.push(text(texts::draft_error(error)).style(text::danger));
     }
+    // What is tested is what is saved: not while the test runs.
+    let testing = matches!(
+        draft.route_test,
+        heimdall_app::gateway_draft::RouteTest::Running(_)
+    );
     form.push(
         row![
             iced::widget::space::horizontal(),
             button(text(fl!("ui-dialog-cancel-button")))
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-profile-save-button"))).on_press(Message::SaveGatewayForm),
+            button(text(fl!("ui-profile-save-button")))
+                .on_press_maybe((!testing).then_some(Message::SaveGatewayForm)),
         ]
         .spacing(SPACING),
     )
