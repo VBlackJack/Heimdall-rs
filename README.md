@@ -54,6 +54,14 @@ driver, such as Mesa. On Windows, the build needs the MSVC build tools.
 cargo run --package heimdall-ui
 ```
 
+On Windows, two scripts at the root build and run it for testing by hand, then show the
+end of its log (`%LOCALAPPDATA%\Heimdall-rs\data\logs\heimdall.log`) once it closes:
+
+- `run-debug.bat`: debug build, with its console, panics shown there; log level `debug`.
+- `run-release.bat`: release build, as a user runs it, without a console; level `info`.
+
+Both take a log level as their argument, `error` to `trace`: `run-debug.bat trace`.
+
 ```bash
 cargo test --workspace
 ```

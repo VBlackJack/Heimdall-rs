@@ -59,6 +59,18 @@ les outils MSVC.
 cargo run --package heimdall-ui
 ```
 
+Sous Windows, deux scripts à la racine la compilent et la lancent pour les tests à la
+main, puis affichent la fin de son journal (`%LOCALAPPDATA%\Heimdall-rs\data\logs\heimdall.log`)
+une fois fermée :
+
+- `run-debug.bat` : compilation de débogage, avec sa console, où s'affichent les paniques ;
+  niveau de journal `debug`.
+- `run-release.bat` : compilation de publication, telle qu'un utilisateur la lance, sans
+  console ; niveau `info`.
+
+Les deux prennent un niveau de journal en argument, de `error` à `trace` :
+`run-debug.bat trace`.
+
 ```bash
 cargo test --workspace
 ```
