@@ -32,6 +32,7 @@ pub mod conflict;
 mod ftp;
 pub mod ftps_trust;
 mod plan;
+pub mod server_copy;
 
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
