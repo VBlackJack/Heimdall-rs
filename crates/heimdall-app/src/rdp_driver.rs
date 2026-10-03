@@ -148,6 +148,32 @@ pub fn rdp_events(
     ReceiverStream::new(receiver)
 }
 
+/// What a running session's event is to the application; the session to `target`.
+fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
+    match event {
+        RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
+        RdpEvent::RemoteClipboard(text) => ConnectionEvent::RemoteClipboard(text),
+        RdpEvent::ResizeRefused { width, height } => {
+            log::info!("RDP session to {target} cannot take {width}x{height} live");
+            ConnectionEvent::DesktopResizeRefused { width, height }
+        }
+        RdpEvent::Closed(CloseReason::Failed(detail)) => {
+            log::warn!("RDP session to {target} failed: {detail:?}");
+            ConnectionEvent::Failed(UiError::RdpProtocol { detail })
+        }
+        RdpEvent::Closed(CloseReason::Disconnected(reason)) => {
+            log::info!("RDP session to {target} ended: {reason:?}");
+            ConnectionEvent::Ended {
+                reason: safe(reason),
+            }
+        }
+        RdpEvent::Closed(_) => {
+            log::info!("RDP session to {target} ended");
+            ConnectionEvent::Closed { exit_status: None }
+        }
+    }
+}
+
 async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender<ConnectionEvent>) {
     let profile = &request.profile;
     let target = display_address(&profile.host, profile.port);
@@ -217,24 +243,7 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         return;
     }
     while let Some(event) = session.events.recv().await {
-        let event = match event {
-            RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
-            RdpEvent::RemoteClipboard(text) => ConnectionEvent::RemoteClipboard(text),
-            RdpEvent::Closed(CloseReason::Failed(detail)) => {
-                log::warn!("RDP session to {target} failed: {detail:?}");
-                ConnectionEvent::Failed(UiError::RdpProtocol { detail })
-            }
-            RdpEvent::Closed(CloseReason::Disconnected(reason)) => {
-                log::info!("RDP session to {target} ended: {reason:?}");
-                ConnectionEvent::Ended {
-                    reason: safe(reason),
-                }
-            }
-            RdpEvent::Closed(_) => {
-                log::info!("RDP session to {target} ended");
-                ConnectionEvent::Closed { exit_status: None }
-            }
-        };
+        let event = connection_event(event, &target);
         let last = matches!(
             event,
             ConnectionEvent::Closed { .. }

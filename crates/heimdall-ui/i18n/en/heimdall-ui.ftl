@@ -1276,6 +1276,7 @@ ui-files-error-copy-refused = Copy refused: this server did not perform the serv
 ui-files-error-paste-into-itself = Cannot paste { $name } into itself or its own subfolder.
 ui-error-key-not-absolute = SSH key path must be absolute: { $path }
 ui-files-menu-open-in-terminal = Open in terminal
+ui-status-resolution-reconnected = Resolution change required reconnect.
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }
 ui-resolution-tooltip-size = Change resolution - { $mode } ({ $width }x{ $height })
