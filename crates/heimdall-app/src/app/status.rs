@@ -68,6 +68,31 @@ pub enum Notice {
     },
     /// Every tunnel was closed.
     AllTunnelsClosed,
+    /// A profile's address is being tested.
+    ReachabilityTesting {
+        /// Address.
+        host: String,
+        /// Port.
+        port: u16,
+    },
+    /// It answered, in this many milliseconds.
+    Reachable {
+        /// Address.
+        host: String,
+        /// Port.
+        port: u16,
+        /// How long the connection took.
+        millis: u64,
+    },
+    /// It did not answer, for this reason.
+    Unreachable {
+        /// Address.
+        host: String,
+        /// Port.
+        port: u16,
+        /// Why.
+        failure: crate::reachability::Unreached,
+    },
     /// This local port was copied.
     PortCopied(u16),
     /// This folder was created.

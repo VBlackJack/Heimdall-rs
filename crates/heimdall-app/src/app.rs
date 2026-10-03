@@ -797,6 +797,14 @@ pub enum Effect {
         /// What to test.
         request: Box<crate::route_test::RouteTestRequest>,
     },
+    /// Test whether a profile's address answers, from the tree, and say it as
+    /// [`ProfileMenuMessage::Tested`].
+    TestReachability {
+        /// Address.
+        host: String,
+        /// Port.
+        port: u16,
+    },
     /// Test whether an address answers, and say it as [`Message::AddressTested`].
     TestAddress {
         /// Which test.
@@ -974,6 +982,7 @@ impl fmt::Debug for Effect {
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
+            Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
             }

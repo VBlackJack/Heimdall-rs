@@ -171,3 +171,52 @@ fn a_test_can_be_stopped_and_a_form_without_an_address_offers_none() {
     app.update(Message::ChooseProtocol(DraftProtocol::Local));
     assert!(app.update(Message::TestAddress).is_empty(), "a local shell");
 }
+
+#[test]
+fn a_profile_s_address_is_tested_from_its_menu_and_said_in_the_status_bar() {
+    use heimdall_app::{Notice, ProfileMenuMessage};
+    use heimdall_core::profile::ProfileId;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    form(&mut app, DraftProtocol::Ssh, "web.lab", "2200");
+    app.update(Message::ProfileField {
+        field: ProfileField::Name,
+        value: "web".to_owned(),
+    });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    let id: ProfileId = app.profile_summaries()[0].id.clone();
+    let effects = app.update(Message::ProfileMenu(ProfileMenuMessage::TestReachability(
+        id,
+    )));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::TestReachability { host, port: 2200 }] if host == "web.lab"
+        ),
+        "{effects:?}"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::ReachabilityTesting {
+            host: "web.lab".to_owned(),
+            port: 2200
+        })
+    );
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Tested {
+        host: "web.lab".to_owned(),
+        port: 2200,
+        result: Err(Unreached::DnsNoResults),
+    }));
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Unreachable {
+            host: "web.lab".to_owned(),
+            port: 2200,
+            failure: Unreached::DnsNoResults,
+        })
+    );
+}

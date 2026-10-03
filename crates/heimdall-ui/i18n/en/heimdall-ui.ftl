@@ -1229,3 +1229,9 @@ ui-route-test-step-line = { $step }: { $outcome } ({ $millis } ms)
 ui-route-test-hint = Tests the current form without saving it. Uses trusted host keys only. Existing sessions stay open.
 ui-route-test-timeout = Timed out. Check VPN, routing and firewall.
 ui-route-test-separator = {" "}→{" "}
+
+## "Test reachability" in a profile's menu, as the C# tree says it in the status bar.
+ui-tree-test-reachability = Test reachability
+ui-status-reachability-testing = Testing { $host }:{ $port } ...
+ui-status-reachability-success = { $host }:{ $port } reachable in { $millis } ms
+ui-status-reachability-failed = { $host }:{ $port } unreachable: { $reason }

@@ -1154,3 +1154,9 @@ ui-route-test-step-line = { $step } : { $outcome } ({ $millis } ms)
 ui-route-test-hint = Teste le formulaire actuel sans l'enregistrer, uniquement avec les clés d'hôtes de confiance. Les sessions existantes restent ouvertes.
 ui-route-test-timeout = Délai dépassé. Vérifiez le VPN, le routage et le pare-feu.
 ui-route-test-separator = {" "}→{" "}
+
+## "Test reachability" in a profile's menu, as the C# tree says it in the status bar.
+ui-tree-test-reachability = Tester l'accessibilité
+ui-status-reachability-testing = Test de { $host }:{ $port } ...
+ui-status-reachability-success = { $host }:{ $port } accessible en { $millis } ms
+ui-status-reachability-failed = { $host }:{ $port } inaccessible : { $reason }

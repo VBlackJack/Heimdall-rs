@@ -17,7 +17,7 @@
 //! The status bar along the window's foot, as the C# Heimdall's: on the left the state of
 //! the session shown, or what was just done; on the right how many sessions the tree holds.
 
-use heimdall_app::{Notice, SessionStatus};
+use heimdall_app::{Notice, SessionStatus, server_text};
 use heimdall_core::settings::BroadcastScope;
 use iced::widget::{container, row, space, text};
 use iced::{Element, Length};
@@ -58,6 +58,27 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-broadcast-on", scope = scope_label(*scope, targets))
             }
             Notice::BroadcastOff => fl!("ui-broadcast-off"),
+            Notice::ReachabilityTesting { host, port } => fl!(
+                "ui-status-reachability-testing",
+                host = server_text(host),
+                port = (*port)
+            ),
+            Notice::Reachable { host, port, millis } => fl!(
+                "ui-status-reachability-success",
+                host = server_text(host),
+                port = (*port),
+                millis = (*millis)
+            ),
+            Notice::Unreachable {
+                host,
+                port,
+                failure,
+            } => fl!(
+                "ui-status-reachability-failed",
+                host = server_text(host),
+                port = (*port),
+                reason = crate::address_test_view::reason(failure)
+            ),
             notice @ (Notice::TunnelOpened { .. }
             | Notice::TunnelFailed(_)
             | Notice::TunnelClosed { .. }
@@ -144,6 +165,34 @@ mod tests {
 
     fn named(name: &str) -> String {
         name.to_owned()
+    }
+
+    #[test]
+    fn a_reachability_test_is_said_as_the_csharp_status_line() {
+        let said = |notice: Notice| status_text(&SessionStatus::Ready, Some(&notice), 0);
+        assert_eq!(
+            said(Notice::ReachabilityTesting {
+                host: "web.lab".to_owned(),
+                port: 22,
+            }),
+            "Testing web.lab:22 ..."
+        );
+        assert_eq!(
+            said(Notice::Reachable {
+                host: "web.lab".to_owned(),
+                port: 22,
+                millis: 4,
+            }),
+            "web.lab:22 reachable in 4 ms"
+        );
+        assert_eq!(
+            said(Notice::Unreachable {
+                host: "web.lab".to_owned(),
+                port: 22,
+                failure: heimdall_app::reachability::Unreached::DnsNoResults,
+            }),
+            "web.lab:22 unreachable: DNS lookup returned no addresses."
+        );
     }
 
     #[test]

@@ -1721,16 +1721,9 @@ impl Shell {
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
-            Effect::TestAddress {
-                test,
-                host,
-                port,
-                ssh,
-                cancel,
-            } => Task::perform(
-                heimdall_app::reachability::test(host, port, ssh, cancel),
-                move |result| Message::App(AppMessage::AddressTested { test, result }),
-            ),
+            effect @ (Effect::TestReachability { .. } | Effect::TestAddress { .. }) => {
+                reachability_task(effect)
+            }
             Effect::OpenTunnel { id, request } => {
                 // Its end is the tunnel's own: closing it cancels the attempt, which ends
                 // the stream.
@@ -4275,6 +4268,33 @@ fn route_test_task(run: u64, request: heimdall_app::route_test::RouteTestRequest
             None => AppMessage::RouteTestDone { run },
         })
     })
+}
+
+/// The task testing whether an address answers: the tree's, or the profile form's.
+fn reachability_task(effect: Effect) -> Task<Message> {
+    match effect {
+        Effect::TestReachability { host, port } => Task::perform(
+            heimdall_app::reachability::test_from_tree(host.clone(), port),
+            move |result| {
+                Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::Tested {
+                    host: host.clone(),
+                    port,
+                    result,
+                }))
+            },
+        ),
+        Effect::TestAddress {
+            test,
+            host,
+            port,
+            ssh,
+            cancel,
+        } => Task::perform(
+            heimdall_app::reachability::test(host, port, ssh, cancel),
+            move |result| Message::App(AppMessage::AddressTested { test, result }),
+        ),
+        _ => Task::none(),
+    }
 }
 
 /// A gateway in a list: "Name (host:port)", as the C# combo shows one.
