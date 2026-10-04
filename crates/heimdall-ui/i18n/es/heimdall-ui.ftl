@@ -1415,3 +1415,6 @@ ui-settings-rdp-reset-defaults = Restablecer valores predeterminados de RDP
 ui-settings-rdp-reset-defaults-tooltip = Revierte solo los valores predeterminados de RDP a sus valores de fábrica. No se tocan otros ajustes.
 ui-dialog-reset-rdp-title = ¿Restablecer valores predeterminados de RDP?
 ui-dialog-reset-rdp-body = ¿Restaurar todos los valores predeterminados relacionados con RDP a sus valores de fábrica? Los servidores existentes no se ven afectados.
+ui-settings-provider-timeout = Tiempo de espera del comando
+ui-settings-provider-timeout-seconds = { $seconds } s
+ui-settings-provider-timeout-hint = Cuánto tiempo puede ejecutarse el comando de contraseña antes de que Heimdall lo abandone. Auméntalo para un almacén que pide confirmación.

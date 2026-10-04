@@ -1493,3 +1493,6 @@ ui-settings-rdp-reset-defaults = Reset RDP defaults
 ui-settings-rdp-reset-defaults-tooltip = Reverts only the RDP defaults to their factory values. Other settings are untouched.
 ui-dialog-reset-rdp-title = Reset RDP defaults?
 ui-dialog-reset-rdp-body = Restore all RDP-related defaults to their factory values? Existing servers are not affected.
+ui-settings-provider-timeout = Command timeout
+ui-settings-provider-timeout-seconds = { $seconds } s
+ui-settings-provider-timeout-hint = How long the password command may run before Heimdall gives up on it. Raise it for a vault that asks for confirmation.
