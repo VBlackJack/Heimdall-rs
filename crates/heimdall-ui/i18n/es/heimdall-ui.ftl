@@ -1284,3 +1284,6 @@ ui-dialog-unsaved-editors = { $count ->
 ui-files-error-looks-binary = Este archivo parece binario (un archivo comprimido, una imagen o un programa): descárguelo en su lugar.
 ui-files-error-not-text = La marca de codificación de este archivo no corresponde a su contenido: no se puede abrir como texto.
 ui-files-error-too-large-for-editor = Demasiado grande para el editor integrado (más de { $size }): use editar con el editor externo.
+ui-dialog-binary-title = Archivo binario
+ui-dialog-binary-body = "{ $name }" parece un archivo binario (un archivo comprimido, una imagen o un programa) y no se puede mostrar como texto. ¿Descargarlo en su lugar?
+ui-dialog-binary-confirm = Descargar

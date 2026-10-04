@@ -1307,6 +1307,10 @@ impl App {
                     return self.list(tab, side);
                 }
                 files.remote.select_only(Some(index));
+                // A text file is opened in the integrated editor, as the C# opens it.
+                if self.opens_in_editor(tab, index) {
+                    return self.edit_integrated(tab, true);
+                }
                 self.start_transfer(tab, Direction::Download)
             }
             Side::Local => {
@@ -1325,7 +1329,7 @@ impl App {
         }
     }
 
-    fn start_transfer(&mut self, tab: TabId, direction: Direction) -> Vec<Effect> {
+    pub(super) fn start_transfer(&mut self, tab: TabId, direction: Direction) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };

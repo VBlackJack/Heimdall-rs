@@ -1362,3 +1362,6 @@ ui-dialog-unsaved-editors = { $count ->
 ui-files-error-looks-binary = This file looks like a binary file (an archive, an image or a program): download it instead.
 ui-files-error-not-text = This file's encoding mark does not match its content: it cannot be opened as text.
 ui-files-error-too-large-for-editor = Too large for the integrated editor (over { $size }): use Edit with external editor.
+ui-dialog-binary-title = Binary file
+ui-dialog-binary-body = "{ $name }" looks like a binary file (an archive, an image or a program) and cannot be shown as text. Download it instead?
+ui-dialog-binary-confirm = Download

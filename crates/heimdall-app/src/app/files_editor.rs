@@ -29,7 +29,7 @@ impl App {
     pub(super) fn editor_message(&mut self, message: FilesMessage) -> Vec<Effect> {
         let message = self.to_editor_tab(message);
         match message {
-            FilesMessage::EditIntegrated { tab } => self.edit_integrated(tab),
+            FilesMessage::EditIntegrated { tab } => self.edit_integrated(tab, false),
             FilesMessage::EditorOpened { tab, id, result } => {
                 self.editor_opened(tab, id, result);
                 Vec::new()
@@ -108,9 +108,24 @@ impl App {
             .filter(|edit| edit.id == id)
     }
 
-    /// "Edit": the server's selected file read for the integrated editor, unless one is
-    /// open already.
-    fn edit_integrated(&mut self, tab: TabId) -> Vec<Effect> {
+    /// Whether Open on the server's entry `index` opens it in the integrated editor, as the
+    /// C# does: a file over SFTP the editor takes. Over FTP, or larger, it is downloaded.
+    pub(super) fn opens_in_editor(&self, tab: TabId, index: usize) -> bool {
+        let Some(files) = self.tab(tab).and_then(|found| found.files.as_ref()) else {
+            return false;
+        };
+        let over_sftp = matches!(files.client, Some(heimdall_files::RemoteSession::Sftp(_)));
+        files.editor.is_none()
+            && over_sftp
+            && files.remote.entries.get(index).is_some_and(|entry| {
+                entry.kind == EntryKind::File
+                    && entry.size.is_none_or(|size| size <= INTEGRATED_EDIT_LIMIT)
+            })
+    }
+
+    /// "Edit", or Open (`from_open`): the server's selected file read for the integrated
+    /// editor, unless one is open already.
+    pub(super) fn edit_integrated(&mut self, tab: TabId, from_open: bool) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -145,6 +160,7 @@ impl App {
             dirty: false,
             saving: false,
             notice: None,
+            from_open,
         });
         vec![Effect::OpenEditor {
             tab,
@@ -177,10 +193,43 @@ impl App {
                 }
             }
             Err(error) => {
-                files.editor = None;
-                files.remote.error = Some(error);
+                let Some(edit) = files.editor.take() else {
+                    return;
+                };
+                // Opened by Open: a file that is not text is offered for download, as the C#.
+                if edit.from_open && error == FilesError::LooksBinary {
+                    self.dialog = Some(Dialog::ConfirmDownloadBinary {
+                        tab,
+                        name: edit.name,
+                        remote: edit.remote,
+                    });
+                } else {
+                    files.remote.error = Some(error);
+                }
             }
         }
+    }
+
+    /// Downloads the server's file `remote`, still listed, into the local folder shown.
+    pub(super) fn download_remote(
+        &mut self,
+        tab: TabId,
+        remote: &heimdall_files::RemotePath,
+    ) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let path = files.remote.path.clone();
+        let Some(index) = files
+            .remote
+            .entries
+            .iter()
+            .position(|entry| path.join(&entry.name) == *remote)
+        else {
+            return Vec::new();
+        };
+        files.remote.select_only(Some(index));
+        self.start_transfer(tab, crate::files::Direction::Download)
     }
 
     /// Saves `text`, stored as the file was, only over the file opened unless `overwrite`.

@@ -1287,3 +1287,6 @@ ui-dialog-unsaved-editors = { $count ->
 ui-files-error-looks-binary = Ce fichier semble binaire (une archive, une image ou un programme) : téléchargez-le plutôt.
 ui-files-error-not-text = La marque d'encodage de ce fichier ne correspond pas à son contenu : il ne peut pas être ouvert comme texte.
 ui-files-error-too-large-for-editor = Trop volumineux pour l'éditeur intégré (plus de { $size }) : utilisez l'édition avec l'éditeur externe.
+ui-dialog-binary-title = Fichier binaire
+ui-dialog-binary-body = "{ $name }" semble être un fichier binaire (une archive, une image ou un programme) et ne peut pas être affiché comme texte. Le télécharger plutôt ?
+ui-dialog-binary-confirm = Télécharger
