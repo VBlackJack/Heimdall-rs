@@ -1326,3 +1326,13 @@ ui-files-state-preparing = Préparation du transfert...
 ui-files-retry-button = Réessayer
 ui-files-clear-finished-button = Effacer les terminés
 ui-files-error-interrupted = Le transfert s'est interrompu de façon inattendue.
+ui-trusted-host-keys-export = Exporter known_hosts
+ui-status-known-hosts-exported = { $count ->
+    [one] { $count } clé exportée vers { $path }.
+   *[other] { $count } clés exportées vers { $path }.
+}
+ui-status-known-hosts-export-skipped = { $count ->
+    [one] { $count } entrée ignorée (aucune clé publique capturée - reconnectez-vous pour permettre l'export).
+   *[other] { $count } entrées ignorées (aucune clé publique capturée - reconnectez-vous pour permettre l'export).
+}
+ui-status-known-hosts-export-failed = Échec de l'export known_hosts : { $detail }

@@ -1401,3 +1401,13 @@ ui-files-state-preparing = Preparing transfer...
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
+ui-trusted-host-keys-export = Export known_hosts
+ui-status-known-hosts-exported = { $count ->
+    [one] Exported { $count } key to { $path }.
+   *[other] Exported { $count } keys to { $path }.
+}
+ui-status-known-hosts-export-skipped = { $count ->
+    [one] { $count } entry skipped (no public key captured - reconnect to enable export).
+   *[other] { $count } entries skipped (no public key captured - reconnect to enable export).
+}
+ui-status-known-hosts-export-failed = known_hosts export failed: { $detail }

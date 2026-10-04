@@ -330,7 +330,7 @@ impl KnownHosts {
 
 /// The host and port a pattern names plainly: `host`, or `[host]:port`. `None` for a hashed
 /// pattern, a wildcard or a negation.
-fn plain_host(pattern: &str) -> Option<(String, u16)> {
+pub(crate) fn plain_host(pattern: &str) -> Option<(String, u16)> {
     if pattern.is_empty() || pattern.starts_with(['|', '!']) || pattern.contains(['*', '?']) {
         return None;
     }
@@ -344,7 +344,7 @@ fn plain_host(pattern: &str) -> Option<(String, u16)> {
 }
 
 /// Port a `known_hosts` line leaves out of the host name.
-const DEFAULT_SSH_PORT: u16 = 22;
+pub(crate) const DEFAULT_SSH_PORT: u16 = 22;
 
 /// `line` without the host pattern `wanted`: `None` when the line does not name it (a
 /// comment, a marked line, another host), else what is left, empty when nothing is.

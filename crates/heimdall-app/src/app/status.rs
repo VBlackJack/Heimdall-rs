@@ -101,6 +101,18 @@ pub enum Notice {
     },
     /// This local port was copied.
     PortCopied(u16),
+    /// The keys trusted were written into the user's OpenSSH `known_hosts`.
+    KnownHostsExported {
+        /// Keys written.
+        count: usize,
+        /// The file written.
+        path: String,
+        /// Servers trusted by a fingerprint alone, left out.
+        skipped: usize,
+    },
+    /// The keys trusted could not be written there, for this reason: a file and what the
+    /// system said, or nothing when the home folder is not known.
+    KnownHostsExportFailed(String),
     /// This folder was created.
     FolderCreated(String),
     /// The full path of an entry of a Files tab was copied, as the C# says it.

@@ -19,9 +19,15 @@
 
 use heimdall_core::profile::display_address;
 use heimdall_rdp::{KnownRdpHost, KnownRdpHosts};
-use heimdall_ssh::{KnownHostEntry, KnownHosts};
+use heimdall_ssh::{KnownHostEntry, KnownHosts, KnownHostsError};
 
 use super::{App, Dialog, Effect, Notice};
+
+/// The folder OpenSSH keeps its files in, under the home folder.
+const OPENSSH_FOLDER: &str = ".ssh";
+
+/// The file of the keys OpenSSH trusts, in that folder.
+const OPENSSH_KNOWN_HOSTS: &str = "known_hosts";
 
 /// A key trusted for a server.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,6 +80,9 @@ pub enum TrustedKeysMessage {
     RequestForget(TrustedKey),
     /// Import the keys of another `known_hosts` file, as the C# "Trusted SSH hosts...".
     Import(super::HostKeysMessage),
+    /// Write the keys trusted into the user's OpenSSH `known_hosts`, as the C# "Export
+    /// `known_hosts`".
+    Export,
 }
 
 impl App {
@@ -99,7 +108,36 @@ impl App {
                 Vec::new()
             }
             TrustedKeysMessage::Import(message) => self.hostkeys_message(message.clone()),
+            TrustedKeysMessage::Export => {
+                self.export_known_hosts();
+                Vec::new()
+            }
         }
+    }
+
+    /// Writes the keys trusted into `~/.ssh/known_hosts`, as the C# export: in place of
+    /// their own lines there, every other line kept; and says how it went.
+    fn export_known_hosts(&mut self) {
+        let Some(target) =
+            std::env::home_dir().map(|home| home.join(OPENSSH_FOLDER).join(OPENSSH_KNOWN_HOSTS))
+        else {
+            self.tell(Notice::KnownHostsExportFailed(String::new()));
+            return;
+        };
+        let notice = match KnownHosts::new(self.config.known_hosts.clone()).export_to(&target) {
+            Ok(report) => Notice::KnownHostsExported {
+                count: report.written,
+                path: target.display().to_string(),
+                skipped: report.skipped,
+            },
+            Err(error) => Notice::KnownHostsExportFailed(match error {
+                KnownHostsError::Unreadable { path, source } => {
+                    format!("{}: {source}", path.display())
+                }
+                _ => target.display().to_string(),
+            }),
+        };
+        self.tell(notice);
     }
 
     /// Reads both files of trusted keys.

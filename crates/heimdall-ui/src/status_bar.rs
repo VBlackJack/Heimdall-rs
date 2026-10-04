@@ -170,6 +170,29 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 crate::tunnels_view::notice_text(notice).unwrap_or_default()
             }
             Notice::Bookmarked(path) => fl!("ui-files-bookmark-added", path = path.as_str()),
+            Notice::KnownHostsExported {
+                count,
+                path,
+                skipped,
+            } => {
+                let exported = fl!(
+                    "ui-status-known-hosts-exported",
+                    count = (*count),
+                    path = path.as_str()
+                );
+                if *skipped == 0 {
+                    exported
+                } else {
+                    let left_out = fl!("ui-status-known-hosts-export-skipped", count = (*skipped));
+                    format!("{exported} {left_out}")
+                }
+            }
+            Notice::KnownHostsExportFailed(detail) => {
+                fl!(
+                    "ui-status-known-hosts-export-failed",
+                    detail = detail.as_str()
+                )
+            }
             Notice::FingerprintCopied(server) => {
                 fl!("ui-status-fingerprint-copied", server = server.as_str())
             }
