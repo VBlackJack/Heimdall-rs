@@ -958,6 +958,7 @@ impl Shell {
             | Message::CopyRouteReport) => return self.input_message(message),
             Message::Submit(tab) => self.reply(tab, true),
             Message::Decline(tab) => self.reply(tab, false),
+            Message::Shortcut(WindowShortcut::Screenshot) => return self.screenshot(),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
             Message::FilesKey(key) => self.files_key(key),
@@ -1341,6 +1342,16 @@ impl Shell {
         self.app.is_locked() || self.app.pin_asked()
     }
 
+    /// Ctrl+Shift+S: the session shown copied to the clipboard as an image, as the C#
+    /// Heimdall does, and said; nothing without a session shown or over a dialog.
+    fn screenshot(&self) -> Task<Message> {
+        if self.app.active.is_none() || self.app.dialog.is_some() || self.settings_shown() {
+            return Task::none();
+        }
+        crate::screenshot::copy_session()
+            .map(|copied| Message::App(AppMessage::ScreenshotTaken { copied }))
+    }
+
     fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
@@ -1371,8 +1382,10 @@ impl Shell {
             (WindowShortcut::PreviousTab, Some(index)) => {
                 AppMessage::SelectTab(self.app.tabs[(index + count - 1) % count].id)
             }
-            // Settings: shown above, tab or no tab.
-            (WindowShortcut::Settings, _) | (_, None) => return Vec::new(),
+            // Settings: shown above, tab or no tab; a screenshot is taken by the window.
+            (WindowShortcut::Settings | WindowShortcut::Screenshot, _) | (_, None) => {
+                return Vec::new();
+            }
         };
         self.app.update(message)
     }
@@ -3314,7 +3327,14 @@ impl Shell {
         }
     }
 
+    /// What the window shows beside the tree, in the area a screenshot takes.
     fn content(&self) -> Element<'_, Message> {
+        container(self.page())
+            .id(crate::screenshot::area_id())
+            .into()
+    }
+
+    fn page(&self) -> Element<'_, Message> {
         if self.settings_shown() {
             return self.settings_page();
         }
