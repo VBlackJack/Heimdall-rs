@@ -1420,6 +1420,22 @@ async fn editing(dir: &Path) -> (App, TabId, PathBuf, heimdall_files::Fingerprin
 }
 
 #[tokio::test]
+async fn a_reconnected_tab_goes_on_watching_its_files_in_an_external_editor() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, local, _) = editing(dir.path()).await;
+    app.update(Message::ReconnectTab(tab));
+    let reopened = app.active.expect("a tab shown");
+    assert_ne!(reopened, tab, "a new connection");
+    let watched: Vec<_> = app
+        .tab(reopened)
+        .and_then(|found| found.files.as_deref())
+        .map(|files| files.edits.iter().map(|edit| edit.local.clone()).collect())
+        .unwrap_or_default();
+    assert_eq!(watched, [local], "its saves are still sent");
+    assert!(app.has_edits());
+}
+
+#[tokio::test]
 async fn a_file_edited_externally_is_watched_one_look_at_a_time_and_its_saves_said() {
     use heimdall_app::Notice;
     use heimdall_app::external_edit::EditCheck;
