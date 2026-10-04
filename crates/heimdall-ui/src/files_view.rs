@@ -603,6 +603,69 @@ fn edit_row(tab: TabId, edit: &EditSession) -> Element<'_, Message> {
     .into()
 }
 
+/// How far a running transfer is, and, once measured, how fast it goes and how long is
+/// left, as the C# says it: "42 MB of 100 MB - 5.2 MB/s, 11 s left".
+fn running_text(transfer: &Transfer) -> String {
+    let progress = match transfer.total {
+        Some(total) => fl!(
+            "ui-files-state-running",
+            done = texts::size(transfer.bytes),
+            total = texts::size(total)
+        ),
+        None => fl!(
+            "ui-files-state-running-unknown",
+            done = texts::size(transfer.bytes)
+        ),
+    };
+    let (Some(speed), Some(left)) = (
+        transfer.rate.bytes_per_second(),
+        transfer.rate.remaining(transfer.bytes, transfer.total),
+    ) else {
+        return progress;
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a speed in whole bytes a second, never negative"
+    )]
+    let speed = speed as u64;
+    fl!(
+        "ui-files-state-rate",
+        progress = progress,
+        rate = texts::size(speed),
+        left = eta_text(left)
+    )
+}
+
+/// A time left as the C# writes it: seconds, minutes and seconds, or hours and minutes.
+fn eta_text(left: std::time::Duration) -> String {
+    let seconds = left.as_secs();
+    match seconds {
+        0..60 => fl!("ui-files-eta-seconds", seconds = seconds),
+        60..3_600 => fl!(
+            "ui-files-eta-minutes",
+            minutes = (seconds / 60),
+            seconds = (seconds % 60)
+        ),
+        _ => fl!(
+            "ui-files-eta-hours",
+            hours = (seconds / 3_600),
+            minutes = (seconds % 3_600 / 60)
+        ),
+    }
+}
+
+/// How much of a running transfer of a known size is done, from 0 to 1.
+#[expect(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    reason = "a share drawn as a bar"
+)]
+fn done_share(transfer: &Transfer) -> Option<f32> {
+    let total = transfer.total.filter(|total| *total > 0)?;
+    Some((transfer.bytes.min(total) as f64 / total as f64) as f32)
+}
+
 fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
     let what = match transfer.direction {
         Direction::Download => {
@@ -611,17 +674,7 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
         Direction::Upload => fl!("ui-files-transfer-upload", name = transfer.label.as_str()),
     };
     let state = match &transfer.state {
-        TransferState::Running => match transfer.total {
-            Some(total) => fl!(
-                "ui-files-state-running",
-                done = texts::size(transfer.bytes),
-                total = texts::size(total)
-            ),
-            None => fl!(
-                "ui-files-state-running-unknown",
-                done = texts::size(transfer.bytes)
-            ),
-        },
+        TransferState::Running => running_text(transfer),
         TransferState::Done => fl!("ui-files-state-done"),
         TransferState::Incomplete { skipped } => {
             fl!("ui-files-state-incomplete", count = (*skipped))
@@ -638,6 +691,13 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
     .spacing(SPACING)
     .align_y(Alignment::Center);
     if transfer.state == TransferState::Running {
+        if let Some(share) = done_share(transfer) {
+            line = line.push(
+                iced::widget::progress_bar(0.0..=1.0, share)
+                    .length(Length::FillPortion(1))
+                    .girth(8.0),
+            );
+        }
         line = line.push(
             button(text(fl!("ui-files-cancel-button")).size(SMALL_SIZE))
                 .style(button::secondary)
