@@ -101,6 +101,10 @@ pub enum Notice {
     },
     /// This local port was copied.
     PortCopied(u16),
+    /// An image of the session shown was copied to the clipboard, as the C# says it.
+    ScreenshotCopied,
+    /// No image of the session shown could be copied.
+    ScreenshotFailed,
     /// This folder was created.
     FolderCreated(String),
     /// The full path of an entry of a Files tab was copied, as the C# says it.

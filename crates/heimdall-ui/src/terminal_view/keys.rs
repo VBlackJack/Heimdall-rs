@@ -51,6 +51,7 @@ fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
         Physical::Code(Code::KeyC) => Some('c'),
         Physical::Code(Code::KeyF) => Some('f'),
         Physical::Code(Code::KeyL) => Some('l'),
+        Physical::Code(Code::KeyS) => Some('s'),
         Physical::Code(Code::KeyV) => Some('v'),
         Physical::Code(Code::KeyW) => Some('w'),
         _ => None,
@@ -97,6 +98,8 @@ pub enum WindowShortcut {
     Broadcast,
     /// Show the settings: Ctrl+comma, as the C# one.
     Settings,
+    /// Copy an image of the session shown to the clipboard: Ctrl+Shift+S, as the C# one.
+    Screenshot,
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
@@ -199,6 +202,9 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('f') => {
             Some(WindowShortcut::Find)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('s') => {
+            Some(WindowShortcut::Screenshot)
         }
         // The character, wherever the layout puts it: the C# reads the comma key.
         keyboard::Key::Character(c) if !shift && c.as_str() == "," => {
@@ -390,6 +396,29 @@ mod tests {
             "Ctrl alone"
         );
         assert_eq!(window_shortcut(&character("c"), ANY_PLACE, ctrl_alt), None);
+    }
+
+    #[test]
+    fn ctrl_shift_s_copies_the_session_as_an_image_on_any_layout() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&character("S"), ANY_PLACE, ctrl_shift),
+            Some(WindowShortcut::Screenshot)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("\u{044b}"),
+                Physical::Code(Code::KeyS),
+                ctrl_shift
+            ),
+            Some(WindowShortcut::Screenshot),
+            "the S key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            window_shortcut(&character("s"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+S is the session's, or the editor's save"
+        );
     }
 
     #[test]
