@@ -367,6 +367,8 @@ pub enum Message {
     /// Trust an unknown host key or certificate for this run only, as the C# Heimdall's
     /// "Trust this session" and "Just this once", and connect.
     HostKeyTrustOnce(TabId),
+    /// Copy the fingerprint the tab's key question shows, as the C# prompts' Copy button.
+    CopyHostKeyFingerprint(TabId),
     /// A key press in a terminal.
     Key {
         /// Tab.
@@ -721,6 +723,9 @@ impl fmt::Debug for Message {
                 write!(f, "HostKeyDecision({}, {accept})", tab.value())
             }
             Self::HostKeyTrustOnce(tab) => write!(f, "HostKeyTrustOnce({})", tab.value()),
+            Self::CopyHostKeyFingerprint(tab) => {
+                write!(f, "CopyHostKeyFingerprint({})", tab.value())
+            }
             Self::Key { tab, .. } => write!(f, "Key({}, ..)", tab.value()),
             Self::Pointer { tab, input } => write!(f, "Pointer({}, {input:?})", tab.value()),
             Self::Resize { tab, grid, .. } => {
@@ -1465,6 +1470,8 @@ pub struct Tab {
     pub files: Option<Box<FilesPane>>,
     /// The desktop, for an RDP tab once connected.
     pub desktop: Option<Box<DesktopPane>>,
+    /// What the certificate question says beside the fingerprint, while it is asked.
+    pub certificate_context: Option<CertificateContext>,
     pending_rdp_key: Option<heimdall_rdp::Fingerprint>,
     attempt: AttemptId,
     sink: Option<Arc<dyn InputSink>>,
@@ -1590,6 +1597,7 @@ impl Tab {
             purpose,
             files: None,
             desktop: None,
+            certificate_context: None,
             pending_rdp_key: None,
             attempt,
             sink: None,
@@ -1625,6 +1633,16 @@ impl Tab {
             sink.close();
         }
     }
+}
+
+/// What a server certificate question says beside the fingerprint, as the C# one.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CertificateContext {
+    /// Certificates this profile already trusts at the same address: several usually mean
+    /// several machines answer to the name.
+    pub others: usize,
+    /// The gateways the tab reaches the server through, nearest to this machine first.
+    pub route: Vec<String>,
 }
 
 /// The profile a tab connects to.
@@ -1824,6 +1842,8 @@ pub enum Dialog {
     ConfirmBroadcast,
     /// Turn session transcripts on, which keep what is typed.
     ConfirmSessionLogging,
+    /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
+    ConfirmResetRdpDefaults,
     /// Quit with live sessions, or text not saved in an integrated editor.
     ConfirmExit {
         /// Live sessions.
@@ -2392,6 +2412,7 @@ impl App {
             }
             Message::HostKeyDecision { tab, accept } => self.host_key_decision(tab, accept.into()),
             Message::HostKeyTrustOnce(tab) => self.host_key_decision(tab, KeyTrust::Once),
+            Message::CopyHostKeyFingerprint(tab) => self.copy_host_key_fingerprint(tab),
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
@@ -2847,6 +2868,22 @@ impl App {
                 Vec::new()
             }
         }
+    }
+
+    /// Copies the fingerprint the tab's key question shows, an SSH key's or a certificate's.
+    fn copy_host_key_fingerprint(&mut self, tab_id: TabId) -> Vec<Effect> {
+        let Some(Phase::HostKey {
+            host,
+            port,
+            fingerprint,
+        }) = self.tab(tab_id).map(|tab| &tab.phase)
+        else {
+            return Vec::new();
+        };
+        let address = heimdall_core::profile::display_address(host, *port);
+        let fingerprint = fingerprint.clone();
+        self.tell(Notice::FingerprintCopied(address));
+        vec![Effect::WriteClipboard(fingerprint)]
     }
 
     fn host_key_decision(&mut self, tab_id: TabId, trust: KeyTrust) -> Vec<Effect> {
@@ -3399,6 +3436,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
+            Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
                 Vec::new()

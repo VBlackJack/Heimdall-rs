@@ -26,7 +26,9 @@ use serde::{Deserialize, Serialize};
 use crate::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, ProviderKind, ProviderSettings};
 use crate::lockout::Lockout;
 use crate::pin::PinHash;
-use crate::profile::RdpDefaults;
+use crate::profile::{
+    RESOLUTION_PRESETS, RdpDefaults, preset_fits, resolution_preset, resolution_text,
+};
 use crate::store::{StoreError, write_atomic};
 
 /// Name of the settings file, beside the profile file.
@@ -196,6 +198,9 @@ pub struct Settings {
     /// Attempts of an RDP desktop's auto-reconnect, as the C# `RdpAutoReconnectMaxAttempts`:
     /// within [`RDP_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`RDP_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub rdp_auto_reconnect_attempts: u32,
+    /// The sizes RDP tabs' Resolution menus offer, as the C# `RdpResolutionPresets`; empty
+    /// offers [`RESOLUTION_PRESETS`]. See [`Settings::resolution_presets`].
+    pub rdp_resolution_presets: Vec<(u16, u16)>,
     /// Seconds between two anti-idle keys of an RDP session whose profile asks for them, as
     /// the C# `AntiIdleIntervalSeconds`: 0 turns them off, else within
     /// [`ANTI_IDLE_INTERVAL_MIN`] and [`ANTI_IDLE_INTERVAL_MAX`].
@@ -360,6 +365,7 @@ impl Default for Settings {
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+            rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
             ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
@@ -399,6 +405,9 @@ struct SettingsFile {
 struct RdpSessionSection {
     #[serde(default)]
     auto_reconnect_attempts: Option<u32>,
+    /// One `WIDTHxHEIGHT` per preset.
+    #[serde(default)]
+    resolution_presets: Option<Vec<String>>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -553,6 +562,33 @@ pub fn settings_path(profiles_file: &Path) -> PathBuf {
 }
 
 impl Settings {
+    /// The sizes the Resolution menus offer: the presets chosen, else the built-in ones, as
+    /// the C# `ResolutionPresetCatalog`.
+    #[must_use]
+    pub fn resolution_presets(&self) -> &[(u16, u16)] {
+        if self.rdp_resolution_presets.is_empty() {
+            &RESOLUTION_PRESETS
+        } else {
+            &self.rdp_resolution_presets
+        }
+    }
+
+    /// Whether `presets` can be the Resolution menus' presets: each within the limits.
+    #[must_use]
+    pub fn resolution_presets_accepted(presets: &[(u16, u16)]) -> bool {
+        presets.iter().copied().all(preset_fits)
+    }
+
+    /// The RDP settings back to their own values, as the C# "Reset RDP defaults": the options
+    /// profiles following the application take, the auto-reconnect attempts and the
+    /// resolution presets. Nothing else changes, and no profile.
+    pub fn reset_rdp(&mut self) {
+        let defaults = Self::default();
+        self.rdp_defaults = defaults.rdp_defaults;
+        self.rdp_auto_reconnect_attempts = defaults.rdp_auto_reconnect_attempts;
+        self.rdp_resolution_presets = defaults.rdp_resolution_presets;
+    }
+
     /// Reads the settings at `path`; a missing file holds the defaults.
     ///
     /// # Errors
@@ -632,6 +668,16 @@ impl Settings {
                 file.rdp_session.auto_reconnect_attempts,
                 rdp_auto_reconnect_attempts_accepted,
                 RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+            ),
+            // A line that is not a preset is left out, as the C# menu leaves it out.
+            rdp_resolution_presets: file.rdp_session.resolution_presets.map_or_else(
+                || RESOLUTION_PRESETS.to_vec(),
+                |lines| {
+                    lines
+                        .iter()
+                        .filter_map(|line| resolution_preset(line))
+                        .collect()
+                },
             ),
             ssh_auto_reconnect_attempts: within(
                 file.ssh.auto_reconnect_attempts,
@@ -728,6 +774,13 @@ impl Settings {
             rdp: self.rdp_defaults,
             rdp_session: RdpSessionSection {
                 auto_reconnect_attempts: Some(self.rdp_auto_reconnect_attempts),
+                resolution_presets: Some(
+                    self.rdp_resolution_presets
+                        .iter()
+                        .copied()
+                        .map(resolution_text)
+                        .collect(),
+                ),
             },
             files: FilesSection {
                 external_editor: self.external_editor.clone(),

@@ -64,6 +64,11 @@ pub enum SettingsMessage {
     SshTmoutResetInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
+    /// The sizes the Resolution menus offer, empty for the built-in ones; refused when one
+    /// is out of the limits.
+    RdpResolutionPresets(Vec<(u16, u16)>),
+    /// The RDP settings back to their own values, asked first as the C# asks.
+    ResetRdpDefaults,
 }
 
 /// The colours of `scheme`.
@@ -121,8 +126,17 @@ impl App {
                 self.dialog = Some(Dialog::ConfirmSessionLogging);
                 Vec::new()
             }
+            SettingsMessage::ResetRdpDefaults => {
+                self.dialog = Some(Dialog::ConfirmResetRdpDefaults);
+                Vec::new()
+            }
             _ => self.apply_settings(message),
         }
+    }
+
+    /// The RDP settings reset, as the user agreed to.
+    pub(super) fn confirm_reset_rdp_defaults(&mut self) -> Vec<Effect> {
+        self.apply_settings(&SettingsMessage::ResetRdpDefaults)
     }
 
     /// Transcripts turned on, as the user agreed to.
@@ -189,6 +203,13 @@ impl App {
                 self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
+            SettingsMessage::RdpResolutionPresets(presets) => {
+                if !Settings::resolution_presets_accepted(presets) {
+                    return Vec::new();
+                }
+                self.settings.rdp_resolution_presets.clone_from(presets);
+            }
+            SettingsMessage::ResetRdpDefaults => self.settings.reset_rdp(),
             SettingsMessage::TrustedKeys(_) => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {

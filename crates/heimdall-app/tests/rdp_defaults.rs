@@ -321,3 +321,44 @@ fn a_desktop_back_by_itself_takes_the_defaults_as_they_are_then() {
         "the tab draws with them"
     );
 }
+
+#[test]
+fn the_resolution_presets_are_kept_within_the_limits_and_reset_with_the_rdp_settings_once_agreed() {
+    use heimdall_app::Dialog;
+    use heimdall_core::profile::RESOLUTION_PRESETS;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(SettingsMessage::RdpResolutionPresets(
+        vec![(1366, 768), (99, 99)],
+    )));
+    assert_eq!(
+        app.settings().rdp_resolution_presets,
+        RESOLUTION_PRESETS,
+        "one out of the limits: refused whole"
+    );
+    app.update(Message::Settings(SettingsMessage::RdpResolutionPresets(
+        vec![(1366, 768)],
+    )));
+    assert_eq!(app.settings().resolution_presets(), [(1366, 768)]);
+    defaults(&mut app, ColorDepth::Bpp16);
+
+    app.update(Message::Settings(SettingsMessage::ResetRdpDefaults));
+    assert!(
+        matches!(app.dialog, Some(Dialog::ConfirmResetRdpDefaults)),
+        "asked first, as the C#"
+    );
+    app.update(Message::DismissDialog);
+    assert_eq!(app.settings().resolution_presets(), [(1366, 768)], "kept");
+
+    app.update(Message::Settings(SettingsMessage::ResetRdpDefaults));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.settings().rdp_resolution_presets, RESOLUTION_PRESETS);
+    assert_eq!(app.settings().rdp_defaults, RdpDefaults::default());
+    // Saved, as every setting.
+    let read = heimdall_core::settings::Settings::load(
+        &dir.path().join(heimdall_core::settings::SETTINGS_FILE_NAME),
+    )
+    .expect("load");
+    assert_eq!(read.rdp_resolution_presets, RESOLUTION_PRESETS);
+}

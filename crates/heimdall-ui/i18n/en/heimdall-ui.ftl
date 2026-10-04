@@ -1468,3 +1468,17 @@ ui-files-empty-no-match = No entries match "{ $filter }".
 ui-files-empty-clear-filter = Clear filter
 ui-files-empty-hidden-only = This folder only contains hidden entries.
 ui-files-empty-show-hidden = Show hidden files
+ui-hostkey-copy-fingerprint-button = Copy
+ui-certificate-already-trusted = { $count ->
+    [one] This profile already trusts { $count } other certificate for this name, which usually means more than one machine answers to it.
+   *[other] This profile already trusts { $count } other certificates for this name, which usually means several machines answer to it.
+}
+ui-certificate-route = Reached through: { $route }
+ui-settings-rdp-resolution-presets = Resolution presets
+ui-settings-rdp-resolution-presets-hint = One preset per line, format WIDTHxHEIGHT (e.g. 1920x1080). Leave the box empty to use the built-in list.
+ui-settings-rdp-resolution-presets-reset = Reset to defaults
+ui-settings-rdp-resolution-presets-invalid = Resolution presets: these lines are not WIDTHxHEIGHT with a width from { $min } to { $width } and a height from { $min } to { $height } pixels: { $lines }
+ui-settings-rdp-reset-defaults = Reset RDP defaults
+ui-settings-rdp-reset-defaults-tooltip = Reverts only the RDP defaults to their factory values. Other settings are untouched.
+ui-dialog-reset-rdp-title = Reset RDP defaults?
+ui-dialog-reset-rdp-body = Restore all RDP-related defaults to their factory values? Existing servers are not affected.
