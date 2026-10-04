@@ -295,3 +295,63 @@ fn powershells_first_error_is_explained_until_the_user_types() {
         Some(Diagnostic::WsmanInvalidResponse)
     );
 }
+
+#[test]
+fn a_session_never_entered_says_to_read_powershells_message_unless_its_cause_is_known() {
+    use heimdall_core::winrm::REMOTE_SESSION_NOT_ENTERED_EXIT_CODE;
+    use heimdall_core::winrm_diagnostic::Diagnostic;
+
+    let not_entered = u32::try_from(REMOTE_SESSION_NOT_ENTERED_EXIT_CODE).expect("positive");
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), profile("bastion"));
+    let (tab, attempt) = open(&mut app);
+    let event = |app: &mut App, event| {
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event,
+        });
+    };
+    event(
+        &mut app,
+        ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    );
+    event(
+        &mut app,
+        ConnectionEvent::Closed {
+            exit_status: Some(not_entered),
+        },
+    );
+    assert_eq!(
+        app.tab(tab).expect("tab").winrm_diagnostic,
+        Some(Diagnostic::SessionNotEntered)
+    );
+
+    // A cause already named stays the one said.
+    let other = tempfile::tempdir().expect("dir");
+    let mut known = self::app(other.path(), profile("bastion"));
+    let (tab, attempt) = open(&mut known);
+    for event in [
+        ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+        ConnectionEvent::Output(
+            b"Enter-PSSession : WinRM cannot process the request. Error 0x80070005".to_vec(),
+        ),
+        ConnectionEvent::Closed {
+            exit_status: Some(not_entered),
+        },
+    ] {
+        known.update(Message::Connection {
+            tab,
+            attempt,
+            event,
+        });
+    }
+    assert_eq!(
+        known.tab(tab).expect("tab").winrm_diagnostic,
+        Some(Diagnostic::AccessDenied)
+    );
+}

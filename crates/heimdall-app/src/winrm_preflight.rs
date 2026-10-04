@@ -84,6 +84,7 @@ pub async fn ensure_reachable(host: &str, port: u16, tls: TlsCheck) -> Result<()
     let tls_failed = || UiError::WinRmTlsFailed {
         host: host.to_owned(),
         port,
+        check_skipped: skipped,
     };
     let name = ServerName::try_from(host.to_owned()).map_err(|_| tls_failed())?;
     let connector = ftps_trust::connector(
@@ -184,7 +185,8 @@ mod tests {
             ensure_reachable("localhost", port, TlsCheck::System).await,
             Err(UiError::WinRmTlsFailed {
                 host: "localhost".to_owned(),
-                port
+                port,
+                check_skipped: false,
             })
         );
     }
@@ -204,8 +206,10 @@ mod tests {
             ensure_reachable("127.0.0.1", port, TlsCheck::Skipped).await,
             Err(UiError::WinRmTlsFailed {
                 host: "127.0.0.1".to_owned(),
-                port
-            })
+                port,
+                check_skipped: true,
+            }),
+            "said as no TLS, not as a certificate refused"
         );
     }
 }

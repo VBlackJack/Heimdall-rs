@@ -85,6 +85,9 @@ pub enum UiError {
         host: String,
         /// Its port.
         port: u16,
+        /// The certificate's check was skipped: no certificate was refused, so the port most
+        /// likely does not speak TLS.
+        check_skipped: bool,
     },
     /// The network connection failed.
     Network {
