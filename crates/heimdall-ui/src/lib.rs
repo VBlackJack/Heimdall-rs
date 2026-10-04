@@ -28,6 +28,7 @@ mod files_view;
 pub mod finder;
 pub mod hostkeys_view;
 pub mod i18n;
+mod integrated_editor;
 pub mod keysym;
 pub mod local_form;
 mod logging;

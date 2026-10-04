@@ -330,6 +330,7 @@ fn live_tabs_close_together_once_asked() {
         Some(Dialog::ConfirmCloseTabs {
             tabs: vec![ended, live_one, ended_last],
             live: 1,
+            unsaved: 0,
         }),
         "asked once for them all"
     );

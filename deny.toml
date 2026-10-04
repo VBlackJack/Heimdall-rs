@@ -9,6 +9,11 @@ yanked = "deny"
 ignore = [
     { id = "RUSTSEC-2024-0436", reason = "paste is unmaintained; pulled by metal, the macOS backend of wgpu, through iced; not built for Linux or Windows" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser is unmaintained; pulled by fontdb and owned_ttf_parser through iced" },
+    # Decided by Julien Bombled on 2026-10-04, with iced's highlighter for the integrated
+    # editor: syntect 5.3 through two-face. Nothing either crate reads comes from the
+    # network or from a user's file.
+    { id = "RUSTSEC-2025-0141", reason = "bincode 1 is unmaintained; syntect decodes the syntax and theme packs compiled into the binary with it" },
+    { id = "RUSTSEC-2024-0320", reason = "yaml-rust is unmaintained; syntect loads .sublime-syntax files with it, which Heimdall never does" },
     # Decided by Julien Bombled on 2026-09-26. No fixed rsa release exists. Heimdall-rs only
     # signs with an RSA user key, locally, once per login; the only party observing that
     # timing is the server being logged into. Removing RSA would lock out servers that

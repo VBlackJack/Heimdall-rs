@@ -47,6 +47,10 @@ identifier!(
     /// One question put to the user.
     QuestionId
 );
+identifier!(
+    /// One file opened in a Files tab's integrated editor: kept when the tab reconnects.
+    EditorId
+);
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -61,6 +65,12 @@ impl TabId {
 }
 
 impl AttemptId {
+    pub(crate) fn fresh() -> Self {
+        Self(next())
+    }
+}
+
+impl EditorId {
     pub(crate) fn fresh() -> Self {
         Self(next())
     }

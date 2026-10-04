@@ -151,8 +151,13 @@ impl App {
             .iter()
             .filter(|id| self.tab(**id).is_some_and(Tab::is_live))
             .count();
-        if live > 0 {
-            self.dialog = Some(Dialog::ConfirmCloseTabs { tabs, live });
+        let unsaved = self.unsaved_tabs(&tabs);
+        if live > 0 || unsaved > 0 {
+            self.dialog = Some(Dialog::ConfirmCloseTabs {
+                tabs,
+                live,
+                unsaved,
+            });
             return;
         }
         for tab in tabs {

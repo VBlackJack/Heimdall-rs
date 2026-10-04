@@ -620,6 +620,12 @@ pub enum FilesError {
     },
     /// The session with the server is over.
     SessionClosed,
+    /// The file looks like a program, an image or an archive: not opened as text.
+    LooksBinary,
+    /// The file is larger than the integrated editor opens: the external editor takes it.
+    TooLargeForEditor,
+    /// The file's byte order mark names an encoding its bytes do not follow.
+    NotText,
     /// The local file system failed.
     Local {
         /// Operating system message.
@@ -739,6 +745,9 @@ pub struct FilesPane {
     /// The password sudo took for this tab, kept until the tab's session ends or sudo
     /// refuses it, as the user chose; never shown, wiped when dropped.
     pub sudo_password: Option<crate::sudo_edit::SudoPassword>,
+    /// The server's file open in the integrated editor, shown in place of the lists: one
+    /// at a time, as the C#.
+    pub editor: Option<crate::integrated_edit::IntegratedEdit>,
 }
 
 impl FilesPane {
@@ -757,6 +766,7 @@ impl FilesPane {
             edits: Vec::new(),
             checking_edits: false,
             sudo_password: None,
+            editor: None,
         }
     }
 

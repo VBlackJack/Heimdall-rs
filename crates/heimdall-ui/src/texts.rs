@@ -377,6 +377,12 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::InvalidPermissions => fl!("ui-files-error-invalid-permissions"),
         FilesError::CopyRefused => fl!("ui-files-error-copy-refused"),
         FilesError::ChangedOnServer => fl!("ui-files-error-changed-on-server"),
+        FilesError::LooksBinary => fl!("ui-files-error-looks-binary"),
+        FilesError::TooLargeForEditor => fl!(
+            "ui-files-error-too-large-for-editor",
+            size = size(heimdall_app::integrated_edit::INTEGRATED_EDIT_LIMIT)
+        ),
+        FilesError::NotText => fl!("ui-files-error-not-text"),
         FilesError::FileTooLarge => fl!("ui-files-error-file-too-large"),
         FilesError::WorkingFolderUnprotected => fl!("ui-files-error-working-folder-unprotected"),
         FilesError::EditorFailed { detail } => {

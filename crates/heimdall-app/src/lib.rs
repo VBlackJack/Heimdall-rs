@@ -32,6 +32,7 @@ pub mod files;
 pub mod ftp_driver;
 pub mod gateway_draft;
 mod ids;
+pub mod integrated_edit;
 pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
@@ -80,6 +81,6 @@ pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};
 pub use event::{
     Answer, ConnectionEvent, PostConnectProgress, QuestionKind, ServerPasswordQuestion, StepStatus,
 };
-pub use ids::{AttemptId, QuestionId, TabId};
+pub use ids::{AttemptId, EditorId, QuestionId, TabId};
 pub use sink::InputSink;
 pub use text::{MAX_SERVER_TEXT_CHARS, server_text, visible_text};

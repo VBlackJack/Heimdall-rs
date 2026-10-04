@@ -237,3 +237,82 @@ async fn a_save_is_sent_once_it_holds_still_and_never_over_a_change_on_the_serve
         "not tried again"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn the_integrated_editor_saves_only_over_the_file_opened_keeping_every_other_byte() {
+    use heimdall_app::files::FilesError;
+    use heimdall_app::integrated_edit::{open, save};
+    use heimdall_app::text_codec::{TextEncoding, encode};
+    use heimdall_files::RemoteSession;
+
+    let Some((_server, client)) = sftp::start().await else {
+        return;
+    };
+    let client = RemoteSession::Sftp(client);
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("hosts");
+    std::fs::write(&file, b"\xEF\xBB\xBF127.0.0.1 a\r\n10.0.0.1 b\r\n").expect("file");
+    let opened = sftp::step(open(client.clone(), sftp::remote(&file)))
+        .await
+        .expect("opened");
+    assert_eq!(opened.text, "127.0.0.1 a\r\n10.0.0.1 b\r\n");
+    assert_eq!(opened.encoding, TextEncoding::Utf8 { bom: true });
+
+    // Its size changes: the fingerprint, size and mtime to the second, tells it apart.
+    let edited = opened.text.replace("10.0.0.1", "10.0.0.20");
+    let bytes = encode(&edited, opened.encoding).expect("encoded");
+    let saved = sftp::step(save(
+        client.clone(),
+        sftp::remote(&file),
+        bytes,
+        Some(opened.fingerprint),
+    ))
+    .await
+    .expect("saved");
+    assert_eq!(
+        std::fs::read(&file).expect("read"),
+        b"\xEF\xBB\xBF127.0.0.1 a\r\n10.0.0.20 b\r\n",
+        "its mark and its line endings kept"
+    );
+
+    // Saved again over what was first opened: the server's file changed since, left as it is.
+    let again = encode("other\r\n", opened.encoding).expect("encoded");
+    assert_eq!(
+        sftp::step(save(
+            client.clone(),
+            sftp::remote(&file),
+            again.clone(),
+            Some(opened.fingerprint),
+        ))
+        .await,
+        Err(FilesError::ChangedOnServer)
+    );
+    assert_ne!(std::fs::read(&file).expect("read"), again);
+    // Over what was saved, or over whatever is there when asked to.
+    sftp::step(save(
+        client.clone(),
+        sftp::remote(&file),
+        again.clone(),
+        Some(saved),
+    ))
+    .await
+    .expect("saved over what was saved");
+    std::fs::write(&file, b"changed by someone\n").expect("changed");
+    sftp::step(save(
+        client.clone(),
+        sftp::remote(&file),
+        again.clone(),
+        None,
+    ))
+    .await
+    .expect("written over, as asked");
+    assert_eq!(std::fs::read(&file).expect("read"), again);
+
+    let program = dir.path().join("tool");
+    std::fs::write(&program, b"\x7FELF\x02\x01\x01\x00").expect("program");
+    assert_eq!(
+        sftp::step(open(client, sftp::remote(&program))).await,
+        Err(FilesError::LooksBinary)
+    );
+}
