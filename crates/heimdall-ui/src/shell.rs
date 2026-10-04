@@ -2674,8 +2674,38 @@ impl Shell {
             .padding(PADDING)
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box),
+            self.rdp_session_settings(),
             self.trusted_keys_settings(TrustedList::Certificates),
         ]
+    }
+
+    /// How many times a dropped desktop is opened again by itself, as the C#
+    /// `RdpAutoReconnectMaxAttempts`.
+    fn rdp_session_settings(&self) -> Element<'_, Message> {
+        let attempts: Vec<u32> = (heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MIN
+            ..=heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX)
+            .collect();
+        container(
+            row![
+                text(fl!("ui-settings-rdp-auto-reconnect-attempts")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    attempts,
+                    Some(self.app.settings().rdp_auto_reconnect_attempts),
+                    |attempts| {
+                        Message::App(AppMessage::Settings(
+                            SettingsMessage::RdpAutoReconnectAttempts(attempts),
+                        ))
+                    },
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
     }
 
     /// The C# SSH Connection card: auto-reconnect, on or off, and how many attempts before
@@ -3659,7 +3689,15 @@ impl Shell {
         )
         .style(button::secondary)
         .on_press(Message::ToggleFullscreen);
-        let mut bar = row![
+        let disconnect = tooltip(
+            button(text(fl!("ui-desktop-disconnect")).size(SMALL_SIZE))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
+            text(fl!("ui-desktop-disconnect-tooltip")).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box);
+        let bar = row![
             // Beside it: below, it would cover the menu's first entry.
             tooltip(
                 send_keys,
@@ -3669,9 +3707,23 @@ impl Shell {
             .style(container::rounded_box),
             mode,
             fullscreen,
+            disconnect,
         ]
         .spacing(SPACING)
         .align_y(iced::Alignment::Center);
+        let bar = self.desktop_bar_end(tab, pane, bar);
+        column![bar, view].spacing(SPACING / 2.0).into()
+    }
+
+    /// The end of a desktop's session bar: the resolution menu, the anti-idle badge, saving
+    /// the server's files, VNC's clipboard, the desktop's name and VNC's warning.
+    fn desktop_bar_end<'a>(
+        &self,
+        tab: &Tab,
+        pane: &'a DesktopPane,
+        mut bar: iced::widget::Row<'a, Message>,
+    ) -> iced::widget::Row<'a, Message> {
+        let tab_id = tab.id;
         // The C# session bar's resolution button: the tab's menu, its tip naming the mode,
         // in the accent colour while a size of its own is kept.
         if let Some(state) = self.resolution_state(tab) {
@@ -3721,6 +3773,9 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
+        if let Some(name) = &pane.desktop_name {
+            bar = bar.push(text(name.as_str()).size(SMALL_SIZE).style(text::secondary));
+        }
         if tab.purpose == Purpose::Vnc {
             // Always in sight: nothing on a VNC connection is encrypted.
             bar = bar.push(
@@ -3729,7 +3784,7 @@ impl Shell {
                     .style(text::danger),
             );
         }
-        column![bar, view].spacing(SPACING / 2.0).into()
+        bar
     }
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
@@ -5761,6 +5816,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-paste-body", count = (*lines)),
             fl!("ui-dialog-paste-confirm"),
         ),
+        Dialog::ConfirmDisconnectDesktop { name, .. } => (
+            fl!("ui-desktop-disconnect-title"),
+            fl!("ui-desktop-disconnect-body", name = name.as_str()),
+            fl!("ui-desktop-disconnect"),
+        ),
         Dialog::ConfirmCloseTransfers { name, .. } => (
             fl!("ui-dialog-close-transfers-title"),
             fl!("ui-dialog-close-transfers-body", name = name.as_str()),
@@ -6678,6 +6738,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     match dialog {
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
         Dialog::ConfirmCloseTab(_)
+        | Dialog::ConfirmDisconnectDesktop { .. }
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseEdits { .. }
         | Dialog::ConfirmCloseEditor { .. }

@@ -1454,3 +1454,8 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Username updated on { $count } servers.
 }
 ui-status-bulk-username-unchanged = No changes applied - every selected server already uses this username.
+ui-desktop-disconnect = Disconnect
+ui-desktop-disconnect-tooltip = Disconnect session
+ui-desktop-disconnect-title = Disconnect Remote Desktop?
+ui-desktop-disconnect-body = You are about to disconnect from { $name }. Continue?
+ui-settings-rdp-auto-reconnect-attempts = Auto-reconnect maximum attempts

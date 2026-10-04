@@ -86,10 +86,12 @@ async fn run(request: VncRequest, registry: AnswerRegistry, events: mpsc::Sender
             return;
         }
     };
+    let name = connection.name.clone();
     let mut session = vnc::start(connection, request.cancel.clone());
     log::info!("VNC session open to {target}");
     if events
         .send(ConnectionEvent::VncReady {
+            name,
             framebuffer: session.framebuffer.clone(),
             input: session.input.clone(),
         })

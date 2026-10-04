@@ -193,6 +193,9 @@ pub struct Settings {
     /// Attempts before the reconnect is left to the user, within
     /// [`SSH_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`SSH_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub ssh_auto_reconnect_attempts: u32,
+    /// Attempts of an RDP desktop's auto-reconnect, as the C# `RdpAutoReconnectMaxAttempts`:
+    /// within [`RDP_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`RDP_AUTO_RECONNECT_ATTEMPTS_MAX`].
+    pub rdp_auto_reconnect_attempts: u32,
     /// Seconds between two anti-idle keys of an RDP session whose profile asks for them, as
     /// the C# `AntiIdleIntervalSeconds`: 0 turns them off, else within
     /// [`ANTI_IDLE_INTERVAL_MIN`] and [`ANTI_IDLE_INTERVAL_MAX`].
@@ -260,6 +263,25 @@ pub const SSH_AUTO_RECONNECT_ATTEMPTS_MIN: u32 = 1;
 
 /// Most attempts of an SSH auto-reconnect accepted, as the C# setting's range.
 pub const SSH_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 10;
+
+/// Most attempts of an RDP auto-reconnect, and their number by default, as the C#
+/// `DefaultRdpAutoReconnectMaxAttempts`.
+pub const RDP_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 20;
+
+/// Fewest attempts of an RDP auto-reconnect accepted, as the C# setting's range.
+pub const RDP_AUTO_RECONNECT_ATTEMPTS_MIN: u32 = 1;
+
+/// Whether `attempts` is a number of RDP auto-reconnect attempts the settings accept.
+#[must_use]
+pub fn rdp_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
+    (RDP_AUTO_RECONNECT_ATTEMPTS_MIN..=RDP_AUTO_RECONNECT_ATTEMPTS_MAX).contains(&attempts)
+}
+
+/// `value` read from the file when `accepted`; `default` when absent or out of the range,
+/// as the C# load warns and keeps the default.
+fn within(value: Option<u32>, accepted: fn(u32) -> bool, default: u32) -> u32 {
+    value.filter(|value| accepted(*value)).unwrap_or(default)
+}
 
 /// Whether `attempts` is a number of SSH auto-reconnect attempts the settings accept.
 #[must_use]
@@ -337,6 +359,7 @@ impl Default for Settings {
             credential_provider: ProviderSettings::default(),
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
             ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
@@ -367,7 +390,15 @@ struct SettingsFile {
     #[serde(default)]
     rdp: RdpDefaults,
     #[serde(default)]
+    rdp_session: RdpSessionSection,
+    #[serde(default)]
     files: FilesSection,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct RdpSessionSection {
+    #[serde(default)]
+    auto_reconnect_attempts: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -528,6 +559,7 @@ impl Settings {
     ///
     /// Returns [`StoreError`] when the file exists and cannot be read, does not parse, or has
     /// a newer format version.
+    #[expect(clippy::too_many_lines, reason = "one field of the file per setting")]
     pub fn load(path: &Path) -> Result<Self, StoreError> {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -596,26 +628,31 @@ impl Settings {
             credential_provider: file.credential_provider.settings(),
             ssh_auto_reconnect: file.ssh.auto_reconnect,
             // Out of the range, as the C# load warns and keeps the default.
-            ssh_auto_reconnect_attempts: file
-                .ssh
-                .auto_reconnect_attempts
-                .filter(|attempts| ssh_auto_reconnect_attempts_accepted(*attempts))
-                .unwrap_or(SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT),
-            anti_idle_interval: file
-                .ssh
-                .anti_idle_interval
-                .filter(|seconds| anti_idle_interval_accepted(*seconds))
-                .unwrap_or(ANTI_IDLE_INTERVAL_DEFAULT),
-            ssh_keep_alive_interval: file
-                .ssh
-                .keep_alive_interval
-                .filter(|seconds| ssh_keep_alive_interval_accepted(*seconds))
-                .unwrap_or(SSH_KEEP_ALIVE_INTERVAL_DEFAULT),
-            ssh_tmout_reset_interval: file
-                .ssh
-                .tmout_reset_interval
-                .filter(|seconds| ssh_tmout_reset_interval_accepted(*seconds))
-                .unwrap_or(SSH_TMOUT_RESET_INTERVAL_DEFAULT),
+            rdp_auto_reconnect_attempts: within(
+                file.rdp_session.auto_reconnect_attempts,
+                rdp_auto_reconnect_attempts_accepted,
+                RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+            ),
+            ssh_auto_reconnect_attempts: within(
+                file.ssh.auto_reconnect_attempts,
+                ssh_auto_reconnect_attempts_accepted,
+                SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
+            ),
+            anti_idle_interval: within(
+                file.ssh.anti_idle_interval,
+                anti_idle_interval_accepted,
+                ANTI_IDLE_INTERVAL_DEFAULT,
+            ),
+            ssh_keep_alive_interval: within(
+                file.ssh.keep_alive_interval,
+                ssh_keep_alive_interval_accepted,
+                SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
+            ),
+            ssh_tmout_reset_interval: within(
+                file.ssh.tmout_reset_interval,
+                ssh_tmout_reset_interval_accepted,
+                SSH_TMOUT_RESET_INTERVAL_DEFAULT,
+            ),
             ssh_agent_preference: file
                 .ssh
                 .agent_preference
@@ -689,6 +726,9 @@ impl Settings {
                 agent_preference: Some(self.ssh_agent_preference.name().to_owned()),
             },
             rdp: self.rdp_defaults,
+            rdp_session: RdpSessionSection {
+                auto_reconnect_attempts: Some(self.rdp_auto_reconnect_attempts),
+            },
             files: FilesSection {
                 external_editor: self.external_editor.clone(),
             },

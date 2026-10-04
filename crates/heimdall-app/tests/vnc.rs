@@ -116,7 +116,9 @@ async fn serve(listener: TcpListener, expected: usize) -> Vec<u8> {
     let _ = read_exactly(&mut stream, 1).await;
     let mut init = vec![0, 4, 0, 2];
     init.extend_from_slice(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0]);
-    init.extend_from_slice(&[0, 0, 0, 0]);
+    // The desktop's name, as the server gives it.
+    init.extend_from_slice(&8_u32.to_be_bytes());
+    init.extend_from_slice(b"Lab desk");
     stream.write_all(&init).await.expect("init");
     let _ = read_exactly(&mut stream, OPENING_REQUESTS).await;
     if expected > 0 {
@@ -169,6 +171,13 @@ async fn session(
         }
         if opened {
             assert_eq!(app.tab(tab).expect("tab").phase, Phase::Connected);
+            assert_eq!(
+                app.tab(tab)
+                    .and_then(|found| found.desktop.as_ref())
+                    .and_then(|desktop| desktop.desktop_name.as_deref()),
+                Some("Lab desk"),
+                "shown on its bar, as the C# session title"
+            );
             let _ = app.update(Message::DesktopInput {
                 tab,
                 inputs: inputs.clone(),
