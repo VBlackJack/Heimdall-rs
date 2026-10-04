@@ -91,6 +91,14 @@ impl App {
         {
             let mut old = std::mem::replace(&mut self.tabs[index], reopened);
             self.tabs[index].custom_title = old.custom_title.take();
+            // Files open in an external editor go on being watched: their saves are sent
+            // once the new connection is up.
+            if let (Some(files), Some(before)) = (
+                self.tabs[index].files.as_deref_mut(),
+                old.files.as_deref_mut(),
+            ) {
+                files.edits = std::mem::take(&mut before.edits);
+            }
             old.stop();
             self.active = Some(self.tabs[index].id);
         }
