@@ -61,6 +61,15 @@ pub enum KnownHostsError {
         /// File concerned.
         path: PathBuf,
     },
+    /// The keys trusted could not be written into another `known_hosts` file.
+    #[error("{path}: {source}")]
+    ExportFailed {
+        /// File concerned.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
     /// An entry still names the host after its own lines were removed: a hashed or
     /// wildcard line, which only a person can tell apart from other hosts' entries.
     #[error("{path}: an entry for this host is hashed or shared with others: edit the file")]
@@ -330,7 +339,7 @@ impl KnownHosts {
 
 /// The host and port a pattern names plainly: `host`, or `[host]:port`. `None` for a hashed
 /// pattern, a wildcard or a negation.
-fn plain_host(pattern: &str) -> Option<(String, u16)> {
+pub(crate) fn plain_host(pattern: &str) -> Option<(String, u16)> {
     if pattern.is_empty() || pattern.starts_with(['|', '!']) || pattern.contains(['*', '?']) {
         return None;
     }
@@ -344,7 +353,7 @@ fn plain_host(pattern: &str) -> Option<(String, u16)> {
 }
 
 /// Port a `known_hosts` line leaves out of the host name.
-const DEFAULT_SSH_PORT: u16 = 22;
+pub(crate) const DEFAULT_SSH_PORT: u16 = 22;
 
 /// `line` without the host pattern `wanted`: `None` when the line does not name it (a
 /// comment, a marked line, another host), else what is left, empty when nothing is.
