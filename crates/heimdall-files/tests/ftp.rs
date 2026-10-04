@@ -317,6 +317,7 @@ async fn a_folder_goes_up_and_comes_back_whole_and_a_second_upload_asks_first() 
         remote: top.join(b"site"),
         local: source.clone(),
         kind: Kind::Folder,
+        stamp: heimdall_files::Stamp::default(),
     }];
     let plan = session.plan_upload(&up, &cancel).await.expect("planned");
     assert!(!plan.has_conflicts());
@@ -354,6 +355,7 @@ async fn a_folder_goes_up_and_comes_back_whole_and_a_second_upload_asks_first() 
         remote: top.join(b"site"),
         local: back.clone(),
         kind: Kind::Folder,
+        stamp: heimdall_files::Stamp::default(),
     }];
     let plan = session
         .plan_download(&down, &cancel)

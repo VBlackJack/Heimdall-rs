@@ -49,7 +49,7 @@ pub use heimdall_sftp::RemotePath;
 pub use heimdall_sftp::local_name::{LocalName, LocalNameError, Rules};
 pub use heimdall_sftp::path::display_bytes;
 pub use heimdall_sftp::transfer::Fingerprint;
-pub use plan::{Plan, Ready, Root, Step};
+pub use plan::{Plan, Ready, Root, Stamp, Step};
 
 /// The permission bits of a mode, set-user, set-group and sticky included.
 const PERMISSION_BITS: u32 = 0o7777;

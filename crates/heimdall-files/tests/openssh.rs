@@ -162,6 +162,7 @@ fn root(
         remote: remote(remote_path),
         local: local.to_owned(),
         kind,
+        stamp: heimdall_files::Stamp::default(),
     }
 }
 

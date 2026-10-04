@@ -89,7 +89,7 @@ impl Allowed {
     pub const fn allows(self, choice: Choice) -> bool {
         match choice {
             Choice::Skip => self.skip,
-            Choice::Replace => self.replace,
+            Choice::Replace | Choice::ReplaceIfNewer => self.replace,
             Choice::AutoRename => self.rename,
         }
     }
@@ -131,6 +131,10 @@ pub enum Choice {
     Replace,
     /// Use a free name next to it.
     AutoRename,
+    /// Replace what is there only when the entry is newer, else leave it out, as the C#
+    /// "Replace if newer": the plan, which knows both times, makes it one or the other
+    /// before [`resolve`]; here it replaces.
+    ReplaceIfNewer,
 }
 
 /// An entry the transfer plans to write.
@@ -279,7 +283,7 @@ pub fn resolve(
             .ok_or(PlanError::Unanswered(index))?;
         outcomes.push(match choice {
             Choice::Skip => Outcome::Skip,
-            Choice::Replace => Outcome::Write { replace: true },
+            Choice::Replace | Choice::ReplaceIfNewer => Outcome::Write { replace: true },
             Choice::AutoRename => {
                 let free = free_target(&entry.target, &reserved, &mut exists, &fold);
                 reserved.insert(folded(&free, &fold));
