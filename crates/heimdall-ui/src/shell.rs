@@ -1879,6 +1879,10 @@ impl Shell {
                 },
             ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            Effect::WriteClipboardImage(image) => Task::future(async move {
+                let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
+            })
+            .discard(),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
             Effect::PickRdpFiles => pick_rdp(),
@@ -4074,13 +4078,80 @@ fn read_desktop_clipboard(tab: TabId) -> Task<Message> {
     )
     .then(move |paths| {
         if paths.is_empty() {
-            iced::clipboard::read()
-                .map(move |text| Message::App(AppMessage::ClipboardText { tab, text }))
+            iced::clipboard::read().then(move |text| match text.filter(|text| !text.is_empty()) {
+                // No text: an image, when the clipboard holds one.
+                None => Task::perform(
+                    async {
+                        tokio::task::spawn_blocking(clipboard_image)
+                            .await
+                            .ok()
+                            .flatten()
+                    },
+                    move |image| match image {
+                        Some(image) => Message::App(AppMessage::ClipboardImage { tab, image }),
+                        None => Message::App(AppMessage::ClipboardText { tab, text: None }),
+                    },
+                ),
+                text => Task::done(Message::App(AppMessage::ClipboardText { tab, text })),
+            })
         } else {
             Task::done(Message::App(AppMessage::ClipboardFiles { tab, paths }))
         }
     })
 }
+
+/// The clipboard's image as a device-independent bitmap, when it holds one no larger than
+/// an RDP server is offered; none elsewhere than on Windows.
+fn clipboard_image() -> Option<Vec<u8>> {
+    #[cfg(windows)]
+    {
+        use clipboard_win::{Clipboard, formats, raw};
+        let _open = Clipboard::new_attempts(CLIPBOARD_ATTEMPTS).ok()?;
+        let size = raw::size(formats::CF_DIB)?.get();
+        if size > heimdall_rdp::MAX_IMAGE_BYTES {
+            return None;
+        }
+        let mut image = Vec::with_capacity(size);
+        raw::get_vec(formats::CF_DIB, &mut image).ok()?;
+        Some(image)
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Puts `image`, a device-independent bitmap an RDP server copied, on the clipboard in
+/// place of what it held. Windows only: elsewhere it goes nowhere.
+fn write_clipboard_image(image: &[u8]) {
+    #[cfg(windows)]
+    {
+        use clipboard_win::{Clipboard, formats, raw};
+        // Another program may hold the clipboard a moment: asked again a little later.
+        for _ in 0..CLIPBOARD_ATTEMPTS {
+            if let Ok(_open) = Clipboard::new() {
+                if let Err(error) = raw::set(formats::CF_DIB, image) {
+                    log::warn!("the server's image did not reach the clipboard: {error}");
+                }
+                return;
+            }
+            std::thread::sleep(CLIPBOARD_RETRY);
+        }
+        log::warn!("the server's image did not reach the clipboard: it stayed held");
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = image;
+    }
+}
+
+/// How many times the clipboard is asked for, another program holding it.
+#[cfg(windows)]
+const CLIPBOARD_ATTEMPTS: usize = 10;
+
+/// How long before the clipboard is asked for again.
+#[cfg(windows)]
+const CLIPBOARD_RETRY: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// The files copied in Explorer, as the clipboard lists them; none elsewhere than on
 /// Windows, or when it holds none.

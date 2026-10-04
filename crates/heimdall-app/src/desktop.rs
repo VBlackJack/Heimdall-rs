@@ -443,6 +443,22 @@ impl DesktopPane {
         }
     }
 
+    /// Offers `image`, this side's clipboard as a device-independent bitmap, to an RDP
+    /// server sharing the clipboard; whether it could be. VNC carries text only.
+    pub(crate) fn offer_image(&self, image: Vec<u8>) -> bool {
+        // Read before a save began: offering would take the server's clipboard back.
+        if self.save.is_some() {
+            return false;
+        }
+        match &self.sink {
+            DesktopSink::Rdp { .. } => self
+                .clipboard
+                .as_ref()
+                .is_some_and(|clipboard| clipboard.send(LocalClipboard::Image(image)).is_ok()),
+            DesktopSink::Vnc(_) => false,
+        }
+    }
+
     /// Whether the server's copied files can be saved now: an RDP desktop sharing the
     /// clipboard, files copied there, no save under way.
     #[must_use]
