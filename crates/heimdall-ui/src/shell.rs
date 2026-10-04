@@ -4791,10 +4791,18 @@ fn network_section<'a>(
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
     }
-    // Said where the SSL box was, as the C# dialog says it.
+    // Said where the SSL box was, as the C# dialog says it; HTTPS asked for, then a gateway
+    // chosen, is said to be off.
     if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {
         section_column =
             section_column.push(text(fl!("ui-profile-winrm-gateway-http")).size(SMALL_SIZE));
+        if draft.is_on(ProfileToggle::UseSsl) {
+            section_column = section_column.push(
+                text(fl!("ui-profile-winrm-https-off-by-gateway"))
+                    .size(SMALL_SIZE)
+                    .style(text::warning),
+            );
+        }
     }
     if draft.shows(ProfileField::SocksPort) {
         section_column = forward_cards(draft, section_column);
@@ -5146,6 +5154,10 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
                     }),
                 )
                 .width(Length::Fill),
+                // How the identity is proven, and what HTTP outside a domain needs, as the
+                // C# dialog's hints.
+                text(fl!("ui-profile-winrm-identity-hint")).size(SMALL_SIZE),
+                text(fl!("ui-profile-winrm-trusted-hosts-hint")).size(SMALL_SIZE),
             ]
             .spacing(SPACING / 2.0),
         );

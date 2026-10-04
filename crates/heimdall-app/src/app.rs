@@ -2743,6 +2743,7 @@ impl App {
                 tab.sink = None;
                 tab.desktop = None;
                 tab.prompts.clear();
+                self.winrm_ended(tab_id, exit_status);
                 Vec::new()
             }
             ConnectionEvent::Ended { reason } => {

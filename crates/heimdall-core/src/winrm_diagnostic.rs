@@ -38,6 +38,25 @@ const NTLM_LOOPBACK_CODE: &str = "0x8009030e";
 /// HTTPS spoken to an HTTP port, or the reverse, through a tunnel.
 const WSMAN_INVALID_RESPONSE_CODE: &str = "12152";
 
+/// The authentication failures, by a token no translation changes (a code, or the
+/// `TrustedHosts` setting's name), and the cause each names, as the C# lists them.
+///
+/// The order is the C#'s: a refused credential first, since the Negotiate logon failure names
+/// `TrustedHosts` among its remedies and a mistyped password is no `TrustedHosts` problem;
+/// `TrustedHosts` before the Kerberos principal code, since its refusal names Kerberos too.
+const AUTHENTICATION_TOKENS: [(&str, Diagnostic); 6] = [
+    // SEC_E_LOGON_DENIED.
+    ("0x8009030c", Diagnostic::LogonFailed),
+    // ERROR_LOGON_FAILURE.
+    ("0x8007052e", Diagnostic::LogonFailed),
+    // E_ACCESSDENIED.
+    ("0x80070005", Diagnostic::AccessDenied),
+    ("trustedhosts", Diagnostic::TrustedHosts),
+    ("0x803381a1", Diagnostic::TrustedHosts),
+    // SEC_E_WRONG_PRINCIPAL.
+    ("0x80090322", Diagnostic::KerberosPrincipal),
+];
+
 /// A cause recognised in a `WinRM` session's first output.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Diagnostic {
@@ -46,6 +65,17 @@ pub enum Diagnostic {
     NtlmLoopback,
     /// What answered did not speak `WSMan`.
     WsmanInvalidResponse,
+    /// The server refused the account or its password.
+    LogonFailed,
+    /// The account may not use `WinRM` on the server.
+    AccessDenied,
+    /// The server is not trusted for this authentication: not in `TrustedHosts`.
+    TrustedHosts,
+    /// Kerberos found no principal for the name the server was reached by.
+    KerberosPrincipal,
+    /// `PowerShell` ended before the remote session was entered, for a cause none of the
+    /// others names: its own message, above, says which.
+    SessionNotEntered,
 }
 
 /// Reads a session's first output for a [`Diagnostic`].
@@ -104,7 +134,12 @@ fn diagnostic(output: &str) -> Option<Diagnostic> {
     if lower.contains(WSMAN_INVALID_RESPONSE_CODE) && wsman_context(&lower) {
         return Some(Diagnostic::WsmanInvalidResponse);
     }
-    None
+    // Recognised by a token, never by translated prose, and only near a `WinRM` word, so
+    // another tool's output cannot set them off.
+    AUTHENTICATION_TOKENS.iter().find_map(|(token, cause)| {
+        let at = lower.find(token)?;
+        winrm_context_near(&lower, at, token.len()).then_some(*cause)
+    })
 }
 
 /// Whether `lower`, lowercased, says `WinRM` around `at`.
@@ -184,6 +219,46 @@ mod tests {
         let far = format!("0x8009030e{}", " ".repeat(CONTEXT_RADIUS + 10));
         assert_eq!(early.observe(far.as_bytes()), None);
         assert_eq!(early.observe(b"WinRM"), None, "too far from the code");
+    }
+
+    #[test]
+    fn each_authentication_failure_is_named_by_its_code_near_winrm() {
+        for (output, cause) in [
+            (
+                "Enter-PSSession : Connecting to remote server web failed: WinRM cannot \
+                 process the request. Error code 0x8009030c. The user name or password is \
+                 incorrect. Possible causes: TrustedHosts...",
+                Diagnostic::LogonFailed,
+            ),
+            (
+                "Enter-PSSession : Access is denied. WinRM error 0x80070005",
+                Diagnostic::AccessDenied,
+            ),
+            (
+                "Enter-PSSession : The WinRM client cannot process the request. Default \
+                 authentication may be used with an IP address if the remote computer is \
+                 added to the TrustedHosts configuration setting. Kerberos...",
+                Diagnostic::TrustedHosts,
+            ),
+            (
+                "New-PSSession : WinRM cannot process the request: error 0x80090322 \
+                 occurred while using Kerberos authentication.",
+                Diagnostic::KerberosPrincipal,
+            ),
+        ] {
+            let mut early = EarlyOutput::new();
+            assert_eq!(early.observe(output.as_bytes()), Some(cause), "{output}");
+        }
+    }
+
+    #[test]
+    fn an_authentication_code_outside_winrm_is_not_taken() {
+        let mut early = EarlyOutput::new();
+        let other = format!(
+            "robocopy: error 0x80070005 (access is denied){}",
+            " ".repeat(CONTEXT_RADIUS + 10)
+        );
+        assert_eq!(early.observe(other.as_bytes()), None);
     }
 
     #[test]
