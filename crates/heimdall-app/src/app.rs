@@ -2162,6 +2162,9 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// Whether the tunnels panel is shown under the sessions.
     pub tunnels_panel: bool,
+    /// The hosts connected to, newest first, with the protocol, as the C#
+    /// `RecentConnectionTracker` keeps them: for this run only.
+    recent_hosts: Vec<(String, ProfileKind)>,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -2262,6 +2265,7 @@ impl App {
             next_address_test: 0,
             tunnels: Vec::new(),
             tunnels_panel: false,
+            recent_hosts: Vec::new(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -2743,6 +2747,9 @@ impl App {
         };
         let mut effects = self.apply_connection_event(tab_id, event);
         self.follow_transcript(tab_id, was_connected);
+        if !was_connected {
+            self.note_recent(tab_id);
+        }
         if !was_connected && self.active == Some(tab_id) {
             self.warn_winrm(tab_id);
         }
