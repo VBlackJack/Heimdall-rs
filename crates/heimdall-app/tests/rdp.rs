@@ -78,15 +78,19 @@ fn app(dir: &Path) -> App {
         auto_reconnect: true,
     }]);
     store.save().expect("save");
-    App::new(AppConfig {
-        profiles_file,
+    App::new(config(dir))
+}
+
+fn config(dir: &Path) -> AppConfig {
+    AppConfig {
+        profiles_file: dir.join("profiles.toml"),
         known_hosts: dir.join("known_hosts"),
         legacy_dir: None,
         agent: AgentSource::Disabled,
         initial_grid: GridSize { cols: 80, rows: 24 },
         files_start: dir.to_owned(),
         system_credentials: heimdall_app::SystemCredentials::memory(),
-    })
+    }
 }
 
 fn key() -> Fingerprint {
@@ -897,4 +901,80 @@ fn a_size_the_server_cannot_take_live_connects_again_at_it_once_and_says_so() {
     // Another size gets its own.
     let (_, desktop) = connected_again(&refused(&mut app, again, (1280, 720)));
     assert_eq!(desktop, (1280, 720));
+}
+
+#[test]
+fn the_certificate_question_counts_the_other_certificates_and_names_the_route() {
+    use heimdall_app::{CertificateContext, Notice};
+    use heimdall_core::profile::SshGateway;
+
+    let dir = tempfile::tempdir().expect("dir");
+    drop(app(dir.path()));
+    // Two machines already trusted at the name, one at another server's.
+    std::fs::write(
+        dir.path().join("known_rdp_hosts"),
+        "dc.lab:3389 SHA256:AgJ0Y04RcqyBpgUaWIbkDqk3bEPjR9jNUxyEc7cvFq0\n\
+         dc.lab:3389 SHA256:bgJ0Y04RcqyBpgUaWIbkDqk3bEPjR9jNUxyEc7cvFq0\n\
+         web.lab:3389 SHA256:cgJ0Y04RcqyBpgUaWIbkDqk3bEPjR9jNUxyEc7cvFq0\n",
+    )
+    .expect("write");
+    // Reached through a bastion, itself behind an edge gateway.
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    let gateway = |id: &str, name: &str, parent: Option<&str>| SshGateway {
+        id: ProfileId::new(id),
+        name: name.to_owned(),
+        host: format!("{id}.lab"),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: parent.map(ProfileId::new),
+    };
+    store.merge_gateways([
+        gateway("edge", "Edge", None),
+        gateway("bastion", "Bastion", Some("edge")),
+    ]);
+    let mut dc = store.rdp_profiles()[0].clone();
+    dc.gateway = Some(ProfileId::new("bastion"));
+    store.merge_rdp([dc]);
+    store.save().expect("save");
+    let mut app = App::new(config(dir.path()));
+
+    let (tab, attempt) = open(&mut app);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: key(),
+        },
+    );
+    let asked = app.tab(tab).expect("tab");
+    assert_eq!(
+        asked.certificate_context,
+        Some(CertificateContext {
+            others: 2,
+            route: vec!["Edge".to_owned(), "Bastion".to_owned()],
+        })
+    );
+
+    // Its fingerprint can be copied, as the C# prompt's Copy.
+    let effects = app.update(Message::CopyHostKeyFingerprint(tab));
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboard(text)] if text == KEY),
+        "{effects:?}"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FingerprintCopied("dc.lab:3389".to_owned()))
+    );
+
+    // Answered, the question and what it said go.
+    app.update(Message::HostKeyDecision { tab, accept: false });
+    assert_eq!(app.tab(tab).expect("tab").certificate_context, None);
+    assert!(
+        app.update(Message::CopyHostKeyFingerprint(tab)).is_empty(),
+        "nothing to copy once answered"
+    );
 }

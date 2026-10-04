@@ -41,9 +41,9 @@ use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
-    DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage, FolderNaming,
-    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
+    ConnectionEvent, DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage,
+    FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
     ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, SelectionMessage,
@@ -3436,7 +3436,8 @@ impl Shell {
                 host,
                 *port,
                 fingerprint,
-                tab.asks_about_certificate().then(|| tab.profile.name()),
+                tab.asks_about_certificate()
+                    .then(|| (tab.profile.name(), tab.certificate_context.as_ref())),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => self.files_page(tab.id, pane, tab.is_live()),
@@ -3864,31 +3865,22 @@ fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message
     .into()
 }
 
-/// The question about an unknown server key.
 /// The question about an unknown key, as the C# Heimdall asks it: an SSH host's, or, when
-/// `certificate` names the profile, an RDP server's own certificate. Either can be trusted
-/// for this run only, never recorded.
+/// `certificate` names the profile, an RDP or FTPS server's own certificate, with the other
+/// certificates already trusted for the name and the gateways on the way. Either can be
+/// trusted for this run only, never recorded, and its fingerprint copied.
 fn host_key_card<'a>(
     tab: TabId,
     host: &'a str,
     port: u16,
     fingerprint: &'a str,
-    certificate: Option<&'a str>,
+    certificate: Option<(&'a str, Option<&'a CertificateContext>)>,
 ) -> Element<'a, Message> {
     let port = port.to_string();
-    let (heading, body, fingerprint, [reject, once, accept]) = match certificate {
-        Some(name) => (
+    let (heading, body, label, [reject, once, accept]) = match certificate {
+        Some((name, context)) => (
             fl!("ui-certificate-title"),
-            column![
-                text(fl!(
-                    "ui-certificate-body",
-                    name = name,
-                    host = host,
-                    port = port.as_str()
-                )),
-                text(fl!("ui-certificate-caution")),
-            ]
-            .spacing(SPACING),
+            certificate_body(name, host, &port, context),
             fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
             [
                 fl!("ui-certificate-refuse-button"),
@@ -3915,7 +3907,14 @@ fn host_key_card<'a>(
         column![
             text(heading).size(HEADING_SIZE),
             body,
-            text(fingerprint).font(iced::Font::MONOSPACE),
+            row![
+                text(label).font(iced::Font::MONOSPACE).width(Length::Fill),
+                button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::alignment::Vertical::Center),
             row![
                 button(text(reject))
                     .style(button::secondary)
@@ -3937,6 +3936,40 @@ fn host_key_card<'a>(
         .spacing(SPACING),
     ))
     .into()
+}
+
+/// What the certificate question says above the fingerprint: who answered, the caution, the
+/// certificates already trusted for the name, and the route.
+fn certificate_body<'a>(
+    name: &str,
+    host: &str,
+    port: &str,
+    context: Option<&CertificateContext>,
+) -> iced::widget::Column<'a, Message> {
+    let mut body = column![
+        text(fl!(
+            "ui-certificate-body",
+            name = name,
+            host = host,
+            port = port
+        )),
+        text(fl!("ui-certificate-caution")),
+    ]
+    .spacing(SPACING);
+    let Some(context) = context else {
+        return body;
+    };
+    if context.others > 0 {
+        body = body.push(text(fl!(
+            "ui-certificate-already-trusted",
+            count = context.others
+        )));
+    }
+    if !context.route.is_empty() {
+        let route = context.route.join(&fl!("ui-route-test-separator"));
+        body = body.push(text(fl!("ui-certificate-route", route = route)));
+    }
+    body
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {

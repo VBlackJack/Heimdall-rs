@@ -1463,3 +1463,9 @@ ui-files-empty-no-match = No entries match "{ $filter }".
 ui-files-empty-clear-filter = Clear filter
 ui-files-empty-hidden-only = This folder only contains hidden entries.
 ui-files-empty-show-hidden = Show hidden files
+ui-hostkey-copy-fingerprint-button = Copy
+ui-certificate-already-trusted = { $count ->
+    [one] This profile already trusts { $count } other certificate for this name, which usually means more than one machine answers to it.
+   *[other] This profile already trusts { $count } other certificates for this name, which usually means several machines answer to it.
+}
+ui-certificate-route = Reached through: { $route }
