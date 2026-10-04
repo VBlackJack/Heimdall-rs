@@ -1144,7 +1144,11 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
         .as_ref()
         .expect("files");
     assert!(
-        files.transfers.is_empty(),
+        files
+            .transfers
+            .iter()
+            .map(|transfer| &transfer.state)
+            .eq([&heimdall_app::files::TransferState::Preparing]),
         "planned first: nothing is written before the plan says what is in the way"
     );
     assert!(
@@ -1160,7 +1164,7 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
         .files
         .as_ref()
         .expect("files");
-    assert_eq!(files.transfers.len(), 1, "refused, and said so");
+    assert_eq!(files.transfers.len(), 2, "refused, and said so");
 
     // Not while the Settings page shows.
     let _ = shell.update(Message::ShowSettings);
@@ -1174,7 +1178,7 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
         .files
         .as_ref()
         .expect("files");
-    assert_eq!(files.transfers.len(), 1, "nothing more");
+    assert_eq!(files.transfers.len(), 2, "nothing more");
 }
 
 #[tokio::test]

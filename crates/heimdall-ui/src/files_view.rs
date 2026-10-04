@@ -666,7 +666,9 @@ fn done_share(transfer: &Transfer) -> Option<f32> {
     Some((transfer.bytes.min(total) as f64 / total as f64) as f32)
 }
 
-fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
+/// A transfer's line: what, how far, and what can be done with it, Retry while the
+/// session lives.
+fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<'_, Message> {
     let what = match transfer.direction {
         Direction::Download => {
             fl!("ui-files-transfer-download", name = transfer.label.as_str())
@@ -674,6 +676,8 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
         Direction::Upload => fl!("ui-files-transfer-upload", name = transfer.label.as_str()),
     };
     let state = match &transfer.state {
+        TransferState::Queued => fl!("ui-files-state-queued"),
+        TransferState::Preparing => fl!("ui-files-state-preparing"),
         TransferState::Running => running_text(transfer),
         TransferState::Done => fl!("ui-files-state-done"),
         TransferState::Incomplete { skipped } => {
@@ -690,6 +694,32 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
+    let small = |label: String, message: FilesMessage| {
+        button(text(label).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(message))
+    };
+    if matches!(
+        transfer.state,
+        TransferState::Queued | TransferState::Preparing
+    ) {
+        line = line.push(small(
+            fl!("ui-files-cancel-button"),
+            FilesMessage::Cancel {
+                tab,
+                id: transfer.id,
+            },
+        ));
+    }
+    if session_live && transfer.state.retryable() && transfer.picked.is_some() {
+        line = line.push(small(
+            fl!("ui-files-retry-button"),
+            FilesMessage::Retry {
+                tab,
+                id: transfer.id,
+            },
+        ));
+    }
     if transfer.state == TransferState::Running {
         if let Some(share) = done_share(transfer) {
             line = line.push(
@@ -698,21 +728,20 @@ fn transfer_row(tab: TabId, transfer: &Transfer) -> Element<'_, Message> {
                     .girth(8.0),
             );
         }
-        line = line.push(
-            button(text(fl!("ui-files-cancel-button")).size(SMALL_SIZE))
-                .style(button::secondary)
-                .on_press(files(FilesMessage::Cancel {
-                    tab,
-                    id: transfer.id,
-                })),
-        );
+        line = line.push(small(
+            fl!("ui-files-cancel-button"),
+            FilesMessage::Cancel {
+                tab,
+                id: transfer.id,
+            },
+        ));
     }
     line.into()
 }
 
 /// The Files tab.
 #[must_use]
-pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
+pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Message> {
     let local_location = files_pane.local.path.display().to_string();
     let remote_location = files_pane.remote.path.display();
     let local = pane(PaneParts {
@@ -793,18 +822,39 @@ pub fn view(tab: TabId, files_pane: &FilesPane) -> Element<'_, Message> {
             .push(list);
     }
     if !files_pane.transfers.is_empty() {
-        let list = files_pane
-            .transfers
-            .iter()
-            .rev()
-            .fold(Column::new().spacing(4.0), |list, transfer| {
-                list.push(transfer_row(tab, transfer))
-            });
-        content = content
-            .push(text(fl!("ui-files-transfers-title")).size(TITLE_SIZE))
-            .push(container(scrollable(list)).max_height(TRANSFERS_HEIGHT));
+        content = content.push(transfers(tab, files_pane, live));
     }
     content.into()
+}
+
+/// The transfers, newest first, under their title and "Clear finished" once one has ended.
+fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Message> {
+    let list = files_pane
+        .transfers
+        .iter()
+        .rev()
+        .fold(Column::new().spacing(4.0), |list, transfer| {
+            list.push(transfer_row(tab, transfer, live))
+        });
+    let mut title = row![text(fl!("ui-files-transfers-title")).size(TITLE_SIZE)]
+        .spacing(SPACING)
+        .align_y(Alignment::Center);
+    if files_pane
+        .transfers
+        .iter()
+        .any(|transfer| transfer.state.ended())
+    {
+        title = title.push(
+            button(text(fl!("ui-files-clear-finished-button")).size(SMALL_SIZE))
+                .style(button::secondary)
+                .on_press(files(FilesMessage::ClearFinished { tab })),
+        );
+    }
+    column![
+        title,
+        container(scrollable(list)).max_height(TRANSFERS_HEIGHT)
+    ]
+    .spacing(SPACING)
 }
 
 #[cfg(test)]

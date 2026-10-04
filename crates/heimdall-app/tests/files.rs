@@ -540,6 +540,17 @@ async fn an_existing_local_file_is_replaced_only_once_answered_so() {
             if !request.replace && request.local == dir.path().join("report (copy).txt")),
         "{renamed:?}"
     );
+    // Ended before the next starts: one runs at a time.
+    if let [Effect::Transfer { id, .. }] = renamed.as_slice() {
+        files(
+            &mut app,
+            FilesMessage::TransferEvent {
+                tab,
+                id: *id,
+                event: TransferEvent::Finished(TransferState::Done),
+            },
+        );
+    }
 
     // Replaced once answered so.
     let started = transfer(&mut app);
@@ -614,7 +625,7 @@ async fn a_hostile_remote_name_is_refused_before_any_transfer() {
 }
 
 #[tokio::test]
-async fn a_finished_download_refreshes_the_local_pane_and_closing_cancels_the_rest() {
+async fn a_finished_download_runs_the_next_refreshes_the_local_pane_and_closing_cancels_the_rest() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let (tab, _) = opened(&mut app).await;
@@ -629,20 +640,21 @@ async fn a_finished_download_refreshes_the_local_pane_and_closing_cancels_the_re
     );
     let first = download(&mut app, tab, 0);
     let first = planned(&mut app, first).await;
-    let second = download(&mut app, tab, 1);
-    let second = planned(&mut app, second).await;
     let [Effect::Transfer { id, .. }] = first.as_slice() else {
         panic!("{first:?}")
     };
-    let [
-        Effect::Transfer {
-            request: running, ..
-        },
-    ] = second.as_slice()
-    else {
-        panic!("{second:?}")
+    // One at a time, as the C# queue: the second is listed waiting, not planned yet.
+    let second = download(&mut app, tab, 1);
+    assert!(second.is_empty(), "{second:?}");
+    let states = |app: &App| -> Vec<TransferState> {
+        let pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+        pane.transfers.iter().map(|t| t.state.clone()).collect()
     };
-    let refreshed = files(
+    assert_eq!(
+        states(&app),
+        [TransferState::Running, TransferState::Queued]
+    );
+    let next = files(
         &mut app,
         FilesMessage::TransferEvent {
             tab,
@@ -650,7 +662,29 @@ async fn a_finished_download_refreshes_the_local_pane_and_closing_cancels_the_re
             event: TransferEvent::Finished(TransferState::Done),
         },
     );
-    assert!(matches!(refreshed.as_slice(), [Effect::ListLocal { .. }]));
+    assert!(
+        matches!(
+            next.as_slice(),
+            [Effect::PlanTransfer { .. }, Effect::ListLocal { .. }]
+        ),
+        "{next:?}"
+    );
+    assert_eq!(
+        states(&app),
+        [TransferState::Done, TransferState::Preparing],
+        "its turn came: planned against what is there now"
+    );
+    let started = planned(&mut app, next).await;
+    let [
+        Effect::Transfer {
+            request: running, ..
+        },
+        Effect::ListLocal { .. },
+    ] = started.as_slice()
+    else {
+        panic!("{started:?}")
+    };
+    assert_eq!(states(&app), [TransferState::Done, TransferState::Running]);
 
     // A transfer still running: closing says it cancels it, as the C# "Transfer In Progress".
     app.update(Message::RequestCloseTab(tab));
@@ -988,5 +1022,224 @@ async fn a_conflict_shows_both_copies_and_replace_if_newer_keeps_a_newer_one() {
             replaced,
             "{started:?}"
         );
+    }
+}
+
+#[tokio::test]
+async fn a_waiting_transfer_cancelled_never_runs_and_retry_queues_it_again_in_place() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            remote_entry(b"one", EntryKind::File, 1),
+            remote_entry(b"two", EntryKind::File, 1),
+        ],
+    );
+    let first = download(&mut app, tab, 0);
+    let first = planned(&mut app, first).await;
+    let [Effect::Transfer { id: first, .. }] = first.as_slice() else {
+        panic!("{first:?}")
+    };
+    let first = *first;
+    assert!(download(&mut app, tab, 1).is_empty());
+    let pane = |app: &App| {
+        app.tab(tab)
+            .and_then(|t| t.files.as_ref())
+            .expect("files")
+            .transfers
+            .clone()
+    };
+    let waiting = pane(&app)[1].id;
+    assert!(files(&mut app, FilesMessage::Cancel { tab, id: waiting }).is_empty());
+    assert_eq!(pane(&app)[1].state, TransferState::Cancelled);
+    let after = files(
+        &mut app,
+        FilesMessage::TransferEvent {
+            tab,
+            id: first,
+            event: TransferEvent::Finished(TransferState::Failed(FilesError::NotAFile)),
+        },
+    );
+    assert!(after.is_empty(), "the cancelled one never runs: {after:?}");
+
+    // Retry: queued anew, planned at once with nothing ahead, listed where it was.
+    let again = files(&mut app, FilesMessage::Retry { tab, id: waiting });
+    let [Effect::PlanTransfer { request, .. }] = again.as_slice() else {
+        panic!("{again:?}")
+    };
+    assert_eq!(request.roots.len(), 1);
+    assert_eq!(request.roots[0].label, "two");
+    let retried = pane(&app)[1].id;
+    assert_ne!(
+        retried, waiting,
+        "a report of the run stopped is not this one's"
+    );
+    assert_eq!(request.rows, [retried]);
+    assert_eq!(pane(&app)[1].state, TransferState::Preparing);
+    let started = planned(&mut app, again).await;
+    let [Effect::Transfer { id, .. }] = started.as_slice() else {
+        panic!("{started:?}")
+    };
+    assert_eq!(*id, retried);
+    let listed = pane(&app);
+    assert_eq!(listed.len(), 2, "replaced, not added");
+    assert_eq!(listed[1].state, TransferState::Running);
+    // A report from the run stopped finds nothing to change.
+    files(
+        &mut app,
+        FilesMessage::TransferEvent {
+            tab,
+            id: waiting,
+            event: TransferEvent::Finished(TransferState::Cancelled),
+        },
+    );
+    assert_eq!(pane(&app)[1].state, TransferState::Running);
+
+    // "Clear finished" leaves what still runs.
+    files(&mut app, FilesMessage::ClearFinished { tab });
+    let listed = pane(&app);
+    assert_eq!(listed.len(), 1);
+    assert_eq!(listed[0].state, TransferState::Running);
+}
+
+#[tokio::test]
+async fn a_plan_stopped_or_failed_lets_the_next_run_and_a_session_over_stops_what_waits() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = match app
+        .update(Message::OpenFiles(ProfileId::new("a")))
+        .as_slice()
+    {
+        [Effect::Connect { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    ready(&mut app, tab, attempt).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            remote_entry(b"one", EntryKind::File, 1),
+            remote_entry(b"two", EntryKind::File, 1),
+            remote_entry(b"three", EntryKind::File, 1),
+            remote_entry(b"four", EntryKind::File, 1),
+        ],
+    );
+    let states = |app: &App| -> Vec<TransferState> {
+        let pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
+        pane.transfers.iter().map(|t| t.state.clone()).collect()
+    };
+    let id_of = |app: &App, index: usize| {
+        app.tab(tab)
+            .and_then(|t| t.files.as_ref())
+            .expect("files")
+            .transfers[index]
+            .id
+    };
+    let first = download(&mut app, tab, 0);
+    assert!(matches!(first.as_slice(), [Effect::PlanTransfer { .. }]));
+    assert!(download(&mut app, tab, 1).is_empty());
+
+    // Stopped while planned: the next one's turn comes at once.
+    let planning = id_of(&app, 0);
+    let next = files(&mut app, FilesMessage::Cancel { tab, id: planning });
+    let [
+        Effect::PlanTransfer {
+            request: second, ..
+        },
+    ] = next.as_slice()
+    else {
+        panic!("{next:?}")
+    };
+    let second = second.clone();
+    assert_eq!(
+        states(&app),
+        [TransferState::Cancelled, TransferState::Preparing]
+    );
+    // The plan stopped answers late: nothing of it runs.
+    let late = planned(&mut app, first).await;
+    assert!(late.is_empty(), "{late:?}");
+
+    // A plan that fails: its entries said failed, to retry, and what follows runs.
+    assert!(download(&mut app, tab, 2).is_empty());
+    let after = files(
+        &mut app,
+        FilesMessage::Planned {
+            tab,
+            request: second,
+            result: Err(FilesError::SessionClosed),
+        },
+    );
+    assert!(
+        matches!(after.as_slice(), [Effect::PlanTransfer { .. }]),
+        "{after:?}"
+    );
+    assert_eq!(
+        states(&app)[1],
+        TransferState::Failed(FilesError::SessionClosed)
+    );
+
+    // The session over: what is planned and what waits are stopped, to be retried.
+    assert!(download(&mut app, tab, 3).is_empty());
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Closed { exit_status: None },
+    });
+    assert_eq!(
+        states(&app)[2..],
+        [TransferState::Cancelled, TransferState::Cancelled]
+    );
+    let stopped = id_of(&app, 2);
+    let retried = files(&mut app, FilesMessage::Retry { tab, id: stopped });
+    assert!(
+        retried.is_empty(),
+        "no Retry without a session: {retried:?}"
+    );
+}
+
+#[tokio::test]
+async fn retry_is_refused_to_what_cannot_run_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![
+            remote_entry(b"..", EntryKind::File, 1),
+            remote_entry(b"done", EntryKind::File, 1),
+        ],
+    );
+    // Its name refused before anything ran: nothing to plan again.
+    assert!(download(&mut app, tab, 0).is_empty());
+    let started = download(&mut app, tab, 1);
+    let started = planned(&mut app, started).await;
+    let [Effect::Transfer { id, .. }] = started.as_slice() else {
+        panic!("{started:?}")
+    };
+    let id = *id;
+    files(
+        &mut app,
+        FilesMessage::TransferEvent {
+            tab,
+            id,
+            event: TransferEvent::Finished(TransferState::Done),
+        },
+    );
+    let refused = app
+        .tab(tab)
+        .and_then(|t| t.files.as_ref())
+        .expect("files")
+        .transfers[0]
+        .id;
+    for id in [refused, id] {
+        let retried = files(&mut app, FilesMessage::Retry { tab, id });
+        assert!(retried.is_empty(), "{retried:?}");
     }
 }
