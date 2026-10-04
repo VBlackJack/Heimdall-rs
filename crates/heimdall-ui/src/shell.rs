@@ -42,9 +42,9 @@ use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
-    Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent,
-    DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage, FolderNaming,
-    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
+    ConnectionEvent, DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage,
+    FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
     ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, SelectionMessage,
@@ -416,6 +416,8 @@ pub enum Message {
     FilesHovered(bool),
     /// A file or folder dropped on the window.
     FileDropped(std::path::PathBuf),
+    /// An action in the Settings page's box of resolution presets.
+    PresetsEdited(iced::widget::text_editor::Action),
     /// The external editor typed in the Settings page.
     EditorEdited(String),
     /// Apply the external editor typed.
@@ -513,6 +515,7 @@ impl fmt::Debug for Message {
             Self::FinderClose => f.write_str("FinderClose"),
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
+            Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
@@ -710,6 +713,8 @@ pub struct Shell {
     log_directory: Option<String>,
     /// The external editor typed in the Settings page, until applied.
     editor_typed: Option<String>,
+    /// The Settings page's box of resolution presets.
+    presets: crate::presets_editor::PresetsEditor,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -791,6 +796,8 @@ impl Shell {
     #[must_use]
     pub fn with_app(mut app: App) -> Self {
         app.set_transcript_lines(crate::transcript_lines::lines());
+        let presets =
+            crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
         Self {
             app,
             editors: crate::integrated_editor::Editors::default(),
@@ -819,6 +826,7 @@ impl Shell {
             focus_next: None,
             log_directory: None,
             editor_typed: None,
+            presets,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -1020,6 +1028,7 @@ impl Shell {
             message @ (Message::LogDirectoryEdited(_)
             | Message::LogDirectoryApply
             | Message::EditorEdited(_)
+            | Message::PresetsEdited(_)
             | Message::EditorApply
             | Message::FontSizeEdited(_)
             | Message::FontSizeApply
@@ -1040,6 +1049,9 @@ impl Shell {
         self.forget_finished();
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // A reset, or presets that could not be saved, shown again in their box.
+        self.presets
+            .sync(&self.app.settings().rdp_resolution_presets);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -2109,7 +2121,10 @@ impl Shell {
             tree_view::tunnel_menu_entries(id)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
-            tree_view::resolution_entries(&self.resolution_state(self.app.tab(tab)?)?)
+            tree_view::resolution_entries(
+                &self.resolution_state(self.app.tab(tab)?)?,
+                self.app.settings().resolution_presets(),
+            )
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
             // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
@@ -2697,6 +2712,20 @@ impl Shell {
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box),
             self.rdp_session_settings(),
+            container(self.presets.view())
+                .padding(PADDING)
+                .max_width(SETTINGS_WIDTH)
+                .style(container::bordered_box),
+            tooltip(
+                button(text(fl!("ui-settings-rdp-reset-defaults")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::Settings(
+                        SettingsMessage::ResetRdpDefaults
+                    ))),
+                text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
             self.trusted_keys_settings(TrustedList::Certificates),
         ]
     }
@@ -2845,6 +2874,14 @@ impl Shell {
             Message::EditorEdited(typed) => {
                 self.editor_typed = Some(typed);
                 Vec::new()
+            }
+            Message::PresetsEdited(action) => {
+                match self.presets.perform(action) {
+                    Some(presets) => self.app.update(AppMessage::Settings(
+                        SettingsMessage::RdpResolutionPresets(presets),
+                    )),
+                    None => Vec::new(),
+                }
             }
             Message::EditorApply => match self.editor_typed.take() {
                 Some(typed) => self
@@ -3467,7 +3504,8 @@ impl Shell {
                 host,
                 *port,
                 fingerprint,
-                tab.asks_about_certificate().then(|| tab.profile.name()),
+                tab.asks_about_certificate()
+                    .then(|| (tab.profile.name(), tab.certificate_context.as_ref())),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => self.files_page(tab.id, pane, tab.is_live()),
@@ -3920,31 +3958,22 @@ fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message
     .into()
 }
 
-/// The question about an unknown server key.
 /// The question about an unknown key, as the C# Heimdall asks it: an SSH host's, or, when
-/// `certificate` names the profile, an RDP server's own certificate. Either can be trusted
-/// for this run only, never recorded.
+/// `certificate` names the profile, an RDP or FTPS server's own certificate, with the other
+/// certificates already trusted for the name and the gateways on the way. Either can be
+/// trusted for this run only, never recorded, and its fingerprint copied.
 fn host_key_card<'a>(
     tab: TabId,
     host: &'a str,
     port: u16,
     fingerprint: &'a str,
-    certificate: Option<&'a str>,
+    certificate: Option<(&'a str, Option<&'a CertificateContext>)>,
 ) -> Element<'a, Message> {
     let port = port.to_string();
-    let (heading, body, fingerprint, [reject, once, accept]) = match certificate {
-        Some(name) => (
+    let (heading, body, label, [reject, once, accept]) = match certificate {
+        Some((name, context)) => (
             fl!("ui-certificate-title"),
-            column![
-                text(fl!(
-                    "ui-certificate-body",
-                    name = name,
-                    host = host,
-                    port = port.as_str()
-                )),
-                text(fl!("ui-certificate-caution")),
-            ]
-            .spacing(SPACING),
+            certificate_body(name, host, &port, context),
             fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
             [
                 fl!("ui-certificate-refuse-button"),
@@ -3971,7 +4000,14 @@ fn host_key_card<'a>(
         column![
             text(heading).size(HEADING_SIZE),
             body,
-            text(fingerprint).font(iced::Font::MONOSPACE),
+            row![
+                text(label).font(iced::Font::MONOSPACE).width(Length::Fill),
+                button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(SMALL_SIZE))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::alignment::Vertical::Center),
             row![
                 button(text(reject))
                     .style(button::secondary)
@@ -3993,6 +4029,40 @@ fn host_key_card<'a>(
         .spacing(SPACING),
     ))
     .into()
+}
+
+/// What the certificate question says above the fingerprint: who answered, the caution, the
+/// certificates already trusted for the name, and the route.
+fn certificate_body<'a>(
+    name: &str,
+    host: &str,
+    port: &str,
+    context: Option<&CertificateContext>,
+) -> iced::widget::Column<'a, Message> {
+    let mut body = column![
+        text(fl!(
+            "ui-certificate-body",
+            name = name,
+            host = host,
+            port = port
+        )),
+        text(fl!("ui-certificate-caution")),
+    ]
+    .spacing(SPACING);
+    let Some(context) = context else {
+        return body;
+    };
+    if context.others > 0 {
+        body = body.push(text(fl!(
+            "ui-certificate-already-trusted",
+            count = context.others
+        )));
+    }
+    if !context.route.is_empty() {
+        let route = context.route.join(&fl!("ui-route-test-separator"));
+        body = body.push(text(fl!("ui-certificate-route", route = route)));
+    }
+    body
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
@@ -6756,10 +6826,26 @@ fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
     }
 }
 
-/// The title, text and action of a question about the whole window: leaving it with
-/// sessions live, broadcasting input to every tab, recording every session.
-fn window_question(dialog: &Dialog) -> (String, String, String) {
+/// The title, text and action of a plain question: leaving the window with sessions live,
+/// broadcasting input to every tab, recording every session, resetting the RDP settings,
+/// deleting profiles or folders.
+fn plain_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
+        Dialog::ConfirmDeleteProfile { name, .. } => (
+            fl!("ui-dialog-delete-profile-title"),
+            fl!("ui-dialog-delete-profile-body", name = name.as_str()),
+            fl!("ui-dialog-delete-profile-confirm"),
+        ),
+        Dialog::ConfirmDelete {
+            name,
+            folder,
+            count,
+            ..
+        } => (
+            fl!("ui-dialog-delete-title"),
+            delete_question(name, *folder, *count),
+            fl!("ui-dialog-delete-confirm"),
+        ),
         Dialog::ConfirmExit { live, unsaved } => (
             fl!("ui-dialog-exit-title"),
             with_unsaved(
@@ -6772,6 +6858,11 @@ fn window_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-session-logging-title"),
             fl!("ui-dialog-session-logging-body"),
             fl!("ui-dialog-session-logging-confirm"),
+        ),
+        Dialog::ConfirmResetRdpDefaults => (
+            fl!("ui-dialog-reset-rdp-title"),
+            fl!("ui-dialog-reset-rdp-body"),
+            fl!("ui-settings-rdp-reset-defaults"),
         ),
         _ => (
             fl!("ui-dialog-broadcast-title"),
@@ -6823,8 +6914,13 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::RenameProfile { .. }
         | Dialog::BulkEdit { .. }
         | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
-        Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } | Dialog::ConfirmSessionLogging => {
-            let (title, body, action) = window_question(dialog);
+        Dialog::ConfirmBroadcast
+        | Dialog::ConfirmExit { .. }
+        | Dialog::ConfirmSessionLogging
+        | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmDeleteProfile { .. }
+        | Dialog::ConfirmDelete { .. } => {
+            let (title, body, action) = plain_question(dialog);
             question(title, body, action).into()
         }
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
@@ -6838,23 +6934,6 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         } => crate::tunnels_view::host_key(host, *port, fingerprint),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
-        Dialog::ConfirmDeleteProfile { name, .. } => question(
-            fl!("ui-dialog-delete-profile-title"),
-            fl!("ui-dialog-delete-profile-body", name = name.as_str()),
-            fl!("ui-dialog-delete-profile-confirm"),
-        )
-        .into(),
-        Dialog::ConfirmDelete {
-            name,
-            folder,
-            count,
-            ..
-        } => question(
-            fl!("ui-dialog-delete-title"),
-            delete_question(name, *folder, *count),
-            fl!("ui-dialog-delete-confirm"),
-        )
-        .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),

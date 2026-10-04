@@ -1398,3 +1398,17 @@ ui-profile-session-logging-inherit = Hériter
 ui-profile-session-logging-on = Activé
 ui-profile-session-logging-off = Désactivé
 ui-profile-session-logging-hint = Hériter suit le paramètre global de journalisation des sessions.
+ui-hostkey-copy-fingerprint-button = Copier
+ui-certificate-already-trusted = { $count ->
+    [one] Ce profil approuve déjà { $count } autre certificat pour ce nom, ce qui signifie le plus souvent que plusieurs machines y répondent.
+   *[other] Ce profil approuve déjà { $count } autres certificats pour ce nom, ce qui signifie le plus souvent que plusieurs machines y répondent.
+}
+ui-certificate-route = Atteint via : { $route }
+ui-settings-rdp-resolution-presets = Préréglages de résolution
+ui-settings-rdp-resolution-presets-hint = Un préréglage par ligne, format LARGEURxHAUTEUR (ex. 1920x1080). Laissez la zone vide pour utiliser la liste intégrée.
+ui-settings-rdp-resolution-presets-reset = Réinitialiser aux valeurs par défaut
+ui-settings-rdp-resolution-presets-invalid = Préréglages de résolution : ces lignes ne sont pas au format LARGEURxHAUTEUR avec une largeur de { $min } à { $width } et une hauteur de { $min } à { $height } pixels : { $lines }
+ui-settings-rdp-reset-defaults = Réinitialiser les valeurs RDP
+ui-settings-rdp-reset-defaults-tooltip = Restaure uniquement les valeurs RDP par défaut. Les autres réglages ne sont pas modifiés.
+ui-dialog-reset-rdp-title = Réinitialiser les valeurs RDP ?
+ui-dialog-reset-rdp-body = Restaurer toutes les valeurs RDP par défaut ? Les serveurs existants ne sont pas affectés.

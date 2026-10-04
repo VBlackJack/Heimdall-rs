@@ -23,7 +23,7 @@ use heimdall_core::profile::{DesktopSizing, ProfileId, RdpProfile, SshGateway};
 use heimdall_rdp::{Fingerprint, KnownRdpHosts};
 use tokio_util::sync::CancellationToken;
 
-use super::{App, Effect, KeyTrust, Phase, Tab, TabProfile};
+use super::{App, CertificateContext, Effect, KeyTrust, Phase, Tab, TabProfile};
 use crate::desktop::{DesktopInput, DesktopPane};
 use crate::driver::Purpose;
 use crate::error::UiError;
@@ -241,6 +241,7 @@ impl App {
             return Vec::new();
         };
         let ftp = matches!(tab.profile, TabProfile::Ftp(_));
+        tab.certificate_context = None;
         match trust {
             // Said as the C# says it of an RDP server: the user stopped it, at the certificate.
             KeyTrust::Refused => {
@@ -450,11 +451,20 @@ impl App {
     }
 
     pub(super) fn rdp_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
+        let context = match &event {
+            ConnectionEvent::UnknownRdpCertificate { host, port, .. } => {
+                self.certificate_context(tab_id, host, *port)
+            }
+            _ => None,
+        };
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
         let ready = matches!(event, ConnectionEvent::RdpReady { .. });
         apply(tab, event);
+        if context.is_some() {
+            tab.certificate_context = context;
+        }
         // A new desktop is offered this side's clipboard at once.
         let effects = super::clipboard_offer(tab);
         // Back at the size the server could not take live: said now it holds.
@@ -467,6 +477,37 @@ impl App {
             self.tell(super::Notice::ResolutionReconnected);
         }
         effects
+    }
+
+    /// What the certificate question of `tab_id` says beside the fingerprint, as the C# one:
+    /// how many other certificates its profile trusts at `host:port`, and the gateways it
+    /// goes through. Read once, when the question comes, not each time it is drawn.
+    fn certificate_context(
+        &self,
+        tab_id: TabId,
+        host: &str,
+        port: u16,
+    ) -> Option<CertificateContext> {
+        let tab = self.tab(tab_id)?;
+        let (file, gateway) = match &tab.profile {
+            TabProfile::Rdp(profile) => (self.known_rdp_hosts(), profile.gateway.as_ref()),
+            TabProfile::Ftp(_) => (self.known_ftps_hosts(), None),
+            _ => return None,
+        };
+        let host = host.to_ascii_lowercase();
+        // A file that cannot be read trusts nothing here: the question is asked all the same.
+        let others = KnownRdpHosts::new(file).entries().map_or(0, |entries| {
+            entries
+                .iter()
+                .filter(|entry| entry.host == host && entry.port == port)
+                .count()
+        });
+        let route = self
+            .store
+            .route(gateway)
+            .map(|route| route.into_iter().map(|gateway| gateway.name).collect())
+            .unwrap_or_default();
+        Some(CertificateContext { others, route })
     }
 
     /// The server of `tab_id` could not take `size` live: the session connects again at

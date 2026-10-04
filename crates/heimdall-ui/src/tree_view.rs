@@ -28,7 +28,7 @@ use heimdall_app::{
     RdpMessage, ResolutionChoice, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId,
     TabMenuMessage, TreeFilter,
 };
-use heimdall_core::profile::{ProfileId, RESOLUTION_PRESETS, Resolution, fixed_desktop};
+use heimdall_core::profile::{ProfileId, Resolution, fixed_desktop};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
@@ -930,8 +930,11 @@ fn checked_entry<'a>(label: String, checked: bool, message: AppMessage) -> Eleme
 }
 
 /// An RDP tab's "Resolution" menu, as the C# one: the active mode, "Match window", the
-/// presets, "Custom...", then "Save as default for this server".
-pub fn resolution_entries<'a>(state: &ResolutionMenuState) -> Element<'a, Message> {
+/// `presets` the settings offer, "Custom...", then "Save as default for this server".
+pub fn resolution_entries<'a>(
+    state: &ResolutionMenuState,
+    presets: &[(u16, u16)],
+) -> Element<'a, Message> {
     let tab = state.tab;
     let choose = |choice| AppMessage::TabMenu(TabMenuMessage::Resolution { tab, choice });
     let header = state.header();
@@ -946,7 +949,7 @@ pub fn resolution_entries<'a>(state: &ResolutionMenuState) -> Element<'a, Messag
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
-    for (width, height) in RESOLUTION_PRESETS {
+    for &(width, height) in presets {
         let size = fixed_desktop(width, height);
         let preset = checked_entry(
             format!("{width} x {height}"),
