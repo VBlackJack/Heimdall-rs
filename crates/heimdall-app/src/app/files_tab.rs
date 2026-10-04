@@ -139,6 +139,13 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Take one of the server's folders off the bookmarks, as the C# "Remove a bookmark".
+    RemoveBookmark {
+        /// Tab.
+        tab: TabId,
+        /// Which, in the order they were bookmarked.
+        index: usize,
+    },
     /// Go to one of the server's folders bookmarked.
     OpenBookmark {
         /// Tab.
@@ -627,6 +634,9 @@ impl std::fmt::Debug for FilesMessage {
             Self::ToggleHidden { tab, side } => {
                 write!(f, "ToggleHidden({}, {side:?})", tab.value())
             }
+            Self::RemoveBookmark { tab, index } => {
+                write!(f, "RemoveBookmark({}, {index})", tab.value())
+            }
             Self::OpenBookmark { tab, index } => {
                 write!(f, "OpenBookmark({}, {index})", tab.value())
             }
@@ -725,11 +735,27 @@ impl App {
         self.tab_mut(tab)?.files.as_deref_mut()
     }
 
-    /// Effects that list both panes, once the session is open.
+    /// Effects that list both panes, once the session is open; the server's bookmarks
+    /// kept from before brought back.
     pub(super) fn files_ready(&mut self, tab: TabId) -> Vec<Effect> {
+        let kept: Vec<RemotePath> = self
+            .files_endpoint(tab)
+            .map(|server| {
+                self.files_state
+                    .bookmarks(&server)
+                    .iter()
+                    .map(|path| RemotePath::from(path.as_str()))
+                    .collect()
+            })
+            .unwrap_or_default();
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
+        for path in kept {
+            if !files.bookmarks.contains(&path) {
+                files.bookmarks.push(path);
+            }
+        }
         let mut effects = Vec::new();
         if let Some(client) = files.client.clone() {
             effects.push(Effect::ListRemote {
@@ -906,6 +932,7 @@ impl App {
             | FilesMessage::Range { .. }
             | FilesMessage::Bookmark { .. }
             | FilesMessage::OpenBookmark { .. }
+            | FilesMessage::RemoveBookmark { .. }
             | FilesMessage::Filter { .. }
             | FilesMessage::ToggleHidden { .. }
             | FilesMessage::Dropped { .. }
@@ -955,6 +982,10 @@ impl App {
                 Vec::new()
             }
             FilesMessage::OpenBookmark { tab, index } => self.open_bookmark(tab, index),
+            FilesMessage::RemoveBookmark { tab, index } => {
+                self.remove_bookmark(tab, index);
+                Vec::new()
+            }
             FilesMessage::Dropped { tab, path } => self.upload_paths(tab, &[path]),
             FilesMessage::ExplorerFilesRead { paths, .. } if paths.is_empty() => {
                 self.tell(super::Notice::ExplorerHoldsNoFiles);
@@ -1096,7 +1127,51 @@ impl App {
         }
         let shown = crate::text::server_text(&path.display());
         files.bookmarks.push(path);
+        self.save_bookmarks(tab);
         self.tell(super::Notice::Bookmarked(shown));
+    }
+
+    /// Takes the server's folder bookmarked at `index` off, and says so.
+    fn remove_bookmark(&mut self, tab: TabId, index: usize) {
+        let Some(files) = self.files_mut(tab) else {
+            return;
+        };
+        if index >= files.bookmarks.len() {
+            return;
+        }
+        let path = files.bookmarks.remove(index);
+        self.save_bookmarks(tab);
+        self.tell(super::Notice::BookmarkRemoved(crate::text::server_text(
+            &path.display(),
+        )));
+    }
+
+    /// Keeps the bookmarks of `tab`'s server for the next run, as the C# keeps them by
+    /// server: shared by every tab on it. A folder whose name is not text stays for the run.
+    fn save_bookmarks(&mut self, tab: TabId) {
+        let Some(server) = self.files_endpoint(tab) else {
+            return;
+        };
+        let Some(files) = self.tab(tab).and_then(|found| found.files.as_deref()) else {
+            return;
+        };
+        let kept: Vec<String> = files
+            .bookmarks
+            .iter()
+            .filter_map(|path| std::str::from_utf8(path.as_bytes()).ok().map(str::to_owned))
+            .collect();
+        if let Err(error) = self.files_state.set_bookmarks(&server, kept) {
+            log::warn!("the bookmarks were not saved: {error}");
+        }
+    }
+
+    /// The folder of this computer a Files tab opens on: where the last download went, as
+    /// the C# remembers it, while it is still there; the home folder otherwise.
+    pub(super) fn files_start(&self) -> PathBuf {
+        self.files_state.last_download_folder().map_or_else(
+            || self.config.files_start.clone(),
+            std::path::Path::to_owned,
+        )
     }
 
     /// Lists the server's folder bookmarked at `index`; the folder shown stays until the
@@ -1255,6 +1330,7 @@ impl App {
         if self.dialog.is_some() {
             return Vec::new();
         }
+        let holding = self.files_clipboard.is_some();
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -1290,6 +1366,27 @@ impl App {
             FilesKey::Delete => return self.ask_delete(tab, side),
             FilesKey::Refresh => return self.list(tab, side),
             FilesKey::CopyPath => return self.copy_path(tab, side),
+            // The server's entries only, as the C# clipboard holds them.
+            FilesKey::Cut | FilesKey::Copy if side == Side::Local => return Vec::new(),
+            FilesKey::Cut => return self.hold_entries(tab, super::ClipMode::Cut),
+            FilesKey::Copy => return self.hold_entries(tab, super::ClipMode::Copy),
+            // Nothing held: the files copied in Explorer, as the C# Ctrl+V falls back.
+            FilesKey::Paste if !holding => {
+                return self.paste_from_explorer(tab);
+            }
+            FilesKey::Paste => return self.paste_held(tab),
+            FilesKey::SelectAll => {
+                match side {
+                    Side::Remote => files.remote.select_all(),
+                    Side::Local => files.local.select_all(),
+                }
+                return Vec::new();
+            }
+            FilesKey::NewFolder => return self.files(FilesMessage::AskNewFolder { tab, side }),
+            FilesKey::Download => return self.start_transfer(tab, Direction::Download),
+            FilesKey::Upload => return self.start_transfer(tab, Direction::Upload),
+            // The window gives the path bar the keyboard.
+            FilesKey::FocusPath => return Vec::new(),
         };
         match side {
             Side::Remote => files.remote.select_only(target),
@@ -1356,6 +1453,16 @@ impl App {
         let chosen = match direction {
             Direction::Download => files.remote.chosen(),
             Direction::Upload => files.local.chosen(),
+        };
+        // Where downloads go, kept for the next tab to open on.
+        if direction == Direction::Download && !chosen.is_empty() {
+            let folder = files.local.path.clone();
+            if let Err(error) = self.files_state.set_last_download_folder(&folder) {
+                log::warn!("the download folder was not kept: {error}");
+            }
+        }
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
         };
         let roots: Vec<_> = chosen
             .into_iter()

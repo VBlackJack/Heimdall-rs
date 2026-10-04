@@ -40,7 +40,8 @@ pub enum Shortcut {
 /// The Latin letter a shortcut reads from a key: the character when it is one, else the
 /// letter printed at that place on a US keyboard, so Ctrl+Shift+C still copies on a
 /// Cyrillic or Greek layout.
-fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
+#[must_use]
+pub fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
     if let keyboard::Key::Character(c) = key
         && let Some(first) = c.chars().next()
         && first.is_ascii_alphabetic()
@@ -48,12 +49,16 @@ fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
         return Some(first.to_ascii_lowercase());
     }
     match physical {
+        Physical::Code(Code::KeyA) => Some('a'),
         Physical::Code(Code::KeyC) => Some('c'),
+        Physical::Code(Code::KeyD) => Some('d'),
         Physical::Code(Code::KeyF) => Some('f'),
         Physical::Code(Code::KeyL) => Some('l'),
         Physical::Code(Code::KeyS) => Some('s'),
+        Physical::Code(Code::KeyU) => Some('u'),
         Physical::Code(Code::KeyV) => Some('v'),
         Physical::Code(Code::KeyW) => Some('w'),
+        Physical::Code(Code::KeyX) => Some('x'),
         _ => None,
     }
 }

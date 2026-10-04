@@ -2156,6 +2156,8 @@ pub struct App {
     /// What the Settings page changes, and the file it is saved to.
     settings: Settings,
     settings_file: std::path::PathBuf,
+    /// What the Files tabs keep between runs: bookmarks, the last download folder.
+    files_state: heimdall_core::files_state::FilesState,
     /// The transcripts' first and last lines, as the window words them.
     transcript_lines: Option<TranscriptLines>,
     /// Broadcast input: on or off, and the tabs marked.
@@ -2213,9 +2215,15 @@ impl App {
         };
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
         let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
+        let files_state = heimdall_core::files_state::FilesState::open(
+            config
+                .profiles_file
+                .with_file_name(heimdall_core::files_state::FILES_STATE_FILE_NAME),
+        );
         let mut app = Self {
             settings,
             settings_file,
+            files_state,
             transcript_lines: None,
             broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,
@@ -2633,8 +2641,8 @@ impl App {
             attempt,
             cancel,
         );
-        tab.files = (purpose == Purpose::Files)
-            .then(|| Box::new(FilesPane::new(self.config.files_start.clone())));
+        let start = self.files_start();
+        tab.files = (purpose == Purpose::Files).then(|| Box::new(FilesPane::new(start)));
         let effects = match request {
             Ok(request) => vec![Effect::Connect {
                 tab: tab_id,

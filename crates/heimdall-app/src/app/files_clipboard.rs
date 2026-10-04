@@ -56,7 +56,7 @@ pub enum ClipMode {
 impl App {
     /// The server `tab_id`'s Files tab is on, as the clipboard keys it: never a match when
     /// unknown.
-    fn files_endpoint(&self, tab_id: TabId) -> Option<String> {
+    pub(super) fn files_endpoint(&self, tab_id: TabId) -> Option<String> {
         let tab = self.tab(tab_id)?;
         tab.files.as_ref()?;
         // The gateway is part of the server: one address behind two gateways can be two

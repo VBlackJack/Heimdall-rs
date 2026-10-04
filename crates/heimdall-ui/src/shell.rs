@@ -255,12 +255,8 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
-                // Ctrl+C copies the selected entry's path, as the C# Files tab; a
-                // terminal or a field took it first.
-                None if ctrl_letter(&key, physical_key, modifiers) == Some('c') => {
-                    Some(Message::FilesKey(FilesKey::CopyPath))
-                }
-                None => files_view::files_key(&key, modifiers).map(Message::FilesKey),
+                // A terminal or a field took its keys first.
+                None => files_view::files_key(&key, physical_key, modifiers).map(Message::FilesKey),
             }
         }
         _ => None,
@@ -986,8 +982,12 @@ impl Shell {
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
-                return operation::focus(search_field_id())
-                    .chain(operation::select_all(search_field_id()));
+                // Ctrl+F in a Files tab's lists is its filter's, as the C# file browser's.
+                let field = match self.shown_files_side() {
+                    Some(side) => files_view::field_id(side, files_view::PaneField::Filter),
+                    None => search_field_id(),
+                };
+                return operation::focus(field.clone()).chain(operation::select_all(field));
             }
             message @ (Message::SearchSubmit | Message::SearchDown) => {
                 return self.search_key(&message);
@@ -1574,7 +1574,23 @@ impl Shell {
     }
 
     /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
+    /// The pane that has the keyboard in the Files tab shown, its lists in sight: none for
+    /// another tab, the settings, a dialog or the integrated editor.
+    fn shown_files_side(&self) -> Option<heimdall_app::files::Side> {
+        if self.settings_shown() || self.app.dialog.is_some() || self.tree_focused {
+            return None;
+        }
+        let files = self.app.active_tab()?.files.as_deref()?;
+        files.editor.is_none().then_some(files.focus)
+    }
+
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
+        if key == FilesKey::FocusPath {
+            if let Some(side) = self.shown_files_side() {
+                self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+            }
+            return Vec::new();
+        }
         // Quick Connect's first, while open.
         if let Some(effects) = self.palette_key(key) {
             return effects;
@@ -2074,14 +2090,18 @@ impl Shell {
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
-        } else if let TreeMenu::FilesBookmarks(tab) = *menu {
+        } else if let TreeMenu::FilesBookmarks(tab) | TreeMenu::FilesBookmarksRemove(tab) = *menu {
             let files = self.app.tab(tab)?.files.as_deref()?;
             let shown: Vec<String> = files
                 .bookmarks
                 .iter()
                 .map(|path| heimdall_app::server_text(&path.display()))
                 .collect();
-            tree_view::files_bookmarks_menu(tab, &shown)
+            if matches!(menu, TreeMenu::FilesBookmarksRemove(_)) {
+                tree_view::files_bookmarks_remove_menu(tab, &shown)
+            } else {
+                tree_view::files_bookmarks_menu(tab, &shown)
+            }
         } else if let TreeMenu::Tunnel(id) = *menu {
             // Only while the tunnel is open.
             self.app.tunnel(id)?;
@@ -2148,6 +2168,7 @@ impl Shell {
                 | TreeMenu::EditSelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
+                | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
                 | TreeMenu::Tunnel(_) => None,
             };
@@ -2998,7 +3019,10 @@ impl Shell {
             // A tab's menu is the tab bar's, an entry's the Files tab's: the keyboard stays
             // where it was.
             Message::OpenTreeMenu(
-                TreeMenu::Tab(_) | TreeMenu::FilesEntry { .. } | TreeMenu::FilesBookmarks(_),
+                TreeMenu::Tab(_)
+                | TreeMenu::FilesEntry { .. }
+                | TreeMenu::FilesBookmarks(_)
+                | TreeMenu::FilesBookmarksRemove(_),
             ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)

@@ -1009,10 +1009,10 @@ ui-files-selected-count = { $count ->
 }
 ui-dialog-delete-many-body = Supprimer { $count } éléments ? Les dossiers sont supprimés avec tout ce qu'ils contiennent. Cette action est irréversible.
 
-ui-files-bookmark-button = Ajouter aux favoris
-ui-files-bookmarks-button = Favoris
-ui-files-bookmarks-empty = Aucun favori enregistré
-ui-files-bookmark-added = Favori ajouté : { $path }
+ui-files-bookmark-button = Ajouter aux signets
+ui-files-bookmarks-button = Signets
+ui-files-bookmarks-empty = Aucun signet enregistré
+ui-files-bookmark-added = Signet ajouté : { $path }
 
 ui-files-filter-placeholder = Filtrer les fichiers...
 ui-files-hidden-toggle = .*
@@ -1384,3 +1384,12 @@ ui-desktop-disconnect-tooltip = Déconnecter la session
 ui-desktop-disconnect-title = Déconnecter Bureau à distance ?
 ui-desktop-disconnect-body = Vous allez vous déconnecter de { $name }. Continuer ?
 ui-settings-rdp-auto-reconnect-attempts = Nombre maximal de tentatives de reconnexion automatique
+ui-files-type-pipe = Tube nommé (FIFO)
+ui-files-type-socket = Socket
+ui-files-type-device = Périphérique
+ui-files-bookmark-removed = Signet supprimé : { $path }
+ui-files-bookmark-remove-menu = Supprimer un signet
+ui-files-empty-no-match = Aucune entrée ne correspond à "{ $filter }".
+ui-files-empty-clear-filter = Effacer le filtre
+ui-files-empty-hidden-only = Ce dossier ne contient que des entrées masquées.
+ui-files-empty-show-hidden = Afficher les fichiers masqués

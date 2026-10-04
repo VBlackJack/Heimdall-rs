@@ -969,6 +969,90 @@ async fn the_servers_folder_is_bookmarked_once_and_gone_back_to() {
 }
 
 #[tokio::test]
+async fn bookmarks_are_kept_for_the_server_and_removed_from_their_menu_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut first = app(dir.path());
+    let (tab, _) = opened(&mut first).await;
+    for path in ["/var/log", "/etc"] {
+        listed_remote(&mut first, tab, path, Vec::new());
+        files(&mut first, FilesMessage::Bookmark { tab });
+    }
+    let bookmarks = |app: &App, tab| {
+        app.tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .bookmarks
+            .iter()
+            .map(RemotePath::display)
+            .collect::<Vec<_>>()
+    };
+
+    // The next run, the same server: they are there.
+    let mut second = app(dir.path());
+    let (again, _) = opened(&mut second).await;
+    assert_eq!(bookmarks(&second, again), ["/var/log", "/etc"]);
+    files(
+        &mut second,
+        FilesMessage::RemoveBookmark {
+            tab: again,
+            index: 0,
+        },
+    );
+    assert_eq!(
+        second.notice(),
+        Some(&heimdall_app::Notice::BookmarkRemoved(
+            "/var/log".to_owned()
+        ))
+    );
+    assert_eq!(bookmarks(&second, again), ["/etc"]);
+    files(
+        &mut second,
+        FilesMessage::RemoveBookmark {
+            tab: again,
+            index: 5,
+        },
+    );
+    assert_eq!(bookmarks(&second, again), ["/etc"], "no such bookmark");
+
+    let mut third = app(dir.path());
+    let (last, _) = opened(&mut third).await;
+    assert_eq!(bookmarks(&third, last), ["/etc"], "the removal kept too");
+}
+
+#[tokio::test]
+async fn a_files_tab_opens_on_the_folder_the_last_download_went_to() {
+    let dir = tempfile::tempdir().expect("dir");
+    let downloads = dir.path().join("downloads");
+    std::fs::create_dir(&downloads).expect("folder");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    files(
+        &mut app,
+        FilesMessage::LocalListed {
+            tab,
+            result: Ok((downloads.clone(), Vec::new())),
+        },
+    );
+    listed_remote(
+        &mut app,
+        tab,
+        "/srv",
+        vec![remote_entry(b"report.txt", EntryKind::File, 1)],
+    );
+    let _ = download(&mut app, tab, 0);
+    let (next, _) = opened(&mut app).await;
+    assert_eq!(
+        app.tab(next)
+            .and_then(|found| found.files.as_ref())
+            .map(|files| files.local.path.clone()),
+        Some(downloads),
+        "as the C# download picker opens on it"
+    );
+}
+
+#[tokio::test]
 async fn a_conflict_shows_both_copies_and_replace_if_newer_keeps_a_newer_one() {
     use std::time::{Duration, SystemTime};
 

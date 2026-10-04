@@ -170,6 +170,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 crate::tunnels_view::notice_text(notice).unwrap_or_default()
             }
             Notice::Bookmarked(path) => fl!("ui-files-bookmark-added", path = path.as_str()),
+            Notice::BookmarkRemoved(path) => {
+                fl!("ui-files-bookmark-removed", path = path.as_str())
+            }
             Notice::FavoriteSaveFailed => fl!("ui-status-favorite-save-failed"),
             Notice::BulkPortUpdated(count) => fl!("ui-status-bulk-port-updated", count = (*count)),
             Notice::BulkPortUnchanged => fl!("ui-status-bulk-port-unchanged"),
