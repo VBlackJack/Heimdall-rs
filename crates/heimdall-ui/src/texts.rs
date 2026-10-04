@@ -92,6 +92,11 @@ pub fn winrm_diagnostic(found: heimdall_core::winrm_diagnostic::Diagnostic) -> S
     match found {
         Diagnostic::NtlmLoopback => fl!("ui-winrm-diagnostic-ntlm-loopback"),
         Diagnostic::WsmanInvalidResponse => fl!("ui-winrm-diagnostic-wsman-invalid"),
+        Diagnostic::LogonFailed => fl!("ui-winrm-diagnostic-logon-failed"),
+        Diagnostic::AccessDenied => fl!("ui-winrm-diagnostic-access-denied"),
+        Diagnostic::TrustedHosts => fl!("ui-winrm-diagnostic-trusted-hosts"),
+        Diagnostic::KerberosPrincipal => fl!("ui-winrm-diagnostic-kerberos-principal"),
+        Diagnostic::SessionNotEntered => fl!("ui-winrm-diagnostic-session-not-entered"),
     }
 }
 
@@ -122,13 +127,25 @@ pub fn error(error: &UiError) -> String {
                 port = (*port)
             )
         }
-        UiError::WinRmTlsFailed { host, port } => {
-            fl!(
-                "ui-error-winrm-tls-failed",
-                host = host.as_str(),
-                port = (*port)
-            )
-        }
+        UiError::WinRmTlsFailed {
+            host,
+            port,
+            check_skipped: false,
+        } => fl!(
+            "ui-error-winrm-tls-failed",
+            host = host.as_str(),
+            port = (*port)
+        ),
+        // Nothing was checked: the port most likely speaks no TLS, as the C# says it.
+        UiError::WinRmTlsFailed {
+            host,
+            port,
+            check_skipped: true,
+        } => fl!(
+            "ui-error-winrm-tls-no-verify",
+            host = host.as_str(),
+            port = (*port)
+        ),
         UiError::Network { failure, detail } => match failure {
             NetworkFailure::Refused => fl!("ui-error-network-refused"),
             NetworkFailure::Reset => fl!("ui-error-network-reset"),

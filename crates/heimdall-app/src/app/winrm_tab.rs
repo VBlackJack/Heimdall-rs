@@ -187,6 +187,22 @@ impl App {
         }
     }
 
+    /// `tab_id`'s session ended with `exit_status`: a `WinRM` session never entered, and
+    /// nothing named why, says to read `PowerShell`'s message, as the C# does.
+    pub(super) fn winrm_ended(&mut self, tab_id: TabId, exit_status: Option<u32>) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        if matches!(tab.profile, TabProfile::WinRm(_))
+            && tab.winrm_diagnostic.is_none()
+            && exit_status.and_then(|status| i32::try_from(status).ok())
+                == Some(winrm::REMOTE_SESSION_NOT_ENTERED_EXIT_CODE)
+        {
+            tab.winrm_diagnostic =
+                Some(heimdall_core::winrm_diagnostic::Diagnostic::SessionNotEntered);
+        }
+    }
+
     /// A tab that says why nothing was started.
     fn open_refused(&mut self, name: String, error: UiError) {
         let tab_id = TabId::fresh();
