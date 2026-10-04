@@ -532,3 +532,42 @@ fn ssh_auto_reconnect_is_off_by_default_and_its_attempts_kept_within_the_csharp_
         "written and read back"
     );
 }
+
+#[test]
+fn the_ssh_agent_preference_is_kept_by_its_csharp_name_and_auto_openssh_first_by_default() {
+    use heimdall_core::settings::AgentPreference;
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(
+        Settings::default().ssh_agent_preference,
+        AgentPreference::OpenSshFirst
+    );
+    for (name, read) in [
+        ("AutoPageantFirst", AgentPreference::PageantFirst),
+        ("openSshOnly", AgentPreference::OpenSshOnly),
+        ("PageantOnly", AgentPreference::PageantOnly),
+        // A name not known, as the C# load: the default.
+        ("Plink", AgentPreference::OpenSshFirst),
+    ] {
+        let text = format!("version = 1\n[ssh]\nagent_preference = \"{name}\"\n");
+        assert_eq!(
+            written(dir.path(), &text).ssh_agent_preference,
+            read,
+            "{name}"
+        );
+    }
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        ssh_agent_preference: AgentPreference::PageantFirst,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert!(
+        std::fs::read_to_string(&path)
+            .expect("written")
+            .contains("agent_preference = \"AutoPageantFirst\""),
+        "the C# name"
+    );
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+}

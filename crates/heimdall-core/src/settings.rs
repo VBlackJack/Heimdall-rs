@@ -115,6 +115,50 @@ impl BroadcastScope {
     }
 }
 
+/// Which SSH agent's keys are offered first, or alone, as the C# `SshAgentPreference`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum AgentPreference {
+    /// Every agent running, the Windows OpenSSH agent's keys first.
+    #[default]
+    OpenSshFirst,
+    /// Every agent running, Pageant's keys first.
+    PageantFirst,
+    /// The Windows OpenSSH agent alone.
+    OpenSshOnly,
+    /// Pageant alone.
+    PageantOnly,
+}
+
+impl AgentPreference {
+    /// Every preference, in the order of the C# list.
+    pub const ALL: [Self; 4] = [
+        Self::OpenSshFirst,
+        Self::PageantFirst,
+        Self::OpenSshOnly,
+        Self::PageantOnly,
+    ];
+
+    /// The name the file holds: the C# one.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::OpenSshFirst => "AutoOpenSshFirst",
+            Self::PageantFirst => "AutoPageantFirst",
+            Self::OpenSshOnly => "OpenSshOnly",
+            Self::PageantOnly => "PageantOnly",
+        }
+    }
+
+    /// The preference named `name`; the default for a name not known, as the C# load.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|preference| preference.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
+    }
+}
+
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
@@ -166,6 +210,8 @@ pub struct Settings {
     /// The program a server's file is edited with, as the C# `ExternalEditorPath`; empty
     /// takes the system's own text editor.
     pub external_editor: String,
+    /// Which SSH agent's keys are offered first, or alone; applied to the next connection.
+    pub ssh_agent_preference: AgentPreference,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -296,6 +342,7 @@ impl Default for Settings {
             ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
             rdp_defaults: RdpDefaults::default(),
             external_editor: String::new(),
+            ssh_agent_preference: AgentPreference::default(),
         }
     }
 }
@@ -342,6 +389,9 @@ struct SshSection {
     keep_alive_interval: Option<u32>,
     #[serde(default)]
     tmout_reset_interval: Option<u32>,
+    /// The C# name of the agent preference.
+    #[serde(default)]
+    agent_preference: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -566,6 +616,12 @@ impl Settings {
                 .tmout_reset_interval
                 .filter(|seconds| ssh_tmout_reset_interval_accepted(*seconds))
                 .unwrap_or(SSH_TMOUT_RESET_INTERVAL_DEFAULT),
+            ssh_agent_preference: file
+                .ssh
+                .agent_preference
+                .as_deref()
+                .map(AgentPreference::named)
+                .unwrap_or_default(),
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
             // A language not offered is not guessed: the desktop's is followed.
@@ -630,6 +686,7 @@ impl Settings {
                 anti_idle_interval: Some(self.anti_idle_interval),
                 keep_alive_interval: Some(self.ssh_keep_alive_interval),
                 tmout_reset_interval: Some(self.ssh_tmout_reset_interval),
+                agent_preference: Some(self.ssh_agent_preference.name().to_owned()),
             },
             rdp: self.rdp_defaults,
             files: FilesSection {

@@ -19,8 +19,10 @@
 
 use std::path::Path;
 
+use heimdall_app::SettingsMessage;
 use heimdall_app::profile_draft::DraftProtocol;
 use heimdall_app::{AgentChip, App, AppConfig, Effect, Message, SystemCredentials};
+use heimdall_core::settings::AgentPreference;
 use heimdall_ssh::{AgentSource, AgentSurvey};
 use heimdall_term::GridSize;
 
@@ -29,7 +31,7 @@ fn app(dir: &Path) -> App {
         profiles_file: dir.join("profiles.toml"),
         known_hosts: dir.join("known_hosts"),
         legacy_dir: None,
-        agent: AgentSource::Auto,
+        agent: AgentSource::Auto(AgentPreference::default()),
         initial_grid: GridSize { cols: 80, rows: 24 },
         files_start: dir.to_owned(),
         system_credentials: SystemCredentials::memory(),
@@ -37,7 +39,37 @@ fn app(dir: &Path) -> App {
 }
 
 fn asks(effects: &[Effect]) -> bool {
-    matches!(effects, [Effect::SurveyAgents(AgentSource::Auto)])
+    matches!(effects, [Effect::SurveyAgents(AgentSource::Auto(_))])
+}
+
+#[test]
+fn the_agents_are_asked_again_as_the_preference_chosen_says() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Ssh));
+    app.update(Message::AgentsSurveyed(Vec::new()));
+    app.update(Message::Settings(SettingsMessage::SshAgentPreference(
+        AgentPreference::PageantOnly,
+    )));
+    assert_eq!(
+        app.settings().ssh_agent_preference,
+        AgentPreference::PageantOnly
+    );
+    assert_eq!(
+        app.agent_chip(),
+        &AgentChip::Unknown,
+        "what it said is no longer so"
+    );
+    assert!(
+        matches!(
+            app.update(Message::RefreshAgents).as_slice(),
+            [Effect::SurveyAgents(AgentSource::Auto(
+                AgentPreference::PageantOnly
+            ))]
+        ),
+        "the agents of the next connection"
+    );
 }
 
 #[test]
