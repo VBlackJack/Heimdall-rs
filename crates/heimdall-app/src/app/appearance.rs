@@ -21,9 +21,10 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, anti_idle_interval_accepted, settings_path,
-    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
-    ssh_tmout_reset_interval_accepted, terminal_font_size_accepted,
+    ColorScheme, Language, Settings, anti_idle_interval_accepted,
+    rdp_auto_reconnect_attempts_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
+    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted,
+    terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -50,6 +51,8 @@ pub enum SettingsMessage {
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
     SshAutoReconnectAttempts(u32),
+    /// Attempts of an RDP auto-reconnect; one out of the accepted range is ignored.
+    RdpAutoReconnectAttempts(u32),
     /// Which SSH agent's keys are offered first, or alone.
     SshAgentPreference(heimdall_core::settings::AgentPreference),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
@@ -154,6 +157,12 @@ impl App {
                 self.settings.ssh_agent_preference = *preference;
                 // The agent chip says what the next connection reaches.
                 self.agent_chip = super::agent_chip::AgentChip::Unknown;
+            }
+            SettingsMessage::RdpAutoReconnectAttempts(attempts) => {
+                if !rdp_auto_reconnect_attempts_accepted(*attempts) {
+                    return Vec::new();
+                }
+                self.settings.rdp_auto_reconnect_attempts = *attempts;
             }
             SettingsMessage::SshAutoReconnectAttempts(attempts) => {
                 if !ssh_auto_reconnect_attempts_accepted(*attempts) {

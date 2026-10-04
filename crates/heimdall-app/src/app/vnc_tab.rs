@@ -66,9 +66,18 @@ impl App {
 
 /// Applies the event that opens a VNC desktop.
 pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
-    if let ConnectionEvent::VncReady { framebuffer, input } = event {
+    if let ConnectionEvent::VncReady {
+        name,
+        framebuffer,
+        input,
+    } = event
+    {
         let view_only = matches!(&tab.profile, TabProfile::Vnc(profile) if profile.view_only);
         tab.phase = Phase::Connected;
-        tab.desktop = Some(Box::new(DesktopPane::vnc(framebuffer, input, view_only)));
+        let mut pane = DesktopPane::vnc(framebuffer, input, view_only);
+        // Shown on its bar, as the C# session title: the server's words, made safe.
+        let name = crate::text::server_text(name.trim());
+        pane.desktop_name = (!name.is_empty()).then_some(name);
+        tab.desktop = Some(Box::new(pane));
     }
 }

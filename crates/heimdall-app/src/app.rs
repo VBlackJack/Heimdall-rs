@@ -317,6 +317,8 @@ pub enum Message {
     SelectTab(TabId),
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
+    /// End a tab's remote desktop from its bar, the tab kept to reconnect.
+    DisconnectDesktop(TabId),
     /// Something from a tab's menu.
     TabMenu(TabMenuMessage),
     /// The wait before a tab's session opens again by itself is over.
@@ -696,6 +698,7 @@ impl fmt::Debug for Message {
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
+            Self::DisconnectDesktop(tab) => write!(f, "DisconnectDesktop({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
             Self::AutoReconnect { tab, attempt } => {
                 write!(f, "AutoReconnect({}, {})", tab.value(), attempt.value())
@@ -2041,6 +2044,14 @@ pub enum Dialog {
         /// Why the value confirmed was refused.
         refused: Option<BulkRefusal>,
     },
+    /// End a Remote Desktop session from its bar, the tab kept to reconnect, as the C#
+    /// asks first.
+    ConfirmDisconnectDesktop {
+        /// The tab.
+        tab: TabId,
+        /// What it is connected to.
+        name: String,
+    },
     /// A new name for a profile.
     RenameProfile {
         /// The profile.
@@ -2386,6 +2397,10 @@ impl App {
             | Message::AddressTested { .. }) => self.address_test_message(message),
             Message::SelectTab(tab) => self.select_tab(tab),
             Message::RequestCloseTab(tab) => self.request_close(tab),
+            Message::DisconnectDesktop(tab) => {
+                self.request_disconnect_desktop(tab);
+                Vec::new()
+            }
             Message::TabMenu(message) => self.tab_menu(message),
             message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
                 self.retry_message(&message)
@@ -3230,6 +3245,39 @@ impl App {
             .count()
     }
 
+    /// The session bar's Disconnect, as the C# one: an RDP desktop asks first, as the C#
+    /// `RdpConfirmDisconnect` does by default; a VNC one ends at once.
+    fn request_disconnect_desktop(&mut self, tab_id: TabId) {
+        let Some(tab) = self.tab(tab_id) else {
+            return;
+        };
+        if tab.phase != Phase::Connected || tab.desktop.is_none() {
+            return;
+        }
+        if tab.purpose == Purpose::Rdp {
+            self.dialog = Some(Dialog::ConfirmDisconnectDesktop {
+                tab: tab_id,
+                name: tab.display_title().to_owned(),
+            });
+        } else {
+            self.disconnect_desktop(tab_id);
+        }
+    }
+
+    /// Ends `tab_id`'s remote desktop, the tab kept and Reconnect offered: the user ended it,
+    /// so nothing reconnects by itself, and whatever the old session still reports is
+    /// another attempt's.
+    fn disconnect_desktop(&mut self, tab_id: TabId) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        tab.attempt = AttemptId::fresh();
+        tab.retry = None;
+        tab.stop();
+        tab.end_reason = None;
+        tab.phase = Phase::Closed { exit_status: None };
+    }
+
     fn request_close(&mut self, tab_id: TabId) -> Vec<Effect> {
         match self.tab(tab_id) {
             // Its editor's text would be lost: said first, as the C# close guard.
@@ -3360,6 +3408,10 @@ impl App {
             }
             Some(Dialog::RenameProfile { id, value }) => {
                 self.confirm_rename_profile(&id, &value);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDisconnectDesktop { tab, .. }) => {
+                self.disconnect_desktop(tab);
                 Vec::new()
             }
             Some(Dialog::BulkEdit {

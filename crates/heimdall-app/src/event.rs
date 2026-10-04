@@ -146,6 +146,8 @@ pub enum ConnectionEvent {
     RdpSaveEnded(SaveEnd),
     /// The VNC session is open.
     VncReady {
+        /// The desktop's name, as the server gives it: untrusted.
+        name: String,
         /// The desktop, drawn by the UI.
         framebuffer: VncFramebuffer,
         /// Where keyboard and mouse input goes.
