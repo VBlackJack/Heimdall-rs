@@ -20,6 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
+use heimdall_core::settings::AgentPreference;
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -613,7 +614,7 @@ fn config() -> AppConfig {
         known_hosts: paths::known_hosts_file()
             .unwrap_or_else(|| PathBuf::from(KNOWN_HOSTS_FILE_NAME)),
         legacy_dir: paths::legacy_data_dir(),
-        agent: AgentSource::Auto,
+        agent: AgentSource::Auto(AgentPreference::default()),
         initial_grid: INITIAL_GRID,
         files_start: paths::home_dir().unwrap_or_else(|| PathBuf::from(".")),
         system_credentials: SystemCredentials::keyring(CREDENTIAL_SERVICE),
@@ -2651,8 +2652,8 @@ impl Shell {
         ]
     }
 
-    /// SSH auto-reconnect, as the C# SSH Connection card: on or off, and how many attempts
-    /// before the reconnect is left to the user.
+    /// The C# SSH Connection card: auto-reconnect, on or off, and how many attempts before
+    /// the reconnect is left to the user; which SSH agent's keys are offered first.
     fn ssh_reconnect_settings(&self) -> Element<'_, Message> {
         let settings = self.app.settings();
         let attempts: Vec<u32> =
@@ -2680,6 +2681,20 @@ impl Shell {
                 ]
                 .spacing(SPACING)
                 .align_y(iced::Alignment::Center),
+                row![
+                    text(fl!("ui-settings-ssh-agent-preference")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        AgentPreference::ALL.map(AgentChoice).to_vec(),
+                        Some(AgentChoice(settings.ssh_agent_preference)),
+                        |AgentChoice(preference)| Message::App(AppMessage::Settings(
+                            SettingsMessage::SshAgentPreference(preference)
+                        )),
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+                text(fl!("ui-settings-ssh-agent-preference-hint")).size(SMALL_SIZE),
             ]
             .spacing(SPACING),
         )
@@ -6137,6 +6152,21 @@ impl fmt::Display for DesktopMode {
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
+
+/// An SSH agent preference in the Settings page's list, named as the C# Heimdall names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AgentChoice(AgentPreference);
+
+impl fmt::Display for AgentChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            AgentPreference::OpenSshFirst => fl!("ui-settings-ssh-agent-openssh-first"),
+            AgentPreference::PageantFirst => fl!("ui-settings-ssh-agent-pageant-first"),
+            AgentPreference::OpenSshOnly => fl!("ui-settings-ssh-agent-openssh-only"),
+            AgentPreference::PageantOnly => fl!("ui-settings-ssh-agent-pageant-only"),
+        })
+    }
+}
 
 /// A colour scheme in the Settings page's list, named as the C# Heimdall names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
