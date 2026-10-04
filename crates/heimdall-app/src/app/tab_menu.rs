@@ -39,6 +39,8 @@ pub enum TabMenuMessage {
     StartTranscript(TabId),
     /// Stop keeping it.
     StopTranscript(TabId),
+    /// Show or hide an SSH shell's server health panel.
+    ToggleHealth(TabId),
     /// A choice of an RDP tab's "Resolution" menu.
     Resolution {
         /// The tab.
@@ -98,6 +100,7 @@ impl App {
                 self.end_transcript(tab, true);
                 Vec::new()
             }
+            TabMenuMessage::ToggleHealth(tab) => self.toggle_health(tab),
             TabMenuMessage::Close { tab, group } => {
                 self.close_group(tab, group);
                 Vec::new()

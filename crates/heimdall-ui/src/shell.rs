@@ -904,6 +904,13 @@ impl Shell {
                 iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
             );
         }
+        // The servers whose health panel is shown, asked as the C# asks them.
+        if self.app.polls_health() {
+            subscriptions.push(
+                iced::time::every(heimdall_app::server_health::HEALTH_INTERVAL)
+                    .map(|_| Message::App(AppMessage::HealthTick)),
+            );
+        }
         if let Some(interval) = self.app.anti_idle_interval() {
             subscriptions
                 .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
@@ -1410,6 +1417,21 @@ impl Shell {
 
     /// `tab`'s terminal, with its search bar over it when open. Under the bar the terminal
     /// takes no keys: Escape and what is typed are the bar's.
+    /// A shell tab's page: its terminal, and its server health panel beside it when shown.
+    fn shell_page<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
+        let terminal =
+            self.searchable_terminal(tab, self.app.dialog.is_none() && !self.tree_focused);
+        if tab.health.shown {
+            row![
+                container(terminal).width(Length::Fill),
+                crate::health_view::view(&tab.health)
+            ]
+            .into()
+        } else {
+            terminal
+        }
+    }
+
     fn searchable_terminal<'a>(&'a self, tab: &'a Tab, interactive: bool) -> Element<'a, Message> {
         let finder = self.finder_of(tab);
         let shown = terminal(tab, interactive && finder.is_none(), self.font_size(tab.id));
@@ -1833,6 +1855,15 @@ impl Shell {
             effect @ (Effect::OpenEditor { .. } | Effect::SaveEditor { .. }) => {
                 crate::integrated_editor::task(effect)
             }
+            Effect::ReadHealth { tab, connection } => Task::perform(
+                heimdall_app::server_health::collect(connection),
+                move |health| {
+                    Message::App(AppMessage::HealthRead {
+                        tab,
+                        health: Box::new(health),
+                    })
+                },
+            ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
@@ -3169,6 +3200,7 @@ impl Shell {
             others: !self.app.tab_group(id, TabGroup::Others).is_empty(),
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
+            health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -3323,7 +3355,7 @@ impl Shell {
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => self.files_page(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
-                _ => self.searchable_terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
+                _ => self.shell_page(tab),
             },
             // An editor's text outlives its session: kept in sight, saved once connected
             // again.

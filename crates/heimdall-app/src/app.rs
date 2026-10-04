@@ -84,6 +84,7 @@ mod folder_menu;
 mod folders;
 mod ftp_tab;
 mod gateways;
+mod health_tab;
 mod hostkeys_import;
 mod keep_alive;
 mod local_tab;
@@ -275,6 +276,15 @@ pub enum Message {
     DisplayScale(f32),
     /// Time to look at the idle SSH shells for their `TMOUT` reset.
     TmoutResetTick,
+    /// Time to ask the servers whose health panel is shown.
+    HealthTick,
+    /// A server said how it is.
+    HealthRead {
+        /// Tab.
+        tab: TabId,
+        /// What it said.
+        health: Box<crate::server_health::ServerHealth>,
+    },
     /// Stop the anti-idle keys of a tab's session, until it connects again.
     StopAntiIdle(TabId),
     /// Send this side's clipboard to the remote desktop of a tab, as the C# Heimdall's
@@ -654,6 +664,8 @@ impl fmt::Debug for Message {
             Self::AntiIdleTick => f.write_str("AntiIdleTick"),
             Self::DisplayScale(scale) => write!(f, "DisplayScale({scale})"),
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
+            Self::HealthTick => f.write_str("HealthTick"),
+            Self::HealthRead { tab, .. } => write!(f, "HealthRead({})", tab.value()),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
             Self::SaveRemoteFiles(tab) => write!(f, "SaveRemoteFiles({})", tab.value()),
@@ -1000,6 +1012,13 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Ask the server of a shell tab how it is, then send [`Message::HealthRead`].
+    ReadHealth {
+        /// Tab.
+        tab: TabId,
+        /// Its session's connection.
+        connection: heimdall_ssh::Connection,
+    },
     /// Read a server's file for the integrated editor, then send
     /// [`FilesMessage::EditorOpened`]; its text goes to the window.
     OpenEditor {
@@ -1242,6 +1261,7 @@ impl fmt::Debug for Effect {
             Self::StartEdit { tab, remote, .. } => {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
             }
+            Self::ReadHealth { tab, .. } => write!(f, "ReadHealth({})", tab.value()),
             Self::OpenEditor { tab, remote, .. } => {
                 write!(f, "OpenEditor({}, {remote:?})", tab.value())
             }
@@ -1398,6 +1418,8 @@ pub struct Tab {
     pub find_missed: bool,
     /// The transcript it keeps, while it keeps one.
     pub transcript: Option<Transcript>,
+    /// Its server health panel, for an SSH shell.
+    pub health: crate::server_health::HealthPane,
     /// Connection state.
     pub phase: Phase,
     /// The terminal.
@@ -1519,6 +1541,7 @@ impl Tab {
             winrm_diagnostic: None,
             find_missed: false,
             transcript: None,
+            health: crate::server_health::HealthPane::default(),
             reopen: reconnect::Reopen::of(&profile),
             post_connect: None,
             profile,
@@ -2275,6 +2298,9 @@ impl App {
             | Message::DisplayScale(_)
             | Message::TmoutResetTick
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
+            message @ (Message::HealthTick | Message::HealthRead { .. }) => {
+                self.health_message(message)
+            }
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
             message @ (Message::TestRoute { .. }
@@ -2627,6 +2653,7 @@ impl App {
         effects
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let active = self.active == Some(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
@@ -2666,6 +2693,7 @@ impl App {
             ConnectionEvent::RemoteClipboard(text) => {
                 vec![Effect::WriteClipboard(String::clone(&text))]
             }
+            ConnectionEvent::SshConnection(connection) => self.shell_connection(tab_id, connection),
             event @ (ConnectionEvent::RdpFilesRefused(_)
             | ConnectionEvent::RdpRemoteFiles(_)
             | ConnectionEvent::RdpSaveProgress { .. }

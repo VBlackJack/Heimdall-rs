@@ -90,7 +90,36 @@ impl std::fmt::Debug for Connection {
     }
 }
 
+/// A connection held without keeping it open: the session's end disconnects it all the
+/// same, and [`WeakConnection::upgrade`] then gives nothing.
+#[derive(Clone)]
+pub struct WeakConnection {
+    inner: std::sync::Weak<Inner>,
+}
+
+impl std::fmt::Debug for WeakConnection {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("WeakConnection").finish_non_exhaustive()
+    }
+}
+
+impl WeakConnection {
+    /// The connection, while something else keeps it open.
+    #[must_use]
+    pub fn upgrade(&self) -> Option<Connection> {
+        self.inner.upgrade().map(|inner| Connection { inner })
+    }
+}
+
 impl Connection {
+    /// This connection, held without keeping it open.
+    #[must_use]
+    pub fn downgrade(&self) -> WeakConnection {
+        WeakConnection {
+            inner: Arc::downgrade(&self.inner),
+        }
+    }
+
     pub(crate) fn new((handle, routes): Reached) -> Self {
         Self {
             inner: Arc::new(Inner {
