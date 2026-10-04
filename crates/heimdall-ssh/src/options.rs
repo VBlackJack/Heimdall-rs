@@ -17,6 +17,7 @@
 //! Connection settings and their defaults.
 
 use crate::run_trust::RunTrust;
+use heimdall_core::settings::AgentPreference;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -63,9 +64,9 @@ pub enum AgentSource {
     /// Do not use an agent.
     Disabled,
     /// The platform's usual places: `SSH_AUTH_SOCK` on Unix; on Windows `SSH_AUTH_SOCK` when
-    /// it names a pipe, the OpenSSH agent pipe, then Pageant, every one reachable offering
-    /// its keys, as the C# `SshAgentRegistry`.
-    Auto,
+    /// it names a pipe, then the OpenSSH agent pipe and Pageant in the order, or alone, as
+    /// the preference says. Every one reachable offers its keys.
+    Auto(AgentPreference),
     /// A Unix socket or a Windows named pipe given explicitly.
     Path(PathBuf),
     /// Several agents given explicitly, their keys offered in this order.
@@ -112,7 +113,7 @@ impl ConnectOptions {
             terminal_type: DEFAULT_TERMINAL_TYPE.to_owned(),
             initial_size: DEFAULT_TERMINAL_SIZE,
             known_hosts,
-            agent: AgentSource::Auto,
+            agent: AgentSource::Auto(AgentPreference::default()),
             run_trust: RunTrust::default(),
             forward_agent: false,
             compression: false,

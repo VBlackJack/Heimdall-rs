@@ -24,7 +24,7 @@
 
 use std::time::Duration;
 
-use heimdall_ssh::ConnectOptions;
+use heimdall_ssh::{AgentSource, ConnectOptions};
 
 use super::{App, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
@@ -37,7 +37,12 @@ impl App {
     /// the keep-alive interval of the settings.
     pub(super) fn ssh_options(&self) -> ConnectOptions {
         let mut options = ConnectOptions::new(self.config.known_hosts.clone());
-        options.agent = self.config.agent.clone();
+        options.agent = match &self.config.agent {
+            // The agents of the settings, as they are now: a change applies to the next
+            // connection, as the C# says it.
+            AgentSource::Auto(_) => AgentSource::Auto(self.settings.ssh_agent_preference),
+            other => other.clone(),
+        };
         options.run_trust = self.run_trust.clone();
         options.keepalive_interval =
             Duration::from_secs(u64::from(self.settings.ssh_keep_alive_interval));

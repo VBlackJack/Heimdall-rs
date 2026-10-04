@@ -17,10 +17,11 @@
 //! Reaching a running SSH agent.
 //!
 //! Unix: the socket named by `SSH_AUTH_SOCK`. Windows: `SSH_AUTH_SOCK` when it names a pipe
-//! (1Password, `KeeAgent`, gpg), then the OpenSSH agent pipe, then Pageant. Authentication
-//! reaches every one of them and offers the keys of all, as the C# `SshAgentRegistry`: a key
-//! loaded in Pageant is offered even while the OpenSSH agent runs. Every attempt is bounded:
-//! russh retries a busy Windows pipe with no limit of its own.
+//! (1Password, `KeeAgent`, gpg), then the OpenSSH agent pipe and Pageant, in the order the
+//! C# `SshAgentPreference` puts them, or one of them alone. Authentication reaches every one
+//! and offers the keys of all, a key loaded in Pageant offered even while the OpenSSH agent
+//! runs: wider than the C#, which offers the keys of the first agent holding any. Every
+//! attempt is bounded: russh retries a busy Windows pipe with no limit of its own.
 
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -29,6 +30,8 @@ use std::time::Duration;
 use russh::keys::PublicKey;
 use russh::keys::agent::AgentIdentity;
 use russh::keys::agent::client::{AgentClient, AgentStream};
+
+use heimdall_core::settings::AgentPreference;
 
 use crate::options::AgentSource;
 
@@ -148,23 +151,63 @@ fn places(source: &AgentSource) -> Vec<Place> {
         AgentSource::Disabled => Vec::new(),
         AgentSource::Path(path) => vec![Place::Path(path.clone())],
         AgentSource::Paths(paths) => paths.iter().cloned().map(Place::Path).collect(),
-        AgentSource::Auto => auto_places(),
+        AgentSource::Auto(preference) => auto_places(*preference),
     }
 }
 
 #[cfg(unix)]
-fn auto_places() -> Vec<Place> {
+fn auto_places(_preference: AgentPreference) -> Vec<Place> {
     vec![Place::Environment]
 }
 
 #[cfg(windows)]
-fn auto_places() -> Vec<Place> {
+fn auto_places(preference: AgentPreference) -> Vec<Place> {
     let auth_sock = std::env::var(AUTH_SOCK_VARIABLE).ok();
-    candidate_pipes(auth_sock.as_deref())
+    windows_places(auth_sock.as_deref(), preference)
         .into_iter()
-        .map(|pipe| Place::Path(PathBuf::from(pipe)))
-        .chain(std::iter::once(Place::Pageant))
+        .map(|place| match place {
+            WindowsPlace::Pipe(pipe) => Place::Path(PathBuf::from(pipe)),
+            WindowsPlace::Pageant => Place::Pageant,
+        })
         .collect()
+}
+
+/// A Windows agent, by where it answers.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) enum WindowsPlace {
+    /// A named pipe.
+    Pipe(String),
+    /// Pageant.
+    Pageant,
+}
+
+/// The Windows agents to reach, in order, given the value of `SSH_AUTH_SOCK` and the
+/// preference: the pipe `SSH_AUTH_SOCK` names first, the user having chosen it, then the
+/// OpenSSH agent and Pageant as the C# `SshAgentRegistry` orders them; "only" keeps one.
+#[cfg_attr(not(windows), allow(dead_code))]
+pub(crate) fn windows_places(
+    auth_sock: Option<&str>,
+    preference: AgentPreference,
+) -> Vec<WindowsPlace> {
+    let openssh = WindowsPlace::Pipe(OPENSSH_AGENT_PIPE.to_owned());
+    match preference {
+        AgentPreference::OpenSshOnly => vec![openssh],
+        AgentPreference::PageantOnly => vec![WindowsPlace::Pageant],
+        AgentPreference::OpenSshFirst | AgentPreference::PageantFirst => {
+            let mut places: Vec<WindowsPlace> = candidate_pipes(auth_sock)
+                .into_iter()
+                .filter(|pipe| pipe != OPENSSH_AGENT_PIPE)
+                .map(WindowsPlace::Pipe)
+                .collect();
+            if preference == AgentPreference::PageantFirst {
+                places.extend([WindowsPlace::Pageant, openssh]);
+            } else {
+                places.extend([openssh, WindowsPlace::Pageant]);
+            }
+            places
+        }
+    }
 }
 
 async fn reach(place: &Place) -> Option<Agent> {
@@ -246,7 +289,45 @@ async fn connect_pageant() -> Option<Agent> {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{OPENSSH_AGENT_PIPE, Place, candidate_pipes, name};
+    use heimdall_core::settings::AgentPreference;
+
+    use super::{OPENSSH_AGENT_PIPE, Place, WindowsPlace, candidate_pipes, name, windows_places};
+
+    #[test]
+    fn the_preference_orders_the_openssh_agent_and_pageant_or_keeps_one_as_the_csharp() {
+        let custom = r"\\.\pipe\openssh-ssh-agent-1password";
+        let pipe = |pipe: &str| WindowsPlace::Pipe(pipe.to_owned());
+        assert_eq!(
+            windows_places(Some(custom), AgentPreference::OpenSshFirst),
+            [
+                pipe(custom),
+                pipe(OPENSSH_AGENT_PIPE),
+                WindowsPlace::Pageant
+            ]
+        );
+        assert_eq!(
+            windows_places(Some(custom), AgentPreference::PageantFirst),
+            [
+                pipe(custom),
+                WindowsPlace::Pageant,
+                pipe(OPENSSH_AGENT_PIPE)
+            ],
+            "the pipe chosen in SSH_AUTH_SOCK stays first"
+        );
+        assert_eq!(
+            windows_places(Some(OPENSSH_AGENT_PIPE), AgentPreference::PageantFirst),
+            [WindowsPlace::Pageant, pipe(OPENSSH_AGENT_PIPE)],
+            "the OpenSSH agent named in SSH_AUTH_SOCK takes its place in the order"
+        );
+        assert_eq!(
+            windows_places(Some(custom), AgentPreference::OpenSshOnly),
+            [pipe(OPENSSH_AGENT_PIPE)]
+        );
+        assert_eq!(
+            windows_places(None, AgentPreference::PageantOnly),
+            [WindowsPlace::Pageant]
+        );
+    }
 
     #[test]
     fn the_agents_are_named_as_the_csharp_names_them() {

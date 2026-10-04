@@ -50,6 +50,8 @@ pub enum SettingsMessage {
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
     SshAutoReconnectAttempts(u32),
+    /// Which SSH agent's keys are offered first, or alone.
+    SshAgentPreference(heimdall_core::settings::AgentPreference),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
     AntiIdleInterval(u32),
     /// Seconds between two SSH keep-alives; refused out of the C# range.
@@ -148,6 +150,11 @@ impl App {
             }
             SettingsMessage::Language(language) => self.settings.language = Some(*language),
             SettingsMessage::SshAutoReconnect(on) => self.settings.ssh_auto_reconnect = *on,
+            SettingsMessage::SshAgentPreference(preference) => {
+                self.settings.ssh_agent_preference = *preference;
+                // The agent chip says what the next connection reaches.
+                self.agent_chip = super::agent_chip::AgentChip::Unknown;
+            }
             SettingsMessage::SshAutoReconnectAttempts(attempts) => {
                 if !ssh_auto_reconnect_attempts_accepted(*attempts) {
                     return Vec::new();
