@@ -103,6 +103,14 @@ pub enum Notice {
     PortCopied(u16),
     /// A favorite could not be saved, as the C# says it.
     FavoriteSaveFailed,
+    /// The port of this many profiles was set at once.
+    BulkPortUpdated(usize),
+    /// The port set at once was every profile's already.
+    BulkPortUnchanged,
+    /// The account of this many profiles was set at once.
+    BulkUsernameUpdated(usize),
+    /// The account set at once was every profile's already.
+    BulkUsernameUnchanged,
     /// The keys trusted were written into the user's OpenSSH `known_hosts`.
     KnownHostsExported {
         /// Keys written.

@@ -1352,3 +1352,30 @@ ui-tree-favorite = Favori
 ui-tree-filter-favorites = Favoris
 ui-profile-toggle-favorite = Marquer comme favori
 ui-status-favorite-save-failed = Impossible d'enregistrer le favori.
+ui-selection-edit = Modifier
+ui-selection-edit-port = Port...
+ui-selection-edit-username = Nom d'utilisateur... ({ $count })
+ui-bulk-port-header = { $count ->
+    [one] Modification du port sur { $count } élément
+   *[other] Modification du port sur { $count } éléments
+}
+ui-bulk-port-label = Port
+ui-bulk-port-mixed = Valeurs mixtes
+ui-bulk-port-invalid = Le port doit être compris entre 1 et 65535.
+ui-bulk-username-header = { $count ->
+    [one] Modification du nom d'utilisateur sur { $count } serveur
+   *[other] Modification du nom d'utilisateur sur { $count } serveurs
+}
+ui-bulk-username-label = Nom d'utilisateur :
+ui-bulk-username-mixed = valeurs multiples
+ui-bulk-username-invalid = Le nom d'utilisateur ne peut pas être vide ni contenir de caractères de contrôle (y compris les sauts de ligne et les tabulations).
+ui-status-bulk-port-updated = { $count ->
+    [one] Port mis à jour sur { $count } élément.
+   *[other] Port mis à jour sur { $count } éléments.
+}
+ui-status-bulk-port-unchanged = Aucun changement de port n'a été appliqué.
+ui-status-bulk-username-updated = { $count ->
+    [one] Nom d'utilisateur modifié sur { $count } serveur.
+   *[other] Nom d'utilisateur modifié sur { $count } serveurs.
+}
+ui-status-bulk-username-unchanged = Aucune modification - tous les serveurs sélectionnés utilisent déjà ce nom d'utilisateur.

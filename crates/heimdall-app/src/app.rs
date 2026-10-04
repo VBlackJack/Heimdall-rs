@@ -73,6 +73,7 @@ mod agent_chip;
 mod appearance;
 mod auto_reconnect;
 mod broadcast;
+mod bulk_edit;
 mod connect_as;
 mod file_import;
 mod files_clipboard;
@@ -119,6 +120,7 @@ pub use agent_chip::AgentChip;
 pub use appearance::SettingsMessage;
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
+pub use bulk_edit::{BulkField, BulkRefusal};
 pub use connect_as::ConnectAs;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
@@ -932,6 +934,8 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
+    OpenUrl(String),
     /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
     /// copied.
     WriteClipboardImage(std::sync::Arc<[u8]>),
@@ -1254,6 +1258,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
@@ -2004,6 +2009,19 @@ pub enum Dialog {
         ids: Vec<ProfileId>,
         /// Their names, sorted, when they are few enough to list; empty otherwise.
         names: Vec<String>,
+    },
+    /// One value for several profiles at once, as the C# bulk edit asks it.
+    BulkEdit {
+        /// What is set.
+        field: BulkField,
+        /// The profiles selected that take it.
+        ids: Vec<ProfileId>,
+        /// The value typed, written in when they all shared it.
+        value: String,
+        /// They did not share one: the field says so, empty.
+        mixed: bool,
+        /// Why the value confirmed was refused.
+        refused: Option<BulkRefusal>,
     },
     /// A new name for a profile.
     RenameProfile {
@@ -2942,6 +2960,16 @@ impl App {
             }
             return Vec::new();
         }
+        // Ctrl+click on a web address opens it, as the C# terminal does, rather than select.
+        if matches!(input.action, MouseAction::Press(MouseButton::Left))
+            && input.modifiers.ctrl
+            && let Some(url) = tab
+                .terminal
+                .url_at(input.at)
+                .and_then(|url| crate::external_url::launchable_url(&url))
+        {
+            return vec![Effect::OpenUrl(url)];
+        }
         match input.action {
             MouseAction::Press(MouseButton::Left) => {
                 let kind = match input.clicks {
@@ -3289,6 +3317,16 @@ impl App {
             }
             Some(Dialog::RenameProfile { id, value }) => {
                 self.confirm_rename_profile(&id, &value);
+                Vec::new()
+            }
+            Some(Dialog::BulkEdit {
+                field,
+                ids,
+                value,
+                mixed,
+                ..
+            }) => {
+                self.confirm_bulk_edit(field, &ids, &value, mixed);
                 Vec::new()
             }
             Some(Dialog::ConfirmDeleteFolder { path, .. }) => {
