@@ -1706,6 +1706,10 @@ pub struct ConflictRow {
     pub allowed: heimdall_files::conflict::Allowed,
     /// The answer picked.
     pub choice: heimdall_files::conflict::Choice,
+    /// The size and time of what would be written, as the C# dialog shows them.
+    pub incoming: heimdall_files::Stamp,
+    /// The size and time of what is there, when known.
+    pub existing: Option<heimdall_files::Stamp>,
 }
 
 /// A modal decision that concerns the whole window.

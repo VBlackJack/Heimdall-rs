@@ -227,7 +227,7 @@ pub fn properties<'a>(
 }
 
 /// `time` as the C# column shows it, `2026-09-27 21:05`, in UTC.
-fn modified_text(time: SystemTime) -> String {
+pub(crate) fn modified_text(time: SystemTime) -> String {
     let at = UtcTime::of(time);
     format!(
         "{:04}-{:02}-{:02} {:02}:{:02}",
