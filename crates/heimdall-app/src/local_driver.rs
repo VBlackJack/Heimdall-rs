@@ -45,6 +45,8 @@ pub struct LocalShell {
     pub arguments: LocalArguments,
     /// Folder it starts in; `None` for the one Files tabs start in.
     pub working_directory: Option<PathBuf>,
+    /// Variables set for it, as the C# `HEIMDALL_*` ones of a saved profile.
+    pub environment: Vec<(String, String)>,
 }
 
 /// What a local attempt needs.
@@ -83,6 +85,7 @@ pub(crate) async fn run(request: LocalRequest, events: mpsc::Sender<ConnectionEv
         program: shell.program,
         arguments: shell.arguments,
         working_directory: Some(starting_folder(shell.working_directory, fallback_directory)),
+        environment: shell.environment,
         columns,
         rows,
     };

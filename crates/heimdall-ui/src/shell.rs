@@ -253,6 +253,13 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if let Some(shortcut) = tree_shortcut(&key, physical_key, modifiers) {
                 return Some(Message::TreeShortcut(shortcut));
             }
+            // F1 left by every widget: a terminal or a desktop keeps it for its programs.
+            if physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F1)
+                && modifiers.is_empty()
+                && !repeat
+            {
+                return Some(Message::Shortcut(WindowShortcut::Help));
+            }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
@@ -578,6 +585,7 @@ fn default_local_shell() -> LocalShell {
         program: None,
         arguments: heimdall_term::local::LocalArguments::default(),
         working_directory: None,
+        environment: Vec::new(),
     }
 }
 
@@ -1367,6 +1375,10 @@ impl Shell {
     }
 
     fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
+        if shortcut == WindowShortcut::Help {
+            self.menu = None;
+            return self.app.update(AppMessage::ShowShortcuts);
+        }
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
             if self.app.dialog.is_none() {
@@ -1396,8 +1408,10 @@ impl Shell {
             (WindowShortcut::PreviousTab, Some(index)) => {
                 AppMessage::SelectTab(self.app.tabs[(index + count - 1) % count].id)
             }
-            // Settings: shown above, tab or no tab; a screenshot is taken by the window.
-            (WindowShortcut::Settings | WindowShortcut::Screenshot, _) | (_, None) => {
+            // Settings and the help: shown above, tab or no tab; a screenshot is taken by
+            // the window.
+            (WindowShortcut::Settings | WindowShortcut::Help | WindowShortcut::Screenshot, _)
+            | (_, None) => {
                 return Vec::new();
             }
         };
@@ -2116,9 +2130,8 @@ impl Shell {
                 tree_view::files_bookmarks_menu(tab, &shown)
             }
         } else if let TreeMenu::Tunnel(id) = *menu {
-            // Only while the tunnel is open.
-            self.app.tunnel(id)?;
-            tree_view::tunnel_menu_entries(id)
+            // Only while the tunnel is listed.
+            tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -2239,16 +2252,20 @@ impl Shell {
         crate::status_bar::view(
             crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
-            row![self.tunnels_toggle(), self.broadcast_controls(targets)]
-                .align_y(iced::Alignment::Center)
-                .into(),
+            row![
+                crate::shortcuts_view::hint(SMALL_SIZE),
+                self.tunnels_toggle(),
+                self.broadcast_controls(targets)
+            ]
+            .align_y(iced::Alignment::Center)
+            .into(),
         )
     }
 
     /// The tunnels panel's button, with how many tunnels are open, as the C# bar's.
     fn tunnels_toggle(&self) -> Element<'_, Message> {
         tooltip(
-            button(text(fl!("ui-tunnels-count", count = self.app.tunnels.len())).size(SMALL_SIZE))
+            button(text(fl!("ui-tunnels-count", count = self.app.live_tunnels())).size(SMALL_SIZE))
                 .style(if self.app.tunnels_panel {
                     button::primary
                 } else {
@@ -2552,10 +2569,7 @@ impl Shell {
         .max_width(SETTINGS_WIDTH)
         .style(container::bordered_box);
         let body: Column<'_, Message> = match self.settings_tab {
-            SettingsTab::General => column![
-                text(fl!("ui-settings-appearance")).size(BODY_SIZE),
-                self.appearance_settings(),
-            ],
+            SettingsTab::General => self.general_settings(),
             SettingsTab::Terminal => column![
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
@@ -2619,6 +2633,37 @@ impl Shell {
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box)
             .into()
+    }
+
+    /// The C# General tab: the appearance, then the behaviour.
+    fn general_settings(&self) -> Column<'_, Message> {
+        column![
+            text(fl!("ui-settings-appearance")).size(BODY_SIZE),
+            self.appearance_settings(),
+            text(fl!("ui-settings-behavior")).size(BODY_SIZE),
+            self.behavior_settings(),
+        ]
+    }
+
+    /// The C# General tab's Behavior section: whether the tunnels panel starts collapsed.
+    fn behavior_settings(&self) -> Element<'_, Message> {
+        container(
+            column![
+                checkbox(self.app.settings().collapse_tunnels_panel)
+                    .label(fl!("ui-settings-collapse-tunnels-panel"))
+                    .on_toggle(|collapse| {
+                        Message::App(AppMessage::Settings(SettingsMessage::CollapseTunnelsPanel(
+                            collapse,
+                        )))
+                    }),
+                text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
     }
 
     /// The keys trusted for servers of `list`, as the C# Host keys and Certificates pages
@@ -6938,6 +6983,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::Shortcuts => crate::shortcuts_view::view(ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ExportDone { .. }
         | Dialog::ExportFailed { .. }
@@ -6984,6 +7030,37 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn f1_left_by_every_widget_shows_the_shortcuts_and_a_session_keeps_its_own() {
+        let f1 = |modifiers, status| {
+            window_event(
+                iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                    key: Key::Named(Named::F1),
+                    modified_key: Key::Named(Named::F1),
+                    physical_key: Physical::Code(keyboard::key::Code::F1),
+                    location: Location::Standard,
+                    modifiers,
+                    text: None,
+                    repeat: false,
+                }),
+                status,
+                window::Id::unique(),
+            )
+        };
+        assert!(matches!(
+            f1(Modifiers::empty(), event::Status::Ignored),
+            Some(Message::Shortcut(WindowShortcut::Help))
+        ));
+        assert!(
+            f1(Modifiers::empty(), event::Status::Captured).is_none(),
+            "a terminal's program gets it"
+        );
+        assert!(!matches!(
+            f1(Modifiers::SHIFT, event::Status::Ignored),
+            Some(Message::Shortcut(WindowShortcut::Help))
+        ));
     }
 
     #[test]

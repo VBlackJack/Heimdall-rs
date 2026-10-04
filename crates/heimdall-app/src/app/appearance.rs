@@ -64,6 +64,8 @@ pub enum SettingsMessage {
     SshTmoutResetInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
+    /// The tunnels panel starts collapsed, or open.
+    CollapseTunnelsPanel(bool),
     /// The sizes the Resolution menus offer, empty for the built-in ones; refused when one
     /// is out of the limits.
     RdpResolutionPresets(Vec<(u16, u16)>),
@@ -203,6 +205,9 @@ impl App {
                 self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
+            SettingsMessage::CollapseTunnelsPanel(collapse) => {
+                self.settings.collapse_tunnels_panel = *collapse;
+            }
             SettingsMessage::RdpResolutionPresets(presets) => {
                 if !Settings::resolution_presets_accepted(presets) {
                     return Vec::new();
