@@ -36,7 +36,7 @@ mod time_zone;
 mod tls;
 
 pub use certificate::{Fingerprint, ServerCertificate};
-pub use clipboard::MAX_REMOTE_TEXT_BYTES;
+pub use clipboard::{MAX_IMAGE_BYTES, MAX_REMOTE_TEXT_BYTES};
 pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
 pub use clipboard_save::{SaveEnd, SaveRefusal};
 pub use connect::{

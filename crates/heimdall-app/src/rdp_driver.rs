@@ -153,6 +153,7 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
     match event {
         RdpEvent::Updated { .. } | RdpEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
         RdpEvent::RemoteClipboard(text) => ConnectionEvent::RemoteClipboard(text),
+        RdpEvent::RemoteImage(image) => ConnectionEvent::RemoteImage(image.into()),
         RdpEvent::FilesRefused(refusal) => ConnectionEvent::RdpFilesRefused(refusal),
         RdpEvent::RemoteFiles(available) => ConnectionEvent::RdpRemoteFiles(available),
         RdpEvent::SaveProgress { saved, total } => {

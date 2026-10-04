@@ -45,7 +45,7 @@ use ironrdp::cliprdr::CliprdrClient;
 use ironrdp::cliprdr::pdu::{ClipboardFormatId, FileContentsRequest, FileContentsResponse};
 use zeroize::Zeroizing;
 
-use crate::clipboard::{Asked, ClipboardBackend, Request, offered_formats};
+use crate::clipboard::{Asked, ClipboardBackend, MAX_IMAGE_BYTES, Offer, Request, offered_formats};
 use crate::clipboard_files::{COPY_LIMITS, CopyRefusal, Entry, FileList};
 use crate::clipboard_save::{Command, Download, SaveEnd, SaveStep, Writer};
 use crate::connect::{ClipboardLink, MAX_DESKTOP_SIDE, RdpConnection, Upgraded};
@@ -100,6 +100,8 @@ pub enum RdpEvent {
     },
     /// The server's clipboard, as text: the server copied it.
     RemoteClipboard(Zeroizing<String>),
+    /// The server's clipboard, as an image: a device-independent bitmap the server copied.
+    RemoteImage(Vec<u8>),
     /// The files copied on this side were not offered to the server: too many, or too
     /// large.
     FilesRefused(CopyRefusal),
@@ -161,6 +163,9 @@ pub struct RdpSession {
 pub enum LocalClipboard {
     /// Text.
     Text(Zeroizing<String>),
+    /// An image, as a device-independent bitmap: offered when no larger than
+    /// [`crate::clipboard::MAX_IMAGE_BYTES`].
+    Image(Vec<u8>),
     /// Files and folders copied, as Explorer lists them: offered when the server takes
     /// files, walked and read off the session's task.
     Files(Vec<PathBuf>),
@@ -322,6 +327,8 @@ struct SaveOutcome {
 struct Held {
     /// SHA-256 of the text offered, or received from the server.
     text: Option<[u8; SHA256_OUTPUT_LEN]>,
+    /// SHA-256 of the image offered, or received from the server.
+    image: Option<[u8; SHA256_OUTPUT_LEN]>,
     /// The files offered, or being walked.
     files: Option<Vec<PathBuf>>,
 }
@@ -329,11 +336,38 @@ struct Held {
 impl Held {
     /// Whether `text` is new to the server; remembered when it is.
     fn new_text(&mut self, text: &str) -> bool {
-        let seen = fingerprint(text);
+        let seen = fingerprint(text.as_bytes());
         if self.text == Some(seen) {
             return false;
         }
         self.text = Some(seen);
+        self.image = None;
+        self.files = None;
+        true
+    }
+
+    /// Whether `image` is new to the server; remembered when it is.
+    fn new_image(&mut self, image: &[u8]) -> bool {
+        let seen = fingerprint(image);
+        if self.image == Some(seen) {
+            return false;
+        }
+        self.image = Some(seen);
+        self.text = None;
+        self.files = None;
+        true
+    }
+
+    /// The server copied `image`: it reaches this side's clipboard, and is not offered
+    /// back; whether it is new, the same one announced again being written once. The text
+    /// remembered stays: should the image not reach this side's clipboard, the text there
+    /// is not offered back over the server's image.
+    fn received_image(&mut self, image: &[u8]) -> bool {
+        let seen = fingerprint(image);
+        if self.image == Some(seen) {
+            return false;
+        }
+        self.image = Some(seen);
         self.files = None;
         true
     }
@@ -345,12 +379,14 @@ impl Held {
         }
         self.files = Some(paths.to_vec());
         self.text = None;
+        self.image = None;
         true
     }
 
     /// The server copied `text`: it reaches this side's clipboard, and is not offered back.
     fn received(&mut self, text: &str) {
-        self.text = Some(fingerprint(text));
+        self.text = Some(fingerprint(text.as_bytes()));
+        self.image = None;
         self.files = None;
     }
 
@@ -360,10 +396,10 @@ impl Held {
     }
 }
 
-/// SHA-256 of `text`, so the text itself is not kept.
-fn fingerprint(text: &str) -> [u8; SHA256_OUTPUT_LEN] {
+/// SHA-256 of `bytes`, so the text or image itself is not kept.
+fn fingerprint(bytes: &[u8]) -> [u8; SHA256_OUTPUT_LEN] {
     let mut seen = [0; SHA256_OUTPUT_LEN];
-    seen.copy_from_slice(digest(&SHA256, text.as_bytes()).as_ref());
+    seen.copy_from_slice(digest(&SHA256, bytes).as_ref());
     seen
 }
 
@@ -872,6 +908,7 @@ impl Running {
 
     /// Does what the clipboard channel asked, offers what this side copied, or sends the
     /// server what was read for it.
+    #[expect(clippy::too_many_lines, reason = "one arm per clipboard step")]
     async fn clipboard(
         &mut self,
         stage: &mut ActiveStage,
@@ -888,6 +925,12 @@ impl Running {
                 let _ = self.events.send(RdpEvent::RemoteClipboard(text)).await;
                 return Ok(());
             }
+            ClipboardStep::Request(Request::ReceivedImage(image)) => {
+                if shared.held.received_image(&image) {
+                    let _ = self.events.send(RdpEvent::RemoteImage(image)).await;
+                }
+                return Ok(());
+            }
             ClipboardStep::Request(Request::FileContents { request, entry }) => {
                 shared.read(request, entry);
                 return Ok(());
@@ -898,20 +941,35 @@ impl Running {
                 }
                 channel.initiate_paste(ClipboardFormatId::CF_UNICODETEXT)
             }
+            ClipboardStep::Request(Request::PasteImage) => {
+                if !ask(channel, Asked::Image) {
+                    return Ok(());
+                }
+                channel.initiate_paste(ClipboardFormatId::CF_DIB)
+            }
             ClipboardStep::Request(Request::Answer(answer)) => channel.submit_format_data(answer),
             ClipboardStep::Request(Request::Offer) => {
                 shared.forget_files();
                 offer_files(channel, None);
                 channel.initiate_copy(&offered_formats(&offered))
             }
-            ClipboardStep::Offer(LocalClipboard::Text(text)) => {
+            ClipboardStep::Offer(local @ (LocalClipboard::Text(_) | LocalClipboard::Image(_))) => {
                 // Held: not remembered, so offered again once the save ends.
-                if shared.holds_offers() || !shared.held.new_text(&text) {
+                if shared.holds_offers() {
                     return Ok(());
                 }
+                let offer = match local {
+                    LocalClipboard::Text(text) if shared.held.new_text(&text) => Offer::Text(text),
+                    LocalClipboard::Image(image)
+                        if image.len() <= MAX_IMAGE_BYTES && shared.held.new_image(&image) =>
+                    {
+                        Offer::Image(image.into())
+                    }
+                    _ => return Ok(()),
+                };
                 shared.forget_files();
                 offer_files(channel, None);
-                *offered.lock().unwrap_or_else(PoisonError::into_inner) = Some(text);
+                *offered.lock().unwrap_or_else(PoisonError::into_inner) = Some(offer);
                 let messages = channel.initiate_copy(&offered_formats(&offered));
                 if forget_remote_files(channel) {
                     let _ = self.events.send(RdpEvent::RemoteFiles(false)).await;
@@ -1346,6 +1404,30 @@ mod tests {
 
         held.forget_files();
         assert!(held.new_files(&copied), "a failed offer is tried again");
+    }
+
+    #[test]
+    fn the_servers_image_is_not_offered_back_and_text_and_image_take_each_others_place() {
+        let mut held = Held::default();
+        let image = [1_u8, 2, 3];
+        assert!(held.new_text("copied here"));
+        assert!(held.received_image(&image));
+        assert!(
+            !held.received_image(&image),
+            "announced again: written once"
+        );
+        assert!(
+            !held.new_image(&image),
+            "written to this side's clipboard, then read when the tab is shown"
+        );
+        assert!(
+            !held.new_text("copied here"),
+            "the image not written here: the old text is not offered over it"
+        );
+        assert!(held.new_text("copied since"));
+        assert!(held.new_image(&image), "copied here again since");
+        assert!(!held.new_image(&image));
+        assert!(held.new_text("copied here"), "the image took its place");
     }
 
     #[test]

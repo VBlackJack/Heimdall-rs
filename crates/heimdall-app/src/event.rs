@@ -125,6 +125,9 @@ pub enum ConnectionEvent {
     },
     /// The server copied this text: it goes to this side's clipboard.
     RemoteClipboard(Zeroizing<String>),
+    /// The server copied this image, a device-independent bitmap: it goes to this side's
+    /// clipboard.
+    RemoteImage(std::sync::Arc<[u8]>),
     /// The SSH shell's connection, held without keeping it open: its server health is
     /// asked over it.
     SshConnection(heimdall_ssh::WeakConnection),
@@ -254,6 +257,7 @@ impl fmt::Debug for ConnectionEvent {
             Self::RdpReady { .. } => f.write_str("RdpReady"),
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
+            Self::RemoteImage(image) => write!(f, "RemoteImage({})", image.len()),
             Self::SshConnection(_) => f.write_str("SshConnection"),
             Self::RdpFilesRefused(refusal) => write!(f, "RdpFilesRefused({refusal:?})"),
             Self::RdpRemoteFiles(available) => write!(f, "RdpRemoteFiles({available})"),

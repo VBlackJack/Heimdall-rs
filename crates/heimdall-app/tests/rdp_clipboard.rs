@@ -327,3 +327,30 @@ fn closing_the_folder_dialog_saves_nothing() {
     );
     assert_eq!(save_state(&app, tab), (false, None));
 }
+
+#[test]
+fn an_image_goes_both_ways_between_the_clipboards() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let (mut offers, _) = ready(&mut app, tab, attempt, true);
+    let image: Vec<u8> = (0..64_u8).collect();
+    assert!(
+        app.update(Message::ClipboardImage {
+            tab,
+            image: image.clone(),
+        })
+        .is_empty()
+    );
+    assert!(matches!(offers.try_recv(), Ok(LocalClipboard::Image(offered)) if offered == image));
+
+    let effects = app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::RemoteImage(image.clone().into()),
+    });
+    assert!(
+        matches!(effects.as_slice(), [Effect::WriteClipboardImage(written)] if **written == *image),
+        "{effects:?}"
+    );
+}
