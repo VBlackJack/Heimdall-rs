@@ -196,6 +196,8 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                     detail = detail.as_str()
                 )
             }
+            Notice::ScreenshotCopied => fl!("ui-status-screenshot-copied"),
+            Notice::ScreenshotFailed => fl!("ui-status-screenshot-failed"),
             Notice::FingerprintCopied(server) => {
                 fl!("ui-status-fingerprint-copied", server = server.as_str())
             }

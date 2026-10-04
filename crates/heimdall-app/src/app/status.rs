@@ -113,6 +113,10 @@ pub enum Notice {
     /// The keys trusted could not be written there, for this reason: a file and what the
     /// system said, or nothing when the home folder is not known.
     KnownHostsExportFailed(String),
+    /// An image of the session shown was copied to the clipboard, as the C# says it.
+    ScreenshotCopied,
+    /// No image of the session shown could be copied.
+    ScreenshotFailed,
     /// This folder was created.
     FolderCreated(String),
     /// The full path of an entry of a Files tab was copied, as the C# says it.

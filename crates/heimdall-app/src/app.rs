@@ -413,6 +413,11 @@ pub enum Message {
         /// Text, if the clipboard held any.
         text: Option<String>,
     },
+    /// The session shown was copied to the clipboard as an image, or could not be.
+    ScreenshotTaken {
+        /// Whether it is on the clipboard.
+        copied: bool,
+    },
     /// The files copied in Explorer arrived for the desktop of `tab`.
     ClipboardFiles {
         /// Tab whose desktop shares the clipboard.
@@ -715,6 +720,7 @@ impl fmt::Debug for Message {
             Self::Copy(tab) => write!(f, "Copy({})", tab.value()),
             Self::PasteRequest(tab) => write!(f, "PasteRequest({})", tab.value()),
             Self::ClipboardText { tab, .. } => write!(f, "ClipboardText({}, ..)", tab.value()),
+            Self::ScreenshotTaken { copied } => write!(f, "ScreenshotTaken({copied})"),
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
             }
@@ -2333,6 +2339,14 @@ impl App {
             Message::Key { tab, input } => self.key(tab, &input),
             Message::Pointer { tab, input } => self.pointer(tab, input),
             Message::Resize { tab, grid, cell } => self.resize(tab, grid, cell),
+            Message::ScreenshotTaken { copied } => {
+                self.tell(if copied {
+                    Notice::ScreenshotCopied
+                } else {
+                    Notice::ScreenshotFailed
+                });
+                Vec::new()
+            }
             message @ (Message::ScrollHistory { .. }
             | Message::FindInTerminal { .. }
             | Message::Copy(_)
