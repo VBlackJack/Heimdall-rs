@@ -101,6 +101,8 @@ pub enum Notice {
     },
     /// This local port was copied.
     PortCopied(u16),
+    /// A favorite could not be saved, as the C# says it.
+    FavoriteSaveFailed,
     /// The keys trusted were written into the user's OpenSSH `known_hosts`.
     KnownHostsExported {
         /// Keys written.

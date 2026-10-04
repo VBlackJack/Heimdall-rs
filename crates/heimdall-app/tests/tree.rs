@@ -484,6 +484,7 @@ fn the_search_folds_the_accents_of_the_profile_too() {
         endpoint: Some(("dc.lab".to_owned(), 22)),
         username: Some("hélène".to_owned()),
         gateway: None,
+        favorite: false,
     };
     for found in [
         "reseau",
@@ -496,4 +497,79 @@ fn the_search_folds_the_accents_of_the_profile_too() {
         assert!(summary.matches(found), "{found:?} finds it");
     }
     assert!(!summary.matches("reseaux"), "folded, not loosened");
+}
+
+/// The profiles the tree shows, by identifier.
+fn shown(app: &App) -> Vec<String> {
+    app.tree_rows("")
+        .into_iter()
+        .filter_map(|row| match row {
+            heimdall_app::TreeRow::Profile { profile, .. } => Some(profile.id.as_str().to_owned()),
+            heimdall_app::TreeRow::Folder { .. } => None,
+        })
+        .collect()
+}
+
+#[test]
+fn favorites_are_marked_from_the_menu_one_or_several_and_filtered_as_the_csharp() {
+    use heimdall_app::{FilterMessage, ProfileMenuMessage, SelectionMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Favorite {
+        id: id("ssh"),
+        favorite: true,
+    }));
+    assert!(app.is_favorite(&id("ssh")));
+    assert!(
+        app.profile_summary(&id("ssh"))
+            .is_some_and(|profile| profile.favorite),
+        "the tree's row carries it"
+    );
+    // Saved: a new run sees it.
+    let reread = self::app(dir.path(), &SystemCredentials::memory());
+    assert!(reread.is_favorite(&id("ssh")));
+
+    app.update(Message::Filter(FilterMessage::Favorites));
+    assert!(app.tree_filter().is_active());
+    assert_eq!(shown(&app), ["ssh"]);
+
+    // Several at once: added while one is not, removed once all are.
+    app.update(Message::Filter(FilterMessage::Favorites));
+    app.update(Message::SelectProfile(id("ssh")));
+    app.update(Message::Selection(SelectionMessage::Toggle(id("rdp"))));
+    let selected = app.selected_profiles();
+    assert!(!app.all_favorites(&selected));
+    app.update(Message::Selection(SelectionMessage::Favorite(true)));
+    assert!(app.all_favorites(&selected));
+    app.update(Message::Selection(SelectionMessage::Favorite(false)));
+    assert!(!app.is_favorite(&id("ssh")) && !app.is_favorite(&id("rdp")));
+}
+
+#[test]
+fn the_form_marks_a_favorite_and_shows_one() {
+    use heimdall_app::profile_draft::ProfileToggle;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    app.update(Message::EditProfile(id("vnc")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert!(!draft.is_on(ProfileToggle::Favorite));
+    app.update(Message::ProfileToggle {
+        toggle: ProfileToggle::Favorite,
+        on: true,
+    });
+    app.update(Message::SaveProfile {
+        password: None,
+        passphrase: None,
+    });
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(app.is_favorite(&id("vnc")));
+    app.update(Message::EditProfile(id("vnc")));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert!(draft.is_on(ProfileToggle::Favorite), "shown ticked");
 }
