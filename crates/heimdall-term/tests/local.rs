@@ -35,6 +35,7 @@ fn config(program: &str, args: &[&str]) -> LocalConfig {
         program: Some(program.to_owned()),
         arguments: LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect()),
         working_directory: None,
+        environment: Vec::new(),
         columns: 80,
         rows: 24,
     }
@@ -294,4 +295,20 @@ async fn closing_ends_even_a_shell_that_ignores_the_hang_up() {
         "{:?}",
         started.elapsed()
     );
+}
+
+#[tokio::test]
+async fn the_variables_asked_reach_the_shell() {
+    #[cfg(unix)]
+    let script = "echo \"[$HEIMDALL_NAME]\"";
+    #[cfg(windows)]
+    let script = "echo [%HEIMDALL_NAME%]";
+    let mut session = spawn(&LocalConfig {
+        environment: vec![("HEIMDALL_NAME".to_owned(), "Build box".to_owned())],
+        ..shell(script)
+    })
+    .expect("spawned");
+    let (output, code) = until_exit(&mut session).await;
+    assert!(output.contains("[Build box]"), "{output:?}");
+    assert_eq!(code, Some(0));
 }

@@ -258,6 +258,7 @@ fn a_duplicate_opens_beside_and_leaves_the_tab() {
         program: Some("sh".to_owned()),
         arguments: LocalArguments::List(Vec::new()),
         working_directory: None,
+        environment: Vec::new(),
     };
     let effects = app.update(Message::OpenLocal(shell));
     let local = app.tabs.last().expect("local").id;

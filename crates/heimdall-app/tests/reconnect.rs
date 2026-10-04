@@ -193,6 +193,7 @@ fn a_local_shell_runs_the_same_program_again() {
         program: Some("tool".to_owned()),
         arguments: LocalArguments::List(vec!["--flag".to_owned()]),
         working_directory: None,
+        environment: Vec::new(),
     };
     let effects = app.update(Message::OpenLocal(shell));
     let [Effect::ConnectLocal { tab, attempt, .. }] = effects.as_slice() else {

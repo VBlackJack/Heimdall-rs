@@ -481,6 +481,8 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
+    /// Show the keyboard shortcuts, unless a dialog is open.
+    ShowShortcuts,
     /// Test the gateway dialog's route, signed in with the password and passphrase typed in
     /// it.
     TestRoute {
@@ -770,6 +772,7 @@ impl fmt::Debug for Message {
             Self::SkipPostConnect => f.write_str("SkipPostConnect"),
             Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
+            Self::ShowShortcuts => f.write_str("ShowShortcuts"),
             Self::TestAddress => f.write_str("TestAddress"),
             Self::TestRoute { .. } => f.write_str("TestRoute(..)"),
             Self::StopRouteTest => f.write_str("StopRouteTest"),
@@ -1840,6 +1843,8 @@ pub enum Dialog {
     },
     /// Start broadcast input to every tab.
     ConfirmBroadcast,
+    /// The keyboard shortcuts, as the C# F1 help.
+    Shortcuts,
     /// Turn session transcripts on, which keep what is typed.
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
@@ -2162,6 +2167,9 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// Whether the tunnels panel is shown under the sessions.
     pub tunnels_panel: bool,
+    /// The hosts connected to, newest first, with the protocol, as the C#
+    /// `RecentConnectionTracker` keeps them: for this run only.
+    recent_hosts: Vec<(String, ProfileKind)>,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -2264,6 +2272,7 @@ impl App {
             tunnels: Vec::new(),
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
+            recent_hosts: Vec::new(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -2471,6 +2480,7 @@ impl App {
             }
             message @ (Message::ConfirmDialog
             | Message::DismissDialog
+            | Message::ShowShortcuts
             | Message::SkipPostConnect
             | Message::StopPostConnect(_)) => self.dialog_message(&message),
             message @ (Message::SelectProfile(_)
@@ -2516,6 +2526,12 @@ impl App {
     fn dialog_message(&mut self, message: &Message) -> Vec<Effect> {
         match message {
             Message::ConfirmDialog => self.confirm_dialog(),
+            Message::ShowShortcuts => {
+                if self.dialog.is_none() {
+                    self.dialog = Some(Dialog::Shortcuts);
+                }
+                Vec::new()
+            }
             Message::DismissDialog => self
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())
@@ -2745,6 +2761,9 @@ impl App {
         };
         let mut effects = self.apply_connection_event(tab_id, event);
         self.follow_transcript(tab_id, was_connected);
+        if !was_connected {
+            self.note_recent(tab_id);
+        }
         if !was_connected && self.active == Some(tab_id) {
             self.warn_winrm(tab_id);
         }
@@ -3496,6 +3515,7 @@ impl App {
                 | Dialog::HostKeysDone { .. }
                 | Dialog::StoreError { .. }
                 | Dialog::PasswordSaveFailed { .. }
+                | Dialog::Shortcuts
                 // Confirmed before: see `confirm_dialog`.
                 | Dialog::NewTunnel(_)
                 | Dialog::TunnelHostKey { .. },
