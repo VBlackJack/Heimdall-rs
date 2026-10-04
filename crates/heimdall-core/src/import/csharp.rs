@@ -153,6 +153,8 @@ pub struct ImportReport {
     pub host_keys: Vec<TrustedHostKey>,
     /// Profiles left out, with the reason.
     pub skipped: Vec<Skipped>,
+    /// The profiles among those imported marked as favorites.
+    pub favorites: Vec<ProfileId>,
 }
 
 /// A setting of a C# profile that Heimdall-rs does not have: the profile is imported
@@ -246,6 +248,9 @@ fn read_servers(text: &str) -> Result<LegacyServers, serde_json::Error> {
 struct LegacyServer {
     #[serde(default)]
     id: String,
+    /// Marked as a favorite in the C# tree.
+    #[serde(default)]
+    is_favorite: bool,
     #[serde(default)]
     display_name: String,
     #[serde(default)]
@@ -699,6 +704,9 @@ pub fn import(
         };
         match converted {
             Ok(()) => {
+                if server.is_favorite {
+                    report.favorites.push(ProfileId::new(server.id.clone()));
+                }
                 let left_out = dropped_settings(&server, &settings.rdp_defaults);
                 if !left_out.is_empty() {
                     report.dropped.push(DroppedSettings {

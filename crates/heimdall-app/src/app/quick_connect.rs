@@ -273,6 +273,7 @@ mod tests {
             endpoint: Some(("web.lab".to_owned(), 22)),
             username: Some("webmaster".to_owned()),
             gateway: None,
+            favorite: false,
         };
         assert_eq!(score(&profile, "web"), 130, "its host");
         assert_eq!(score(&profile, "alp"), 130, "its name");

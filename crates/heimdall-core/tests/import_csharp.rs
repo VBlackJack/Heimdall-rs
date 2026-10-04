@@ -1268,3 +1268,18 @@ fn the_trusted_ssh_servers_of_settings_are_read_with_their_keys_when_kept() {
         ]
     );
 }
+
+#[test]
+fn the_favorites_are_imported_with_their_profiles() {
+    let json = servers(
+        r#"{"id": "fav", "displayName": "Web", "remoteServer": "web.lab", "connectionType": "SSH", "isFavorite": true},
+           {"id": "plain", "displayName": "Db", "remoteServer": "db.lab", "connectionType": "SSH"},
+           {"id": "skipped", "displayName": "", "remoteServer": "", "connectionType": "SSH", "isFavorite": true}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert_eq!(
+        report.favorites,
+        [ProfileId::new("fav")],
+        "a profile left out is not one"
+    );
+}

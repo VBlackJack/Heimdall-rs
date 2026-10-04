@@ -25,7 +25,9 @@ use heimdall_ssh::Secret;
 use heimdall_term::local;
 
 use super::{App, Dialog, Message};
-use crate::profile_draft::{DraftError, DraftProfile, ProfileDraft, ProfileField, SavedSecret};
+use crate::profile_draft::{
+    DraftError, DraftProfile, ProfileDraft, ProfileField, ProfileToggle, SavedSecret,
+};
 use crate::text::server_text;
 
 impl App {
@@ -118,6 +120,9 @@ impl App {
         draft.password_saved = draft.protocol.saves_password() && self.password_saved(id);
         draft.passphrase =
             SavedSecret::from_saved(draft.protocol.has_key_file() && self.passphrase_saved(id));
+        if self.store.is_favorite(id) {
+            draft.toggle(ProfileToggle::Favorite, true);
+        }
         self.dialog = Some(Dialog::EditProfile { draft, error: None });
     }
 
@@ -180,6 +185,7 @@ impl App {
             }
         };
         let id = saved_id(&profile).clone();
+        let favorite = draft.is_on(ProfileToggle::Favorite);
         // The key whose passphrase the form saves: an SSH profile's, which may have none.
         let key_file = match &profile {
             DraftProfile::Ssh(profile) => Some(profile.key_path.clone()),
@@ -226,6 +232,7 @@ impl App {
                     report
                 }
             };
+            store.set_favorite(&id, favorite);
             if let Some(old_name) = &old_name {
                 store.freeze_vault_entry(&id, old_name);
             }

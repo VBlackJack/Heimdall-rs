@@ -35,6 +35,13 @@ pub enum ProfileMenuMessage {
         /// The folder.
         to: Option<String>,
     },
+    /// Mark a profile as a favorite, or no longer, as the C# tree's "Add to favorites".
+    Favorite {
+        /// The profile.
+        id: ProfileId,
+        /// Whether it is one.
+        favorite: bool,
+    },
     /// Test whether a profile's address answers, as the C# tree's "Test reachability".
     TestReachability(ProfileId),
     /// What that test found.
@@ -92,6 +99,7 @@ impl App {
                     },
                 });
             }
+            ProfileMenuMessage::Favorite { id, favorite } => self.set_favorites(&[id], favorite),
             ProfileMenuMessage::Move { id, to } => {
                 if let Err(error) = self.store.apply(|store| store.set_group(&id, to)) {
                     self.dialog = Some(Dialog::StoreError {
@@ -101,6 +109,26 @@ impl App {
             }
         }
         Vec::new()
+    }
+
+    /// Marks `ids` as favorites, or none of them, saved at once, as the C# does them in one
+    /// write; a failure said as the C# says it.
+    pub(super) fn set_favorites(&mut self, ids: &[ProfileId], favorite: bool) {
+        let saved = self.store.apply(|store| {
+            for id in ids {
+                store.set_favorite(id, favorite);
+            }
+        });
+        if saved.is_err() {
+            self.tell(Notice::FavoriteSaveFailed);
+        }
+    }
+
+    /// Whether every one of `ids` is a favorite: the menu then offers to remove them, as
+    /// the C# one does.
+    #[must_use]
+    pub fn all_favorites(&self, ids: &[ProfileId]) -> bool {
+        !ids.is_empty() && ids.iter().all(|id| self.store.is_favorite(id))
     }
 
     /// Names profile `id` as typed; an empty name leaves it as it was, as the C# inline

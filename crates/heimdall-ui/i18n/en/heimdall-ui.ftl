@@ -1420,3 +1420,9 @@ ui-status-known-hosts-export-skipped = { $count ->
 }
 ui-status-known-hosts-export-failed = known_hosts export failed: { $detail }
 ui-status-known-hosts-export-no-home = known_hosts export failed: the home folder is not known.
+ui-tree-favorite-add = Add to favorites
+ui-tree-favorite-remove = Remove from favorites
+ui-tree-favorite = Favorite
+ui-tree-filter-favorites = Favorites
+ui-profile-toggle-favorite = Mark as favorite
+ui-status-favorite-save-failed = Could not save the favorite.

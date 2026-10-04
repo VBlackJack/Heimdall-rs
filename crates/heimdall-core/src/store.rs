@@ -34,9 +34,9 @@ use crate::profile::{
 ///
 /// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
 /// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
-/// included. A build that knows an older version refuses a newer file rather than reading
+/// included, 9 the favorites. A build that knows an older version refuses a newer file rather than reading
 /// it, dropping what it does not know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 8;
+pub const PROFILE_FILE_VERSION: u32 = 9;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -63,6 +63,8 @@ struct ProfileFile {
     ftp: Vec<FtpProfile>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     folder: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    favorite: Vec<ProfileId>,
 }
 
 /// Why the profile file could not be read or written.
@@ -126,6 +128,8 @@ pub struct ProfileStore {
     ftp: Vec<FtpProfile>,
     /// Folders kept for themselves, as the C# Heimdall's empty groups: normalised.
     folders: Vec<String>,
+    /// The profiles marked as favorites, as the C# `IsFavorite`: each once.
+    favorites: Vec<ProfileId>,
 }
 
 /// Why an SSH profile's gateways cannot be followed.
@@ -156,6 +160,7 @@ impl ProfileStore {
             winrm: Vec::new(),
             ftp: Vec::new(),
             folders: Vec::new(),
+            favorites: Vec::new(),
         }
     }
 
@@ -201,6 +206,12 @@ impl ProfileStore {
                 .map(|path| folder::normal(path))
                 .filter(|path| !path.is_empty())
                 .collect(),
+            favorites: {
+                let mut favorites = file.favorite;
+                favorites.sort();
+                favorites.dedup();
+                favorites
+            },
         })
     }
 
@@ -384,8 +395,43 @@ impl ProfileStore {
         }
     }
 
-    /// Removes the profile `id`, of any protocol; whether it was there.
+    /// Whether profile `id` is marked as a favorite.
+    #[must_use]
+    pub fn is_favorite(&self, id: &ProfileId) -> bool {
+        self.favorites.binary_search(id).is_ok()
+    }
+
+    /// Marks profile `id` as a favorite, or no longer, as the C# tree menu and server form
+    /// do; whether that changed anything. A profile not in the store is not marked.
+    pub fn set_favorite(&mut self, id: &ProfileId, favorite: bool) -> bool {
+        match (self.favorites.binary_search(id), favorite) {
+            (Err(at), true) if self.holds(id) => {
+                self.favorites.insert(at, id.clone());
+                true
+            }
+            (Ok(at), false) => {
+                self.favorites.remove(at);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Whether a profile of any protocol is `id`.
+    fn holds(&self, id: &ProfileId) -> bool {
+        self.ssh.iter().any(|profile| profile.id == *id)
+            || self.rdp.iter().any(|profile| profile.id == *id)
+            || self.telnet.iter().any(|profile| profile.id == *id)
+            || self.vnc.iter().any(|profile| profile.id == *id)
+            || self.local.iter().any(|profile| profile.id == *id)
+            || self.winrm.iter().any(|profile| profile.id == *id)
+            || self.ftp.iter().any(|profile| profile.id == *id)
+    }
+
+    /// Removes the profile `id`, of any protocol; whether it was there. A favorite no
+    /// longer.
     pub fn remove(&mut self, id: &ProfileId) -> bool {
+        self.set_favorite(id, false);
         let before = self.len();
         self.ssh.retain(|profile| profile.id != *id);
         self.rdp.retain(|profile| profile.id != *id);
@@ -657,6 +703,7 @@ impl ProfileStore {
             winrm: self.winrm.clone(),
             ftp: self.ftp.clone(),
             folder: self.folders.clone(),
+            favorite: self.favorites.clone(),
         })?;
         write_atomic(&self.path, &text)
     }

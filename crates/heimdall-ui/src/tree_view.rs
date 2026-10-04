@@ -251,6 +251,9 @@ pub fn owned_row(
     ]
     .spacing(6.0)
     .align_y(iced::Alignment::Center);
+    if profile.favorite {
+        label = label.push(text(FAVORITE_MARK).size(PROTOCOL_SIZE).style(text::warning));
+    }
     if let Some(badge) = &profile.gateway {
         label = label.push(gateway_badge(badge));
     }
@@ -338,6 +341,9 @@ fn row_tooltip(profile: &ProfileSummary) -> String {
         "ui-tree-tooltip-protocol",
         protocol = profile.kind.label()
     ));
+    if profile.favorite {
+        lines.push(fl!("ui-tree-favorite"));
+    }
     lines.join("\n")
 }
 
@@ -500,6 +506,11 @@ pub fn filter_entries<'a>(filter: &TreeFilter) -> Element<'a, Message> {
             filter.gateway(),
             FilterMessage::Gateway,
         ))
+        .push(filter_box(
+            fl!("ui-tree-filter-favorites"),
+            filter.favorites(),
+            FilterMessage::Favorites,
+        ))
         .push(separator())
         .push(filter_box(
             fl!("ui-tree-filter-gateway-badge"),
@@ -550,6 +561,13 @@ fn profile_entries<'a>(
             Some(AppMessage::DuplicateProfile {
                 id: id.clone(),
                 suffix: fl!("ui-tree-duplicate-suffix"),
+            }),
+        ))
+        .push(favorite_entry(
+            profile.favorite,
+            AppMessage::ProfileMenu(ProfileMenuMessage::Favorite {
+                id: id.clone(),
+                favorite: !profile.favorite,
             }),
         ))
         .push(separator())
@@ -859,6 +877,9 @@ fn mode_name(mode: Resolution) -> String {
 /// What a checked entry shows before its label, and an unchecked one.
 const CHECKED: &str = "\u{2713}";
 
+/// The star a favorite's row carries, as the C# tree's.
+const FAVORITE_MARK: &str = "\u{2605}";
+
 /// Width of the column a checked entry's mark is in, so labels line up.
 const CHECK_WIDTH: f32 = 18.0;
 
@@ -1142,9 +1163,25 @@ pub fn move_profile_entries<'a>(
         .into()
 }
 
+/// "Add to favorites", or "Remove from favorites" once `favorite`, as the C# entry offers
+/// it: `message` does it.
+fn favorite_entry<'a>(favorite: bool, message: AppMessage) -> Element<'a, Message> {
+    let label = if favorite {
+        fl!("ui-tree-favorite-remove")
+    } else {
+        fl!("ui-tree-favorite-add")
+    };
+    entry(label, Some(message))
+}
+
 /// The menu of `count` profiles selected together, as the C# bulk menu: how many, Connect
-/// selected, Duplicate selected, Move to folder, Delete selected.
-pub fn selection_menu_entries<'a>(count: usize, connectable: usize) -> Element<'a, Message> {
+/// selected, Duplicate selected, the favorites, Move to folder, Delete selected; removing
+/// from the favorites once `all_favorites`.
+pub fn selection_menu_entries<'a>(
+    count: usize,
+    connectable: usize,
+    all_favorites: bool,
+) -> Element<'a, Message> {
     let selection = |message| Some(AppMessage::Selection(message));
     let entries = column![]
         .spacing(0.0)
@@ -1160,6 +1197,10 @@ pub fn selection_menu_entries<'a>(count: usize, connectable: usize) -> Element<'
             selection(SelectionMessage::Duplicate {
                 suffix: fl!("ui-tree-duplicate-suffix"),
             }),
+        ))
+        .push(favorite_entry(
+            all_favorites,
+            AppMessage::Selection(SelectionMessage::Favorite(!all_favorites)),
         ))
         .push(separator())
         .push(

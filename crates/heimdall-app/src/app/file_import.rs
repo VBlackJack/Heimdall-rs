@@ -226,6 +226,9 @@ impl App {
             let winrm = store.merge_winrm(report.winrm);
             let ftp = store.merge_ftp(report.ftp);
             let gateways = store.merge_gateways(report.gateways);
+            for id in &report.favorites {
+                store.set_favorite(id, true);
+            }
             [ssh, rdp, telnet, vnc, local, winrm, ftp, gateways]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {
