@@ -1773,3 +1773,274 @@ async fn paste_from_explorer_uploads_the_files_copied_or_says_there_are_none() {
     assert_eq!(request.roots.len(), 1);
     assert_eq!(request.roots[0].root.remote.as_bytes(), b"/srv/report.pdf");
 }
+
+/// The fingerprint a test's server file has.
+fn fingerprint(size: u64) -> heimdall_files::Fingerprint {
+    heimdall_files::Fingerprint {
+        size: Some(size),
+        modified: Some(1),
+        permissions: Some(0o100_644),
+        uid_gid: Some((1000, 1000)),
+    }
+}
+
+/// The integrated editor of `tab`, as the core holds it.
+fn open_editor(app: &App, tab: TabId) -> Option<heimdall_app::integrated_edit::IntegratedEdit> {
+    app.tab(tab)
+        .and_then(|found| found.files.as_ref())
+        .and_then(|files| files.editor.clone())
+}
+
+/// "/srv/a.txt" opened in the integrated editor of a Files tab, stored as `encoding`.
+async fn editing_inside(
+    dir: &Path,
+    encoding: heimdall_app::text_codec::TextEncoding,
+) -> (App, TabId, heimdall_app::EditorId) {
+    let (mut app, tab) = tab(dir).await;
+    select(&mut app, tab, Side::Remote, 1);
+    let opened = files(&mut app, FilesMessage::EditIntegrated { tab });
+    let id = match opened.as_slice() {
+        [Effect::OpenEditor { id, remote, .. }] if remote.as_bytes() == b"/srv/a.txt" => *id,
+        other => panic!("{other:?}"),
+    };
+    files(
+        &mut app,
+        FilesMessage::EditorOpened {
+            tab,
+            id,
+            result: Ok((encoding, fingerprint(4))),
+        },
+    );
+    (app, tab, id)
+}
+
+#[tokio::test]
+async fn edit_opens_the_selected_file_in_place_of_the_lists() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    select(&mut app, tab, Side::Remote, 0);
+    assert!(files(&mut app, FilesMessage::EditIntegrated { tab }).is_empty());
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::NotAFile),
+        "a folder is not edited"
+    );
+
+    select(&mut app, tab, Side::Remote, 1);
+    let opened = files(&mut app, FilesMessage::EditIntegrated { tab });
+    let [Effect::OpenEditor { id, .. }] = opened.as_slice() else {
+        panic!("{opened:?}");
+    };
+    let id = *id;
+    let edit = open_editor(&app, tab).expect("an editor");
+    assert_eq!(
+        (edit.name.as_str(), edit.opened),
+        ("a.txt", None),
+        "read first"
+    );
+    assert!(
+        files(&mut app, FilesMessage::EditIntegrated { tab }).is_empty(),
+        "one editor at a time"
+    );
+    // The lists are hidden: their keys do nothing.
+    assert!(
+        files(
+            &mut app,
+            FilesMessage::Key {
+                tab,
+                key: FilesKey::Delete
+            }
+        )
+        .is_empty()
+    );
+    assert!(app.dialog.is_none());
+
+    // Not text: said on the lists, the editor gone.
+    files(
+        &mut app,
+        FilesMessage::EditorOpened {
+            tab,
+            id,
+            result: Err(FilesError::LooksBinary),
+        },
+    );
+    assert!(open_editor(&app, tab).is_none());
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::LooksBinary)
+    );
+}
+
+#[tokio::test]
+async fn a_save_goes_only_over_the_file_opened_and_says_how_it_went() {
+    use heimdall_app::integrated_edit::EditorNotice;
+    use heimdall_app::text_codec::{TextEncoding, Unencodable};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, id) = editing_inside(dir.path(), TextEncoding::Latin1).await;
+    assert_eq!(
+        open_editor(&app, tab).and_then(|edit| edit.notice),
+        Some(EditorNotice::Latin1)
+    );
+    let save = |app: &mut App, text: &str, overwrite: bool| {
+        files(
+            app,
+            FilesMessage::EditorSave {
+                tab,
+                id,
+                text: text.to_owned(),
+                overwrite,
+            },
+        )
+    };
+    assert!(save(&mut app, "caf\u{e9} \u{20ac}", false).is_empty());
+    assert_eq!(
+        open_editor(&app, tab).and_then(|edit| edit.notice),
+        Some(EditorNotice::Unencodable(Unencodable {
+            line: 1,
+            column: 6
+        })),
+        "never written as another character"
+    );
+
+    let sent = save(&mut app, "caf\u{e9}", false);
+    let [
+        Effect::SaveEditor {
+            bytes, expected, ..
+        },
+    ] = sent.as_slice()
+    else {
+        panic!("{sent:?}");
+    };
+    assert_eq!(bytes, &[b'c', b'a', b'f', 0xE9]);
+    assert_eq!(*expected, Some(fingerprint(4)), "only over the file opened");
+    assert!(
+        save(&mut app, "caf\u{e9}", false).is_empty(),
+        "one save at a time"
+    );
+    files(&mut app, FilesMessage::EditorClose { tab, id });
+    let edit = open_editor(&app, tab).expect("not closed while it saves");
+    assert_eq!(edit.notice, Some(EditorNotice::SaveRunning));
+
+    files(
+        &mut app,
+        FilesMessage::EditorSaved {
+            tab,
+            id,
+            result: Err(FilesError::ChangedOnServer),
+            dirty: true,
+        },
+    );
+    let edit = open_editor(&app, tab).expect("kept");
+    assert_eq!(edit.notice, Some(EditorNotice::ChangedOnServer));
+    assert!(!edit.saving && edit.dirty);
+    let overwrite = save(&mut app, "caf\u{e9}", true);
+    assert!(
+        matches!(
+            overwrite.as_slice(),
+            [Effect::SaveEditor { expected: None, .. }]
+        ),
+        "over whatever is there, as asked: {overwrite:?}"
+    );
+    files(
+        &mut app,
+        FilesMessage::EditorSaved {
+            tab,
+            id,
+            result: Ok(fingerprint(9)),
+            dirty: false,
+        },
+    );
+    let edit = open_editor(&app, tab).expect("kept");
+    assert_eq!(edit.notice, Some(EditorNotice::Saved));
+    assert_eq!(edit.opened, Some((TextEncoding::Latin1, fingerprint(9))));
+    assert!(!edit.dirty);
+}
+
+#[tokio::test]
+async fn text_not_saved_is_asked_about_before_it_is_lost() {
+    use heimdall_app::text_codec::TextEncoding;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, id) = editing_inside(dir.path(), TextEncoding::Utf8 { bom: false }).await;
+    files(&mut app, FilesMessage::EditorClose { tab, id });
+    assert!(open_editor(&app, tab).is_none(), "nothing to lose: closed");
+
+    let (mut app, tab, id) = editing_inside(dir.path(), TextEncoding::Utf8 { bom: false }).await;
+    files(
+        &mut app,
+        FilesMessage::EditorChanged {
+            tab,
+            id,
+            dirty: true,
+        },
+    );
+    files(&mut app, FilesMessage::EditorClose { tab, id });
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmDiscardEditor { name, .. }) if name == "a.txt"
+    ));
+    app.update(Message::DismissDialog);
+    assert!(open_editor(&app, tab).is_some(), "kept");
+
+    app.update(Message::RequestCloseTab(tab));
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::ConfirmCloseEditor { tab: asked, .. }) if *asked == tab
+    ));
+    app.update(Message::DismissDialog);
+    app.update(Message::WindowCloseRequested);
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmExit {
+            live: 1,
+            unsaved: 1
+        })
+    );
+    app.update(Message::DismissDialog);
+
+    // A reconnection keeps the text: saved once connected again.
+    app.update(Message::ReconnectTab(tab));
+    let reopened = app.active.expect("a tab shown");
+    assert_eq!(open_editor(&app, reopened).map(|edit| edit.id), Some(id));
+
+    files(&mut app, FilesMessage::EditorClose { tab: reopened, id });
+    app.update(Message::ConfirmDialog);
+    assert!(open_editor(&app, reopened).is_none(), "discarded as asked");
+}
+
+#[tokio::test]
+async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let large = RemoteEntry {
+        name: b"dump.sql".to_vec(),
+        label: "dump.sql".to_owned(),
+        kind: EntryKind::File,
+        size: Some(heimdall_app::integrated_edit::INTEGRATED_EDIT_LIMIT + 1),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+    };
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv"), vec![large])),
+        },
+    );
+    select(&mut app, tab, Side::Remote, 0);
+    assert!(files(&mut app, FilesMessage::EditIntegrated { tab }).is_empty());
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        Some(FilesError::TooLargeForEditor)
+    );
+    assert!(
+        matches!(
+            files(&mut app, FilesMessage::EditExternal { tab }).as_slice(),
+            [] | [Effect::StartEdit { .. }]
+        ),
+        "the external editor still takes it"
+    );
+}

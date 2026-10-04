@@ -192,6 +192,60 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Open the server's selected file in the integrated editor, as the C# "Edit".
+    EditIntegrated {
+        /// Tab.
+        tab: TabId,
+    },
+    /// The file of the integrated editor was read: how it is stored and the server's file
+    /// as read, or why it is not opened. Its text stays with the window.
+    EditorOpened {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+        /// How it is stored and the server's file as read, or why not.
+        result: Result<(crate::text_codec::TextEncoding, heimdall_files::Fingerprint), FilesError>,
+    },
+    /// The integrated editor's text now differs from what was last read or saved, or no
+    /// longer does.
+    EditorChanged {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+        /// It differs.
+        dirty: bool,
+    },
+    /// Save the integrated editor's text.
+    EditorSave {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+        /// The text.
+        text: String,
+        /// Write over the server's file even though it changed, as the user said.
+        overwrite: bool,
+    },
+    /// The integrated editor's text was saved, or why not.
+    EditorSaved {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+        /// The server's file as saved, or why not.
+        result: Result<heimdall_files::Fingerprint, FilesError>,
+        /// The text still differs from what was saved: edited during the save.
+        dirty: bool,
+    },
+    /// Close the integrated editor; asked first when its text is not saved.
+    EditorClose {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+    },
     /// Open the server's selected file in the external editor, as the C# "Edit with
     /// external editor".
     EditExternal {
@@ -511,6 +565,20 @@ impl std::fmt::Debug for FilesMessage {
             Self::Copy { tab } => write!(f, "Copy({})", tab.value()),
             Self::Duplicate { tab } => write!(f, "Duplicate({})", tab.value()),
             Self::EditExternal { tab } => write!(f, "EditExternal({})", tab.value()),
+            Self::EditIntegrated { tab } => write!(f, "EditIntegrated({})", tab.value()),
+            Self::EditorOpened { tab, result, .. } => {
+                write!(f, "EditorOpened({}, {})", tab.value(), result.is_ok())
+            }
+            Self::EditorChanged { tab, dirty, .. } => {
+                write!(f, "EditorChanged({}, {dirty})", tab.value())
+            }
+            Self::EditorSave { tab, overwrite, .. } => {
+                write!(f, "EditorSave({}, {overwrite})", tab.value())
+            }
+            Self::EditorSaved { tab, result, .. } => {
+                write!(f, "EditorSaved({}, {})", tab.value(), result.is_ok())
+            }
+            Self::EditorClose { tab, .. } => write!(f, "EditorClose({})", tab.value()),
             Self::EditStarted { tab, result } => {
                 write!(f, "EditStarted({}, {})", tab.value(), result.is_ok())
             }
@@ -1173,6 +1241,10 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
+        // The lists are hidden behind the integrated editor: their keys do nothing.
+        if files.editor.is_some() {
+            return Vec::new();
+        }
         let side = files.focus;
         let (selected, count) = files.focused();
         let last = count.checked_sub(1);

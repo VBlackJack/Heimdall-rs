@@ -1250,3 +1250,40 @@ ui-status-rdp-files-save-cancelled = Enregistrement arrêté : { $saved } sur { 
 ui-status-rdp-files-not-saved-too-many = Fichiers du serveur non enregistrés : une copie prend { $count } fichiers et dossiers au plus.
 ui-status-rdp-files-not-saved-too-large = Fichiers du serveur non enregistrés : une copie prend { $size } au plus.
 ui-status-rdp-files-not-saved-unknown-size = Fichiers du serveur non enregistrés : le serveur n'a pas donné leur taille.
+ui-files-menu-edit-integrated = Éditer
+ui-editor-save = Enregistrer
+ui-editor-close = Fermer
+ui-editor-overwrite = Écraser
+ui-editor-opening = Ouverture de { $name }...
+ui-editor-position = Ln { $line }, Col { $column }
+ui-editor-lines = { $count ->
+    [one] { $count } ligne
+   *[other] { $count } lignes
+}
+ui-editor-encoding-utf8 = UTF-8
+ui-editor-encoding-utf8-bom = UTF-8 avec BOM
+ui-editor-encoding-utf16le = UTF-16 LE
+ui-editor-encoding-utf16be = UTF-16 BE
+ui-editor-encoding-utf32le = UTF-32 LE
+ui-editor-encoding-utf32be = UTF-32 BE
+ui-editor-encoding-latin1 = Latin-1
+ui-editor-ending-lf = LF
+ui-editor-ending-crlf = CRLF
+ui-editor-ending-cr = CR
+ui-editor-notice-latin1 = Ce fichier n'est pas en UTF-8 valide et a été ouvert en Latin-1. L'enregistrement le réécrit en Latin-1.
+ui-editor-notice-saved = Enregistré.
+ui-editor-notice-changed = Le fichier a changé sur le serveur depuis son ouverture : non enregistré. Écrasez-le, ou fermez sans enregistrer.
+ui-editor-notice-unencodable = Non enregistré : le caractère ligne { $line }, colonne { $column } ne peut pas être stocké en Latin-1.
+ui-editor-notice-save-running = L'enregistrement est encore en cours.
+ui-editor-notice-session-ended = La session est terminée : vos modifications sont conservées. Reconnectez-vous pour les enregistrer.
+ui-editor-notice-failed = Échec de l'enregistrement : { $reason }
+ui-dialog-discard-editor-title = Modifications non enregistrées
+ui-dialog-discard-editor-body = Le fichier a des modifications non enregistrées. Fermer quand même ?
+ui-dialog-close-editor-body = L'éditeur sur "{ $name }" a des modifications non enregistrées. Fermer et les abandonner ?
+ui-dialog-unsaved-editors = { $count ->
+    [one] { $count } éditeur a des modifications non enregistrées, qui seraient perdues.
+   *[other] { $count } éditeurs ont des modifications non enregistrées, qui seraient perdues.
+}
+ui-files-error-looks-binary = Ce fichier semble binaire (une archive, une image ou un programme) : téléchargez-le plutôt.
+ui-files-error-not-text = La marque d'encodage de ce fichier ne correspond pas à son contenu : il ne peut pas être ouvert comme texte.
+ui-files-error-too-large-for-editor = Trop volumineux pour l'éditeur intégré (plus de { $size }) : utilisez l'édition avec l'éditeur externe.

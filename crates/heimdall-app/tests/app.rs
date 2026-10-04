@@ -809,7 +809,13 @@ fn quitting_with_live_sessions_asks_then_closes_them_all() {
     let (_, _, sink_a) = connected(&mut app, "a");
     let (_, _, sink_b) = connected(&mut app, "b");
     assert!(app.update(Message::WindowCloseRequested).is_empty());
-    assert_eq!(app.dialog, Some(Dialog::ConfirmExit { live: 2 }));
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmExit {
+            live: 2,
+            unsaved: 0
+        })
+    );
     assert!(matches!(
         app.update(Message::ConfirmDialog).as_slice(),
         [Effect::Exit]

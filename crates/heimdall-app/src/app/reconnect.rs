@@ -98,6 +98,8 @@ impl App {
                 old.files.as_deref_mut(),
             ) {
                 files.edits = std::mem::take(&mut before.edits);
+                // As the text in the integrated editor: saved once connected again.
+                files.editor = before.editor.take();
             }
             old.stop();
             self.active = Some(self.tabs[index].id);

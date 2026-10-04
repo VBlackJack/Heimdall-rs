@@ -72,7 +72,8 @@ impl App {
                 }
                 Vec::new()
             }
-            _ => Vec::new(),
+            // What is left is about the integrated editor.
+            message => self.editor_message(message),
         }
     }
 

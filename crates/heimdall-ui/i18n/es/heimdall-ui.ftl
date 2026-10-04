@@ -1247,3 +1247,40 @@ ui-status-rdp-files-save-cancelled = Guardado detenido: { $saved } de { $total }
 ui-status-rdp-files-not-saved-too-many = Archivos del servidor no guardados: una copia admite { $count } archivos y carpetas como máximo.
 ui-status-rdp-files-not-saved-too-large = Archivos del servidor no guardados: una copia admite { $size } como máximo.
 ui-status-rdp-files-not-saved-unknown-size = Archivos del servidor no guardados: el servidor no indicó su tamaño.
+ui-files-menu-edit-integrated = Editar
+ui-editor-save = Guardar
+ui-editor-close = Cerrar
+ui-editor-overwrite = Sobrescribir
+ui-editor-opening = Abriendo { $name }...
+ui-editor-position = Lín { $line }, Col { $column }
+ui-editor-lines = { $count ->
+    [one] { $count } línea
+   *[other] { $count } líneas
+}
+ui-editor-encoding-utf8 = UTF-8
+ui-editor-encoding-utf8-bom = UTF-8 con BOM
+ui-editor-encoding-utf16le = UTF-16 LE
+ui-editor-encoding-utf16be = UTF-16 BE
+ui-editor-encoding-utf32le = UTF-32 LE
+ui-editor-encoding-utf32be = UTF-32 BE
+ui-editor-encoding-latin1 = Latin-1
+ui-editor-ending-lf = LF
+ui-editor-ending-crlf = CRLF
+ui-editor-ending-cr = CR
+ui-editor-notice-latin1 = Este archivo no es UTF-8 válido y se abrió como Latin-1. Al guardar se escribe de nuevo en Latin-1.
+ui-editor-notice-saved = Guardado.
+ui-editor-notice-changed = El archivo cambió en el servidor desde que se abrió: no se guardó. Sobrescríbalo, o cierre sin guardar.
+ui-editor-notice-unencodable = No guardado: el carácter de la línea { $line }, columna { $column } no se puede almacenar en Latin-1.
+ui-editor-notice-save-running = El guardado sigue en curso.
+ui-editor-notice-session-ended = La sesión terminó: sus cambios se conservan. Vuelva a conectar para guardarlos.
+ui-editor-notice-failed = Error al guardar: { $reason }
+ui-dialog-discard-editor-title = Cambios sin guardar
+ui-dialog-discard-editor-body = El archivo tiene cambios sin guardar. ¿Cerrar de todos modos?
+ui-dialog-close-editor-body = El editor de "{ $name }" tiene cambios sin guardar. ¿Cerrar y descartarlos?
+ui-dialog-unsaved-editors = { $count ->
+    [one] { $count } editor tiene cambios sin guardar, que se perderían.
+   *[other] { $count } editores tienen cambios sin guardar, que se perderían.
+}
+ui-files-error-looks-binary = Este archivo parece binario (un archivo comprimido, una imagen o un programa): descárguelo en su lugar.
+ui-files-error-not-text = La marca de codificación de este archivo no corresponde a su contenido: no se puede abrir como texto.
+ui-files-error-too-large-for-editor = Demasiado grande para el editor integrado (más de { $size }): use editar con el editor externo.

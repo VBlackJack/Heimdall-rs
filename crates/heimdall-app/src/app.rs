@@ -77,6 +77,7 @@ mod connect_as;
 mod file_import;
 mod files_clipboard;
 mod files_edit;
+mod files_editor;
 mod files_tab;
 mod files_terminal;
 mod folder_menu;
@@ -999,6 +1000,33 @@ pub enum Effect {
         /// Tab.
         tab: TabId,
     },
+    /// Read a server's file for the integrated editor, then send
+    /// [`FilesMessage::EditorOpened`]; its text goes to the window.
+    OpenEditor {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The server's file.
+        remote: heimdall_files::RemotePath,
+    },
+    /// Save the integrated editor's text, then send [`FilesMessage::EditorSaved`].
+    SaveEditor {
+        /// Tab.
+        tab: TabId,
+        /// The editor.
+        id: crate::ids::EditorId,
+        /// Session.
+        client: heimdall_files::RemoteSession,
+        /// The server's file.
+        remote: heimdall_files::RemotePath,
+        /// The text, stored as the file was.
+        bytes: Vec<u8>,
+        /// The server's file it may replace; `None` to write over whatever is there.
+        expected: Option<heimdall_files::Fingerprint>,
+    },
     /// Copy the server's file into a folder of the user's own and start the editor on it,
     /// then send [`FilesMessage::EditStarted`].
     StartEdit {
@@ -1153,6 +1181,7 @@ pub enum Effect {
 }
 
 impl fmt::Debug for Effect {
+    #[expect(clippy::too_many_lines, reason = "one arm per effect")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // Clipboard text is what the user selected: never shown.
         match self {
@@ -1213,6 +1242,21 @@ impl fmt::Debug for Effect {
             Self::StartEdit { tab, remote, .. } => {
                 write!(f, "StartEdit({}, {remote:?})", tab.value())
             }
+            Self::OpenEditor { tab, remote, .. } => {
+                write!(f, "OpenEditor({}, {remote:?})", tab.value())
+            }
+            Self::SaveEditor {
+                tab,
+                bytes,
+                expected,
+                ..
+            } => write!(
+                f,
+                "SaveEditor({}, {} bytes, {})",
+                tab.value(),
+                bytes.len(),
+                expected.is_some()
+            ),
             Self::LaunchEditor { tab, .. } => write!(f, "LaunchEditor({})", tab.value()),
             Self::SendEditAnyway { tab, .. } => write!(f, "SendEditAnyway({})", tab.value()),
             Self::OpenFolder { tab, .. } => write!(f, "OpenFolder({})", tab.value()),
@@ -1505,6 +1549,15 @@ impl Tab {
         }
     }
 
+    /// Whether the tab's integrated editor holds text not saved, or being saved.
+    #[must_use]
+    pub fn holds_unsaved_text(&self) -> bool {
+        self.files
+            .as_ref()
+            .and_then(|files| files.editor.as_ref())
+            .is_some_and(|edit| edit.dirty || edit.saving)
+    }
+
     fn stop(&mut self) {
         self.cancel.cancel();
         self.desktop = None;
@@ -1674,6 +1727,22 @@ pub enum Dialog {
         /// What the password is for.
         action: SudoAction,
     },
+    /// Close a Files tab whose integrated editor's text is not saved, as the C# close
+    /// guard asks.
+    ConfirmCloseEditor {
+        /// Tab.
+        tab: TabId,
+        /// The file, as the question names it.
+        name: String,
+    },
+    /// Close the integrated editor and lose its text not saved, as the C# "Unsaved
+    /// Changes".
+    ConfirmDiscardEditor {
+        /// Tab.
+        tab: TabId,
+        /// The file, as the question names it.
+        name: String,
+    },
     /// Close a Files tab with files open in an external editor, whose next saves would
     /// no longer be sent, as the C# close guard asks.
     ConfirmCloseEdits {
@@ -1686,10 +1755,12 @@ pub enum Dialog {
     ConfirmBroadcast,
     /// Turn session transcripts on, which keep what is typed.
     ConfirmSessionLogging,
-    /// Quit with live sessions.
+    /// Quit with live sessions, or text not saved in an integrated editor.
     ConfirmExit {
         /// Live sessions.
         live: usize,
+        /// Integrated editors whose text is not saved.
+        unsaved: usize,
     },
     /// Paste several lines into a shell that would run them one by one, or a command that
     /// can destroy data or stop the machine.
@@ -1902,6 +1973,8 @@ pub enum Dialog {
         tabs: Vec<TabId>,
         /// How many are live.
         live: usize,
+        /// How many hold an integrated editor whose text is not saved.
+        unsaved: usize,
     },
 }
 
@@ -2981,6 +3054,14 @@ impl App {
         self.tabs.iter().filter(|tab| tab.is_live()).count()
     }
 
+    /// Tabs whose integrated editor's text is not saved, or still being saved.
+    pub(crate) fn unsaved_tabs(&self, tabs: &[TabId]) -> usize {
+        tabs.iter()
+            .filter_map(|id| self.tab(*id))
+            .filter(|tab| tab.holds_unsaved_text())
+            .count()
+    }
+
     fn request_close(&mut self, tab_id: TabId) -> Vec<Effect> {
         match self.tab(tab_id) {
             // Its transfers would be cancelled: said, as the C# Files tab says it.
@@ -2989,6 +3070,16 @@ impl App {
                     tab: tab_id,
                     name: tab.display_title().to_owned(),
                 });
+            }
+            // Its editor's text would be lost: said, as the C# close guard.
+            Some(tab) if tab.holds_unsaved_text() => {
+                let name = tab
+                    .files
+                    .as_ref()
+                    .and_then(|files| files.editor.as_ref())
+                    .map(|edit| edit.name.clone())
+                    .unwrap_or_default();
+                self.dialog = Some(Dialog::ConfirmCloseEditor { tab: tab_id, name });
             }
             // Its edits' next saves would no longer be sent: said, as the C# close guard.
             Some(tab)
@@ -3028,8 +3119,10 @@ impl App {
 
     fn close_window(&mut self) -> Vec<Effect> {
         let live = self.live_tabs();
-        if live > 0 {
-            self.dialog = Some(Dialog::ConfirmExit { live });
+        let all: Vec<TabId> = self.tabs.iter().map(|tab| tab.id).collect();
+        let unsaved = self.unsaved_tabs(&all);
+        if live > 0 || unsaved > 0 {
+            self.dialog = Some(Dialog::ConfirmExit { live, unsaved });
             return Vec::new();
         }
         vec![Effect::Exit]
@@ -3064,9 +3157,16 @@ impl App {
             Some(
                 Dialog::ConfirmCloseTab(tab)
                 | Dialog::ConfirmCloseTransfers { tab, .. }
+                | Dialog::ConfirmCloseEditor { tab, .. }
                 | Dialog::ConfirmCloseEdits { tab, .. },
             ) => {
                 self.close_tab(tab);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDiscardEditor { tab, .. }) => {
+                if let Some(files) = self.files_mut(tab) {
+                    files.editor = None;
+                }
                 Vec::new()
             }
             Some(Dialog::ConfirmCloseTabs { tabs, .. }) => {

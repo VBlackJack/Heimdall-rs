@@ -51,6 +51,8 @@ pub struct History {
     redo: Vec<Change>,
     /// How many edits to undo to reach the text saved; `None` once it cannot be reached.
     saved: Option<usize>,
+    /// Counts every change to the text, edits, undos and redos alike.
+    version: u64,
 }
 
 impl Default for History {
@@ -59,6 +61,7 @@ impl Default for History {
             undo: Vec::new(),
             redo: Vec::new(),
             saved: Some(0),
+            version: 0,
         }
     }
 }
@@ -120,6 +123,7 @@ impl History {
             return false;
         };
         let end = replace(content, change.start, change.end, &change.removed);
+        self.version += 1;
         self.redo.push(Change {
             start: change.start,
             removed: change.inserted,
@@ -136,6 +140,7 @@ impl History {
             return false;
         };
         let end = replace(content, change.start, change.end, &change.removed);
+        self.version += 1;
         self.undo.push(Change {
             start: change.start,
             removed: change.inserted,
@@ -149,6 +154,22 @@ impl History {
     /// The text now is the text saved.
     pub fn mark_saved(&mut self) {
         self.saved = Some(self.undo.len());
+    }
+
+    /// The text of `version` was saved: the text saved now, unless it changed since; then
+    /// the text saved is one no undo reaches.
+    pub fn mark_saved_if(&mut self, version: u64) {
+        if version == self.version {
+            self.mark_saved();
+        } else {
+            self.saved = None;
+        }
+    }
+
+    /// Changes with each edit, undo and redo: what a save started from.
+    #[must_use]
+    pub fn version(&self) -> u64 {
+        self.version
     }
 
     /// Whether the text differs from the text last saved.
@@ -170,6 +191,7 @@ impl History {
     }
 
     fn record(&mut self, change: Change) {
+        self.version += 1;
         // Redo goes with a new edit: the text saved may be among what it held.
         if !self.redo.is_empty() {
             self.redo.clear();
@@ -435,6 +457,27 @@ next"
         assert!(history.undo(&mut content));
         assert_eq!(content.text(), "ab");
         assert!(!history.is_dirty());
+    }
+
+    #[test]
+    fn a_save_marks_the_text_saved_only_when_nothing_changed_meanwhile() {
+        let mut content = Text::with_text("");
+        let mut history = History::default();
+        typed(&mut history, &mut content, "a");
+        let started = history.version();
+        history.mark_saved_if(started);
+        assert!(!history.is_dirty());
+
+        typed(&mut history, &mut content, "b");
+        let started = history.version();
+        typed(&mut history, &mut content, "c");
+        history.mark_saved_if(started);
+        assert!(history.is_dirty(), "edited while it saved");
+        while history.undo(&mut content) {}
+        assert!(
+            history.is_dirty(),
+            "what the server has is out of undo's reach"
+        );
     }
 
     #[test]

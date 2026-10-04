@@ -271,6 +271,8 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
 pub enum Message {
     /// A message for the application core.
     App(AppMessage),
+    /// A message of a Files tab's integrated editor, whose text the window holds.
+    Editor(crate::integrated_editor::EditorMessage),
     /// The user edited field `index` of a question.
     Field {
         /// Question.
@@ -450,6 +452,7 @@ impl fmt::Debug for Message {
         // A field holds what the user types into a question: a password, a passphrase.
         match self {
             Self::App(message) => write!(f, "App({message:?})"),
+            Self::Editor(message) => write!(f, "Editor({message:?})"),
             Self::Field {
                 question, index, ..
             } => write!(f, "Field({}, {index}, ..)", question.value()),
@@ -657,6 +660,8 @@ impl SettingsTab {
 
 pub struct Shell {
     app: App,
+    /// The texts of the Files tabs' integrated editors.
+    editors: crate::integrated_editor::Editors,
     registry: AnswerRegistry,
     /// Running connection attempts; dropping a handle aborts its task.
     connections: HashMap<TabId, Handle>,
@@ -790,6 +795,7 @@ impl Shell {
         app.set_transcript_lines(crate::transcript_lines::lines());
         Self {
             app,
+            editors: crate::integrated_editor::Editors::default(),
             registry: AnswerRegistry::default(),
             connections: HashMap::new(),
             drafts: HashMap::new(),
@@ -928,6 +934,7 @@ impl Shell {
         );
         let effects = match message {
             Message::App(message) => self.app.update(message),
+            Message::Editor(message) => self.editors.update(message, &mut self.app),
             message @ (Message::Field { .. }
             | Message::FocusField { .. }
             | Message::VaultField { .. }
@@ -1021,6 +1028,8 @@ impl Shell {
             self.sudo_password = Zeroizing::default();
         }
         self.forget_finished();
+        // The texts of editors closed, with their tab or not, go.
+        self.editors.prune(&self.app);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -1821,6 +1830,9 @@ impl Shell {
             | Effect::SudoSave { .. }
             | Effect::SendEditAnyway { .. }
             | Effect::OpenFolder { .. }) => files_task(effect),
+            effect @ (Effect::OpenEditor { .. } | Effect::SaveEditor { .. }) => {
+                crate::integrated_editor::task(effect)
+            }
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
             Effect::SaveExport { document, count } => save_export(document, count),
             Effect::PickOpenSshConfig => pick_openssh(),
@@ -3252,6 +3264,23 @@ impl Shell {
         tabs.wrap().into()
     }
 
+    /// A Files tab's page: its integrated editor when a file is open in it, else its lists.
+    fn files_page<'a>(
+        &'a self,
+        tab: TabId,
+        pane: &'a heimdall_app::files::FilesPane,
+    ) -> Element<'a, Message> {
+        match &pane.editor {
+            Some(edit) => crate::integrated_editor::view(
+                tab,
+                edit,
+                self.editors.get(edit.id),
+                pane.client.is_some(),
+            ),
+            None => crate::files_view::view(tab, pane),
+        }
+    }
+
     fn content(&self) -> Element<'_, Message> {
         if self.settings_shown() {
             return self.settings_page();
@@ -3292,10 +3321,22 @@ impl Shell {
                 tab.asks_about_certificate().then(|| tab.profile.name()),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
-                (Some(pane), _) => crate::files_view::view(tab.id, pane),
+                (Some(pane), _) => self.files_page(tab.id, pane),
                 (_, Some(pane)) => self.desktop(tab, pane),
                 _ => self.searchable_terminal(tab, self.app.dialog.is_none() && !self.tree_focused),
             },
+            // An editor's text outlives its session: kept in sight, saved once connected
+            // again.
+            Phase::Closed { .. }
+                if let Some(edit) = tab.files.as_deref().and_then(|pane| pane.editor.as_ref()) =>
+            {
+                column![
+                    crate::integrated_editor::view(tab.id, edit, self.editors.get(edit.id), false),
+                    self.session_actions(tab),
+                ]
+                .spacing(SPACING)
+                .into()
+            }
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
                 let mut ended = column![text(fl!("ui-session-closed"))].spacing(SPACING);
@@ -5486,14 +5527,33 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-close-edits-body", name = name.as_str()),
             fl!("ui-dialog-close-tab-confirm"),
         ),
-        Dialog::ConfirmCloseTabs { tabs, live } => (
+        Dialog::ConfirmCloseTabs {
+            tabs,
+            live,
+            unsaved,
+        } => (
             fl!("ui-dialog-close-tabs-title"),
-            fl!(
-                "ui-dialog-close-tabs-body",
-                count = tabs.len(),
-                live = (*live)
+            with_unsaved(
+                (*live > 0).then(|| {
+                    fl!(
+                        "ui-dialog-close-tabs-body",
+                        count = tabs.len(),
+                        live = (*live)
+                    )
+                }),
+                *unsaved,
             ),
             fl!("ui-dialog-close-tab-confirm"),
+        ),
+        Dialog::ConfirmCloseEditor { name, .. } => (
+            fl!("ui-dialog-close-tab-title"),
+            fl!("ui-dialog-close-editor-body", name = name.as_str()),
+            fl!("ui-dialog-close-tab-confirm"),
+        ),
+        Dialog::ConfirmDiscardEditor { .. } => (
+            fl!("ui-dialog-discard-editor-title"),
+            fl!("ui-dialog-discard-editor-body"),
+            fl!("ui-editor-close"),
         ),
         _ => (
             fl!("ui-dialog-close-tab-title"),
@@ -6293,13 +6353,26 @@ fn delete_question(name: &str, folder: bool, count: usize) -> String {
     }
 }
 
+/// A question's text, then what it would lose of integrated editors' text not saved.
+fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
+    let lost = (unsaved > 0).then(|| fl!("ui-dialog-unsaved-editors", count = unsaved));
+    match (body, lost) {
+        (Some(body), Some(lost)) => format!("{body}\n\n{lost}"),
+        (Some(text), None) | (None, Some(text)) => text,
+        (None, None) => String::new(),
+    }
+}
+
 /// The title, text and action of a question about the whole window: leaving it with
 /// sessions live, broadcasting input to every tab, recording every session.
 fn window_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
-        Dialog::ConfirmExit { live } => (
+        Dialog::ConfirmExit { live, unsaved } => (
             fl!("ui-dialog-exit-title"),
-            fl!("ui-dialog-exit-body", count = (*live)),
+            with_unsaved(
+                (*live > 0).then(|| fl!("ui-dialog-exit-body", count = (*live))),
+                *unsaved,
+            ),
             fl!("ui-dialog-exit-confirm"),
         ),
         Dialog::ConfirmSessionLogging => (
@@ -6343,6 +6416,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmCloseTab(_)
         | Dialog::ConfirmCloseTransfers { .. }
         | Dialog::ConfirmCloseEdits { .. }
+        | Dialog::ConfirmCloseEditor { .. }
+        | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::CustomResolution { .. }

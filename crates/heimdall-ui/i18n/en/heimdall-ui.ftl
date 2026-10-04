@@ -1325,3 +1325,40 @@ ui-status-rdp-files-save-cancelled = Saving stopped: { $saved } of { $total } sa
 ui-status-rdp-files-not-saved-too-many = Server's files not saved: one copy takes { $count } files and folders at most.
 ui-status-rdp-files-not-saved-too-large = Server's files not saved: one copy takes { $size } at most.
 ui-status-rdp-files-not-saved-unknown-size = Server's files not saved: the server did not say their size.
+ui-files-menu-edit-integrated = Edit
+ui-editor-save = Save
+ui-editor-close = Close
+ui-editor-overwrite = Overwrite
+ui-editor-opening = Opening { $name }...
+ui-editor-position = Ln { $line }, Col { $column }
+ui-editor-lines = { $count ->
+    [one] { $count } line
+   *[other] { $count } lines
+}
+ui-editor-encoding-utf8 = UTF-8
+ui-editor-encoding-utf8-bom = UTF-8 with BOM
+ui-editor-encoding-utf16le = UTF-16 LE
+ui-editor-encoding-utf16be = UTF-16 BE
+ui-editor-encoding-utf32le = UTF-32 LE
+ui-editor-encoding-utf32be = UTF-32 BE
+ui-editor-encoding-latin1 = Latin-1
+ui-editor-ending-lf = LF
+ui-editor-ending-crlf = CRLF
+ui-editor-ending-cr = CR
+ui-editor-notice-latin1 = This file is not valid UTF-8 and was opened as Latin-1. Saving writes it back as Latin-1.
+ui-editor-notice-saved = Saved.
+ui-editor-notice-changed = The file changed on the server since it was opened: not saved. Overwrite it, or close without saving.
+ui-editor-notice-unencodable = Not saved: the character at line { $line }, column { $column } cannot be stored as Latin-1.
+ui-editor-notice-save-running = The save is still running.
+ui-editor-notice-session-ended = The session ended: your changes are kept. Reconnect to save them.
+ui-editor-notice-failed = Failed to save: { $reason }
+ui-dialog-discard-editor-title = Unsaved Changes
+ui-dialog-discard-editor-body = File has unsaved changes. Close anyway?
+ui-dialog-close-editor-body = The editor on "{ $name }" has unsaved changes. Close and discard them?
+ui-dialog-unsaved-editors = { $count ->
+    [one] { $count } editor holds unsaved changes, which would be lost.
+   *[other] { $count } editors hold unsaved changes, which would be lost.
+}
+ui-files-error-looks-binary = This file looks like a binary file (an archive, an image or a program): download it instead.
+ui-files-error-not-text = This file's encoding mark does not match its content: it cannot be opened as text.
+ui-files-error-too-large-for-editor = Too large for the integrated editor (over { $size }): use Edit with external editor.
