@@ -43,6 +43,7 @@ fn profile(id: &str, host: &str) -> SshProfile {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }
 }
 
@@ -209,6 +210,7 @@ fn telnet(id: &str) -> TelnetProfile {
         group: Some("Network".to_owned()),
         host: "switch.lab".to_owned(),
         port: 23,
+        session_logging: None,
     }
 }
 
@@ -297,6 +299,7 @@ fn local(id: &str, line: &str) -> LocalProfile {
             working_directory: Some(PathBuf::from(r"C:\work")),
         },
         approved: None,
+        session_logging: None,
     }
 }
 

@@ -66,6 +66,7 @@ fn app(dir: &Path, route: Option<&str>, gateways: Vec<SshGateway>) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

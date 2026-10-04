@@ -95,6 +95,8 @@ struct Entry {
     ssh_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ssh_key_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session_logging_override: Option<bool>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ssh_agent_forwarding: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -302,6 +304,7 @@ fn ssh(profile: &SshProfile) -> Entry {
             .map(|path| path.to_string_lossy().into_owned()),
         ssh_agent_forwarding: profile.forward_agent,
         ssh_compression: profile.compression,
+        session_logging_override: profile.session_logging,
         post_connect_steps: profile.post_connect.steps.iter().map(step).collect(),
         ..server(
             &profile.id,
@@ -374,6 +377,7 @@ fn rdp(profile: &RdpProfile) -> Entry {
 fn telnet(profile: &TelnetProfile) -> Entry {
     Entry {
         telnet_port: Some(profile.port),
+        session_logging_override: profile.session_logging,
         ..server(
             &profile.id,
             &profile.name,
@@ -429,6 +433,7 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
             .working_directory
             .as_ref()
             .map(|folder| folder.to_string_lossy().into_owned()),
+        session_logging_override: profile.session_logging,
         ..server(
             &profile.id,
             &profile.name,

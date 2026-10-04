@@ -96,6 +96,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {
@@ -1326,6 +1327,7 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     };
     store.merge([
         profile("direct", None),

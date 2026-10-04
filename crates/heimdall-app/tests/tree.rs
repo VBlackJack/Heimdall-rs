@@ -57,6 +57,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.merge_rdp([RdpProfile {
         id: id("rdp"),
@@ -84,6 +85,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         group: None,
         host: "sw.lab".to_owned(),
         port: 23,
+        session_logging: None,
     }]);
     store.merge_vnc([VncProfile {
         id: id("vnc"),
@@ -106,6 +108,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         group: None,
         command: command.clone(),
         approved: None,
+        session_logging: None,
     }]);
     store.approve_local(
         &id("local"),

@@ -84,6 +84,7 @@ fn ssh() -> Vec<SshProfile> {
         compression: true,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: Some(true),
     };
     let files = SshProfile {
         id: ProfileId::new("files"),
@@ -101,6 +102,7 @@ fn ssh() -> Vec<SshProfile> {
         compression: false,
         sftp: true,
         legacy_algorithms: false,
+        session_logging: None,
     };
     vec![base, files]
 }
@@ -176,6 +178,7 @@ fn local(arguments: LocalArguments) -> LocalProfile {
             working_directory: Some(PathBuf::from(r"C:\Work")),
         },
         approved: None,
+        session_logging: Some(true),
     }
 }
 
@@ -190,6 +193,7 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         group: None,
         host: "switch.lab".to_owned(),
         port: 2323,
+        session_logging: Some(false),
     }]);
     store.merge_vnc([VncProfile {
         id: ProfileId::new("screen"),

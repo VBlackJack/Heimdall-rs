@@ -1396,6 +1396,11 @@ ui-tunnels-menu-reopen = Reabrir
 ui-settings-behavior = Comportamiento
 ui-settings-collapse-tunnels-panel = Contraer el panel de túneles de forma predeterminada
 ui-settings-collapse-tunnels-panel-hint = Cómo empieza el panel de túneles. Abrirlo o cerrarlo después lo deja así hasta que se cierra la aplicación.
+ui-profile-session-logging = Registro de sesión
+ui-profile-session-logging-inherit = Heredar
+ui-profile-session-logging-on = Activado
+ui-profile-session-logging-off = Desactivado
+ui-profile-session-logging-hint = Heredar sigue el ajuste global de registro de sesión.
 ui-hostkey-copy-fingerprint-button = Copiar
 ui-certificate-already-trusted = { $count ->
     [one] Este perfil ya confía en { $count } certificado más para este nombre, lo que normalmente significa que más de una máquina responde a él.
