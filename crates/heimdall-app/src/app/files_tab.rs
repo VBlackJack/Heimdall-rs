@@ -1330,6 +1330,7 @@ impl App {
         if self.dialog.is_some() {
             return Vec::new();
         }
+        let holding = self.files_clipboard.is_some();
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -1365,6 +1366,27 @@ impl App {
             FilesKey::Delete => return self.ask_delete(tab, side),
             FilesKey::Refresh => return self.list(tab, side),
             FilesKey::CopyPath => return self.copy_path(tab, side),
+            // The server's entries only, as the C# clipboard holds them.
+            FilesKey::Cut | FilesKey::Copy if side == Side::Local => return Vec::new(),
+            FilesKey::Cut => return self.hold_entries(tab, super::ClipMode::Cut),
+            FilesKey::Copy => return self.hold_entries(tab, super::ClipMode::Copy),
+            // Nothing held: the files copied in Explorer, as the C# Ctrl+V falls back.
+            FilesKey::Paste if !holding => {
+                return self.paste_from_explorer(tab);
+            }
+            FilesKey::Paste => return self.paste_held(tab),
+            FilesKey::SelectAll => {
+                match side {
+                    Side::Remote => files.remote.select_all(),
+                    Side::Local => files.local.select_all(),
+                }
+                return Vec::new();
+            }
+            FilesKey::NewFolder => return self.files(FilesMessage::AskNewFolder { tab, side }),
+            FilesKey::Download => return self.start_transfer(tab, Direction::Download),
+            FilesKey::Upload => return self.start_transfer(tab, Direction::Upload),
+            // The window gives the path bar the keyboard.
+            FilesKey::FocusPath => return Vec::new(),
         };
         match side {
             Side::Remote => files.remote.select_only(target),

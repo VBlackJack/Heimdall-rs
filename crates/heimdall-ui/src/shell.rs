@@ -255,12 +255,8 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
-                // Ctrl+C copies the selected entry's path, as the C# Files tab; a
-                // terminal or a field took it first.
-                None if ctrl_letter(&key, physical_key, modifiers) == Some('c') => {
-                    Some(Message::FilesKey(FilesKey::CopyPath))
-                }
-                None => files_view::files_key(&key, modifiers).map(Message::FilesKey),
+                // A terminal or a field took its keys first.
+                None => files_view::files_key(&key, physical_key, modifiers).map(Message::FilesKey),
             }
         }
         _ => None,
@@ -986,8 +982,12 @@ impl Shell {
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
-                return operation::focus(search_field_id())
-                    .chain(operation::select_all(search_field_id()));
+                // Ctrl+F in a Files tab's lists is its filter's, as the C# file browser's.
+                let field = match self.shown_files_side() {
+                    Some(side) => files_view::field_id(side, files_view::PaneField::Filter),
+                    None => search_field_id(),
+                };
+                return operation::focus(field.clone()).chain(operation::select_all(field));
             }
             message @ (Message::SearchSubmit | Message::SearchDown) => {
                 return self.search_key(&message);
@@ -1574,7 +1574,23 @@ impl Shell {
     }
 
     /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
+    /// The pane that has the keyboard in the Files tab shown, its lists in sight: none for
+    /// another tab, the settings, a dialog or the integrated editor.
+    fn shown_files_side(&self) -> Option<heimdall_app::files::Side> {
+        if self.settings_shown() || self.app.dialog.is_some() || self.tree_focused {
+            return None;
+        }
+        let files = self.app.active_tab()?.files.as_deref()?;
+        files.editor.is_none().then_some(files.focus)
+    }
+
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
+        if key == FilesKey::FocusPath {
+            if let Some(side) = self.shown_files_side() {
+                self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+            }
+            return Vec::new();
+        }
         // Quick Connect's first, while open.
         if let Some(effects) = self.palette_key(key) {
             return effects;
