@@ -378,6 +378,7 @@ pub fn files_error(error: &FilesError) -> String {
             fl!("ui-files-error-server", message = message)
         }
         FilesError::SessionClosed => fl!("ui-files-error-session"),
+        FilesError::Interrupted => fl!("ui-files-error-interrupted"),
         FilesError::Local { detail } => fl!("ui-files-error-local", detail = detail.as_str()),
         FilesError::UnsafeName { name, reason } => fl!(
             "ui-files-error-unsafe-name",

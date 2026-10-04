@@ -172,6 +172,22 @@ fn files(app: &mut App, message: FilesMessage) -> Vec<Effect> {
     app.update(Message::Files(message))
 }
 
+/// Stops the transfer being planned, so that the next one asked for is planned at once.
+fn stop_planning(app: &mut App, tab: TabId) {
+    let id = app
+        .tab(tab)
+        .and_then(|found| found.files.as_ref())
+        .and_then(|files| {
+            files
+                .transfers
+                .iter()
+                .find(|t| t.state == heimdall_app::files::TransferState::Preparing)
+        })
+        .map(|transfer| transfer.id)
+        .expect("one being planned");
+    assert!(files(app, FilesMessage::Cancel { tab, id }).is_empty());
+}
+
 /// The plan a transfer starts with: what it was asked for, before anything is written.
 fn plan_request(effects: &[Effect]) -> &PlanRequest {
     match effects {
@@ -271,6 +287,7 @@ async fn a_selected_folder_is_sent_whole_in_both_directions() {
     assert_eq!(root.root.kind, Kind::Folder);
     assert_eq!(root.root.remote.as_bytes(), b"/srv/logs");
     assert_eq!(root.root.local, dir.path().join("logs"));
+    stop_planning(&mut app, tab);
     select(&mut app, tab, Side::Local, 0);
     let up = files(
         &mut app,
@@ -288,6 +305,7 @@ async fn a_selected_folder_is_sent_whole_in_both_directions() {
         files_pane.transfers.iter().all(|t| t.total.is_none()),
         "a folder's own size is not what its transfer moves"
     );
+    stop_planning(&mut app, tab);
     // A file stays a file.
     select(&mut app, tab, Side::Remote, 1);
     let file = files(
@@ -1088,12 +1106,13 @@ async fn transfers_in_the_way_are_asked_one_after_the_other_and_cancel_drops_onl
     assert!(planned(&mut app, first).await.is_empty(), "asked first");
     let second = download(&mut app);
     assert!(
-        planned(&mut app, second).await.is_empty(),
-        "waits for the first question"
+        second.is_empty(),
+        "waits its turn: planned once the first is answered"
     );
     assert_eq!(asked(&app).as_deref(), Some("a.txt"));
-    // Cancelled: that one goes nowhere, the next is asked.
-    app.update(Message::DismissDialog);
+    // Cancelled: that one goes nowhere, the next is planned and asked.
+    let next = app.update(Message::DismissDialog);
+    assert!(planned(&mut app, next).await.is_empty());
     assert_eq!(asked(&app).as_deref(), Some("a.txt"), "then the next");
     let started = app.update(Message::ConfirmDialog);
     assert!(
@@ -1134,6 +1153,19 @@ async fn what_explorer_drops_goes_to_the_servers_folder_shown() {
     );
     let files_pane = app.tab(tab).expect("tab").files.as_ref().expect("files");
     assert_eq!(files_pane.transfers.last().map(|t| t.total), Some(Some(5)));
+    // Ended before the next starts: one runs at a time.
+    if let [Effect::Transfer { id, .. }] = sent.as_slice() {
+        files(
+            &mut app,
+            FilesMessage::TransferEvent {
+                tab,
+                id: *id,
+                event: heimdall_app::files::TransferEvent::Finished(
+                    heimdall_app::files::TransferState::Done,
+                ),
+            },
+        );
+    }
 
     let dropped = drop(&mut app, &folder);
     let sent = planned(&mut app, dropped).await;

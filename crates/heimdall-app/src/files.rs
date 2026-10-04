@@ -20,7 +20,7 @@
 //! folder, running a transfer) is in the functions at the end, which the UI layer runs for
 //! the effects the application asks for.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -575,6 +575,12 @@ pub enum Direction {
 /// Where a transfer stands.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TransferState {
+    /// Waiting for the transfer before it in this tab to end: one runs at a time, as the
+    /// C# transfer queue.
+    Queued,
+    /// Its turn came: what it would write is checked against what is there, and asked
+    /// about, before it runs.
+    Preparing,
     /// Running.
     Running,
     /// Complete.
@@ -588,6 +594,20 @@ pub enum TransferState {
     Cancelled,
     /// Failed.
     Failed(FilesError),
+}
+
+impl TransferState {
+    /// Whether it has ended, whatever the outcome.
+    #[must_use]
+    pub fn ended(&self) -> bool {
+        !matches!(self, Self::Queued | Self::Preparing | Self::Running)
+    }
+
+    /// Whether Retry runs it again: it failed or was stopped, as the C# `CanRetry`.
+    #[must_use]
+    pub fn retryable(&self) -> bool {
+        matches!(self, Self::Cancelled | Self::Failed(_))
+    }
 }
 
 /// How often a transfer's speed is measured at most, as the C# `TransferProgressTracker`.
@@ -660,6 +680,8 @@ pub struct Transfer {
     pub rate: Rate,
     /// State.
     pub state: TransferState,
+    /// The entry picked, planned again by Retry; none for what could not be picked at all.
+    pub picked: Option<PlannedRoot>,
     pub(crate) cancel: CancellationToken,
 }
 
@@ -675,6 +697,8 @@ pub enum FilesError {
     },
     /// The session with the server is over.
     SessionClosed,
+    /// The transfer stopped short, for no reason it could tell.
+    Interrupted,
     /// The file looks like a program, an image or an archive: not opened as text.
     LooksBinary,
     /// The file is larger than the integrated editor opens: the external editor takes it.
@@ -785,6 +809,8 @@ pub struct FilesPane {
     pub local: LocalPane,
     /// Transfers, oldest first.
     pub transfers: Vec<Transfer>,
+    /// What waits its turn, in order.
+    pub(crate) queue: VecDeque<Waiting>,
     /// The pane keys act on: the last one clicked or chosen.
     pub focus: Side,
     /// The server's folders bookmarked in this tab, in the order they were, as the C#
@@ -815,6 +841,7 @@ impl FilesPane {
             remote: Pane::new(RemotePath::from(".")),
             local: Pane::new(local),
             transfers: Vec::new(),
+            queue: VecDeque::new(),
             focus: Side::Local,
             bookmarks: Vec::new(),
             copying: None,
@@ -836,9 +863,7 @@ impl FilesPane {
 
     /// Cancels every running transfer and drops the session.
     pub(crate) fn stop(&mut self) {
-        for transfer in &self.transfers {
-            transfer.cancel.cancel();
-        }
+        self.stop_transfers();
         if let Some(copying) = self.copying.take() {
             copying.cancel();
         }
@@ -847,14 +872,143 @@ impl FilesPane {
         self.sudo_password = None;
     }
 
-    /// Transfers still running.
+    /// Transfers still running, waiting their turn or prepared again.
     #[must_use]
     pub fn running(&self) -> usize {
         self.transfers
             .iter()
-            .filter(|transfer| transfer.state == TransferState::Running)
+            .filter(|transfer| !transfer.state.ended())
             .count()
     }
+
+    /// Stops every transfer: those not ended are said cancelled, so Retry can run them.
+    fn stop_transfers(&mut self) {
+        self.queue.clear();
+        for transfer in &mut self.transfers {
+            transfer.cancel.cancel();
+            if !transfer.state.ended() {
+                transfer.state = TransferState::Cancelled;
+            }
+        }
+    }
+
+    /// The transfers listed, every one stopped, for the pane of the connection opened again
+    /// in this one's place: Retry runs them there.
+    pub(crate) fn hand_over_transfers(&mut self) -> Vec<Transfer> {
+        self.stop_transfers();
+        std::mem::take(&mut self.transfers)
+    }
+
+    /// Stops what waits, the session being over: what is planned stops, what waits is said
+    /// cancelled, to be retried; what runs ends by itself.
+    pub(crate) fn cancel_waiting(&mut self) {
+        self.queue.clear();
+        for transfer in &mut self.transfers {
+            if matches!(
+                transfer.state,
+                TransferState::Queued | TransferState::Preparing
+            ) {
+                transfer.cancel.cancel();
+                transfer.state = TransferState::Cancelled;
+            }
+        }
+    }
+
+    /// Stops transfer `id`: a waiting one never starts, one being planned stops with the
+    /// entries planned with it, as the C# job, and a running one stops where it stands.
+    pub(crate) fn cancel_transfer(&mut self, id: TransferId) {
+        let Some(transfer) = self.transfers.iter_mut().find(|t| t.id == id) else {
+            return;
+        };
+        match transfer.state {
+            TransferState::Queued => {
+                transfer.state = TransferState::Cancelled;
+                self.queue
+                    .retain(|waiting| !matches!(waiting, Waiting::Run(queued, _) if *queued == id));
+            }
+            TransferState::Preparing => {
+                transfer.cancel.cancel();
+                // One plan at a time: every entry being planned is this one's.
+                for transfer in &mut self.transfers {
+                    if transfer.state == TransferState::Preparing {
+                        transfer.state = TransferState::Cancelled;
+                    }
+                }
+            }
+            _ => transfer.cancel.cancel(),
+        }
+    }
+
+    /// Whether `id` is listed and being planned.
+    pub(crate) fn preparing(&self, id: TransferId) -> bool {
+        self.transfers
+            .iter()
+            .any(|transfer| transfer.id == id && transfer.state == TransferState::Preparing)
+    }
+
+    /// What comes next, once nothing runs or is planned: a transfer to run, said running, or
+    /// entries to plan, said being planned. What was cancelled while waiting is left out.
+    pub(crate) fn next_waiting(&mut self) -> Option<Waiting> {
+        if self.transfers.iter().any(|transfer| {
+            matches!(
+                transfer.state,
+                TransferState::Running | TransferState::Preparing
+            )
+        }) {
+            return None;
+        }
+        while let Some(waiting) = self.queue.pop_front() {
+            match waiting {
+                Waiting::Run(id, request) => {
+                    if let Some(transfer) = self
+                        .transfers
+                        .iter_mut()
+                        .find(|t| t.id == id && t.state == TransferState::Queued)
+                    {
+                        transfer.state = TransferState::Running;
+                        return Some(Waiting::Run(id, request));
+                    }
+                }
+                Waiting::Plan(mut request) => {
+                    let mut roots = Vec::new();
+                    let mut rows = Vec::new();
+                    for (mut picked, id) in request.roots.drain(..).zip(request.rows.drain(..)) {
+                        let Some(transfer) = self
+                            .transfers
+                            .iter_mut()
+                            .find(|t| t.id == id && t.state == TransferState::Queued)
+                        else {
+                            continue;
+                        };
+                        if request.direction == Direction::Upload {
+                            picked.read_again();
+                            transfer.total = picked.total;
+                        }
+                        transfer.state = TransferState::Preparing;
+                        transfer.cancel = request.cancel.clone();
+                        roots.push(picked);
+                        rows.push(id);
+                    }
+                    if !rows.is_empty() {
+                        request.roots = roots;
+                        request.rows = rows;
+                        return Some(Waiting::Plan(request));
+                    }
+                }
+            }
+        }
+        None
+    }
+}
+
+/// What waits its turn in a Files tab, one thing at a time, as the C# transfer queue.
+#[derive(Debug)]
+pub enum Waiting {
+    /// Entries picked, planned and asked about once their turn comes, as the C# job: what
+    /// is in the way is what is there then.
+    Plan(Box<PlanRequest>),
+    /// One entry planned and answered, to run.
+    Run(TransferId, Box<TransferRequest>),
 }
 
 /// Folders first, then by name, ignoring case.
@@ -996,6 +1150,10 @@ pub struct PlanRequest {
     pub direction: Direction,
     /// The entries picked, both ends, with what the transfers list shows of each.
     pub roots: Vec<PlannedRoot>,
+    /// The transfers listing the entries, in the same order.
+    pub rows: Vec<TransferId>,
+    /// Stops the plan.
+    pub cancel: CancellationToken,
 }
 
 /// One entry picked for a transfer.
@@ -1007,6 +1165,20 @@ pub struct PlannedRoot {
     pub label: String,
     /// Its size when known: a file's, never a folder's.
     pub total: Option<u64>,
+}
+
+impl PlannedRoot {
+    /// What is uploaded read as it is now, its turn come: its size and time.
+    fn read_again(&mut self) {
+        let Ok(metadata) = self.root.local.metadata() else {
+            return;
+        };
+        self.root.stamp.modified = metadata.modified().ok();
+        if self.root.kind == heimdall_files::conflict::Kind::File {
+            self.root.stamp.size = Some(metadata.len());
+            self.total = Some(metadata.len());
+        }
+    }
 }
 
 /// Plans `request` whole: every file and folder it would write, checked against what the
@@ -1021,10 +1193,9 @@ pub async fn plan_transfer(request: PlanRequest) -> Result<Plan, FilesError> {
         .into_iter()
         .map(|planned| planned.root)
         .collect();
-    let cancel = CancellationToken::new();
     let plan = match request.direction {
-        Direction::Download => request.client.plan_download(&roots, &cancel).await,
-        Direction::Upload => request.client.plan_upload(&roots, &cancel).await,
+        Direction::Download => request.client.plan_download(&roots, &request.cancel).await,
+        Direction::Upload => request.client.plan_upload(&roots, &request.cancel).await,
     };
     plan.map_err(|error| FilesError::from(&error))
 }
@@ -1034,7 +1205,9 @@ pub async fn plan_transfer(request: PlanRequest) -> Result<Plan, FilesError> {
 #[must_use]
 pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent> {
     let (events, receiver) = mpsc::channel(TRANSFER_QUEUE_LENGTH);
-    tokio::spawn(async move {
+    let reports = events.clone();
+    let work = tokio::spawn(async move {
+        let events = reports;
         let mut last: Option<Instant> = None;
         let progress = |bytes: u64| {
             if last.is_none_or(|sent| sent.elapsed() >= PROGRESS_INTERVAL) {
@@ -1042,7 +1215,7 @@ pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent
                 let _ = events.try_send(TransferEvent::Progress(bytes));
             }
         };
-        let state = if request.folder {
+        if request.folder {
             match run_folder(&request, progress).await {
                 Ok(0) => TransferState::Done,
                 Ok(skipped) => TransferState::Incomplete { skipped },
@@ -1082,7 +1255,13 @@ pub fn transfer_events(request: TransferRequest) -> ReceiverStream<TransferEvent
                 }
                 Err(error) => failed(&error),
             }
-        };
+        }
+    });
+    tokio::spawn(async move {
+        // A transfer that stopped short still ends: the transfers waiting behind it run.
+        let state = work
+            .await
+            .unwrap_or(TransferState::Failed(FilesError::Interrupted));
         let _ = events.send(TransferEvent::Finished(state)).await;
     });
     ReceiverStream::new(receiver)
@@ -1429,6 +1608,42 @@ pub fn typed_name(side: Side, typed: &str) -> Result<LocalName, FilesError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn transfers_handed_over_to_a_new_connection_are_stopped_to_be_retried() {
+        let mut pane = super::FilesPane::new(std::path::PathBuf::from("."));
+        let transfer = |state| super::Transfer {
+            id: super::TransferId::fresh(),
+            direction: super::Direction::Download,
+            label: "file".to_owned(),
+            bytes: 0,
+            total: None,
+            rate: super::Rate::default(),
+            state,
+            picked: None,
+            cancel: tokio_util::sync::CancellationToken::new(),
+        };
+        pane.transfers = vec![
+            transfer(super::TransferState::Done),
+            transfer(super::TransferState::Running),
+            transfer(super::TransferState::Queued),
+        ];
+        let handed = pane.hand_over_transfers();
+        assert!(pane.transfers.is_empty());
+        assert_eq!(
+            handed
+                .iter()
+                .map(|transfer| transfer.state.clone())
+                .collect::<Vec<_>>(),
+            [
+                super::TransferState::Done,
+                super::TransferState::Cancelled,
+                super::TransferState::Cancelled
+            ]
+        );
+        assert!(handed[1].cancel.is_cancelled(), "the run stops");
+        assert_eq!(pane.running(), 0);
+    }
+
     #[test]
     fn a_transfers_speed_is_measured_every_quarter_second_and_smoothed_as_the_csharp() {
         use std::time::{Duration, Instant};

@@ -23,10 +23,12 @@ use heimdall_files::{Plan, RemotePath, Root};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, ConflictRow, Dialog, Effect, NameAction};
+use heimdall_files::RemoteSession;
+
 use crate::files::{
     Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey, FilesPane,
     PlanRequest, PlannedRoot, Side, SortColumn, Transfer, TransferEvent, TransferId,
-    TransferRequest, TransferState, download_name, octal_mode, typed_name,
+    TransferRequest, TransferState, Waiting, download_name, octal_mode, typed_name,
 };
 use crate::ids::TabId;
 
@@ -420,6 +422,18 @@ pub enum FilesMessage {
         /// Transfer.
         id: TransferId,
     },
+    /// Run a failed or cancelled transfer again, planned anew.
+    Retry {
+        /// Tab.
+        tab: TabId,
+        /// Transfer.
+        id: TransferId,
+    },
+    /// Take the ended transfers off the list.
+    ClearFinished {
+        /// Tab.
+        tab: TabId,
+    },
     /// Ask for the name of a new folder in a pane.
     AskNewFolder {
         /// Tab.
@@ -637,6 +651,8 @@ impl std::fmt::Debug for FilesMessage {
                 )
             }
             Self::Cancel { tab, id } => write!(f, "Cancel({}, {})", tab.value(), id.value()),
+            Self::Retry { tab, id } => write!(f, "Retry({}, {})", tab.value(), id.value()),
+            Self::ClearFinished { tab } => write!(f, "ClearFinished({})", tab.value()),
             Self::Key { tab, key } => write!(f, "Key({}, {key:?})", tab.value()),
             Self::AskNewFolder { tab, side } => {
                 write!(f, "AskNewFolder({}, {side:?})", tab.value())
@@ -902,10 +918,16 @@ impl App {
             | FilesMessage::ConflictChosen { .. }
             | FilesMessage::ConflictAll(_)) => self.plan_message(message),
             FilesMessage::Cancel { tab, id } => {
-                if let Some(files) = self.files_mut(tab)
-                    && let Some(transfer) = files.transfers.iter().find(|t| t.id == id)
-                {
-                    transfer.cancel.cancel();
+                if let Some(files) = self.files_mut(tab) {
+                    files.cancel_transfer(id);
+                }
+                // What it held up runs.
+                self.next_turn(tab)
+            }
+            FilesMessage::Retry { tab, id } => self.retry_transfer(tab, id),
+            FilesMessage::ClearFinished { tab } => {
+                if let Some(files) = self.files_mut(tab) {
+                    files.transfers.retain(|transfer| !transfer.state.ended());
                 }
                 Vec::new()
             }
@@ -1060,17 +1082,7 @@ impl App {
                 total: size,
             });
         }
-        if roots.is_empty() {
-            return Vec::new();
-        }
-        vec![Effect::PlanTransfer {
-            tab,
-            request: Box::new(PlanRequest {
-                client,
-                direction: Direction::Upload,
-                roots,
-            }),
-        }]
+        self.queue_transfer(tab, client, Direction::Upload, roots)
     }
 
     /// Bookmarks the server's folder shown, once, and says so.
@@ -1349,18 +1361,71 @@ impl App {
             .into_iter()
             .filter_map(|index| prepare(files, direction, index))
             .collect();
+        self.queue_transfer(tab, client, direction, roots)
+    }
+
+    /// Lists the entries picked as waiting, and queues them as one, as the C# job: planned
+    /// whole once their turn comes, nothing written before every conflict is answered.
+    fn queue_transfer(
+        &mut self,
+        tab: TabId,
+        client: RemoteSession,
+        direction: Direction,
+        roots: Vec<PlannedRoot>,
+    ) -> Vec<Effect> {
         if roots.is_empty() {
             return Vec::new();
         }
-        // Planned whole first: nothing is written before every conflict is answered.
-        vec![Effect::PlanTransfer {
-            tab,
-            request: Box::new(PlanRequest {
-                client,
-                direction,
-                roots,
-            }),
-        }]
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let cancel = CancellationToken::new();
+        let rows = roots
+            .iter()
+            .map(|picked| {
+                let id = TransferId::fresh();
+                files.transfers.push(Transfer {
+                    id,
+                    direction,
+                    label: picked.label.clone(),
+                    bytes: 0,
+                    total: picked.total,
+                    rate: crate::files::Rate::default(),
+                    state: TransferState::Queued,
+                    picked: Some(picked.clone()),
+                    cancel: cancel.clone(),
+                });
+                id
+            })
+            .collect();
+        files.queue.push_back(Waiting::Plan(Box::new(PlanRequest {
+            client,
+            direction,
+            roots,
+            rows,
+            cancel,
+        })));
+        self.next_turn(tab)
+    }
+
+    /// Starts what comes next in `tab`, once nothing runs or is planned there.
+    fn next_turn(&mut self, tab: TabId) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        match files.next_waiting() {
+            Some(Waiting::Run(id, request)) => vec![Effect::Transfer { tab, id, request }],
+            Some(Waiting::Plan(request)) => vec![Effect::PlanTransfer { tab, request }],
+            None => Vec::new(),
+        }
+    }
+
+    /// Whether some entry of `request` is still being planned: none when the user stopped
+    /// it meanwhile, or the tab is gone.
+    fn plan_is_live(&self, tab: TabId, request: &PlanRequest) -> bool {
+        self.tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .is_some_and(|files| request.rows.iter().any(|id| files.preparing(*id)))
     }
 
     /// A transfer's plan, or an answer about what is in its way.
@@ -1391,17 +1456,23 @@ impl App {
         request: PlanRequest,
         result: Result<Box<Plan>, FilesError>,
     ) -> Vec<Effect> {
+        // Stopped while planned: it is left as it is, and what follows runs.
+        if !self.plan_is_live(tab, &request) {
+            return self.next_turn(tab);
+        }
         let plan = match result {
             Ok(plan) => *plan,
             Err(error) => {
                 if let Some(files) = self.files_mut(tab) {
-                    for root in request.roots {
-                        files
-                            .transfers
-                            .push(failed(request.direction, root.label, error.clone()));
+                    for transfer in &mut files.transfers {
+                        if request.rows.contains(&transfer.id)
+                            && transfer.state == TransferState::Preparing
+                        {
+                            transfer.state = TransferState::Failed(error.clone());
+                        }
                     }
                 }
-                return Vec::new();
+                return self.next_turn(tab);
             }
         };
         if !plan.has_conflicts() {
@@ -1419,6 +1490,14 @@ impl App {
     pub(super) fn ask_next_conflicts(&mut self) {
         if self.dialog.is_some() {
             return;
+        }
+        // What was stopped meanwhile is not asked about.
+        while self
+            .pending_plans
+            .front()
+            .is_some_and(|next| !self.plan_is_live(next.tab, &next.request))
+        {
+            self.pending_plans.pop_front();
         }
         if let Some(next) = self.pending_plans.front() {
             self.dialog = Some(Dialog::FileConflicts {
@@ -1467,13 +1546,26 @@ impl App {
         effects
     }
 
-    /// The question about the transfer shown was cancelled: that transfer goes nowhere.
-    pub(super) fn cancel_conflicts(&mut self) {
-        self.pending_plans.pop_front();
+    /// The question about the transfer shown was cancelled: that transfer goes nowhere,
+    /// listed cancelled to be retried, and what waits behind it runs.
+    pub(super) fn cancel_conflicts(&mut self) -> Vec<Effect> {
+        let Some(pending) = self.pending_plans.pop_front() else {
+            return Vec::new();
+        };
+        if let Some(files) = self.files_mut(pending.tab) {
+            for transfer in &mut files.transfers {
+                if pending.request.rows.contains(&transfer.id)
+                    && transfer.state == TransferState::Preparing
+                {
+                    transfer.state = TransferState::Cancelled;
+                }
+            }
+        }
+        self.next_turn(pending.tab)
     }
 
-    /// Starts one transfer per picked entry, as answered; an entry skipped whole is not
-    /// started.
+    /// Queues one transfer per picked entry, as answered, ahead of what waits, and starts
+    /// the first; an entry skipped whole is taken off the list.
     fn launch_plan(
         &mut self,
         tab: TabId,
@@ -1481,15 +1573,37 @@ impl App {
         plan: &Plan,
         answers: &[(usize, Choice)],
     ) -> Vec<Effect> {
-        let Ok(ready) = plan.resolve(answers) else {
-            // Rows are built from the plan's own conflicts, each with an allowed answer.
+        let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        let mut effects = Vec::new();
-        for (index, (picked, steps)) in request.roots.iter().zip(ready).enumerate() {
+        let Ok(ready) = plan.resolve(answers) else {
+            // Rows are built from the plan's own conflicts, each with an allowed answer; were
+            // one refused, the batch stops, to be retried, rather than hold the turn.
+            for transfer in &mut files.transfers {
+                if request.rows.contains(&transfer.id) && transfer.state == TransferState::Preparing
+                {
+                    transfer.state = TransferState::Cancelled;
+                }
+            }
+            return self.next_turn(tab);
+        };
+        let mut runs = Vec::new();
+        let mut skipped = Vec::new();
+        for (index, ((picked, steps), id)) in request
+            .roots
+            .iter()
+            .zip(ready)
+            .zip(&request.rows)
+            .enumerate()
+        {
+            // Stopped while asked about.
+            if !files.preparing(*id) {
+                continue;
+            }
             let transfer = match picked.root.kind {
                 Kind::File => {
                     let Some(step) = steps.into_iter().next() else {
+                        skipped.push(*id);
                         continue;
                     };
                     TransferRequest {
@@ -1506,6 +1620,7 @@ impl App {
                 }
                 Kind::Folder => {
                     if steps.is_empty() {
+                        skipped.push(*id);
                         continue;
                     }
                     TransferRequest {
@@ -1521,37 +1636,60 @@ impl App {
                     }
                 }
             };
-            effects.extend(self.launch(tab, transfer, picked.label.clone(), picked.total));
+            if let Some(listed) = files.transfers.iter_mut().find(|t| t.id == *id) {
+                listed.state = TransferState::Queued;
+                listed.cancel = transfer.cancel.clone();
+            }
+            runs.push(Waiting::Run(*id, Box::new(transfer)));
         }
-        effects
+        files.transfers.retain(|t| !skipped.contains(&t.id));
+        // Its turn goes on: its transfers run before what was queued after it.
+        for run in runs.into_iter().rev() {
+            files.queue.push_front(run);
+        }
+        self.next_turn(tab)
     }
 
-    fn launch(
-        &mut self,
-        tab: TabId,
-        request: TransferRequest,
-        label: String,
-        total: Option<u64>,
-    ) -> Vec<Effect> {
+    /// Runs failed or cancelled transfer `id` again, as the C# Retry: queued anew, its entry
+    /// planned again once its turn comes, so what is in the way is asked about again.
+    /// While the session lives only.
+    fn retry_transfer(&mut self, tab: TabId, id: TransferId) -> Vec<Effect> {
+        if !self.tab(tab).is_some_and(super::Tab::is_live) {
+            return Vec::new();
+        }
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        let id = TransferId::fresh();
-        files.transfers.push(Transfer {
-            id,
-            direction: request.direction,
-            label,
-            bytes: 0,
-            total,
-            rate: crate::files::Rate::default(),
-            state: TransferState::Running,
-            cancel: request.cancel.clone(),
-        });
-        vec![Effect::Transfer {
-            tab,
-            id,
-            request: Box::new(request),
-        }]
+        let Some(client) = files.client.clone() else {
+            return Vec::new();
+        };
+        let Some(transfer) = files
+            .transfers
+            .iter_mut()
+            .find(|t| t.id == id && t.state.retryable())
+        else {
+            return Vec::new();
+        };
+        let Some(picked) = transfer.picked.clone() else {
+            return Vec::new();
+        };
+        // A new identity: a report still coming from the run stopped is not this one's.
+        let again = TransferId::fresh();
+        let cancel = CancellationToken::new();
+        transfer.id = again;
+        transfer.state = TransferState::Queued;
+        transfer.bytes = 0;
+        transfer.rate = crate::files::Rate::default();
+        transfer.cancel = cancel.clone();
+        let direction = transfer.direction;
+        files.queue.push_back(Waiting::Plan(Box::new(PlanRequest {
+            client,
+            direction,
+            roots: vec![picked],
+            rows: vec![again],
+            cancel,
+        })));
+        self.next_turn(tab)
     }
 
     fn transfer_event(&mut self, tab: TabId, id: TransferId, event: TransferEvent) -> Vec<Effect> {
@@ -1571,17 +1709,19 @@ impl App {
                 let done = state == TransferState::Done;
                 let direction = transfer.direction;
                 transfer.state = state;
-                if !done {
-                    return Vec::new();
+                // What comes next runs.
+                let mut effects = self.next_turn(tab);
+                if done {
+                    // The destination pane now holds the file.
+                    effects.extend(self.list(
+                        tab,
+                        match direction {
+                            Direction::Download => Side::Local,
+                            Direction::Upload => Side::Remote,
+                        },
+                    ));
                 }
-                // The destination pane now holds the file.
-                self.list(
-                    tab,
-                    match direction {
-                        Direction::Download => Side::Local,
-                        Direction::Upload => Side::Remote,
-                    },
-                )
+                effects
             }
         }
     }
@@ -1930,6 +2070,7 @@ fn target_text(target: &[Vec<u8>]) -> String {
         .join("/")
 }
 
+/// A transfer refused before anything was planned: nothing for Retry to plan again.
 fn failed(direction: Direction, label: String, error: FilesError) -> Transfer {
     Transfer {
         id: TransferId::fresh(),
@@ -1939,6 +2080,7 @@ fn failed(direction: Direction, label: String, error: FilesError) -> Transfer {
         total: None,
         rate: crate::files::Rate::default(),
         state: TransferState::Failed(error),
+        picked: None,
         cancel: CancellationToken::new(),
     }
 }
