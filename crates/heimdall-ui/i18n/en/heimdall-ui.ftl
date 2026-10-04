@@ -1375,6 +1375,7 @@ ui-health-unsupported = Unsupported
 ui-health-cpu-value = { $percent }%
 ui-health-memory-value = { $used } / { $total } MB
 ui-health-disk-value = { $used } / { $total }
+ui-find-count = { $index } / { $total }
 ui-winrm-diagnostic-logon-failed = The remote host rejected the credentials. Check the user name and password (use the user@domain form for a domain account) and that the account is not locked.
 ui-winrm-diagnostic-access-denied = Access denied by the remote host. The account needs the right to use WinRM: ask your administrator to add it to the Remote Management Users group on the host.
 ui-winrm-diagnostic-trusted-hosts = WinRM refused the connection because the host is not trusted for this authentication. Use the host DNS name instead of its IP address, use HTTPS, or ask your administrator to add the host to the TrustedHosts list of this computer.

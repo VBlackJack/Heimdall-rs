@@ -1297,6 +1297,7 @@ ui-health-unsupported = No compatible
 ui-health-cpu-value = { $percent } %
 ui-health-memory-value = { $used } / { $total } MB
 ui-health-disk-value = { $used } / { $total }
+ui-find-count = { $index } / { $total }
 ui-winrm-diagnostic-logon-failed = El host remoto rechazó las credenciales. Compruebe el nombre de usuario y la contraseña (use la forma usuario@dominio para una cuenta de dominio) y que la cuenta no esté bloqueada.
 ui-winrm-diagnostic-access-denied = Acceso denegado por el host remoto. La cuenta necesita el derecho de usar WinRM: pida a su administrador que la añada al grupo Usuarios de administración remota del host.
 ui-winrm-diagnostic-trusted-hosts = WinRM rechazó la conexión porque el host no es de confianza para esta autenticación. Use el nombre DNS del host en lugar de su dirección IP, use HTTPS, o pida a su administrador que añada el host a la lista TrustedHosts de este equipo.

@@ -1300,6 +1300,7 @@ ui-health-unsupported = Non pris en charge
 ui-health-cpu-value = { $percent } %
 ui-health-memory-value = { $used } / { $total } Mo
 ui-health-disk-value = { $used } / { $total }
+ui-find-count = { $index } / { $total }
 ui-winrm-diagnostic-logon-failed = L'hôte distant a refusé les identifiants. Vérifiez le nom d'utilisateur et le mot de passe (forme utilisateur@domaine pour un compte de domaine) et que le compte n'est pas verrouillé.
 ui-winrm-diagnostic-access-denied = Accès refusé par l'hôte distant. Le compte doit avoir le droit d'utiliser WinRM : demandez à votre administrateur de l'ajouter au groupe Utilisateurs de gestion à distance de l'hôte.
 ui-winrm-diagnostic-trusted-hosts = WinRM a refusé la connexion car l'hôte n'est pas approuvé pour cette authentification. Utilisez le nom DNS de l'hôte plutôt que son adresse IP, utilisez HTTPS, ou demandez à votre administrateur d'ajouter l'hôte à la liste TrustedHosts de cet ordinateur.
