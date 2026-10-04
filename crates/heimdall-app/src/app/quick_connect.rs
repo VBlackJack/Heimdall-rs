@@ -212,6 +212,7 @@ impl App {
                     compression: false,
                     sftp: false,
                     legacy_algorithms: false,
+                    session_logging: None,
                 }),
                 Purpose::Shell,
             ),

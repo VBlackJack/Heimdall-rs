@@ -53,6 +53,7 @@ fn app(dir: &Path, port: u16) -> App {
         group: Some("Network".to_owned()),
         host: "127.0.0.1".to_owned(),
         port,
+        session_logging: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

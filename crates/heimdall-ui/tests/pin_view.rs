@@ -55,6 +55,7 @@ fn app(dir: &Path) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

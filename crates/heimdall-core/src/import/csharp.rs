@@ -340,6 +340,8 @@ struct LegacyServer {
     vnc_allow_no_password: Option<bool>,
     /// The entry in the external password manager, for the provider's `{Title}`.
     vault_entry_name: Option<String>,
+    /// "Session logging": absent or null inherits the settings', else on or off.
+    session_logging_override: Option<bool>,
     /// "Forward SSH agent"; absent is off.
     #[serde(default)]
     ssh_agent_forwarding: bool,
@@ -995,6 +997,7 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         compression: server.ssh_compression,
         sftp,
         legacy_algorithms: false,
+        session_logging: server.session_logging_override,
     })
 }
 
@@ -1167,6 +1170,7 @@ fn convert_telnet(server: &LegacyServer) -> Result<TelnetProfile, SkipReason> {
         group: non_empty(server.group.as_ref()),
         host: server.remote_server.trim().to_owned(),
         port,
+        session_logging: server.session_logging_override,
     })
 }
 
@@ -1273,6 +1277,7 @@ fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
             working_directory: working_directory.map(PathBuf::from),
         },
         approved: None,
+        session_logging: server.session_logging_override,
     })
 }
 

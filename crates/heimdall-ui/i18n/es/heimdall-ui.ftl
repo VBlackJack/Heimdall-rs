@@ -1390,6 +1390,11 @@ ui-files-empty-no-match = Ninguna entrada coincide con "{ $filter }".
 ui-files-empty-clear-filter = Borrar filtro
 ui-files-empty-hidden-only = Esta carpeta solo contiene entradas ocultas.
 ui-files-empty-show-hidden = Mostrar archivos ocultos
+ui-profile-session-logging = Registro de sesión
+ui-profile-session-logging-inherit = Heredar
+ui-profile-session-logging-on = Activado
+ui-profile-session-logging-off = Desactivado
+ui-profile-session-logging-hint = Heredar sigue el ajuste global de registro de sesión.
 ui-hostkey-copy-fingerprint-button = Copiar
 ui-certificate-already-trusted = { $count ->
     [one] Este perfil ya confía en { $count } certificado más para este nombre, lo que normalmente significa que más de una máquina responde a él.

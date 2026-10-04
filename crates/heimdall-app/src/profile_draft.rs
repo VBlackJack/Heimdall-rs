@@ -327,6 +327,8 @@ pub enum ProfileChoice {
     DynamicResolution(bool),
     /// A box of the visual experience, ticked or cleared.
     Experience(Experience, bool),
+    /// Whether its sessions keep a transcript; `None` follows the settings.
+    SessionLogging(Option<bool>),
 }
 
 /// The profile a form saves, of its protocol.
@@ -407,6 +409,9 @@ pub struct ProfileDraft {
     pub working_directory: String,
     /// "Test address": not run, running, or what it found for the address shown.
     pub address_test: AddressTest,
+    /// SSH, Telnet and local: whether its sessions keep a transcript; `None` follows the
+    /// settings, as the C# "Inherit".
+    pub session_logging: Option<bool>,
 }
 
 /// The form's "Test address", as the C# chip.
@@ -535,6 +540,7 @@ impl ProfileDraft {
                 DraftProtocol::Ssh
             },
             protocol_chosen: true,
+            session_logging: profile.session_logging,
             ..Self::default()
         }
     }
@@ -580,6 +586,7 @@ impl ProfileDraft {
                 .unwrap_or_default(),
             protocol: DraftProtocol::Local,
             protocol_chosen: true,
+            session_logging: profile.session_logging,
             ..Self::default()
         }
     }
@@ -609,6 +616,7 @@ impl ProfileDraft {
                 working_directory: optional(&self.working_directory).map(PathBuf::from),
             },
             approved: None,
+            session_logging: self.session_logging,
         }))
     }
 
@@ -726,6 +734,7 @@ impl ProfileDraft {
             port: profile.port.to_string(),
             protocol: DraftProtocol::Telnet,
             protocol_chosen: true,
+            session_logging: profile.session_logging,
             ..Self::default()
         }
     }
@@ -756,6 +765,23 @@ impl ProfileDraft {
         };
         draft.port = draft.default_port().to_string();
         draft
+    }
+
+    /// Whether the form shows the session logging choice: the sessions of text that keep a
+    /// transcript, as the C# hint says `WinRM` does not.
+    #[must_use]
+    pub fn shows_session_logging(&self) -> bool {
+        matches!(
+            self.protocol,
+            DraftProtocol::Ssh | DraftProtocol::Telnet | DraftProtocol::Local
+        )
+    }
+
+    /// The session logging choice saved: an SFTP profile opens no shell to keep a
+    /// transcript of.
+    fn saved_session_logging(&self) -> Option<bool> {
+        self.session_logging
+            .filter(|_| self.shows_session_logging())
     }
 
     /// Whether `toggle` is ticked.
@@ -803,6 +829,7 @@ impl ProfileDraft {
             ProfileChoice::ScaleFixed(on) => self.rdp_options.scale_fixed = on,
             ProfileChoice::DynamicResolution(on) => self.rdp_options.dynamic_resolution = on,
             ProfileChoice::Experience(experience, on) => self.rdp_options.set(experience, on),
+            ProfileChoice::SessionLogging(logging) => self.session_logging = logging,
         }
     }
 
@@ -1075,6 +1102,7 @@ impl ProfileDraft {
     ///
     /// What only one protocol checks: an RDP fixed size, a forwarded port, a `WinRM`
     /// account, a local shell's arguments.
+    #[expect(clippy::too_many_lines, reason = "one profile literal per protocol")]
     fn build(&self, checked: Checked<'_>) -> Result<DraftProfile, DraftError> {
         let Checked {
             id,
@@ -1106,6 +1134,7 @@ impl ProfileDraft {
                 compression: self.is_on(ProfileToggle::Compression),
                 sftp: self.protocol == DraftProtocol::Sftp,
                 legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
+                session_logging: self.saved_session_logging(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 id,
@@ -1174,6 +1203,7 @@ impl ProfileDraft {
                 group,
                 host,
                 port,
+                session_logging: self.session_logging,
             }),
         })
     }
@@ -1278,6 +1308,7 @@ impl ProfileDraft {
             compression: self.is_on(ProfileToggle::Compression),
             sftp: false,
             legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
+            session_logging: self.session_logging,
         })
     }
 }
@@ -1441,6 +1472,7 @@ mod tests {
             compression: false,
             sftp: false,
             legacy_algorithms: false,
+            session_logging: None,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -1911,6 +1943,7 @@ mod tests {
             group: None,
             host: "sw.lab".to_owned(),
             port: 2323,
+            session_logging: None,
         };
         assert_eq!(
             ProfileDraft::from_telnet(&telnet).to_saved(id()),
@@ -2035,5 +2068,40 @@ mod tests {
             0x140,
             "read back"
         );
+    }
+
+    #[test]
+    fn session_logging_is_chosen_for_a_shell_and_never_saved_for_sftp() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::Ssh);
+        form.set(ProfileField::Name, "web".to_owned());
+        form.set(ProfileField::Host, "web.lab".to_owned());
+        assert!(form.shows_session_logging());
+        assert_eq!(form.session_logging, None, "Inherit by default, as the C#");
+        form.choose(ProfileChoice::SessionLogging(Some(false)));
+        let Ok(DraftProfile::Ssh(saved)) = form.to_saved(id()) else {
+            panic!("an SSH profile");
+        };
+        assert_eq!(saved.session_logging, Some(false));
+        assert_eq!(
+            ProfileDraft::from_profile(&saved).session_logging,
+            Some(false),
+            "read back"
+        );
+
+        form.protocol = DraftProtocol::Sftp;
+        assert!(
+            !form.shows_session_logging(),
+            "no shell to keep a transcript of"
+        );
+        let Ok(DraftProfile::Ssh(files)) = form.to_saved(id()) else {
+            panic!("an SFTP profile");
+        };
+        assert_eq!(files.session_logging, None);
+        for protocol in [DraftProtocol::Telnet, DraftProtocol::Local] {
+            assert!(ProfileDraft::new_for(protocol).shows_session_logging());
+        }
+        for protocol in [DraftProtocol::Rdp, DraftProtocol::WinRm, DraftProtocol::Ftp] {
+            assert!(!ProfileDraft::new_for(protocol).shows_session_logging());
+        }
     }
 }

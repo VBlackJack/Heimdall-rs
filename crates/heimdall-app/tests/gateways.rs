@@ -55,6 +55,7 @@ fn web(gateway: Option<&str>) -> SshProfile {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }
 }
 
