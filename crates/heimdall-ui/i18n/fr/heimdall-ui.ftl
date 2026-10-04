@@ -1321,3 +1321,5 @@ ui-files-conflict-newer = Le nouveau fichier est plus récent.
 ui-files-conflict-older = Le nouveau fichier est plus ancien.
 ui-files-conflict-same-time = Même date de modification.
 ui-files-conflict-unknown = inconnu
+ui-status-screenshot-copied = Capture d'écran copiée dans le presse-papiers
+ui-status-screenshot-failed = Échec de la capture d'écran

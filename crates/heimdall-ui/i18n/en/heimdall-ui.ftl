@@ -1396,3 +1396,5 @@ ui-files-conflict-newer = The new file is newer.
 ui-files-conflict-older = The new file is older.
 ui-files-conflict-same-time = Same modification time.
 ui-files-conflict-unknown = unknown
+ui-status-screenshot-copied = Screenshot copied to clipboard
+ui-status-screenshot-failed = Failed to capture screenshot
