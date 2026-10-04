@@ -95,6 +95,8 @@ pub enum TreeMenu {
     EditSelection,
     /// The server's folders bookmarked in a Files tab.
     FilesBookmarks(TabId),
+    /// Which of a Files tab's bookmarks to take off.
+    FilesBookmarksRemove(TabId),
     /// The menu of a row of the tunnels panel, as the C# one.
     Tunnel(heimdall_app::tunnel::TunnelId),
     /// An RDP tab's "Resolution" menu, as the C# one.
@@ -764,6 +766,30 @@ pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a,
         entries = entries.push(entry(
             path.clone(),
             Some(AppMessage::Files(FilesMessage::OpenBookmark { tab, index })),
+        ));
+    }
+    if !bookmarks.is_empty() {
+        entries = entries.push(separator()).push(
+            button(text(fl!("ui-files-bookmark-remove-menu")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarksRemove(tab))),
+        );
+    }
+    menu_card(entries).into()
+}
+
+/// Which of a Files tab's bookmarks to take off, as the C# "Remove a bookmark".
+#[must_use]
+pub fn files_bookmarks_remove_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a, Message> {
+    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    for (index, path) in bookmarks.iter().enumerate() {
+        entries = entries.push(entry(
+            path.clone(),
+            Some(AppMessage::Files(FilesMessage::RemoveBookmark {
+                tab,
+                index,
+            })),
         ));
     }
     menu_card(entries).into()

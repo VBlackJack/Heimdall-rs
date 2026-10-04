@@ -26,6 +26,8 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
+/// What an entry that is neither a file, a folder nor a link is.
+pub use heimdall_files::Special;
 use heimdall_files::{
     ItemKind, LocalName, LocalNameError, Plan, Ready, Refusal, RemoteError, RemoteItem, RemotePath,
     RemoteSession, Root, Rules, display_bytes,
@@ -122,7 +124,7 @@ pub enum EntryKind {
     /// A symbolic link, not followed.
     Link,
     /// A device, socket, pipe or unknown.
-    Other,
+    Other(Special),
 }
 
 /// An entry of the remote pane.
@@ -157,7 +159,7 @@ impl RemoteEntry {
                 ItemKind::Directory => EntryKind::Directory,
                 ItemKind::File => EntryKind::File,
                 ItemKind::Link => EntryKind::Link,
-                ItemKind::Other => EntryKind::Other,
+                ItemKind::Other(special) => EntryKind::Other(special),
             },
             size: item.size,
             modified: item.modified,
@@ -1065,8 +1067,29 @@ fn local_kind(file_type: std::fs::FileType) -> EntryKind {
     } else if file_type.is_file() {
         EntryKind::File
     } else {
-        EntryKind::Other
+        EntryKind::Other(local_special(file_type))
     }
+}
+
+/// What a local entry that is neither a file, a folder nor a link is.
+#[cfg(unix)]
+fn local_special(file_type: std::fs::FileType) -> Special {
+    use std::os::unix::fs::FileTypeExt as _;
+    if file_type.is_fifo() {
+        Special::Pipe
+    } else if file_type.is_socket() {
+        Special::Socket
+    } else if file_type.is_char_device() || file_type.is_block_device() {
+        Special::Device
+    } else {
+        Special::Unknown
+    }
+}
+
+/// What a local entry that is neither a file, a folder nor a link is: Windows says none.
+#[cfg(not(unix))]
+fn local_special(_file_type: std::fs::FileType) -> Special {
+    Special::Unknown
 }
 
 fn list_local_now(path: &Path) -> Result<Vec<LocalEntry>, FilesError> {

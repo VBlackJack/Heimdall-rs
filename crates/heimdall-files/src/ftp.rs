@@ -626,7 +626,7 @@ fn item(listed: &Listed) -> RemoteItem {
     } else if listed.is_file() {
         ItemKind::File
     } else {
-        ItemKind::Other
+        ItemKind::Other(crate::Special::Unknown)
     };
     let mut mode = 0u32;
     for (shift, who) in [
@@ -759,7 +759,11 @@ mod tests {
     #[test]
     fn a_delete_goes_into_a_folder_only_never_a_link() {
         assert!(walks(ItemKind::Directory));
-        for kind in [ItemKind::Link, ItemKind::File, ItemKind::Other] {
+        for kind in [
+            ItemKind::Link,
+            ItemKind::File,
+            ItemKind::Other(crate::Special::Unknown),
+        ] {
             assert!(!walks(kind), "{kind:?}");
         }
     }

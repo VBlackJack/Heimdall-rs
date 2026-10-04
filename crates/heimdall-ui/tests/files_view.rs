@@ -1247,3 +1247,55 @@ async fn sudo_s_question_gives_the_password_typed_and_keeps_none_of_it() {
         .map(|password| password.bytes().to_vec());
     assert_eq!(kept.as_deref(), Some(&b"hunter2"[..]), "kept for the tab");
 }
+
+#[tokio::test]
+async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Filter {
+        tab,
+        side: Side::Remote,
+        text: "zzz".to_owned(),
+    })));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("No entries match \"zzz\".").expect("said");
+        ui.click("Clear filter").expect("offered");
+        assert!(files_messages(ui).iter().any(|message| matches!(
+            message,
+            FilesMessage::Filter { side: Side::Remote, text, .. } if text.is_empty()
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Filter {
+        tab,
+        side: Side::Remote,
+        text: String::new(),
+    })));
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::ToggleHidden {
+            tab,
+            side: Side::Remote,
+        },
+    )));
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/home/admin"),
+                vec![remote(".profile", EntryKind::File, 10)],
+            )),
+        },
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("This folder only contains hidden entries.")
+        .expect("said");
+    ui.click("Show hidden files").expect("offered");
+    assert!(files_messages(ui).iter().any(|message| matches!(
+        message,
+        FilesMessage::ToggleHidden {
+            side: Side::Remote,
+            ..
+        }
+    )));
+}

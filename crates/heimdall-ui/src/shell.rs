@@ -2074,14 +2074,18 @@ impl Shell {
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
-        } else if let TreeMenu::FilesBookmarks(tab) = *menu {
+        } else if let TreeMenu::FilesBookmarks(tab) | TreeMenu::FilesBookmarksRemove(tab) = *menu {
             let files = self.app.tab(tab)?.files.as_deref()?;
             let shown: Vec<String> = files
                 .bookmarks
                 .iter()
                 .map(|path| heimdall_app::server_text(&path.display()))
                 .collect();
-            tree_view::files_bookmarks_menu(tab, &shown)
+            if matches!(menu, TreeMenu::FilesBookmarksRemove(_)) {
+                tree_view::files_bookmarks_remove_menu(tab, &shown)
+            } else {
+                tree_view::files_bookmarks_menu(tab, &shown)
+            }
         } else if let TreeMenu::Tunnel(id) = *menu {
             // Only while the tunnel is open.
             self.app.tunnel(id)?;
@@ -2148,6 +2152,7 @@ impl Shell {
                 | TreeMenu::EditSelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
+                | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
                 | TreeMenu::Tunnel(_) => None,
             };
@@ -2968,7 +2973,10 @@ impl Shell {
             // A tab's menu is the tab bar's, an entry's the Files tab's: the keyboard stays
             // where it was.
             Message::OpenTreeMenu(
-                TreeMenu::Tab(_) | TreeMenu::FilesEntry { .. } | TreeMenu::FilesBookmarks(_),
+                TreeMenu::Tab(_)
+                | TreeMenu::FilesEntry { .. }
+                | TreeMenu::FilesBookmarks(_)
+                | TreeMenu::FilesBookmarksRemove(_),
             ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)

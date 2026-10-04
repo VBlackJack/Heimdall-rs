@@ -73,7 +73,37 @@ pub enum ItemKind {
     /// A symbolic link, not followed.
     Link,
     /// A device, socket, pipe or unknown.
-    Other,
+    Other(Special),
+}
+
+/// What an entry that is neither a file, a folder nor a link is, as the C# Properties
+/// dialog names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum Special {
+    /// A named pipe (FIFO).
+    Pipe,
+    /// A socket.
+    Socket,
+    /// A character or block device.
+    Device,
+    /// The server does not say.
+    Unknown,
+}
+
+/// The file type bits of a POSIX mode.
+const FILE_TYPE_BITS: u32 = 0o170_000;
+
+impl Special {
+    /// What the file type bits of POSIX `mode` name; unknown for any other.
+    #[must_use]
+    pub fn of_mode(mode: u32) -> Self {
+        match mode & FILE_TYPE_BITS {
+            0o010_000 => Self::Pipe,
+            0o140_000 => Self::Socket,
+            0o020_000 | 0o060_000 => Self::Device,
+            _ => Self::Unknown,
+        }
+    }
 }
 
 /// An entry of a remote folder.
@@ -438,7 +468,11 @@ fn sftp_item(entry: DirEntry) -> RemoteItem {
     } else if attributes.is_symlink() {
         ItemKind::Link
     } else {
-        ItemKind::Other
+        ItemKind::Other(
+            attributes
+                .permissions
+                .map_or(Special::Unknown, Special::of_mode),
+        )
     };
     RemoteItem {
         kind,
@@ -502,6 +536,16 @@ fn tree_error(error: &TreeError) -> RemoteError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_special_entry_is_named_by_the_file_type_bits_of_its_mode() {
+        use super::Special;
+        assert_eq!(Special::of_mode(0o010_644), Special::Pipe);
+        assert_eq!(Special::of_mode(0o140_755), Special::Socket);
+        assert_eq!(Special::of_mode(0o020_660), Special::Device, "character");
+        assert_eq!(Special::of_mode(0o060_660), Special::Device, "block");
+        assert_eq!(Special::of_mode(0o644), Special::Unknown, "no type said");
+    }
+
     use super::*;
 
     fn status(code: StatusCode) -> RemoteError {

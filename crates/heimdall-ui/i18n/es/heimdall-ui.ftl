@@ -1376,3 +1376,12 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Usuario actualizado en { $count } servidores.
 }
 ui-status-bulk-username-unchanged = No se aplicó ningún cambio: todos los servidores seleccionados ya usan este usuario.
+ui-files-type-pipe = Tubería con nombre (FIFO)
+ui-files-type-socket = Socket
+ui-files-type-device = Dispositivo
+ui-files-bookmark-removed = Marcador eliminado: { $path }
+ui-files-bookmark-remove-menu = Eliminar un marcador
+ui-files-empty-no-match = Ninguna entrada coincide con "{ $filter }".
+ui-files-empty-clear-filter = Borrar filtro
+ui-files-empty-hidden-only = Esta carpeta solo contiene entradas ocultas.
+ui-files-empty-show-hidden = Mostrar archivos ocultos
