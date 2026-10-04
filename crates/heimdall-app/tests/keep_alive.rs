@@ -177,6 +177,7 @@ fn a_local_shell_has_no_remote_tmout_and_gets_no_enter() {
         program: None,
         arguments: LocalArguments::List(Vec::new()),
         working_directory: None,
+        environment: Vec::new(),
     }));
     let [Effect::ConnectLocal { tab, attempt, .. }] = effects.as_slice() else {
         panic!("{effects:?}");

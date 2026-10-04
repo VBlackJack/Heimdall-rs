@@ -200,6 +200,7 @@ async fn run_with_double(
         program: Some(program.to_owned()),
         arguments: LocalArguments::List(arguments),
         working_directory: None,
+        environment: Vec::new(),
         columns: 80,
         rows: 24,
     })

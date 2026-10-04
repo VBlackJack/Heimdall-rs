@@ -214,6 +214,7 @@ impl App {
                 program: None,
                 arguments: LocalArguments::List(Vec::new()),
                 working_directory: None,
+                environment: Vec::new(),
             }),
             Purpose::Shell,
             self.viewport,

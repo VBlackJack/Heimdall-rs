@@ -297,3 +297,39 @@ fn an_imported_command_edited_and_saved_from_its_form_is_approved_as_the_csharp_
     assert!(app.dialog.is_none(), "no question once saved from the form");
     assert_eq!(program(&effects).as_deref(), Some(PROGRAM));
 }
+
+#[test]
+fn a_saved_shell_is_told_what_it_was_opened_for_as_the_csharp_heimdall_variables() {
+    let dir = tempfile::tempdir().expect("dir");
+    let filed = LocalProfile {
+        group: Some("Lab/Linux".to_owned()),
+        ..profile(command("-x"), None)
+    };
+    let mut app = app(dir.path(), &[filed]);
+    open(&mut app);
+    // Agreed to first: the variables come with what was approved.
+    let effects = app.update(Message::ConfirmDialog);
+    let shell = started(&effects).expect("started");
+    assert_eq!(
+        shell.environment,
+        [
+            ("HEIMDALL_NAME".to_owned(), "Tool".to_owned()),
+            ("HEIMDALL_TYPE".to_owned(), "Local".to_owned()),
+            ("HEIMDALL_GROUP".to_owned(), "Lab/Linux".to_owned()),
+        ]
+    );
+
+    // Approved, at once; without a folder, no HEIMDALL_GROUP.
+    let dir = tempfile::tempdir().expect("dir");
+    let approved = profile(command("-x"), Some(approval(command("-x"))));
+    let mut app = self::app(dir.path(), &[approved]);
+    let shell = started(&open(&mut app)).expect("started");
+    assert_eq!(
+        shell
+            .environment
+            .iter()
+            .map(|(name, _)| name.as_str())
+            .collect::<Vec<_>>(),
+        ["HEIMDALL_NAME", "HEIMDALL_TYPE"]
+    );
+}
