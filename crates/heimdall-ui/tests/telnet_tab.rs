@@ -40,6 +40,7 @@ fn app(dir: &Path) -> App {
         group: Some("Network".to_owned()),
         host: "sw1.lab".to_owned(),
         port: 2323,
+        session_logging: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

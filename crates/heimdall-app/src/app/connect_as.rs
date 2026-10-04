@@ -156,6 +156,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 compression: false,
                 sftp: false,
                 legacy_algorithms: false,
+                session_logging: None,
             }),
             purpose,
         )
@@ -207,6 +208,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 group: None,
                 host,
                 port: DEFAULT_TELNET_PORT,
+                session_logging: None,
             }),
             Purpose::Shell,
         ),

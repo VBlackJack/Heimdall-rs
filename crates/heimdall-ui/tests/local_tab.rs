@@ -76,6 +76,7 @@ fn tool() -> LocalProfile {
             working_directory: None,
         },
         approved: None,
+        session_logging: None,
     }
 }
 

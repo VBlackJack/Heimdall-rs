@@ -33,7 +33,8 @@ use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
 use heimdall_app::local_driver::{LocalShell, local_events};
 use heimdall_app::profile_draft::{
-    DraftError, DraftProtocol, ProfileDraft, ProfileField, ProfileToggle, SavedSecret,
+    DraftError, DraftProtocol, ProfileChoice, ProfileDraft, ProfileField, ProfileToggle,
+    SavedSecret,
 };
 use heimdall_app::rdp_driver::rdp_events;
 use heimdall_app::telnet_driver::telnet_events;
@@ -5453,6 +5454,9 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
             }
         }
     }
+    if draft.shows_session_logging() {
+        form = form.push(session_logging_choice(draft));
+    }
     // TLS to the plaintext port: said, not corrected, as the C# schema check reports it.
     if draft.protocol == DraftProtocol::WinRm
         && draft.uses_ssl()
@@ -6400,6 +6404,47 @@ impl fmt::Display for DesktopMode {
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
+
+/// A profile's session logging in its form's list, as the C# "Inherit", "On" and "Off".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct LoggingChoice(Option<bool>);
+
+impl LoggingChoice {
+    /// The choices, in the C# order.
+    const ALL: [Self; 3] = [Self(None), Self(Some(true)), Self(Some(false))];
+}
+
+impl fmt::Display for LoggingChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            None => fl!("ui-profile-session-logging-inherit"),
+            Some(true) => fl!("ui-profile-session-logging-on"),
+            Some(false) => fl!("ui-profile-session-logging-off"),
+        })
+    }
+}
+
+/// Whether the profile's sessions keep a transcript, as the C# server dialog's choice.
+fn session_logging_choice(draft: &ProfileDraft) -> Element<'_, Message> {
+    column![
+        row![
+            text(fl!("ui-profile-session-logging")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                LoggingChoice::ALL.to_vec(),
+                Some(LoggingChoice(draft.session_logging)),
+                |LoggingChoice(logging)| Message::App(AppMessage::ProfileChoice(
+                    ProfileChoice::SessionLogging(logging)
+                )),
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+        text(fl!("ui-profile-session-logging-hint")).size(SMALL_SIZE),
+    ]
+    .spacing(SPACING / 2.0)
+    .into()
+}
 
 /// An SSH agent preference in the Settings page's list, named as the C# Heimdall names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

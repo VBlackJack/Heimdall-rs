@@ -911,6 +911,7 @@ pub fn plan<S: BuildHasher>(
             compression: false,
             sftp: false,
             legacy_algorithms: false,
+            session_logging: None,
         });
     }
     plan.gateways = planner.made;

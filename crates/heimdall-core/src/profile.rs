@@ -125,6 +125,10 @@ pub struct SshProfile {
     /// Off unless turned on, written down only when on.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub legacy_algorithms: bool,
+    /// Whether its sessions keep a transcript, as the C# `SessionLoggingOverride`: `None`
+    /// follows the Settings page's session logging, `Some` decides for this profile alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_logging: Option<bool>,
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -200,6 +204,7 @@ impl SshGateway {
             compression: false,
             sftp: false,
             legacy_algorithms: false,
+            session_logging: None,
         }
     }
 }
@@ -732,6 +737,10 @@ pub struct TelnetProfile {
     pub host: String,
     /// TCP port.
     pub port: u16,
+    /// Whether its sessions keep a transcript, as the C# `SessionLoggingOverride`: `None`
+    /// follows the Settings page's session logging, `Some` decides for this profile alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_logging: Option<bool>,
 }
 
 /// A saved `WinRM` destination: a remote `PowerShell` session on a Windows server.
@@ -925,6 +934,10 @@ pub struct LocalProfile {
     /// What the user approved, if anything.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub approved: Option<LocalApproval>,
+    /// Whether its sessions keep a transcript, as the C# `SessionLoggingOverride`: `None`
+    /// follows the Settings page's session logging, `Some` decides for this profile alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_logging: Option<bool>,
 }
 
 impl LocalProfile {
@@ -979,6 +992,7 @@ mod tests {
             group: None,
             command,
             approved,
+            session_logging: None,
         }
     }
 

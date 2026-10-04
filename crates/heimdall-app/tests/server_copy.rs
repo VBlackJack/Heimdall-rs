@@ -126,6 +126,7 @@ fn tab(dir: &Path, client: RemoteSession, shell: Option<Connection>) -> (App, Ta
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

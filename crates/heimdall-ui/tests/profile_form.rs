@@ -32,7 +32,7 @@ use iced::{Settings, Size};
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
 /// Height of a window showing a whole form: RDP, or SSH with its post-connect steps.
-const TALL_HEIGHT: f32 = 1180.0;
+const TALL_HEIGHT: f32 = 1280.0;
 
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
@@ -115,6 +115,7 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

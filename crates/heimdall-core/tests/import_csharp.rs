@@ -1283,3 +1283,30 @@ fn the_favorites_are_imported_with_their_profiles() {
         "a profile left out is not one"
     );
 }
+
+#[test]
+fn a_profile_s_session_logging_is_imported_as_the_csharp_override_says() {
+    let json = servers(
+        r#"{"id": "on", "remoteServer": "a.lab", "connectionType": "SSH", "sessionLoggingOverride": true},
+           {"id": "off", "remoteServer": "b.lab", "connectionType": "SSH", "sessionLoggingOverride": false},
+           {"id": "inherit", "remoteServer": "c.lab", "connectionType": "SSH", "sessionLoggingOverride": null},
+           {"id": "unsaid", "remoteServer": "d.lab", "connectionType": "SSH"},
+           {"id": "switch", "remoteServer": "e.lab", "connectionType": "Telnet", "sessionLoggingOverride": false}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    let ssh: Vec<_> = report
+        .profiles
+        .iter()
+        .map(|profile| (profile.id.as_str(), profile.session_logging))
+        .collect();
+    assert_eq!(
+        ssh,
+        [
+            ("on", Some(true)),
+            ("off", Some(false)),
+            ("inherit", None),
+            ("unsaid", None),
+        ]
+    );
+    assert_eq!(report.telnet[0].session_logging, Some(false));
+}

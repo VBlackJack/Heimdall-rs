@@ -48,6 +48,7 @@ fn app(dir: &Path) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.merge_rdp([RdpProfile {
         id: ProfileId::new("dc"),
@@ -79,6 +80,7 @@ fn app(dir: &Path) -> App {
             working_directory: None,
         },
         approved: None,
+        session_logging: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

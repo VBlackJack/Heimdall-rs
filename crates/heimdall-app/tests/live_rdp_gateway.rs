@@ -100,6 +100,7 @@ fn request(
             compression: false,
             sftp: false,
             legacy_algorithms: false,
+            session_logging: None,
         }],
         ssh,
         cancel: CancellationToken::new(),

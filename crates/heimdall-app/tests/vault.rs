@@ -51,6 +51,7 @@ fn profile(id: &str, host: &str, username: Option<&str>) -> SshProfile {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }
 }
 
