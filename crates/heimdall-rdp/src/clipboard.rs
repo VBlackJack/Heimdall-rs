@@ -45,17 +45,28 @@ const ANSWER_WAIT_MS: u64 = 30_000;
 /// Longest text taken from the server, in bytes of UTF-16: a larger one is dropped, not cut.
 pub const MAX_REMOTE_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
+/// Largest image copied either way, in bytes of a device-independent bitmap: a 4K screen at
+/// 32 bits a pixel and room to spare. A larger one is not offered, nor taken.
+pub const MAX_IMAGE_BYTES: usize = 64 * 1024 * 1024;
+
+/// Bytes of the header a device-independent bitmap starts with, at least.
+const BITMAP_INFO_HEADER_LEN: usize = 40;
+
 /// What the backend asks the session loop to do.
 #[derive(Debug)]
 pub(crate) enum Request {
     /// Ask the server for its clipboard, as text.
     Paste,
+    /// Ask the server for its clipboard, as an image.
+    PasteImage,
     /// Answer the server's request for our clipboard.
     Answer(OwnedFormatDataResponse),
     /// Tell the server what our clipboard holds.
     Offer,
     /// The server's text arrived.
     Received(Zeroizing<String>),
+    /// The server's image arrived, as a device-independent bitmap.
+    ReceivedImage(Vec<u8>),
     /// The server asks for a file offered, or for its size: `entry` is the file, `None`
     /// when the server's index names none.
     FileContents {
@@ -95,12 +106,23 @@ pub(crate) enum Request {
 pub(crate) enum Asked {
     /// Its text.
     Text,
+    /// Its image.
+    Image,
     /// The list of its files.
     Files,
 }
 
-/// The text this side offers the server, until it asks for it.
-pub(crate) type Offered = Arc<Mutex<Option<Zeroizing<String>>>>;
+/// What this side's clipboard offers the server, until it asks for it.
+#[derive(Debug, Clone)]
+pub(crate) enum Offer {
+    /// Text.
+    Text(Zeroizing<String>),
+    /// An image, as a device-independent bitmap.
+    Image(Arc<[u8]>),
+}
+
+/// The text or image this side offers the server, until it asks for it.
+pub(crate) type Offered = Arc<Mutex<Option<Offer>>>;
 
 /// The backend: reads what `IronRDP` reports and posts [`Request`]s.
 #[derive(Debug)]
@@ -188,6 +210,7 @@ impl ClipboardBackend {
         if let Some(next) = self.waiting.pop_front() {
             self.post(match next {
                 Asked::Text => Request::Paste,
+                Asked::Image => Request::PasteImage,
                 Asked::Files => Request::ListFiles,
             });
         }
@@ -213,18 +236,27 @@ impl ClipboardBackend {
 
 ironrdp_core::impl_as_any!(ClipboardBackend);
 
-/// The formats this side offers: text, when there is some.
+/// The formats this side offers: text, when there is some, or an image.
 pub(crate) fn offered_formats(offered: &Offered) -> Vec<ClipboardFormat> {
-    let has_text = offered
+    match offered
         .lock()
         .unwrap_or_else(PoisonError::into_inner)
         .as_ref()
-        .is_some_and(|text| !text.is_empty());
-    if has_text {
-        vec![ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]
-    } else {
-        Vec::new()
+    {
+        Some(Offer::Text(text)) if !text.is_empty() => {
+            vec![ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]
+        }
+        Some(Offer::Image(_)) => vec![ClipboardFormat::new(ClipboardFormatId::CF_DIB)],
+        _ => Vec::new(),
     }
+}
+
+/// The server's image in `response`, when it is one and not too large: a device-independent
+/// bitmap, at least its header.
+pub(crate) fn image_of(response: &FormatDataResponse<'_>) -> Option<Vec<u8>> {
+    let data = response.data();
+    (!response.is_error() && (BITMAP_INFO_HEADER_LEN..=MAX_IMAGE_BYTES).contains(&data.len()))
+        .then(|| data.to_vec())
 }
 
 /// The server's text in `response`, when it is text and not too large.
@@ -278,11 +310,12 @@ impl CliprdrBackend for ClipboardBackend {
             })
             .map(ClipboardFormat::id);
         self.post(Request::RemoteFiles(self.remote_files.is_some()));
-        if available_formats
-            .iter()
-            .any(|format| format.id() == ClipboardFormatId::CF_UNICODETEXT)
-        {
+        let offers = |id| available_formats.iter().any(|format| format.id() == id);
+        // Text first, as the clipboard is read here; an image when there is no text.
+        if offers(ClipboardFormatId::CF_UNICODETEXT) {
             self.post(Request::Paste);
+        } else if offers(ClipboardFormatId::CF_DIB) {
+            self.post(Request::PasteImage);
         }
     }
 
@@ -293,8 +326,11 @@ impl CliprdrBackend for ClipboardBackend {
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
         let answer = match offered {
-            Some(text) if request.format == ClipboardFormatId::CF_UNICODETEXT => {
+            Some(Offer::Text(text)) if request.format == ClipboardFormatId::CF_UNICODETEXT => {
                 OwnedFormatDataResponse::new_unicode_string(&text)
+            }
+            Some(Offer::Image(image)) if request.format == ClipboardFormatId::CF_DIB => {
+                OwnedFormatDataResponse::new_data(image.to_vec())
             }
             _ => OwnedFormatDataResponse::new_error(),
         };
@@ -306,6 +342,11 @@ impl CliprdrBackend for ClipboardBackend {
             Some(Asked::Text) => {
                 if let Some(text) = text_of(&response) {
                     self.post(Request::Received(text));
+                }
+            }
+            Some(Asked::Image) => {
+                if let Some(image) = image_of(&response) {
+                    self.post(Request::ReceivedImage(image));
                 }
             }
             // Not a list `IronRDP` could read: never taken for text.
@@ -380,7 +421,8 @@ mod tests {
     use zeroize::Zeroizing;
 
     use super::{
-        ClipboardBackend, MAX_REMOTE_TEXT_BYTES, Offered, Request, offered_formats, text_of,
+        Asked, ClipboardBackend, MAX_IMAGE_BYTES, MAX_REMOTE_TEXT_BYTES, Offer, Offered, Request,
+        image_of, offered_formats, text_of,
     };
     use crate::clipboard_files::Entry;
 
@@ -389,7 +431,7 @@ mod tests {
     ) -> (ClipboardBackend, mpsc::UnboundedReceiver<Request>, Offered) {
         let (sender, receiver) = mpsc::unbounded_channel();
         let offered: Offered = Arc::new(Mutex::new(
-            offered.map(|text| Zeroizing::new(text.to_owned())),
+            offered.map(|text| Offer::Text(Zeroizing::new(text.to_owned()))),
         ));
         (
             ClipboardBackend::new(sender, offered.clone()),
@@ -399,17 +441,23 @@ mod tests {
     }
 
     #[test]
-    fn a_remote_copy_with_text_asks_for_it_and_one_without_does_not() {
+    fn a_remote_copy_asks_for_its_text_or_else_its_image_and_for_nothing_else() {
         let (mut backend, mut requests, _) = backend(None);
-        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_DIB)]);
+        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_HDROP)]);
         assert!(matches!(
             requests.try_recv(),
             Ok(Request::RemoteFiles(false))
         ));
         assert!(
             requests.try_recv().is_err(),
-            "no text offered: nothing asked"
+            "no text nor image offered: nothing asked"
         );
+        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_DIB)]);
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::RemoteFiles(false))
+        ));
+        assert!(matches!(requests.try_recv(), Ok(Request::PasteImage)));
         backend.on_remote_copy(&[
             ClipboardFormat::new(ClipboardFormatId::CF_DIB),
             ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT),
@@ -460,10 +508,52 @@ mod tests {
     }
 
     #[test]
+    fn an_image_goes_both_ways_as_a_bitmap_within_its_size() {
+        let (mut backend, mut requests, offered) = backend(None);
+        let image: Vec<u8> = (0..60_u8).collect();
+        *offered.lock().expect("lock") = Some(Offer::Image(image.clone().into()));
+        assert_eq!(
+            offered_formats(&offered),
+            [ClipboardFormat::new(ClipboardFormatId::CF_DIB)]
+        );
+        backend.on_format_data_request(FormatDataRequest {
+            format: ClipboardFormatId::CF_DIB,
+        });
+        let Ok(Request::Answer(answer)) = requests.try_recv() else {
+            panic!("an answer");
+        };
+        assert_eq!(answer.data(), image.as_slice());
+        backend.on_format_data_request(FormatDataRequest {
+            format: ClipboardFormatId::CF_UNICODETEXT,
+        });
+        let Ok(Request::Answer(answer)) = requests.try_recv() else {
+            panic!("an answer");
+        };
+        assert!(answer.is_error(), "an image is not text");
+
+        // The server's image, once asked for.
+        assert!(backend.ask(Asked::Image));
+        backend.on_format_data_response(FormatDataResponse::new_data(image.clone()));
+        assert!(matches!(
+            requests.try_recv(),
+            Ok(Request::ReceivedImage(received)) if received == image
+        ));
+        assert!(
+            image_of(&FormatDataResponse::new_data(vec![0; 39])).is_none(),
+            "no header"
+        );
+        assert!(
+            image_of(&FormatDataResponse::new_data(vec![0; MAX_IMAGE_BYTES + 1])).is_none(),
+            "too large: dropped"
+        );
+        assert!(image_of(&FormatDataResponse::new_error()).is_none());
+    }
+
+    #[test]
     fn text_is_offered_only_when_there_is_some() {
         let (_, _, offered) = backend(Some(""));
         assert!(offered_formats(&offered).is_empty());
-        *offered.lock().expect("lock") = Some(Zeroizing::new("x".to_owned()));
+        *offered.lock().expect("lock") = Some(Offer::Text(Zeroizing::new("x".to_owned())));
         assert_eq!(offered_formats(&offered).len(), 1);
     }
 

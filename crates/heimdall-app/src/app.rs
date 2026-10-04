@@ -418,6 +418,14 @@ pub enum Message {
         /// Whether it is on the clipboard.
         copied: bool,
     },
+    /// The clipboard's image arrived for the desktop of `tab`, a device-independent bitmap:
+    /// it held no files and no text.
+    ClipboardImage {
+        /// Tab whose desktop shares the clipboard.
+        tab: TabId,
+        /// The image.
+        image: Vec<u8>,
+    },
     /// The files copied in Explorer arrived for the desktop of `tab`.
     ClipboardFiles {
         /// Tab whose desktop shares the clipboard.
@@ -724,6 +732,9 @@ impl fmt::Debug for Message {
             Self::ClipboardFiles { tab, paths } => {
                 write!(f, "ClipboardFiles({}, {})", tab.value(), paths.len())
             }
+            Self::ClipboardImage { tab, image } => {
+                write!(f, "ClipboardImage({}, {})", tab.value(), image.len())
+            }
             Self::SyncDeadline { tab, generation } => {
                 write!(f, "SyncDeadline({}, {generation})", tab.value())
             }
@@ -921,6 +932,9 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
+    /// copied.
+    WriteClipboardImage(std::sync::Arc<[u8]>),
     /// Ask which OpenSSH configuration to import, as the C# open dialog, then read it;
     /// answered with [`SessionsMessage::Read`], or nothing when no file is picked.
     PickOpenSshConfig,
@@ -1240,6 +1254,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
             Self::ReadPuttySessions => f.write_str("ReadPuttySessions"),
@@ -2353,6 +2368,7 @@ impl App {
             | Message::PasteRequest(_)
             | Message::SendClipboard(_)
             | Message::ClipboardText { .. }
+            | Message::ClipboardImage { .. }
             | Message::ClipboardFiles { .. }) => self.clipboard_message(message),
             message @ (Message::SaveRemoteFiles(_)
             | Message::SaveFolderPicked { .. }
@@ -2714,6 +2730,7 @@ impl App {
             ConnectionEvent::RemoteClipboard(text) => {
                 vec![Effect::WriteClipboard(String::clone(&text))]
             }
+            ConnectionEvent::RemoteImage(image) => vec![Effect::WriteClipboardImage(image)],
             ConnectionEvent::SshConnection(connection) => self.shell_connection(tab_id, connection),
             event @ (ConnectionEvent::RdpFilesRefused(_)
             | ConnectionEvent::RdpRemoteFiles(_)
@@ -3034,6 +3051,16 @@ impl App {
                     .filter(|pane| pane.shares_clipboard())
                 {
                     pane.offer_files(paths);
+                }
+                Vec::new()
+            }
+            Message::ClipboardImage { tab, image } => {
+                if let Some(pane) = self
+                    .tab(tab)
+                    .and_then(|found| found.desktop.as_deref())
+                    .filter(|pane| pane.shares_clipboard())
+                {
+                    pane.offer_image(image);
                 }
                 Vec::new()
             }
