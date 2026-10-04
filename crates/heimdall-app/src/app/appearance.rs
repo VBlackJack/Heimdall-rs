@@ -64,6 +64,8 @@ pub enum SettingsMessage {
     SshTmoutResetInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
+    /// The tunnels panel starts collapsed, or open.
+    CollapseTunnelsPanel(bool),
 }
 
 /// The colours of `scheme`.
@@ -189,6 +191,9 @@ impl App {
                 self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
+            SettingsMessage::CollapseTunnelsPanel(collapse) => {
+                self.settings.collapse_tunnels_panel = *collapse;
+            }
             SettingsMessage::TrustedKeys(_) => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {

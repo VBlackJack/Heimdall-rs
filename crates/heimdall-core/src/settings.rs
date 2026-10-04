@@ -215,6 +215,8 @@ pub struct Settings {
     pub external_editor: String,
     /// Which SSH agent's keys are offered first, or alone; applied to the next connection.
     pub ssh_agent_preference: AgentPreference,
+    /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
+    pub collapse_tunnels_panel: bool,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -366,6 +368,7 @@ impl Default for Settings {
             rdp_defaults: RdpDefaults::default(),
             external_editor: String::new(),
             ssh_agent_preference: AgentPreference::default(),
+            collapse_tunnels_panel: true,
         }
     }
 }
@@ -514,6 +517,9 @@ struct GeneralSection {
     /// desktop's language is followed.
     #[serde(default)]
     language: Option<String>,
+    /// Absent is the C# default: collapsed.
+    #[serde(default)]
+    collapse_tunnels_panel: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -661,6 +667,7 @@ impl Settings {
                 .unwrap_or_default(),
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
+            collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -705,6 +712,7 @@ impl Settings {
             },
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),
+                collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),

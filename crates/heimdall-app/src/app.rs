@@ -2215,6 +2215,7 @@ impl App {
         };
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
         let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
+        let tunnels_panel = !settings.collapse_tunnels_panel;
         let files_state = heimdall_core::files_state::FilesState::open(
             config
                 .profiles_file
@@ -2241,7 +2242,8 @@ impl App {
             address_test: None,
             next_address_test: 0,
             tunnels: Vec::new(),
-            tunnels_panel: false,
+            // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
+            tunnels_panel,
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
