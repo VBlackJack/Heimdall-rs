@@ -1881,6 +1881,15 @@ impl Shell {
                 },
             ),
             Effect::WriteClipboard(content) => iced::clipboard::write(content),
+            Effect::OpenUrl(url) => Task::future(async move {
+                let opened =
+                    tokio::task::spawn_blocking(move || heimdall_app::external_url::open_url(&url))
+                        .await;
+                if let Ok(Err(error)) = opened {
+                    log::warn!("the browser did not start: {error}");
+                }
+            })
+            .discard(),
             Effect::WriteClipboardImage(image) => Task::future(async move {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
             })

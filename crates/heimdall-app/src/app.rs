@@ -934,6 +934,8 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
+    OpenUrl(String),
     /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
     /// copied.
     WriteClipboardImage(std::sync::Arc<[u8]>),
@@ -1256,6 +1258,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
@@ -2956,6 +2959,16 @@ impl App {
                 tab.write(bytes);
             }
             return Vec::new();
+        }
+        // Ctrl+click on a web address opens it, as the C# terminal does, rather than select.
+        if matches!(input.action, MouseAction::Press(MouseButton::Left))
+            && input.modifiers.ctrl
+            && let Some(url) = tab
+                .terminal
+                .url_at(input.at)
+                .and_then(|url| crate::external_url::launchable_url(&url))
+        {
+            return vec![Effect::OpenUrl(url)];
         }
         match input.action {
             MouseAction::Press(MouseButton::Left) => {

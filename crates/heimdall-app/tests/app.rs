@@ -607,6 +607,41 @@ fn a_tracked_mouse_goes_to_the_server_and_an_untracked_one_selects() {
 }
 
 #[test]
+fn a_ctrl_click_on_a_web_address_opens_it_and_selects_nothing() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _) = connected(&mut app, "a");
+    output(
+        &mut app,
+        tab,
+        attempt,
+        b"clone https://git.lab/repo.git now
+",
+    );
+    let mut click = pointer(MouseAction::Press(MouseButton::Left), 0, 10);
+    click.modifiers.ctrl = true;
+    let opened = app.update(Message::Pointer { tab, input: click });
+    assert!(
+        matches!(opened.as_slice(), [Effect::OpenUrl(url)] if url == "https://git.lab/repo.git"),
+        "{opened:?}"
+    );
+    // Without Ctrl, or beside the address, a click selects as before.
+    assert!(
+        app.update(Message::Pointer {
+            tab,
+            input: pointer(MouseAction::Press(MouseButton::Left), 0, 10),
+        })
+        .is_empty()
+    );
+    let mut beside = pointer(MouseAction::Press(MouseButton::Left), 0, 2);
+    beside.modifiers.ctrl = true;
+    assert!(
+        app.update(Message::Pointer { tab, input: beside })
+            .is_empty()
+    );
+}
+
+#[test]
 fn the_wheel_scrolls_history_when_the_screen_does_not_want_it() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));

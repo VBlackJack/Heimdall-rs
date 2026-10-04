@@ -317,6 +317,64 @@ impl Screen {
             .flat_map(|cell| std::iter::once(cell.ch).chain(cell.zerowidth.iter().copied()))
             .collect()
     }
+
+    /// The web address shown over cell `row`, `col`, as the C# terminal finds one for
+    /// Ctrl+click: `http://` or `https://` and what follows up to a space, `<`, `>`, a quote
+    /// or a backquote, the punctuation that ends a sentence left out. Within one row.
+    #[must_use]
+    pub fn url_at(&self, row: usize, col: usize) -> Option<String> {
+        // Each character with the column it starts at; a wide one covers the next too.
+        let cells: Vec<(usize, char)> = (0..self.cols)
+            .filter_map(|at| self.cell(row, at).map(|cell| (at, cell)))
+            .filter(|(_, cell)| cell.width != CellWidth::Spacer)
+            .map(|(at, cell)| (at, cell.ch))
+            .collect();
+        let chars: Vec<char> = cells.iter().map(|(_, ch)| *ch).collect();
+        let mut start = 0;
+        while start < chars.len() {
+            let Some(prefix) = URL_PREFIXES
+                .iter()
+                .find(|prefix| starts_with_ignoring_case(&chars[start..], prefix))
+            else {
+                start += 1;
+                continue;
+            };
+            let mut end = start + prefix.chars().count();
+            while end < chars.len() && !ends_url(chars[end]) {
+                end += 1;
+            }
+            while end > start && URL_TRAILING.contains(&chars[end - 1]) {
+                end -= 1;
+            }
+            let first = cells[start].0;
+            let last = cells.get(end).map_or(self.cols, |(at, _)| *at);
+            if (first..last).contains(&col) && end > start + prefix.chars().count() {
+                return Some(chars[start..end].iter().collect());
+            }
+            start = end.max(start + 1);
+        }
+        None
+    }
+}
+
+/// What a web address starts with, as the C# terminal's pattern.
+const URL_PREFIXES: [&str; 2] = ["http://", "https://"];
+
+/// What ends a web address, as the C# terminal's pattern: a space, `<`, `>`, a quote or a
+/// backquote.
+fn ends_url(ch: char) -> bool {
+    ch.is_whitespace() || matches!(ch, '<' | '>' | '"' | '\'' | '`')
+}
+
+/// The punctuation left out at the end of a web address, as the C# terminal leaves it.
+const URL_TRAILING: [char; 9] = ['.', ',', ';', ':', '!', '?', ')', ']', '}'];
+
+fn starts_with_ignoring_case(chars: &[char], prefix: &str) -> bool {
+    prefix.chars().count() <= chars.len()
+        && prefix
+            .chars()
+            .zip(chars)
+            .all(|(wanted, ch)| ch.eq_ignore_ascii_case(&wanted))
 }
 
 /// Which way [`Terminal::find`] looks through the history.
@@ -630,6 +688,12 @@ impl Terminal {
     #[must_use]
     pub fn selected_text(&self) -> Option<String> {
         self.term.selection_to_string()
+    }
+
+    /// The web address shown at `at`, in view, for Ctrl+click: see [`Screen::url_at`].
+    #[must_use]
+    pub fn url_at(&self, at: CellPoint) -> Option<String> {
+        self.snapshot().url_at(at.row, at.col)
     }
 
     /// Everything needed to draw, into a new screen.
