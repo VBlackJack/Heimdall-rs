@@ -1902,6 +1902,7 @@ impl Shell {
             | Effect::PlanTransfer { .. }
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }
+            | Effect::FileBatchStep { .. }
             | Effect::MoveRemote { .. }
             | Effect::CopyRemote { .. }
             | Effect::StartEdit { .. }
@@ -6414,6 +6415,14 @@ fn files_task(effect: Effect) -> Task<Message> {
                     tab,
                     id,
                     event,
+                }))
+            })
+        }
+        Effect::FileBatchStep { tab, operation, .. } => {
+            Task::perform(file_operation(*operation), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::BatchStepDone {
+                    tab,
+                    result,
                 }))
             })
         }

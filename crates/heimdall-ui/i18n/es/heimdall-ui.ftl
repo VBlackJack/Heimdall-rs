@@ -1454,3 +1454,19 @@ ui-shortcuts-screenshot = Capturar la pantalla
 ui-shortcuts-lock = Bloquear
 ui-shortcuts-help = Mostrar esta ayuda
 ui-shortcuts-close = Cerrar un diálogo o un menú, salir de pantalla completa
+ui-files-batch-deleting = Eliminando { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Cambiando los permisos de { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Cancelar
+ui-files-batch-stopping = Deteniendo después de este...
+ui-status-files-delete-failed = No se pudo eliminar "{ $name }": { $reason }
+ui-status-files-permissions-failed = No se pudieron cambiar los permisos de "{ $name }": { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] No se pudo eliminar { $failed } elemento de { $total }. "{ $name }": { $reason }
+   *[other] No se pudieron eliminar { $failed } elementos de { $total }. El primero, "{ $name }": { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] No se pudieron cambiar los permisos de { $failed } elemento de { $total }. "{ $name }": { $reason }
+   *[other] No se pudieron cambiar los permisos de { $failed } elementos de { $total }. El primero, "{ $name }": { $reason }
+}
+ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
+ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.

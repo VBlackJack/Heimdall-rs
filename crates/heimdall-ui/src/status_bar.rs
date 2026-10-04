@@ -40,6 +40,61 @@ pub fn scope_label(scope: BroadcastScope, targets: usize) -> String {
     }
 }
 
+/// What a delete or a change of permissions of entries came to, as the C# summary says
+/// it, the first failure named.
+fn batch_outcome(outcome: &heimdall_app::files::BatchOutcome) -> String {
+    use heimdall_app::files::{BatchKind, BatchOutcome};
+    match outcome {
+        BatchOutcome::Failed {
+            kind,
+            failed,
+            total,
+            first,
+            reason,
+        } => {
+            let reason = crate::texts::files_error(reason);
+            match (kind, *total) {
+                (BatchKind::Delete, 1) => fl!(
+                    "ui-status-files-delete-failed",
+                    name = first.as_str(),
+                    reason = reason
+                ),
+                (BatchKind::Permissions, 1) => fl!(
+                    "ui-status-files-permissions-failed",
+                    name = first.as_str(),
+                    reason = reason
+                ),
+                (BatchKind::Delete, _) => fl!(
+                    "ui-status-files-delete-partial",
+                    failed = (*failed),
+                    total = (*total),
+                    name = first.as_str(),
+                    reason = reason
+                ),
+                (BatchKind::Permissions, _) => fl!(
+                    "ui-status-files-permissions-partial",
+                    failed = (*failed),
+                    total = (*total),
+                    name = first.as_str(),
+                    reason = reason
+                ),
+            }
+        }
+        BatchOutcome::Stopped { kind, done, total } => match kind {
+            BatchKind::Delete => fl!(
+                "ui-status-files-delete-stopped",
+                done = (*done),
+                total = (*total)
+            ),
+            BatchKind::Permissions => fl!(
+                "ui-status-files-permissions-stopped",
+                done = (*done),
+                total = (*total)
+            ),
+        },
+    }
+}
+
 /// What a Files tab's notice says.
 fn files_notice(notice: &Notice) -> String {
     match notice {
@@ -60,6 +115,7 @@ fn files_notice(notice: &Notice) -> String {
         ),
         Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
         Notice::FilesDuplicated => fl!("ui-status-files-duplicated"),
+        Notice::FilesBatch(outcome) => batch_outcome(outcome),
         _ => String::new(),
     }
 }
@@ -126,6 +182,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::FilesSavedWithSudo(_)
             | Notice::FilesAutoUploadRefused { .. }
             | Notice::FilesCopied(_)
+            | Notice::FilesBatch(_)
             | Notice::FilesDuplicated) => files_notice(notice),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
@@ -292,6 +349,42 @@ mod tests {
 
     fn named(name: &str) -> String {
         name.to_owned()
+    }
+
+    #[test]
+    fn a_run_over_several_entries_is_summed_up_as_the_csharp_says_it() {
+        use heimdall_app::files::{BatchKind, BatchOutcome, FilesError};
+
+        let said = |outcome: BatchOutcome| {
+            status_text(&SessionStatus::Ready, Some(&Notice::FilesBatch(outcome)), 0)
+        };
+        let failed = |kind, failed, total| BatchOutcome::Failed {
+            kind,
+            failed,
+            total,
+            first: "logs".to_owned(),
+            reason: FilesError::Exists,
+        };
+        let one = said(failed(BatchKind::Delete, 1, 1));
+        assert!(one.starts_with("Could not delete \"logs\": "), "{one}");
+        let some = said(failed(BatchKind::Delete, 2, 5));
+        assert!(
+            some.starts_with("2 items out of 5 could not be deleted. First, \"logs\": "),
+            "{some}"
+        );
+        let single = said(failed(BatchKind::Permissions, 1, 3));
+        assert!(
+            single.starts_with("Permissions could not be changed on 1 item out of 3."),
+            "{single}"
+        );
+        assert_eq!(
+            said(BatchOutcome::Stopped {
+                kind: BatchKind::Delete,
+                done: 1,
+                total: 4
+            }),
+            "Deletion cancelled: 1 of 4 items deleted."
+        );
     }
 
     #[test]
