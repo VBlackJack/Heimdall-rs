@@ -758,8 +758,9 @@ fn a_session_the_server_ended_says_why() {
         },
     );
     let mut ui = simulator(&shell);
-    ui.find("The session ended.").expect("ended");
-    ui.find("The server said: Another user connected to the session")
+    ui.find("The Remote Desktop session has ended.")
+        .expect("ended");
+    ui.find("Reason: Another user connected to the session")
         .expect("its reason");
     ui.click("Reconnect").expect("reconnect");
 }
@@ -797,9 +798,10 @@ fn a_session_ended_by_the_server_says_it_as_the_csharp_and_a_logoff_says_nothing
         },
     );
     let mut ui = simulator(&shell);
-    ui.find("The session ended.").expect("ended");
+    ui.find("The Remote Desktop session has ended.")
+        .expect("ended");
     assert!(ui.find("Error:").is_err(), "a logoff is not an error");
-    assert!(ui.find("The server said:").is_err(), "nor a reason");
+    assert!(ui.find("Reason:").is_err(), "nor a reason");
 }
 
 #[tokio::test]

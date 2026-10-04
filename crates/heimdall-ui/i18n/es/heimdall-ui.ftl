@@ -198,8 +198,8 @@ ui-prompt-server-password-title = Contraseña del servidor VNC { $target }
 ui-prompt-interactive-title = { $user } en { $host }: el servidor pregunta
 ui-prompt-server-text = El servidor indica: { $text }
 
-ui-session-closed = La sesión ha terminado.
-ui-session-closed-status = La sesión ha terminado (código de salida { $status }).
+ui-session-closed = Sesión finalizada.
+ui-session-closed-status = Sesión finalizada: el proceso terminó con el código { $status }.
 ui-session-cancelled = La conexión se ha cancelado.
 ui-session-failed-title = La conexión ha fallado
 ui-session-close-button = Cerrar la pestaña
@@ -825,7 +825,7 @@ ui-error-network-refused = Conexión rechazada.
 ui-error-network-reset = Conexión reiniciada.
 ui-error-network-timed-out = Se agotó el tiempo de conexión. Comprueba que el host es accesible.
 ui-error-network-unreachable = El host o la red no son accesibles. Comprueba el DNS y el enrutamiento.
-ui-session-closed-reason = El servidor indicó: { $reason }
+ui-session-closed-reason = Motivo: { $reason }
 
 ## Why an RDP server refused a logon or ended a session, as the C# Heimdall says it.
 ui-rdp-severity-warning = Advertencia:
@@ -1331,6 +1331,7 @@ ui-files-state-preparing = Preparando la transferencia...
 ui-files-retry-button = Reintentar
 ui-files-clear-finished-button = Borrar finalizadas
 ui-files-error-interrupted = La transferencia se detuvo de forma inesperada.
+ui-rdp-session-closed = La sesión de Escritorio remoto ha terminado.
 ui-trusted-host-keys-export = Exportar known_hosts
 ui-status-known-hosts-exported = { $count ->
     [one] Se exportó { $count } clave a { $path }.
