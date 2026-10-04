@@ -1842,6 +1842,8 @@ pub enum Dialog {
     ConfirmBroadcast,
     /// Turn session transcripts on, which keep what is typed.
     ConfirmSessionLogging,
+    /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
+    ConfirmResetRdpDefaults,
     /// Quit with live sessions, or text not saved in an integrated editor.
     ConfirmExit {
         /// Live sessions.
@@ -3434,6 +3436,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
+            Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
                 Vec::new()

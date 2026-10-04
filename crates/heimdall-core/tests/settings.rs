@@ -571,3 +571,53 @@ fn the_ssh_agent_preference_is_kept_by_its_csharp_name_and_auto_openssh_first_by
     );
     assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
 }
+
+#[test]
+fn resolution_presets_round_trip_and_reset_with_the_other_rdp_settings() {
+    use heimdall_core::profile::RESOLUTION_PRESETS;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.rdp_resolution_presets, RESOLUTION_PRESETS);
+    assert_eq!(settings.resolution_presets(), RESOLUTION_PRESETS);
+
+    settings.rdp_resolution_presets = vec![(1366, 768), (800, 600)];
+    settings.rdp_auto_reconnect_attempts = 3;
+    settings.save(&path).expect("save");
+    let read = Settings::load(&path).expect("load");
+    assert_eq!(read.rdp_resolution_presets, [(1366, 768), (800, 600)]);
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(
+        text.contains(r#""1366x768""#) && text.contains(r#""800x600""#),
+        "one WIDTHxHEIGHT per preset: {text}"
+    );
+
+    // Emptied, the menus offer the built-in list, as the C# catalog.
+    settings.rdp_resolution_presets.clear();
+    assert_eq!(settings.resolution_presets(), RESOLUTION_PRESETS);
+
+    // A line edited by hand that is not a preset is left out, the others kept.
+    std::fs::write(
+        &path,
+        "version = 1\n[rdp_session]\nresolution_presets =[\"1920x1080\", \"huge\", \"99999x1\"]\n",
+    )
+    .expect("write");
+    let read = Settings::load(&path).expect("load");
+    assert_eq!(read.rdp_resolution_presets, [(1920, 1080)]);
+
+    // Reset: the RDP settings only.
+    let mut settings = read;
+    settings.rdp_auto_reconnect_attempts = 3;
+    settings.rdp_defaults.redirect_drives = !settings.rdp_defaults.redirect_drives;
+    settings.ssh_auto_reconnect = true;
+    settings.reset_rdp();
+    let defaults = Settings::default();
+    assert_eq!(settings.rdp_resolution_presets, RESOLUTION_PRESETS);
+    assert_eq!(
+        settings.rdp_auto_reconnect_attempts,
+        defaults.rdp_auto_reconnect_attempts
+    );
+    assert_eq!(settings.rdp_defaults, defaults.rdp_defaults);
+    assert!(settings.ssh_auto_reconnect, "outside RDP, untouched");
+}

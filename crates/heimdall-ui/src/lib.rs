@@ -35,6 +35,7 @@ pub mod local_form;
 mod logging;
 pub mod palette;
 pub mod post_connect_form;
+pub mod presets_editor;
 mod provider_view;
 pub mod rdp_options;
 pub mod rdp_view;

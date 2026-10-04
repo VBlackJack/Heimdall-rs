@@ -415,6 +415,8 @@ pub enum Message {
     FilesHovered(bool),
     /// A file or folder dropped on the window.
     FileDropped(std::path::PathBuf),
+    /// An action in the Settings page's box of resolution presets.
+    PresetsEdited(iced::widget::text_editor::Action),
     /// The external editor typed in the Settings page.
     EditorEdited(String),
     /// Apply the external editor typed.
@@ -512,6 +514,7 @@ impl fmt::Debug for Message {
             Self::FinderClose => f.write_str("FinderClose"),
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
+            Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
@@ -709,6 +712,8 @@ pub struct Shell {
     log_directory: Option<String>,
     /// The external editor typed in the Settings page, until applied.
     editor_typed: Option<String>,
+    /// The Settings page's box of resolution presets.
+    presets: crate::presets_editor::PresetsEditor,
     /// The terminals' font size as typed in the Settings page, until applied.
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
@@ -790,6 +795,8 @@ impl Shell {
     #[must_use]
     pub fn with_app(mut app: App) -> Self {
         app.set_transcript_lines(crate::transcript_lines::lines());
+        let presets =
+            crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
         Self {
             app,
             editors: crate::integrated_editor::Editors::default(),
@@ -818,6 +825,7 @@ impl Shell {
             focus_next: None,
             log_directory: None,
             editor_typed: None,
+            presets,
             font_size_typed: None,
             session_typed: Default::default(),
             host_key_search: String::new(),
@@ -1019,6 +1027,7 @@ impl Shell {
             message @ (Message::LogDirectoryEdited(_)
             | Message::LogDirectoryApply
             | Message::EditorEdited(_)
+            | Message::PresetsEdited(_)
             | Message::EditorApply
             | Message::FontSizeEdited(_)
             | Message::FontSizeApply
@@ -1039,6 +1048,9 @@ impl Shell {
         self.forget_finished();
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // A reset, or presets that could not be saved, shown again in their box.
+        self.presets
+            .sync(&self.app.settings().rdp_resolution_presets);
         tasks.push(self.focus_question());
         tasks.push(self.focus_dialog());
         if let Some(field) = self.focus_next.take() {
@@ -2108,7 +2120,10 @@ impl Shell {
             tree_view::tunnel_menu_entries(id)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
-            tree_view::resolution_entries(&self.resolution_state(self.app.tab(tab)?)?)
+            tree_view::resolution_entries(
+                &self.resolution_state(self.app.tab(tab)?)?,
+                self.app.settings().resolution_presets(),
+            )
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
             // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
@@ -2696,6 +2711,20 @@ impl Shell {
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box),
             self.rdp_session_settings(),
+            container(self.presets.view())
+                .padding(PADDING)
+                .max_width(SETTINGS_WIDTH)
+                .style(container::bordered_box),
+            tooltip(
+                button(text(fl!("ui-settings-rdp-reset-defaults")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::Settings(
+                        SettingsMessage::ResetRdpDefaults
+                    ))),
+                text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
             self.trusted_keys_settings(TrustedList::Certificates),
         ]
     }
@@ -2844,6 +2873,14 @@ impl Shell {
             Message::EditorEdited(typed) => {
                 self.editor_typed = Some(typed);
                 Vec::new()
+            }
+            Message::PresetsEdited(action) => {
+                match self.presets.perform(action) {
+                    Some(presets) => self.app.update(AppMessage::Settings(
+                        SettingsMessage::RdpResolutionPresets(presets),
+                    )),
+                    None => Vec::new(),
+                }
             }
             Message::EditorApply => match self.editor_typed.take() {
                 Some(typed) => self
@@ -6744,10 +6781,26 @@ fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
     }
 }
 
-/// The title, text and action of a question about the whole window: leaving it with
-/// sessions live, broadcasting input to every tab, recording every session.
-fn window_question(dialog: &Dialog) -> (String, String, String) {
+/// The title, text and action of a plain question: leaving the window with sessions live,
+/// broadcasting input to every tab, recording every session, resetting the RDP settings,
+/// deleting profiles or folders.
+fn plain_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
+        Dialog::ConfirmDeleteProfile { name, .. } => (
+            fl!("ui-dialog-delete-profile-title"),
+            fl!("ui-dialog-delete-profile-body", name = name.as_str()),
+            fl!("ui-dialog-delete-profile-confirm"),
+        ),
+        Dialog::ConfirmDelete {
+            name,
+            folder,
+            count,
+            ..
+        } => (
+            fl!("ui-dialog-delete-title"),
+            delete_question(name, *folder, *count),
+            fl!("ui-dialog-delete-confirm"),
+        ),
         Dialog::ConfirmExit { live, unsaved } => (
             fl!("ui-dialog-exit-title"),
             with_unsaved(
@@ -6760,6 +6813,11 @@ fn window_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-session-logging-title"),
             fl!("ui-dialog-session-logging-body"),
             fl!("ui-dialog-session-logging-confirm"),
+        ),
+        Dialog::ConfirmResetRdpDefaults => (
+            fl!("ui-dialog-reset-rdp-title"),
+            fl!("ui-dialog-reset-rdp-body"),
+            fl!("ui-settings-rdp-reset-defaults"),
         ),
         _ => (
             fl!("ui-dialog-broadcast-title"),
@@ -6811,8 +6869,13 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::RenameProfile { .. }
         | Dialog::BulkEdit { .. }
         | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
-        Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } | Dialog::ConfirmSessionLogging => {
-            let (title, body, action) = window_question(dialog);
+        Dialog::ConfirmBroadcast
+        | Dialog::ConfirmExit { .. }
+        | Dialog::ConfirmSessionLogging
+        | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmDeleteProfile { .. }
+        | Dialog::ConfirmDelete { .. } => {
+            let (title, body, action) = plain_question(dialog);
             question(title, body, action).into()
         }
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
@@ -6826,23 +6889,6 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         } => crate::tunnels_view::host_key(host, *port, fingerprint),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
-        Dialog::ConfirmDeleteProfile { name, .. } => question(
-            fl!("ui-dialog-delete-profile-title"),
-            fl!("ui-dialog-delete-profile-body", name = name.as_str()),
-            fl!("ui-dialog-delete-profile-confirm"),
-        )
-        .into(),
-        Dialog::ConfirmDelete {
-            name,
-            folder,
-            count,
-            ..
-        } => question(
-            fl!("ui-dialog-delete-title"),
-            delete_question(name, *folder, *count),
-            fl!("ui-dialog-delete-confirm"),
-        )
-        .into(),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
