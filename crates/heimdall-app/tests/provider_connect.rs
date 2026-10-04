@@ -49,6 +49,7 @@ fn app(dir: &Path) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -455,6 +456,7 @@ fn a_blank_vault_entry_name_written_in_the_file_is_the_name() {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

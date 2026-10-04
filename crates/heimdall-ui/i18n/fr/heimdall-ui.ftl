@@ -1393,6 +1393,17 @@ ui-files-empty-no-match = Aucune entrée ne correspond à "{ $filter }".
 ui-files-empty-clear-filter = Effacer le filtre
 ui-files-empty-hidden-only = Ce dossier ne contient que des entrées masquées.
 ui-files-empty-show-hidden = Afficher les fichiers masqués
+ui-tunnels-status-active = Actif
+ui-tunnels-status-interrupted = Interrompu
+ui-tunnels-menu-reopen = Rouvrir
+ui-settings-behavior = Comportement
+ui-settings-collapse-tunnels-panel = Replier le panneau Tunnels par défaut
+ui-settings-collapse-tunnels-panel-hint = État du panneau Tunnels au démarrage. L'ouvrir ou le fermer ensuite le laisse ainsi jusqu'à la fermeture de l'application.
+ui-profile-session-logging = Journalisation des sessions
+ui-profile-session-logging-inherit = Hériter
+ui-profile-session-logging-on = Activé
+ui-profile-session-logging-off = Désactivé
+ui-profile-session-logging-hint = Hériter suit le paramètre global de journalisation des sessions.
 ui-hostkey-copy-fingerprint-button = Copier
 ui-certificate-already-trusted = { $count ->
     [one] Ce profil approuve déjà { $count } autre certificat pour ce nom, ce qui signifie le plus souvent que plusieurs machines y répondent.

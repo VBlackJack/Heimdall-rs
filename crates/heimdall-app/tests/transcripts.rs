@@ -51,6 +51,7 @@ fn app(dir: &Path) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.merge_telnet([TelnetProfile {
         id: ProfileId::new("switch"),
@@ -58,6 +59,7 @@ fn app(dir: &Path) -> App {
         group: None,
         host: "switch.lab".to_owned(),
         port: 23,
+        session_logging: None,
     }]);
     store.merge_winrm([WinRmProfile {
         id: ProfileId::new("dc"),
@@ -365,4 +367,59 @@ impl heimdall_app::InputSink for NullSink {
         Ok(())
     }
     fn close(&self) {}
+}
+
+#[test]
+fn a_profile_s_own_session_logging_wins_over_the_settings_either_way() {
+    use heimdall_core::profile::{LocalCommand, LocalProfile};
+
+    let dir = tempfile::tempdir().expect("dir");
+    drop(app(dir.path()));
+    // The C# "Session logging" of each profile: On, Off, and On for a local shell.
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    let mut web = store.ssh_profiles()[0].clone();
+    web.session_logging = Some(true);
+    store.merge([web]);
+    let mut switch = store.telnet_profiles()[0].clone();
+    switch.session_logging = Some(false);
+    store.merge_telnet([switch]);
+    store.merge_local([LocalProfile {
+        id: ProfileId::new("shell"),
+        name: "Shell".to_owned(),
+        group: None,
+        command: LocalCommand::default(),
+        approved: None,
+        session_logging: Some(true),
+    }]);
+    store.save().expect("save");
+    let mut app = app_reopened(dir.path());
+
+    // Settings off: the profiles saying On keep one.
+    let (web, _) = connected(&mut app, Message::OpenProfile(ProfileId::new("web")));
+    assert!(recording(&app, web), "On, whatever the settings");
+    let (shell, _) = connected(&mut app, Message::OpenLocalProfile(ProfileId::new("shell")));
+    assert!(recording(&app, shell), "a local shell's profile says too");
+
+    // Settings on: the profile saying Off keeps none.
+    logging(&mut app, true);
+    let (switch, _) = connected(&mut app, Message::OpenTelnet(ProfileId::new("switch")));
+    assert!(!recording(&app, switch), "Off, whatever the settings");
+}
+
+/// The application over the profiles already in `dir`.
+fn app_reopened(dir: &Path) -> App {
+    let mut app = App::new(AppConfig {
+        profiles_file: dir.join("profiles.toml"),
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    app.set_transcript_lines(TranscriptLines {
+        header: Arc::new(|_: &TranscriptContext| "start".to_owned()),
+        footer: Arc::new(|_, _| "end".to_owned()),
+    });
+    app
 }

@@ -44,6 +44,7 @@ fn ssh(id: &str, name: &str, host: &str, group: Option<&str>) -> SshProfile {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }
 }
 

@@ -368,13 +368,45 @@ fn a_row_is_closed_by_the_user_or_by_its_gateway_and_its_port_copied() {
     let lost = open_tunnel(&mut app);
     event(&mut app, lost, TunnelEvent::Opened(local()));
     event(&mut app, lost, TunnelEvent::Closed);
-    assert!(app.tunnels.is_empty());
     assert_eq!(
         app.notice(),
         Some(&Notice::TunnelClosed {
             port: LOCAL_PORT,
             error: Some(UiError::ConnectionLost)
         })
+    );
+    // Its row stays, said interrupted, as the C# one; its port is free again.
+    assert!(app.tunnel(lost).expect("kept").interrupted);
+    assert_eq!(app.live_tunnels(), 0);
+    assert!(app.tunnel_ports().is_empty());
+    // Opened again as it was asked for, its row replaced by the new attempt's.
+    let effects = tunnel(&mut app, TunnelMessage::Reopen(lost));
+    let [Effect::OpenTunnel { id: again, request }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(
+        (request.local_port, request.remote_host.as_str()),
+        (LOCAL_PORT, "wiki.lab")
+    );
+    assert!(app.tunnel(lost).is_none());
+    let again = *again;
+    event(&mut app, again, TunnelEvent::Opened(local()));
+    assert_eq!(app.live_tunnels(), 1);
+    assert!(
+        tunnel(&mut app, TunnelMessage::Reopen(again)).is_empty(),
+        "only an interrupted one"
+    );
+    // Lost again, then closed: the row goes without a second word.
+    event(&mut app, again, TunnelEvent::Closed);
+    tunnel(&mut app, TunnelMessage::Close(again));
+    assert!(app.tunnels.is_empty());
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::TunnelClosed {
+            port: LOCAL_PORT,
+            error: Some(UiError::ConnectionLost)
+        }),
+        "the loss said once"
     );
 
     for port in [LOCAL_PORT, LOCAL_PORT + 1] {
@@ -386,8 +418,26 @@ fn a_row_is_closed_by_the_user_or_by_its_gateway_and_its_port_copied() {
         );
     }
     assert_eq!(app.tunnels.len(), 2);
+    let first = app.tunnels[0].id;
+    event(&mut app, first, TunnelEvent::Closed);
     tunnel(&mut app, TunnelMessage::CloseAll);
     assert!(app.tunnels.is_empty());
     assert!(app.tunnel_ports().is_empty());
     assert_eq!(app.notice(), Some(&Notice::AllTunnelsClosed));
+}
+
+#[test]
+fn the_panel_starts_as_the_settings_say_collapsed_unless_chosen() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    assert!(!app.tunnels_panel, "collapsed, as the C# default");
+    assert!(app.settings().collapse_tunnels_panel);
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::CollapseTunnelsPanel(false),
+    ));
+    assert!(!app.tunnels_panel, "the panel shown now is left as it is");
+    assert!(
+        self::app(dir.path()).tunnels_panel,
+        "open at the next start"
+    );
 }

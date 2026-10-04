@@ -61,6 +61,8 @@ pub enum TunnelMessage {
     Close(TunnelId),
     /// Closes every tunnel.
     CloseAll,
+    /// Opens an interrupted tunnel again, as it was asked for.
+    Reopen(TunnelId),
     /// Copies a tunnel's local port.
     CopyPort(TunnelId),
     /// Opens or closes the tunnels panel.
@@ -118,8 +120,25 @@ impl App {
                 }
                 Vec::new()
             }
+            TunnelMessage::Reopen(id) => {
+                let Some(index) = self
+                    .tunnels
+                    .iter()
+                    .position(|tunnel| tunnel.id == id && tunnel.interrupted)
+                else {
+                    return Vec::new();
+                };
+                let spec = self.tunnels.remove(index).spec;
+                self.open_tunnel(spec)
+            }
             TunnelMessage::CloseAll => {
-                let ids: Vec<TunnelId> = self.tunnel_runs.iter().map(|run| run.id).collect();
+                // The interrupted ones too: their rows go.
+                let ids: Vec<TunnelId> = self
+                    .tunnel_runs
+                    .iter()
+                    .map(|run| run.id)
+                    .chain(self.tunnels.iter().map(|tunnel| tunnel.id))
+                    .collect();
                 for id in ids {
                     self.close_tunnel(id);
                 }
@@ -144,6 +163,15 @@ impl App {
     #[must_use]
     pub fn tunnel(&self, id: TunnelId) -> Option<&Tunnel> {
         self.tunnels.iter().find(|tunnel| tunnel.id == id)
+    }
+
+    /// How many tunnels listen: the interrupted ones are not counted.
+    #[must_use]
+    pub fn live_tunnels(&self) -> usize {
+        self.tunnels
+            .iter()
+            .filter(|tunnel| !tunnel.interrupted)
+            .count()
     }
 
     /// What stops the "New tunnel" dialog's tunnel from being opened, if it is open and
@@ -289,6 +317,7 @@ impl App {
                     gateway_name,
                     local,
                     started: SystemTime::now(),
+                    interrupted: false,
                 };
                 self.tell(Notice::TunnelOpened {
                     port: local.port(),
@@ -299,12 +328,21 @@ impl App {
                 Vec::new()
             }
             TunnelEvent::Closed => {
-                if let Some(port) = self.close_tunnel(id) {
-                    self.tell(Notice::TunnelClosed {
-                        port,
-                        error: Some(UiError::ConnectionLost),
-                    });
-                }
+                // Kept and said interrupted, as the C# row: which one went stays in sight,
+                // to be opened again or closed.
+                let Some(run) = self.take_run(id) else {
+                    return Vec::new();
+                };
+                run.cancel.cancel();
+                let Some(tunnel) = self.tunnels.iter_mut().find(|tunnel| tunnel.id == id) else {
+                    return Vec::new();
+                };
+                tunnel.interrupted = true;
+                let port = tunnel.local.port();
+                self.tell(Notice::TunnelClosed {
+                    port,
+                    error: Some(UiError::ConnectionLost),
+                });
                 Vec::new()
             }
         }
@@ -368,12 +406,15 @@ impl App {
         }
     }
 
-    /// Stops tunnel `id`, open or being opened; its local port when it was open.
+    /// Stops tunnel `id`, open, being opened or interrupted, its row gone; its local port
+    /// when it was listening.
     fn close_tunnel(&mut self, id: TunnelId) -> Option<u16> {
-        let run = self.take_run(id)?;
-        run.cancel.cancel();
+        if let Some(run) = self.take_run(id) {
+            run.cancel.cancel();
+        }
         let index = self.tunnels.iter().position(|tunnel| tunnel.id == id)?;
-        Some(self.tunnels.remove(index).local.port())
+        let tunnel = self.tunnels.remove(index);
+        (!tunnel.interrupted).then(|| tunnel.local.port())
     }
 
     fn take_run(&mut self, id: TunnelId) -> Option<TunnelRun> {

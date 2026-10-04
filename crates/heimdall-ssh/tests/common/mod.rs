@@ -804,6 +804,7 @@ pub fn profile(port: u16, key: Option<&str>) -> SshProfile {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }
 }
 
