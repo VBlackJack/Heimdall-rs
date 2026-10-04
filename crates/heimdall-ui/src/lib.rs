@@ -21,6 +21,7 @@ pub mod agent_chip_view;
 mod conflicts_view;
 mod desktop_texture;
 pub mod desktop_view;
+pub mod editor_history;
 pub mod export_file;
 pub mod file_import_view;
 mod files_view;
