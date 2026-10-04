@@ -3411,7 +3411,13 @@ impl Shell {
             }
             // A remote desktop that ended leaves nothing to look at.
             Phase::Closed { .. } if matches!(tab.purpose, Purpose::Rdp | Purpose::Vnc) => {
-                let mut ended = column![text(fl!("ui-session-closed"))].spacing(SPACING);
+                // As the C# says each: the Remote Desktop session by its name.
+                let said = if tab.purpose == Purpose::Rdp {
+                    fl!("ui-rdp-session-closed")
+                } else {
+                    fl!("ui-session-closed")
+                };
+                let mut ended = column![text(said)].spacing(SPACING);
                 if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
                     ended = ended.push(text(reason));
                 }

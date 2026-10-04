@@ -208,8 +208,8 @@ ui-prompt-server-password-title = Password of the VNC server { $target }
 ui-prompt-interactive-title = { $user } on { $host }: the server asks
 ui-prompt-server-text = Server says: { $text }
 
-ui-session-closed = The session ended.
-ui-session-closed-status = The session ended (exit status { $status }).
+ui-session-closed = Session ended.
+ui-session-closed-status = Session ended: process exited with code { $status }.
 ui-session-cancelled = The connection was cancelled.
 ui-session-failed-title = The connection failed
 ui-session-close-button = Close the tab
@@ -869,7 +869,7 @@ ui-error-network-refused = Connection refused.
 ui-error-network-reset = Connection reset.
 ui-error-network-timed-out = Connection timed out. Check that the host is reachable.
 ui-error-network-unreachable = Host or network is unreachable. Check DNS and routing.
-ui-session-closed-reason = The server said: { $reason }
+ui-session-closed-reason = Reason: { $reason }
 
 ## Why an RDP server refused a logon or ended a session, as the C# Heimdall says it.
 ui-rdp-severity-warning = Warning:
@@ -1409,6 +1409,7 @@ ui-files-state-preparing = Preparing transfer...
 ui-files-retry-button = Retry
 ui-files-clear-finished-button = Clear finished
 ui-files-error-interrupted = The transfer stopped unexpectedly.
+ui-rdp-session-closed = The Remote Desktop session has ended.
 ui-trusted-host-keys-export = Export known_hosts
 ui-status-known-hosts-exported = { $count ->
     [one] Exported { $count } key to { $path }.
