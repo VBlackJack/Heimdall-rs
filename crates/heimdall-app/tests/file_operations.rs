@@ -2112,3 +2112,81 @@ async fn closing_the_editor_never_takes_the_place_of_another_question() {
     files(&mut app, FilesMessage::EditorClose { tab, id });
     assert_eq!(app.dialog, asked, "the question on screen stays");
 }
+
+#[tokio::test]
+async fn opening_a_text_file_edits_it_and_a_binary_one_is_offered_for_download() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let open = |app: &mut App| {
+        files(
+            app,
+            FilesMessage::Open {
+                tab,
+                side: Side::Remote,
+                index: 1,
+            },
+        )
+    };
+    let opened = open(&mut app);
+    let [Effect::OpenEditor { id, .. }] = opened.as_slice() else {
+        panic!("{opened:?}");
+    };
+    let id = *id;
+    assert!(open_editor(&app, tab).is_some_and(|edit| edit.from_open));
+
+    // Not text: the C# "Binary file" question, its download on yes.
+    files(
+        &mut app,
+        FilesMessage::EditorOpened {
+            tab,
+            id,
+            result: Err(FilesError::LooksBinary),
+        },
+    );
+    assert!(open_editor(&app, tab).is_none());
+    assert!(
+        matches!(&app.dialog, Some(Dialog::ConfirmDownloadBinary { name, .. }) if name == "a.txt"),
+        "{:?}",
+        app.dialog
+    );
+    assert_eq!(
+        pane_error(&app, tab, Side::Remote),
+        None,
+        "asked, not an error"
+    );
+    let downloaded = app.update(Message::ConfirmDialog);
+    assert_eq!(plan_request(&downloaded).direction, Direction::Download);
+}
+
+#[tokio::test]
+async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let large = RemoteEntry {
+        name: b"dump.sql".to_vec(),
+        label: "dump.sql".to_owned(),
+        kind: EntryKind::File,
+        size: Some(heimdall_app::integrated_edit::INTEGRATED_EDIT_LIMIT + 1),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+    };
+    files(
+        &mut app,
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv"), vec![large])),
+        },
+    );
+    let opened = files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    assert_eq!(plan_request(&opened).direction, Direction::Download);
+    assert!(open_editor(&app, tab).is_none());
+}

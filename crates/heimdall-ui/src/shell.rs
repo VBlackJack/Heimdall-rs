@@ -5555,6 +5555,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-discard-editor-body"),
             fl!("ui-editor-close"),
         ),
+        Dialog::ConfirmDownloadBinary { name, .. } => (
+            fl!("ui-dialog-binary-title"),
+            fl!("ui-dialog-binary-body", name = name.as_str()),
+            fl!("ui-dialog-binary-confirm"),
+        ),
         _ => (
             fl!("ui-dialog-close-tab-title"),
             fl!("ui-dialog-close-tab-body"),
@@ -6418,6 +6423,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseEdits { .. }
         | Dialog::ConfirmCloseEditor { .. }
         | Dialog::ConfirmDiscardEditor { .. }
+        | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::CustomResolution { .. }

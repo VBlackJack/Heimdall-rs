@@ -51,6 +51,9 @@ pub struct IntegratedEdit {
     pub saving: bool,
     /// What the editor says, under its title.
     pub notice: Option<EditorNotice>,
+    /// Opened by Open (a double click, Enter), as the C#: a file that is not text is then
+    /// offered for download instead.
+    pub from_open: bool,
 }
 
 /// What the integrated editor says of its file.

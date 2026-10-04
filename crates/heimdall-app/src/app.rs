@@ -1735,6 +1735,16 @@ pub enum Dialog {
         /// The file, as the question names it.
         name: String,
     },
+    /// Download a server's file Open found not to be text, as the C# "Binary file"
+    /// question offers.
+    ConfirmDownloadBinary {
+        /// Tab.
+        tab: TabId,
+        /// The file, as the question names it.
+        name: String,
+        /// The server's file.
+        remote: heimdall_files::RemotePath,
+    },
     /// Close the integrated editor and lose its text not saved, as the C# "Unsaved
     /// Changes".
     ConfirmDiscardEditor {
@@ -3162,6 +3172,9 @@ impl App {
             ) => {
                 self.close_tab(tab);
                 Vec::new()
+            }
+            Some(Dialog::ConfirmDownloadBinary { tab, remote, .. }) => {
+                self.download_remote(tab, &remote)
             }
             Some(Dialog::ConfirmDiscardEditor { tab, .. }) => {
                 if let Some(files) = self.files_mut(tab) {

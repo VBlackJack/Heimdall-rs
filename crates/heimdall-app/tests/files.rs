@@ -439,8 +439,28 @@ async fn back_returns_through_the_folders_left_and_home_to_the_first_one_as_the_
     assert_eq!(remote(&app).1, ["/home/admin", "/home/admin/logs"]);
 }
 
+/// Downloads the server's entry `index`, as the Download button does: Open edits a text
+/// file, as the C# does.
+fn download(app: &mut App, tab: TabId, index: usize) -> Vec<Effect> {
+    files(
+        app,
+        FilesMessage::Select {
+            tab,
+            side: Side::Remote,
+            index,
+        },
+    );
+    files(
+        app,
+        FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        },
+    )
+}
+
 #[tokio::test]
-async fn opening_a_remote_file_downloads_it_into_the_local_folder() {
+async fn downloading_a_remote_file_puts_it_into_the_local_folder() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let (tab, _) = opened(&mut app).await;
@@ -450,14 +470,7 @@ async fn opening_a_remote_file_downloads_it_into_the_local_folder() {
         "/srv",
         vec![remote_entry(b"report.txt", EntryKind::File, 42)],
     );
-    let opened = files(
-        &mut app,
-        FilesMessage::Open {
-            tab,
-            side: Side::Remote,
-            index: 0,
-        },
-    );
+    let opened = download(&mut app, tab, 0);
     let effects = planned(&mut app, opened).await;
     let [Effect::Transfer { request, .. }] = effects.as_slice() else {
         panic!("expected a transfer, got {effects:?}");
@@ -591,14 +604,7 @@ async fn a_hostile_remote_name_is_refused_before_any_transfer() {
         "/srv",
         vec![remote_entry(b"..", EntryKind::File, 1)],
     );
-    let effects = files(
-        &mut app,
-        FilesMessage::Open {
-            tab,
-            side: Side::Remote,
-            index: 0,
-        },
-    );
+    let effects = download(&mut app, tab, 0);
     assert!(effects.is_empty(), "{effects:?}");
     let pane = app.tab(tab).and_then(|t| t.files.as_ref()).expect("files");
     assert!(matches!(
@@ -621,23 +627,9 @@ async fn a_finished_download_refreshes_the_local_pane_and_closing_cancels_the_re
             remote_entry(b"two", EntryKind::File, 1),
         ],
     );
-    let first = files(
-        &mut app,
-        FilesMessage::Open {
-            tab,
-            side: Side::Remote,
-            index: 0,
-        },
-    );
+    let first = download(&mut app, tab, 0);
     let first = planned(&mut app, first).await;
-    let second = files(
-        &mut app,
-        FilesMessage::Open {
-            tab,
-            side: Side::Remote,
-            index: 1,
-        },
-    );
+    let second = download(&mut app, tab, 1);
     let second = planned(&mut app, second).await;
     let [Effect::Transfer { id, .. }] = first.as_slice() else {
         panic!("{first:?}")
