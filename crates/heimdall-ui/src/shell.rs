@@ -1438,7 +1438,7 @@ impl Shell {
         match finder {
             Some(finder) => stack![
                 shown,
-                crate::finder::view(finder, tab.find_missed, self.modifiers.shift())
+                crate::finder::view(finder, tab.find_found, self.modifiers.shift())
             ]
             .into(),
             None => shown,

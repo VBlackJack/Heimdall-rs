@@ -1416,6 +1416,8 @@ pub struct Tab {
     pub winrm_diagnostic: Option<Diagnostic>,
     /// The last search in its history found nothing.
     pub find_missed: bool,
+    /// Where the last search's match is among all of them, as the C# bar counts them.
+    pub find_found: Option<heimdall_term::Found>,
     /// The transcript it keeps, while it keeps one.
     pub transcript: Option<Transcript>,
     /// Its server health panel, for an SSH shell.
@@ -1540,6 +1542,7 @@ impl Tab {
             early_output: None,
             winrm_diagnostic: None,
             find_missed: false,
+            find_found: None,
             transcript: None,
             health: crate::server_health::HealthPane::default(),
             reopen: reconnect::Reopen::of(&profile),
@@ -2442,7 +2445,8 @@ impl App {
                 direction,
             } => {
                 if let Some(found) = self.tab_mut(tab) {
-                    found.find_missed = !found.terminal.find(&query, direction);
+                    found.find_found = found.terminal.find(&query, direction);
+                    found.find_missed = found.find_found.is_none();
                 }
             }
             _ => {}

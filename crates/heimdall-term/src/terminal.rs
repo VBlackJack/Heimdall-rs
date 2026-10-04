@@ -328,6 +328,16 @@ pub enum FindDirection {
     Up,
 }
 
+/// Where [`Terminal::find`] found a match: its place among all of them, from 1, and how many
+/// there are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Found {
+    /// Its place, from 1.
+    pub index: usize,
+    /// How many matches there are.
+    pub total: usize,
+}
+
 /// Lines shown above a match found, as the C# terminal scrolls to one.
 const FIND_CONTEXT_LINES: i32 = 5;
 
@@ -493,51 +503,74 @@ impl Terminal {
         (viewport_to_point(self.display_offset(), viewport), side)
     }
 
-    /// Looks for `query`, whatever its case, in the history and on the screen, from the
-    /// match found before (the selection) or else from the view, going `direction`; a
-    /// match found is selected and scrolled into view, a few lines below its top, as the
-    /// C# terminal does. False when there is none that way.
-    pub fn find(&mut self, query: &str, direction: FindDirection) -> bool {
+    /// Looks for `query`, whatever its case, in the history and on the screen, as the C#
+    /// terminal does: every match is listed; the first look lands on the first match at or
+    /// after the top of the view (the last one above it, going up), the next ones step from
+    /// the match found (the selection) and wrap around. The match is selected and scrolled
+    /// into view, a few lines below its top. Where it is among them all; none when nothing
+    /// matches, the selection then cleared.
+    pub fn find(&mut self, query: &str, direction: FindDirection) -> Option<Found> {
         let query = query.to_lowercase();
         if query.is_empty() {
-            return false;
+            return None;
         }
-        let step = match direction {
-            FindDirection::Down => 1,
-            FindDirection::Up => -1,
-        };
         let (top, bottom) = (self.term.topmost_line(), self.term.bottommost_line());
+        let mut matches = Vec::new();
+        let mut line = top;
+        while line <= bottom {
+            matches.extend(
+                self.matches_in(line, &query)
+                    .into_iter()
+                    .map(|(start, end)| (line, start, end)),
+            );
+            line += 1;
+        }
+        let total = matches.len();
+        if total == 0 {
+            self.term.selection = None;
+            return None;
+        }
         let view_top = Line(-to_i32(self.display_offset()));
-        let before = self
+        let current = self
             .term
             .selection
             .as_ref()
             .and_then(|selection| selection.to_range(&self.term))
-            .map(|range| range.start.line);
-        let mut line = match (before, direction) {
-            (Some(line), _) => line + step,
-            (None, FindDirection::Down) => view_top,
-            (None, FindDirection::Up) => view_top + to_i32(self.term.screen_lines()) - 1,
+            .and_then(|range| {
+                matches
+                    .iter()
+                    .position(|(line, start, _)| Point::new(*line, *start) == range.start)
+            });
+        let index = match (current, direction) {
+            (Some(at), FindDirection::Down) => (at + 1) % total,
+            (Some(at), FindDirection::Up) => (at + total - 1) % total,
+            (None, FindDirection::Down) => matches
+                .iter()
+                .position(|(line, ..)| *line >= view_top)
+                .unwrap_or(0),
+            (None, FindDirection::Up) => matches
+                .iter()
+                .rposition(|(line, ..)| *line < view_top)
+                .unwrap_or(total - 1),
         };
-        while line >= top && line <= bottom {
-            if let Some((start, end)) = self.match_in(line, &query) {
-                let mut selection =
-                    Selection::new(SelectionType::Simple, Point::new(line, start), Side::Left);
-                selection.update(Point::new(line, end), Side::Right);
-                self.term.selection = Some(selection);
-                // Scrolling stops at either end of the history by itself.
-                let offset = FIND_CONTEXT_LINES - line.0;
-                self.term
-                    .scroll_display(Scroll::Delta(offset - to_i32(self.display_offset())));
-                return true;
-            }
-            line += step;
-        }
-        false
+        let (line, start, end) = matches[index];
+        let mut selection =
+            Selection::new(SelectionType::Simple, Point::new(line, start), Side::Left);
+        selection.update(Point::new(line, end), Side::Right);
+        self.term.selection = Some(selection);
+        // Scrolling stops at either end of the history by itself.
+        let offset = FIND_CONTEXT_LINES - line.0;
+        self.term
+            .scroll_display(Scroll::Delta(offset - to_i32(self.display_offset())));
+        Some(Found {
+            index: index + 1,
+            total,
+        })
     }
 
-    /// The first and last columns of `query`, already lower case, in `line`.
-    fn match_in(&self, line: Line, query: &str) -> Option<(Column, Column)> {
+    /// The first and last columns of each match of `query`, already lower case, in `line`,
+    /// left to right, none overlapping.
+    fn matches_in(&self, line: Line, query: &str) -> Vec<(Column, Column)> {
         let row = &self.term.grid()[line];
         let mut text = String::new();
         let mut columns = Vec::new();
@@ -554,10 +587,17 @@ impl Terminal {
                 columns.push(col);
             }
         }
-        let at = text.find(query)?;
-        let first = text[..at].chars().count();
-        let last = first + query.chars().count() - 1;
-        Some((Column(columns[first]), Column(columns[last])))
+        let length = query.chars().count();
+        let mut found = Vec::new();
+        let mut from = 0;
+        while let Some(at) = text[from..].find(query) {
+            let byte = from + at;
+            let first = text[..byte].chars().count();
+            let last = first + length - 1;
+            found.push((Column(columns[first]), Column(columns[last])));
+            from = byte + query.len();
+        }
+        found
     }
 
     /// Starts a selection at `at`.

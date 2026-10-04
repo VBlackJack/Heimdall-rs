@@ -18,7 +18,7 @@
 //! right of the terminal; the terminal itself finds.
 
 use heimdall_app::TabId;
-use heimdall_term::FindDirection;
+use heimdall_term::{FindDirection, Found};
 use iced::widget::{button, container, row, text, text_input};
 use iced::{Element, Length};
 
@@ -31,7 +31,7 @@ const FIELD_WIDTH: f32 = 220.0;
 /// Room around the bar and between its parts.
 const SPACING: f32 = 4.0;
 
-/// Size of "No match".
+/// Size of "No match" and of the count.
 const NOTE_SIZE: f32 = 12.0;
 
 /// The search bar of one tab's terminal.
@@ -63,8 +63,8 @@ pub fn field_id() -> iced::widget::Id {
     iced::widget::Id::new("terminal-find")
 }
 
-/// The bar; `missed` when what is typed was looked for and not found.
-pub fn view<'a>(finder: &Finder, missed: bool, shift: bool) -> Element<'a, Message> {
+/// The bar; `found` where what is typed, once looked for, was found, none when it was not.
+pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'a, Message> {
     let direction = if shift {
         FindDirection::Up
     } else {
@@ -79,8 +79,15 @@ pub fn view<'a>(finder: &Finder, missed: bool, shift: bool) -> Element<'a, Messa
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center);
-    if missed && finder.searched.as_deref() == Some(finder.query.as_str()) {
-        bar = bar.push(text(fl!("ui-find-nothing")).size(NOTE_SIZE));
+    // Said only of what was looked for: typing more is a new search.
+    if finder.searched.as_deref() == Some(finder.query.as_str()) {
+        bar = bar.push(
+            text(match found {
+                Some(found) => fl!("ui-find-count", index = found.index, total = found.total),
+                None => fl!("ui-find-nothing"),
+            })
+            .size(NOTE_SIZE),
+        );
     }
     bar = bar
         .push(

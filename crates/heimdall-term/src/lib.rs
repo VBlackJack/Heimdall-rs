@@ -40,6 +40,6 @@ pub use paste::encode_paste;
 pub use plain::PlainText;
 pub use terminal::{
     CellPixels, CellPoint, CellWidth, ClipboardPolicy, CursorStyle, FeedOutput, FindDirection,
-    GridSize, Screen, ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig,
+    Found, GridSize, Screen, ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig,
     TitleChange, Underline,
 };

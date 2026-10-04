@@ -1300,3 +1300,4 @@ ui-health-unsupported = Non pris en charge
 ui-health-cpu-value = { $percent } %
 ui-health-memory-value = { $used } / { $total } Mo
 ui-health-disk-value = { $used } / { $total }
+ui-find-count = { $index } / { $total }
