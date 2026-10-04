@@ -171,6 +171,12 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             }
             Notice::Bookmarked(path) => fl!("ui-files-bookmark-added", path = path.as_str()),
             Notice::FavoriteSaveFailed => fl!("ui-status-favorite-save-failed"),
+            Notice::BulkPortUpdated(count) => fl!("ui-status-bulk-port-updated", count = (*count)),
+            Notice::BulkPortUnchanged => fl!("ui-status-bulk-port-unchanged"),
+            Notice::BulkUsernameUpdated(count) => {
+                fl!("ui-status-bulk-username-updated", count = (*count))
+            }
+            Notice::BulkUsernameUnchanged => fl!("ui-status-bulk-username-unchanged"),
             Notice::KnownHostsExported {
                 count,
                 path,

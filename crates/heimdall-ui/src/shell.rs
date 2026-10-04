@@ -1494,7 +1494,8 @@ impl Shell {
                 TreeMenu::ConnectAs(_)
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::MoveProfile(_)
-                | TreeMenu::MoveSelection,
+                | TreeMenu::MoveSelection
+                | TreeMenu::EditSelection,
                 Some((_, at)),
             ) => *at,
             _ => self.cursor.get(),
@@ -1674,7 +1675,8 @@ impl Shell {
                 | Dialog::RenameTab { .. }
                 | Dialog::CustomResolution { .. }
                 | Dialog::FolderName { .. }
-                | Dialog::RenameProfile { .. },
+                | Dialog::RenameProfile { .. }
+                | Dialog::BulkEdit { .. },
             ) => (Some(DialogFocus::Name), name_field_id()),
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
             Some(Dialog::Pin(_)) => (Some(DialogFocus::Pin), vault_field_id(0)),
@@ -2116,6 +2118,12 @@ impl Shell {
             )
         } else if let TreeMenu::MoveSelection = menu {
             tree_view::move_selection_entries(&self.app.folder_paths())
+        } else if let TreeMenu::EditSelection = menu {
+            let selected = self.app.selected_profiles();
+            tree_view::edit_selection_entries(
+                self.app
+                    .bulk_targets(&selected, heimdall_app::BulkField::Username),
+            )
         } else {
             let profile = match menu {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
@@ -2128,6 +2136,7 @@ impl Shell {
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
+                | TreeMenu::EditSelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::Resolution(_)
@@ -5548,6 +5557,63 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
 }
 
 /// A new name for a profile, its present one written in.
+/// One value for `count` profiles, as the C# bulk edit dialog asks it: what and for how
+/// many, the field, empty and saying so when they differed, and why a value was refused.
+fn bulk_edit_dialog(
+    field: heimdall_app::BulkField,
+    count: usize,
+    value: &str,
+    mixed: bool,
+    refused: Option<heimdall_app::BulkRefusal>,
+) -> Element<'_, Message> {
+    use heimdall_app::{BulkField, BulkRefusal};
+
+    let (header, label, mixed_hint) = match field {
+        BulkField::Port => (
+            fl!("ui-bulk-port-header", count = count),
+            fl!("ui-bulk-port-label"),
+            fl!("ui-bulk-port-mixed"),
+        ),
+        BulkField::Username => (
+            fl!("ui-bulk-username-header", count = count),
+            fl!("ui-bulk-username-label"),
+            fl!("ui-bulk-username-mixed"),
+        ),
+    };
+    let placeholder = if mixed { mixed_hint } else { String::new() };
+    let mut body = column![
+        text(header).size(HEADING_SIZE),
+        text(label),
+        text_input(&placeholder, value)
+            .id(name_field_id())
+            .on_input(|value| {
+                Message::App(AppMessage::Selection(SelectionMessage::BulkEdited(value)))
+            })
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+    ]
+    .spacing(SPACING);
+    if let Some(refused) = refused {
+        body = body.push(
+            text(match refused {
+                BulkRefusal::Port => fl!("ui-bulk-port-invalid"),
+                BulkRefusal::Username => fl!("ui-bulk-username-invalid"),
+            })
+            .style(text::danger),
+        );
+    }
+    body.push(
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-ok-button")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    )
+    .into()
+}
+
 fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
     column![
         text(fl!("ui-tree-rename-title")).size(HEADING_SIZE),
@@ -5632,6 +5698,13 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-folder-delete"),
         ),
         Dialog::RenameProfile { value, .. } => return rename_profile_dialog(value),
+        Dialog::BulkEdit {
+            field,
+            ids,
+            value,
+            mixed,
+            refused,
+        } => return bulk_edit_dialog(*field, ids.len(), value, *mixed, *refused),
         Dialog::ConfirmDeleteProfiles { ids, names } => (
             fl!("ui-dialog-delete-selection-title"),
             std::iter::once(fl!("ui-dialog-delete-selection-body", count = ids.len()))
@@ -6603,6 +6676,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmDeleteFolder { .. }
         | Dialog::ConfirmConnectFolder { .. }
         | Dialog::RenameProfile { .. }
+        | Dialog::BulkEdit { .. }
         | Dialog::ConfirmDeleteProfiles { .. } => folder_dialog(dialog),
         Dialog::ConfirmBroadcast | Dialog::ConfirmExit { .. } | Dialog::ConfirmSessionLogging => {
             let (title, body, action) = window_question(dialog);

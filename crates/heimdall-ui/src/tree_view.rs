@@ -20,6 +20,7 @@
 
 use std::sync::{Arc, Mutex, PoisonError};
 
+use heimdall_app::BulkField;
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
@@ -90,6 +91,8 @@ pub enum TreeMenu {
     Selection,
     /// Which folder the profiles selected together can move to.
     MoveSelection,
+    /// What can be set on the profiles selected together at once.
+    EditSelection,
     /// The server's folders bookmarked in a Files tab.
     FilesBookmarks(TabId),
     /// The menu of a row of the tunnels panel, as the C# one.
@@ -1204,6 +1207,12 @@ pub fn selection_menu_entries<'a>(
         ))
         .push(separator())
         .push(
+            button(text(fl!("ui-selection-edit")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::EditSelection)),
+        )
+        .push(
             button(text(fl!("ui-tree-move-to-folder")).size(MENU_TEXT_SIZE))
                 .width(Length::Fill)
                 .style(menu_style)
@@ -1218,6 +1227,21 @@ pub fn selection_menu_entries<'a>(
                     SelectionMessage::RequestDelete,
                 ))),
         );
+    menu_card(entries).into()
+}
+
+/// What the profiles selected together can be set at once, as the C# "Edit" menu: their
+/// port, and the account of the `usernames` among them that take one.
+pub fn edit_selection_entries<'a>(usernames: usize) -> Element<'a, Message> {
+    let edit = |field| Some(AppMessage::Selection(SelectionMessage::Edit(field)));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-selection-edit-port"), edit(BulkField::Port)))
+        .push(entry(
+            fl!("ui-selection-edit-username", count = usernames),
+            edit(BulkField::Username).filter(|_| usernames > 0),
+        ));
     menu_card(entries).into()
 }
 

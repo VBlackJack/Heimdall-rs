@@ -50,6 +50,10 @@ pub enum SelectionMessage {
     Move(Option<String>),
     /// Mark every one selected as a favorite, or none of them.
     Favorite(bool),
+    /// Set a field of every one selected that has it, as the C# "Edit" menu.
+    Edit(super::BulkField),
+    /// The value typed for them.
+    BulkEdited(String),
     /// Delete every one selected, once asked.
     RequestDelete,
 }
@@ -113,6 +117,14 @@ impl App {
                         detail: error.to_string(),
                     });
                 }
+                Vec::new()
+            }
+            SelectionMessage::Edit(field) => {
+                self.open_bulk_edit(field);
+                Vec::new()
+            }
+            SelectionMessage::BulkEdited(value) => {
+                self.bulk_edited(value);
                 Vec::new()
             }
             SelectionMessage::Favorite(favorite) => {

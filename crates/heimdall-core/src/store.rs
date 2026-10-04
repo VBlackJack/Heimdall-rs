@@ -587,6 +587,69 @@ impl ProfileStore {
             .is_some()
     }
 
+    /// Sets the port profile `id` connects to, as the C# bulk edit does; whether it changed.
+    /// A local shell has none.
+    pub fn set_port(&mut self, id: &ProfileId, port: u16) -> bool {
+        match self.port_mut(id) {
+            Some(current) if *current != port => {
+                *current = port;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Sets the account profile `id` logs in with, as the C# bulk edit does for SSH, SFTP,
+    /// RDP, FTP and `WinRM`; whether it changed. The other protocols name none.
+    pub fn set_username(&mut self, id: &ProfileId, username: &str) -> bool {
+        let username = Some(username.to_owned());
+        match self.username_mut(id) {
+            Some(current) if *current != username => {
+                *current = username;
+                true
+            }
+            _ => false,
+        }
+    }
+
+    fn port_mut(&mut self, id: &ProfileId) -> Option<&mut u16> {
+        if let Some(profile) = self.ssh.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.port);
+        }
+        if let Some(profile) = self.rdp.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.port);
+        }
+        if let Some(profile) = self.telnet.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.port);
+        }
+        if let Some(profile) = self.vnc.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.port);
+        }
+        if let Some(profile) = self.winrm.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.port);
+        }
+        self.ftp
+            .iter_mut()
+            .find(|profile| profile.id == *id)
+            .map(|profile| &mut profile.port)
+    }
+
+    fn username_mut(&mut self, id: &ProfileId) -> Option<&mut Option<String>> {
+        if let Some(profile) = self.ssh.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.username);
+        }
+        if let Some(profile) = self.rdp.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.username);
+        }
+        if let Some(profile) = self.winrm.iter_mut().find(|profile| profile.id == *id) {
+            return Some(&mut profile.username);
+        }
+        self.ftp
+            .iter_mut()
+            .find(|profile| profile.id == *id)
+            .map(|profile| &mut profile.username)
+    }
+
     /// Names profile `id`, of any protocol, `name`, trimmed; whether it is saved and the
     /// name is not empty. A profile the password manager knows by its name keeps being
     /// found: its old name becomes its vault entry name, as the C# rename freezes it.
