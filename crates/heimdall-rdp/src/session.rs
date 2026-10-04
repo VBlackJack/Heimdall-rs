@@ -359,11 +359,17 @@ impl Held {
     }
 
     /// The server copied `image`: it reaches this side's clipboard, and is not offered
-    /// back.
-    fn received_image(&mut self, image: &[u8]) {
-        self.image = Some(fingerprint(image));
-        self.text = None;
+    /// back; whether it is new, the same one announced again being written once. The text
+    /// remembered stays: should the image not reach this side's clipboard, the text there
+    /// is not offered back over the server's image.
+    fn received_image(&mut self, image: &[u8]) -> bool {
+        let seen = fingerprint(image);
+        if self.image == Some(seen) {
+            return false;
+        }
+        self.image = Some(seen);
         self.files = None;
+        true
     }
 
     /// Whether `paths` are new to the server; remembered when they are.
@@ -920,8 +926,9 @@ impl Running {
                 return Ok(());
             }
             ClipboardStep::Request(Request::ReceivedImage(image)) => {
-                shared.held.received_image(&image);
-                let _ = self.events.send(RdpEvent::RemoteImage(image)).await;
+                if shared.held.received_image(&image) {
+                    let _ = self.events.send(RdpEvent::RemoteImage(image)).await;
+                }
                 return Ok(());
             }
             ClipboardStep::Request(Request::FileContents { request, entry }) => {
@@ -1403,12 +1410,21 @@ mod tests {
     fn the_servers_image_is_not_offered_back_and_text_and_image_take_each_others_place() {
         let mut held = Held::default();
         let image = [1_u8, 2, 3];
-        held.received_image(&image);
+        assert!(held.new_text("copied here"));
+        assert!(held.received_image(&image));
+        assert!(
+            !held.received_image(&image),
+            "announced again: written once"
+        );
         assert!(
             !held.new_image(&image),
             "written to this side's clipboard, then read when the tab is shown"
         );
-        assert!(held.new_text("copied here"));
+        assert!(
+            !held.new_text("copied here"),
+            "the image not written here: the old text is not offered over it"
+        );
+        assert!(held.new_text("copied since"));
         assert!(held.new_image(&image), "copied here again since");
         assert!(!held.new_image(&image));
         assert!(held.new_text("copied here"), "the image took its place");

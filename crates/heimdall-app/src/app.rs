@@ -967,7 +967,7 @@ pub enum Effect {
     },
     /// Read the clipboard for the desktop of `tab`, which shares it: the files copied in
     /// Explorer, sent as [`Message::ClipboardFiles`], or else its text, sent as
-    /// [`Message::ClipboardText`].
+    /// [`Message::ClipboardText`], or else its image, sent as [`Message::ClipboardImage`].
     ReadDesktopClipboard {
         /// Tab.
         tab: TabId,

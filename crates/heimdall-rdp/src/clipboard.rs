@@ -42,6 +42,21 @@ use crate::clipboard_files::Entry;
 /// what waits behind it is asked.
 const ANSWER_WAIT_MS: u64 = 30_000;
 
+/// How long an image is waited for, in milliseconds: one at its largest takes about a minute
+/// on a slow link, and an answer coming after its wait would be taken for the next one's.
+const IMAGE_ANSWER_WAIT_MS: u64 = 300_000;
+
+/// Whether the server's images are asked for: on Windows only, where they reach this side's
+/// clipboard. Elsewhere one would be fetched for nothing.
+const TAKES_IMAGES: bool = cfg!(windows);
+
+/// The sizes of the headers a device-independent bitmap may start with: `BITMAPINFOHEADER`,
+/// its versions with colour masks, `BITMAPV4HEADER` and `BITMAPV5HEADER`.
+const BITMAP_HEADER_SIZES: [u32; 5] = [40, 52, 56, 108, 124];
+
+/// The bits a pixel of a device-independent bitmap may take.
+const BITMAP_BIT_COUNTS: [u16; 7] = [0, 1, 4, 8, 16, 24, 32];
+
 /// Longest text taken from the server, in bytes of UTF-16: a larger one is dropped, not cut.
 pub const MAX_REMOTE_TEXT_BYTES: usize = 8 * 1024 * 1024;
 
@@ -196,10 +211,14 @@ impl ClipboardBackend {
 
     /// As [`Self::expire`], at `now`.
     fn expire_at(&mut self, now: u64) {
-        if self
-            .asked
-            .is_some_and(|(_, since)| now.saturating_sub(since) >= ANSWER_WAIT_MS)
-        {
+        if self.asked.is_some_and(|(asked, since)| {
+            let wait = if asked == Asked::Image {
+                IMAGE_ANSWER_WAIT_MS
+            } else {
+                ANSWER_WAIT_MS
+            };
+            now.saturating_sub(since) >= wait
+        }) {
             self.answered();
         }
     }
@@ -252,11 +271,40 @@ pub(crate) fn offered_formats(offered: &Offered) -> Vec<ClipboardFormat> {
 }
 
 /// The server's image in `response`, when it is one and not too large: a device-independent
-/// bitmap, at least its header.
+/// bitmap whose header reads as one, so that nothing else is handed to this side's
+/// clipboard as an image.
 pub(crate) fn image_of(response: &FormatDataResponse<'_>) -> Option<Vec<u8>> {
     let data = response.data();
-    (!response.is_error() && (BITMAP_INFO_HEADER_LEN..=MAX_IMAGE_BYTES).contains(&data.len()))
-        .then(|| data.to_vec())
+    (!response.is_error()
+        && (BITMAP_INFO_HEADER_LEN..=MAX_IMAGE_BYTES).contains(&data.len())
+        && is_bitmap(data))
+    .then(|| data.to_vec())
+}
+
+/// Whether `data` starts as a device-independent bitmap does: a known header size, a width,
+/// a height, one plane and a known number of bits a pixel.
+fn is_bitmap(data: &[u8]) -> bool {
+    let u32_at = |at: usize| {
+        data.get(at..at + 4)
+            .and_then(|bytes| <[u8; 4]>::try_from(bytes).ok())
+            .map(u32::from_le_bytes)
+    };
+    let u16_at = |at: usize| {
+        data.get(at..at + 2)
+            .and_then(|bytes| <[u8; 2]>::try_from(bytes).ok())
+            .map(u16::from_le_bytes)
+    };
+    let header = u32_at(0).filter(|size| BITMAP_HEADER_SIZES.contains(size));
+    let header_fits = header
+        .and_then(|size| usize::try_from(size).ok())
+        .is_some_and(|size| size <= data.len());
+    let width = u32_at(4).and_then(|width| i32::try_from(width).ok());
+    let height = u32_at(8).map(u32::cast_signed);
+    header_fits
+        && width.is_some_and(|width| width > 0)
+        && height.is_some_and(|height| height != 0)
+        && u16_at(12) == Some(1)
+        && u16_at(14).is_some_and(|bits| BITMAP_BIT_COUNTS.contains(&bits))
 }
 
 /// The server's text in `response`, when it is text and not too large.
@@ -310,11 +358,17 @@ impl CliprdrBackend for ClipboardBackend {
             })
             .map(ClipboardFormat::id);
         self.post(Request::RemoteFiles(self.remote_files.is_some()));
+        // The server took the clipboard: an image this side offered is no longer kept.
+        let mut offered = self.offered.lock().unwrap_or_else(PoisonError::into_inner);
+        if matches!(*offered, Some(Offer::Image(_))) {
+            *offered = None;
+        }
+        drop(offered);
         let offers = |id| available_formats.iter().any(|format| format.id() == id);
         // Text first, as the clipboard is read here; an image when there is no text.
         if offers(ClipboardFormatId::CF_UNICODETEXT) {
             self.post(Request::Paste);
-        } else if offers(ClipboardFormatId::CF_DIB) {
+        } else if TAKES_IMAGES && offers(ClipboardFormatId::CF_DIB) {
             self.post(Request::PasteImage);
         }
     }
@@ -457,7 +511,11 @@ mod tests {
             requests.try_recv(),
             Ok(Request::RemoteFiles(false))
         ));
-        assert!(matches!(requests.try_recv(), Ok(Request::PasteImage)));
+        assert_eq!(
+            matches!(requests.try_recv(), Ok(Request::PasteImage)),
+            cfg!(windows),
+            "an image is asked for where it reaches the clipboard"
+        );
         backend.on_remote_copy(&[
             ClipboardFormat::new(ClipboardFormatId::CF_DIB),
             ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT),
@@ -507,10 +565,45 @@ mod tests {
         assert!(answer.is_error(), "nothing offered: nothing given");
     }
 
+    /// A device-independent bitmap of `width` by `height` pixels, 32 bits each.
+    fn bitmap(width: u32, height: i32) -> Vec<u8> {
+        let mut image = Vec::new();
+        image.extend_from_slice(&40_u32.to_le_bytes());
+        image.extend_from_slice(&width.to_le_bytes());
+        image.extend_from_slice(&height.to_le_bytes());
+        image.extend_from_slice(&1_u16.to_le_bytes());
+        image.extend_from_slice(&32_u16.to_le_bytes());
+        image.resize(40, 0);
+        let pixels = width as usize * height.unsigned_abs() as usize;
+        image.resize(40 + 4 * pixels, 0x7f);
+        image
+    }
+
+    #[test]
+    fn only_what_reads_as_a_bitmap_is_taken_for_the_servers_image() {
+        let image = |data: Vec<u8>| image_of(&FormatDataResponse::new_data(data));
+        assert!(image(bitmap(2, 2)).is_some());
+        assert!(image(bitmap(2, -2)).is_some(), "top down");
+        let mut text: Vec<u8> = "a copied sentence, as long as a header or longer"
+            .encode_utf16()
+            .flat_map(u16::to_le_bytes)
+            .collect();
+        text.resize(120, 0);
+        assert!(image(text).is_none(), "text answered late is not an image");
+        let mut planes = bitmap(2, 2);
+        planes[12] = 2;
+        assert!(image(planes).is_none());
+        let mut bits = bitmap(2, 2);
+        bits[14] = 7;
+        assert!(image(bits).is_none());
+        assert!(image(bitmap(0, 2)).is_none(), "no width");
+        assert!(image(bitmap(2, 0)).is_none(), "no height");
+    }
+
     #[test]
     fn an_image_goes_both_ways_as_a_bitmap_within_its_size() {
         let (mut backend, mut requests, offered) = backend(None);
-        let image: Vec<u8> = (0..60_u8).collect();
+        let image = bitmap(3, 5);
         *offered.lock().expect("lock") = Some(Offer::Image(image.clone().into()));
         assert_eq!(
             offered_formats(&offered),
@@ -542,11 +635,17 @@ mod tests {
             image_of(&FormatDataResponse::new_data(vec![0; 39])).is_none(),
             "no header"
         );
+        let mut huge = bitmap(1, 1);
+        huge.resize(MAX_IMAGE_BYTES + 1, 0);
         assert!(
-            image_of(&FormatDataResponse::new_data(vec![0; MAX_IMAGE_BYTES + 1])).is_none(),
+            image_of(&FormatDataResponse::new_data(huge)).is_none(),
             "too large: dropped"
         );
         assert!(image_of(&FormatDataResponse::new_error()).is_none());
+
+        // The server copies: the image offered is no longer kept.
+        backend.on_remote_copy(&[ClipboardFormat::new(ClipboardFormatId::CF_UNICODETEXT)]);
+        assert!(offered.lock().expect("lock").is_none());
     }
 
     #[test]
