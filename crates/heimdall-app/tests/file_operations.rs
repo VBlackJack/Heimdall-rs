@@ -2044,3 +2044,71 @@ async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one()
         "the external editor still takes it"
     );
 }
+
+#[tokio::test]
+async fn a_save_answered_after_a_reconnection_reaches_the_editor_where_it_went() {
+    use heimdall_app::integrated_edit::EditorNotice;
+    use heimdall_app::text_codec::TextEncoding;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, id) = editing_inside(dir.path(), TextEncoding::Utf8 { bom: false }).await;
+    files(
+        &mut app,
+        FilesMessage::EditorChanged {
+            tab,
+            id,
+            dirty: true,
+        },
+    );
+    let sent = files(
+        &mut app,
+        FilesMessage::EditorSave {
+            tab,
+            id,
+            text: "new".to_owned(),
+            overwrite: false,
+        },
+    );
+    assert!(matches!(sent.as_slice(), [Effect::SaveEditor { .. }]));
+    app.update(Message::ReconnectTab(tab));
+    let reopened = app.active.expect("a tab shown");
+    assert_ne!(reopened, tab);
+
+    // The answer names the tab the save started in: it reaches the editor all the same.
+    files(
+        &mut app,
+        FilesMessage::EditorSaved {
+            tab,
+            id,
+            result: Err(FilesError::SessionClosed),
+            dirty: true,
+        },
+    );
+    let edit = open_editor(&app, reopened).expect("moved");
+    assert!(!edit.saving, "not stuck saving");
+    assert_eq!(
+        edit.notice,
+        Some(EditorNotice::Failed(FilesError::SessionClosed))
+    );
+}
+
+#[tokio::test]
+async fn closing_the_editor_never_takes_the_place_of_another_question() {
+    use heimdall_app::text_codec::TextEncoding;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab, id) = editing_inside(dir.path(), TextEncoding::Utf8 { bom: false }).await;
+    files(
+        &mut app,
+        FilesMessage::EditorChanged {
+            tab,
+            id,
+            dirty: true,
+        },
+    );
+    app.update(Message::RequestCloseTab(tab));
+    let asked = app.dialog.clone();
+    assert!(matches!(asked, Some(Dialog::ConfirmCloseEditor { .. })));
+    files(&mut app, FilesMessage::EditorClose { tab, id });
+    assert_eq!(app.dialog, asked, "the question on screen stays");
+}

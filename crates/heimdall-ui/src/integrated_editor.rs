@@ -27,7 +27,7 @@ use heimdall_app::text_codec::TextEncoding;
 use heimdall_app::{App, Effect, FilesMessage, Message as AppMessage};
 use heimdall_app::{EditorId, TabId};
 use iced::keyboard::{Key, key::Named};
-use iced::widget::text_editor::{Action, Binding, Content, Edit, KeyPress, LineEnding};
+use iced::widget::text_editor::{self, Action, Binding, Content, Edit, KeyPress, LineEnding};
 use iced::widget::{Space, button, column, container, row, text, text_editor as editor};
 use iced::{Element, Font, Length, Task};
 
@@ -166,19 +166,40 @@ impl Editors {
                 app.update(files(FilesMessage::EditorOpened { tab, id, result }))
             }
             EditorMessage::Action { tab, id, action } => {
+                // Under a question, the text is not the user's to change.
+                if app.dialog.is_some() {
+                    return Vec::new();
+                }
                 let Some(buffer) = self.buffers.get_mut(&id) else {
                     return Vec::new();
                 };
-                let Action::Edit(edit) = action else {
-                    buffer.content.perform(action);
-                    return Vec::new();
+                let edit = match action {
+                    Action::Edit(edit) => edit,
+                    // Plain selections, whose bounds the undo history can read.
+                    Action::SelectWord => {
+                        crate::editor_history::select_word(&mut buffer.content);
+                        return Vec::new();
+                    }
+                    Action::SelectLine => {
+                        crate::editor_history::select_line(&mut buffer.content);
+                        return Vec::new();
+                    }
+                    action => {
+                        buffer.content.perform(action);
+                        return Vec::new();
+                    }
                 };
                 let was = buffer.history.is_dirty();
                 let edit = file_ending(&buffer.content, edit);
                 buffer.history.edit(&mut buffer.content, edit);
                 changed(app, tab, id, was, buffer.history.is_dirty())
             }
-            EditorMessage::Key { tab, id, key } => self.key(app, tab, id, key),
+            EditorMessage::Key { tab, id, key } => {
+                if app.dialog.is_some() {
+                    return Vec::new();
+                }
+                self.key(app, tab, id, key)
+            }
             EditorMessage::Saved { tab, id, result } => {
                 let Some(buffer) = self.buffers.get_mut(&id) else {
                     return Vec::new();
@@ -209,6 +230,16 @@ impl Editors {
         };
         match key {
             EditorKey::Save | EditorKey::Overwrite => {
+                // A save under way keeps the version it started from; the core says it
+                // runs. The text is the real one all the same: never an empty file.
+                if buffer.saving.is_some() {
+                    return app.update(files(FilesMessage::EditorSave {
+                        tab,
+                        id,
+                        text: buffer.content.text(),
+                        overwrite: key == EditorKey::Overwrite,
+                    }));
+                }
                 buffer.saving = Some(buffer.history.version());
                 let effects = app.update(files(FilesMessage::EditorSave {
                     tab,
@@ -252,12 +283,34 @@ fn changed(app: &mut App, tab: TabId, id: EditorId, was: bool, dirty: bool) -> V
 
 /// Enter as the file ends its lines, not always LF.
 fn file_ending(content: &Content, edit: Edit) -> Edit {
-    match (edit, content.line_ending()) {
-        (Edit::Enter, Some(ending @ (LineEnding::CrLf | LineEnding::Cr | LineEnding::LfCr))) => {
+    let ending = document_ending(content);
+    match edit {
+        Edit::Enter if ending != LineEnding::Lf => {
             Edit::Paste(Arc::new(ending.as_str().to_owned()))
         }
-        (edit, _) => edit,
+        // Text pasted keeps the file's line endings, whatever the clipboard had.
+        Edit::Paste(text) if text.contains(['\r', '\n']) => {
+            let unified = text.replace("\r\n", "\n").replace('\r', "\n");
+            Edit::Paste(Arc::new(if ending == LineEnding::Lf {
+                unified
+            } else {
+                unified.replace('\n', ending.as_str())
+            }))
+        }
+        edit => edit,
     }
+}
+
+/// How the file ends its lines where the cursor is: the cursor's line, else the first's,
+/// else LF.
+fn document_ending(content: &Content) -> LineEnding {
+    let line = content.cursor().position.line;
+    [content.line(line), content.line(0)]
+        .into_iter()
+        .flatten()
+        .map(|line| line.ending)
+        .find(|ending| *ending != LineEnding::None)
+        .unwrap_or(LineEnding::Lf)
 }
 
 /// Runs the integrated editor's effects: the file read, the text saved.
@@ -312,14 +365,14 @@ fn editor_key(press: &KeyPress) -> Option<EditorKey> {
     }
 }
 
-/// The editor's keys: its own, Tab typing a tab, and the rest as any text field.
-fn binding(tab: TabId, id: EditorId, press: KeyPress) -> Option<Binding<Message>> {
+/// The editor's keys, only while it has the keyboard: its own, Tab typing a tab, and the
+/// rest as any text field. `ask` makes the message of one of its own.
+fn binding<M: Clone>(press: KeyPress, ask: impl Fn(EditorKey) -> M) -> Option<Binding<M>> {
+    if !matches!(press.status, text_editor::Status::Focused { .. }) {
+        return None;
+    }
     if let Some(key) = editor_key(&press) {
-        return Some(Binding::Custom(Message::Editor(EditorMessage::Key {
-            tab,
-            id,
-            key,
-        })));
+        return Some(Binding::Custom(ask(key)));
     }
     if press.key == Key::Named(Named::Tab) && press.modifiers.is_empty() {
         return Some(Binding::Insert('\t'));
@@ -383,7 +436,11 @@ pub fn view<'a>(
         .to_owned();
     let body = editor(&buffer.content)
         .on_action(move |action| Message::Editor(EditorMessage::Action { tab, id, action }))
-        .key_binding(move |press| binding(tab, id, press))
+        .key_binding(move |press| {
+            binding(press, |key| {
+                Message::Editor(EditorMessage::Key { tab, id, key })
+            })
+        })
         .font(Font::MONOSPACE)
         .height(Length::Fill)
         .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
@@ -470,7 +527,9 @@ mod tests {
     use iced::keyboard::{Key, Modifiers};
     use iced::widget::text_editor::{Content, Edit, KeyPress, Status};
 
-    use super::{EditorKey, editor_key, file_ending};
+    use iced::widget::text_editor::Binding;
+
+    use super::{EditorKey, binding, editor_key, file_ending};
 
     fn press(letter: &str, modifiers: Modifiers) -> KeyPress {
         let key = Key::Character(letter.into());
@@ -528,6 +587,44 @@ mod tests {
         let started = std::time::Instant::now();
         let _: Content = Content::with_text(&long);
         println!("one line of 2 MiB: with_text {:?}", started.elapsed());
+    }
+
+    #[test]
+    fn the_editors_keys_act_only_while_it_has_the_keyboard() {
+        let mut tab = press("s", Modifiers::CTRL);
+        assert!(matches!(
+            binding(tab.clone(), |key| key),
+            Some(Binding::Custom(EditorKey::Save))
+        ));
+        tab.status = Status::Active;
+        assert!(
+            binding(tab, |key| key).is_none(),
+            "under a dialog, in another field"
+        );
+        let mut typed = press("\t", Modifiers::empty());
+        typed.key = Key::Named(iced::keyboard::key::Named::Tab);
+        assert!(matches!(
+            binding(typed.clone(), |key| key),
+            Some(Binding::Insert('\t'))
+        ));
+        typed.status = Status::Hovered;
+        assert!(
+            binding(typed, |key| key).is_none(),
+            "no tab typed into a hidden text"
+        );
+    }
+
+    #[test]
+    fn text_pasted_ends_its_lines_as_the_file_does() {
+        let crlf: Content = Content::with_text("a\r\nb\r\n");
+        let pasted = Edit::Paste(std::sync::Arc::new("x\ny\r\nz\r".to_owned()));
+        assert!(
+            matches!(file_ending(&crlf, pasted.clone()), Edit::Paste(text) if text.as_str() == "x\r\ny\r\nz\r\n")
+        );
+        let lf: Content = Content::with_text("a\nb\n");
+        assert!(
+            matches!(file_ending(&lf, pasted), Edit::Paste(text) if text.as_str() == "x\ny\nz\n")
+        );
     }
 
     #[test]

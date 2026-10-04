@@ -27,6 +27,7 @@ use crate::text_codec::{TextEncoding, encode};
 impl App {
     /// A message of the integrated editor.
     pub(super) fn editor_message(&mut self, message: FilesMessage) -> Vec<Effect> {
+        let message = self.to_editor_tab(message);
         match message {
             FilesMessage::EditIntegrated { tab } => self.edit_integrated(tab),
             FilesMessage::EditorOpened { tab, id, result } => {
@@ -76,6 +77,27 @@ impl App {
             }
             _ => Vec::new(),
         }
+    }
+
+    /// `message`, addressed to the tab its editor is in now: a reconnection moves the
+    /// editor to a new tab while a read or a save for it runs.
+    fn to_editor_tab(&self, mut message: FilesMessage) -> FilesMessage {
+        if let FilesMessage::EditorOpened { tab, id, .. }
+        | FilesMessage::EditorChanged { tab, id, .. }
+        | FilesMessage::EditorSave { tab, id, .. }
+        | FilesMessage::EditorSaved { tab, id, .. }
+        | FilesMessage::EditorClose { tab, id } = &mut message
+            && let Some(found) = self.tabs.iter().find(|found| {
+                found
+                    .files
+                    .as_ref()
+                    .and_then(|files| files.editor.as_ref())
+                    .is_some_and(|edit| edit.id == *id)
+            })
+        {
+            *tab = found.id;
+        }
+        message
     }
 
     /// The integrated editor `id` of `tab`, while it is the one open.
@@ -209,6 +231,10 @@ impl App {
     /// Closes the integrated editor: not while it saves, and asked first when its text is
     /// not saved.
     fn editor_close(&mut self, tab: TabId, id: EditorId) {
+        // Another question on screen is answered first: never replaced.
+        if self.dialog.is_some() {
+            return;
+        }
         let Some(files) = self.files_mut(tab) else {
             return;
         };

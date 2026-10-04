@@ -3064,14 +3064,7 @@ impl App {
 
     fn request_close(&mut self, tab_id: TabId) -> Vec<Effect> {
         match self.tab(tab_id) {
-            // Its transfers would be cancelled: said, as the C# Files tab says it.
-            Some(tab) if tab.files.as_ref().is_some_and(|files| files.running() > 0) => {
-                self.dialog = Some(Dialog::ConfirmCloseTransfers {
-                    tab: tab_id,
-                    name: tab.display_title().to_owned(),
-                });
-            }
-            // Its editor's text would be lost: said, as the C# close guard.
+            // Its editor's text would be lost: said first, as the C# close guard.
             Some(tab) if tab.holds_unsaved_text() => {
                 let name = tab
                     .files
@@ -3080,6 +3073,13 @@ impl App {
                     .map(|edit| edit.name.clone())
                     .unwrap_or_default();
                 self.dialog = Some(Dialog::ConfirmCloseEditor { tab: tab_id, name });
+            }
+            // Its transfers would be cancelled: said, as the C# Files tab says it.
+            Some(tab) if tab.files.as_ref().is_some_and(|files| files.running() > 0) => {
+                self.dialog = Some(Dialog::ConfirmCloseTransfers {
+                    tab: tab_id,
+                    name: tab.display_title().to_owned(),
+                });
             }
             // Its edits' next saves would no longer be sent: said, as the C# close guard.
             Some(tab)
