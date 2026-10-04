@@ -240,11 +240,12 @@ async fn run(
     .await
     {
         Ok(Routed { server, gateway }) => {
+            let weak = server.downgrade();
             match open_forwards(request.profile.forwards, gateway.as_ref()).await {
                 Ok(forwards) => server
                     .open_shell(&request.options, request.cancel.clone())
                     .await
-                    .map(|session| (session, forwards, gateway)),
+                    .map(|session| (session, forwards, gateway, weak)),
                 Err(error) => Err(error),
             }
         }
@@ -252,7 +253,7 @@ async fn run(
     };
     // The forwards and the gateway, whose drop would disconnect it and the server carried
     // over it, last as long as the session: they go when this attempt returns.
-    let (session, _forwards, _gateway) = match result {
+    let (session, _forwards, _gateway, weak) = match result {
         Ok(opened) => opened,
         Err(ConnectError::UnknownHostKey { host, port, key }) => {
             let fingerprint = fingerprint(&key);
@@ -294,6 +295,8 @@ async fn run(
         sink.close();
         return;
     }
+    // The server health panel asks over the session's own connection, never keeping it.
+    let _ = events.send(ConnectionEvent::SshConnection(weak)).await;
     // The steps stop with the session: when this attempt returns, or when the tab asks.
     let steps = request.profile.post_connect.to_run();
     let stop = request.cancel.child_token();

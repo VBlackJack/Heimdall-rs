@@ -775,6 +775,21 @@ pub struct TabMenuState {
     pub transcript: TranscriptEntry,
     /// It shows a remote desktop whose size can be chosen: an RDP one.
     pub resolution: bool,
+    /// Its server health panel, for an SSH shell: shown or not.
+    pub health: Option<bool>,
+}
+
+/// The tab menu's entry showing or hiding an SSH shell's server health panel.
+fn health_entry<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
+    let label = if shown {
+        fl!("ui-tab-menu-hide-health")
+    } else {
+        fl!("ui-tab-menu-show-health")
+    };
+    entry(
+        label,
+        Some(AppMessage::TabMenu(TabMenuMessage::ToggleHealth(tab))),
+    )
 }
 
 /// What an RDP tab's "Resolution" menu shows.
@@ -1001,6 +1016,9 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::StopTranscript(tab)),
         )),
     };
+    if let Some(shown) = state.health {
+        entries = entries.push(health_entry(tab, shown));
+    }
     let close = |group| menu(TabMenuMessage::Close { tab, group });
     entries = entries
         .push(separator())

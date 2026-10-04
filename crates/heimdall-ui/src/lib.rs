@@ -26,6 +26,7 @@ pub mod export_file;
 pub mod file_import_view;
 mod files_view;
 pub mod finder;
+mod health_view;
 pub mod hostkeys_view;
 pub mod i18n;
 mod integrated_editor;

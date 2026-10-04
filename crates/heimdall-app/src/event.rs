@@ -125,6 +125,9 @@ pub enum ConnectionEvent {
     },
     /// The server copied this text: it goes to this side's clipboard.
     RemoteClipboard(Zeroizing<String>),
+    /// The SSH shell's connection, held without keeping it open: its server health is
+    /// asked over it.
+    SshConnection(heimdall_ssh::WeakConnection),
     /// The files copied on this side were not offered to the RDP server.
     RdpFilesRefused(CopyRefusal),
     /// The RDP server's clipboard holds files to save here, or no longer.
@@ -251,6 +254,7 @@ impl fmt::Debug for ConnectionEvent {
             Self::RdpReady { .. } => f.write_str("RdpReady"),
             // What was copied can be a password: never shown.
             Self::RemoteClipboard(_) => f.write_str("RemoteClipboard(..)"),
+            Self::SshConnection(_) => f.write_str("SshConnection"),
             Self::RdpFilesRefused(refusal) => write!(f, "RdpFilesRefused({refusal:?})"),
             Self::RdpRemoteFiles(available) => write!(f, "RdpRemoteFiles({available})"),
             Self::RdpSaveProgress { saved, total } => {

@@ -43,6 +43,7 @@ pub mod putty_store;
 pub mod rdp_driver;
 pub mod reachability;
 pub mod route_test;
+pub mod server_health;
 mod sink;
 pub mod steps_draft;
 pub mod sudo_edit;

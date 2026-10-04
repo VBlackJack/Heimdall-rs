@@ -45,7 +45,9 @@ pub use agent::{AgentSurvey, survey as survey_agents};
 pub use client::{
     Routed, at_gateway, connect, establish, establish_via, establish_via_keeping_gateway,
 };
-pub use connection::{ChannelBytes, CommandEnd, Connection, OUTPUT_LIMIT, SubsystemStream, Tunnel};
+pub use connection::{
+    ChannelBytes, CommandEnd, Connection, OUTPUT_LIMIT, SubsystemStream, Tunnel, WeakConnection,
+};
 pub use diagnose::{HopSecrets, Outcome, Step, StepOf, diagnose_route, has_trusted_key};
 pub use error::{AuthMethod, ConnectError};
 pub use forward::RemoteForward;

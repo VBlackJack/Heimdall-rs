@@ -91,6 +91,8 @@ impl App {
         {
             let mut old = std::mem::replace(&mut self.tabs[index], reopened);
             self.tabs[index].custom_title = old.custom_title.take();
+            // A health panel shown stays shown, asked again once connected.
+            self.tabs[index].health.shown = old.health.shown;
             // Files open in an external editor go on being watched: their saves are sent
             // once the new connection is up.
             if let (Some(files), Some(before)) = (
