@@ -108,8 +108,24 @@ pub enum FilesKey {
     Delete,
     /// List the folder again.
     Refresh,
-    /// Copy the full path of the selected entry, as the C# Files tab's Ctrl+C.
+    /// Copy the full path of the selected entry, as the C# Files tab's Ctrl+Shift+C.
     CopyPath,
+    /// Cut the server's entries chosen, as the C# Ctrl+X.
+    Cut,
+    /// Copy the server's entries chosen, as the C# Ctrl+C.
+    Copy,
+    /// Paste what is held, or else the files copied in Explorer, as the C# Ctrl+V.
+    Paste,
+    /// Select every entry of the pane, Ctrl+A.
+    SelectAll,
+    /// Ask for a new folder's name, as the C# F7.
+    NewFolder,
+    /// Download the server's entries chosen, as the C# Ctrl+Shift+D.
+    Download,
+    /// Upload this computer's entries chosen, as the C# Ctrl+Shift+U.
+    Upload,
+    /// Type in the pane's path bar, as the C# Alt+D and F4: the window's to do.
+    FocusPath,
 }
 
 /// What an entry is.
@@ -474,6 +490,16 @@ impl<P, E> Pane<P, E> {
             .into_iter()
             .filter(|index| *index < self.entries.len())
             .collect()
+    }
+
+    /// Ctrl+A: every entry chosen, the one selected staying where it was, or the first.
+    pub fn select_all(&mut self) {
+        if self.entries.is_empty() {
+            return;
+        }
+        let anchor = self.selected.unwrap_or(0);
+        self.selected = Some(anchor);
+        self.marked = (0..self.entries.len()).filter(|at| *at != anchor).collect();
     }
 
     /// Ctrl+click on `index`: selected with the others, or no longer.

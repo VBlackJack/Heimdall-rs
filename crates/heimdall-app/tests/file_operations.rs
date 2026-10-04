@@ -2223,3 +2223,56 @@ async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
     assert_eq!(plan_request(&opened).direction, Direction::Download);
     assert!(open_editor(&app, tab).is_none());
 }
+
+#[tokio::test]
+async fn the_csharp_file_browser_keys_hold_paste_select_and_transfer() {
+    use heimdall_app::Notice;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    // Nothing held: Ctrl+V pastes what Explorer copied.
+    assert!(matches!(
+        key(&mut app, tab, FilesKey::Paste).as_slice(),
+        [Effect::ReadExplorerFiles { tab: asked }] if *asked == tab
+    ));
+
+    // Ctrl+A then Ctrl+X on the server's pane: every entry held.
+    key(&mut app, tab, FilesKey::Focus(Side::Remote));
+    key(&mut app, tab, FilesKey::SelectAll);
+    let listed = app
+        .tab(tab)
+        .and_then(|t| t.files.as_ref())
+        .map(|files| (files.remote.chosen().len(), files.remote.entries.len()))
+        .expect("files");
+    assert_eq!(listed.0, listed.1, "every entry");
+    key(&mut app, tab, FilesKey::Cut);
+    assert_eq!(app.notice(), Some(&Notice::FilesCut(listed.1)));
+    assert!(app.can_paste(tab));
+    // Something held: Ctrl+V pastes it, Explorer is not read.
+    assert!(
+        !matches!(
+            key(&mut app, tab, FilesKey::Paste).as_slice(),
+            [Effect::ReadExplorerFiles { .. }]
+        ),
+        "the entries held"
+    );
+
+    // This computer's pane holds nothing on Ctrl+C: the clipboard is the server's.
+    key(&mut app, tab, FilesKey::Focus(Side::Local));
+    select(&mut app, tab, Side::Local, 1);
+    key(&mut app, tab, FilesKey::Focus(Side::Local));
+    assert!(key(&mut app, tab, FilesKey::Copy).is_empty());
+
+    // F7 asks a new folder's name; Ctrl+Shift+U plans the upload of what is chosen.
+    key(&mut app, tab, FilesKey::NewFolder);
+    assert!(
+        matches!(app.dialog, Some(Dialog::AskName { .. })),
+        "{:?}",
+        app.dialog
+    );
+    app.update(Message::DismissDialog);
+    assert!(matches!(
+        key(&mut app, tab, FilesKey::Upload).as_slice(),
+        [Effect::PlanTransfer { .. }]
+    ));
+}

@@ -99,6 +99,26 @@ const FOLDER_MARK: &str = "/";
 /// Marks a link after its name.
 const LINK_MARK: &str = " ->";
 
+/// A field of a pane the keyboard can be given to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PaneField {
+    /// The path bar, Alt+D and F4.
+    Path,
+    /// The filter, Ctrl+F.
+    Filter,
+}
+
+/// Widget identifier of a pane's `field`.
+#[must_use]
+pub fn field_id(side: Side, field: PaneField) -> Id {
+    Id::new(match (side, field) {
+        (Side::Local, PaneField::Path) => "files-local-path",
+        (Side::Remote, PaneField::Path) => "files-remote-path",
+        (Side::Local, PaneField::Filter) => "files-local-filter",
+        (Side::Remote, PaneField::Filter) => "files-remote-filter",
+    })
+}
+
 /// Widget identifier of a pane's list, to scroll the selection into view.
 #[must_use]
 pub fn list_id(side: Side) -> Id {
@@ -108,12 +128,42 @@ pub fn list_id(side: Side) -> Id {
     })
 }
 
-/// What `key` does in a Files tab. Keys with Ctrl, Alt or the logo key are left to the
-/// window; Enter and Tab reach the tab through the window, as they act on a dialog first.
+/// What `key` at `physical` does in a Files tab, as the C# `FileBrowserShortcutPolicy`:
+/// the clipboard on Ctrl+X, C and V, Ctrl+A, the path on Ctrl+Shift+C, the transfers on
+/// Ctrl+Shift+D and U, Back and Up on Alt+Left and Alt+Up, the path bar on Alt+D and F4, a
+/// new folder on F7, whatever the keyboard's layout. Enter and Tab reach the tab through the
+/// window, as they act on a dialog first; the logo key is the system's.
 #[must_use]
-pub fn files_key(key: &keyboard::Key, modifiers: Modifiers) -> Option<FilesKey> {
-    if modifiers.control() || modifiers.alt() || modifiers.logo() {
+pub fn files_key(
+    key: &keyboard::Key,
+    physical: keyboard::key::Physical,
+    modifiers: Modifiers,
+) -> Option<FilesKey> {
+    let (ctrl, shift, alt) = (modifiers.control(), modifiers.shift(), modifiers.alt());
+    if modifiers.logo() || (ctrl && alt) {
         return None;
+    }
+    let letter = crate::terminal_view::keys::letter(key, physical);
+    if ctrl {
+        return match (shift, letter) {
+            (false, Some('x')) => Some(FilesKey::Cut),
+            (false, Some('c')) => Some(FilesKey::Copy),
+            (false, Some('v')) => Some(FilesKey::Paste),
+            (false, Some('a')) => Some(FilesKey::SelectAll),
+            (true, Some('c')) => Some(FilesKey::CopyPath),
+            (true, Some('d')) => Some(FilesKey::Download),
+            (true, Some('u')) => Some(FilesKey::Upload),
+            _ => None,
+        };
+    }
+    if alt {
+        return match key {
+            _ if shift => None,
+            keyboard::Key::Named(Named::ArrowLeft) => Some(FilesKey::Back),
+            keyboard::Key::Named(Named::ArrowUp) => Some(FilesKey::Parent),
+            _ if letter == Some('d') => Some(FilesKey::FocusPath),
+            _ => None,
+        };
     }
     let keyboard::Key::Named(named) = key else {
         return None;
@@ -128,6 +178,8 @@ pub fn files_key(key: &keyboard::Key, modifiers: Modifiers) -> Option<FilesKey> 
         Named::ArrowLeft => FilesKey::Focus(Side::Local),
         Named::ArrowRight => FilesKey::Focus(Side::Remote),
         Named::F2 => FilesKey::Rename,
+        Named::F4 => FilesKey::FocusPath,
+        Named::F7 => FilesKey::NewFolder,
         Named::Delete => FilesKey::Delete,
         Named::F5 => FilesKey::Refresh,
         _ => return None,
@@ -372,6 +424,7 @@ fn pane_narrowing<'a>(
 ) -> iced::widget::Row<'a, Message> {
     row![
         text_input(&fl!("ui-files-filter-placeholder"), filter)
+            .id(field_id(side, PaneField::Filter))
             .size(SMALL_SIZE)
             .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
             .width(Length::Fill),
@@ -481,6 +534,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             .on_press_maybe(moves.home.then(|| files(FilesMessage::Home { tab, side }))),
         // The folder shown, typed over to go elsewhere, as the C# path bar.
         text_input(&location, typed.unwrap_or(&location))
+            .id(field_id(side, PaneField::Path))
             .size(SMALL_SIZE)
             .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
             .on_submit(files(FilesMessage::GoTo { tab, side }))
@@ -884,31 +938,73 @@ mod tests {
     }
 
     #[test]
-    fn plain_keys_act_and_modified_ones_are_left_to_the_window() {
+    fn the_keys_are_the_csharp_file_browser_ones_whatever_the_layout() {
+        use iced::keyboard::key::{Code, NativeCode, Physical};
+
+        let anywhere = Physical::Unidentified(NativeCode::Unidentified);
+        let key = |key: &keyboard::Key, modifiers| files_key(key, anywhere, modifiers);
+        let letter = |c: &str| keyboard::Key::Character(c.into());
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
         assert_eq!(
-            files_key(&named(Named::Delete), Modifiers::empty()),
+            key(&named(Named::Delete), Modifiers::empty()),
             Some(FilesKey::Delete)
         );
-        for modifiers in [Modifiers::CTRL, Modifiers::ALT, Modifiers::LOGO] {
+        assert_eq!(
+            key(&named(Named::Enter), Modifiers::empty()),
+            None,
+            "a dialog's first"
+        );
+        assert_eq!(key(&letter("a"), Modifiers::empty()), None);
+        assert_eq!(
+            key(&named(Named::Backspace), Modifiers::empty()),
+            Some(FilesKey::Back)
+        );
+        assert_eq!(
+            key(&named(Named::F7), Modifiers::empty()),
+            Some(FilesKey::NewFolder)
+        );
+        assert_eq!(
+            key(&named(Named::F4), Modifiers::empty()),
+            Some(FilesKey::FocusPath)
+        );
+        for (typed, wanted) in [
+            ("x", FilesKey::Cut),
+            ("c", FilesKey::Copy),
+            ("v", FilesKey::Paste),
+            ("a", FilesKey::SelectAll),
+        ] {
             assert_eq!(
-                files_key(&named(Named::Delete), modifiers),
-                None,
-                "{modifiers:?}"
+                key(&letter(typed), Modifiers::CTRL),
+                Some(wanted),
+                "Ctrl+{typed}"
             );
         }
+        assert_eq!(key(&letter("C"), ctrl_shift), Some(FilesKey::CopyPath));
+        assert_eq!(key(&letter("D"), ctrl_shift), Some(FilesKey::Download));
+        assert_eq!(key(&letter("U"), ctrl_shift), Some(FilesKey::Upload));
         assert_eq!(
-            files_key(&named(Named::Enter), Modifiers::empty()),
+            files_key(
+                &letter("\u{0441}"),
+                Physical::Code(Code::KeyC),
+                Modifiers::CTRL
+            ),
+            Some(FilesKey::Copy),
+            "the C key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            key(&named(Named::ArrowLeft), Modifiers::ALT),
+            Some(FilesKey::Back)
+        );
+        assert_eq!(
+            key(&named(Named::ArrowUp), Modifiers::ALT),
+            Some(FilesKey::Parent)
+        );
+        assert_eq!(key(&letter("d"), Modifiers::ALT), Some(FilesKey::FocusPath));
+        assert_eq!(
+            key(&named(Named::Delete), Modifiers::CTRL | Modifiers::ALT),
             None,
-            "Enter answers a dialog first"
+            "AltGr is Ctrl+Alt: it types"
         );
-        assert_eq!(
-            files_key(&keyboard::Key::Character("a".into()), Modifiers::empty()),
-            None
-        );
-        assert_eq!(
-            files_key(&named(Named::Backspace), Modifiers::empty()),
-            Some(FilesKey::Back),
-            "Back, as the C# Files tab's Backspace"
-        );
+        assert_eq!(key(&named(Named::Delete), Modifiers::LOGO), None);
     }
 }
