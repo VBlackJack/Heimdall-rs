@@ -105,6 +105,9 @@ pub enum WindowShortcut {
     Settings,
     /// Copy an image of the session shown to the clipboard: Ctrl+Shift+S, as the C# one.
     Screenshot,
+    /// Show the keyboard shortcuts: F1, as the C# one, when no session has the keyboard; a
+    /// terminal keeps F1 for its programs. Never a key a terminal leaves to the window.
+    Help,
 }
 
 /// A change of the terminal's text size, as the C# Heimdall's.
