@@ -573,3 +573,104 @@ fn the_form_marks_a_favorite_and_shows_one() {
     };
     assert!(draft.is_on(ProfileToggle::Favorite), "shown ticked");
 }
+
+#[test]
+fn the_port_and_the_account_of_several_profiles_are_set_at_once_as_the_csharp() {
+    use heimdall_app::{BulkField, BulkRefusal, Notice, SelectionMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &SystemCredentials::memory());
+    let select = |app: &mut App, ids: &[&str]| {
+        app.update(Message::SelectProfile(id(ids[0])));
+        for other in &ids[1..] {
+            app.update(Message::Selection(SelectionMessage::Toggle(id(other))));
+        }
+    };
+    let bulk = |app: &mut App, message| app.update(Message::Selection(message));
+    let port = |app: &App, profile: &str| {
+        app.profile_summary(&id(profile))
+            .and_then(|profile| profile.endpoint)
+            .map(|(_, port)| port)
+    };
+
+    // A local shell has no port: left out, the others' ports differ.
+    select(&mut app, &["ssh", "rdp", "local"]);
+    bulk(&mut app, SelectionMessage::Edit(BulkField::Port));
+    let Some(Dialog::BulkEdit {
+        ids, value, mixed, ..
+    }) = &app.dialog
+    else {
+        panic!("{:?}", app.dialog);
+    };
+    let mut ids = ids.clone();
+    ids.sort();
+    assert_eq!(ids, [id("rdp"), id("ssh")]);
+    assert!(value.is_empty() && *mixed, "mixed values");
+    bulk(&mut app, SelectionMessage::BulkEdited("0".to_owned()));
+    app.update(Message::ConfirmDialog);
+    assert!(
+        matches!(
+            app.dialog,
+            Some(Dialog::BulkEdit {
+                refused: Some(BulkRefusal::Port),
+                ..
+            })
+        ),
+        "between 1 and 65535"
+    );
+    bulk(&mut app, SelectionMessage::BulkEdited("2200".to_owned()));
+    app.update(Message::ConfirmDialog);
+    assert!(app.dialog.is_none());
+    assert_eq!(
+        (port(&app, "ssh"), port(&app, "rdp")),
+        (Some(2200), Some(2200))
+    );
+    assert_eq!(app.notice(), Some(&Notice::BulkPortUpdated(2)));
+    // The same again changes nothing, and says so.
+    bulk(&mut app, SelectionMessage::Edit(BulkField::Port));
+    let Some(Dialog::BulkEdit { value, mixed, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        (value.as_str(), *mixed),
+        ("2200", false),
+        "shared: written in"
+    );
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.notice(), Some(&Notice::BulkPortUnchanged));
+
+    // VNC names no account: the menu counts the others, the dialog sets theirs.
+    select(&mut app, &["ssh", "vnc", "winrm"]);
+    let selected = app.selected_profiles();
+    assert_eq!(app.bulk_targets(&selected, BulkField::Username), 2);
+    bulk(&mut app, SelectionMessage::Edit(BulkField::Username));
+    bulk(
+        &mut app,
+        SelectionMessage::BulkEdited("ops\tteam".to_owned()),
+    );
+    app.update(Message::ConfirmDialog);
+    assert!(matches!(
+        app.dialog,
+        Some(Dialog::BulkEdit {
+            refused: Some(BulkRefusal::Username),
+            ..
+        })
+    ));
+    bulk(&mut app, SelectionMessage::BulkEdited("ops".to_owned()));
+    app.update(Message::ConfirmDialog);
+    for profile in ["ssh", "winrm"] {
+        assert_eq!(
+            app.profile_summary(&id(profile))
+                .and_then(|profile| profile.username)
+                .as_deref(),
+            Some("ops"),
+            "{profile}"
+        );
+    }
+    assert_eq!(app.notice(), Some(&Notice::BulkUsernameUpdated(2)));
+
+    // One profile alone is not a bulk edit.
+    app.update(Message::SelectProfile(id("ssh")));
+    bulk(&mut app, SelectionMessage::Edit(BulkField::Port));
+    assert!(app.dialog.is_none());
+}

@@ -1427,3 +1427,30 @@ ui-tree-favorite = Favorite
 ui-tree-filter-favorites = Favorites
 ui-profile-toggle-favorite = Mark as favorite
 ui-status-favorite-save-failed = Could not save the favorite.
+ui-selection-edit = Edit
+ui-selection-edit-port = Port...
+ui-selection-edit-username = Username... ({ $count })
+ui-bulk-port-header = { $count ->
+    [one] Editing port on { $count } item
+   *[other] Editing port on { $count } items
+}
+ui-bulk-port-label = Port
+ui-bulk-port-mixed = Mixed values
+ui-bulk-port-invalid = Port must be between 1 and 65535.
+ui-bulk-username-header = { $count ->
+    [one] Editing username on { $count } server
+   *[other] Editing username on { $count } servers
+}
+ui-bulk-username-label = Username:
+ui-bulk-username-mixed = mixed values
+ui-bulk-username-invalid = Username cannot be empty and cannot contain control characters (including line breaks and tabs).
+ui-status-bulk-port-updated = { $count ->
+    [one] Updated port on { $count } item.
+   *[other] Updated port on { $count } items.
+}
+ui-status-bulk-port-unchanged = No port changes were applied.
+ui-status-bulk-username-updated = { $count ->
+    [one] Username updated on { $count } server.
+   *[other] Username updated on { $count } servers.
+}
+ui-status-bulk-username-unchanged = No changes applied - every selected server already uses this username.

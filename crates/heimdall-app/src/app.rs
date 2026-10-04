@@ -73,6 +73,7 @@ mod agent_chip;
 mod appearance;
 mod auto_reconnect;
 mod broadcast;
+mod bulk_edit;
 mod connect_as;
 mod file_import;
 mod files_clipboard;
@@ -119,6 +120,7 @@ pub use agent_chip::AgentChip;
 pub use appearance::SettingsMessage;
 pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
+pub use bulk_edit::{BulkField, BulkRefusal};
 pub use connect_as::ConnectAs;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
@@ -2005,6 +2007,19 @@ pub enum Dialog {
         /// Their names, sorted, when they are few enough to list; empty otherwise.
         names: Vec<String>,
     },
+    /// One value for several profiles at once, as the C# bulk edit asks it.
+    BulkEdit {
+        /// What is set.
+        field: BulkField,
+        /// The profiles selected that take it.
+        ids: Vec<ProfileId>,
+        /// The value typed, written in when they all shared it.
+        value: String,
+        /// They did not share one: the field says so, empty.
+        mixed: bool,
+        /// Why the value confirmed was refused.
+        refused: Option<BulkRefusal>,
+    },
     /// A new name for a profile.
     RenameProfile {
         /// The profile.
@@ -3289,6 +3304,16 @@ impl App {
             }
             Some(Dialog::RenameProfile { id, value }) => {
                 self.confirm_rename_profile(&id, &value);
+                Vec::new()
+            }
+            Some(Dialog::BulkEdit {
+                field,
+                ids,
+                value,
+                mixed,
+                ..
+            }) => {
+                self.confirm_bulk_edit(field, &ids, &value, mixed);
                 Vec::new()
             }
             Some(Dialog::ConfirmDeleteFolder { path, .. }) => {

@@ -800,3 +800,23 @@ fn favorites_are_kept_by_profile_and_leave_with_it() {
     assert!(reread.set_favorite(&ProfileId::new("b"), false));
     assert!(!reread.is_favorite(&ProfileId::new("b")));
 }
+
+#[test]
+fn a_port_and_an_account_are_set_where_a_profile_has_them() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    store.merge([profile("a", "a.lab")]);
+    store.merge_telnet([telnet("t")]);
+    let a = ProfileId::new("a");
+    assert!(store.set_port(&a, 2200));
+    assert!(!store.set_port(&a, 2200), "already so");
+    assert_eq!(store.ssh_profiles()[0].port, 2200);
+    assert!(store.set_username(&a, "ops"));
+    assert!(!store.set_username(&a, "ops"));
+    assert!(store.set_port(&ProfileId::new("t"), 2323));
+    assert!(
+        !store.set_username(&ProfileId::new("t"), "ops"),
+        "Telnet names no account"
+    );
+    assert!(!store.set_port(&ProfileId::new("gone"), 1));
+}
