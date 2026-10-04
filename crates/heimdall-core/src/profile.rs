@@ -581,12 +581,53 @@ pub const RESOLUTION_PRESETS: [(u16, u16); 10] = [
 /// of 4; `None` when it is not one.
 #[must_use]
 pub fn parse_resolution(typed: &str) -> Option<(u16, u16)> {
+    let (width, height) = resolution_preset(typed)?;
+    Some(fixed_desktop(width, height))
+}
+
+/// A size typed as `WIDTHxHEIGHT`, kept as typed: `x` or `X`, spaces around the numbers
+/// allowed, each side within the C# `RdpDisplayLimits`; `None` when it is not one.
+#[must_use]
+pub fn resolution_preset(typed: &str) -> Option<(u16, u16)> {
     let (width, height) = typed.split_once(['x', 'X'])?;
-    let width: u16 = width.trim().parse().ok()?;
-    let height: u16 = height.trim().parse().ok()?;
-    let fits = (FIXED_SIDE_MIN..=FIXED_WIDTH_MAX).contains(&width)
-        && (FIXED_SIDE_MIN..=FIXED_HEIGHT_MAX).contains(&height);
-    fits.then(|| fixed_desktop(width, height))
+    let size = (width.trim().parse().ok()?, height.trim().parse().ok()?);
+    preset_fits(size).then_some(size)
+}
+
+/// Whether a resolution preset is within the C# `RdpDisplayLimits`.
+#[must_use]
+pub fn preset_fits((width, height): (u16, u16)) -> bool {
+    (FIXED_SIDE_MIN..=FIXED_WIDTH_MAX).contains(&width)
+        && (FIXED_SIDE_MIN..=FIXED_HEIGHT_MAX).contains(&height)
+}
+
+/// A preset as the settings file and the Settings box write it: `WIDTHxHEIGHT`.
+#[must_use]
+pub fn resolution_text((width, height): (u16, u16)) -> String {
+    format!("{width}x{height}")
+}
+
+/// The presets typed one per line, as the C# Settings box reads them: blank lines are
+/// skipped, and nothing typed at all is the built-in list. The text is read as a whole: the
+/// lines that are not a size within the limits, trimmed, when there are any.
+///
+/// # Errors
+///
+/// The lines that are not a preset, so none is dropped without a word.
+pub fn parse_resolution_presets(typed: &str) -> Result<Vec<(u16, u16)>, Vec<String>> {
+    let mut presets = Vec::new();
+    let mut invalid = Vec::new();
+    for line in typed.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        match resolution_preset(line) {
+            Some(size) => presets.push(size),
+            None => invalid.push(line.to_owned()),
+        }
+    }
+    if invalid.is_empty() {
+        Ok(presets)
+    } else {
+        Err(invalid)
+    }
 }
 
 fn default_fixed_width() -> u16 {
@@ -1030,7 +1071,7 @@ mod tests {
 
 #[cfg(test)]
 mod resolution_tests {
-    use super::parse_resolution;
+    use super::{parse_resolution, parse_resolution_presets, resolution_preset};
 
     #[test]
     fn a_size_is_read_as_the_csharp_custom_one() {
@@ -1046,5 +1087,29 @@ mod resolution_tests {
         assert_eq!(parse_resolution("1920x4321"), None);
         assert_eq!(parse_resolution("1920*1080"), None);
         assert_eq!(parse_resolution("wide x tall"), None);
+    }
+
+    #[test]
+    fn presets_are_kept_as_typed_and_read_as_a_whole() {
+        assert_eq!(
+            resolution_preset("1366x768"),
+            Some((1366, 768)),
+            "a preset is not snapped: the menu snaps the size it gives"
+        );
+        assert_eq!(
+            parse_resolution_presets("1920x1080\n\n  1280 x 720  \n"),
+            Ok(vec![(1920, 1080), (1280, 720)]),
+            "blank lines skipped"
+        );
+        assert_eq!(
+            parse_resolution_presets("  \n"),
+            Ok(Vec::new()),
+            "the built-in list"
+        );
+        assert_eq!(
+            parse_resolution_presets("1920x1080\n1920x\n99999x1\n800x600"),
+            Err(vec!["1920x".to_owned(), "99999x1".to_owned()]),
+            "every bad line named"
+        );
     }
 }

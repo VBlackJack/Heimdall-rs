@@ -1396,3 +1396,17 @@ ui-tunnels-menu-reopen = Reabrir
 ui-settings-behavior = Comportamiento
 ui-settings-collapse-tunnels-panel = Contraer el panel de túneles de forma predeterminada
 ui-settings-collapse-tunnels-panel-hint = Cómo empieza el panel de túneles. Abrirlo o cerrarlo después lo deja así hasta que se cierra la aplicación.
+ui-hostkey-copy-fingerprint-button = Copiar
+ui-certificate-already-trusted = { $count ->
+    [one] Este perfil ya confía en { $count } certificado más para este nombre, lo que normalmente significa que más de una máquina responde a él.
+   *[other] Este perfil ya confía en otros { $count } certificados para este nombre, lo que normalmente significa que varias máquinas responden a él.
+}
+ui-certificate-route = Alcanzado a través de: { $route }
+ui-settings-rdp-resolution-presets = Resoluciones predefinidas
+ui-settings-rdp-resolution-presets-hint = Una resolución predefinida por línea, formato ANCHOxALTO (por ejemplo, 1920x1080). Deja el cuadro vacío para usar la lista integrada.
+ui-settings-rdp-resolution-presets-reset = Restablecer valores predeterminados
+ui-settings-rdp-resolution-presets-invalid = Resoluciones predefinidas: estas líneas no tienen el formato ANCHOxALTO con un ancho de { $min } a { $width } y un alto de { $min } a { $height } píxeles: { $lines }
+ui-settings-rdp-reset-defaults = Restablecer valores predeterminados de RDP
+ui-settings-rdp-reset-defaults-tooltip = Revierte solo los valores predeterminados de RDP a sus valores de fábrica. No se tocan otros ajustes.
+ui-dialog-reset-rdp-title = ¿Restablecer valores predeterminados de RDP?
+ui-dialog-reset-rdp-body = ¿Restaurar todos los valores predeterminados relacionados con RDP a sus valores de fábrica? Los servidores existentes no se ven afectados.
