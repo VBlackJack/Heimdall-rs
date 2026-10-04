@@ -3316,6 +3316,7 @@ impl Shell {
         &'a self,
         tab: TabId,
         pane: &'a heimdall_app::files::FilesPane,
+        live: bool,
     ) -> Element<'a, Message> {
         match &pane.editor {
             Some(edit) => crate::integrated_editor::view(
@@ -3324,7 +3325,7 @@ impl Shell {
                 self.editors.get(edit.id),
                 pane.client.is_some(),
             ),
-            None => crate::files_view::view(tab, pane),
+            None => crate::files_view::view(tab, pane, live),
         }
     }
 
@@ -3368,7 +3369,7 @@ impl Shell {
                 tab.asks_about_certificate().then(|| tab.profile.name()),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
-                (Some(pane), _) => self.files_page(tab.id, pane),
+                (Some(pane), _) => self.files_page(tab.id, pane, tab.is_live()),
                 (_, Some(pane)) => self.desktop(tab, pane),
                 _ => self.shell_page(tab),
             },

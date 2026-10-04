@@ -2426,10 +2426,7 @@ impl App {
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())
                 .or_else(|| self.dismiss_tunnel_key())
-                .unwrap_or_else(|| {
-                    self.dismiss_dialog();
-                    Vec::new()
-                }),
+                .unwrap_or_else(|| self.dismiss_dialog()),
             _ => self.post_connect_message(message),
         }
     }
@@ -2508,16 +2505,18 @@ impl App {
 
     /// Closes the open dialog and drops what it held; the gateway dialog returns to the
     /// session's form it was opened from.
-    fn dismiss_dialog(&mut self) {
+    fn dismiss_dialog(&mut self) -> Vec<Effect> {
         if self.dismiss_gateway() {
-            return;
+            return Vec::new();
         }
+        let mut effects = Vec::new();
         if matches!(self.dialog.take(), Some(Dialog::FileConflicts { .. })) {
-            self.cancel_conflicts();
+            effects = self.cancel_conflicts();
         }
         self.pending_paste = None;
         self.pending_operation = None;
         self.ask_next_conflicts();
+        effects
     }
 
     /// What connecting to `profile` needs, its gateways included; an error when they cannot
@@ -2743,6 +2742,10 @@ impl App {
             }
             ConnectionEvent::Closed { exit_status } => {
                 tab.phase = Phase::Closed { exit_status };
+                // What waits its turn has no session left to run on.
+                if let Some(files) = tab.files.as_deref_mut() {
+                    files.cancel_waiting();
+                }
                 tab.post_connect = None;
                 tab.sink = None;
                 tab.desktop = None;
@@ -2752,6 +2755,9 @@ impl App {
             }
             ConnectionEvent::Ended { reason } => {
                 tab.phase = Phase::Closed { exit_status: None };
+                if let Some(files) = tab.files.as_deref_mut() {
+                    files.cancel_waiting();
+                }
                 tab.end_reason = Some(reason);
                 tab.sink = None;
                 tab.desktop = None;
@@ -2760,6 +2766,9 @@ impl App {
             }
             ConnectionEvent::Failed(error) => {
                 tab.phase = Phase::Failed(error);
+                if let Some(files) = tab.files.as_deref_mut() {
+                    files.cancel_waiting();
+                }
                 tab.sink = None;
                 tab.desktop = None;
                 tab.prompts.clear();
