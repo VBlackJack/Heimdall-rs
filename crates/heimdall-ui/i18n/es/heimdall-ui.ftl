@@ -1343,3 +1343,9 @@ ui-status-known-hosts-export-skipped = { $count ->
 }
 ui-status-known-hosts-export-failed = Falló la exportación de known_hosts: { $detail }
 ui-status-known-hosts-export-no-home = Falló la exportación de known_hosts: no se conoce la carpeta personal.
+ui-tree-favorite-add = Añadir a favoritos
+ui-tree-favorite-remove = Quitar de favoritos
+ui-tree-favorite = Favorito
+ui-tree-filter-favorites = Favoritos
+ui-profile-toggle-favorite = Marcar como favorito
+ui-status-favorite-save-failed = No se pudo guardar el favorito.

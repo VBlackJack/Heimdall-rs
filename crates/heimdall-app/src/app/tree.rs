@@ -100,6 +100,8 @@ pub struct ProfileSummary {
     pub username: Option<String>,
     /// The gateway it goes through, when it does.
     pub gateway: Option<GatewayBadge>,
+    /// Marked as a favorite, as the C# tree's star.
+    pub favorite: bool,
 }
 
 impl ProfileSummary {
@@ -170,6 +172,7 @@ impl App {
         for profile in self.store.ssh_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: if profile.sftp {
@@ -185,6 +188,7 @@ impl App {
         for profile in self.store.rdp_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Rdp,
@@ -196,6 +200,7 @@ impl App {
         for profile in self.store.telnet_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Telnet,
@@ -207,6 +212,7 @@ impl App {
         for profile in self.store.vnc_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Vnc,
@@ -218,6 +224,7 @@ impl App {
         for profile in self.store.ftp_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Ftp,
@@ -229,6 +236,7 @@ impl App {
         for profile in self.store.local_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Local,
@@ -240,6 +248,7 @@ impl App {
         for profile in self.store.winrm_profiles() {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
+                favorite: self.store.is_favorite(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::WinRm,
@@ -249,6 +258,12 @@ impl App {
             });
         }
         all
+    }
+
+    /// Whether profile `id` is marked as a favorite.
+    #[must_use]
+    pub fn is_favorite(&self, id: &ProfileId) -> bool {
+        self.store.is_favorite(id)
     }
 
     /// The badge of a session routed through `gateway`.
@@ -512,6 +527,7 @@ mod tests {
             endpoint: Some(("web.lab".to_owned(), port)),
             username: username.map(str::to_owned),
             gateway: None,
+            favorite: false,
         }
     }
 

@@ -182,7 +182,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 8);
+    assert_eq!(PROFILE_FILE_VERSION, 9);
 }
 
 #[test]
@@ -774,4 +774,29 @@ fn ftp_profiles_read_back_and_passive_is_written_only_when_off() {
     let mut store = reopened;
     assert!(store.remove(&ProfileId::new("active")));
     assert_eq!(store.ftp_profiles().len(), 1);
+}
+
+#[test]
+fn favorites_are_kept_by_profile_and_leave_with_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge([profile("a", "a.lab"), profile("b", "b.lab")]);
+    let a = ProfileId::new("a");
+    assert!(!store.is_favorite(&a));
+    assert!(store.set_favorite(&a, true));
+    assert!(!store.set_favorite(&a, true), "already one");
+    assert!(
+        !store.set_favorite(&ProfileId::new("gone"), true),
+        "a profile not in the store is not marked"
+    );
+    store.save().expect("saves");
+    let mut reread = ProfileStore::open(&path).expect("reopens");
+    assert!(reread.is_favorite(&a));
+    assert!(!reread.is_favorite(&ProfileId::new("b")));
+    assert!(reread.remove(&a));
+    assert!(!reread.is_favorite(&a), "deleted: a favorite no longer");
+    assert!(reread.set_favorite(&ProfileId::new("b"), true));
+    assert!(reread.set_favorite(&ProfileId::new("b"), false));
+    assert!(!reread.is_favorite(&ProfileId::new("b")));
 }

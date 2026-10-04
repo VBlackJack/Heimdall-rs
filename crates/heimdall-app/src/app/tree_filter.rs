@@ -15,7 +15,7 @@
  */
 
 //! The tree's filters, as the C# sidebar's filter button offers them: protocols, connected,
-//! through a gateway; every one chosen must hold, as the C# `ServerFilterSpec` combines them.
+//! through a gateway, favorites; every one chosen must hold, as the C# `ServerFilterSpec` combines them.
 //! Showing the gateway badge is a view choice beside them, not a filter.
 
 use super::tree::{ProfileKind, ProfileSummary};
@@ -23,6 +23,10 @@ use super::{App, SessionState};
 
 /// Which profiles the tree lists, beyond its search.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per box of the C# filter menu"
+)]
 pub struct TreeFilter {
     /// Only these protocols; none chosen is every one.
     protocols: Vec<ProfileKind>,
@@ -30,6 +34,8 @@ pub struct TreeFilter {
     connected: bool,
     /// Only profiles that go through an SSH gateway.
     gateway: bool,
+    /// Only profiles marked as favorites.
+    favorites: bool,
     /// Rows show the gateway a profile goes through: on, as in the C#.
     show_gateway_badge: bool,
 }
@@ -40,6 +46,7 @@ impl Default for TreeFilter {
             protocols: Vec::new(),
             connected: false,
             gateway: false,
+            favorites: false,
             show_gateway_badge: true,
         }
     }
@@ -54,6 +61,8 @@ pub enum FilterMessage {
     Connected,
     /// Through a gateway only, or no longer.
     Gateway,
+    /// Favorites only, or no longer.
+    Favorites,
     /// The gateway badge shown, or hidden.
     GatewayBadge,
     /// Every filter off, as the C# "Reset filters"; the badge choice stays.
@@ -79,6 +88,12 @@ impl TreeFilter {
         self.gateway
     }
 
+    /// Whether only favorites are listed.
+    #[must_use]
+    pub fn favorites(&self) -> bool {
+        self.favorites
+    }
+
     /// Whether rows show their gateway.
     #[must_use]
     pub fn shows_gateway_badge(&self) -> bool {
@@ -88,7 +103,7 @@ impl TreeFilter {
     /// Whether any filter leaves profiles out: the C# button's dot.
     #[must_use]
     pub fn is_active(&self) -> bool {
-        !self.protocols.is_empty() || self.connected || self.gateway
+        !self.protocols.is_empty() || self.connected || self.gateway || self.favorites
     }
 
     /// Whether `profile`, its sessions in `state`, passes every filter chosen.
@@ -96,6 +111,7 @@ impl TreeFilter {
         (self.protocols.is_empty() || self.protocols.contains(&profile.kind))
             && (!self.connected || state == Some(SessionState::Connected))
             && (!self.gateway || profile.gateway.is_some())
+            && (!self.favorites || profile.favorite)
     }
 
     fn apply(&mut self, message: FilterMessage) {
@@ -109,6 +125,7 @@ impl TreeFilter {
             }
             FilterMessage::Connected => self.connected = !self.connected,
             FilterMessage::Gateway => self.gateway = !self.gateway,
+            FilterMessage::Favorites => self.favorites = !self.favorites,
             FilterMessage::GatewayBadge => self.show_gateway_badge = !self.show_gateway_badge,
             FilterMessage::Reset => {
                 *self = Self {

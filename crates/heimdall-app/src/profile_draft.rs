@@ -248,6 +248,9 @@ pub enum ProfileToggle {
     /// RDP: open a dropped desktop again by itself, as the C# "Automatically reconnect",
     /// ticked for a new profile.
     AutoReconnect,
+    /// Every protocol: marked as a favorite, as the C# "Mark as favorite"; kept by the
+    /// store beside the profile.
+    Favorite,
 }
 
 impl ProfileToggle {
@@ -263,22 +266,25 @@ impl ProfileToggle {
                 Self::Nla,
                 Self::AdminSession,
                 Self::SeveralServers,
+                Self::Favorite,
             ],
             DraftProtocol::WinRm => &[
                 Self::StoredCredential,
                 Self::UseSsl,
                 Self::SkipCertificateCheck,
+                Self::Favorite,
             ],
-            DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword],
+            DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword, Self::Favorite],
             DraftProtocol::Ssh => &[
                 Self::Compression,
                 Self::ForwardAgent,
                 Self::LegacyAlgorithms,
+                Self::Favorite,
             ],
             // No shell to forward the agent to.
-            DraftProtocol::Sftp => &[Self::Compression, Self::LegacyAlgorithms],
-            DraftProtocol::Ftp => &[Self::Passive, Self::Tls],
-            DraftProtocol::Telnet | DraftProtocol::Local => &[],
+            DraftProtocol::Sftp => &[Self::Compression, Self::LegacyAlgorithms, Self::Favorite],
+            DraftProtocol::Ftp => &[Self::Passive, Self::Tls, Self::Favorite],
+            DraftProtocol::Telnet | DraftProtocol::Local => &[Self::Favorite],
         }
     }
 }
@@ -1472,6 +1478,8 @@ mod tests {
                 ProfileToggle::AdminSession,
                 // Not in the C# dialog, which always asks: after its boxes.
                 ProfileToggle::SeveralServers,
+                // Every form's last, as the C# dialog's favorite box.
+                ProfileToggle::Favorite,
             ],
             "in the C# dialog's order"
         );
@@ -1546,7 +1554,11 @@ mod tests {
         );
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Ftp),
-            [ProfileToggle::Passive, ProfileToggle::Tls]
+            [
+                ProfileToggle::Passive,
+                ProfileToggle::Tls,
+                ProfileToggle::Favorite
+            ]
         );
         for field in [ProfileField::Username, ProfileField::VaultEntry] {
             assert!(draft.shows(field), "{field:?}");
@@ -1685,7 +1697,11 @@ mod tests {
         }
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Sftp),
-            [ProfileToggle::Compression, ProfileToggle::LegacyAlgorithms],
+            [
+                ProfileToggle::Compression,
+                ProfileToggle::LegacyAlgorithms,
+                ProfileToggle::Favorite
+            ],
             "no shell to forward the agent to"
         );
         assert!(DraftProtocol::Sftp.routes_through_gateway());
@@ -1719,7 +1735,8 @@ mod tests {
                 ProfileToggle::Compression,
                 ProfileToggle::ForwardAgent,
                 // Not in the C# dialog, which always offers them: after its boxes.
-                ProfileToggle::LegacyAlgorithms
+                ProfileToggle::LegacyAlgorithms,
+                ProfileToggle::Favorite
             ],
             "in the C# order"
         );

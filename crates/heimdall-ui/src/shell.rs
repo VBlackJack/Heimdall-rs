@@ -2109,7 +2109,11 @@ impl Shell {
                 .iter()
                 .filter(|id| self.app.connects_in_bulk(id))
                 .count();
-            tree_view::selection_menu_entries(selected.len(), connectable)
+            tree_view::selection_menu_entries(
+                selected.len(),
+                connectable,
+                self.app.all_favorites(&selected),
+            )
         } else if let TreeMenu::MoveSelection = menu {
             tree_view::move_selection_entries(&self.app.folder_paths())
         } else {
@@ -4770,6 +4774,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::LegacyAlgorithms => fl!("ui-profile-toggle-legacy-algorithms"),
         ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
+        ProfileToggle::Favorite => fl!("ui-profile-toggle-favorite"),
     }
 }
 

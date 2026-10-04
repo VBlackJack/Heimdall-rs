@@ -48,6 +48,8 @@ pub enum SelectionMessage {
     },
     /// Put every one selected in a folder, none for `None`.
     Move(Option<String>),
+    /// Mark every one selected as a favorite, or none of them.
+    Favorite(bool),
     /// Delete every one selected, once asked.
     RequestDelete,
 }
@@ -111,6 +113,11 @@ impl App {
                         detail: error.to_string(),
                     });
                 }
+                Vec::new()
+            }
+            SelectionMessage::Favorite(favorite) => {
+                let ids = self.selected_profiles();
+                self.set_favorites(&ids, favorite);
                 Vec::new()
             }
             SelectionMessage::RequestDelete => {
