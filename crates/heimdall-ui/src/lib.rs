@@ -16,6 +16,7 @@
 
 //! The Heimdall desktop application: the window, its views and the terminal widget.
 
+mod about_view;
 pub mod address_test_view;
 pub mod agent_chip_view;
 mod conflicts_view;
