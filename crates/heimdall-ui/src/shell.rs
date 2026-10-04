@@ -578,6 +578,7 @@ fn default_local_shell() -> LocalShell {
         program: None,
         arguments: heimdall_term::local::LocalArguments::default(),
         working_directory: None,
+        environment: Vec::new(),
     }
 }
 

@@ -78,6 +78,10 @@ pub struct LocalConfig {
     pub arguments: LocalArguments,
     /// Folder it starts in; `None` for the current one.
     pub working_directory: Option<PathBuf>,
+    /// Variables set for it over what it inherits, as name and value. One the system cannot
+    /// carry, a name empty or holding `=` or NUL, a value holding NUL, is left out; the
+    /// terminal's own variables are never replaced.
+    pub environment: Vec<(String, String)>,
     /// Columns.
     pub columns: u16,
     /// Rows.
@@ -222,7 +226,7 @@ fn options(config: &LocalConfig) -> io::Result<Options> {
         working_directory: config.working_directory.clone(),
         drain_on_exit: false,
         // Passed to the child only: `tty::setup_env` would change this process's own.
-        env: environment(&program),
+        env: environment(&program, &config.environment),
         // The command line is built whole here, by `command_line::windows`: nothing is added
         // to it on the way.
         #[cfg(windows)]
@@ -230,20 +234,29 @@ fn options(config: &LocalConfig) -> io::Result<Options> {
     })
 }
 
-/// The variables set for the child, over what it inherits: the terminal it runs in and, for
-/// Windows `PowerShell`, a module path without `PowerShell` 7's entries
-/// ([`module_path::for_windows_powershell`]).
-fn environment(program: &Path) -> HashMap<String, String> {
-    [
-        ("TERM".to_owned(), TERMINAL_TYPE.to_owned()),
-        ("COLORTERM".to_owned(), "truecolor".to_owned()),
-    ]
-    .into_iter()
-    .chain(
-        windows_powershell_module_path(program)
-            .map(|path| (module_path::VARIABLE.to_owned(), path)),
-    )
-    .collect()
+/// The variables set for the child, over what it inherits: those `asked` that the system can
+/// carry, then the terminal it runs in and, for Windows `PowerShell`, a module path without
+/// `PowerShell` 7's entries ([`module_path::for_windows_powershell`]), which win.
+fn environment(program: &Path, asked: &[(String, String)]) -> HashMap<String, String> {
+    asked
+        .iter()
+        .filter(|(name, value)| carried(name, value))
+        .cloned()
+        .chain([
+            ("TERM".to_owned(), TERMINAL_TYPE.to_owned()),
+            ("COLORTERM".to_owned(), "truecolor".to_owned()),
+        ])
+        .chain(
+            windows_powershell_module_path(program)
+                .map(|path| (module_path::VARIABLE.to_owned(), path)),
+        )
+        .collect()
+}
+
+/// Whether a variable can be handed to a program: a name, without `=` or NUL, and a value
+/// without NUL, which would end it early.
+fn carried(name: &str, value: &str) -> bool {
+    !name.is_empty() && !name.contains(['=', '\0']) && !value.contains('\0')
 }
 
 /// The module path `program` gets when it is Windows `PowerShell`.
@@ -364,6 +377,40 @@ mod tests {
         );
         assert!(!options.drain_on_exit);
         assert!(options.shell.is_some());
+    }
+
+    #[test]
+    fn the_variables_asked_are_set_unless_the_system_cannot_carry_them() {
+        let asked = |name: &str, value: &str| (name.to_owned(), value.to_owned());
+        let options = options(&LocalConfig {
+            program: Some(FULL_PATH.to_owned()),
+            environment: vec![
+                asked("HEIMDALL_NAME", "Build box"),
+                asked("HEIMDALL_GROUP", "Lab/Linux"),
+                asked("", "nameless"),
+                asked("A=B", "split"),
+                asked("CUT", "before\0after"),
+                asked("TERM", "dumb"),
+            ],
+            ..LocalConfig::default()
+        })
+        .expect("options");
+        assert_eq!(
+            options.env.get("HEIMDALL_NAME").map(String::as_str),
+            Some("Build box")
+        );
+        assert_eq!(
+            options.env.get("HEIMDALL_GROUP").map(String::as_str),
+            Some("Lab/Linux")
+        );
+        assert_eq!(
+            options.env.get("TERM").map(String::as_str),
+            Some("xterm-256color"),
+            "the terminal's own wins"
+        );
+        for refused in ["", "A=B", "CUT"] {
+            assert!(!options.env.contains_key(refused), "{refused:?}");
+        }
     }
 
     #[test]

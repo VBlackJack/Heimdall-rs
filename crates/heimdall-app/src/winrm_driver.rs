@@ -209,5 +209,6 @@ pub fn shell(name: String, program: String, command: String) -> LocalShell {
         program: Some(program),
         arguments: LocalArguments::List(arguments),
         working_directory: None,
+        environment: Vec::new(),
     }
 }

@@ -165,6 +165,7 @@ mod tests {
             program: Some("cmd.exe".to_owned()),
             arguments: LocalArguments::List(vec!["/C".to_owned(), format!("exit {EXIT_CODE}")]),
             working_directory: None,
+            environment: Vec::new(),
             columns: 80,
             rows: 24,
         })

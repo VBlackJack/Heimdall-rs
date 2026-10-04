@@ -50,6 +50,7 @@ fn shell(program: &str, args: &[&str]) -> LocalShell {
         program: Some(program.to_owned()),
         arguments: LocalArguments::List(args.iter().map(|arg| (*arg).to_owned()).collect()),
         working_directory: None,
+        environment: Vec::new(),
     }
 }
 
