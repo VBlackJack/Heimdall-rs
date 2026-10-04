@@ -175,6 +175,8 @@ pub enum Notice {
     TranscriptFailed(String),
     /// The server's folder at this path was bookmarked.
     Bookmarked(String),
+    /// This folder of the server was taken off the bookmarks.
+    BookmarkRemoved(String),
     /// Broadcast input is on, reaching this scope.
     BroadcastOn(BroadcastScope),
     /// Broadcast input is off.

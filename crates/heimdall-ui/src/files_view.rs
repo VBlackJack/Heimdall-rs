@@ -30,7 +30,7 @@ use std::time::SystemTime;
 use heimdall_app::external_edit::EditSession;
 use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
-    SortColumn, Transfer, TransferState, symbolic_mode,
+    SortColumn, Special, Transfer, TransferState, symbolic_mode,
 };
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use heimdall_core::utc::UtcTime;
@@ -181,7 +181,10 @@ pub fn properties<'a>(
         EntryKind::File => fl!("ui-files-type-file"),
         EntryKind::Directory => fl!("ui-files-type-directory"),
         EntryKind::Link => fl!("ui-files-type-link"),
-        EntryKind::Other => fl!("ui-files-type-other"),
+        EntryKind::Other(Special::Pipe) => fl!("ui-files-type-pipe"),
+        EntryKind::Other(Special::Socket) => fl!("ui-files-type-socket"),
+        EntryKind::Other(Special::Device) => fl!("ui-files-type-device"),
+        EntryKind::Other(Special::Unknown) => fl!("ui-files-type-other"),
     };
     let number = |value: Option<u32>| value.map(|n| n.to_string()).unwrap_or_default();
     let lines = [
@@ -242,7 +245,7 @@ fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
             let mark = match entry.kind() {
                 EntryKind::Directory => FOLDER_MARK,
                 EntryKind::Link => LINK_MARK,
-                EntryKind::File | EntryKind::Other => "",
+                EntryKind::File | EntryKind::Other(_) => "",
             };
             format!("{}{mark}", entry.label())
         }
@@ -446,6 +449,54 @@ struct Moves {
     home: bool,
 }
 
+/// What a pane listing nothing says, as the C# empty states: the folder is empty; or
+/// nothing matches the filter, with a way to clear it; or only hidden entries are there,
+/// with a way to show them.
+fn empty_state<'a>(
+    tab: TabId,
+    side: Side,
+    filter: &str,
+    show_hidden: bool,
+    total: usize,
+) -> Element<'a, Message> {
+    let said = |words: String| text(words).size(SMALL_SIZE);
+    let way = |label: String, message: FilesMessage| {
+        button(text(label).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(message))
+    };
+    if total == 0 {
+        return said(fl!("ui-files-empty")).into();
+    }
+    if !filter.trim().is_empty() {
+        return column![
+            said(fl!("ui-files-empty-no-match", filter = filter)),
+            way(
+                fl!("ui-files-empty-clear-filter"),
+                FilesMessage::Filter {
+                    tab,
+                    side,
+                    text: String::new(),
+                }
+            ),
+        ]
+        .spacing(SPACING)
+        .into();
+    }
+    if show_hidden {
+        return said(fl!("ui-files-empty")).into();
+    }
+    column![
+        said(fl!("ui-files-empty-hidden-only")),
+        way(
+            fl!("ui-files-empty-show-hidden"),
+            FilesMessage::ToggleHidden { tab, side }
+        ),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
 fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     let PaneParts {
         tab,
@@ -503,7 +554,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         if loading {
             list = list.push(text(fl!("ui-files-loading")).size(SMALL_SIZE));
         } else if entries.is_empty() && !failed {
-            list = list.push(text(fl!("ui-files-empty")).size(SMALL_SIZE));
+            list = list.push(empty_state(tab, side, filter, show_hidden, total));
         }
         for (index, entry) in entries.iter().enumerate() {
             let place = (tab, side, index);

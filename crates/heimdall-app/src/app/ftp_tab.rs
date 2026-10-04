@@ -68,7 +68,7 @@ impl App {
             attempt,
             cancel,
         );
-        tab.files = Some(Box::new(FilesPane::new(self.config.files_start.clone())));
+        tab.files = Some(Box::new(FilesPane::new(self.files_start())));
         self.tabs.push(tab);
         self.active = Some(tab_id);
         vec![Effect::ConnectFtp {

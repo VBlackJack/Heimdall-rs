@@ -1454,3 +1454,12 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Username updated on { $count } servers.
 }
 ui-status-bulk-username-unchanged = No changes applied - every selected server already uses this username.
+ui-files-type-pipe = Named pipe (FIFO)
+ui-files-type-socket = Socket
+ui-files-type-device = Device
+ui-files-bookmark-removed = Bookmark removed: { $path }
+ui-files-bookmark-remove-menu = Remove a bookmark
+ui-files-empty-no-match = No entries match "{ $filter }".
+ui-files-empty-clear-filter = Clear filter
+ui-files-empty-hidden-only = This folder only contains hidden entries.
+ui-files-empty-show-hidden = Show hidden files
