@@ -2116,9 +2116,8 @@ impl Shell {
                 tree_view::files_bookmarks_menu(tab, &shown)
             }
         } else if let TreeMenu::Tunnel(id) = *menu {
-            // Only while the tunnel is open.
-            self.app.tunnel(id)?;
-            tree_view::tunnel_menu_entries(id)
+            // Only while the tunnel is listed.
+            tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -2248,7 +2247,7 @@ impl Shell {
     /// The tunnels panel's button, with how many tunnels are open, as the C# bar's.
     fn tunnels_toggle(&self) -> Element<'_, Message> {
         tooltip(
-            button(text(fl!("ui-tunnels-count", count = self.app.tunnels.len())).size(SMALL_SIZE))
+            button(text(fl!("ui-tunnels-count", count = self.app.live_tunnels())).size(SMALL_SIZE))
                 .style(if self.app.tunnels_panel {
                     button::primary
                 } else {
@@ -2552,10 +2551,7 @@ impl Shell {
         .max_width(SETTINGS_WIDTH)
         .style(container::bordered_box);
         let body: Column<'_, Message> = match self.settings_tab {
-            SettingsTab::General => column![
-                text(fl!("ui-settings-appearance")).size(BODY_SIZE),
-                self.appearance_settings(),
-            ],
+            SettingsTab::General => self.general_settings(),
             SettingsTab::Terminal => column![
                 text(fl!("ui-settings-terminal")).size(BODY_SIZE),
                 self.terminal_settings(),
@@ -2619,6 +2615,37 @@ impl Shell {
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box)
             .into()
+    }
+
+    /// The C# General tab: the appearance, then the behaviour.
+    fn general_settings(&self) -> Column<'_, Message> {
+        column![
+            text(fl!("ui-settings-appearance")).size(BODY_SIZE),
+            self.appearance_settings(),
+            text(fl!("ui-settings-behavior")).size(BODY_SIZE),
+            self.behavior_settings(),
+        ]
+    }
+
+    /// The C# General tab's Behavior section: whether the tunnels panel starts collapsed.
+    fn behavior_settings(&self) -> Element<'_, Message> {
+        container(
+            column![
+                checkbox(self.app.settings().collapse_tunnels_panel)
+                    .label(fl!("ui-settings-collapse-tunnels-panel"))
+                    .on_toggle(|collapse| {
+                        Message::App(AppMessage::Settings(SettingsMessage::CollapseTunnelsPanel(
+                            collapse,
+                        )))
+                    }),
+                text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
     }
 
     /// The keys trusted for servers of `list`, as the C# Host keys and Certificates pages
