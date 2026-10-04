@@ -1331,3 +1331,14 @@ ui-files-state-preparing = Preparando la transferencia...
 ui-files-retry-button = Reintentar
 ui-files-clear-finished-button = Borrar finalizadas
 ui-files-error-interrupted = La transferencia se detuvo de forma inesperada.
+ui-trusted-host-keys-export = Exportar known_hosts
+ui-status-known-hosts-exported = { $count ->
+    [one] Se exportó { $count } clave a { $path }.
+   *[other] Se exportaron { $count } claves a { $path }.
+}
+ui-status-known-hosts-export-skipped = { $count ->
+    [one] { $count } entrada omitida (sin clave pública capturada; vuelve a conectar para habilitar la exportación).
+   *[other] { $count } entradas omitidas (sin clave pública capturada; vuelve a conectar para habilitar la exportación).
+}
+ui-status-known-hosts-export-failed = Falló la exportación de known_hosts: { $detail }
+ui-status-known-hosts-export-no-home = Falló la exportación de known_hosts: no se conoce la carpeta personal.

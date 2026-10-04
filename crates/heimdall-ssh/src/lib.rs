@@ -31,6 +31,7 @@ mod error;
 mod forward;
 mod key_file;
 mod known_hosts;
+mod known_hosts_export;
 pub mod known_hosts_import;
 pub mod local_forward;
 mod options;
@@ -55,6 +56,7 @@ pub use key_file::{KeyFile, KeyFileError, KeyFormat};
 pub use known_hosts::{
     KnownHostEntry, KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
+pub use known_hosts_export::KnownHostsExport;
 pub use options::{AgentSource, ConnectOptions, TerminalSize};
 pub use pins::{Carried, PinVerdict, Pins, carry_over, is_fingerprint, pin_verdict};
 pub use prompter::{
