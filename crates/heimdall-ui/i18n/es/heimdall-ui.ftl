@@ -1307,3 +1307,7 @@ ui-profile-winrm-identity-hint = Kerberos o NTLM se negocia automáticamente. Ke
 ui-profile-winrm-trusted-hosts-hint = Fuera de un dominio, NTLM por HTTP requiere que el host esté en la lista TrustedHosts de este equipo, o usar HTTPS. Heimdall nunca modifica TrustedHosts.
 ui-profile-winrm-https-off-by-gateway = HTTPS se desactivó porque hay una pasarela SSH seleccionada: WinRM por pasarela usa HTTP dentro del túnel. Quite la pasarela para restablecer HTTPS.
 ui-error-winrm-tls-no-verify = La conexión TLS de WinRM a '{ $host }' en el puerto { $port } falló aunque la validación del certificado está omitida: el puerto probablemente no responde en TLS. Compruebe que el puerto { $port } es el agente de escucha WinRM HTTPS (normalmente 5986).
+ui-files-state-rate = { $progress } - { $rate }/s, quedan { $left }
+ui-files-eta-seconds = { $seconds } s
+ui-files-eta-minutes = { $minutes } min { $seconds } s
+ui-files-eta-hours = { $hours } h { $minutes } min

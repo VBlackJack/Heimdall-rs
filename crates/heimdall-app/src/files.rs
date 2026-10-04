@@ -590,6 +590,59 @@ pub enum TransferState {
     Failed(FilesError),
 }
 
+/// How often a transfer's speed is measured at most, as the C# `TransferProgressTracker`.
+const RATE_SAMPLE: Duration = Duration::from_millis(250);
+
+/// How much a new measure counts against the speed so far, as the C#.
+const RATE_SMOOTHING: f64 = 0.3;
+
+/// How fast a transfer goes, measured as the C# `TransferProgressTracker` measures it: at
+/// most every quarter second, each measure smoothed into the speed so far.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct Rate {
+    /// The bytes done at the last measure, and when.
+    last: Option<(u64, Instant)>,
+    bytes_per_second: f64,
+}
+
+impl Rate {
+    /// `bytes` were done at `now`.
+    pub fn sample(&mut self, bytes: u64, now: Instant) {
+        let Some((before, then)) = self.last else {
+            self.last = Some((bytes, now));
+            return;
+        };
+        let elapsed = now.saturating_duration_since(then);
+        if elapsed < RATE_SAMPLE {
+            return;
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a speed shown to three digits")]
+        let measured = bytes.saturating_sub(before) as f64 / elapsed.as_secs_f64();
+        self.bytes_per_second = if self.bytes_per_second <= 0.0 {
+            measured
+        } else {
+            RATE_SMOOTHING * measured + (1.0 - RATE_SMOOTHING) * self.bytes_per_second
+        };
+        self.last = Some((bytes, now));
+    }
+
+    /// Bytes a second, once measured.
+    #[must_use]
+    pub fn bytes_per_second(&self) -> Option<f64> {
+        (self.bytes_per_second > 0.0).then_some(self.bytes_per_second)
+    }
+
+    /// The time left to go from `done` to `total` at this speed; `None` until measured, or
+    /// when the size is not known.
+    #[must_use]
+    pub fn remaining(&self, done: u64, total: Option<u64>) -> Option<Duration> {
+        let speed = self.bytes_per_second()?;
+        #[expect(clippy::cast_precision_loss, reason = "a time shown to the second")]
+        let left = total?.saturating_sub(done) as f64;
+        Duration::try_from_secs_f64(left / speed).ok()
+    }
+}
+
 /// A transfer shown in the tab.
 #[derive(Debug, Clone)]
 pub struct Transfer {
@@ -603,6 +656,8 @@ pub struct Transfer {
     pub bytes: u64,
     /// Size, when known.
     pub total: Option<u64>,
+    /// How fast it goes.
+    pub rate: Rate,
     /// State.
     pub state: TransferState,
     pub(crate) cancel: CancellationToken,
@@ -1374,6 +1429,28 @@ pub fn typed_name(side: Side, typed: &str) -> Result<LocalName, FilesError> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_transfers_speed_is_measured_every_quarter_second_and_smoothed_as_the_csharp() {
+        use std::time::{Duration, Instant};
+
+        let start = Instant::now();
+        let mut rate = super::Rate::default();
+        rate.sample(0, start);
+        assert_eq!(rate.bytes_per_second(), None, "one point is no speed");
+        rate.sample(1_000, start + Duration::from_millis(100));
+        assert_eq!(rate.bytes_per_second(), None, "too soon to measure");
+        rate.sample(1_000_000, start + Duration::from_secs(1));
+        assert!((rate.bytes_per_second().expect("measured") - 1_000_000.0).abs() < 1.0);
+        // Half as fast for a second: 30% of the new measure, 70% of the speed so far.
+        rate.sample(1_500_000, start + Duration::from_secs(2));
+        assert!((rate.bytes_per_second().expect("measured") - 850_000.0).abs() < 1.0);
+        let left = rate
+            .remaining(1_500_000, Some(3_200_000))
+            .expect("a time left");
+        assert_eq!(left.as_secs(), 2);
+        assert_eq!(rate.remaining(0, None), None, "no size, no time left");
+    }
+
     use heimdall_files::{ItemKind, RemoteItem};
 
     use std::time::{Duration, UNIX_EPOCH};

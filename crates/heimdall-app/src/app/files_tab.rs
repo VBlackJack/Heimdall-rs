@@ -1534,6 +1534,7 @@ impl App {
             label,
             bytes: 0,
             total,
+            rate: crate::files::Rate::default(),
             state: TransferState::Running,
             cancel: request.cancel.clone(),
         });
@@ -1554,6 +1555,7 @@ impl App {
         match event {
             TransferEvent::Progress(bytes) => {
                 transfer.bytes = bytes;
+                transfer.rate.sample(bytes, std::time::Instant::now());
                 Vec::new()
             }
             TransferEvent::Finished(state) => {
@@ -1918,6 +1920,7 @@ fn failed(direction: Direction, label: String, error: FilesError) -> Transfer {
         label,
         bytes: 0,
         total: None,
+        rate: crate::files::Rate::default(),
         state: TransferState::Failed(error),
         cancel: CancellationToken::new(),
     }
