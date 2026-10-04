@@ -453,3 +453,29 @@ fn a_folder_counts_the_profiles_it_holds_its_sub_folders_included() {
         "while searching, only what was found (api by its folder)"
     );
 }
+
+#[test]
+fn a_folder_is_given_a_colour_from_its_menu_and_its_folders_show_it() {
+    use heimdall_app::FolderMessage;
+    use heimdall_core::folder::FolderColor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (parent, child) = ("Prod".to_owned(), "Prod/Web".to_owned());
+    app.update(Message::Folder(FolderMessage::Color {
+        path: parent.clone(),
+        color: Some(FolderColor::Amber),
+    }));
+    assert_eq!(app.own_folder_color(&parent), Some(FolderColor::Amber));
+    assert_eq!(
+        app.folder_color(&child),
+        Some(FolderColor::Amber),
+        "inherited"
+    );
+    assert_eq!(app.own_folder_color(&child), None);
+    app.update(Message::Folder(FolderMessage::Color {
+        path: parent.clone(),
+        color: None,
+    }));
+    assert_eq!(app.folder_color(&child), None);
+}
