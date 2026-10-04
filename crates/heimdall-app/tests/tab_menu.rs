@@ -67,6 +67,7 @@ fn app(dir: &Path) -> App {
         compression: false,
         sftp: false,
         legacy_algorithms: false,
+        session_logging: None,
     }]);
     store.merge_winrm([WinRmProfile {
         id: ProfileId::new("w"),

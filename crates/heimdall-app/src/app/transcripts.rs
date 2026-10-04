@@ -14,14 +14,15 @@
  * limitations under the License.
  */
 
-//! Which sessions keep a transcript, as the C# Heimdall decides: with session logging on,
-//! every SSH, Telnet and local session from when it connects; `WinRM` only by hand, its
-//! `PowerShell` host able to echo what sets it up. Any session of text by hand, from its
-//! tab's menu; each ends with its session.
+//! Which sessions keep a transcript, as the C# Heimdall decides: every SSH, Telnet and local
+//! session from when it connects, when session logging is on or its profile says so, unless
+//! its profile says not; `WinRM` only by hand, its `PowerShell` host able to echo what sets
+//! it up. Any session of text by hand, from its tab's menu; each ends with its session.
 
 use std::time::SystemTime;
 
-use super::{App, Notice, Phase, ProfileKind, Tab};
+use super::reconnect::Reopen;
+use super::{App, Notice, Phase, ProfileKind, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::ids::TabId;
 use crate::transcript::{TRANSCRIPT_MAX_BYTES, Transcript, TranscriptContext, TranscriptLines};
@@ -56,7 +57,7 @@ impl App {
         if tab.phase != Phase::Connected {
             self.end_transcript(tab_id, false);
         } else if !was_connected
-            && self.settings.session_logging
+            && self.logs_sessions(tab)
             && matches!(
                 self.tab_kind(tab),
                 ProfileKind::Ssh | ProfileKind::Telnet | ProfileKind::Local
@@ -64,6 +65,28 @@ impl App {
         {
             self.start_transcript(tab_id, false);
         }
+    }
+
+    /// Whether `tab`'s session keeps a transcript from when it connects: as its profile
+    /// says, else as the settings say, as the C# `SessionLoggingOverride`.
+    fn logs_sessions(&self, tab: &Tab) -> bool {
+        let chosen = match &tab.profile {
+            TabProfile::Ssh(profile) => profile.session_logging,
+            TabProfile::Telnet(profile) => profile.session_logging,
+            // A local shell's tab keeps what it runs, not its profile: the profile it opened
+            // from says.
+            TabProfile::Local(_) => match &tab.reopen {
+                Reopen::Profile(id) => self
+                    .store
+                    .local_profiles()
+                    .iter()
+                    .find(|profile| profile.id == *id)
+                    .and_then(|profile| profile.session_logging),
+                Reopen::Shell(_) | Reopen::Transient(..) => None,
+            },
+            _ => None,
+        };
+        chosen.unwrap_or(self.settings.session_logging)
     }
 
     /// Starts `tab_id`'s transcript in the folder of the settings; `told` says where.

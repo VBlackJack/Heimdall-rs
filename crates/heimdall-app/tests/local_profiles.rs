@@ -73,6 +73,7 @@ fn profile(command: LocalCommand, approved: Option<LocalApproval>) -> LocalProfi
         group: None,
         command,
         approved,
+        session_logging: None,
     }
 }
 
