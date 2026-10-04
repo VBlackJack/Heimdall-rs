@@ -1172,11 +1172,20 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
 pub const TUNNEL_MENU_HEIGHT: f32 = 3.0 * (MENU_TEXT_SIZE * 1.3 + 10.0) + 1.0 + 2.0 * MENU_PADDING;
 
 /// A tunnel row's menu, as the C# one: Close Tunnel, Copy Local Port, then Close All Tunnels.
-pub fn tunnel_menu_entries<'a>(id: heimdall_app::tunnel::TunnelId) -> Element<'a, Message> {
+pub fn tunnel_menu_entries<'a>(
+    id: heimdall_app::tunnel::TunnelId,
+    interrupted: bool,
+) -> Element<'a, Message> {
     let tunnel = |message| Some(AppMessage::Tunnel(message));
-    let entries = column![]
-        .spacing(0.0)
-        .width(MENU_WIDTH)
+    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    // An interrupted tunnel is opened again from its row, as it was asked for.
+    if interrupted {
+        entries = entries.push(entry(
+            fl!("ui-tunnels-menu-reopen"),
+            tunnel(heimdall_app::TunnelMessage::Reopen(id)),
+        ));
+    }
+    let entries = entries
         .push(entry(
             fl!("ui-tunnels-menu-close"),
             tunnel(heimdall_app::TunnelMessage::Close(id)),

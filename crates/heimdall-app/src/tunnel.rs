@@ -191,6 +191,9 @@ pub struct Tunnel {
     pub local: SocketAddr,
     /// When it opened.
     pub started: SystemTime,
+    /// Its gateway connection went: it listens no more. Its row stays, said interrupted as
+    /// the C# one, until it is closed or opened again.
+    pub interrupted: bool,
 }
 
 /// What a tunnel's attempt, then the tunnel, report.

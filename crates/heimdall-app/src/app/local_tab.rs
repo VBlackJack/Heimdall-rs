@@ -21,7 +21,9 @@
 
 use std::path::Path;
 
-use heimdall_core::profile::{LocalApproval, LocalArguments, LocalCommand, ProfileId};
+use heimdall_core::profile::{
+    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId,
+};
 use heimdall_term::local::{self, LocalArguments as TermArguments};
 use tokio_util::sync::CancellationToken;
 
@@ -93,13 +95,12 @@ impl App {
         };
         let Ok(program_path) = local::program_path(profile.command.program.as_deref()) else {
             // Nothing can run: the tab says why, as starting it would.
-            let effects = self.open_local(shell(&profile.name, &profile.command, None));
+            let effects = self.open_local(shell(&profile, &profile.command, None));
             self.reopened_by(Reopen::Profile(profile.id));
             return effects;
         };
         if profile.may_run(&program_path) {
-            let effects =
-                self.open_local(shell(&profile.name, &profile.command, Some(&program_path)));
+            let effects = self.open_local(shell(&profile, &profile.command, Some(&program_path)));
             self.reopened_by(Reopen::Profile(profile.id));
             return effects;
         }
@@ -124,16 +125,18 @@ impl App {
 
     /// Records the approval, then runs what was approved.
     pub(super) fn confirm_local(&mut self, confirmation: LocalConfirmation) -> Vec<Effect> {
-        let LocalConfirmation {
-            id, approval, name, ..
-        } = confirmation;
+        let LocalConfirmation { id, approval, .. } = confirmation;
         let recorded = self
             .store
             .apply(|store| store.approve_local(&id, approval.clone()));
         match recorded {
             Ok(true) => {
+                let Some(profile) = self.local_profiles().iter().find(|p| p.id == id).cloned()
+                else {
+                    return Vec::new();
+                };
                 let effects = self.open_local(shell(
-                    &name,
+                    &profile,
                     &approval.command,
                     Some(&approval.program_path),
                 ));
@@ -152,18 +155,49 @@ impl App {
     }
 }
 
-/// What a tab runs for `command`: the program at `program_path` when it was found, so that
-/// the file run is the one approved, not whatever the name finds by then.
-fn shell(name: &str, command: &LocalCommand, program_path: Option<&Path>) -> LocalShell {
+/// What a tab runs for `profile`'s `command`: the program at `program_path` when it was
+/// found, so that the file run is the one approved, not whatever the name finds by then.
+fn shell(
+    profile: &LocalProfile,
+    command: &LocalCommand,
+    program_path: Option<&Path>,
+) -> LocalShell {
     LocalShell {
-        name: name.to_owned(),
+        name: profile.name.clone(),
         program: program_path
             .map(|path| path.to_string_lossy().into_owned())
             .or_else(|| command.program.clone()),
         arguments: term_arguments(&command.arguments),
         working_directory: command.working_directory.clone(),
+        environment: context_environment(profile),
     }
 }
+
+/// The variables a saved profile's shell is given to know what it was opened for, as the C#
+/// `BuildContextEnvironment`: its name, its type and its folder, each only when it has one.
+/// A local profile has no server, so the C# host, port and user are never set here.
+fn context_environment(profile: &LocalProfile) -> Vec<(String, String)> {
+    [
+        (CONTEXT_NAME, Some(profile.name.as_str())),
+        (CONTEXT_TYPE, Some(CONTEXT_TYPE_LOCAL)),
+        (CONTEXT_GROUP, profile.group.as_deref()),
+    ]
+    .into_iter()
+    .filter_map(|(variable, value)| {
+        let value = value?.trim();
+        (!value.is_empty()).then(|| (variable.to_owned(), value.to_owned()))
+    })
+    .collect()
+}
+
+/// The profile's name, as the C# `HEIMDALL_NAME`.
+const CONTEXT_NAME: &str = "HEIMDALL_NAME";
+/// Its type, as the C# `HEIMDALL_TYPE`.
+const CONTEXT_TYPE: &str = "HEIMDALL_TYPE";
+/// Its folder, as the C# `HEIMDALL_GROUP`.
+const CONTEXT_GROUP: &str = "HEIMDALL_GROUP";
+/// The type a local profile is said to be, the C# connection type's.
+const CONTEXT_TYPE_LOCAL: &str = "Local";
 
 pub(super) fn term_arguments(arguments: &LocalArguments) -> TermArguments {
     match arguments {

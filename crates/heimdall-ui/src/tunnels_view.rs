@@ -49,6 +49,8 @@ const PANEL_TEXT_SIZE: f32 = 12.0;
 /// Room around the panel's content.
 const PANEL_PADDING: [f32; 2] = [4.0, 8.0];
 
+/// Width of the ring of an interrupted tunnel's health dot.
+const RING_WIDTH: f32 = 2.0;
 /// Side of a row's health dot, as the C# one.
 const DOT_SIDE: f32 = 7.0;
 
@@ -292,19 +294,9 @@ fn columns<'a>() -> Element<'a, Message> {
 /// button closing it; a right click opens its menu.
 fn tunnel_row(open: &Tunnel) -> Element<'_, Message> {
     let cell = |value: String| text(value).size(PANEL_TEXT_SIZE);
-    // A row is a tunnel that listens: one whose gateway went is gone.
-    let dot = container(space().width(DOT_SIDE).height(DOT_SIDE)).style(|theme: &Theme| {
-        container::Style {
-            background: Some(theme.extended_palette().success.base.color.into()),
-            border: Border {
-                radius: (DOT_SIDE / 2.0).into(),
-                ..Border::default()
-            },
-            ..container::Style::default()
-        }
-    });
+    let interrupted = open.interrupted;
     let line = row![
-        dot,
+        status_dot(interrupted),
         cell(server_text(&open.gateway_name)).width(Length::Fill),
         cell(
             open.spec
@@ -332,6 +324,46 @@ fn tunnel_row(open: &Tunnel) -> Element<'_, Message> {
     mouse_area(line)
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Tunnel(open.id)))
         .into()
+}
+
+/// A row's health: a full green dot while the tunnel listens; an empty red ring once its
+/// gateway went, the C# "Interrupted", told apart by its shape as much as by its colour.
+fn status_dot<'a>(interrupted: bool) -> Element<'a, Message> {
+    let dot = container(space().width(DOT_SIDE).height(DOT_SIDE)).style(move |theme: &Theme| {
+        let palette = theme.extended_palette();
+        let border = Border {
+            radius: (DOT_SIDE / 2.0).into(),
+            ..Border::default()
+        };
+        if interrupted {
+            container::Style {
+                border: Border {
+                    color: palette.danger.base.color,
+                    width: RING_WIDTH,
+                    ..border
+                },
+                ..container::Style::default()
+            }
+        } else {
+            container::Style {
+                background: Some(palette.success.base.color.into()),
+                border,
+                ..container::Style::default()
+            }
+        }
+    });
+    let label = if interrupted {
+        fl!("ui-tunnels-status-interrupted")
+    } else {
+        fl!("ui-tunnels-status-active")
+    };
+    tooltip(
+        dot,
+        text(label).size(PANEL_TEXT_SIZE),
+        tooltip::Position::Right,
+    )
+    .style(container::rounded_box)
+    .into()
 }
 
 /// What the status bar says of a tunnel `notice`; `None` when it is not one.
