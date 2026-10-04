@@ -159,7 +159,7 @@ pub fn error(error: &UiError) -> String {
         }
         UiError::RdpRefused { refusal } => rdp_refusal(*refusal),
         UiError::RdpEnded { ending } => {
-            rdp_ending(ending).unwrap_or_else(|| fl!("ui-session-closed"))
+            rdp_ending(ending).unwrap_or_else(|| fl!("ui-rdp-session-closed"))
         }
         UiError::RdpProtocol { detail } => {
             fl!("ui-error-rdp-protocol", detail = server_text(detail))
@@ -528,7 +528,7 @@ mod tests {
             error(&UiError::RdpEnded {
                 ending: Ending::Logoff
             }),
-            "The session ended."
+            "The Remote Desktop session has ended."
         );
         assert!(
             error(&UiError::RdpEnded {
