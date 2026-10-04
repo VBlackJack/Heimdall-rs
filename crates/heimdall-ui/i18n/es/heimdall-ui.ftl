@@ -1376,6 +1376,11 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Usuario actualizado en { $count } servidores.
 }
 ui-status-bulk-username-unchanged = No se aplicó ningún cambio: todos los servidores seleccionados ya usan este usuario.
+ui-desktop-disconnect = Desconectar
+ui-desktop-disconnect-tooltip = Desconectar sesión
+ui-desktop-disconnect-title = ¿Desconectar Escritorio remoto?
+ui-desktop-disconnect-body = Estás a punto de desconectarte de { $name }. ¿Continuar?
+ui-settings-rdp-auto-reconnect-attempts = Intentos máximos de reconexión automática
 ui-files-type-pipe = Tubería con nombre (FIFO)
 ui-files-type-socket = Socket
 ui-files-type-device = Dispositivo

@@ -568,3 +568,58 @@ fn a_shell_in_the_background_comes_back_there() {
         "the chain went with it"
     );
 }
+
+#[test]
+fn the_settings_choose_how_many_times_a_desktop_is_tried_again() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::Settings(
+        SettingsMessage::RdpAutoReconnectAttempts(0),
+    ));
+    assert_eq!(
+        app.settings().rdp_auto_reconnect_attempts,
+        RDP_MAX_ATTEMPTS,
+        "out of the range: kept"
+    );
+    app.update(Message::Settings(
+        SettingsMessage::RdpAutoReconnectAttempts(3),
+    ));
+    let (tab, attempt) = live(&mut app);
+    event(&mut app, tab, attempt, dropped());
+    let retry = app.tab(tab).expect("tab").retry.expect("waiting");
+    assert_eq!((retry.attempt, retry.max), (1, 3));
+}
+
+#[test]
+fn the_session_bars_disconnect_asks_then_ends_the_desktop_and_keeps_the_tab() {
+    use heimdall_app::Dialog;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = live(&mut app);
+    app.update(Message::DisconnectDesktop(tab));
+    assert!(
+        matches!(app.dialog, Some(Dialog::ConfirmDisconnectDesktop { tab: asked, .. }) if asked == tab),
+        "asked first, as the C# RdpConfirmDisconnect: {:?}",
+        app.dialog
+    );
+    app.update(Message::DismissDialog);
+    assert_eq!(app.tab(tab).expect("tab").phase, Phase::Connected, "kept");
+
+    app.update(Message::DisconnectDesktop(tab));
+    app.update(Message::ConfirmDialog);
+    let ended = app.tab(tab).expect("the tab stays");
+    assert!(
+        matches!(ended.phase, Phase::Closed { .. }),
+        "{:?}",
+        ended.phase
+    );
+    assert!(ended.desktop.is_none());
+    assert!(app.can_reconnect(ended), "Reconnect is offered");
+    // What the old session still says changes nothing, and nothing opens by itself.
+    assert!(event(&mut app, tab, attempt, dropped()).is_empty());
+    let ended = app.tab(tab).expect("tab");
+    assert!(ended.retry.is_none() && matches!(ended.phase, Phase::Closed { .. }));
+}

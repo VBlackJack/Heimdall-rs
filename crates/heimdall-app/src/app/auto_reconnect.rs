@@ -87,13 +87,14 @@ impl App {
             .settings
             .ssh_auto_reconnect
             .then_some(self.settings.ssh_auto_reconnect_attempts);
+        let rdp_attempts = self.settings.rdp_auto_reconnect_attempts;
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
         // An RDP desktop whose profile asks; an SSH shell when the setting asks; nothing else.
         let max = match (&tab.profile, tab.purpose) {
             (TabProfile::Rdp(profile), Purpose::Rdp) => {
-                profile.auto_reconnect.then_some(RDP_MAX_ATTEMPTS)
+                profile.auto_reconnect.then_some(rdp_attempts)
             }
             (TabProfile::Ssh(_), Purpose::Shell) => ssh_attempts,
             _ => None,

@@ -246,6 +246,8 @@ pub struct DesktopPane {
     /// The session gets anti-idle keys: its profile asks for them and the user has not
     /// stopped them for this session.
     pub anti_idle: bool,
+    /// A VNC desktop's name, as its server gives it, made safe; shown on the session bar.
+    pub desktop_name: Option<String>,
     /// The server's clipboard holds files to save here.
     remote_files: bool,
     /// Saving the server's files, from the folder asked for until it ends.
@@ -294,6 +296,7 @@ impl DesktopPane {
             },
             clipboard,
             anti_idle: false,
+            desktop_name: None,
             remote_files: false,
             save: None,
         }
@@ -570,6 +573,7 @@ impl DesktopPane {
                 view_only,
             }),
             anti_idle: false,
+            desktop_name: None,
         }
     }
 
