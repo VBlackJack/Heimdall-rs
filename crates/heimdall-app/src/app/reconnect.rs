@@ -100,6 +100,9 @@ impl App {
                 old.files.as_deref_mut(),
             ) {
                 files.edits = std::mem::take(&mut before.edits);
+                // The transfers listed stay, those cut short stopped: Retry runs them on
+                // the new connection.
+                files.transfers = before.hand_over_transfers();
                 // As the text in the integrated editor: saved once connected again.
                 files.editor = before.editor.take();
             }
