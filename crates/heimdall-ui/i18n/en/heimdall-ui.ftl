@@ -1411,3 +1411,4 @@ ui-status-known-hosts-export-skipped = { $count ->
    *[other] { $count } entries skipped (no public key captured - reconnect to enable export).
 }
 ui-status-known-hosts-export-failed = known_hosts export failed: { $detail }
+ui-status-known-hosts-export-no-home = known_hosts export failed: the home folder is not known.

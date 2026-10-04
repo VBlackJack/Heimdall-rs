@@ -1333,3 +1333,4 @@ ui-status-known-hosts-export-skipped = { $count ->
    *[other] { $count } entradas omitidas (sin clave pública capturada; vuelve a conectar para habilitar la exportación).
 }
 ui-status-known-hosts-export-failed = Falló la exportación de known_hosts: { $detail }
+ui-status-known-hosts-export-no-home = Falló la exportación de known_hosts: no se conoce la carpeta personal.

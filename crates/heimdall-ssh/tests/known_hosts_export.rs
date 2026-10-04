@@ -51,7 +51,8 @@ fn the_keys_trusted_replace_their_lines_in_place_and_every_other_line_stays() {
     let target = dir.path().join(".ssh").join("known_hosts");
     std::fs::create_dir_all(target.parent().expect("folder")).expect("folder");
     let stale = written(&other);
-    let theirs = written(&ed25519);
+    // The same kind of key, with a comment: written again from the one trusted.
+    let theirs = written(&ecdsa);
     let before = format!(
         "# mine\n\
          web.lab {stale}\n\
@@ -125,5 +126,115 @@ fn a_missing_file_and_folder_are_created_and_nothing_trusted_writes_nothing() {
     assert_eq!(
         std::fs::read_to_string(&target).expect("read"),
         format!("[web.lab]:2200 {}\n", written(&key))
+    );
+}
+
+/// A Heimdall-rs file trusting `web.lab`'s ed25519 key, and the user's file at `target`.
+fn trusting_web(dir: &std::path::Path) -> (KnownHosts, std::path::PathBuf, PublicKey) {
+    let hosts = KnownHosts::new(dir.join("heimdall").join("known_hosts"));
+    let key = host_public_key("host-ed25519");
+    hosts.learn("web.lab", 22, &key).expect("learn");
+    (hosts, dir.join("known_hosts"), key)
+}
+
+#[test]
+fn a_file_ending_its_lines_with_a_lone_carriage_return_is_never_taken_whole() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (hosts, target, key) = trusting_web(dir.path());
+    let other = written(&host_public_key("host-ecdsa"));
+    let mine = format!("web.lab {other}\rdb.lab {other}\rmail.lab {other}\r");
+    std::fs::write(&target, &mine).expect("write");
+    hosts.export_to(&target).expect("exported");
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read"),
+        format!("{mine}\nweb.lab {}\n", written(&key)),
+        "kept whole, the key added after it"
+    );
+}
+
+#[test]
+fn crlf_lines_and_a_byte_order_mark_are_read_and_the_file_written_in_lf() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (hosts, target, key) = trusting_web(dir.path());
+    let stale = written(&host_public_key("host-ed25519-other"));
+    std::fs::write(
+        &target,
+        format!("\u{feff}web.lab {stale}\r\n# mine\r\nother.lab {stale}\r\n"),
+    )
+    .expect("write");
+    let report = hosts.export_to(&target).expect("exported");
+    assert_eq!((report.written, report.preserved), (1, 2));
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read"),
+        format!("web.lab {}\n# mine\nother.lab {stale}\n", written(&key)),
+        "replaced in its place, not added again"
+    );
+}
+
+#[test]
+fn a_key_of_a_kind_not_trusted_here_stays_beside_the_one_written() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (hosts, target, key) = trusting_web(dir.path());
+    let ecdsa = written(&host_public_key("host-ecdsa"));
+    std::fs::write(&target, format!("web.lab {ecdsa}\n")).expect("write");
+    hosts.export_to(&target).expect("exported");
+    assert_eq!(
+        std::fs::read_to_string(&target).expect("read"),
+        format!("web.lab {ecdsa}\nweb.lab {}\n", written(&key)),
+        "the user's ECDSA key is theirs"
+    );
+}
+
+#[test]
+fn a_read_only_file_is_left_as_it_is_and_said() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (hosts, target, _) = trusting_web(dir.path());
+    std::fs::write(&target, "# mine\n").expect("write");
+    let mut permissions = std::fs::metadata(&target).expect("meta").permissions();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&target, permissions.clone()).expect("read-only");
+    let refused = hosts.export_to(&target);
+    assert!(
+        matches!(
+            refused,
+            Err(heimdall_ssh::KnownHostsError::ExportFailed { .. })
+        ),
+        "{refused:?}"
+    );
+    assert_eq!(std::fs::read_to_string(&target).expect("read"), "# mine\n");
+    #[expect(
+        clippy::permissions_set_readonly_false,
+        reason = "the temporary folder is removed afterwards"
+    )]
+    permissions.set_readonly(false);
+    std::fs::set_permissions(&target, permissions).expect("writable again");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_is_followed_to_the_file_it_names_and_its_permissions_kept() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let (hosts, target, key) = trusting_web(dir.path());
+    let real = dir.path().join("dotfiles-known_hosts");
+    std::fs::write(&real, "# mine\n").expect("write");
+    std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).expect("mode");
+    std::os::unix::fs::symlink(&real, &target).expect("link");
+    hosts.export_to(&target).expect("exported");
+    assert!(
+        std::fs::symlink_metadata(&target)
+            .expect("meta")
+            .file_type()
+            .is_symlink(),
+        "still a link"
+    );
+    assert_eq!(
+        std::fs::read_to_string(&real).expect("read"),
+        format!("# mine\nweb.lab {}\n", written(&key))
+    );
+    assert_eq!(
+        std::fs::metadata(&real).expect("meta").permissions().mode() & 0o777,
+        0o600
     );
 }

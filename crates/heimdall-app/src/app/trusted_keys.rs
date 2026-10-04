@@ -131,7 +131,8 @@ impl App {
                 skipped: report.skipped,
             },
             Err(error) => Notice::KnownHostsExportFailed(match error {
-                KnownHostsError::Unreadable { path, source } => {
+                KnownHostsError::Unreadable { path, source }
+                | KnownHostsError::ExportFailed { path, source } => {
                     format!("{}: {source}", path.display())
                 }
                 _ => target.display().to_string(),

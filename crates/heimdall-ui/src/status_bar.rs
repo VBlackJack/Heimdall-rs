@@ -187,6 +187,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                     format!("{exported} {left_out}")
                 }
             }
+            Notice::KnownHostsExportFailed(detail) if detail.is_empty() => {
+                fl!("ui-status-known-hosts-export-no-home")
+            }
             Notice::KnownHostsExportFailed(detail) => {
                 fl!(
                     "ui-status-known-hosts-export-failed",

@@ -1336,3 +1336,4 @@ ui-status-known-hosts-export-skipped = { $count ->
    *[other] { $count } entrées ignorées (aucune clé publique capturée - reconnectez-vous pour permettre l'export).
 }
 ui-status-known-hosts-export-failed = Échec de l'export known_hosts : { $detail }
+ui-status-known-hosts-export-no-home = Échec de l'export known_hosts : le dossier personnel est inconnu.

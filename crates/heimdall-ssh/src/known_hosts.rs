@@ -61,6 +61,15 @@ pub enum KnownHostsError {
         /// File concerned.
         path: PathBuf,
     },
+    /// The keys trusted could not be written into another `known_hosts` file.
+    #[error("{path}: {source}")]
+    ExportFailed {
+        /// File concerned.
+        path: PathBuf,
+        /// Underlying error.
+        #[source]
+        source: io::Error,
+    },
     /// An entry still names the host after its own lines were removed: a hashed or
     /// wildcard line, which only a person can tell apart from other hosts' entries.
     #[error("{path}: an entry for this host is hashed or shared with others: edit the file")]
