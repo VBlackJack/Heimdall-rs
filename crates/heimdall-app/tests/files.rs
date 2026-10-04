@@ -933,3 +933,60 @@ async fn the_servers_folder_is_bookmarked_once_and_gone_back_to() {
     );
     assert!(files(&mut app, FilesMessage::OpenBookmark { tab, index: 2 }).is_empty());
 }
+
+#[tokio::test]
+async fn a_conflict_shows_both_copies_and_replace_if_newer_keeps_a_newer_one() {
+    use std::time::{Duration, SystemTime};
+
+    let dir = tempfile::tempdir().expect("dir");
+    std::fs::write(dir.path().join("report.txt"), b"mine").expect("existing");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let transfer = |app: &mut App| {
+        files(
+            app,
+            FilesMessage::Transfer {
+                tab,
+                direction: Direction::Download,
+            },
+        )
+    };
+    for (age, replaced) in [(Duration::from_hours(24), false), (Duration::ZERO, true)] {
+        // A day older than the local copy, or an hour newer.
+        let modified = if replaced {
+            SystemTime::now() + Duration::from_hours(1)
+        } else {
+            SystemTime::now() - age
+        };
+        let mut entry = remote_entry(b"report.txt", EntryKind::File, 42);
+        entry.modified = Some(modified);
+        listed_remote(&mut app, tab, "/srv", vec![entry]);
+        files(
+            &mut app,
+            FilesMessage::Select {
+                tab,
+                side: Side::Remote,
+                index: 0,
+            },
+        );
+        let started = transfer(&mut app);
+        planned(&mut app, started).await;
+        let Some(Dialog::FileConflicts { rows, .. }) = &app.dialog else {
+            panic!("{:?}", app.dialog);
+        };
+        assert_eq!(rows[0].incoming.size, Some(42), "as the pane lists it");
+        assert_eq!(rows[0].incoming.modified, Some(modified));
+        assert_eq!(
+            rows[0].existing.and_then(|existing| existing.size),
+            Some(4),
+            "what is there, as read"
+        );
+        files(&mut app, FilesMessage::ConflictAll(Choice::ReplaceIfNewer));
+        let started = app.update(Message::ConfirmDialog);
+        assert_eq!(
+            matches!(started.as_slice(), [Effect::Transfer { request, .. }] if request.replace),
+            replaced,
+            "{started:?}"
+        );
+    }
+}

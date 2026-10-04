@@ -839,6 +839,7 @@ async fn a_folder_with_a_link_ends_incomplete() {
         remote: common::remote(&folder),
         local: dir.path().join("copy"),
         kind: Kind::Folder,
+        stamp: heimdall_files::Stamp::default(),
     };
     let plan =
         common::step(client.plan_download(std::slice::from_ref(&root), &CancellationToken::new()))

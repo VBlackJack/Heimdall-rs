@@ -47,7 +47,12 @@ const ROWS_HEIGHT: f32 = 300.0;
 const COLUMNS: [f32; 2] = [520.0, 150.0];
 
 /// Every answer, in the C# order.
-const CHOICES: [Choice; 3] = [Choice::Skip, Choice::Replace, Choice::AutoRename];
+const CHOICES: [Choice; 4] = [
+    Choice::Skip,
+    Choice::Replace,
+    Choice::AutoRename,
+    Choice::ReplaceIfNewer,
+];
 
 /// An answer, named in the user's language.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -64,7 +69,50 @@ fn choice_name(choice: Choice) -> String {
         Choice::Skip => fl!("ui-files-conflict-skip"),
         Choice::Replace => fl!("ui-files-conflict-replace"),
         Choice::AutoRename => fl!("ui-files-conflict-rename"),
+        Choice::ReplaceIfNewer => fl!("ui-files-conflict-replace-if-newer"),
     }
+}
+
+/// A copy's size and time, as the C# dialog writes them.
+fn stamp_text(stamp: &heimdall_files::Stamp) -> (String, String) {
+    (
+        stamp
+            .size
+            .map_or_else(|| fl!("ui-files-conflict-unknown"), crate::texts::size),
+        stamp.modified.map_or_else(
+            || fl!("ui-files-conflict-unknown"),
+            crate::files_view::modified_text,
+        ),
+    )
+}
+
+/// What a file in the way is told by: both copies' size and time, and which is newer.
+fn details<'a>(row: &ConflictRow) -> Column<'a, Message> {
+    let note = |line: String| text(line).size(CAPTION_SIZE).style(text::secondary);
+    let (size, modified) = stamp_text(&row.incoming);
+    let mut lines = column![note(fl!(
+        "ui-files-conflict-incoming",
+        size = size,
+        modified = modified
+    ))];
+    if let Some(existing) = &row.existing {
+        let (size, modified) = stamp_text(existing);
+        lines = lines.push(note(fl!(
+            "ui-files-conflict-existing",
+            size = size,
+            modified = modified
+        )));
+        let compared = match row.incoming.compare_time(existing) {
+            Some(std::cmp::Ordering::Greater) => Some(fl!("ui-files-conflict-newer")),
+            Some(std::cmp::Ordering::Less) => Some(fl!("ui-files-conflict-older")),
+            Some(std::cmp::Ordering::Equal) => Some(fl!("ui-files-conflict-same-time")),
+            None => None,
+        };
+        if let Some(compared) = compared {
+            lines = lines.push(note(compared));
+        }
+    }
+    lines
 }
 
 fn files(message: FilesMessage) -> Message {
@@ -131,6 +179,9 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
         )
         .clip(true)
     ];
+    if !row.folder {
+        target = target.push(details(row));
+    }
     // A folder that can only be skipped takes everything planned inside with it.
     if row.folder && !row.allowed.replace && !row.allowed.rename {
         target = target.push(
@@ -142,6 +193,8 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
     let allowed: Vec<Named> = CHOICES
         .into_iter()
         .filter(|choice| row.allowed.allows(*choice))
+        // "Replace if newer" is a file's answer.
+        .filter(|choice| *choice != Choice::ReplaceIfNewer || !row.folder)
         .map(Named)
         .collect();
     row![

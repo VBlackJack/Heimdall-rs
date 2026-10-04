@@ -1042,14 +1042,19 @@ impl App {
                     .push(failed(Direction::Upload, label, FilesError::NotAFile));
                 continue;
             }
+            let metadata = path.metadata().ok();
             let size = (!folder)
-                .then(|| path.metadata().map(|meta| meta.len()).ok())
+                .then(|| metadata.as_ref().map(std::fs::Metadata::len))
                 .flatten();
             roots.push(PlannedRoot {
                 root: Root {
                     remote: files.remote.path.join(&name_bytes(name)),
                     local: path.clone(),
                     kind: if folder { Kind::Folder } else { Kind::File },
+                    stamp: heimdall_files::Stamp {
+                        size,
+                        modified: metadata.and_then(|metadata| metadata.modified().ok()),
+                    },
                 },
                 label: name.to_string_lossy().into_owned(),
                 total: size,
@@ -1429,6 +1434,8 @@ impl App {
                             folder: step.kind == Kind::Folder,
                             allowed,
                             choice: allowed.default_choice()?,
+                            incoming: step.stamp,
+                            existing: next.plan.existing(index),
                         })
                     })
                     .collect(),
@@ -1440,7 +1447,9 @@ impl App {
     fn choose_conflict(&mut self, only: Option<usize>, choice: Choice) {
         if let Some(Dialog::FileConflicts { rows, .. }) = self.dialog.as_mut() {
             for (index, row) in rows.iter_mut().enumerate() {
-                if only.is_none_or(|only| only == index) && row.allowed.allows(choice) {
+                // "Replace if newer" is a file's answer: a folder keeps its own.
+                let fits = choice != Choice::ReplaceIfNewer || !row.folder;
+                if only.is_none_or(|only| only == index) && row.allowed.allows(choice) && fits {
                     row.choice = choice;
                 }
             }
@@ -1875,6 +1884,10 @@ fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<
                     remote: files.remote.path.join(&entry.name),
                     local: files.local.path.join(&name.name),
                     kind: kind(entry.kind),
+                    stamp: heimdall_files::Stamp {
+                        size: entry.size,
+                        modified: entry.modified,
+                    },
                 },
                 label,
                 // A folder's own size is not what its transfer moves.
@@ -1895,6 +1908,10 @@ fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<
                     remote: files.remote.path.join(&name_bytes(&entry.name)),
                     local: files.local.path.join(&entry.name),
                     kind: kind(entry.kind),
+                    stamp: heimdall_files::Stamp {
+                        size: entry.size,
+                        modified: entry.modified,
+                    },
                 },
                 label,
                 // A folder's own size is not what its transfer moves.
