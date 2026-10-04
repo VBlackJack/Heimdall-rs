@@ -1532,3 +1532,7 @@ ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-lock = Lock
 ui-shortcuts-help = Show this help
 ui-shortcuts-close = Close a dialog or a menu, exit fullscreen
+ui-shortcuts-select-all-sessions = Select every session shown
+ui-shortcuts-session-menu = The selected session's menu
+ui-shortcuts-find-by-name = Go to the session whose name starts with what is typed
+ui-shortcuts-toggle-sidebar = Show or hide the sidebar

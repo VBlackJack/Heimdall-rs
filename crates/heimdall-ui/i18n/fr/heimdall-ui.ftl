@@ -1457,3 +1457,7 @@ ui-shortcuts-screenshot = Capturer l'écran
 ui-shortcuts-lock = Verrouiller
 ui-shortcuts-help = Afficher cette aide
 ui-shortcuts-close = Fermer une boîte de dialogue ou un menu, quitter le plein écran
+ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
+ui-shortcuts-session-menu = Menu de la session sélectionnée
+ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
+ui-shortcuts-toggle-sidebar = Afficher ou masquer le panneau latéral
