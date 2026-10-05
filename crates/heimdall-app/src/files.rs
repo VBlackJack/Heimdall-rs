@@ -23,7 +23,7 @@
 use std::collections::{BTreeSet, VecDeque};
 use std::ffi::OsString;
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::{Component, MAIN_SEPARATOR, MAIN_SEPARATOR_STR, Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
 
@@ -316,6 +316,39 @@ pub fn sort_entries<E: Listed>(entries: &mut [E], sort: Sort) {
             .then(by_column)
             .then_with(|| a.label().to_lowercase().cmp(&b.label().to_lowercase()))
     });
+}
+
+/// The folders of `path`, the root first, each named as the C# breadcrumb shows it.
+#[must_use]
+pub fn remote_segments(path: &RemotePath) -> Vec<String> {
+    let mut segments = Vec::new();
+    if path.is_absolute() {
+        segments.push("/".to_owned());
+    }
+    segments.extend(
+        path.as_bytes()
+            .split(|&byte| byte == b'/')
+            .filter(|name| !name.is_empty())
+            .map(|name| RemotePath::from_bytes(name).display()),
+    );
+    segments
+}
+
+/// The folders of `path`, the root first, a drive with its separator, each named as the C#
+/// breadcrumb shows it.
+#[must_use]
+pub fn local_segments(path: &Path) -> Vec<String> {
+    let mut segments: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::RootDir => match segments.last_mut() {
+                Some(drive) => drive.push(MAIN_SEPARATOR),
+                None => segments.push(MAIN_SEPARATOR_STR.to_owned()),
+            },
+            other => segments.push(other.as_os_str().to_string_lossy().into_owned()),
+        }
+    }
+    segments
 }
 
 /// `mode`'s permission bits as the C# column shows them, `rwxr-xr-x`, the set-user,

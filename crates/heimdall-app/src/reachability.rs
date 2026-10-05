@@ -68,9 +68,81 @@ pub enum Unreached {
         address: String,
         /// Why, in the system's words.
         detail: String,
+        /// Why, as the system classes it.
+        kind: std::io::ErrorKind,
     },
     /// The user stopped the test.
     Cancelled,
+}
+
+/// One server the background check dials.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Probe {
+    /// The profile.
+    pub id: heimdall_core::profile::ProfileId,
+    /// Its host.
+    pub host: String,
+    /// Its port.
+    pub port: u16,
+}
+
+/// What the background check last found of a server, as the C# health state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// Being checked for the first time.
+    Checking,
+    /// It answered, in this many milliseconds.
+    Up(u64),
+    /// It did not answer.
+    Down(DownReason),
+    /// It is not checked from here.
+    Unchecked(Unchecked),
+}
+
+/// Why a server did not answer the background check, as the C# reasons.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DownReason {
+    /// Not in time.
+    Timeout,
+    /// The connection was refused.
+    Refused,
+    /// No route to it.
+    Unreachable,
+    /// Its name was not found.
+    Dns,
+    /// Otherwise, in the system's words.
+    Other(String),
+}
+
+/// Why a server is not checked from here, as the C# reasons.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Unchecked {
+    /// It is reached through a gateway: whether this computer reaches it says nothing.
+    BehindGateway,
+    /// Its protocol has no address to dial: a local shell.
+    NoPort,
+    /// No host is filled in.
+    NoHost,
+}
+
+/// Whether `host` answers on `port` within `timeout`: the background check of one server.
+pub async fn check(host: String, port: u16, timeout: Duration) -> Verdict {
+    match test_within(host, port, false, timeout, CancellationToken::new()).await {
+        // Under a millisecond is still an answer that took time, as the C# says it.
+        Ok(reached) => Verdict::Up(reached.millis.max(1)),
+        Err(Unreached::DnsTimeout | Unreached::DnsFailed(_) | Unreached::DnsNoResults) => {
+            Verdict::Down(DownReason::Dns)
+        }
+        Err(Unreached::TcpTimeout(_) | Unreached::Cancelled) => Verdict::Down(DownReason::Timeout),
+        Err(Unreached::TcpFailed { detail, kind, .. }) => Verdict::Down(match kind {
+            std::io::ErrorKind::ConnectionRefused => DownReason::Refused,
+            std::io::ErrorKind::HostUnreachable | std::io::ErrorKind::NetworkUnreachable => {
+                DownReason::Unreachable
+            }
+            std::io::ErrorKind::TimedOut => DownReason::Timeout,
+            _ => DownReason::Other(crate::server_text(&detail)),
+        }),
+    }
 }
 
 /// Tests whether `host` answers on `port`; with `ssh`, reads the SSH server's banner too.
@@ -155,6 +227,7 @@ async fn run(host: String, port: u16, ssh: bool, budget: Duration) -> Result<Rea
                 last = Some(Unreached::TcpFailed {
                     address: address.ip().to_string(),
                     detail: error.to_string(),
+                    kind: error.kind(),
                 });
             }
             Err(_) => last = Some(Unreached::TcpTimeout(address.ip().to_string())),
