@@ -111,14 +111,15 @@ pub enum TreeMenu {
     Macros(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
     Notes(ProfileId),
-    /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
+    /// The menu of an entry of a Files tab's pane, as the C# Files tab's; `None` beside the
+    /// entries, the menu of the folder shown.
     FilesEntry {
         /// The tab.
         tab: TabId,
         /// The pane.
         side: Side,
-        /// The entry.
-        index: usize,
+        /// The entry, or none.
+        index: Option<usize>,
     },
 }
 
@@ -878,6 +879,19 @@ fn add_entries(entries: Column<'_, Message>) -> Column<'_, Message> {
         ))
 }
 
+/// What the menu of a Files entry needs to know of the entry.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FilesEntryFacts {
+    /// Where it is listed.
+    pub index: usize,
+    /// It is chosen alone.
+    pub single: bool,
+    /// It is a regular file, chosen alone.
+    pub one_file: bool,
+    /// It is a symbolic link.
+    pub link: bool,
+}
+
 /// The transcript entry of a tab's menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TranscriptEntry {
@@ -895,13 +909,20 @@ pub enum TranscriptEntry {
 /// can be pasted in this tab, `can_paste`; Copy, Duplicate and Open in terminal on a tab of
 /// SFTP over its SSH connection, `over_ssh`.
 pub fn files_entry_menu<'a>(
-    tab: TabId,
-    side: Side,
-    index: usize,
+    (tab, side): (TabId, Side),
+    entry_facts: Option<FilesEntryFacts>,
     can_paste: bool,
     over_ssh: bool,
 ) -> Element<'a, Message> {
     let copies = side == Side::Remote && over_ssh;
+    // An entry's own actions only on an entry, as the C# list hides them beside it.
+    let on_entry = entry_facts.is_some();
+    let index = entry_facts.map(|facts| facts.index);
+    // Editing is of one regular file: a link, a pipe, a device or a folder is not written
+    // back, as in the C#.
+    let edits = copies && entry_facts.is_some_and(|facts| facts.one_file);
+    // SFTP renames follow a link to its target: no rename of a link there, as the C#.
+    let renames = entry_facts.is_some_and(|facts| facts.single && !(over_ssh && facts.link));
     let files = |message| Some(AppMessage::Files(message));
     let server = |entry: Element<'a, Message>| (side == Side::Remote).then_some(entry);
     let (send, direction) = match side {
@@ -909,38 +930,40 @@ pub fn files_entry_menu<'a>(
         Side::Local => (fl!("ui-files-menu-upload"), Direction::Upload),
     };
     let entries = column![
-        entry(
+        index.map(|index| entry(
             fl!("ui-files-menu-open"),
             files(FilesMessage::Open { tab, side, index })
-        ),
-        copies.then(|| entry(
+        )),
+        edits.then(|| entry(
             fl!("ui-files-menu-edit-integrated"),
             files(FilesMessage::EditIntegrated { tab })
         )),
-        copies.then(|| entry(
+        edits.then(|| entry(
             fl!("ui-files-menu-edit-external"),
             files(FilesMessage::EditExternal { tab })
         )),
-        copies.then(|| entry(
+        edits.then(|| entry(
             fl!("ui-files-menu-edit-sudo"),
             files(FilesMessage::EditWithSudo { tab })
         )),
-        entry(send, files(FilesMessage::Transfer { tab, direction })),
-        separator(),
-        entry(
+        on_entry.then(|| entry(send, files(FilesMessage::Transfer { tab, direction }))),
+        on_entry.then(separator),
+        renames.then(|| entry(
             fl!("ui-files-menu-rename"),
             files(FilesMessage::AskRename { tab, side })
-        ),
-        entry(
+        )),
+        on_entry.then(|| entry(
             fl!("ui-files-menu-delete"),
             files(FilesMessage::AskDelete { tab, side })
-        ),
-        // The server's entries only, as in the C# Files tab.
-        server(entry(
-            fl!("ui-files-menu-permissions"),
-            files(FilesMessage::AskPermissions { tab, side })
         )),
-        separator(),
+        // The server's entries only, as in the C# Files tab.
+        on_entry
+            .then(|| server(entry(
+                fl!("ui-files-menu-permissions"),
+                files(FilesMessage::AskPermissions { tab, side })
+            )))
+            .flatten(),
+        on_entry.then(separator),
         server(entry(
             fl!("ui-files-menu-upload-here"),
             files(FilesMessage::UploadHere { tab })
@@ -950,28 +973,33 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-paste-explorer"),
             files(FilesMessage::PasteFromExplorer { tab })
         )),
-        server(entry(
-            fl!("ui-files-menu-cut"),
-            files(FilesMessage::Cut { tab })
-        )),
-        copies.then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
+        on_entry
+            .then(|| server(entry(
+                fl!("ui-files-menu-cut"),
+                files(FilesMessage::Cut { tab })
+            )))
+            .flatten(),
+        (copies && on_entry)
+            .then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
         (side == Side::Remote && can_paste).then(|| entry(
             fl!("ui-files-menu-paste"),
             files(FilesMessage::Paste { tab })
         )),
-        copies.then(|| entry(
+        (copies && on_entry).then(|| entry(
             fl!("ui-files-menu-duplicate"),
             files(FilesMessage::Duplicate { tab })
         )),
-        entry(
+        on_entry.then(|| entry(
             fl!("ui-files-menu-copy-path"),
             files(FilesMessage::CopyPath { tab, side })
-        ),
-        server(entry(
-            fl!("ui-files-menu-properties"),
-            files(FilesMessage::ShowProperties { tab, side })
         )),
-        separator(),
+        on_entry
+            .then(|| server(entry(
+                fl!("ui-files-menu-properties"),
+                files(FilesMessage::ShowProperties { tab, side })
+            )))
+            .flatten(),
+        on_entry.then(separator),
         entry(
             fl!("ui-files-menu-new-folder"),
             files(FilesMessage::AskNewFolder { tab, side })
