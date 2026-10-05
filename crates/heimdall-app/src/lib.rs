@@ -38,6 +38,7 @@ pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
 pub mod macro_player;
+pub mod notes;
 mod paste_guard;
 mod post_connect;
 pub mod profile_draft;

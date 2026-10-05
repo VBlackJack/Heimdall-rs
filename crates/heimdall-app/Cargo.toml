@@ -27,6 +27,7 @@ log.workspace = true
 # The hash an edited file is compared by.
 ring.workspace = true
 regex.workspace = true
+chrono.workspace = true
 # process: the external credential provider's commands.
 tokio = { workspace = true, features = ["process"] }
 tokio-stream.workspace = true

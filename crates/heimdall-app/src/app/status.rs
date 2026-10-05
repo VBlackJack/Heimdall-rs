@@ -198,6 +198,10 @@ pub enum Notice {
         /// How.
         outcome: crate::macro_player::MacroOutcome,
     },
+    /// The note of this file name was opened in the editor.
+    NoteOpened(String),
+    /// A note could not be written or opened, for this reason.
+    NoteFailed(String),
     /// The settings were exported.
     SettingsExported,
     /// The settings could not be exported, for this reason.

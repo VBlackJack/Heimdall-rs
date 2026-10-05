@@ -686,6 +686,8 @@ pub enum Message {
     Settings(SettingsMessage),
     /// A step of the terminal macros.
     Macro(MacroMessage),
+    /// A note about a server was written and opened in the editor set, or why not.
+    NoteOpened(Result<PathBuf, String>),
     /// The settings carried to or from another computer.
     SettingsTransfer(SettingsTransferMessage),
     /// A step of the Settings page's Gateways tab.
@@ -895,6 +897,7 @@ impl fmt::Debug for Message {
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
             Self::Macro(MacroMessage::Draft(_)) => f.write_str("Macro(Draft)"),
             Self::Macro(message) => write!(f, "Macro({message:?})"),
+            Self::NoteOpened(result) => write!(f, "NoteOpened({})", result.is_ok()),
             Self::SettingsTransfer(message) => match message {
                 // What the file says is not logged.
                 SettingsTransferMessage::Read(result) => {
@@ -2669,6 +2672,7 @@ impl App {
             | Message::Rdp(_)
             | Message::Settings(_)
             | Message::Macro(_)
+            | Message::NoteOpened(_)
             | Message::SettingsTransfer(_)
             | Message::Gateways(_)
             | Message::Broadcast(_)) => self.window_message(&message),
@@ -3820,6 +3824,17 @@ impl App {
             }
             Message::Settings(message) => self.settings_message(message),
             Message::Macro(message) => self.macro_message(message.clone()),
+            Message::NoteOpened(result) => {
+                self.tell(match result {
+                    Ok(path) => Notice::NoteOpened(
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    ),
+                    Err(reason) => Notice::NoteFailed(reason.clone()),
+                });
+                Vec::new()
+            }
             Message::SettingsTransfer(message) => self.settings_transfer(message.clone()),
             Message::Gateways(message) => {
                 self.gateways_message(message.clone());
