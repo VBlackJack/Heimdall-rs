@@ -178,6 +178,13 @@ pub fn files_key(
     let keyboard::Key::Named(named) = key else {
         return None;
     };
+    if shift {
+        return match named {
+            Named::ArrowUp => Some(FilesKey::ExtendPrevious),
+            Named::ArrowDown => Some(FilesKey::ExtendNext),
+            _ => None,
+        };
+    }
     Some(match named {
         Named::ArrowUp => FilesKey::Previous,
         Named::ArrowDown => FilesKey::Next,
@@ -233,13 +240,9 @@ fn column_width(column: SortColumn) -> Length {
     }
 }
 
-/// What an entry of the server is, as the C# Properties dialog shows it, with `ok` to
-/// close it.
-pub fn properties<'a>(
-    properties: &FileProperties,
-    ok: iced::widget::Button<'a, Message>,
-) -> Element<'a, Message> {
-    let kind = match properties.kind {
+/// What `kind` of entry it is, as the C# Properties dialog names it.
+fn kind_name(kind: EntryKind) -> String {
+    match kind {
         EntryKind::File => fl!("ui-files-type-file"),
         EntryKind::Directory => fl!("ui-files-type-directory"),
         EntryKind::Link => fl!("ui-files-type-link"),
@@ -247,7 +250,62 @@ pub fn properties<'a>(
         EntryKind::Other(Special::Socket) => fl!("ui-files-type-socket"),
         EntryKind::Other(Special::Device) => fl!("ui-files-type-device"),
         EntryKind::Other(Special::Unknown) => fl!("ui-files-type-other"),
-    };
+    }
+}
+
+/// `line` with what `entry` is, as the C# row's tooltip: its name, its type, its size, when
+/// it changed to the second, and its permissions.
+fn row_tooltip<'a, E: Listed>(
+    line: iced::widget::Button<'a, Message>,
+    entry: &E,
+) -> Element<'a, Message> {
+    let mut lines = vec![
+        entry.label().to_owned(),
+        fl!("ui-files-tooltip-type", kind = kind_name(entry.kind())),
+    ];
+    if let (EntryKind::File, Some(bytes)) = (entry.kind(), entry.size()) {
+        lines.push(fl!("ui-files-tooltip-size", size = texts::size(bytes)));
+    }
+    if let Some(time) = entry.modified() {
+        lines.push(fl!("ui-files-tooltip-modified", at = modified_long(time)));
+    }
+    if let Some(mode) = entry.permissions() {
+        lines.push(fl!(
+            "ui-files-tooltip-permissions",
+            permissions = symbolic_mode(mode)
+        ));
+    }
+    tooltip(
+        line,
+        text(lines.join("\n")).size(SMALL_SIZE),
+        tooltip::Position::FollowCursor,
+    )
+    .delay(ROW_TOOLTIP_DELAY)
+    .style(container::rounded_box)
+    .into()
+}
+
+/// How long the pointer rests on a row before its tooltip shows: a list scanned with the
+/// pointer stays clear.
+const ROW_TOOLTIP_DELAY: std::time::Duration = std::time::Duration::from_millis(600);
+
+/// `time` to the second, in UTC, as the C# tooltip's long date.
+fn modified_long(time: SystemTime) -> String {
+    let at = UtcTime::of(time);
+    fl!(
+        "ui-files-tooltip-time",
+        day = format!("{:04}-{:02}-{:02}", at.year, at.month, at.day),
+        time = format!("{:02}:{:02}:{:02}", at.hour, at.minute, at.second)
+    )
+}
+
+/// What an entry of the server is, as the C# Properties dialog shows it, with `ok` to
+/// close it.
+pub fn properties<'a>(
+    properties: &FileProperties,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let kind = kind_name(properties.kind);
     let number = |value: Option<u32>| value.map(|n| n.to_string()).unwrap_or_default();
     let lines = [
         (fl!("ui-files-properties-name"), properties.name.clone()),
@@ -304,12 +362,17 @@ pub(crate) fn modified_text(time: SystemTime) -> String {
 fn cell_text<E: Listed>(entry: &E, column: SortColumn) -> String {
     match column {
         SortColumn::Name => {
-            let mark = match entry.kind() {
-                EntryKind::Directory => FOLDER_MARK,
-                EntryKind::Link => LINK_MARK,
-                EntryKind::File | EntryKind::Other(_) => "",
-            };
-            format!("{}{mark}", entry.label())
+            match entry.kind() {
+                EntryKind::Directory => format!("{}{FOLDER_MARK}", entry.label()),
+                EntryKind::Link => format!("{}{LINK_MARK}", entry.label()),
+                EntryKind::File => entry.label().to_owned(),
+                // A pipe, a socket, a device marked, as the C# icons tell them apart.
+                special @ EntryKind::Other(_) => fl!(
+                    "ui-files-special-mark",
+                    name = entry.label(),
+                    kind = kind_name(special)
+                ),
+            }
         }
         SortColumn::Size => match (entry.kind(), entry.size()) {
             (EntryKind::File, Some(bytes)) => texts::size(bytes),
@@ -385,11 +448,13 @@ fn entry_row<'a, E: Listed>(
         .on_press(on_press);
     // A right click opens its menu, as in the C# Files tab.
     crate::files_drag::spot(
-        mouse_area(line).on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
-            tab,
-            side,
-            index,
-        })),
+        mouse_area(row_tooltip(line, entry)).on_right_press(Message::OpenTreeMenu(
+            TreeMenu::FilesEntry {
+                tab,
+                side,
+                index: Some(index),
+            },
+        )),
         crate::files_drag::Spot {
             tab,
             side,
@@ -472,7 +537,7 @@ fn pane_heading<'a>(
     title: String,
     shown: usize,
     total: usize,
-    chosen: usize,
+    (chosen, size): (usize, u64),
 ) -> iced::widget::Row<'a, Message> {
     let count = if shown == total {
         fl!("ui-files-item-count", count = total)
@@ -483,8 +548,18 @@ fn pane_heading<'a>(
         .spacing(SPACING)
         .align_y(Alignment::Center);
     if chosen > 1 {
-        heading =
-            heading.push(text(fl!("ui-files-selected-count", count = chosen)).size(SMALL_SIZE));
+        let selection = fl!("ui-files-selected-count", count = chosen);
+        // The files' size beside it, as the C# selection line; folders are not counted.
+        let selection = if size > 0 {
+            fl!(
+                "ui-files-selected-with-size",
+                selection = selection,
+                size = texts::size(size)
+            )
+        } else {
+            selection
+        };
+        heading = heading.push(text(selection).size(SMALL_SIZE));
     }
     heading
 }
@@ -506,7 +581,9 @@ struct PaneParts<'p, E> {
     marked: &'p BTreeSet<usize>,
     filter: &'p str,
     show_hidden: bool,
-    total: usize,
+    /// The listing's entries, then those left once hidden names are left out, unless they
+    /// show.
+    counts: (usize, usize),
     loading: bool,
     error: Option<&'p FilesError>,
     focused: bool,
@@ -572,8 +649,7 @@ fn empty_state<'a>(
     tab: TabId,
     side: Side,
     filter: &str,
-    show_hidden: bool,
-    total: usize,
+    (total, unhidden): (usize, usize),
 ) -> Element<'a, Message> {
     let said = |words: String| text(words).size(SMALL_SIZE);
     let way = |label: String, message: FilesMessage| {
@@ -583,6 +659,18 @@ fn empty_state<'a>(
     };
     if total == 0 {
         return said(fl!("ui-files-empty")).into();
+    }
+    // As the C# `UpdateEmptyState`: only hidden entries first, then no match.
+    if unhidden == 0 {
+        return column![
+            said(fl!("ui-files-empty-hidden-only")),
+            way(
+                fl!("ui-files-empty-show-hidden"),
+                FilesMessage::ToggleHidden { tab, side }
+            ),
+        ]
+        .spacing(SPACING)
+        .into();
     }
     if !filter.trim().is_empty() {
         return column![
@@ -599,18 +687,7 @@ fn empty_state<'a>(
         .spacing(SPACING)
         .into();
     }
-    if show_hidden {
-        return said(fl!("ui-files-empty")).into();
-    }
-    column![
-        said(fl!("ui-files-empty-hidden-only")),
-        way(
-            fl!("ui-files-empty-show-hidden"),
-            FilesMessage::ToggleHidden { tab, side }
-        ),
-    ]
-    .spacing(SPACING)
-    .into()
+    said(fl!("ui-files-empty")).into()
 }
 
 /// Where a delete or a change of permissions of several entries is, as the C# status says
@@ -664,7 +741,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         marked,
         filter,
         show_hidden,
-        total,
+        counts: (total, unhidden),
         loading,
         error,
         focused,
@@ -715,7 +792,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         if loading {
             list = list.push(text(fl!("ui-files-loading")).size(SMALL_SIZE));
         } else if entries.is_empty() && !failed {
-            list = list.push(empty_state(tab, side, filter, show_hidden, total));
+            list = list.push(empty_state(tab, side, filter, (total, unhidden)));
         }
         for (index, entry) in entries.iter().enumerate() {
             let place = (tab, side, index);
@@ -723,14 +800,23 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             let target = drop == Some(DropHere::Entry(index));
             list = list.push(entry_row(entry, &shown, (picked, target), place));
         }
-        column![
-            headers(tab, side, &shown, sort),
-            scrollable(list).id(list_id(side)).height(Length::Fill)
-        ]
-        .spacing(SPACING)
-        .into()
+        // A right click beside the entries: the menu of the folder shown, as the C# list's.
+        let list = mouse_area(scrollable(list).id(list_id(side)).height(Length::Fill))
+            .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+                tab,
+                side,
+                index: None,
+            }));
+        column![headers(tab, side, &shown, sort), list]
+            .spacing(SPACING)
+            .into()
     });
-    let heading = pane_heading(title, entries.len(), total, chosen);
+    let heading = pane_heading(
+        title,
+        entries.len(),
+        total,
+        (chosen, chosen_size(entries, selected, marked)),
+    );
     let mut content = column![heading, header, tools, narrowing].spacing(SPACING);
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
@@ -744,6 +830,19 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         focused,
         drop == Some(DropHere::Pane),
     )
+}
+
+/// The size of the files among the entries chosen, as the C# selection line adds them;
+/// folders are not counted.
+fn chosen_size<E: Listed>(entries: &[E], selected: Option<usize>, marked: &BTreeSet<usize>) -> u64 {
+    entries
+        .iter()
+        .enumerate()
+        .filter(|(index, entry)| {
+            (selected == Some(*index) || marked.contains(index)) && entry.kind() == EntryKind::File
+        })
+        .filter_map(|(_, entry)| entry.size())
+        .sum()
 }
 
 /// Where a drag would drop in a pane.
@@ -1020,7 +1119,7 @@ pub fn view(
         marked: &files_pane.local.marked,
         filter: &files_pane.local.filter,
         show_hidden: files_pane.local.show_hidden,
-        total: files_pane.local.listing.len(),
+        counts: files_pane.local.counts(),
         loading: files_pane.local.loading,
         error: files_pane.local.error.as_ref(),
         focused: files_pane.focus == Side::Local,
@@ -1049,7 +1148,7 @@ pub fn view(
         marked: &files_pane.remote.marked,
         filter: &files_pane.remote.filter,
         show_hidden: files_pane.remote.show_hidden,
-        total: files_pane.remote.listing.len(),
+        counts: files_pane.remote.counts(),
         loading: files_pane.remote.loading,
         error: files_pane.remote.error.as_ref(),
         focused: files_pane.focus == Side::Remote,

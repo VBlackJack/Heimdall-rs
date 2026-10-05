@@ -91,6 +91,10 @@ pub enum FilesKey {
     Previous,
     /// Select the entry below.
     Next,
+    /// Shift+Up: the selection grows to the entry above, as a Windows list's.
+    ExtendPrevious,
+    /// Shift+Down: the selection grows to the entry below.
+    ExtendNext,
     /// Select the first entry.
     First,
     /// Select the last entry.
@@ -400,6 +404,8 @@ pub struct Pane<P, E> {
     pub selected: Option<usize>,
     /// The entries selected with it, with Ctrl or Shift, as in the C# Files tab.
     pub marked: BTreeSet<usize>,
+    /// The moving end of a Shift+arrow range; where it started is the one selected.
+    cursor: Option<usize>,
     /// A listing is on its way.
     pub loading: bool,
     /// Why the last listing failed.
@@ -497,6 +503,7 @@ impl<P, E> Pane<P, E> {
             show_hidden: true,
             selected: None,
             marked: BTreeSet::new(),
+            cursor: None,
             loading: true,
             error: None,
             typed: None,
@@ -518,6 +525,29 @@ impl<P, E> Pane<P, E> {
     pub fn select_only(&mut self, index: Option<usize>) {
         self.selected = index;
         self.marked.clear();
+        self.cursor = None;
+    }
+
+    /// Shift+Up (`up`) or Shift+Down: the selection grows to the entry above or below the
+    /// moving end of the range, the one selected staying where it started.
+    pub fn extend_by_one(&mut self, up: bool) {
+        let last = self.entries.len().checked_sub(1);
+        let Some(last) = last else {
+            return;
+        };
+        let to = match (self.cursor.or(self.selected), up) {
+            (Some(at), true) => at.saturating_sub(1),
+            (Some(at), false) => (at + 1).min(last),
+            (None, _) => 0,
+        };
+        self.extend_to(to);
+        self.cursor = Some(to);
+    }
+
+    /// The entry the keyboard is on: the moving end of a Shift range, else the one selected.
+    #[must_use]
+    pub fn cursor(&self) -> Option<usize> {
+        self.cursor.or(self.selected)
     }
 
     /// The entries selected, the one selected and those with it, in their order.
@@ -565,6 +595,23 @@ impl<P, E> Pane<P, E> {
 }
 
 impl<P, E: Listed + PartialEq + Clone> Pane<P, E> {
+    /// How many entries the listing has, and how many once hidden names are left out unless
+    /// they show.
+    #[must_use]
+    pub fn counts(&self) -> (usize, usize) {
+        (self.listing.len(), self.unhidden_count())
+    }
+
+    /// How many entries the listing has once the names starting with a dot are left out,
+    /// unless they show, as the C# counts them for its empty states.
+    #[must_use]
+    pub fn unhidden_count(&self) -> usize {
+        self.listing
+            .iter()
+            .filter(|entry| self.show_hidden || !entry.label().starts_with('.'))
+            .count()
+    }
+
     /// Shows `entries`, a new listing, sorted and filtered as the pane is.
     pub fn show(&mut self, entries: Vec<E>) {
         self.listing = entries;

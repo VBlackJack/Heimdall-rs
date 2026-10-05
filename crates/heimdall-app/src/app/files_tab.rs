@@ -1481,9 +1481,21 @@ impl App {
                 }
                 return Vec::new();
             }
+            FilesKey::ExtendPrevious | FilesKey::ExtendNext => {
+                let up = key == FilesKey::ExtendPrevious;
+                match side {
+                    Side::Remote => files.remote.extend_by_one(up),
+                    Side::Local => files.local.extend_by_one(up),
+                }
+                return Vec::new();
+            }
             // The entry at the cursor in or out of the selection, as a Ctrl+click on it.
             FilesKey::ToggleMark => {
-                if let Some(index) = selected {
+                let cursor = match side {
+                    Side::Remote => files.remote.cursor(),
+                    Side::Local => files.local.cursor(),
+                };
+                if let Some(index) = cursor.or(selected) {
                     match side {
                         Side::Remote => files.remote.toggle(index),
                         Side::Local => files.local.toggle(index),

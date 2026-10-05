@@ -3392,7 +3392,6 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
 fn the_tree_keys_reach_folders_fold_them_and_extend_the_selection() {
     use heimdall_app::Dialog;
     use heimdall_app::files::{FilesKey, Side};
-    use iced::keyboard::Modifiers;
 
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
@@ -3438,9 +3437,7 @@ fn the_tree_keys_reach_folders_fold_them_and_extend_the_selection() {
 
     // Shift+Down from a: a and b; Ctrl+Space takes b out again.
     let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
-    let _ = shell.update(Message::Modifiers(Modifiers::SHIFT));
-    let _ = shell.update(Message::FilesKey(FilesKey::Next));
-    let _ = shell.update(Message::Modifiers(Modifiers::empty()));
+    let _ = shell.update(Message::FilesKey(FilesKey::ExtendNext));
     assert_eq!(
         shell.app().selected_profiles(),
         [ProfileId::new("a"), ProfileId::new("b")]
