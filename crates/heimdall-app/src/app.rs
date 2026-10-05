@@ -102,6 +102,7 @@ mod reconnect;
 mod resolution;
 mod route_test;
 mod selection;
+mod session_restore;
 mod sessions_import;
 mod status;
 mod tab_menu;
@@ -141,6 +142,7 @@ pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview
 use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;
 pub use selection::SelectionMessage;
+pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
 };
@@ -481,6 +483,14 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
+    /// A session of the restore dialog ticked or not; every one for `None`, its
+    /// "Select all".
+    RestoreChoose {
+        /// The session, by its place; every one for `None`.
+        index: Option<usize>,
+        /// Ticked.
+        chosen: bool,
+    },
     /// Show the keyboard shortcuts, unless a dialog is open.
     ShowShortcuts,
     /// Test the gateway dialog's route, signed in with the password and passphrase typed in
@@ -772,6 +782,9 @@ impl fmt::Debug for Message {
             Self::SkipPostConnect => f.write_str("SkipPostConnect"),
             Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
+            Self::RestoreChoose { index, chosen } => {
+                write!(f, "RestoreChoose({index:?}, {chosen})")
+            }
             Self::ShowShortcuts => f.write_str("ShowShortcuts"),
             Self::TestAddress => f.write_str("TestAddress"),
             Self::TestRoute { .. } => f.write_str("TestRoute(..)"),
@@ -1860,6 +1873,8 @@ pub enum Dialog {
     },
     /// Start broadcast input to every tab.
     ConfirmBroadcast,
+    /// Which of the previous run's sessions to reopen, as the C# restore dialog asks.
+    RestoreSessions(RestoreDialog),
     /// The keyboard shortcuts, as the C# F1 help.
     Shortcuts,
     /// Turn session transcripts on, which keep what is typed.
@@ -2184,6 +2199,8 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// Whether the tunnels panel is shown under the sessions.
     pub tunnels_panel: bool,
+    /// The previous run's sessions, until they are offered.
+    pending_restore: Option<heimdall_core::session_snapshot::SessionSnapshot>,
     /// The hosts connected to, newest first, with the protocol, as the C#
     /// `RecentConnectionTracker` keeps them: for this run only.
     recent_hosts: Vec<(String, ProfileKind)>,
@@ -2254,6 +2271,9 @@ impl App {
     /// be read starts empty and the problem is shown.
     #[must_use]
     pub fn new(config: AppConfig) -> Self {
+        let pending_restore = heimdall_core::session_snapshot::load(
+            &heimdall_core::session_snapshot::snapshot_path(&config.profiles_file),
+        );
         let (store, dialog) = match ProfileStore::open(&config.profiles_file) {
             Ok(store) => (store, None),
             // Start empty, saving beside the unreadable file so it is never overwritten.
@@ -2295,6 +2315,7 @@ impl App {
             tunnels: Vec::new(),
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
+            pending_restore,
             recent_hosts: Vec::new(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
@@ -2501,6 +2522,10 @@ impl App {
             message @ (Message::RefreshAgents | Message::AgentsSurveyed(_)) => {
                 self.agent_chip_message(message)
             }
+            Message::RestoreChoose { index, chosen } => {
+                self.choose_restored(index, chosen);
+                Vec::new()
+            }
             message @ (Message::ConfirmDialog
             | Message::DismissDialog
             | Message::ShowShortcuts
@@ -2643,8 +2668,11 @@ impl App {
             return Vec::new();
         }
         let mut effects = Vec::new();
-        if matches!(self.dialog.take(), Some(Dialog::FileConflicts { .. })) {
-            effects = self.cancel_conflicts();
+        match self.dialog.take() {
+            Some(Dialog::FileConflicts { .. }) => effects = self.cancel_conflicts(),
+            // "Don't restore": answered, the snapshot goes.
+            Some(Dialog::RestoreSessions(_)) => self.forget_snapshot(),
+            _ => {}
         }
         self.pending_paste = None;
         self.pending_operation = None;
@@ -3387,6 +3415,7 @@ impl App {
             self.dialog = Some(Dialog::ConfirmExit { live, unsaved });
             return Vec::new();
         }
+        self.keep_snapshot();
         vec![Effect::Exit]
     }
 
@@ -3486,11 +3515,13 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmExit { .. }) => {
+                self.keep_snapshot();
                 for tab in &mut self.tabs {
                     tab.stop();
                 }
                 vec![Effect::Exit]
             }
+            Some(Dialog::RestoreSessions(dialog)) => self.restore_sessions(dialog),
             Some(Dialog::ConfirmPaste { .. }) => {
                 if let Some((tab_id, text)) = self.pending_paste.take() {
                     self.paste_to(&self.input_targets(tab_id), &text);
