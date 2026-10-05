@@ -22,6 +22,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use heimdall_app::BulkField;
 use heimdall_app::files::{Direction, Side};
+use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
     Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
@@ -152,6 +153,80 @@ pub fn state_dot<'a>(state: Option<SessionState>) -> Element<'a, Message> {
             }
         })
         .into()
+}
+
+/// Width of the ring that says what the background check found, in logical pixels.
+const RING_WIDTH: f32 = 2.0;
+
+/// A server's dot in the tree, as the C# one: its session's state while one is open or
+/// failed; else what the background check found, as a ring, so that it is never taken for
+/// a session.
+fn profile_dot<'a>(state: Option<SessionState>, reach: Option<&Verdict>) -> Element<'a, Message> {
+    if state.is_some_and(|state| state != SessionState::Ended) {
+        return state_dot(state);
+    }
+    let Some(reach) = reach.filter(|reach| !matches!(reach, Verdict::Unchecked(_))) else {
+        return state_dot(None);
+    };
+    let tone = match reach {
+        Verdict::Up(_) => Tone::Success,
+        Verdict::Down(_) => Tone::Danger,
+        _ => Tone::Warning,
+    };
+    container(iced::widget::space())
+        .width(DOT_SIZE)
+        .height(DOT_SIZE)
+        .style(move |theme: &Theme| {
+            let palette = theme.extended_palette();
+            let colour = match tone {
+                Tone::Success => palette.success.base.color,
+                Tone::Danger => palette.danger.base.color,
+                Tone::Warning => palette.warning.base.color,
+            };
+            container::Style {
+                border: iced::Border {
+                    color: colour,
+                    width: RING_WIDTH,
+                    radius: (DOT_SIZE / 2.0).into(),
+                },
+                ..container::Style::default()
+            }
+        })
+        .into()
+}
+
+/// The colour of a ring.
+#[derive(Debug, Clone, Copy)]
+enum Tone {
+    Success,
+    Danger,
+    Warning,
+}
+
+/// What the background check found of a server, as the C# dot's tooltip says it.
+fn reach_text(reach: &Verdict) -> String {
+    match reach {
+        Verdict::Checking => fl!("ui-tree-reachability-checking"),
+        Verdict::Up(millis) => fl!("ui-tree-reachability-up", millis = (*millis)),
+        Verdict::Down(reason) => fl!(
+            "ui-tree-reachability-down",
+            reason = match reason {
+                DownReason::Timeout => fl!("ui-reachability-reason-timeout"),
+                DownReason::Refused => fl!("ui-reachability-reason-refused"),
+                DownReason::Unreachable => fl!("ui-reachability-reason-unreachable"),
+                DownReason::Dns => fl!("ui-reachability-reason-dns"),
+                DownReason::Other(detail) => detail.clone(),
+            }
+        ),
+        Verdict::Unchecked(why) => fl!(
+            "ui-tree-reachability-unchecked",
+            reason = match why {
+                Unchecked::BehindGateway => fl!("ui-reachability-reason-behind-gateway"),
+                Unchecked::NoPort => fl!("ui-reachability-reason-no-port"),
+                Unchecked::NoHost => fl!("ui-reachability-reason-no-host"),
+            }
+        ),
+    }
 }
 
 /// How far a row moves right for each folder it is in.
@@ -313,7 +388,7 @@ pub fn search_context(profile: &ProfileSummary) -> Option<String> {
 pub fn owned_row(
     profile: &ProfileSummary,
     selected: bool,
-    state: Option<SessionState>,
+    (state, reach): (Option<SessionState>, Option<Verdict>),
     context: Option<String>,
 ) -> Element<'static, Message> {
     let id = profile.id.clone();
@@ -324,7 +399,7 @@ pub fn owned_row(
                 .style(text::secondary)
         )
         .width(PROTOCOL_WIDTH),
-        state_dot(state),
+        profile_dot(state, reach.as_ref()),
         column![text(profile.name.clone()).wrapping(text::Wrapping::Glyph)].push(context.map(
             |context| {
                 text(context)
@@ -353,7 +428,7 @@ pub fn owned_row(
         .interaction(mouse::Interaction::Pointer);
     tooltip(
         area,
-        text(row_tooltip(profile)).size(12.0),
+        text(row_tooltip(profile, reach.as_ref())).size(12.0),
         tooltip::Position::Right,
     )
     .style(container::rounded_box)
@@ -414,7 +489,7 @@ fn row_style(theme: &Theme, selected: bool) -> container::Style {
     }
 }
 
-fn row_tooltip(profile: &ProfileSummary) -> String {
+fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
     let mut lines = Vec::new();
     if let Some((host, _)) = &profile.endpoint {
         lines.push(fl!("ui-tree-tooltip-host", host = host.as_str()));
@@ -441,6 +516,10 @@ fn row_tooltip(profile: &ProfileSummary) -> String {
     }
     if profile.favorite {
         lines.push(fl!("ui-tree-favorite"));
+    }
+    // What the background check found, as the C# dot's tooltip.
+    if let Some(reach) = reach {
+        lines.push(reach_text(reach));
     }
     lines.join("\n")
 }

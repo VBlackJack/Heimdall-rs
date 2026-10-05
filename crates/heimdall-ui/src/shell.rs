@@ -734,7 +734,7 @@ pub struct Shell {
     font_size_typed: Option<String>,
     /// The numbers of the session card as typed in the Settings page, until applied, by
     /// [`SessionField::index`].
-    session_typed: [Option<String>; 3],
+    session_typed: [Option<String>; SessionField::COUNT],
     /// The search typed over the trusted SSH host keys.
     host_key_search: String,
     /// The Settings tab shown, kept while the application runs.
@@ -926,6 +926,12 @@ impl Shell {
                 iced::time::every(interval).map(|_| Message::App(AppMessage::TmoutResetTick)),
             );
         }
+        // Every server checked in the background, as the C# session health monitor.
+        if let Some(interval) = self.app.reachability_interval() {
+            subscriptions.push(
+                iced::time::every(interval).map(|_| Message::App(AppMessage::ReachabilityTick)),
+            );
+        }
         // The servers whose health panel is shown, asked as the C# asks them.
         if self.app.polls_health() {
             subscriptions.push(
@@ -1068,6 +1074,10 @@ impl Shell {
         // open to the user.
         if !self.gated() {
             self.app.offer_restore();
+            // The servers' first background check, once their tree can be seen.
+            for effect in self.app.start_reachability() {
+                tasks.push(self.run(effect));
+            }
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
@@ -1894,6 +1904,24 @@ impl Shell {
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
+            Effect::CheckReachability {
+                probes,
+                timeout,
+                at_once,
+            } => {
+                let checks = stream::iter(probes)
+                    .map(move |probe| async move {
+                        let verdict =
+                            heimdall_app::reachability::check(probe.host, probe.port, timeout)
+                                .await;
+                        Message::App(AppMessage::ReachabilityChecked {
+                            id: probe.id,
+                            verdict,
+                        })
+                    })
+                    .buffer_unordered(at_once);
+                Task::stream(checks)
+            }
             effect @ (Effect::TestReachability { .. }
             | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
@@ -2453,7 +2481,12 @@ impl Shell {
                     .then(|| tree_view::search_context(&profile))
                     .flatten();
                 tree_view::indented(
-                    tree_view::owned_row(&profile, selected, state, context),
+                    tree_view::owned_row(
+                        &profile,
+                        selected,
+                        (state, self.app.reachability(&profile.id).cloned()),
+                        context,
+                    ),
                     depth,
                 )
             }
@@ -2668,6 +2701,8 @@ impl Shell {
             self.appearance_settings(),
             text(fl!("ui-settings-behavior")).size(BODY_SIZE),
             self.behavior_settings(),
+            text(fl!("ui-settings-reachability")).size(BODY_SIZE),
+            self.reachability_settings(),
         ]
     }
 
@@ -3024,28 +3059,42 @@ impl Shell {
     /// the `TMOUT` reset of idle SSH shells, and the anti-idle interval RDP sessions asking
     /// for anti-idle keys follow; each applied with Enter.
     fn ssh_session_settings(&self) -> Element<'_, Message> {
+        container(self.number_fields(Column::new().spacing(SPACING), &SessionField::SESSION))
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
+    }
+
+    /// `fields` under `card`, each typed and applied with Enter, its rule said under it
+    /// while what is typed is out of its range.
+    fn number_fields<'a>(
+        &'a self,
+        mut card: Column<'a, Message>,
+        fields: &[SessionField],
+    ) -> Column<'a, Message> {
         let settings = self.app.settings();
-        let mut card = Column::new().spacing(SPACING);
-        for field in SessionField::ALL {
+        for &field in fields {
             let shown = field.value(settings).to_string();
             let typed = self.session_typed[field.index()].clone().unwrap_or(shown);
             let refused = self.session_typed[field.index()].is_some()
                 && !self
                     .typed_session(field)
-                    .is_some_and(|seconds| field.accepted(seconds));
-            card = card.push(
-                row![
-                    text(field.label()),
-                    iced::widget::space::horizontal(),
-                    text_input("", &typed)
-                        .width(FONT_SIZE_FIELD_WIDTH)
-                        .on_input(move |typed| Message::SessionFieldEdited(field, typed))
-                        .on_submit(Message::SessionFieldApply(field)),
-                    text(fl!("ui-settings-anti-idle-unit")),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-            );
+                    .is_some_and(|value| field.accepted(value));
+            let mut line = row![
+                text(field.label()),
+                iced::widget::space::horizontal(),
+                text_input("", &typed)
+                    .width(FONT_SIZE_FIELD_WIDTH)
+                    .on_input(move |typed| Message::SessionFieldEdited(field, typed))
+                    .on_submit(Message::SessionFieldApply(field)),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center);
+            if let Some(unit) = field.unit() {
+                line = line.push(text(unit));
+            }
+            card = card.push(line);
             if let Some(hint) = field.hint() {
                 card = card.push(text(hint).size(SMALL_SIZE));
             }
@@ -3053,7 +3102,22 @@ impl Shell {
                 card = card.push(text(field.refusal()).size(SMALL_SIZE).style(text::danger));
             }
         }
-        container(card)
+        card
+    }
+
+    /// The C# session health monitor's settings: whether every server is checked in the
+    /// background, how often, how long each has to answer and how many at once.
+    fn reachability_settings(&self) -> Element<'_, Message> {
+        let card = column![
+            checkbox(self.app.settings().reachability.enabled)
+                .label(fl!("ui-settings-reachability-enabled"))
+                .on_toggle(
+                    |on| Message::App(AppMessage::Settings(SettingsMessage::Reachability(on)))
+                ),
+            text(fl!("ui-settings-reachability-hint")).size(SMALL_SIZE),
+        ]
+        .spacing(SPACING);
+        container(self.number_fields(card, &SessionField::REACHABILITY))
             .padding(PADDING)
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box)
