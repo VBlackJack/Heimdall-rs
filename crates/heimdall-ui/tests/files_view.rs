@@ -23,7 +23,7 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use heimdall_app::files::{
-    Direction, EntryKind, LocalEntry, RemoteEntry, Side, TransferEvent, plan_transfer,
+    Direction, EntryKind, FilesKey, LocalEntry, RemoteEntry, Side, TransferEvent, plan_transfer,
 };
 use heimdall_app::{
     App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message as AppMessage, TabId,
@@ -615,7 +615,7 @@ async fn a_right_click_selects_an_entry_and_opens_the_csharp_menu() {
     let entry = TreeMenu::FilesEntry {
         tab,
         side: Side::Remote,
-        index: 1,
+        index: Some(1),
     };
     {
         let mut ui = simulator(&shell);
@@ -654,7 +654,7 @@ async fn a_right_click_selects_an_entry_and_opens_the_csharp_menu() {
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
         tab,
         side: Side::Remote,
-        index: 0,
+        index: Some(0),
     }));
     assert_eq!(selected(&shell), Some(0));
     let path = shell
@@ -672,7 +672,7 @@ async fn a_right_click_selects_an_entry_and_opens_the_csharp_menu() {
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
         tab,
         side: Side::Remote,
-        index: 9,
+        index: Some(9),
     }));
     assert!(simulator(&shell).find("Copy path").is_err());
 }
@@ -688,7 +688,7 @@ async fn this_computers_menu_uploads_what_the_servers_downloads() {
     let mut ui = common::simulator(
         settings,
         WINDOW,
-        heimdall_ui::tree_view::files_entry_menu(tab, Side::Local, 0, false, false),
+        heimdall_ui::tree_view::files_entry_menu((tab, Side::Local), Some(a_file(0)), false, false),
     );
     assert!(ui.find("Download").is_err());
     ui.click("Upload").expect("Upload");
@@ -712,7 +712,7 @@ async fn after_an_entrys_menu_the_arrows_still_move_through_the_files() {
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
         tab,
         side: Side::Remote,
-        index: 0,
+        index: Some(0),
     }));
     let _ = shell.update(Message::CloseTreeMenu);
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
@@ -806,7 +806,12 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
         let mut ui = common::simulator(
             settings,
             WINDOW,
-            heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 1, true, true),
+            heimdall_ui::tree_view::files_entry_menu(
+                (tab, Side::Remote),
+                Some(a_file(1)),
+                true,
+                true,
+            ),
         );
         ui.click(label).expect(label);
         let chosen: Vec<String> = ui
@@ -832,7 +837,7 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
         common::simulator(
             settings(),
             WINDOW,
-            heimdall_ui::tree_view::files_entry_menu(tab, side, 0, false, false),
+            heimdall_ui::tree_view::files_entry_menu((tab, side), Some(a_file(0)), false, false),
         )
     };
     let mut remote = menu(Side::Remote);
@@ -951,7 +956,8 @@ async fn ctrl_and_shift_clicks_select_several_entries_and_the_pane_says_how_many
     snapshot(&shell, "files-several.png");
     {
         let mut ui = simulator(&shell);
-        ui.find("2 selected").expect("counted");
+        ui.find("2 selected (2.0 KiB)")
+            .expect("counted, the file's size beside it, as the C#: not the folder's");
         ui.click("Rename").expect("the button");
         assert!(
             files_messages(ui).is_empty(),
@@ -1079,7 +1085,12 @@ async fn the_files_menus_are_drawn_on_a_card_that_hides_what_is_under_them() {
     // In the card's margin, left of the entries: the card's colour, not the window's, or
     // the listing under the menu shows through its entries.
     let entry_menu = pixel_of(
-        heimdall_ui::tree_view::files_entry_menu(tab, Side::Remote, 0, false, false),
+        heimdall_ui::tree_view::files_entry_menu(
+            (tab, Side::Remote),
+            Some(a_file(0)),
+            false,
+            false,
+        ),
         2,
         20,
     );
@@ -1375,4 +1386,166 @@ async fn an_entry_dragged_onto_the_other_panes_folder_is_sent_into_it() {
         .and_then(|tab| tab.files.as_deref())
         .expect("files");
     assert_eq!(files.transfers.len(), 1);
+}
+
+/// The facts of a menu opened on a regular file chosen alone, listed at `index`.
+fn a_file(index: usize) -> heimdall_ui::tree_view::FilesEntryFacts {
+    heimdall_ui::tree_view::FilesEntryFacts {
+        index,
+        single: true,
+        one_file: true,
+        link: false,
+    }
+}
+
+/// The remote pane listing `entries` in `/srv`.
+fn list_remote(shell: &mut Shell, tab: TabId, entries: Vec<RemoteEntry>) {
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::RemoteListed {
+            tab,
+            result: Ok((RemotePath::from("/srv"), entries)),
+        },
+    )));
+}
+
+#[tokio::test]
+async fn a_folder_of_hidden_entries_says_so_before_a_filter_matching_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    list_remote(
+        &mut shell,
+        tab,
+        vec![remote(".profile", EntryKind::File, 1)],
+    );
+    // Shown by default, as the C#'s: hidden here.
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::ToggleHidden {
+            tab,
+            side: Side::Remote,
+        },
+    )));
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Filter {
+        tab,
+        side: Side::Remote,
+        text: "zzz".to_owned(),
+    })));
+    let mut ui = simulator(&shell);
+    ui.find("Show hidden files")
+        .expect("only hidden entries, as the C# says first");
+    assert!(ui.find("Clear filter").is_err());
+}
+
+#[tokio::test]
+async fn shift_and_the_arrows_extend_the_selection_and_ctrl_space_takes_one_out() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    list_remote(
+        &mut shell,
+        tab,
+        vec![
+            remote("a", EntryKind::File, 1),
+            remote("b", EntryKind::File, 1),
+            remote("c", EntryKind::File, 1),
+        ],
+    );
+    let chosen = |shell: &Shell| {
+        shell
+            .app()
+            .tab(tab)
+            .and_then(|tab| tab.files.as_deref())
+            .map(|files| files.remote.chosen())
+            .unwrap_or_default()
+    };
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Select {
+        tab,
+        side: Side::Remote,
+        index: 0,
+    })));
+    let key = |shell: &mut Shell, key| {
+        let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Key {
+            tab,
+            key,
+        })));
+    };
+    key(&mut shell, FilesKey::ExtendNext);
+    key(&mut shell, FilesKey::ExtendNext);
+    assert_eq!(chosen(&shell), [0, 1, 2]);
+    key(&mut shell, FilesKey::ExtendPrevious);
+    assert_eq!(chosen(&shell), [0, 1], "the range shrinks back");
+    key(&mut shell, FilesKey::ToggleMark);
+    assert_eq!(
+        chosen(&shell),
+        [0],
+        "the entry the keyboard is on taken out"
+    );
+}
+
+#[tokio::test]
+async fn the_menu_beside_the_entries_is_the_folders_and_an_entrys_offers_what_it_takes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    let settings = || Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    // Beside the entries: the folder's actions, none of an entry's.
+    let mut ui = common::simulator(
+        settings(),
+        WINDOW,
+        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), None, true, true),
+    );
+    for label in ["New Folder", "Upload here...", "Paste", "Refresh"] {
+        ui.find(label).expect(label);
+    }
+    for label in ["Open", "Rename", "Delete", "Copy path"] {
+        assert!(ui.find(label).is_err(), "{label}");
+    }
+    // A folder: no editing.
+    let folder = heimdall_ui::tree_view::FilesEntryFacts {
+        index: 0,
+        single: true,
+        one_file: false,
+        link: false,
+    };
+    let mut ui = common::simulator(
+        settings(),
+        WINDOW,
+        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), Some(folder), false, true),
+    );
+    ui.find("Rename").expect("renamed");
+    assert!(ui.find("Edit").is_err(), "a folder is not edited");
+    // A link over SFTP: no rename, which would rename its target.
+    let link = heimdall_ui::tree_view::FilesEntryFacts {
+        link: true,
+        ..folder
+    };
+    let mut ui = common::simulator(
+        settings(),
+        WINDOW,
+        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), Some(link), false, true),
+    );
+    assert!(ui.find("Rename").is_err());
+    ui.find("Delete").expect("deleted");
+}
+
+#[tokio::test]
+async fn a_pipe_a_socket_and_a_device_are_marked_in_the_list() {
+    use heimdall_app::files::Special;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    list_remote(
+        &mut shell,
+        tab,
+        vec![
+            remote("fifo", EntryKind::Other(Special::Pipe), 0),
+            remote("sock", EntryKind::Other(Special::Socket), 0),
+        ],
+    );
+    let mut ui = simulator(&shell);
+    ui.find("fifo (Named pipe (FIFO))").expect("the pipe");
+    ui.find("sock (Socket)").expect("the socket");
 }

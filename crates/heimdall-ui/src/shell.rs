@@ -26,8 +26,8 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    FilesError, FilesKey, Side, copy_remote, file_operation, list_local, list_remote, move_remote,
-    plan_transfer, transfer_events,
+    EntryKind, FilesError, FilesKey, Side, copy_remote, file_operation, list_local, list_remote,
+    move_remote, plan_transfer, transfer_events,
 };
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
@@ -1916,7 +1916,12 @@ impl Shell {
             let _ = self.app.update(AppMessage::SelectProfile(id.clone()));
         }
         // And in the C# Files tab; a folder already selected stays closed.
-        if let TreeMenu::FilesEntry { tab, side, index } = menu {
+        if let TreeMenu::FilesEntry {
+            tab,
+            side,
+            index: Some(index),
+        } = menu
+        {
             let selected = self
                 .app
                 .tab(tab)
@@ -2690,19 +2695,38 @@ impl Shell {
                 self.app.settings().resolution_presets(),
             )
         } else if let TreeMenu::FilesEntry { tab, side, index } = *menu {
-            // Only while the entry is still listed.
             let files = self.app.tab(tab)?.files.as_deref()?;
-            let listed = match side {
-                Side::Remote => files.remote.entries.len(),
-                Side::Local => files.local.entries.len(),
+            let (kinds, chosen): (Vec<EntryKind>, usize) = match side {
+                Side::Remote => (
+                    files
+                        .remote
+                        .entries
+                        .iter()
+                        .map(|entry| entry.kind)
+                        .collect(),
+                    files.remote.chosen().len(),
+                ),
+                Side::Local => (
+                    files.local.entries.iter().map(|entry| entry.kind).collect(),
+                    files.local.chosen().len(),
+                ),
             };
-            if index >= listed {
-                return None;
-            }
+            let facts = match index {
+                // Only while the entry is still listed.
+                Some(index) => {
+                    let kind = *kinds.get(index)?;
+                    Some(tree_view::FilesEntryFacts {
+                        index,
+                        single: chosen <= 1,
+                        one_file: chosen <= 1 && kind == EntryKind::File,
+                        link: kind == EntryKind::Link,
+                    })
+                }
+                None => None,
+            };
             tree_view::files_entry_menu(
-                tab,
-                side,
-                index,
+                (tab, side),
+                facts,
                 self.app.can_paste(tab),
                 self.app.can_copy(tab),
             )
@@ -4148,8 +4172,8 @@ impl Shell {
         let several = !self.app.selected_profiles().is_empty();
         let cursor = self.tree_cursor();
         Some(match key {
-            FilesKey::Previous | FilesKey::Next if self.modifiers.shift() => {
-                self.extend_tree_selection(key == FilesKey::Previous)
+            FilesKey::ExtendPrevious | FilesKey::ExtendNext => {
+                self.extend_tree_selection(key == FilesKey::ExtendPrevious)
             }
             FilesKey::Previous | FilesKey::Next => {
                 let rows = self.tree_cursors();
