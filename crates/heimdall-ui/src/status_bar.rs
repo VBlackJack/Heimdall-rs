@@ -176,6 +176,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::FavoriteSaveFailed => fl!("ui-status-favorite-save-failed"),
             Notice::BulkPortUpdated(count) => fl!("ui-status-bulk-port-updated", count = (*count)),
             Notice::BulkPortUnchanged => fl!("ui-status-bulk-port-unchanged"),
+            Notice::BulkGatewayUpdated(0) => fl!("ui-status-bulk-gateway-unchanged"),
+            Notice::BulkGatewayUpdated(count) => {
+                fl!("ui-status-bulk-gateway-updated", count = (*count))
+            }
             Notice::BulkUsernameUpdated(count) => {
                 fl!("ui-status-bulk-username-updated", count = (*count))
             }

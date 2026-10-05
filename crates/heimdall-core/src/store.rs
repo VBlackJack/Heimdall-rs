@@ -641,6 +641,30 @@ impl ProfileStore {
         }
     }
 
+    /// Sets the gateway profile `id` goes through, none for a direct connection, as the C#
+    /// bulk "Set gateway" does for SSH, SFTP, RDP and `WinRM`; whether it changed. The other
+    /// protocols go through none, and a gateway not in the store is not set.
+    pub fn set_gateway(&mut self, id: &ProfileId, gateway: Option<&ProfileId>) -> bool {
+        if gateway.is_some_and(|gateway| !self.gateways.iter().any(|known| known.id == *gateway)) {
+            return false;
+        }
+        let gateway = gateway.cloned();
+        let current = if let Some(profile) = self.ssh.iter_mut().find(|p| p.id == *id) {
+            &mut profile.gateway
+        } else if let Some(profile) = self.rdp.iter_mut().find(|p| p.id == *id) {
+            &mut profile.gateway
+        } else if let Some(profile) = self.winrm.iter_mut().find(|p| p.id == *id) {
+            &mut profile.gateway
+        } else {
+            return false;
+        };
+        if *current == gateway {
+            return false;
+        }
+        *current = gateway;
+        true
+    }
+
     fn port_mut(&mut self, id: &ProfileId) -> Option<&mut u16> {
         if let Some(profile) = self.ssh.iter_mut().find(|profile| profile.id == *id) {
             return Some(&mut profile.port);

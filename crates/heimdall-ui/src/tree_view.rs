@@ -96,6 +96,8 @@ pub enum TreeMenu {
     MoveSelection,
     /// What can be set on the profiles selected together at once.
     EditSelection,
+    /// The route the profiles selected together can be given: direct, or a gateway.
+    GatewaySelection,
     /// The server's folders bookmarked in a Files tab.
     FilesBookmarks(TabId),
     /// Which of a Files tab's bookmarks to take off.
@@ -1358,7 +1360,7 @@ pub fn selection_menu_entries<'a>(
 
 /// What the profiles selected together can be set at once, as the C# "Edit" menu: their
 /// port, and the account of the `usernames` among them that take one.
-pub fn edit_selection_entries<'a>(usernames: usize) -> Element<'a, Message> {
+pub fn edit_selection_entries<'a>(usernames: usize, routed: usize) -> Element<'a, Message> {
     let edit = |field| Some(AppMessage::Selection(SelectionMessage::Edit(field)));
     let entries = column![]
         .spacing(0.0)
@@ -1367,8 +1369,39 @@ pub fn edit_selection_entries<'a>(usernames: usize) -> Element<'a, Message> {
         .push(entry(
             fl!("ui-selection-edit-username", count = usernames),
             edit(BulkField::Username).filter(|_| usernames > 0),
-        ));
+        ))
+        .push(
+            button(text(fl!("ui-selection-set-gateway", count = routed)).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press_maybe(
+                    (routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)),
+                ),
+        );
     menu_card(entries).into()
+}
+
+/// The routes the profiles selected together can be given, as the C# "Set gateway":
+/// directly, then through each gateway saved.
+#[must_use]
+pub fn gateway_selection_entries<'a>(
+    gateways: &[heimdall_core::profile::SshGateway],
+) -> Element<'a, Message> {
+    let set = |gateway| Some(AppMessage::Selection(SelectionMessage::SetGateway(gateway)));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-selection-gateway-direct"), set(None)))
+        .push(separator())
+        .extend(gateways.iter().map(|gateway| {
+            entry(
+                heimdall_app::server_text(&gateway.name),
+                set(Some(gateway.id.clone())),
+            )
+        }));
+    menu_card(scrollable(entries).height(Length::Shrink))
+        .max_height(MOVE_MENU_HEIGHT)
+        .into()
 }
 
 /// Which folder the profiles selected together can move to: "(No Folder)", then every
