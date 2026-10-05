@@ -4270,6 +4270,10 @@ impl Shell {
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
+            vnc_resize: tab
+                .desktop
+                .as_ref()
+                .and_then(|pane| pane.vnc_remote_resize()),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
             transcript: if tab.transcript.is_some() {

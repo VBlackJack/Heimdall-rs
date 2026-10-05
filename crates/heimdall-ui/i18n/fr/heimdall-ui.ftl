@@ -1720,6 +1720,7 @@ ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été
 ui-status-move-undone = Déplacement annulé.
 ui-status-nothing-to-undo = Rien à annuler.
 ui-shortcuts-undo-move = Annuler le dernier déplacement fait en glissant dans l'arborescence
+ui-tab-menu-vnc-remote-resize = Redimensionner le bureau distant à l'onglet
 ui-detail-folder = Dossier :
 ui-detail-environment = Environnement :
 ui-detail-username = Utilisateur :

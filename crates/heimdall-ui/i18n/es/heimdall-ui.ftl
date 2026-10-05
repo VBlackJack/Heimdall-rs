@@ -1717,6 +1717,7 @@ ui-status-drop-refused = Ya hay una carpeta con ese nombre: no se movió nada.
 ui-status-move-undone = Movimiento deshecho.
 ui-status-nothing-to-undo = Nada que deshacer.
 ui-shortcuts-undo-move = Deshacer el último movimiento hecho arrastrando en el árbol
+ui-tab-menu-vnc-remote-resize = Ajustar el escritorio remoto a la pestaña
 ui-detail-folder = Carpeta:
 ui-detail-environment = Entorno:
 ui-detail-username = Usuario:

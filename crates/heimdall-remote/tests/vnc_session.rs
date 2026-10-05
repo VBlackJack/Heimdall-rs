@@ -42,8 +42,8 @@ const RESPONSE: [u8; 16] = [
 ];
 
 /// What the client sends between `ServerInit` and the first update: `SetPixelFormat` (20),
-/// `SetEncodings` of 5 (4 + 20) and a `FramebufferUpdateRequest` (10).
-const OPENING_REQUESTS: usize = 20 + 24 + 10;
+/// `SetEncodings` of 6 (4 + 24) and a `FramebufferUpdateRequest` (10).
+const OPENING_REQUESTS: usize = 20 + 28 + 10;
 /// An incremental `FramebufferUpdateRequest`.
 const UPDATE_REQUEST: usize = 10;
 

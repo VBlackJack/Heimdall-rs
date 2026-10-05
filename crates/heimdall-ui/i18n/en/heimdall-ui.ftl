@@ -1795,6 +1795,7 @@ ui-status-drop-refused = A folder of that name is already there: nothing was mov
 ui-status-move-undone = Move undone.
 ui-status-nothing-to-undo = Nothing to undo.
 ui-shortcuts-undo-move = Undo the last move made by dragging in the tree
+ui-tab-menu-vnc-remote-resize = Resize the remote desktop to the tab
 ui-detail-folder = Folder:
 ui-detail-environment = Environment:
 ui-detail-username = Username:
