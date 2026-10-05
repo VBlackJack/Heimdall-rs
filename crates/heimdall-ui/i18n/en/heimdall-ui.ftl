@@ -1335,6 +1335,7 @@ ui-editor-lines = { $count ->
     [one] { $count } line
    *[other] { $count } lines
 }
+ui-editor-plain-text = Plain text
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 with BOM
 ui-editor-encoding-utf16le = UTF-16 LE
