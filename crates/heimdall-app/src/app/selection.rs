@@ -211,6 +211,9 @@ impl App {
     /// Selects `id` alone, as a plain click does.
     pub(super) fn select_only(&mut self, id: Option<ProfileId>) {
         self.selection.clear();
+        if id.is_some() {
+            self.selected_folder = None;
+        }
         self.selected_profile = id;
     }
 

@@ -1481,6 +1481,16 @@ impl App {
                 }
                 return Vec::new();
             }
+            // The entry at the cursor in or out of the selection, as a Ctrl+click on it.
+            FilesKey::ToggleMark => {
+                if let Some(index) = selected {
+                    match side {
+                        Side::Remote => files.remote.toggle(index),
+                        Side::Local => files.local.toggle(index),
+                    }
+                }
+                return Vec::new();
+            }
             FilesKey::NewFolder => return self.files(FilesMessage::AskNewFolder { tab, side }),
             FilesKey::Download => return self.start_transfer(tab, Direction::Download),
             FilesKey::Upload => return self.start_transfer(tab, Direction::Upload),

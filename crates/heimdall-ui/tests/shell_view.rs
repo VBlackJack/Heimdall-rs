@@ -1449,12 +1449,20 @@ fn the_tree_keys_move_connect_rename_delete_and_edit_as_the_csharp_ones() {
     assert_eq!(selected(&shell).as_deref(), Some("b"));
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     assert_eq!(
+        (selected(&shell), shell.app().selected_folder.as_deref()),
+        (None, Some(heimdall_app::NO_FOLDER)),
+        "a folder is a row too, as in the C# tree"
+    );
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    assert_eq!(
         selected(&shell).as_deref(),
         Some("c"),
         "into the next folder"
     );
+    assert_eq!(shell.app().selected_folder, None);
     let _ = shell.update(Message::FilesKey(FilesKey::Next));
     assert_eq!(selected(&shell).as_deref(), Some("c"), "the last stays");
+    let _ = shell.update(Message::FilesKey(FilesKey::Previous));
     let _ = shell.update(Message::FilesKey(FilesKey::Previous));
     assert_eq!(selected(&shell).as_deref(), Some("b"));
 
@@ -3348,6 +3356,12 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     let _ = shell.update(Message::FilesKey(FilesKey::Last));
     assert_eq!(selected(&shell).as_deref(), Some("c"));
     let _ = shell.update(Message::FilesKey(FilesKey::First));
+    assert_eq!(
+        shell.app().selected_folder.as_deref(),
+        Some("Production"),
+        "Home: the first row, a folder, as in the C# tree"
+    );
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
     assert_eq!(selected(&shell).as_deref(), Some("a"));
 
     // The same letter again goes on to the next name starting with it.
@@ -3372,4 +3386,68 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     assert!(!title(&shell), "hidden");
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     assert!(title(&shell), "shown again");
+}
+
+#[test]
+fn the_tree_keys_reach_folders_fold_them_and_extend_the_selection() {
+    use heimdall_app::Dialog;
+    use heimdall_app::files::{FilesKey, Side};
+    use iced::keyboard::Modifiers;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let open = |shell: &Shell, path: &str| {
+        shell.app().tree_rows("").into_iter().any(|row| {
+            matches!(row, heimdall_app::TreeRow::Folder { path: found, open: true, .. }
+                if found == path)
+        })
+    };
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    // Left from a profile: up to its folder.
+    let _ = shell.update(Message::FilesKey(FilesKey::Focus(Side::Local)));
+    assert_eq!(shell.app().selected_folder.as_deref(), Some("Production"));
+    assert_eq!(shell.app().selected_profile, None);
+    // Left again folds it; Right unfolds it, then goes down to its first row.
+    let _ = shell.update(Message::FilesKey(FilesKey::Focus(Side::Local)));
+    assert!(!open(&shell, "Production"), "folded");
+    let _ = shell.update(Message::FilesKey(FilesKey::Focus(Side::Remote)));
+    assert!(open(&shell, "Production"), "unfolded");
+    assert_eq!(shell.app().selected_folder.as_deref(), Some("Production"));
+    let _ = shell.update(Message::FilesKey(FilesKey::Focus(Side::Remote)));
+    assert_eq!(
+        shell.app().selected_profile.as_ref().map(ProfileId::as_str),
+        Some("a")
+    );
+    // Enter on a folder folds it, and connects nothing.
+    let _ = shell.update(Message::FilesKey(FilesKey::Focus(Side::Local)));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    assert!(!open(&shell, "Production"));
+    assert!(shell.app().tabs.is_empty());
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    // F2 and Delete on a folder are the folder's.
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    assert!(
+        matches!(shell.app().dialog, Some(Dialog::FolderName { .. })),
+        "{:?}",
+        shell.app().dialog
+    );
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+    let _ = shell.update(Message::FilesKey(FilesKey::Delete));
+    assert!(shell.app().dialog.is_some(), "the folder's deletion asked");
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+
+    // Shift+Down from a: a and b; Ctrl+Space takes b out again.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::Modifiers(Modifiers::SHIFT));
+    let _ = shell.update(Message::FilesKey(FilesKey::Next));
+    let _ = shell.update(Message::Modifiers(Modifiers::empty()));
+    assert_eq!(
+        shell.app().selected_profiles(),
+        [ProfileId::new("a"), ProfileId::new("b")]
+    );
+    let _ = shell.update(Message::FilesKey(FilesKey::ToggleMark));
+    assert!(
+        shell.app().selected_profiles().is_empty(),
+        "b taken out: a alone again"
+    );
 }

@@ -344,6 +344,12 @@ impl App {
                 self.select_only(found);
                 Vec::new()
             }
+            Message::SelectFolder(path) => {
+                self.select_only(None);
+                self.selected_profile = None;
+                self.selected_folder = Some(path);
+                Vec::new()
+            }
             Message::ToggleFolder(path) => {
                 self.toggle_folder(&path);
                 Vec::new()

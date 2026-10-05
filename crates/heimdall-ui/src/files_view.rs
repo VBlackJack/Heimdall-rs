@@ -159,6 +159,7 @@ pub fn files_key(
             (false, Some('c')) => Some(FilesKey::Copy),
             (false, Some('v')) => Some(FilesKey::Paste),
             (false, Some('a')) => Some(FilesKey::SelectAll),
+            (false, _) if *key == keyboard::Key::Named(Named::Space) => Some(FilesKey::ToggleMark),
             (true, Some('c')) => Some(FilesKey::CopyPath),
             (true, Some('d')) => Some(FilesKey::Download),
             (true, Some('u')) => Some(FilesKey::Upload),
