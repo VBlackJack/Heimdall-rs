@@ -97,6 +97,12 @@ struct Entry {
     ssh_key_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     session_logging_override: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    environment: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tags: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mac_address: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ssh_agent_forwarding: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -240,6 +246,7 @@ pub fn csharp(
                 .map(|profile| local(profile, windows_line)),
         )
         .chain(store.winrm_profiles().iter().map(winrm))
+        .map(|server| with_metadata(server, store))
         .collect();
     let document = Document {
         schema_version: SCHEMA_VERSION,
@@ -277,6 +284,16 @@ fn server(
         group: group.cloned(),
         ..Entry::default()
     }
+}
+
+/// `server` with what its profile says of it, as the C# Metadata section keeps it.
+fn with_metadata(mut server: Entry, store: &ProfileStore) -> Entry {
+    if let Some(metadata) = store.metadata(&crate::profile::ProfileId::new(server.id.clone())) {
+        server.environment = metadata.environment.map(|e| e.name().to_owned());
+        server.tags = Some(metadata.tags.clone()).filter(|tags| !tags.is_empty());
+        server.mac_address = metadata.mac_address.map(|mac| mac.to_string());
+    }
+    server
 }
 
 /// The ports opened through a gateway: 0, absent here, opens none.

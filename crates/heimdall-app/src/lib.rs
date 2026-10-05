@@ -56,6 +56,7 @@ pub mod transcript;
 pub mod tunnel;
 pub mod tunnel_driver;
 pub mod vnc_driver;
+pub mod wake_on_lan;
 pub mod winrm_driver;
 pub mod winrm_preflight;
 

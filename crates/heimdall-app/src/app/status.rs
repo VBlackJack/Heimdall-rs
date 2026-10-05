@@ -165,6 +165,8 @@ pub enum Notice {
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.
     FilesCopied(usize),
+    /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
+    WakeOnLan(Result<(), String>),
     /// The entries chosen were duplicated.
     FilesDuplicated,
     /// A transcript was started, in this file.

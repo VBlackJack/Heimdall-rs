@@ -229,6 +229,9 @@ impl App {
             for id in &report.favorites {
                 store.set_favorite(id, true);
             }
+            for (id, metadata) in &report.metadata {
+                store.set_metadata(id, metadata.clone());
+            }
             [ssh, rdp, telnet, vnc, local, winrm, ftp, gateways]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {

@@ -16,6 +16,7 @@
 
 //! The profile file of Heimdall-rs.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -24,6 +25,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::folder::{self, FolderError};
+use crate::metadata::{Environment, MacAddress, ProfileMetadata};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
     FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile,
@@ -34,9 +36,10 @@ use crate::profile::{
 ///
 /// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
 /// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
-/// included, 9 the favorites. A build that knows an older version refuses a newer file rather than reading
+/// included, 9 the favorites, 10 the profiles' metadata and a profile's own session
+/// logging. A build that knows an older version refuses a newer file rather than reading
 /// it, dropping what it does not know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 9;
+pub const PROFILE_FILE_VERSION: u32 = 10;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -65,6 +68,43 @@ struct ProfileFile {
     folder: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     favorite: Vec<ProfileId>,
+    /// What each profile says of its server, by identifier.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    metadata: BTreeMap<String, MetadataEntry>,
+}
+
+/// A profile's metadata as the file keeps it: words, read leniently.
+#[derive(Debug, Default, Serialize, Deserialize)]
+struct MetadataEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    environment: Option<String>,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    tags: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    mac_address: Option<String>,
+}
+
+impl MetadataEntry {
+    /// What it says that is known: an environment or an address that does not read is
+    /// left out, the rest kept.
+    fn read(&self) -> ProfileMetadata {
+        ProfileMetadata {
+            environment: self.environment.as_deref().and_then(Environment::named),
+            tags: self.tags.trim().to_owned(),
+            mac_address: self
+                .mac_address
+                .as_deref()
+                .and_then(|typed| typed.parse::<MacAddress>().ok()),
+        }
+    }
+
+    fn of(metadata: &ProfileMetadata) -> Self {
+        Self {
+            environment: metadata.environment.map(|e| e.name().to_owned()),
+            tags: metadata.tags.clone(),
+            mac_address: metadata.mac_address.map(|mac| mac.to_string()),
+        }
+    }
 }
 
 /// Why the profile file could not be read or written.
@@ -130,6 +170,8 @@ pub struct ProfileStore {
     folders: Vec<String>,
     /// The profiles marked as favorites, as the C# `IsFavorite`: each once.
     favorites: Vec<ProfileId>,
+    /// What each profile says of its server, as the C# Metadata section; none empty.
+    metadata: BTreeMap<ProfileId, ProfileMetadata>,
 }
 
 /// Why an SSH profile's gateways cannot be followed.
@@ -161,6 +203,7 @@ impl ProfileStore {
             ftp: Vec::new(),
             folders: Vec::new(),
             favorites: Vec::new(),
+            metadata: BTreeMap::new(),
         }
     }
 
@@ -212,6 +255,12 @@ impl ProfileStore {
                 favorites.dedup();
                 favorites
             },
+            metadata: file
+                .metadata
+                .iter()
+                .map(|(id, entry)| (ProfileId::new(id.clone()), entry.read()))
+                .filter(|(_, metadata)| !metadata.is_empty())
+                .collect(),
         })
     }
 
@@ -417,6 +466,23 @@ impl ProfileStore {
         }
     }
 
+    /// What profile `id` says of its server; nothing for one that says nothing.
+    #[must_use]
+    pub fn metadata(&self, id: &ProfileId) -> Option<&ProfileMetadata> {
+        self.metadata.get(id)
+    }
+
+    /// Keeps `metadata` for profile `id`, taken away when it says nothing; a profile not in
+    /// the store keeps none. Whether it is kept.
+    pub fn set_metadata(&mut self, id: &ProfileId, metadata: ProfileMetadata) -> bool {
+        if metadata.is_empty() || !self.holds(id) {
+            self.metadata.remove(id);
+            return false;
+        }
+        self.metadata.insert(id.clone(), metadata);
+        true
+    }
+
     /// Whether a profile of any protocol is `id`.
     fn holds(&self, id: &ProfileId) -> bool {
         self.ssh.iter().any(|profile| profile.id == *id)
@@ -432,6 +498,7 @@ impl ProfileStore {
     /// longer.
     pub fn remove(&mut self, id: &ProfileId) -> bool {
         self.set_favorite(id, false);
+        self.metadata.remove(id);
         let before = self.len();
         self.ssh.retain(|profile| profile.id != *id);
         self.rdp.retain(|profile| profile.id != *id);
@@ -767,6 +834,11 @@ impl ProfileStore {
             ftp: self.ftp.clone(),
             folder: self.folders.clone(),
             favorite: self.favorites.clone(),
+            metadata: self
+                .metadata
+                .iter()
+                .map(|(id, metadata)| (id.as_str().to_owned(), MetadataEntry::of(metadata)))
+                .collect(),
         })?;
         write_atomic(&self.path, &text)
     }

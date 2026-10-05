@@ -155,6 +155,9 @@ pub struct ImportReport {
     pub skipped: Vec<Skipped>,
     /// The profiles among those imported marked as favorites.
     pub favorites: Vec<ProfileId>,
+    /// What the profiles imported say of their servers: an environment or an address that
+    /// does not read is left out, the rest kept.
+    pub metadata: Vec<(ProfileId, crate::metadata::ProfileMetadata)>,
 }
 
 /// A setting of a C# profile that Heimdall-rs does not have: the profile is imported
@@ -251,6 +254,10 @@ struct LegacyServer {
     /// Marked as a favorite in the C# tree.
     #[serde(default)]
     is_favorite: bool,
+    /// The Metadata section: its environment by name, its tags, its MAC address.
+    environment: Option<String>,
+    tags: Option<String>,
+    mac_address: Option<String>,
     #[serde(default)]
     display_name: String,
     #[serde(default)]
@@ -708,6 +715,22 @@ pub fn import(
             Ok(()) => {
                 if server.is_favorite {
                     report.favorites.push(ProfileId::new(server.id.clone()));
+                }
+                let metadata = crate::metadata::ProfileMetadata {
+                    environment: server
+                        .environment
+                        .as_deref()
+                        .and_then(crate::metadata::Environment::named),
+                    tags: server.tags.as_deref().unwrap_or_default().trim().to_owned(),
+                    mac_address: server
+                        .mac_address
+                        .as_deref()
+                        .and_then(|typed| typed.parse().ok()),
+                };
+                if !metadata.is_empty() {
+                    report
+                        .metadata
+                        .push((ProfileId::new(server.id.clone()), metadata));
                 }
                 let left_out = dropped_settings(&server, &settings.rdp_defaults);
                 if !left_out.is_empty() {

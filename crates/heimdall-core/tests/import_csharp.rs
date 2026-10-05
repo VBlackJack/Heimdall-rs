@@ -1310,3 +1310,27 @@ fn a_profile_s_session_logging_is_imported_as_the_csharp_override_says() {
     );
     assert_eq!(report.telnet[0].session_logging, Some(false));
 }
+
+#[test]
+fn the_metadata_section_is_imported_what_does_not_read_left_out() {
+    use heimdall_core::metadata::{Environment, MacAddress};
+
+    let report = import(
+        &servers(
+            r#"{"id": "a", "remoteServer": "a.lab", "connectionType": "SSH", "environment": "Production", "tags": "web, prod", "macAddress": "AA:BB:CC:DD:EE:FF"},
+               {"id": "b", "remoteServer": "b.lab", "connectionType": "RDP", "environment": "None", "macAddress": "bad"},
+               {"id": "c", "remoteServer": "c.lab", "connectionType": "SSH"}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert_eq!(report.metadata.len(), 1, "{:?}", report.metadata);
+    let (id, metadata) = &report.metadata[0];
+    assert_eq!(id.as_str(), "a");
+    assert_eq!(metadata.environment, Some(Environment::Production));
+    assert_eq!(metadata.tags, "web, prod");
+    assert_eq!(
+        metadata.mac_address,
+        Some(MacAddress([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF]))
+    );
+}

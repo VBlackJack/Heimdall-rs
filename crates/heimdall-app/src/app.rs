@@ -898,6 +898,9 @@ pub enum Effect {
     },
     /// Ask the SSH agents of `0` what they hold, and say it as [`Message::AgentsSurveyed`].
     SurveyAgents(AgentSource),
+    /// Send the Wake-on-LAN magic packet for this card, and say how it went as
+    /// [`ProfileMenuMessage::WakeOnLanSent`].
+    WakeOnLan(heimdall_core::metadata::MacAddress),
     /// Test whether a profile's address answers, from the tree, and say it as
     /// [`ProfileMenuMessage::Tested`].
     TestReachability {
@@ -1261,6 +1264,7 @@ impl fmt::Debug for Effect {
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
+            Self::WakeOnLan(_) => f.write_str("WakeOnLan"),
             Self::SurveyAgents(_) => f.write_str("SurveyAgents"),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())

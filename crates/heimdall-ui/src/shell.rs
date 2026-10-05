@@ -1878,6 +1878,7 @@ impl Shell {
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
             effect @ (Effect::TestReachability { .. }
+            | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
             | Effect::SurveyAgents(_)) => probe_task(effect),
             Effect::OpenTunnel { id, request } => {
@@ -4873,6 +4874,14 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-local-working-directory"),
             fl!("ui-profile-optional"),
         ),
+        ProfileField::Tags => (
+            fl!("ui-profile-field-tags"),
+            fl!("ui-profile-tags-placeholder"),
+        ),
+        ProfileField::MacAddress => (
+            fl!("ui-profile-field-mac-address"),
+            fl!("ui-profile-mac-address-placeholder"),
+        ),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -5012,6 +5021,11 @@ fn probe_task(effect: Effect) -> Task<Message> {
             async move { heimdall_ssh::survey_agents(&source).await },
             |found| Message::App(AppMessage::AgentsSurveyed(found)),
         ),
+        Effect::WakeOnLan(mac) => Task::perform(heimdall_app::wake_on_lan::send(mac), |sent| {
+            Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLanSent(
+                sent.map_err(|error| error.to_string()),
+            )))
+        }),
         Effect::TestReachability { host, port } => Task::perform(
             heimdall_app::reachability::test_from_tree(host.clone(), port),
             move |result| {
@@ -5691,6 +5705,7 @@ fn profile_form<'a>(
         .push(form_field(draft, ProfileField::Group))
         // As the C#: the separator is taught by the example and by a sentence that stays.
         .push(text(fl!("ui-profile-folder-hint")).size(SMALL_SIZE));
+    form = form.push(metadata_fields(draft));
     // With the C# metadata: the password manager's entry, for the protocols it serves.
     if draft.shows(ProfileField::VaultEntry) {
         form = form
@@ -6519,6 +6534,44 @@ impl fmt::Display for DesktopMode {
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
+
+/// An environment in the form's list, as the C# names it; "(None)" for none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnvironmentChoice(Option<heimdall_core::metadata::Environment>);
+
+impl fmt::Display for EnvironmentChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&texts::environment_name(self.0))
+    }
+}
+
+/// The C# Metadata section's fields: the environment, the tags and the MAC address
+/// Wake-on-LAN wakes the server with.
+fn metadata_fields(draft: &ProfileDraft) -> Element<'_, Message> {
+    let choices: Vec<EnvironmentChoice> = std::iter::once(None)
+        .chain(heimdall_core::metadata::Environment::ALL.map(Some))
+        .map(EnvironmentChoice)
+        .collect();
+    column![
+        row![
+            text(fl!("ui-profile-field-environment")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                choices,
+                Some(EnvironmentChoice(draft.environment)),
+                |EnvironmentChoice(environment)| Message::App(AppMessage::ProfileChoice(
+                    ProfileChoice::Environment(environment)
+                )),
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+        form_field(draft, ProfileField::Tags),
+        form_field(draft, ProfileField::MacAddress),
+    ]
+    .spacing(SPACING)
+    .into()
+}
 
 /// A profile's session logging in its form's list, as the C# "Inherit", "On" and "Off".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

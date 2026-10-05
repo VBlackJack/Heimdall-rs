@@ -59,6 +59,10 @@ fn files_notice(notice: &Notice) -> String {
             reason = crate::texts::files_error(error)
         ),
         Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
+        Notice::WakeOnLan(Ok(())) => fl!("ui-status-wake-on-lan-sent"),
+        Notice::WakeOnLan(Err(reason)) => {
+            fl!("ui-status-wake-on-lan-failed", reason = reason.as_str())
+        }
         Notice::FilesDuplicated => fl!("ui-status-files-duplicated"),
         _ => String::new(),
     }
@@ -126,6 +130,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::FilesSavedWithSudo(_)
             | Notice::FilesAutoUploadRefused { .. }
             | Notice::FilesCopied(_)
+            | Notice::WakeOnLan(_)
             | Notice::FilesDuplicated) => files_notice(notice),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
