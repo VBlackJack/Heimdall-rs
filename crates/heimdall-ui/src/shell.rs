@@ -530,6 +530,13 @@ pub enum Message {
     PresetsEdited(iced::widget::text_editor::Action),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
+    /// Write a note about the session `id` from `template`, then open it in the editor set.
+    NewNote {
+        /// The session.
+        id: ProfileId,
+        /// What it starts as.
+        template: heimdall_app::notes::NoteTemplate,
+    },
     /// Show a page of the window's navigation.
     Navigate(Destination),
     /// The external editor typed in the Settings page.
@@ -655,6 +662,7 @@ impl fmt::Debug for Message {
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
+            Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
@@ -1330,6 +1338,10 @@ impl Shell {
                 self.drop_message(message)
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
+            Message::NewNote { id, template } => {
+                self.menu = None;
+                return self.new_note(&id, template);
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -2495,7 +2507,34 @@ impl Shell {
         CursorTracker::new(layers, self.cursor.clone()).into()
     }
 
+    /// A note about the session `id`, written from `template` now, then opened in the editor
+    /// set; the day's note, written already, opened again.
+    fn new_note(
+        &self,
+        id: &ProfileId,
+        template: heimdall_app::notes::NoteTemplate,
+    ) -> Task<Message> {
+        let Some(context) = self.app.profile_summary_note(id) else {
+            return Task::none();
+        };
+        let draft = heimdall_app::notes::draft(
+            template,
+            &context,
+            heimdall_app::notes::LocalTime::now(),
+            &note_labels(),
+        );
+        Task::perform(
+            heimdall_app::notes::open(
+                self.app.notes_dir(),
+                draft,
+                self.app.settings().external_editor.clone(),
+            ),
+            |opened| Message::App(AppMessage::NoteOpened(opened)),
+        )
+    }
+
     /// The entries of `menu`, the open one; `None` once what it is for is gone.
+    #[expect(clippy::too_many_lines, reason = "one arm per menu")]
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
@@ -2514,6 +2553,10 @@ impl Shell {
         } else if let TreeMenu::Tunnel(id) = *menu {
             // Only while the tunnel is listed.
             tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
+        } else if let TreeMenu::Notes(id) = menu {
+            // Only while the session is saved.
+            self.app.profile_summary(id)?;
+            tree_view::notes_entries(id)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -2588,6 +2631,7 @@ impl Shell {
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
+                | TreeMenu::Notes(_)
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -5841,6 +5885,37 @@ fn route_test_task(run: u64, request: heimdall_app::route_test::RouteTestRequest
             None => AppMessage::RouteTestDone { run },
         })
     })
+}
+
+/// The words of the note templates, in the language shown.
+fn note_labels() -> heimdall_app::notes::NoteLabels {
+    heimdall_app::notes::NoteLabels {
+        working_note: fl!("ui-notes-tpl-working-note"),
+        notes: fl!("ui-notes-tpl-notes"),
+        commands: fl!("ui-notes-tpl-commands"),
+        next: fl!("ui-notes-tpl-next"),
+        daily_note: fl!("ui-notes-tpl-daily-note"),
+        focus: fl!("ui-notes-tpl-focus"),
+        journal: fl!("ui-notes-tpl-journal"),
+        follow_up: fl!("ui-notes-tpl-follow-up"),
+        incident: fl!("ui-notes-tpl-incident"),
+        incident_report: fl!("ui-notes-tpl-incident-report"),
+        summary: fl!("ui-notes-tpl-summary"),
+        impact: fl!("ui-notes-tpl-impact"),
+        timeline: fl!("ui-notes-tpl-timeline"),
+        incident_started: fl!("ui-notes-tpl-incident-started"),
+        investigation: fl!("ui-notes-tpl-investigation"),
+        actions: fl!("ui-notes-tpl-actions"),
+        resolution: fl!("ui-notes-tpl-resolution"),
+        procedure: fl!("ui-notes-tpl-procedure"),
+        purpose: fl!("ui-notes-tpl-purpose"),
+        scope: fl!("ui-notes-tpl-scope"),
+        preconditions: fl!("ui-notes-tpl-preconditions"),
+        steps: fl!("ui-notes-tpl-steps"),
+        validation: fl!("ui-notes-tpl-validation"),
+        rollback: fl!("ui-notes-tpl-rollback"),
+        references: fl!("ui-notes-tpl-references"),
+    }
 }
 
 /// The task asking what answers: an address, from the tree or the profile form, or the SSH
