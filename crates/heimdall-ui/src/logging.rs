@@ -29,6 +29,7 @@ use std::io::Write as _;
 use std::panic::{self, PanicHookInfo};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[cfg(test)]
@@ -57,6 +58,18 @@ const PRIVATE_FILE_MODE: u32 = 0o600;
 /// Longest panic message kept in a crash report, in characters.
 const MAX_PANIC_MESSAGE_CHARS: usize = 1024;
 
+/// Whether the log is written, as the settings' diagnostics log switch says: on until they
+/// are read. Crash reports are written whatever it says, as they are the trace of a crash.
+static ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Writes the log, or stops writing it, from now on.
+pub fn set_enabled(on: bool) {
+    let was = ENABLED.swap(on, Ordering::Relaxed);
+    if was && !on {
+        log::logger().flush();
+    }
+}
+
 struct FileLogger {
     file: Mutex<File>,
     own: LevelFilter,
@@ -78,7 +91,7 @@ impl Log for FileLogger {
     }
 
     fn log(&self, record: &Record<'_>) {
-        if !self.enabled(record.metadata()) {
+        if !ENABLED.load(Ordering::Relaxed) || !self.enabled(record.metadata()) {
             return;
         }
         let line = format!(
