@@ -90,8 +90,8 @@ fn score_text(text: &str, query: &str) -> usize {
     if wanted.peek().is_none() { score } else { 0 }
 }
 
-/// How well `profile` matches `query`: its name and host fully, its folder, account and
-/// protocol by half.
+/// How well `profile` matches `query`: its name and host fully, its folder, account,
+/// protocol, environment and tags by half, as the C# palette scores them.
 fn score(profile: &ProfileSummary, query: &str) -> usize {
     let host = profile
         .endpoint
@@ -103,6 +103,8 @@ fn score(profile: &ProfileSummary, query: &str) -> usize {
         score_text(profile.group.as_deref().unwrap_or_default(), query) / 2,
         score_text(profile.username.as_deref().unwrap_or_default(), query) / 2,
         score_text(profile.kind.label(), query) / 2,
+        score_text(profile.metadata.environment.map_or("", |e| e.name()), query) / 2,
+        score_text(&profile.metadata.tags, query) / 2,
     ]
     .into_iter()
     .max()

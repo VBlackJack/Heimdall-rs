@@ -15,7 +15,8 @@
  */
 
 //! How the window was left, as the C# settings keep it: its place and size, whether it was
-//! maximized, and the sidebar's width and whether it was hidden. Its place is checked against
+//! maximized, the sidebar's width and whether it was hidden, and the tree: its folders
+//! folded and the session selected. Its place is checked against
 //! the screens there are when it opens again, as the C# does: a screen unplugged since does
 //! not open it where nothing shows it.
 
@@ -30,7 +31,7 @@ use crate::store::{StoreError, write_atomic};
 pub const WINDOW_STATE_FILE_NAME: &str = "window-state.toml";
 
 /// How the window was left; what is not known is left to the defaults.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct WindowState {
     /// Its width when last not maximized, in logical pixels.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -57,6 +58,12 @@ pub struct WindowState {
     /// size times this.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub scale: Option<f32>,
+    /// The tree's folders left folded, by path, as the C# keeps its expanded ones.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folded: Vec<String>,
+    /// The session left selected, by identifier, as the C# selects it again.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub selected: Option<String>,
 }
 
 /// A rectangle of the desktop, in physical pixels: a window, or a screen's working area.
@@ -218,6 +225,8 @@ mod tests {
             x: Some(-1900),
             y: Some(40),
             scale: Some(1.5),
+            folded: vec!["Prod/Web".to_owned(), "(No Folder)".to_owned()],
+            selected: Some("dc".to_owned()),
         };
         save(&path, &state).expect("save");
         assert_eq!(load(&path), state);
@@ -241,7 +250,7 @@ mod tests {
         assert_eq!(
             WindowState {
                 scale: None,
-                ..state
+                ..state.clone()
             }
             .bounds(),
             None,

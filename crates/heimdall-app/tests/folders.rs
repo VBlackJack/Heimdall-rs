@@ -539,3 +539,38 @@ fn sessions_and_folders_dropped_move_and_ctrl_z_puts_them_back() {
     });
     assert_eq!(group(&app, "db").as_deref(), Some("Prod"));
 }
+
+#[test]
+fn every_folder_folds_and_unfolds_at_once_and_the_tree_comes_back_as_it_was_left() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::FoldAll(true));
+    assert_eq!(
+        outline(&app.tree_rows("")),
+        ["-dev@0", "-Prod@0", "-(none)@0"],
+        "Collapse all, as the C# menu's"
+    );
+    app.update(Message::FoldAll(false));
+    assert!(
+        outline(&app.tree_rows(""))
+            .iter()
+            .all(|row| !row.starts_with('-')),
+        "Expand all"
+    );
+
+    // Left with Web folded and api selected, the tree opens again so.
+    app.update(Message::ToggleFolder("Prod/Web".to_owned()));
+    app.update(Message::SelectProfile(ProfileId::new("api")));
+    let folded = app.folded_folders();
+    assert_eq!(folded, ["Prod/Web"]);
+    let mut again = self::app(dir.path());
+    again.restore_tree(&folded, Some(ProfileId::new("api")));
+    assert!(outline(&again.tree_rows("")).contains(&"-Web@1".to_owned()));
+    assert_eq!(again.selected_profile, Some(ProfileId::new("api")));
+    let mut gone = self::app(dir.path());
+    gone.restore_tree(&[], Some(ProfileId::new("deleted since")));
+    assert_eq!(
+        gone.selected_profile, None,
+        "a session gone is not selected"
+    );
+}

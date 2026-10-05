@@ -137,6 +137,27 @@ impl App {
         rows
     }
 
+    /// The tree's folders folded, by path, to keep how it was left.
+    #[must_use]
+    pub fn folded_folders(&self) -> Vec<String> {
+        let mut folded: Vec<String> = self.closed_folders.iter().cloned().collect();
+        folded.sort();
+        folded
+    }
+
+    /// The tree as it was left: `folded` folded, and `selected` selected when it is still
+    /// there.
+    pub fn restore_tree(
+        &mut self,
+        folded: &[String],
+        selected: Option<heimdall_core::profile::ProfileId>,
+    ) {
+        self.closed_folders = folded.iter().cloned().collect();
+        if let Some(id) = selected.filter(|id| self.profile_summary(id).is_some()) {
+            self.select_only(Some(id));
+        }
+    }
+
     /// Opens folder `path` if closed, closes it if open.
     pub(super) fn toggle_folder(&mut self, path: &str) {
         let key = if path == NO_FOLDER {
