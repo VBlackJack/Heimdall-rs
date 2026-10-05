@@ -20,6 +20,7 @@
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -256,6 +257,7 @@ enum Command {
     Key { keysym: u32, down: bool },
     Pointer { buttons: u8, x: u16, y: u16 },
     CutText(String),
+    Resize { width: u16, height: u16 },
     Close,
 }
 
@@ -269,6 +271,8 @@ pub struct SessionEnded;
 #[derive(Clone)]
 pub struct VncInput {
     commands: mpsc::UnboundedSender<Command>,
+    /// The server takes a size asked of it, once it said its screens.
+    resizable: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for VncInput {
@@ -305,6 +309,24 @@ impl VncInput {
         self.send(Command::CutText(text))
     }
 
+    /// Asks the server to make its desktop `width` by `height`, as noVNC's remote resizing:
+    /// sizes asked faster than they are sent are merged, the last one asked; nothing when
+    /// the server does not take a size asked of it.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionEnded`].
+    pub fn resize(&self, width: u16, height: u16) -> Result<(), SessionEnded> {
+        self.send(Command::Resize { width, height })
+    }
+
+    /// Whether the server takes a size asked of it: it said its screens, as a server that
+    /// knows the extended desktop size does.
+    #[must_use]
+    pub fn can_resize(&self) -> bool {
+        self.resizable.load(Ordering::Relaxed)
+    }
+
     /// Ends the session.
     pub fn close(&self) {
         let _ = self.commands.send(Command::Close);
@@ -334,16 +356,20 @@ pub fn start(connection: VncConnection, cancel: CancellationToken) -> VncSession
     framebuffer.update(screen, None);
     let (commands, commands_received) = mpsc::unbounded_channel();
     let (events_sent, events) = mpsc::channel(EVENT_QUEUE);
+    let resizable = Arc::new(AtomicBool::new(connection.rfb.can_resize()));
     tokio::spawn(run(
         connection,
         framebuffer.clone(),
         commands_received,
         events_sent,
-        cancel,
+        (cancel, resizable.clone()),
     ));
     VncSession {
         framebuffer,
-        input: VncInput { commands },
+        input: VncInput {
+            commands,
+            resizable,
+        },
         events,
     }
 }
@@ -353,7 +379,7 @@ async fn run(
     framebuffer: Framebuffer,
     mut commands: mpsc::UnboundedReceiver<Command>,
     events: mpsc::Sender<VncEvent>,
-    cancel: CancellationToken,
+    (cancel, resizable): (CancellationToken, Arc<AtomicBool>),
 ) {
     let VncConnection {
         stream, mut rfb, ..
@@ -377,6 +403,7 @@ async fn run(
                             {
                                 break reason;
                             }
+                            resizable.store(rfb.can_resize(), Ordering::Relaxed);
                         }
                         Err(error) => break CloseReason::Failed(error.to_string()),
                     }
@@ -412,6 +439,25 @@ async fn run(
                     rfb.pointer(buttons, x, y);
                 }
                 Command::CutText(text) => rfb.cut_text(&text),
+                Command::Resize {
+                    mut width,
+                    mut height,
+                } => {
+                    // The last size asked is the one that counts.
+                    while let Ok(next) = commands.try_recv() {
+                        if let Command::Resize {
+                            width: next_width,
+                            height: next_height,
+                        } = next
+                        {
+                            (width, height) = (next_width, next_height);
+                        } else {
+                            held = Some(next);
+                            break;
+                        }
+                    }
+                    rfb.request_size(width, height);
+                }
                 Command::Close => break CloseReason::Local,
             }
         }

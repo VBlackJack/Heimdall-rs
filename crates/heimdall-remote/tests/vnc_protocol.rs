@@ -50,10 +50,10 @@ fn opening_requests(width: u16, height: u16) -> Vec<u8> {
     let mut bytes = vec![
         // SetPixelFormat: 32 bits, depth 24, little-endian, true colour, red lowest.
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
-        // SetEncodings: 5 of them.
-        2, 0, 0, 5,
+        // SetEncodings: 6 of them.
+        2, 0, 0, 6,
     ];
-    for encoding in [16_i32, 1, 0, -223, -224] {
+    for encoding in [16_i32, 1, 0, -223, -224, -308] {
         bytes.extend_from_slice(&encoding.to_be_bytes());
     }
     bytes.extend_from_slice(&full_request(false, width, height));
@@ -283,6 +283,65 @@ fn a_copy_moves_pixels_and_a_rectangle_outside_the_desktop_is_refused() {
     bytes.extend(rect_header(0, 0, 1, 1, 1));
     bytes.extend_from_slice(&[0, 5, 0, 0]);
     assert!(matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))));
+}
+
+/// An `ExtendedDesktopSize` rectangle: why, whether a size asked was taken, the size, then
+/// one screen, identifier 7 and flags 0, from the protocol's community specification.
+fn extended_size(reason: u16, status: u16, width: u16, height: u16) -> Vec<u8> {
+    let mut bytes = rect_header(reason, status, width, height, -308);
+    // One screen, three bytes of padding.
+    bytes.extend_from_slice(&[1, 0, 0, 0]);
+    bytes.extend_from_slice(&7_u32.to_be_bytes());
+    bytes.extend_from_slice(&[0, 0, 0, 0]);
+    bytes.extend_from_slice(&width.to_be_bytes());
+    bytes.extend_from_slice(&height.to_be_bytes());
+    bytes.extend_from_slice(&0_u32.to_be_bytes());
+    bytes
+}
+
+#[test]
+fn a_server_saying_its_screens_takes_a_size_asked_of_it() {
+    let mut rfb = opened(800, 600);
+    assert!(!rfb.can_resize(), "not before it says its screens");
+    rfb.request_size(1024, 768);
+    assert!(rfb.take_output().is_empty());
+
+    // Its screens said, at the size it has: nothing changes but what it takes.
+    let mut bytes = update(1);
+    bytes.extend(extended_size(0, 0, 800, 600));
+    assert!(rfb.receive(&bytes).expect("update").is_empty());
+    assert!(rfb.can_resize());
+    let _ = rfb.take_output();
+
+    // SetDesktopSize, its one screen at the origin with the identifier the server gave.
+    rfb.request_size(1024, 768);
+    let mut asked = vec![251, 0, 4, 0, 3, 0, 1, 0];
+    asked.extend_from_slice(&7_u32.to_be_bytes());
+    asked.extend_from_slice(&[0, 0, 0, 0, 4, 0, 3, 0]);
+    asked.extend_from_slice(&0_u32.to_be_bytes());
+    assert_eq!(rfb.take_output(), asked);
+    // The size it has already: nothing asked.
+    rfb.request_size(800, 600);
+    assert!(rfb.take_output().is_empty());
+
+    // Taken, by the client's asking (1): the desktop is that size.
+    let mut bytes = update(1);
+    bytes.extend(extended_size(1, 0, 1024, 768));
+    assert_eq!(
+        rfb.receive(&bytes).expect("update"),
+        [RfbEvent::Resized {
+            width: 1024,
+            height: 768
+        }]
+    );
+    assert_eq!((rfb.screen().width(), rfb.screen().height()), (1024, 768));
+    let _ = rfb.take_output();
+
+    // Refused (status 3, out of resources): the desktop stays as it is.
+    let mut bytes = update(1);
+    bytes.extend(extended_size(1, 3, 4000, 3000));
+    assert!(rfb.receive(&bytes).expect("update").is_empty());
+    assert_eq!((rfb.screen().width(), rfb.screen().height()), (1024, 768));
 }
 
 #[test]

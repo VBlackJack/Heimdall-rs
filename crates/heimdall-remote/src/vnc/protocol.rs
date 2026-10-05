@@ -41,15 +41,21 @@ const ENCODING_COPY_RECT: i32 = 1;
 const ENCODING_ZRLE: i32 = 16;
 const PSEUDO_DESKTOP_SIZE: i32 = -223;
 const PSEUDO_LAST_RECT: i32 = -224;
+/// The server says its screens, and takes a size asked of it: noVNC's "remote resizing".
+const PSEUDO_EXTENDED_DESKTOP_SIZE: i32 = -308;
 
 /// Encodings asked for, preferred first.
-const ENCODINGS: [i32; 5] = [
+const ENCODINGS: [i32; 6] = [
     ENCODING_ZRLE,
     ENCODING_COPY_RECT,
     ENCODING_RAW,
     PSEUDO_DESKTOP_SIZE,
     PSEUDO_LAST_RECT,
+    PSEUDO_EXTENDED_DESKTOP_SIZE,
 ];
+
+/// Bytes of one screen of an extended desktop size: identifier, place, size and flags.
+const SCREEN_BYTES: usize = 16;
 
 /// Server messages.
 const FRAMEBUFFER_UPDATE: u8 = 0;
@@ -64,6 +70,7 @@ const FRAMEBUFFER_UPDATE_REQUEST: u8 = 3;
 const KEY_EVENT: u8 = 4;
 const POINTER_EVENT: u8 = 5;
 const CLIENT_CUT_TEXT: u8 = 6;
+const SET_DESKTOP_SIZE: u8 = 251;
 
 /// Longest server text kept: a failure reason or the desktop's name.
 const MAX_TEXT: usize = 4096;
@@ -178,6 +185,9 @@ pub struct Rfb {
     challenge: [u8; CHALLENGE_LENGTH],
     screen: Screen,
     zrle: Zrle,
+    /// The first screen the server said, by its identifier and flags, once it says its
+    /// screens: a size can then be asked of it.
+    layout: Option<(u32, u32)>,
 }
 
 impl std::fmt::Debug for Rfb {
@@ -271,7 +281,39 @@ impl Rfb {
             challenge: [0; CHALLENGE_LENGTH],
             screen: Screen::new(0, 0),
             zrle: Zrle::new(),
+            layout: None,
         }
+    }
+
+    /// Whether the server takes a size asked of it: it said its screens.
+    #[must_use]
+    pub fn can_resize(&self) -> bool {
+        self.layout.is_some()
+    }
+
+    /// Asks the server to make its desktop `width` by `height`, one screen, as noVNC's
+    /// remote resizing does; nothing when it does not take a size asked of it, or the size
+    /// is the desktop's already.
+    pub fn request_size(&mut self, width: u16, height: u16) {
+        let Some((id, flags)) = self.layout else {
+            return;
+        };
+        if (width, height) == (self.screen.width(), self.screen.height())
+            || check_size(width, height).is_err()
+        {
+            return;
+        }
+        self.output.extend_from_slice(&[SET_DESKTOP_SIZE, 0]);
+        self.output.extend_from_slice(&width.to_be_bytes());
+        self.output.extend_from_slice(&height.to_be_bytes());
+        // One screen, then padding.
+        self.output.extend_from_slice(&[1, 0]);
+        self.output.extend_from_slice(&id.to_be_bytes());
+        // At the origin.
+        self.output.extend_from_slice(&[0, 0, 0, 0]);
+        self.output.extend_from_slice(&width.to_be_bytes());
+        self.output.extend_from_slice(&height.to_be_bytes());
+        self.output.extend_from_slice(&flags.to_be_bytes());
     }
 
     /// The desktop.
@@ -652,6 +694,32 @@ impl Rfb {
                 });
             }
             PSEUDO_LAST_RECT => last = true,
+            // The x is why it came, the y whether a size asked was taken (0), the size the
+            // desktop's; then its screens.
+            PSEUDO_EXTENDED_DESKTOP_SIZE => {
+                let (Some(count), Some(_padding)) = (reader.u8(), reader.take(3)) else {
+                    return Ok(Step::More);
+                };
+                let Some(screens) = reader.take(usize::from(count) * SCREEN_BYTES) else {
+                    return Ok(Step::More);
+                };
+                if let Some(first) = screens.get(..SCREEN_BYTES) {
+                    let word = |at: usize| {
+                        u32::from_be_bytes([first[at], first[at + 1], first[at + 2], first[at + 3]])
+                    };
+                    self.layout = Some((word(0), word(12)));
+                }
+                let taken = rect.y == 0;
+                if taken && (rect.width, rect.height) != (self.screen.width(), self.screen.height())
+                {
+                    check_size(rect.width, rect.height)?;
+                    self.screen = Screen::new(rect.width, rect.height);
+                    events.push(RfbEvent::Resized {
+                        width: rect.width,
+                        height: rect.height,
+                    });
+                }
+            }
             other => {
                 return Err(RfbError::Protocol(format!(
                     "a rectangle in encoding {other}, which was not asked for"

@@ -232,6 +232,11 @@ struct VncSink {
     position: AtomicU32,
     /// Watch only: nothing is sent.
     view_only: bool,
+    /// The server is asked for the tab's size, as noVNC's remote resizing; off, the desktop
+    /// keeps its own size, shown scaled.
+    remote_resize: bool,
+    /// The tab's last size, asked when remote resizing is turned on.
+    tab: std::sync::Mutex<Option<(u16, u16)>>,
 }
 
 /// The desktop of a tab, once its session is open.
@@ -359,6 +364,15 @@ impl DesktopPane {
     /// The size the tab shows the desktop at, in pixels: the RDP session asks the server for
     /// it once it settles, as its profile's sizing allows. VNC keeps the server's size.
     pub(crate) fn resize(&self, width: u16, height: u16) {
+        if let DesktopSink::Vnc(sink) = &self.sink {
+            *sink
+                .tab
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
+            if sink.remote_resize {
+                let _ = sink.input.resize(width, height);
+            }
+        }
         if let DesktopSink::Rdp { tab, .. } = &self.sink {
             *tab.lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
@@ -374,9 +388,39 @@ impl DesktopPane {
     /// tab's size is known whatever the desktop's own, to scale a larger one and to go back
     /// to the tab's.
     pub(crate) fn shown_at(&self, width: u16, height: u16) {
-        if let DesktopSink::Rdp { tab, .. } = &self.sink {
-            *tab.lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
+        let tab = match &self.sink {
+            DesktopSink::Rdp { tab, .. } => tab,
+            DesktopSink::Vnc(sink) => &sink.tab,
+        };
+        *tab.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some((width, height));
+    }
+
+    /// Whether a VNC desktop is resized to its tab, as the C# "Remote resizing"; `None` for
+    /// a desktop that cannot be: an RDP one, a VNC one watched only, or one whose server
+    /// does not take a size asked of it.
+    #[must_use]
+    pub fn vnc_remote_resize(&self) -> Option<bool> {
+        match &self.sink {
+            DesktopSink::Vnc(sink) if !sink.view_only && sink.input.can_resize() => {
+                Some(sink.remote_resize)
+            }
+            _ => None,
+        }
+    }
+
+    /// Turns a VNC desktop's remote resizing on or off; on, the tab's size is asked now.
+    pub(crate) fn set_vnc_remote_resize(&mut self, on: bool) {
+        let DesktopSink::Vnc(sink) = &mut self.sink else {
+            return;
+        };
+        sink.remote_resize = on;
+        let last = *sink
+            .tab
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if on && let Some((width, height)) = last {
+            let _ = sink.input.resize(width, height);
         }
     }
 
@@ -423,7 +467,10 @@ impl DesktopPane {
             DesktopSink::Rdp { tab, .. } => *tab
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
-            DesktopSink::Vnc(_) => None,
+            DesktopSink::Vnc(sink) => *sink
+                .tab
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
         }
     }
 
@@ -448,7 +495,7 @@ impl DesktopPane {
                 DesktopSizing::TabSizeOnce => self.wants_first_size(),
                 DesktopSizing::Fixed { .. } => false,
             },
-            DesktopSink::Vnc(_) => false,
+            DesktopSink::Vnc(sink) => sink.remote_resize,
         }
     }
 
@@ -626,6 +673,8 @@ impl DesktopPane {
                 buttons: AtomicU8::new(0),
                 position: AtomicU32::new(0),
                 view_only,
+                remote_resize: false,
+                tab: std::sync::Mutex::new(None),
             }),
             anti_idle: false,
             desktop_name: None,

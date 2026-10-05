@@ -54,6 +54,9 @@ pub enum TabMenuMessage {
     ResolutionEdited(String),
     /// Pin a tab, or no longer.
     Pin(TabId),
+    /// Resize a VNC tab's remote desktop to the tab, or no longer, as the C# "Remote
+    /// resizing".
+    VncRemoteResize(TabId),
     /// Open the form of a new profile filled from the session of a tab saved nowhere, as the
     /// C# "Save as profile...".
     SaveAsProfile(TabId),
@@ -113,6 +116,14 @@ impl App {
             TabMenuMessage::ToggleHealth(tab) => self.toggle_health(tab),
             TabMenuMessage::Pin(tab) => {
                 self.toggle_pin(tab);
+                Vec::new()
+            }
+            TabMenuMessage::VncRemoteResize(tab) => {
+                if let Some(pane) = self.tab_mut(tab).and_then(|tab| tab.desktop.as_mut())
+                    && let Some(on) = pane.vnc_remote_resize()
+                {
+                    pane.set_vnc_remote_resize(!on);
+                }
                 Vec::new()
             }
             TabMenuMessage::SaveAsProfile(tab) => {

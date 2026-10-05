@@ -930,6 +930,8 @@ pub struct TabMenuState {
     pub health: Option<bool>,
     /// It is pinned.
     pub pinned: bool,
+    /// A VNC desktop resized to the tab, or not; `None` for one that cannot be.
+    pub vnc_resize: Option<bool>,
     /// Its session is saved nowhere, and can be saved as a profile.
     pub saveable: bool,
 }
@@ -1173,6 +1175,13 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         },
         menu(TabMenuMessage::Pin(tab)),
     ));
+    if let Some(on) = state.vnc_resize {
+        entries = entries.push(separator()).push(checked_entry(
+            fl!("ui-tab-menu-vnc-remote-resize"),
+            on,
+            AppMessage::TabMenu(TabMenuMessage::VncRemoteResize(tab)),
+        ));
+    }
     if state.resolution {
         entries = entries.push(separator()).push(
             button(text(fl!("ui-resolution-menu")).size(MENU_TEXT_SIZE))

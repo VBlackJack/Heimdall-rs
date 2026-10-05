@@ -45,7 +45,7 @@ const RESPONSE: [u8; 16] = [
 ];
 /// Client messages between the server's init and the session: pixel format, encodings,
 /// the first update request.
-const OPENING_REQUESTS: usize = 20 + 24 + 10;
+const OPENING_REQUESTS: usize = 20 + 28 + 10;
 
 fn app(dir: &Path, port: u16, view_only: bool) -> App {
     let profiles_file = dir.join("profiles.toml");
@@ -101,6 +101,20 @@ const QUIET: Duration = Duration::from_millis(500);
 /// next `expected` bytes the client sends, or, for none expected, whatever comes within
 /// [`QUIET`]. It then closes, which ends the session.
 async fn serve(listener: TcpListener, expected: usize) -> Vec<u8> {
+    let mut stream = opened_desktop(listener).await;
+    if expected > 0 {
+        return read_exactly(&mut stream, expected).await;
+    }
+    let mut rest = vec![0; 64];
+    match tokio::time::timeout(QUIET, stream.read(&mut rest)).await {
+        Ok(Ok(read)) => rest.truncate(read),
+        _ => rest.clear(),
+    }
+    rest
+}
+
+/// The server's side up to an open 4 by 2 desktop, the client's first requests read.
+async fn opened_desktop(listener: TcpListener) -> TcpStream {
     let (mut stream, _) = listener.accept().await.expect("accepted");
     stream.write_all(b"RFB 003.008\n").await.expect("version");
     let _ = read_exactly(&mut stream, 12).await;
@@ -121,15 +135,23 @@ async fn serve(listener: TcpListener, expected: usize) -> Vec<u8> {
     init.extend_from_slice(b"Lab desk");
     stream.write_all(&init).await.expect("init");
     let _ = read_exactly(&mut stream, OPENING_REQUESTS).await;
-    if expected > 0 {
-        return read_exactly(&mut stream, expected).await;
-    }
-    let mut rest = vec![0; 64];
-    match tokio::time::timeout(QUIET, stream.read(&mut rest)).await {
-        Ok(Ok(read)) => rest.truncate(read),
-        _ => rest.clear(),
-    }
-    rest
+    stream
+}
+
+/// A server that says its screens, one of identifier 7, as `TigerVNC` does; then the size
+/// the client asks of it, as `SetDesktopSize` bytes.
+async fn serve_screens(listener: TcpListener) -> Vec<u8> {
+    let mut stream = opened_desktop(listener).await;
+    // A framebuffer update of one rectangle: the extended desktop size, unchanged.
+    let mut update = vec![0, 0, 0, 1, 0, 0, 0, 0, 0, 4, 0, 2];
+    update.extend_from_slice(&(-308_i32).to_be_bytes());
+    update.extend_from_slice(&[1, 0, 0, 0]);
+    update.extend_from_slice(&7_u32.to_be_bytes());
+    update.extend_from_slice(&[0, 0, 0, 0, 0, 4, 0, 2, 0, 0, 0, 0]);
+    stream.write_all(&update).await.expect("update");
+    // The next update asked for, then the size: 8 bytes, and 16 for its screen.
+    let _ = read_exactly(&mut stream, 10).await;
+    read_exactly(&mut stream, 24).await
 }
 
 /// Runs the attempt, answers the password question with "Secret12", and once the desktop is
@@ -387,4 +409,58 @@ async fn what_the_server_copies_reaches_this_sides_clipboard() {
             .any(|effect| matches!(effect, Effect::WriteClipboard(text) if text == "caf\u{e9}")),
         "{effects:?}"
     );
+}
+
+#[tokio::test]
+async fn a_vnc_desktop_is_resized_to_its_tab_once_asked_and_the_server_takes_sizes() {
+    use heimdall_app::TabMenuMessage;
+
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(serve_screens(listener));
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), port, false);
+    let (tab, attempt, request) = open(&mut app);
+    let registry = AnswerRegistry::default();
+    let mut events = vnc_events(request, registry.clone());
+    let resizable = |app: &App| {
+        app.tab(tab)
+            .and_then(|found| found.desktop.as_ref())
+            .and_then(|desktop| desktop.vnc_remote_resize())
+    };
+    let mut asked = false;
+    loop {
+        tokio::select! {
+            event = events.next() => {
+                let Some(event) = event else { break };
+                if let ConnectionEvent::Question { question, .. } = &event {
+                    let question = *question;
+                    let _ = app.update(Message::Connection { tab, attempt, event });
+                    assert!(registry.answer(
+                        question,
+                        Some(Answer::Secret(Secret::new("Secret12".to_owned())))
+                    ));
+                    continue;
+                }
+                let _ = app.update(Message::Connection { tab, attempt, event });
+            }
+            () = tokio::time::sleep(Duration::from_millis(20)), if !asked => {
+                // Once the server said its screens: the tab's size known, then asked.
+                if resizable(&app) == Some(false) {
+                    let _ = app.update(Message::DesktopShown { tab, width: 640, height: 480 });
+                    let _ = app.update(Message::TabMenu(TabMenuMessage::VncRemoteResize(tab)));
+                    assert_eq!(resizable(&app), Some(true));
+                    asked = true;
+                }
+            }
+        }
+    }
+    let sent = tokio::time::timeout(WAIT, server)
+        .await
+        .expect("in time")
+        .expect("server");
+    let mut expected = vec![251, 0, 2, 128, 1, 224, 1, 0];
+    expected.extend_from_slice(&7_u32.to_be_bytes());
+    expected.extend_from_slice(&[0, 0, 0, 0, 2, 128, 1, 224, 0, 0, 0, 0]);
+    assert_eq!(sent, expected, "640 by 480, its one screen");
 }
