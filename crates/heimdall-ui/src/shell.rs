@@ -407,6 +407,13 @@ pub enum Message {
     ContentFocus,
     /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
     TreeShortcut(TreeShortcut),
+    /// A click beside the folders of a Files pane's breadcrumb: its path, to type in.
+    EditPath {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: heimdall_app::files::Side,
+    },
     /// Quick Connect's search changed.
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
@@ -516,6 +523,7 @@ impl fmt::Debug for Message {
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::EditPath { tab, side } => write!(f, "EditPath({}, {side:?})", tab.value()),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
@@ -720,6 +728,8 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// The Files pane whose path bar is typed in, rather than showing its breadcrumb.
+    path_editing: Option<(TabId, heimdall_app::files::Side)>,
     /// Quick Connect, while open.
     palette: Option<Palette>,
     /// The terminal's search bar, while open.
@@ -837,6 +847,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            path_editing: None,
             palette: None,
             finder: None,
             focus_next: None,
@@ -957,6 +968,12 @@ impl Shell {
         }
         let message = self.files_click(message);
         self.note_focus(&message);
+        // A gesture in a Files pane, the path gone to among them, gives the breadcrumb back.
+        if let Message::App(AppMessage::Files(files)) = &message
+            && files.gesture().is_some()
+        {
+            self.path_editing = None;
+        }
         let reveal = matches!(
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
@@ -1034,6 +1051,10 @@ impl Shell {
             message
             @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
                 self.tree_input(message)
+            }
+            Message::EditPath { tab, side } => {
+                self.edit_path(tab, side);
+                Vec::new()
             }
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
@@ -1584,6 +1605,15 @@ impl Shell {
             // Escape closes the open menu first.
             return Vec::new();
         }
+        if !confirm
+            && self.app.dialog.is_none()
+            && let Some((tab, side)) = self.path_editing.take()
+        {
+            // Then a path bar typed in, back to the folder shown, as the C# one.
+            return self
+                .app
+                .update(AppMessage::Files(FilesMessage::PathCancelled { tab, side }));
+        }
         if self.app.dialog.is_none() {
             // Escape reaches here even when a terminal sent it to its session.
             return if confirm {
@@ -1623,10 +1653,19 @@ impl Shell {
         files.editor.is_none().then_some(files.focus)
     }
 
+    /// The path bar of `side` in `tab` given the keyboard, its path shown to type in.
+    fn edit_path(&mut self, tab: TabId, side: heimdall_app::files::Side) {
+        self.path_editing = Some((tab, side));
+        self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+    }
+
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
         if key == FilesKey::FocusPath {
-            if let Some(side) = self.shown_files_side() {
-                self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+            if let (Some(side), Some(tab)) = (
+                self.shown_files_side(),
+                self.app.active_tab().map(|tab| tab.id),
+            ) {
+                self.edit_path(tab, side);
             }
             return Vec::new();
         }
@@ -3522,7 +3561,14 @@ impl Shell {
                 self.editors.get(edit.id),
                 pane.client.is_some(),
             ),
-            None => crate::files_view::view(tab, pane, live),
+            None => crate::files_view::view(
+                tab,
+                pane,
+                live,
+                self.path_editing
+                    .filter(|(editing, _)| *editing == tab)
+                    .map(|(_, side)| side),
+            ),
         }
     }
 

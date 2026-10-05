@@ -83,6 +83,23 @@ pub enum FilesMessage {
         /// What is typed.
         text: String,
     },
+    /// What is typed in a pane's path bar given up: it shows the folder shown again.
+    PathCancelled {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// Go `levels` folders up at once, as a click on a folder of the C# breadcrumb; none
+    /// lists the folder shown again.
+    Ascend {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// Folders up.
+        levels: usize,
+    },
     /// Select an entry with the others, or no longer: Ctrl+click.
     Toggle {
         /// Tab.
@@ -530,11 +547,13 @@ pub enum FilesMessage {
 
 impl FilesMessage {
     /// The pane a user gesture acts on: the one that takes the focus.
-    fn gesture(&self) -> Option<(TabId, Side)> {
+    #[must_use]
+    pub fn gesture(&self) -> Option<(TabId, Side)> {
         match *self {
             Self::Select { tab, side, .. }
             | Self::Open { tab, side, .. }
             | Self::Up { tab, side }
+            | Self::Ascend { tab, side, .. }
             | Self::Back { tab, side }
             | Self::Home { tab, side }
             | Self::Refresh { tab, side }
@@ -585,6 +604,12 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "PathEdited({}, {side:?}, ..)", tab.value())
             }
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
+            Self::PathCancelled { tab, side } => {
+                write!(f, "PathCancelled({}, {side:?})", tab.value())
+            }
+            Self::Ascend { tab, side, levels } => {
+                write!(f, "Ascend({}, {side:?}, {levels})", tab.value())
+            }
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Cut { tab } => write!(f, "Cut({})", tab.value()),
             Self::UploadHere { tab } => write!(f, "UploadHere({})", tab.value()),
@@ -878,7 +903,6 @@ impl App {
         Vec::new()
     }
 
-    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         if let Some((tab, side)) = message.gesture()
             && let Some(files) = self.files_mut(tab)
@@ -910,25 +934,8 @@ impl App {
                 self.list(tab, side)
             }
             FilesMessage::Open { tab, side, index } => self.open_entry(tab, side, index),
-            FilesMessage::Up { tab, side } => {
-                let Some(files) = self.files_mut(tab) else {
-                    return Vec::new();
-                };
-                match side {
-                    Side::Remote => {
-                        files.remote.leave();
-                        files.remote.path = files.remote.path.parent();
-                    }
-                    Side::Local => {
-                        if let Some(parent) = files.local.path.parent() {
-                            let parent = parent.to_owned();
-                            files.local.leave();
-                            files.local.path = parent;
-                        }
-                    }
-                }
-                self.list(tab, side)
-            }
+            FilesMessage::Up { tab, side } => self.ascend(tab, side, 1),
+            FilesMessage::Ascend { tab, side, levels } => self.ascend(tab, side, levels),
             FilesMessage::Back { tab, side } => self.go_back(tab, side),
             FilesMessage::Home { tab, side } => self.go_home(tab, side),
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
@@ -946,6 +953,7 @@ impl App {
                 duplicate,
             } => self.copied(tab, results, duplicate),
             message @ (FilesMessage::PathEdited { .. }
+            | FilesMessage::PathCancelled { .. }
             | FilesMessage::GoTo { .. }
             | FilesMessage::SortBy { .. }
             | FilesMessage::CopyPath { .. }
@@ -994,6 +1002,15 @@ impl App {
                     match side {
                         Side::Remote => files.remote.typed = Some(text),
                         Side::Local => files.local.typed = Some(text),
+                    }
+                }
+                Vec::new()
+            }
+            FilesMessage::PathCancelled { tab, side } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.typed = None,
+                        Side::Local => files.local.typed = None,
                     }
                 }
                 Vec::new()
@@ -1240,6 +1257,37 @@ impl App {
 
     /// Lists the folder typed in `side`'s path bar, from the folder shown when relative; the
     /// folder shown stays until the listing comes back.
+    /// `levels` folders up from the one `side` shows, as one move Back undoes; at the root,
+    /// no further. The folder reached is listed.
+    fn ascend(&mut self, tab: TabId, side: Side, levels: usize) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        if levels > 0 {
+            match side {
+                Side::Remote => {
+                    let target =
+                        (0..levels).fold(files.remote.path.clone(), |path, _| path.parent());
+                    files.remote.leave();
+                    files.remote.path = target;
+                }
+                Side::Local => {
+                    let target = files
+                        .local
+                        .path
+                        .ancestors()
+                        .nth(levels)
+                        .map(std::path::Path::to_owned);
+                    if let Some(target) = target {
+                        files.local.leave();
+                        files.local.path = target;
+                    }
+                }
+            }
+        }
+        self.list(tab, side)
+    }
+
     fn go_to(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
