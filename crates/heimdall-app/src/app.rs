@@ -680,6 +680,8 @@ pub enum Message {
     CredentialProvided(Box<ProviderAnswer>),
     /// A change from the Settings page.
     Settings(SettingsMessage),
+    /// A note about a server was written and opened in the editor set, or why not.
+    NoteOpened(Result<PathBuf, String>),
     /// The settings carried to or from another computer.
     SettingsTransfer(SettingsTransferMessage),
     /// A step of the Settings page's Gateways tab.
@@ -885,6 +887,7 @@ impl fmt::Debug for Message {
                 )
             }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
+            Self::NoteOpened(result) => write!(f, "NoteOpened({})", result.is_ok()),
             Self::SettingsTransfer(message) => match message {
                 // What the file says is not logged.
                 SettingsTransferMessage::Read(result) => {
@@ -2617,6 +2620,7 @@ impl App {
             | Message::Sessions(_)
             | Message::Rdp(_)
             | Message::Settings(_)
+            | Message::NoteOpened(_)
             | Message::SettingsTransfer(_)
             | Message::Gateways(_)
             | Message::Broadcast(_)) => self.window_message(&message),
@@ -3742,6 +3746,17 @@ impl App {
                 Vec::new()
             }
             Message::Settings(message) => self.settings_message(message),
+            Message::NoteOpened(result) => {
+                self.tell(match result {
+                    Ok(path) => Notice::NoteOpened(
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    ),
+                    Err(reason) => Notice::NoteFailed(reason.clone()),
+                });
+                Vec::new()
+            }
             Message::SettingsTransfer(message) => self.settings_transfer(message.clone()),
             Message::Gateways(message) => {
                 self.gateways_message(message.clone());
