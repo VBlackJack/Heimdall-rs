@@ -1486,6 +1486,13 @@ ui-shortcuts-screenshot = Capturar la pantalla
 ui-shortcuts-lock = Bloquear
 ui-shortcuts-help = Mostrar esta ayuda
 ui-shortcuts-close = Cerrar un diálogo o un menú, salir de pantalla completa
+ui-selection-set-gateway = Establecer pasarela... ({ $count })
+ui-selection-gateway-direct = Conexión directa (sin pasarela)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Ruta de conexión actualizada en { $count } servidor.
+   *[other] Ruta de conexión actualizada en { $count } servidores.
+}
+ui-status-bulk-gateway-unchanged = No se aplicó ningún cambio de ruta.
 ui-shortcuts-select-all-sessions = Seleccionar todas las sesiones mostradas
 ui-shortcuts-session-menu = Menú de la sesión seleccionada
 ui-shortcuts-find-by-name = Ir a la sesión cuyo nombre empieza por lo escrito
