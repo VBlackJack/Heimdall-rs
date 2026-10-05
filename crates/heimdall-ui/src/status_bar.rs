@@ -234,6 +234,14 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::SettingsImportInvalid
             | Notice::SettingsImportNewer
             | Notice::SettingsImportFailed(_)) => settings_notice(notice),
+            Notice::GatewayDeleted(name) => {
+                fl!("ui-status-gateway-deleted", name = server_text(name))
+            }
+            Notice::GatewaysReassigned(count) => {
+                fl!("ui-status-gateways-reassigned", count = (*count))
+            }
+            Notice::GatewaysCleared(count) => fl!("ui-status-gateways-cleared", count = (*count)),
+            Notice::GatewaysUnchanged => fl!("ui-status-gateways-unchanged"),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
             }

@@ -1657,6 +1657,52 @@ ui-status-settings-imported = { $count ->
 ui-status-settings-import-nothing = The file holds the settings you already have. Nothing to change.
 ui-status-settings-import-invalid = This file is not a Heimdall settings file, or it comes from a version this one cannot read. Nothing was changed.
 ui-status-settings-import-failed = The settings file could not be read: { $reason }
+ui-settings-tab-gateways = Gateways
+ui-gateways-title = SSH Gateways
+ui-gateways-description = Review which sessions use each SSH gateway and find unresolved gateway references.
+ui-gateways-summary = { $gateways ->
+    [one] { $gateways } gateway
+   *[other] { $gateways } gateways
+}, { $routed ->
+    [one] { $routed } routed session
+   *[other] { $routed } routed sessions
+}, { $unresolved ->
+    [one] { $unresolved } unresolved reference
+   *[other] { $unresolved } unresolved references
+}
+ui-gateways-configured = Configured gateways
+ui-gateways-empty = No SSH gateways are configured.
+ui-gateways-parent = Parent: { $name }
+ui-gateways-sessions = { $count ->
+    [one] { $count } session
+   *[other] { $count } sessions
+}
+ui-gateways-no-sessions = No sessions use this gateway.
+ui-gateways-edit = Edit
+ui-gateways-delete = Delete
+ui-gateways-unresolved = Unresolved references
+ui-gateways-missing-description = These sessions or child gateways reference a gateway id that is not configured.
+ui-gateways-missing-header = Missing gateway id: { $id }
+ui-gateways-child = Child gateway: { $name }
+ui-gateways-reassign-to = Gateway
+ui-gateways-reassign = Reassign
+ui-gateways-clear = Clear
+ui-dialog-delete-gateway-title = Delete gateway
+ui-dialog-delete-gateway-body = Delete gateway "{ $name }"?
+
+    References to clear:
+    - Servers: { $servers }
+    - Child gateways: { $gateways }
+ui-status-gateway-deleted = Gateway "{ $name }" deleted.
+ui-status-gateways-reassigned = { $count ->
+    [one] Reassigned { $count } session.
+   *[other] Reassigned { $count } sessions.
+}
+ui-status-gateways-cleared = { $count ->
+    [one] Cleared gateway reference on { $count } session.
+   *[other] Cleared gateway reference on { $count } sessions.
+}
+ui-status-gateways-unchanged = No sessions needed changes.
 ui-settings-reachability = Session Health Monitor
 ui-settings-reachability-enabled = Enable background reachability probes
 ui-settings-reachability-hint = Every server is dialled from this computer, a few at a time, and its dot in the list shows whether it answered. Servers behind a gateway are not dialled. Nothing is sent but the connection.

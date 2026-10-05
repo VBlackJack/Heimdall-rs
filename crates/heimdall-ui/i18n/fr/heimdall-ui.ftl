@@ -1582,6 +1582,52 @@ ui-status-settings-imported = { $count ->
 ui-status-settings-import-nothing = Le fichier contient les paramètres que vous avez déjà. Rien à modifier.
 ui-status-settings-import-invalid = Ce fichier n'est pas un fichier de paramètres Heimdall, ou il provient d'une version que celle-ci ne sait pas lire. Rien n'a été modifié.
 ui-status-settings-import-failed = Le fichier de paramètres n'a pas pu être lu : { $reason }
+ui-settings-tab-gateways = Passerelles
+ui-gateways-title = Passerelles SSH
+ui-gateways-description = Vérifie quelles sessions utilisent chaque passerelle SSH et repère les références introuvables.
+ui-gateways-summary = { $gateways ->
+    [one] { $gateways } passerelle
+   *[other] { $gateways } passerelles
+}, { $routed ->
+    [one] { $routed } session routée
+   *[other] { $routed } sessions routées
+}, { $unresolved ->
+    [one] { $unresolved } référence introuvable
+   *[other] { $unresolved } références introuvables
+}
+ui-gateways-configured = Passerelles configurées
+ui-gateways-empty = Aucune passerelle SSH n'est configurée.
+ui-gateways-parent = Parent : { $name }
+ui-gateways-sessions = { $count ->
+    [one] { $count } session
+   *[other] { $count } sessions
+}
+ui-gateways-no-sessions = Aucune session n'utilise cette passerelle.
+ui-gateways-edit = Modifier
+ui-gateways-delete = Supprimer
+ui-gateways-unresolved = Références non résolues
+ui-gateways-missing-description = Ces sessions ou passerelles enfants référencent un id de passerelle qui n'est pas configuré.
+ui-gateways-missing-header = Id de passerelle manquant : { $id }
+ui-gateways-child = Passerelle enfant : { $name }
+ui-gateways-reassign-to = Passerelle
+ui-gateways-reassign = Réassigner
+ui-gateways-clear = Vider
+ui-dialog-delete-gateway-title = Supprimer la passerelle
+ui-dialog-delete-gateway-body = Supprimer la passerelle "{ $name }" ?
+
+    Références à effacer :
+    - Serveurs : { $servers }
+    - Passerelles enfants : { $gateways }
+ui-status-gateway-deleted = Passerelle "{ $name }" supprimée.
+ui-status-gateways-reassigned = { $count ->
+    [one] { $count } session réassignée.
+   *[other] { $count } sessions réassignées.
+}
+ui-status-gateways-cleared = { $count ->
+    [one] Référence de passerelle vidée pour { $count } session.
+   *[other] Référence de passerelle vidée pour { $count } sessions.
+}
+ui-status-gateways-unchanged = Aucune session ne nécessitait de changement.
 ui-settings-reachability = Moniteur de santé des sessions
 ui-settings-reachability-enabled = Activer les sondes de joignabilité en arrière-plan
 ui-settings-reachability-hint = Chaque serveur est appelé depuis cet ordinateur, quelques-uns à la fois, et sa pastille dans la liste montre s'il a répondu. Les serveurs derrière une gateway ne sont pas appelés. Rien n'est envoyé hormis la connexion.
