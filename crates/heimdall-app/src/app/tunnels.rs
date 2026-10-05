@@ -67,6 +67,11 @@ pub enum TunnelMessage {
     CopyPort(TunnelId),
     /// Opens or closes the tunnels panel.
     TogglePanel,
+    /// Trusts the gateway's key asked about for this run only, never recorded, as a tab's
+    /// "Trust this session".
+    TrustKeyOnce,
+    /// Copies the fingerprint of the gateway's key asked about.
+    CopyKeyFingerprint,
 }
 
 /// A tunnel being opened, or open: what it was asked for, and how to stop it.
@@ -149,6 +154,29 @@ impl App {
                 self.tunnels_panel = !self.tunnels_panel;
                 Vec::new()
             }
+            TunnelMessage::TrustKeyOnce => {
+                if !matches!(self.dialog, Some(Dialog::TunnelHostKey { .. })) {
+                    return Vec::new();
+                }
+                self.dialog = None;
+                self.tunnel_host_key_decision(super::KeyTrust::Once)
+            }
+            TunnelMessage::CopyKeyFingerprint => {
+                let Some(Dialog::TunnelHostKey {
+                    host,
+                    port,
+                    fingerprint,
+                    ..
+                }) = &self.dialog
+                else {
+                    return Vec::new();
+                };
+                let fingerprint = fingerprint.clone();
+                self.tell(Notice::FingerprintCopied(
+                    heimdall_core::profile::display_address(host, *port),
+                ));
+                vec![Effect::WriteClipboard(fingerprint)]
+            }
             TunnelMessage::CopyPort(id) => {
                 let Some(port) = self.tunnel(id).map(|tunnel| tunnel.local.port()) else {
                     return Vec::new();
@@ -196,7 +224,7 @@ impl App {
     /// Confirms the tunnel dialog open: "Open tunnel", or trusting the gateway's key.
     pub(super) fn confirm_tunnel_dialog(&mut self) -> Vec<Effect> {
         let Some(Dialog::NewTunnel(form)) = self.dialog.take() else {
-            return self.tunnel_host_key_decision(true);
+            return self.tunnel_host_key_decision(super::KeyTrust::Always);
         };
         // The dialog closes and the attempt starts, when the form holds.
         if let Ok(spec) = form.spec(&self.tunnel_ports()) {
@@ -280,6 +308,7 @@ impl App {
                     host: host.clone(),
                     port,
                     fingerprint,
+                    algorithm: key.algorithm().to_string(),
                 });
                 self.pending_tunnel_key = Some(PendingTunnelKey {
                     spec: run.spec,
@@ -374,15 +403,24 @@ impl App {
         Some(answer)
     }
 
-    /// The user's answer about a gateway's unknown key: learnt, and the tunnel tried again;
-    /// or refused, and the tunnel not opened.
-    pub(super) fn tunnel_host_key_decision(&mut self, accept: bool) -> Vec<Effect> {
+    /// The user's answer about a gateway's unknown key: learnt, or trusted for this run
+    /// only, and the tunnel tried again; or refused, and the tunnel not opened.
+    pub(super) fn tunnel_host_key_decision(&mut self, trust: super::KeyTrust) -> Vec<Effect> {
         let Some(pending) = self.pending_tunnel_key.take() else {
             return Vec::new();
         };
-        if !accept {
-            self.tell(Notice::TunnelFailed(UiError::Cancelled));
-            return Vec::new();
+        match trust {
+            super::KeyTrust::Refused => {
+                self.tell(Notice::TunnelFailed(UiError::Cancelled));
+                return Vec::new();
+            }
+            // Held in memory for this run: the file is not written, as a tab's.
+            super::KeyTrust::Once => {
+                self.run_trust
+                    .trust(&pending.host, pending.port, PublicKey::clone(&pending.key));
+                return self.open_tunnel(pending.spec);
+            }
+            super::KeyTrust::Always => {}
         }
         let known_hosts = KnownHosts::new(&self.config.known_hosts);
         // Another tab may have recorded a key for this host meanwhile: read again.
@@ -428,7 +466,7 @@ impl App {
             return None;
         }
         self.dialog = None;
-        Some(self.tunnel_host_key_decision(false))
+        Some(self.tunnel_host_key_decision(super::KeyTrust::Refused))
     }
 }
 

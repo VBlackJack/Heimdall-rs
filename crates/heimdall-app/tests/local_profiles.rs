@@ -334,3 +334,30 @@ fn a_saved_shell_is_told_what_it_was_opened_for_as_the_csharp_heimdall_variables
         ["HEIMDALL_NAME", "HEIMDALL_TYPE"]
     );
 }
+
+#[test]
+fn a_saved_shell_is_told_its_environment_as_the_csharp_heimdall_env() {
+    use heimdall_core::metadata::{Environment, ProfileMetadata};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let approved = profile(command("-x"), Some(approval(command("-x"))));
+    drop(app(dir.path(), &[approved]));
+    let mut store = ProfileStore::open(profiles_file(dir.path())).expect("store");
+    store.set_metadata(
+        &ProfileId::new("tool"),
+        ProfileMetadata {
+            environment: Some(Environment::Staging),
+            ..ProfileMetadata::default()
+        },
+    );
+    store.save().expect("save");
+    let mut app = self::app(dir.path(), &[]);
+    let shell = started(&open(&mut app)).expect("started");
+    assert!(
+        shell
+            .environment
+            .contains(&("HEIMDALL_ENV".to_owned(), "Staging".to_owned())),
+        "{:?}",
+        shell.environment
+    );
+}
