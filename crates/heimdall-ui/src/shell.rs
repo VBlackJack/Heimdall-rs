@@ -870,6 +870,9 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// The moving end of a Shift+arrow range in the tree; where it started is the profile
+    /// selected.
+    tree_focus: Option<ProfileId>,
     /// The language the texts are in, as last chosen in the settings.
     language_shown: Option<heimdall_core::settings::Language>,
     /// The gateway picked for the references to each missing gateway, by its identifier.
@@ -983,6 +986,15 @@ const NAV_TITLE_PADDING: [f32; 2] = [0.0, 16.0];
 /// Height of the line under the page shown.
 const NAV_UNDERLINE: f32 = 2.0;
 
+/// A row of the tree the keyboard is on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TreeCursor {
+    /// A profile.
+    Profile(ProfileId),
+    /// A folder, by its path.
+    Folder(String),
+}
+
 /// A field given focus in a dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum DialogFocus {
@@ -1065,6 +1077,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            tree_focus: None,
             language_shown,
             gateway_reassign: std::collections::BTreeMap::new(),
             path_editing: None,
@@ -1227,7 +1240,12 @@ impl Shell {
         {
             self.path_editing = None;
         }
-        // A press on a folder: the start of a drag of it.
+        // A press on a folder: the folder selected, as the C# tree's click, and the start of
+        // a drag of it.
+        if let Message::App(AppMessage::ToggleFolder(path)) = &message {
+            self.tree_focus = None;
+            let _ = self.app.update(AppMessage::SelectFolder(path.clone()));
+        }
         if let Message::App(AppMessage::ToggleFolder(path)) = &message
             && path != heimdall_app::NO_FOLDER
         {
@@ -3051,8 +3069,9 @@ impl Shell {
             } => {
                 let color = self.app.folder_color(&path);
                 let target = heimdall_app::DropTarget::Folder(path.clone());
+                let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
                 crate::tree_drag::drop_zone(
-                    tree_view::folder_row(path, name, depth, open, count, color),
+                    tree_view::folder_row(path, name, depth, open, count, color, selected),
                     target,
                     self.tree_drag.as_ref(),
                 )
@@ -4118,77 +4137,230 @@ impl Shell {
     }
 
     /// A key of the Files tab's set pressed while the tree has the keyboard, as the C# tree
-    /// takes them: the arrows move the selection, Enter connects, F2 renames, Delete deletes
-    /// once asked; `None` when the tree does not have it.
+    /// takes them: the arrows move through folders and profiles, Shift extending the
+    /// selection; Left and Right fold and unfold a folder, or go to its parent and its first
+    /// row; Enter connects or folds; F2 renames, Delete deletes once asked; Ctrl+Space adds a
+    /// profile to the selection or takes it out. `None` when the tree does not have it.
     fn tree_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
         if !self.tree_focused || self.app.dialog.is_some() {
             return None;
         }
-        let selected = self.app.selected_profile.clone();
         let several = !self.app.selected_profiles().is_empty();
+        let cursor = self.tree_cursor();
         Some(match key {
+            FilesKey::Previous | FilesKey::Next if self.modifiers.shift() => {
+                self.extend_tree_selection(key == FilesKey::Previous)
+            }
             FilesKey::Previous | FilesKey::Next => {
-                let order: Vec<ProfileId> = self
-                    .app
-                    .tree_rows(&self.search)
-                    .into_iter()
-                    .filter_map(|row| match row {
-                        TreeRow::Profile { profile, .. } => Some(profile.id),
-                        TreeRow::Folder { .. } => None,
-                    })
-                    .collect();
-                let at = selected.and_then(|id| order.iter().position(|found| *found == id));
+                let rows = self.tree_cursors();
+                let at = cursor
+                    .as_ref()
+                    .and_then(|cursor| rows.iter().position(|row| row == cursor));
                 let next = match (key, at) {
                     (FilesKey::Previous, Some(at)) => at.checked_sub(1),
                     (_, Some(at)) => Some(at + 1),
                     (_, None) => Some(0),
                 };
-                match next.and_then(|index| order.get(index)) {
-                    Some(id) => self.app.update(AppMessage::SelectProfile(id.clone())),
+                match next.and_then(|index| rows.get(index)) {
+                    Some(row) => self.select_tree_row(row.clone()),
                     None => Vec::new(),
                 }
             }
-            FilesKey::First | FilesKey::Last | FilesKey::SelectAll => {
+            FilesKey::First | FilesKey::Last => {
+                let rows = self.tree_cursors();
+                let row = if key == FilesKey::First {
+                    rows.first()
+                } else {
+                    rows.last()
+                };
+                match row {
+                    Some(row) => self.select_tree_row(row.clone()),
+                    None => Vec::new(),
+                }
+            }
+            FilesKey::SelectAll => {
                 let order = self.tree_order();
                 let (Some(first), Some(last)) = (order.first().cloned(), order.last().cloned())
                 else {
                     return Some(Vec::new());
                 };
-                match key {
-                    FilesKey::First => self.app.update(AppMessage::SelectProfile(first)),
-                    FilesKey::Last => self.app.update(AppMessage::SelectProfile(last)),
-                    // Every profile shown, as the C# tree's Ctrl+A.
-                    _ => {
-                        let mut effects = self.app.update(AppMessage::SelectProfile(first));
-                        effects.extend(self.app.update(AppMessage::Selection(
-                            SelectionMessage::Range { to: last, order },
-                        )));
-                        effects
-                    }
-                }
+                // Every profile shown, as the C# tree's Ctrl+A.
+                let mut effects = self.app.update(AppMessage::SelectProfile(first));
+                effects.extend(
+                    self.app
+                        .update(AppMessage::Selection(SelectionMessage::Range {
+                            to: last,
+                            order,
+                        })),
+                );
+                effects
             }
-            FilesKey::Open if several => self
-                .app
-                .update(AppMessage::Selection(SelectionMessage::Connect)),
-            FilesKey::Open => match selected {
-                Some(id) => self.app.update(AppMessage::ConnectProfile(id)),
+            FilesKey::Focus(side) => self.tree_fold(cursor, side == Side::Remote),
+            FilesKey::Open => match cursor {
+                Some(TreeCursor::Folder(path)) => {
+                    let effects = self.app.update(AppMessage::ToggleFolder(path.clone()));
+                    let _ = self.app.update(AppMessage::SelectFolder(path));
+                    effects
+                }
+                _ if several => self
+                    .app
+                    .update(AppMessage::Selection(SelectionMessage::Connect)),
+                Some(TreeCursor::Profile(id)) => self.app.update(AppMessage::ConnectProfile(id)),
                 None => Vec::new(),
             },
-            FilesKey::Delete if several => self
-                .app
-                .update(AppMessage::Selection(SelectionMessage::RequestDelete)),
-            FilesKey::Delete => match selected {
-                Some(id) => self.app.update(AppMessage::RequestDeleteProfile(id)),
-                None => Vec::new(),
+            FilesKey::Delete => match cursor {
+                Some(TreeCursor::Folder(path)) if path != heimdall_app::NO_FOLDER => self
+                    .app
+                    .update(AppMessage::Folder(FolderMessage::RequestDelete(path))),
+                _ if several => self
+                    .app
+                    .update(AppMessage::Selection(SelectionMessage::RequestDelete)),
+                Some(TreeCursor::Profile(id)) => {
+                    self.app.update(AppMessage::RequestDeleteProfile(id))
+                }
+                _ => Vec::new(),
             },
-            FilesKey::Rename => match selected {
-                Some(id) if self.app.can_edit(&id) => self
+            FilesKey::Rename => match cursor {
+                Some(TreeCursor::Folder(path)) if path != heimdall_app::NO_FOLDER => self
+                    .app
+                    .update(AppMessage::Folder(FolderMessage::Rename(path))),
+                Some(TreeCursor::Profile(id)) if self.app.can_edit(&id) => self
                     .app
                     .update(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id))),
                 _ => Vec::new(),
             },
+            // The row the keyboard is on: where a Shift range ended, else the one selected.
+            FilesKey::ToggleMark => match (self.tree_focus.take(), cursor) {
+                (Some(id), _) | (None, Some(TreeCursor::Profile(id))) => self
+                    .app
+                    .update(AppMessage::Selection(SelectionMessage::Toggle(id))),
+                _ => Vec::new(),
+            },
             _ => Vec::new(),
         })
+    }
+
+    /// Left (`unfold` false): a folder open closes; else up to the folder holding the row.
+    /// Right: a folder closed opens; open, down to its first row.
+    fn tree_fold(&mut self, cursor: Option<TreeCursor>, unfold: bool) -> Vec<Effect> {
+        match (cursor, unfold) {
+            (Some(TreeCursor::Folder(path)), false) if self.folder_open(&path) => {
+                self.app.update(AppMessage::ToggleFolder(path))
+            }
+            (Some(row), false) => match self.parent_row(&row) {
+                Some(parent) => self.select_tree_row(parent),
+                None => Vec::new(),
+            },
+            (Some(TreeCursor::Folder(path)), true) if !self.folder_open(&path) => {
+                let effects = self.app.update(AppMessage::ToggleFolder(path.clone()));
+                // Opening it keeps it the one selected.
+                let _ = self.app.update(AppMessage::SelectFolder(path));
+                effects
+            }
+            (Some(folder @ TreeCursor::Folder(_)), true) => {
+                let rows = self.tree_cursors();
+                let below = rows
+                    .iter()
+                    .position(|row| *row == folder)
+                    .and_then(|at| rows.get(at + 1))
+                    .cloned();
+                match below {
+                    Some(row) if self.parent_row(&row).as_ref() == Some(&folder) => {
+                        self.select_tree_row(row)
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// The row the tree's keyboard is on: the folder selected, or the profile.
+    fn tree_cursor(&self) -> Option<TreeCursor> {
+        self.app
+            .selected_folder
+            .clone()
+            .map(TreeCursor::Folder)
+            .or_else(|| self.app.selected_profile.clone().map(TreeCursor::Profile))
+    }
+
+    /// Every row of the tree, folders and profiles, as it shows them.
+    fn tree_cursors(&self) -> Vec<TreeCursor> {
+        self.app
+            .tree_rows(&self.search)
+            .into_iter()
+            .map(|row| match row {
+                TreeRow::Profile { profile, .. } => TreeCursor::Profile(profile.id),
+                TreeRow::Folder { path, .. } => TreeCursor::Folder(path),
+            })
+            .collect()
+    }
+
+    /// Whether the folder at `path` shows its content.
+    fn folder_open(&self, path: &str) -> bool {
+        self.app.tree_rows(&self.search).into_iter().any(
+            |row| matches!(row, TreeRow::Folder { path: found, open: true, .. } if found == path),
+        )
+    }
+
+    /// The folder row holding `row`, when the tree shows one: the closest row above it, less
+    /// deep.
+    fn parent_row(&self, row: &TreeCursor) -> Option<TreeCursor> {
+        let rows = self.app.tree_rows(&self.search);
+        let depth_of = |row: &TreeRow| match row {
+            TreeRow::Profile { depth, .. } | TreeRow::Folder { depth, .. } => *depth,
+        };
+        let at = rows.iter().position(|found| match (found, row) {
+            (TreeRow::Profile { profile, .. }, TreeCursor::Profile(id)) => profile.id == *id,
+            (TreeRow::Folder { path, .. }, TreeCursor::Folder(wanted)) => path == wanted,
+            _ => false,
+        })?;
+        let depth = depth_of(&rows[at]);
+        rows[..at].iter().rev().find_map(|above| match above {
+            TreeRow::Folder { path, depth: d, .. } if *d < depth => {
+                Some(TreeCursor::Folder(path.clone()))
+            }
+            _ => None,
+        })
+    }
+
+    /// Selects `row`, a folder or a profile.
+    fn select_tree_row(&mut self, row: TreeCursor) -> Vec<Effect> {
+        // A range's moving end starts again from here.
+        self.tree_focus = None;
+        match row {
+            TreeCursor::Profile(id) => self.app.update(AppMessage::SelectProfile(id)),
+            TreeCursor::Folder(path) => self.app.update(AppMessage::SelectFolder(path)),
+        }
+    }
+
+    /// Shift+Up or Shift+Down: the selection grows to the profile above or below, from the
+    /// one it started at, as a Windows tree's.
+    fn extend_tree_selection(&mut self, up: bool) -> Vec<Effect> {
+        let order = self.tree_order();
+        let at = self
+            .tree_focus
+            .clone()
+            .or_else(|| self.app.selected_profile.clone())
+            .and_then(|id| order.iter().position(|found| *found == id));
+        let next = match (up, at) {
+            (true, Some(at)) => at.checked_sub(1),
+            (false, Some(at)) => Some(at + 1),
+            (_, None) => Some(0),
+        };
+        let Some(to) = next.and_then(|index| order.get(index)).cloned() else {
+            return Vec::new();
+        };
+        let mut effects = Vec::new();
+        if self.app.selected_profile.is_none() {
+            effects.extend(self.app.update(AppMessage::SelectProfile(to.clone())));
+        }
+        self.tree_focus = Some(to.clone());
+        effects.extend(
+            self.app
+                .update(AppMessage::Selection(SelectionMessage::Range { to, order })),
+        );
+        effects
     }
 
     /// The profiles as the tree shows them, folders left out.
