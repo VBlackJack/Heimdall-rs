@@ -2387,8 +2387,9 @@ impl Shell {
         }
     }
 
-    /// Keeps how the window is left, then closes it. Maximized, its size is the one it had
-    /// before: the one kept when it was last not maximized.
+    /// Keeps how the window is left, then closes it. Maximized, minimized or full screen,
+    /// its place and size are the ones it had before: the ones kept when it was last shown
+    /// as a window.
     fn exit(&self) -> Task<Message> {
         let Some((path, left)) = self.window_memory.clone() else {
             return iced::exit();
@@ -2398,22 +2399,51 @@ impl Shell {
             sidebar_hidden: self.sidebar_hidden,
             ..left
         };
-        let size = self.window_size;
-        let keep = move |maximized: bool| {
+        let (size, fullscreen) = (self.window_size, self.fullscreen);
+        let keep = move |maximized: bool, place: Option<((i32, i32), f32)>| {
             let mut state = leaving;
             state.maximized = maximized;
             if let (false, Some(size)) = (maximized, size) {
                 state.width = Some(size.width);
                 state.height = Some(size.height);
             }
+            if let Some(((x, y), scale)) = place {
+                (state.x, state.y, state.scale) = (Some(x), Some(y), Some(scale));
+            }
             if let Err(error) = heimdall_core::window_state::save(&path, &state) {
                 log::warn!("the window's state could not be kept: {error}");
             }
             iced::exit()
         };
-        window::latest().then(move |id| match id {
-            Some(id) => window::is_maximized(id).then(keep.clone()),
-            None => keep(false),
+        window::latest().then(move |id| {
+            let Some(id) = id else {
+                return keep(false, None);
+            };
+            let keep = keep.clone();
+            window::is_maximized(id).then(move |maximized| {
+                let keep = keep.clone();
+                if maximized || fullscreen {
+                    return keep(maximized, None);
+                }
+                // Minimized, the system reports a place off every screen.
+                window::is_minimized(id).then(move |minimized| {
+                    let keep = keep.clone();
+                    if minimized == Some(true) {
+                        return keep(false, None);
+                    }
+                    window::position(id).then(move |position| {
+                        let keep = keep.clone();
+                        window::scale_factor(id).then(move |scale| {
+                            keep(
+                                false,
+                                position.map(|position| {
+                                    (crate::screens::physical(position, scale), scale)
+                                }),
+                            )
+                        })
+                    })
+                })
+            })
         })
     }
 
