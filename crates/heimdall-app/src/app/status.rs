@@ -185,6 +185,10 @@ pub enum Notice {
     NothingToUndo,
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// The note of this file name was opened in the editor.
+    NoteOpened(String),
+    /// A note could not be written or opened, for this reason.
+    NoteFailed(String),
     /// A delete or a change of permissions of entries did not do them all.
     FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.

@@ -120,6 +120,7 @@ pub fn view(app: &App) -> Column<'_, Message> {
                 row![
                     open_button(fl!("ui-about-open-config"), config),
                     open_button(fl!("ui-about-open-logs"), logs),
+                    open_button(fl!("ui-about-open-notes"), Some(app.notes_dir())),
                     open_button(fl!("ui-about-repository"), Some(PathBuf::from(REPOSITORY))),
                 ]
                 .spacing(SPACING)

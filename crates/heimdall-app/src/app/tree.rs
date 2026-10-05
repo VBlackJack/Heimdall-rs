@@ -299,6 +299,29 @@ impl App {
 
     /// One profile, whatever its protocol.
     #[must_use]
+    pub fn profile_summary_note(&self, id: &ProfileId) -> Option<crate::notes::NoteContext> {
+        let profile = self.profile_summary(id)?;
+        let (host, port) = profile
+            .endpoint
+            .map_or((None, None), |(host, port)| (Some(host), Some(port)));
+        Some(crate::notes::NoteContext {
+            name: profile.name,
+            host,
+            port,
+            user: profile.username,
+            group: profile.group,
+            protocol: Some(profile.kind.label().to_owned()),
+        })
+    }
+
+    /// The notes folder, beside the profiles.
+    #[must_use]
+    pub fn notes_dir(&self) -> std::path::PathBuf {
+        crate::notes::notes_dir(&self.config.profiles_file)
+    }
+
+    /// The summary of profile `id`, when there is one.
+    #[must_use]
     pub fn profile_summary(&self, id: &ProfileId) -> Option<ProfileSummary> {
         self.profile_summaries()
             .into_iter()

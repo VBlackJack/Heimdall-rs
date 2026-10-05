@@ -1188,6 +1188,35 @@ fn a_folder_has_the_csharp_menu_and_its_name_dialog_says_why_a_name_is_refused()
 }
 
 #[test]
+fn a_session_menu_writes_a_note_about_it_from_a_csharp_template() {
+    use heimdall_app::notes::NoteTemplate;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let id = ProfileId::new("a");
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Notes").expect("Notes");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::OpenTreeMenu(TreeMenu::Notes(about)) if *about == id
+        )));
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Notes(id.clone())));
+    let mut ui = simulator(&shell);
+    for label in ["New", "Daily", "Incident"] {
+        ui.find(label).expect(label);
+    }
+    ui.click("Procedure").expect("Procedure");
+    assert!(ui.into_messages().any(|message| matches!(
+        &message,
+        Message::NewNote { id: about, template: NoteTemplate::Procedure } if *about == id
+    )));
+}
+
+#[test]
 fn a_profile_renames_and_moves_to_another_folder_from_its_menu() {
     use heimdall_app::ProfileMenuMessage;
     use heimdall_ui::tree_view::TreeMenu;

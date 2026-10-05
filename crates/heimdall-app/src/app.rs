@@ -664,6 +664,8 @@ pub enum Message {
     CredentialProvided(Box<ProviderAnswer>),
     /// A change from the Settings page.
     Settings(SettingsMessage),
+    /// A note about a server was written and opened in the editor set, or why not.
+    NoteOpened(Result<PathBuf, String>),
     /// A change of broadcast input.
     Broadcast(BroadcastMessage),
 }
@@ -861,6 +863,7 @@ impl fmt::Debug for Message {
                 )
             }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
+            Self::NoteOpened(result) => write!(f, "NoteOpened({})", result.is_ok()),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
     }
@@ -2534,6 +2537,7 @@ impl App {
             | Message::Sessions(_)
             | Message::Rdp(_)
             | Message::Settings(_)
+            | Message::NoteOpened(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
@@ -3650,6 +3654,17 @@ impl App {
                 Vec::new()
             }
             Message::Settings(message) => self.settings_message(message),
+            Message::NoteOpened(result) => {
+                self.tell(match result {
+                    Ok(path) => Notice::NoteOpened(
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    ),
+                    Err(reason) => Notice::NoteFailed(reason.clone()),
+                });
+                Vec::new()
+            }
             Message::Broadcast(message) => self.broadcast_message(*message),
             _ => Vec::new(),
         }

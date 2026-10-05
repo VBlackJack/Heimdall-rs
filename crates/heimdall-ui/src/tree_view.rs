@@ -106,6 +106,8 @@ pub enum TreeMenu {
     Tunnel(heimdall_app::tunnel::TunnelId),
     /// An RDP tab's "Resolution" menu, as the C# one.
     Resolution(TabId),
+    /// The notes a session's menu writes about it, as the C# Notes submenu.
+    Notes(ProfileId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
     FilesEntry {
         /// The tab.
@@ -620,6 +622,63 @@ pub fn filter_entries<'a>(filter: &TreeFilter) -> Element<'a, Message> {
     menu_card(entries).into()
 }
 
+/// The entries of a session's menu about its server: its address copied, whether it
+/// answers, and, when its MAC address is known, Wake-on-LAN.
+fn server_entries<'a>(
+    mut entries: Column<'a, Message>,
+    profile: &ProfileSummary,
+) -> Column<'a, Message> {
+    let id = profile.id.clone();
+    let copy = |what| {
+        Some(AppMessage::CopyProfile {
+            id: id.clone(),
+            what,
+        })
+    };
+    if profile.endpoint.is_some() {
+        let has_user = profile
+            .username
+            .as_deref()
+            .is_some_and(|user| !user.is_empty());
+        entries = entries
+            .push(separator())
+            .push(entry(
+                fl!("ui-tree-copy-hostname"),
+                copy(ProfileCopy::Hostname),
+            ))
+            .push(entry(
+                fl!("ui-tree-copy-username"),
+                copy(ProfileCopy::Username).filter(|_| has_user),
+            ))
+            .push(entry(
+                fl!("ui-tree-copy-address"),
+                copy(ProfileCopy::Address),
+            ));
+        if profile.kind == ProfileKind::Ssh {
+            entries = entries.push(entry(
+                fl!("ui-tree-copy-ssh-command"),
+                copy(ProfileCopy::SshCommand),
+            ));
+        }
+        entries = entries.push(entry(
+            fl!("ui-tree-test-reachability"),
+            Some(AppMessage::ProfileMenu(
+                ProfileMenuMessage::TestReachability(id.clone()),
+            )),
+        ));
+    }
+    // Only for a server whose MAC address is known, as the C# menu.
+    if profile.metadata.mac_address.is_some() {
+        entries = entries.push(entry(
+            fl!("ui-tree-wake-on-lan"),
+            Some(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLan(
+                id.clone(),
+            ))),
+        ));
+    }
+    entries
+}
+
 /// A profile's menu, in the C# order this version has: Connect, Connect as, Rename, Edit,
 /// Duplicate, Move to folder, the copies, Delete.
 fn profile_entries<'a>(
@@ -629,12 +688,6 @@ fn profile_entries<'a>(
     editable: bool,
 ) -> Column<'a, Message> {
     let id = profile.id.clone();
-    let copy = |what| {
-        Some(AppMessage::CopyProfile {
-            id: id.clone(),
-            what,
-        })
-    };
     entries = entries.push(entry(
         fl!("ui-tree-connect"),
         Some(AppMessage::ConnectProfile(id.clone())),
@@ -679,47 +732,13 @@ fn profile_entries<'a>(
                     editable.then(|| Message::OpenTreeMenu(TreeMenu::MoveProfile(id.clone()))),
                 ),
         );
-    if profile.endpoint.is_some() {
-        let has_user = profile
-            .username
-            .as_deref()
-            .is_some_and(|user| !user.is_empty());
-        entries = entries
-            .push(separator())
-            .push(entry(
-                fl!("ui-tree-copy-hostname"),
-                copy(ProfileCopy::Hostname),
-            ))
-            .push(entry(
-                fl!("ui-tree-copy-username"),
-                copy(ProfileCopy::Username).filter(|_| has_user),
-            ))
-            .push(entry(
-                fl!("ui-tree-copy-address"),
-                copy(ProfileCopy::Address),
-            ));
-        if profile.kind == ProfileKind::Ssh {
-            entries = entries.push(entry(
-                fl!("ui-tree-copy-ssh-command"),
-                copy(ProfileCopy::SshCommand),
-            ));
-        }
-        entries = entries.push(entry(
-            fl!("ui-tree-test-reachability"),
-            Some(AppMessage::ProfileMenu(
-                ProfileMenuMessage::TestReachability(id.clone()),
-            )),
-        ));
-    }
-    // Only for a server whose MAC address is known, as the C# menu.
-    if profile.metadata.mac_address.is_some() {
-        entries = entries.push(entry(
-            fl!("ui-tree-wake-on-lan"),
-            Some(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLan(
-                id.clone(),
-            ))),
-        ));
-    }
+    entries = server_entries(entries, profile);
+    entries = entries.push(separator()).push(
+        button(text(fl!("ui-tree-notes")).size(MENU_TEXT_SIZE))
+            .width(Length::Fill)
+            .style(menu_style)
+            .on_press(Message::OpenTreeMenu(TreeMenu::Notes(id.clone()))),
+    );
     entries = entries.push(separator()).push(
         button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
             .width(Length::Fill)
@@ -727,6 +746,31 @@ fn profile_entries<'a>(
             .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
     );
     entries
+}
+
+/// A session's Notes menu, as the C# one: a note about it, written from a template.
+#[must_use]
+pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
+    use heimdall_app::notes::NoteTemplate;
+    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    for template in NoteTemplate::ALL {
+        let label = match template {
+            NoteTemplate::Blank => fl!("ui-notes-new"),
+            NoteTemplate::Daily => fl!("ui-notes-daily"),
+            NoteTemplate::Incident => fl!("ui-notes-incident"),
+            NoteTemplate::Procedure => fl!("ui-notes-procedure"),
+        };
+        entries = entries.push(
+            button(text(label).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::NewNote {
+                    id: id.clone(),
+                    template,
+                }),
+        );
+    }
+    entries.into()
 }
 
 /// The tree's own menu and the "+" button's, as the C# one: Add Session, Add gateway, New
