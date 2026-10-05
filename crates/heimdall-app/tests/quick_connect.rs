@@ -273,3 +273,79 @@ fn a_host_typed_opens_a_session_never_saved_that_reconnects_as_it_was() {
     assert!(!request.profile.allow_tls_only && request.profile.redirect_clipboard);
     assert!(!request.profile.redirect_drives);
 }
+
+#[derive(Debug)]
+struct NullSink;
+
+impl heimdall_app::InputSink for NullSink {
+    fn write(&self, _bytes: Vec<u8>) -> Result<(), heimdall_ssh::SessionClosed> {
+        Ok(())
+    }
+    fn resize(&self, _size: heimdall_ssh::TerminalSize) -> Result<(), heimdall_ssh::SessionClosed> {
+        Ok(())
+    }
+    fn close(&self) {}
+}
+
+/// Opens `result` and connects it.
+fn connected(app: &mut App, result: QuickResult) {
+    let effects = app.update(Message::QuickConnect(result));
+    let (tab, attempt) = match effects.as_slice() {
+        [Effect::Connect { tab, attempt, .. } | Effect::ConnectRdp { tab, attempt, .. }] => {
+            (*tab, *attempt)
+        }
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: std::sync::Arc::new(NullSink),
+        },
+    });
+}
+
+#[test]
+fn the_hosts_last_connected_to_come_first_and_their_protocol_with_them() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let saved = |app: &App, name: &str| {
+        app.quick_results(name)
+            .into_iter()
+            .find(|result| matches!(result, QuickResult::Profile(p) if p.name == name))
+            .expect(name)
+    };
+    let mail = saved(&app, "Mail");
+    connected(&mut app, mail);
+    let web = saved(&app, "webserver");
+    connected(&mut app, web);
+    assert_eq!(
+        names(&app.quick_results("")),
+        ["webserver", "Mail", "Database", "Domain controller"],
+        "newest first, then by name, as the C# palette"
+    );
+
+    // A bare host is offered with the protocol last used with it first.
+    connected(
+        &mut app,
+        QuickResult::Rdp {
+            host: "jump.lab".to_owned(),
+        },
+    );
+    assert!(matches!(
+        app.quick_results("JUMP.lab").as_slice(),
+        [QuickResult::Rdp { .. }, QuickResult::Ssh { .. }]
+    ));
+    connected(
+        &mut app,
+        QuickResult::Ssh {
+            username: None,
+            host: "jump.lab".to_owned(),
+            port: 22,
+        },
+    );
+    assert!(matches!(
+        app.quick_results("jump.lab").as_slice(),
+        [QuickResult::Ssh { .. }, QuickResult::Rdp { .. }]
+    ));
+}

@@ -47,6 +47,7 @@ mod search_keys;
 pub mod session_settings;
 pub mod sessions_view;
 pub mod shell;
+mod shortcuts_view;
 pub mod status_bar;
 pub mod terminal_view;
 mod texts;

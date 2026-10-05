@@ -1124,3 +1124,21 @@ fn a_right_click_pastes_unless_the_program_tracks_the_mouse() {
         "the program gets the click"
     );
 }
+
+#[test]
+fn the_shortcuts_help_opens_over_nothing_else_and_any_answer_closes_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = App::new(config(dir.path()));
+    app.update(Message::ShowShortcuts);
+    assert!(matches!(app.dialog, Some(Dialog::Shortcuts)));
+    app.update(Message::ConfirmDialog);
+    assert!(app.dialog.is_none(), "Enter closes it");
+    app.update(Message::ShowShortcuts);
+    app.update(Message::DismissDialog);
+    assert!(app.dialog.is_none(), "Esc too");
+
+    app.update(Message::NewProfile);
+    let asked = format!("{:?}", app.dialog);
+    app.update(Message::ShowShortcuts);
+    assert_eq!(format!("{:?}", app.dialog), asked, "a dialog open is kept");
+}

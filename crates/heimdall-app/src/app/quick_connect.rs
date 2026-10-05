@@ -15,24 +15,29 @@
  */
 
 //! Quick Connect, the C# Heimdall's Ctrl+K palette without its tools and snippets: the
-//! sessions found as it scores them, the first ten when nothing is typed; when none is
-//! found, `ssh user@host:port` or `user@host` opens an SSH session saved nowhere, and a bare
-//! host or address offers SSH and RDP to it.
+//! sessions found as it scores them, the first ten when nothing is typed, those of the hosts
+//! last connected to first; when none is found, `ssh user@host:port` or `user@host` opens an
+//! SSH session saved nowhere, and a bare host or address offers SSH and RDP to it, the one
+//! last used with it first.
 
 use std::net::IpAddr;
 
 use heimdall_core::profile::{DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, RdpProfile, SshProfile};
 
 use super::reconnect::Reopen;
-use super::tree::ProfileSummary;
-use super::{App, Effect, Message, TabProfile};
+use super::tree::{ProfileKind, ProfileSummary};
+use super::{App, Effect, Message, Phase, TabProfile};
 use crate::driver::Purpose;
+use crate::ids::TabId;
 
 /// Sessions shown when nothing is typed, as the C# palette.
 const FIRST_SESSIONS: usize = 10;
 
 /// Most sessions a search shows, as the C# palette.
 const MOST_FOUND: usize = 20;
+
+/// Connections remembered, as the C# tracker's `MaxEntries`.
+const RECENT_KEPT: usize = 50;
 
 /// What Quick Connect offers.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -142,7 +147,15 @@ impl App {
         let query = query.trim();
         let mut profiles = self.profile_summaries();
         if query.is_empty() {
-            profiles.sort_by_key(|profile| profile.name.to_lowercase());
+            // The hosts last connected to first, newest first; then by name, as the C#.
+            profiles.sort_by_cached_key(|profile| {
+                let recency = profile
+                    .endpoint
+                    .as_ref()
+                    .and_then(|(host, _)| self.recency(host))
+                    .unwrap_or(usize::MAX);
+                (recency, profile.name.to_lowercase())
+            });
             return profiles
                 .into_iter()
                 .take(FIRST_SESSIONS)
@@ -180,9 +193,51 @@ impl App {
                 results.push(QuickResult::Rdp {
                     host: query.to_owned(),
                 });
+                // The protocol last used with this host first, as the C# palette leans.
+                if self.last_kind(query) == Some(ProfileKind::Rdp) {
+                    results.reverse();
+                }
             }
         }
         results
+    }
+
+    /// Records that `tab_id` just connected: its host, with its protocol, first among the
+    /// recent ones, once per host and protocol. A local program has no host to keep.
+    pub(super) fn note_recent(&mut self, tab_id: TabId) {
+        let Some(tab) = self.tab(tab_id).filter(|tab| tab.phase == Phase::Connected) else {
+            return;
+        };
+        let Some(host) = tab
+            .profile
+            .endpoint()
+            .map(|(host, _)| host.trim().to_lowercase())
+            .filter(|host| !host.is_empty())
+        else {
+            return;
+        };
+        let kind = self.tab_kind(tab);
+        self.recent_hosts
+            .retain(|(known, known_kind)| !(*known == host && *known_kind == kind));
+        self.recent_hosts.insert(0, (host, kind));
+        self.recent_hosts.truncate(RECENT_KEPT);
+    }
+
+    /// How recently `host` was connected to: 0 for the last one; `None` when it was not.
+    fn recency(&self, host: &str) -> Option<usize> {
+        let host = host.trim().to_lowercase();
+        self.recent_hosts
+            .iter()
+            .position(|(known, _)| *known == host)
+    }
+
+    /// The protocol `host` was last connected with.
+    fn last_kind(&self, host: &str) -> Option<ProfileKind> {
+        let host = host.trim().to_lowercase();
+        self.recent_hosts
+            .iter()
+            .find(|(known, _)| *known == host)
+            .map(|(_, kind)| *kind)
     }
 
     /// Opens what Quick Connect offered.
