@@ -774,12 +774,10 @@ fn profile_entries<'a>(
         Some(AppMessage::ConnectProfile(id.clone())),
     ));
     if !connect_as.is_empty() {
-        entries = entries.push(
-            button(text(fl!("ui-tree-connect-as")).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::OpenTreeMenu(TreeMenu::ConnectAs(id.clone()))),
-        );
+        entries = entries.push(submenu(
+            fl!("ui-tree-connect-as"),
+            TreeMenu::ConnectAs(id.clone()),
+        ));
     }
     entries = entries
         .push(entry(
@@ -814,12 +812,9 @@ fn profile_entries<'a>(
                 ),
         );
     entries = server_entries(entries, profile);
-    entries = entries.push(separator()).push(
-        button(text(fl!("ui-tree-notes")).size(MENU_TEXT_SIZE))
-            .width(Length::Fill)
-            .style(menu_style)
-            .on_press(Message::OpenTreeMenu(TreeMenu::Notes(id.clone()))),
-    );
+    entries = entries
+        .push(separator())
+        .push(submenu(fl!("ui-tree-notes"), TreeMenu::Notes(id.clone())));
     entries = entries.push(separator()).push(
         button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
             .width(Length::Fill)
@@ -998,12 +993,10 @@ pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a,
         ));
     }
     if !bookmarks.is_empty() {
-        entries = entries.push(separator()).push(
-            button(text(fl!("ui-files-bookmark-remove-menu")).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarksRemove(tab))),
-        );
+        entries = entries.push(separator()).push(submenu(
+            fl!("ui-files-bookmark-remove-menu"),
+            TreeMenu::FilesBookmarksRemove(tab),
+        ));
     }
     menu_card(entries).into()
 }
@@ -1325,8 +1318,17 @@ fn profile_tab_entries<'a>(
         ))
 }
 
+/// An entry that opens the menu `menu` beside the one shown.
+fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
+    button(text(label).size(MENU_TEXT_SIZE))
+        .width(Length::Fill)
+        .style(menu_style)
+        .on_press(Message::OpenTreeMenu(menu))
+        .into()
+}
+
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
-/// does: no pin, split, detach or macros.
+/// does: no split or detach.
 pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let tab = state.tab;
     let menu = |message| Some(AppMessage::TabMenu(message));
@@ -1363,20 +1365,15 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         ));
     }
     if state.resolution {
-        entries = entries.push(separator()).push(
-            button(text(fl!("ui-resolution-menu")).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab))),
-        );
+        entries = entries.push(separator()).push(submenu(
+            fl!("ui-resolution-menu"),
+            TreeMenu::Resolution(tab),
+        ));
     }
     if state.macros {
-        entries = entries.push(separator()).push(
-            button(text(fl!("ui-macros-menu")).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::OpenTreeMenu(TreeMenu::Macros(tab))),
-        );
+        entries = entries
+            .push(separator())
+            .push(submenu(fl!("ui-macros-menu"), TreeMenu::Macros(tab)));
     }
     entries = entries
         .push(separator())
@@ -1506,12 +1503,10 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                 fl!("ui-folder-rename"),
                 folder(FolderMessage::Rename(path.to_owned())),
             ))
-            .push(
-                button(text(fl!("ui-folder-move-to")).size(MENU_TEXT_SIZE))
-                    .width(Length::Fill)
-                    .style(menu_style)
-                    .on_press(Message::OpenTreeMenu(TreeMenu::MoveFolder(path.to_owned()))),
-            )
+            .push(submenu(
+                fl!("ui-folder-move-to"),
+                TreeMenu::MoveFolder(path.to_owned()),
+            ))
             .push(
                 button(text(fl!("ui-folder-color")).size(MENU_TEXT_SIZE))
                     .width(Length::Fill)
@@ -1599,18 +1594,11 @@ pub fn selection_menu_entries<'a>(
             AppMessage::Selection(SelectionMessage::Favorite(!all_favorites)),
         ))
         .push(separator())
-        .push(
-            button(text(fl!("ui-selection-edit")).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::OpenTreeMenu(TreeMenu::EditSelection)),
-        )
-        .push(
-            button(text(fl!("ui-tree-move-to-folder")).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press(Message::OpenTreeMenu(TreeMenu::MoveSelection)),
-        )
+        .push(submenu(fl!("ui-selection-edit"), TreeMenu::EditSelection))
+        .push(submenu(
+            fl!("ui-tree-move-to-folder"),
+            TreeMenu::MoveSelection,
+        ))
         .push(separator())
         .push(
             button(text(fl!("ui-selection-delete", count = count)).size(MENU_TEXT_SIZE))
