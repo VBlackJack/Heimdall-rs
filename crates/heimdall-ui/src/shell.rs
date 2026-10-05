@@ -1235,6 +1235,15 @@ impl Shell {
     /// Closes the open menu, then hands `message` to the core.
     fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
         self.menu = None;
+        // Revealed in the tree: the tree takes the keyboard, its search cleared so the
+        // profile shows.
+        if matches!(
+            message,
+            AppMessage::TabMenu(heimdall_app::TabMenuMessage::RevealInTree(_))
+        ) {
+            self.search.clear();
+            self.tree_focused = true;
+        }
         self.app.update(message)
     }
 
@@ -3399,6 +3408,8 @@ impl Shell {
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
+            pinned: tab.pinned,
+            saveable: self.app.can_save_as_profile(tab),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -3428,6 +3439,9 @@ impl Shell {
             ]
             .spacing(SPACING / 2.0)
             .align_y(iced::Alignment::Center);
+            if tab.pinned {
+                label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+            }
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
             }

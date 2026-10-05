@@ -1426,6 +1426,10 @@ pub enum ExportOutcome {
 }
 
 /// One tab.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "a tab's independent states: bell, search, input, pinned"
+)]
 pub struct Tab {
     /// Identifier.
     pub id: TabId,
@@ -1490,6 +1494,9 @@ pub struct Tab {
     auto_answered: Vec<(AttemptId, ProfileId)>,
     /// How the tab opens again, for Reconnect.
     reopen: reconnect::Reopen,
+    /// Pinned, as the C# tab: before every tab not pinned, and left by "Close others" and
+    /// "Close to the right".
+    pub pinned: bool,
     /// The post-connect step running, while the sequence runs.
     pub post_connect: Option<PostConnectProgress>,
 }
@@ -1584,6 +1591,7 @@ impl Tab {
             find_found: None,
             transcript: None,
             health: crate::server_health::HealthPane::default(),
+            pinned: false,
             reopen: reconnect::Reopen::of(&profile),
             post_connect: None,
             profile,
