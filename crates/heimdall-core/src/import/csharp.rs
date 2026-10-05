@@ -37,11 +37,11 @@ use thiserror::Error;
 use crate::folder::FolderColor;
 use crate::post_connect::{DEFAULT_STEP_DELAY_MS, OnFailure, PostConnect, PostConnectStep};
 use crate::profile::{
-    AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
+    Aspect, AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
     DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT,
     DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments, LocalCommand, LocalProfile,
-    ProfileId, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile,
-    VncProfile, WinRmProfile, fixed_desktop,
+    ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile,
+    TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -95,8 +95,6 @@ pub enum SkipReason {
     MissingGateway,
     /// An SSH gateway reached through itself, by way of its parents.
     GatewayLoop,
-    /// Reaches its server through a Remote Desktop Gateway, not supported yet.
-    NeedsRdGateway,
     /// Has no host.
     MissingHost,
     /// Has no identifier, so a later import could not update it.
@@ -163,12 +161,43 @@ pub struct ImportReport {
     pub folder_colors: Vec<(String, FolderColor)>,
 }
 
+impl ImportReport {
+    /// Marks every profile of the report as come from `origin`, what else it says kept.
+    pub fn stamp_origin(&mut self, origin: crate::metadata::ProfileOrigin) {
+        let ids: Vec<ProfileId> = self
+            .profiles
+            .iter()
+            .map(|p| p.id.clone())
+            .chain(self.rdp.iter().map(|p| p.id.clone()))
+            .chain(self.telnet.iter().map(|p| p.id.clone()))
+            .chain(self.vnc.iter().map(|p| p.id.clone()))
+            .chain(self.ftp.iter().map(|p| p.id.clone()))
+            .chain(self.local.iter().map(|p| p.id.clone()))
+            .chain(self.winrm.iter().map(|p| p.id.clone()))
+            .collect();
+        for id in ids {
+            match self.metadata.iter_mut().find(|(found, _)| *found == id) {
+                Some((_, metadata)) => metadata.origin = Some(origin),
+                None => self.metadata.push((
+                    id,
+                    crate::metadata::ProfileMetadata {
+                        origin: Some(origin),
+                        ..crate::metadata::ProfileMetadata::default()
+                    },
+                )),
+            }
+        }
+    }
+}
+
 /// A setting of a C# profile that Heimdall-rs does not have: the profile is imported
 /// without it, and the user is told.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Dropped {
     /// Opened in an external program (`PuTTY`, `mstsc`) rather than in a tab.
     ExternalClient,
+    /// Through a Remote Desktop Gateway.
+    RdGateway,
     /// X11 forwarding.
     X11Forwarding,
     /// RDP printer redirection.
@@ -261,6 +290,13 @@ struct LegacyServer {
     environment: Option<String>,
     tags: Option<String>,
     mac_address: Option<String>,
+    /// Where it came from: the C# `ProfileOrigin`, a number or a name.
+    origin: Option<serde_json::Value>,
+    /// Its place among its folder's profiles; 0, the C# default, sorts by name.
+    #[serde(default)]
+    sort_order: i64,
+    /// Its tunnels panel left open or closed; absent follows the setting.
+    tunnels_panel_expanded: Option<bool>,
     #[serde(default)]
     display_name: String,
     #[serde(default)]
@@ -330,6 +366,22 @@ struct LegacyServer {
     rdp_audio_capture: bool,
     #[serde(default)]
     rdp_multi_monitor: bool,
+    #[serde(default)]
+    rdp_selected_monitor_indices: Vec<i64>,
+    #[serde(default)]
+    rdp_strict_server_authentication: bool,
+    #[serde(default)]
+    rdp_disable_udp: bool,
+    /// Absent means the C# default: on.
+    rdp_bitmap_caching: Option<bool>,
+    /// Absent means the C# default: on.
+    rdp_compression: Option<bool>,
+    #[serde(default)]
+    rdp_hardware_acceleration: bool,
+    #[serde(default)]
+    rdp_full_screen: bool,
+    /// `Stretch` (the C# default), `Preserve`, `Auto`, `Dynamic`, `16:9`, `4:3` or `21:9`.
+    rdp_aspect_ratio: Option<String>,
     #[serde(default)]
     rdp_anti_idle: bool,
     /// Absent means the C# default: on.
@@ -467,8 +519,15 @@ struct RdpChoices {
     color_depth: Option<i64>,
     audio_mode: i64,
     auto_reconnect: bool,
-    /// What the choices turn on that Heimdall-rs does not have.
-    dropped: Vec<Dropped>,
+    /// Opened in the Windows client.
+    external: bool,
+    printers: bool,
+    com_ports: bool,
+    smart_cards: bool,
+    webcam: bool,
+    usb: bool,
+    microphone: bool,
+    multi_monitor: bool,
 }
 
 impl RdpChoices {
@@ -482,19 +541,14 @@ impl RdpChoices {
                 color_depth: defaults.color_depth,
                 audio_mode: defaults.audio_mode,
                 auto_reconnect: defaults.auto_reconnect.unwrap_or(true),
-                dropped: turned_on(&[
-                    (
-                        is_external(defaults.mode.as_deref()),
-                        Dropped::ExternalClient,
-                    ),
-                    (defaults.printers, Dropped::RdpPrinters),
-                    (defaults.com_ports, Dropped::RdpComPorts),
-                    (defaults.smart_cards, Dropped::RdpSmartCards),
-                    (defaults.webcam, Dropped::RdpWebcam),
-                    (defaults.usb, Dropped::RdpUsb),
-                    (defaults.audio_capture, Dropped::RdpMicrophone),
-                    (defaults.multi_monitor, Dropped::RdpMultiMonitor),
-                ]),
+                external: is_external(defaults.mode.as_deref()),
+                printers: defaults.printers,
+                com_ports: defaults.com_ports,
+                smart_cards: defaults.smart_cards,
+                webcam: defaults.webcam,
+                usb: defaults.usb,
+                microphone: defaults.audio_capture,
+                multi_monitor: defaults.multi_monitor,
             }
         } else {
             Self {
@@ -504,21 +558,67 @@ impl RdpChoices {
                 color_depth: server.rdp_color_depth,
                 audio_mode: server.rdp_audio_mode,
                 auto_reconnect: server.rdp_auto_reconnect.unwrap_or(true),
-                dropped: turned_on(&[
-                    (
-                        is_external(server.rdp_mode.as_deref()),
-                        Dropped::ExternalClient,
-                    ),
-                    (server.rdp_redirect_printers, Dropped::RdpPrinters),
-                    (server.rdp_redirect_com_ports, Dropped::RdpComPorts),
-                    (server.rdp_redirect_smart_cards, Dropped::RdpSmartCards),
-                    (server.rdp_redirect_webcam, Dropped::RdpWebcam),
-                    (server.rdp_redirect_usb, Dropped::RdpUsb),
-                    (server.rdp_audio_capture, Dropped::RdpMicrophone),
-                    (server.rdp_multi_monitor, Dropped::RdpMultiMonitor),
-                ]),
+                external: is_external(server.rdp_mode.as_deref()),
+                printers: server.rdp_redirect_printers,
+                com_ports: server.rdp_redirect_com_ports,
+                smart_cards: server.rdp_redirect_smart_cards,
+                webcam: server.rdp_redirect_webcam,
+                usb: server.rdp_redirect_usb,
+                microphone: server.rdp_audio_capture,
+                multi_monitor: server.rdp_multi_monitor,
             }
         }
+    }
+
+    /// What the choices and `server` turn on that the built-in client does not do yet,
+    /// kept in the profile.
+    fn extras(&self, server: &LegacyServer) -> RdpExtras {
+        RdpExtras {
+            external: self.external,
+            rd_gateway: server
+                .rdp_gateway
+                .as_deref()
+                .map(str::trim)
+                .filter(|host| !host.is_empty())
+                .map(str::to_owned),
+            redirect_printers: self.printers,
+            redirect_com_ports: self.com_ports,
+            redirect_smart_cards: self.smart_cards,
+            redirect_webcam: self.webcam,
+            redirect_usb: self.usb,
+            microphone: self.microphone,
+            multi_monitor: self.multi_monitor,
+            monitors: server
+                .rdp_selected_monitor_indices
+                .iter()
+                .filter_map(|index| u32::try_from(*index).ok())
+                .collect(),
+            strict_server_authentication: server.rdp_strict_server_authentication,
+            disable_udp: server.rdp_disable_udp,
+            bitmap_caching: server.rdp_bitmap_caching.unwrap_or(true),
+            compression: server.rdp_compression.unwrap_or(true),
+            hardware_acceleration: server.rdp_hardware_acceleration,
+            full_screen: server.rdp_full_screen,
+        }
+    }
+
+    /// What the choices and `server` turn on that the built-in client does not do yet, in
+    /// a fixed order, for the import's summary.
+    fn dropped(&self, server: &LegacyServer) -> Vec<Dropped> {
+        turned_on(&[
+            (self.external, Dropped::ExternalClient),
+            (
+                non_empty(server.rdp_gateway.as_ref()).is_some(),
+                Dropped::RdGateway,
+            ),
+            (self.printers, Dropped::RdpPrinters),
+            (self.com_ports, Dropped::RdpComPorts),
+            (self.smart_cards, Dropped::RdpSmartCards),
+            (self.webcam, Dropped::RdpWebcam),
+            (self.usb, Dropped::RdpUsb),
+            (self.microphone, Dropped::RdpMicrophone),
+            (self.multi_monitor, Dropped::RdpMultiMonitor),
+        ])
     }
 
     /// The C# audio mode: not played, played here, or played on the server.
@@ -535,7 +635,7 @@ impl RdpChoices {
 fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<Dropped> {
     let kind = server.connection_type.as_str();
     if kind == RDP_CONNECTION_TYPE {
-        RdpChoices::of(server, defaults).dropped
+        RdpChoices::of(server, defaults).dropped(server)
     } else if [
         WINRM_CONNECTION_TYPE,
         LOCAL_CONNECTION_TYPE,
@@ -555,6 +655,31 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
             ),
             (server.ssh_x11_forwarding, Dropped::X11Forwarding),
         ])
+    }
+}
+
+/// What `server` says of itself besides how to reach it: an environment or an address that
+/// does not read is left out, the rest kept.
+fn metadata_of(server: &LegacyServer) -> crate::metadata::ProfileMetadata {
+    crate::metadata::ProfileMetadata {
+        environment: server
+            .environment
+            .as_deref()
+            .and_then(crate::metadata::Environment::named),
+        tags: server.tags.as_deref().unwrap_or_default().trim().to_owned(),
+        mac_address: server
+            .mac_address
+            .as_deref()
+            .and_then(|typed| typed.parse().ok()),
+        origin: server
+            .origin
+            .as_ref()
+            .and_then(crate::metadata::ProfileOrigin::csharp),
+        // 0, the C# default, is no place of its own: sorted by name.
+        sort_order: (server.sort_order != 0)
+            .then(|| i32::try_from(server.sort_order).ok())
+            .flatten(),
+        tunnels_expanded: server.tunnels_panel_expanded,
     }
 }
 
@@ -595,8 +720,9 @@ fn resolution_of(server: &LegacyServer) -> (Resolution, (u16, u16)) {
     let mode = match server.rdp_resolution_mode.as_deref() {
         Some(mode) if mode.eq_ignore_ascii_case("Fixed") => Resolution::Fixed,
         Some(mode) if mode.eq_ignore_ascii_case("SmartSizing") => Resolution::SmartSizing,
+        Some(mode) if mode.eq_ignore_ascii_case("Multimon") => Resolution::MultiMonitor,
+        Some(mode) if mode.eq_ignore_ascii_case("Auto") => Resolution::Auto,
         None if sized => Resolution::Fixed,
-        // Multi-monitor and Auto have no sense in a tab: Auto windowed fits the window.
         Some(_) | None => Resolution::FitWindow,
     };
     if !sized {
@@ -722,17 +848,7 @@ pub fn import(
                 if server.is_favorite {
                     report.favorites.push(ProfileId::new(server.id.clone()));
                 }
-                let metadata = crate::metadata::ProfileMetadata {
-                    environment: server
-                        .environment
-                        .as_deref()
-                        .and_then(crate::metadata::Environment::named),
-                    tags: server.tags.as_deref().unwrap_or_default().trim().to_owned(),
-                    mac_address: server
-                        .mac_address
-                        .as_deref()
-                        .and_then(|typed| typed.parse().ok()),
-                };
+                let metadata = metadata_of(&server);
                 if !metadata.is_empty() {
                     report
                         .metadata
@@ -1132,13 +1248,6 @@ fn convert_rdp(
         return Err(SkipReason::MissingHost);
     }
     let gateway = routed_gateway(server, gateways)?;
-    if server
-        .rdp_gateway
-        .as_ref()
-        .is_some_and(|gateway| !gateway.trim().is_empty())
-    {
-        return Err(SkipReason::NeedsRdGateway);
-    }
     let port = match server.remote_port {
         None => DEFAULT_RDP_PORT,
         Some(value) => match u16::try_from(value) {
@@ -1179,6 +1288,10 @@ fn convert_rdp(
             // Always the profile's in the C# Heimdall, never a global default. A negative
             // value is none the C# dialog writes: taken as no box ticked.
             performance_flags: u32::try_from(server.rdp_performance_flags).unwrap_or(0),
+            aspect: server
+                .rdp_aspect_ratio
+                .as_deref()
+                .map_or_else(Aspect::default, Aspect::csharp),
         },
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,
@@ -1187,6 +1300,7 @@ fn convert_rdp(
         // Not one of the global defaults in the C# Heimdall either.
         anti_idle: server.rdp_anti_idle,
         auto_reconnect: choices.auto_reconnect,
+        extras: choices.extras(server),
     })
 }
 

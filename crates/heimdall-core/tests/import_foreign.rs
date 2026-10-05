@@ -227,11 +227,19 @@ fn mremoteng_nodes_are_read_with_their_containers_as_folders() {
         .collect();
     assert_eq!(
         skipped,
-        [
-            ("site", &SkipReason::NotSsh("HTTPS".to_owned())),
-            ("behind", &SkipReason::NeedsRdGateway),
-        ],
+        [("site", &SkipReason::NotSsh("HTTPS".to_owned()))],
         "a protocol Heimdall lacks is said, not made RDP; a node with neither name nor host is none"
+    );
+    let gateways: Vec<(&str, Option<&str>)> = report
+        .rdp
+        .iter()
+        .map(|profile| (profile.name.as_str(), profile.extras.rd_gateway()))
+        .filter(|(_, gateway)| gateway.is_some())
+        .collect();
+    assert_eq!(
+        gateways,
+        [("behind", Some("gw.lab"))],
+        "a gateway always used is kept; one never used is none"
     );
 }
 
@@ -310,11 +318,21 @@ fn an_rdcman_27_file_is_read_under_its_properties_where_the_csharp_finds_nothing
         [
             "Domain controller dc.lab:3391 Estate/Paris admin CORP",
             "files.lab files.lab:3391 Estate/Paris admin CORP",
+            "far.lab far.lab:3391 Estate/Paris admin CORP",
         ],
-        "the account and port are the group's; a gateway switched off is none"
+        "the account and port are the group's"
     );
-    assert_eq!(report.skipped.len(), 1);
-    assert_eq!(report.skipped[0].reason, SkipReason::NeedsRdGateway);
+    let gateways: Vec<Option<&str>> = report
+        .rdp
+        .iter()
+        .map(|profile| profile.extras.rd_gateway())
+        .collect();
+    assert_eq!(
+        gateways,
+        [None, None, Some("gw.lab")],
+        "a gateway switched off is none; one switched on is kept"
+    );
+    assert!(report.skipped.is_empty());
 }
 
 #[test]
@@ -353,8 +371,8 @@ fn the_ids_given_are_the_callers_one_per_kept_session() {
             .chain(report.profiles.iter().map(|p| p.id.as_str().to_owned()))
             .collect()
     };
-    assert_eq!(ids.len(), 4);
+    assert_eq!(ids.len(), 5, "the one behind its RD Gateway too");
     let unique: std::collections::HashSet<&String> = ids.iter().collect();
-    assert_eq!(unique.len(), 4);
+    assert_eq!(unique.len(), 5);
     assert!(ids.iter().all(|id| id.starts_with("id-")));
 }

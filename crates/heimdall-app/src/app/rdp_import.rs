@@ -22,6 +22,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use heimdall_core::import::rdp_file::{self, Conflict, Patch, Refusal};
+use heimdall_core::metadata::ProfileOrigin;
 use heimdall_core::profile::{ProfileId, RdpProfile};
 
 use super::{App, Dialog, Effect};
@@ -303,7 +304,12 @@ impl App {
             }
         }
         let saved = self.store.apply(|store| {
+            let ids: Vec<ProfileId> = written.iter().map(|profile| profile.id.clone()).collect();
             store.merge_rdp(written);
+            // As the C# marks a profile a file wrote, replaced ones included.
+            for id in &ids {
+                store.set_origin(id, ProfileOrigin::RdpFile);
+            }
         });
         self.dialog = Some(match saved {
             Ok(()) => Dialog::RdpDone(done),

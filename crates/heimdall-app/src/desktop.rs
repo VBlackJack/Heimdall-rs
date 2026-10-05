@@ -262,55 +262,8 @@ pub struct DesktopPane {
     save: Option<SaveState>,
 }
 
-/// The proportions of a desktop that follows its tab, as the C# `AspectRatio` offers them
-/// under "Match window".
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum Aspect {
-    /// The tab's own: the whole of it.
-    #[default]
-    Stretch,
-    /// 16:9.
-    Wide,
-    /// 4:3.
-    Standard,
-    /// 21:9.
-    UltraWide,
-}
-
-impl Aspect {
-    /// The ratios, in the C# menu's order.
-    pub const RATIOS: [Self; 3] = [Self::Wide, Self::Standard, Self::UltraWide];
-
-    /// Its width and height, in parts; `None` for the tab's own.
-    #[must_use]
-    pub fn ratio(self) -> Option<(u32, u32)> {
-        match self {
-            Self::Stretch => None,
-            Self::Wide => Some((16, 9)),
-            Self::Standard => Some((4, 3)),
-            Self::UltraWide => Some((21, 9)),
-        }
-    }
-
-    /// The size asked of the server for a tab of `size`: the tab's own for Stretch; else the
-    /// largest of the ratio inside it, as the C# `AspectRatioManager` fits it, kept a size
-    /// an RDP server takes.
-    #[must_use]
-    pub fn fit(self, (width, height): (u16, u16)) -> (u16, u16) {
-        let Some((parts_wide, parts_high)) = self.ratio() else {
-            return (width, height);
-        };
-        let (width, height) = (u32::from(width), u32::from(height));
-        let (fitted_width, fitted_height) = if width * parts_high > height * parts_wide {
-            // Wider than the ratio: as high as the tab, bars at the sides.
-            (height * parts_wide / parts_high, height)
-        } else {
-            (width, width * parts_high / parts_wide)
-        };
-        let side = |value: u32| u16::try_from(value).unwrap_or(u16::MAX);
-        heimdall_core::profile::fixed_desktop(side(fitted_width), side(fitted_height))
-    }
-}
+/// The proportions of a desktop that follows its tab, kept with its profile.
+pub use heimdall_core::profile::Aspect;
 
 /// Where saving an RDP server's copied files is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

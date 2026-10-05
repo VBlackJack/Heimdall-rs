@@ -439,6 +439,7 @@ mod tests {
             ..RdpOptions::default()
         };
         let config = rdp_config(&request(RdpProfile {
+            extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("dc"),
             name: "dc".to_owned(),
             group: None,

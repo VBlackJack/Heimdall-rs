@@ -53,6 +53,7 @@ fn app_with(dir: &Path, profiles: Vec<SshProfile>) -> App {
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge(profiles);
     store.merge_rdp([RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: Some("Windows".to_owned()),

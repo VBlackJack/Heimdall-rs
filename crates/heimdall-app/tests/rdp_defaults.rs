@@ -34,6 +34,7 @@ use heimdall_term::GridSize;
 
 fn profile(id: &str, follow_defaults: bool) -> RdpProfile {
     RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_owned(),
         group: None,

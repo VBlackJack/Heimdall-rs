@@ -29,6 +29,7 @@ use std::fmt;
 use heimdall_core::import::csharp::{self, ImportReport};
 use heimdall_core::import::foreign::{FileWarning, Parsed};
 use heimdall_core::import::{mobaxterm, mremoteng, rdcman};
+use heimdall_core::metadata::ProfileOrigin;
 use heimdall_core::store::MergeReport;
 
 use super::{App, Dialog, Effect, ImportSummary, server_text};
@@ -183,9 +184,20 @@ impl App {
     /// A foreign file's sessions, each kept one given its own identifier, as the C# gives
     /// each a new GUID.
     fn pending(&self, kind: FileKind, parsed: &Parsed) -> PendingImport {
+        let mut report = parsed.report(&mut || self.fresh_id().as_str().to_owned());
+        let origin = match kind {
+            FileKind::MobaXterm => Some(ProfileOrigin::MobaXterm),
+            FileKind::MRemoteNg => Some(ProfileOrigin::MRemoteNg),
+            FileKind::RdcMan => Some(ProfileOrigin::RdcMan),
+            // A Heimdall document says its own.
+            FileKind::Heimdall => None,
+        };
+        if let Some(origin) = origin {
+            report.stamp_origin(origin);
+        }
         PendingImport {
             kind,
-            report: parsed.report(&mut || self.fresh_id().as_str().to_owned()),
+            report,
             warnings: parsed.warnings.clone(),
             stored_credentials: parsed.stored_credentials,
         }

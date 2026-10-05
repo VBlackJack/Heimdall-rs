@@ -23,11 +23,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
-    AudioPlayback, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT,
+    Aspect, AudioPlayback, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT,
     DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Experience,
     FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile, LocalCommand,
-    LocalProfile, ProfileId, RdpOptions, RdpProfile, Resolution, SshProfile, TelnetProfile,
-    VncProfile, WinRmProfile, fixed_desktop,
+    LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution, SshProfile,
+    TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 use crate::local_draft;
@@ -330,6 +330,8 @@ pub enum ProfileChoice {
     Audio(AudioPlayback),
     /// How the desktop is sized.
     Resolution(Resolution),
+    /// The proportions the desktop is first given.
+    Aspect(Aspect),
     /// A common size, written into the width and height.
     Preset(u16, u16),
     /// Whether a fixed desktop is scaled into the tab.
@@ -400,6 +402,12 @@ pub struct ProfileDraft {
     /// RDP: the options chosen from lists and boxes of their own; the administrative session
     /// is a toggle, the fixed size is typed in `fixed_width` and `fixed_height`.
     pub rdp_options: RdpOptions,
+    /// RDP: what the profile asks that the built-in client does not do yet, which the form
+    /// does not edit: kept as it is, so that saving the form never drops it.
+    pub rdp_extras: RdpExtras,
+    /// What the profile's metadata says that the form does not show (where it came from,
+    /// its place in its folder, its tunnels panel): kept as it is.
+    pub metadata_kept: ProfileMetadata,
     /// RDP: width of a fixed desktop, as typed.
     pub fixed_width: String,
     /// RDP: height of a fixed desktop, as typed.
@@ -687,6 +695,7 @@ impl ProfileDraft {
             protocol_chosen: true,
             toggles,
             rdp_options: profile.options,
+            rdp_extras: profile.extras.clone(),
             fixed_width: profile.options.fixed_width.to_string(),
             fixed_height: profile.options.fixed_height.to_string(),
             ..Self::default()
@@ -765,7 +774,10 @@ impl ProfileDraft {
     /// in, and for RDP the clipboard shared and Network Level Authentication required.
     #[must_use]
     pub fn new_for(protocol: DraftProtocol) -> Self {
-        let options = RdpOptions::default();
+        let options = RdpOptions {
+            resolution: Resolution::NEW_PROFILE,
+            ..RdpOptions::default()
+        };
         let mut draft = Self {
             protocol,
             protocol_chosen: true,
@@ -824,11 +836,13 @@ impl ProfileDraft {
             environment: self.environment,
             tags: self.tags.trim().to_owned(),
             mac_address,
+            ..self.metadata_kept.clone()
         })
     }
 
     /// The form filled with what a saved profile says of its server.
     pub fn show_metadata(&mut self, metadata: &ProfileMetadata) {
+        self.metadata_kept = metadata.clone();
         self.environment = metadata.environment;
         self.tags.clone_from(&metadata.tags);
         self.mac_address = metadata
@@ -875,6 +889,7 @@ impl ProfileDraft {
             ProfileChoice::ColorDepth(depth) => self.rdp_options.color_depth = depth,
             ProfileChoice::Audio(audio) => self.rdp_options.audio = audio,
             ProfileChoice::Resolution(resolution) => self.rdp_options.resolution = resolution,
+            ProfileChoice::Aspect(aspect) => self.rdp_options.aspect = aspect,
             ProfileChoice::Preset(width, height) => {
                 self.fixed_width = width.to_string();
                 self.fixed_height = height.to_string();
@@ -1191,6 +1206,7 @@ impl ProfileDraft {
                 session_logging: self.saved_session_logging(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
+                extras: self.rdp_extras.clone(),
                 id,
                 name,
                 group,
@@ -1556,7 +1572,14 @@ mod tests {
         );
         assert!(!rdp.is_on(ProfileToggle::AntiIdle), "off, as the C#");
         assert!(rdp.is_on(ProfileToggle::AutoReconnect), "on, as the C#");
-        assert_eq!(rdp.rdp_options, RdpOptions::default());
+        assert_eq!(
+            rdp.rdp_options,
+            RdpOptions {
+                resolution: Resolution::Auto,
+                ..RdpOptions::default()
+            },
+            "sized automatically, as a new C# profile"
+        );
         assert_eq!(
             ProfileToggle::of(DraftProtocol::Rdp),
             [
@@ -1927,8 +1950,80 @@ mod tests {
     }
 
     #[test]
+    fn saving_the_form_keeps_what_it_does_not_show() {
+        use heimdall_core::metadata::ProfileOrigin;
+
+        let saved = RdpProfile {
+            extras: RdpExtras {
+                rd_gateway: Some("rdg.lab".to_owned()),
+                redirect_printers: true,
+                compression: false,
+                ..RdpExtras::default()
+            },
+            options: RdpOptions {
+                aspect: Aspect::UltraWide,
+                ..RdpOptions::default()
+            },
+            id: id(),
+            name: "dc".to_owned(),
+            group: None,
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            username: None,
+            domain: None,
+            allow_tls_only: false,
+            gateway: None,
+            redirect_clipboard: true,
+            redirect_drives: false,
+            vault_entry: None,
+            forwards: Forwards::default(),
+            follow_defaults: false,
+            several_servers: false,
+            anti_idle: false,
+            auto_reconnect: true,
+        };
+        let mut form = ProfileDraft::from_rdp(&saved);
+        form.show_metadata(&ProfileMetadata {
+            tags: "dc".to_owned(),
+            origin: Some(ProfileOrigin::RdpFile),
+            sort_order: Some(7),
+            tunnels_expanded: Some(true),
+            ..ProfileMetadata::default()
+        });
+        form.name = "Renamed".to_owned();
+        form.tags = "dc win".to_owned();
+        assert_eq!(
+            form.to_saved(id()),
+            Ok(DraftProfile::Rdp(RdpProfile {
+                name: "Renamed".to_owned(),
+                ..saved
+            }))
+        );
+        assert_eq!(
+            form.metadata(),
+            Ok(ProfileMetadata {
+                tags: "dc win".to_owned(),
+                origin: Some(ProfileOrigin::RdpFile),
+                sort_order: Some(7),
+                tunnels_expanded: Some(true),
+                ..ProfileMetadata::default()
+            })
+        );
+        form.choose(ProfileChoice::Aspect(Aspect::Standard));
+        assert_eq!(form.rdp_options.aspect, Aspect::Standard);
+    }
+
+    #[test]
+    fn a_new_rdp_profile_sizes_its_desktop_automatically_as_the_csharp_dialog() {
+        let form = ProfileDraft::new_for(DraftProtocol::Rdp);
+        assert_eq!(form.rdp_options.resolution, Resolution::Auto);
+        assert_eq!(form.rdp_extras, RdpExtras::default());
+    }
+
+    #[test]
     fn every_protocol_reads_back_from_its_form() {
         let rdp = RdpProfile {
+            extras: heimdall_core::profile::RdpExtras::default(),
             id: id(),
             name: "dc".to_owned(),
             group: Some("Win".to_owned()),

@@ -1185,6 +1185,8 @@ fn mode_name(mode: Resolution) -> String {
         Resolution::FitWindow => fl!("ui-resolution-mode-fit-window"),
         Resolution::Fixed => fl!("ui-resolution-mode-fixed"),
         Resolution::SmartSizing => fl!("ui-resolution-mode-smart-sizing"),
+        Resolution::MultiMonitor => fl!("ui-resolution-mode-multi-monitor"),
+        Resolution::Auto => fl!("ui-resolution-mode-auto"),
     }
 }
 

@@ -51,6 +51,7 @@ fn app(dir: &Path) -> App {
         session_logging: None,
     }]);
     store.merge_rdp([RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: None,

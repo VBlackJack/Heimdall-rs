@@ -143,6 +143,7 @@ fn a_corrupt_file_is_an_error_not_an_empty_store() {
 
 fn rdp(id: &str) -> RdpProfile {
     RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new(id),
         name: id.to_uppercase(),
         group: Some("Windows".to_owned()),
@@ -487,6 +488,7 @@ fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
     let mut store = ProfileStore::open(&path).expect("opens");
     let mut chosen = rdp("chosen");
     chosen.options = RdpOptions {
+        aspect: heimdall_core::profile::Aspect::Stretch,
         color_depth: ColorDepth::Bpp16,
         audio: AudioPlayback::OnServer,
         admin_session: true,
@@ -528,6 +530,7 @@ fn the_display_and_session_options_are_written_only_when_not_the_defaults() {
     assert_eq!(
         RdpOptions::default(),
         RdpOptions {
+            aspect: heimdall_core::profile::Aspect::Stretch,
             color_depth: ColorDepth::Bpp32,
             audio: AudioPlayback::Off,
             admin_session: false,
@@ -834,6 +837,9 @@ fn a_profile_s_metadata_is_kept_beside_it_read_leniently_and_goes_with_it() {
     store.merge([profile("web", "web.lab")]);
     let id = store.ssh_profiles()[0].id.clone();
     let metadata = ProfileMetadata {
+        origin: None,
+        sort_order: None,
+        tunnels_expanded: None,
         environment: Some(Environment::Staging),
         tags: "frontend".to_owned(),
         mac_address: "0A:0B:0C:0D:0E:0F".parse().ok(),
@@ -867,5 +873,63 @@ fn a_profile_s_metadata_is_kept_beside_it_read_leniently_and_goes_with_it() {
     assert_eq!(
         (read.environment, read.tags.as_str(), read.mac_address),
         (None, "kept", None)
+    );
+}
+
+#[test]
+fn an_rdp_profile_keeps_what_the_built_in_client_does_not_use_and_its_metadata_its_origin() {
+    use heimdall_core::metadata::{ProfileMetadata, ProfileOrigin};
+    use heimdall_core::profile::{Aspect, RdpExtras, RdpOptions, Resolution};
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    let kept = RdpProfile {
+        options: RdpOptions {
+            resolution: Resolution::MultiMonitor,
+            aspect: Aspect::UltraWide,
+            ..RdpOptions::default()
+        },
+        extras: RdpExtras {
+            rd_gateway: Some("rdg.lab".to_owned()),
+            redirect_usb: true,
+            monitors: vec![1],
+            compression: false,
+            hardware_acceleration: true,
+            ..RdpExtras::default()
+        },
+        ..rdp("dc")
+    };
+    store.merge_rdp([kept.clone(), rdp("plain")]);
+    let id = ProfileId::new("dc");
+    store.set_metadata(
+        &id,
+        ProfileMetadata {
+            tags: "domain".to_owned(),
+            sort_order: Some(-2),
+            tunnels_expanded: Some(true),
+            ..ProfileMetadata::default()
+        },
+    );
+    assert!(store.set_origin(&id, ProfileOrigin::RdcMan));
+    store.save().expect("saves");
+
+    let text = fs::read_to_string(&path).expect("read");
+    assert!(
+        !text.contains("bitmap_caching"),
+        "a default is not written down:\n{text}"
+    );
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.rdp_profiles(), [kept, rdp("plain")]);
+    assert_eq!(
+        reopened.metadata(&id),
+        Some(&ProfileMetadata {
+            tags: "domain".to_owned(),
+            origin: Some(ProfileOrigin::RdcMan),
+            sort_order: Some(-2),
+            tunnels_expanded: Some(true),
+            ..ProfileMetadata::default()
+        }),
+        "the origin marked, the tags kept"
     );
 }

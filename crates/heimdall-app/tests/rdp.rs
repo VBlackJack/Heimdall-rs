@@ -36,6 +36,7 @@ fn app(dir: &Path) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_rdp([RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: None,
@@ -57,6 +58,7 @@ fn app(dir: &Path) -> App {
     }]);
     // The same port on another server.
     store.merge_rdp([RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("web"),
         name: "Web".to_owned(),
         group: None,
@@ -1045,4 +1047,68 @@ fn match_window_fits_the_desktop_to_a_ratio_and_keeps_it_for_the_reconnections()
         Some(Aspect::Wide)
     );
     assert_eq!(*watched.borrow(), Some((1200, 675)));
+}
+
+/// `app` with profile `dc` changed by `change`.
+fn app_with(dir: &Path, change: impl FnOnce(&mut RdpProfile)) -> App {
+    drop(app(dir));
+    let mut store = ProfileStore::open(dir.join("profiles.toml")).expect("store");
+    let mut profile = store
+        .rdp_profiles()
+        .iter()
+        .find(|profile| profile.id.as_str() == "dc")
+        .cloned()
+        .expect("dc");
+    change(&mut profile);
+    store.merge_rdp([profile]);
+    store.save().expect("save");
+    App::new(config(dir))
+}
+
+#[test]
+fn a_desktop_starts_at_the_proportions_its_profile_keeps() {
+    use heimdall_app::Aspect;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), |profile| {
+        profile.options.aspect = Aspect::Wide;
+    });
+    let (tab, attempt) = open(&mut app);
+    let (input, _received) = mpsc::unbounded_channel();
+    let (size, watched) = tokio::sync::watch::channel(None);
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(64, 48),
+            input,
+            size,
+            clipboard: None,
+        },
+    });
+    app.update(Message::DesktopResize {
+        tab,
+        width: 1600,
+        height: 1000,
+    });
+    assert_eq!(
+        *watched.borrow(),
+        Some((1600, 900)),
+        "16:9 from the start, as the C# reads the profile's ratio"
+    );
+}
+
+#[test]
+fn a_server_behind_a_remote_desktop_gateway_is_not_reached_straight() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), |profile| {
+        profile.extras.rd_gateway = Some("rdg.lab".to_owned());
+    });
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    assert!(effects.is_empty(), "nothing connects: {effects:?}");
+    let tab = app.active_tab().expect("the tab says why");
+    assert_eq!(
+        tab.phase,
+        Phase::Failed(UiError::NeedsRdGateway("rdg.lab".to_owned()))
+    );
 }

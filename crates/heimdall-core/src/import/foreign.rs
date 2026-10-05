@@ -21,6 +21,8 @@
 //! The C# gives each imported session a new identifier; so does the caller, through
 //! [`Parsed::report`]: the identifiers written here only tell the sessions apart until then.
 
+use std::collections::HashMap;
+
 use serde_json::{Map, Value, json};
 
 use super::csharp::{self, ImportReport};
@@ -68,26 +70,28 @@ impl Parsed {
         let document = json!({ "servers": self.servers }).to_string();
         // The document is written here, of the shape the import reads: it cannot be refused.
         let mut report = csharp::import(&document, None).unwrap_or_default();
-        for profile in &mut report.profiles {
-            profile.id = ProfileId::new(new_id());
+        let mut renamed: HashMap<ProfileId, ProfileId> = HashMap::new();
+        let mut fresh = |id: &mut ProfileId| {
+            let new = ProfileId::new(new_id());
+            renamed.insert(std::mem::replace(id, new.clone()), new);
+        };
+        report.profiles.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.rdp.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.telnet.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.vnc.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.ftp.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.local.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.winrm.iter_mut().for_each(|p| fresh(&mut p.id));
+        // What the sessions say of their servers follows them to their new identifiers.
+        for (id, _) in &mut report.metadata {
+            if let Some(new) = renamed.get(id) {
+                id.clone_from(new);
+            }
         }
-        for profile in &mut report.rdp {
-            profile.id = ProfileId::new(new_id());
-        }
-        for profile in &mut report.telnet {
-            profile.id = ProfileId::new(new_id());
-        }
-        for profile in &mut report.vnc {
-            profile.id = ProfileId::new(new_id());
-        }
-        for profile in &mut report.ftp {
-            profile.id = ProfileId::new(new_id());
-        }
-        for profile in &mut report.local {
-            profile.id = ProfileId::new(new_id());
-        }
-        for profile in &mut report.winrm {
-            profile.id = ProfileId::new(new_id());
+        for id in &mut report.favorites {
+            if let Some(new) = renamed.get(id) {
+                id.clone_from(new);
+            }
         }
         report
     }
@@ -98,5 +102,60 @@ pub(super) fn set_text(fields: &mut Map<String, Value>, key: &str, value: &str) 
     let value = value.trim();
     if !value.is_empty() {
         fields.insert(key.to_owned(), Value::String(value.to_owned()));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::metadata::{Environment, ProfileOrigin};
+
+    #[test]
+    fn what_a_session_says_and_its_origin_follow_it_to_its_new_identifier() {
+        let mut parsed = Parsed::default();
+        for (name, tags) in [("a", "web"), ("b", "")] {
+            let mut fields = Map::new();
+            fields.insert("displayName".to_owned(), Value::from(name));
+            fields.insert(
+                "remoteServer".to_owned(),
+                Value::from(format!("{name}.lab")),
+            );
+            fields.insert("connectionType".to_owned(), Value::from("SSH"));
+            fields.insert("tags".to_owned(), Value::from(tags));
+            fields.insert("environment".to_owned(), Value::from("Lab"));
+            fields.insert("isFavorite".to_owned(), Value::from(name == "a"));
+            parsed.push(fields);
+        }
+        let mut next = 0;
+        let mut report = parsed.report(&mut || {
+            next += 1;
+            format!("new-{next}")
+        });
+        report.stamp_origin(ProfileOrigin::MobaXterm);
+        let ids: Vec<&str> = report.profiles.iter().map(|p| p.id.as_str()).collect();
+        assert_eq!(ids, ["new-1", "new-2"]);
+        assert_eq!(report.favorites, [ProfileId::new("new-1")]);
+        let said: Vec<(&str, &str, Option<Environment>, Option<ProfileOrigin>)> = report
+            .metadata
+            .iter()
+            .map(|(id, m)| (id.as_str(), m.tags.as_str(), m.environment, m.origin))
+            .collect();
+        assert_eq!(
+            said,
+            [
+                (
+                    "new-1",
+                    "web",
+                    Some(Environment::Lab),
+                    Some(ProfileOrigin::MobaXterm)
+                ),
+                (
+                    "new-2",
+                    "",
+                    Some(Environment::Lab),
+                    Some(ProfileOrigin::MobaXterm)
+                ),
+            ]
+        );
     }
 }

@@ -112,6 +112,10 @@ impl App {
         ),
         cancel: CancellationToken,
     ) -> Result<RdpRequest, UiError> {
+        // Straight to the server, it could not be reached, or not the one meant.
+        if let Some(gateway) = profile.extras.rd_gateway() {
+            return Err(UiError::NeedsRdGateway(gateway.to_owned()));
+        }
         let route = self
             .store
             .route(profile.gateway.as_ref())

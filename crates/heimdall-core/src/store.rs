@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::folder::{self, FolderColor, FolderError};
-use crate::metadata::{Environment, MacAddress, ProfileMetadata};
+use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
     FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway, SshProfile,
@@ -85,6 +85,12 @@ struct MetadataEntry {
     tags: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     mac_address: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    origin: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    sort_order: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tunnels_expanded: Option<bool>,
 }
 
 impl MetadataEntry {
@@ -98,6 +104,9 @@ impl MetadataEntry {
                 .mac_address
                 .as_deref()
                 .and_then(|typed| typed.parse::<MacAddress>().ok()),
+            origin: self.origin.as_deref().and_then(ProfileOrigin::named),
+            sort_order: self.sort_order,
+            tunnels_expanded: self.tunnels_expanded,
         }
     }
 
@@ -106,6 +115,9 @@ impl MetadataEntry {
             environment: metadata.environment.map(|e| e.name().to_owned()),
             tags: metadata.tags.clone(),
             mac_address: metadata.mac_address.map(|mac| mac.to_string()),
+            origin: metadata.origin.map(|origin| origin.name().to_owned()),
+            sort_order: metadata.sort_order,
+            tunnels_expanded: metadata.tunnels_expanded,
         }
     }
 }
@@ -537,6 +549,15 @@ impl ProfileStore {
         }
         self.metadata.insert(id.clone(), metadata);
         true
+    }
+
+    /// Marks profile `id` as come from `origin`, what else it says kept; whether it is kept.
+    pub fn set_origin(&mut self, id: &ProfileId, origin: ProfileOrigin) -> bool {
+        let metadata = ProfileMetadata {
+            origin: Some(origin),
+            ..self.metadata.get(id).cloned().unwrap_or_default()
+        };
+        self.set_metadata(id, metadata)
     }
 
     /// Whether a profile of any protocol is `id`.

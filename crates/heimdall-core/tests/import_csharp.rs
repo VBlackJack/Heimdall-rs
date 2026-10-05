@@ -109,8 +109,20 @@ fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
            {"id": "port", "remoteServer": "h", "connectionType": "RDP", "remotePort": 0}"#,
     );
     let report = import(&json, None).expect("valid JSON");
-    let kept: Vec<&str> = report.rdp.iter().map(|p| p.id.as_str()).collect();
-    assert_eq!(kept, ["direct", "rdg-blank"]);
+    let kept: Vec<(&str, Option<&str>)> = report
+        .rdp
+        .iter()
+        .map(|p| (p.id.as_str(), p.extras.rd_gateway()))
+        .collect();
+    assert_eq!(
+        kept,
+        [
+            ("direct", None),
+            ("rdg", Some("rdg.lab")),
+            ("rdg-blank", None)
+        ],
+        "a Remote Desktop Gateway is kept, for the client that goes through it"
+    );
     let reasons: Vec<(String, SkipReason)> = report
         .skipped
         .into_iter()
@@ -121,7 +133,6 @@ fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
         vec![
             // Its gateway is not in the settings, which this import has none of.
             ("tunnel".to_owned(), SkipReason::MissingGateway),
-            ("rdg".to_owned(), SkipReason::NeedsRdGateway),
             ("port".to_owned(), SkipReason::InvalidPort(0)),
         ]
     );
@@ -793,9 +804,15 @@ fn a_csharp_resolution_mode_is_read_as_its_embedded_session_sizes_the_desktop() 
             // Both sides are needed, as the C# migration asks.
             ("one-side", fit, (1920, 1080), true, true),
             ("smart", Resolution::SmartSizing, (1920, 1080), true, true),
-            // Neither has sense in a tab.
-            ("multimon", fit, (1280, 720), true, true),
-            ("auto", fit, (1920, 1080), true, false),
+            // Kept: a tab sizes them as it fits the window, the Windows client as they say.
+            (
+                "multimon",
+                Resolution::MultiMonitor,
+                (1280, 720),
+                true,
+                true
+            ),
+            ("auto", Resolution::Auto, (1920, 1080), true, false),
             ("too-large", fixed, (7680, 4320), true, true),
         ]
     );
@@ -1355,5 +1372,89 @@ fn the_folders_colours_of_settings_json_are_imported_those_of_the_palette_only()
             ("Lab".to_owned(), FolderColor::Blue),
             ("Lab/Linux".to_owned(), FolderColor::Orange),
         ]
+    );
+}
+
+#[test]
+fn an_rdp_profile_keeps_what_the_built_in_client_does_not_do_and_where_it_came_from() {
+    use heimdall_core::import::csharp::Dropped;
+    use heimdall_core::metadata::ProfileOrigin;
+    use heimdall_core::profile::{Aspect, RdpExtras, Resolution};
+
+    let json = servers(
+        r#"{"id": "far", "displayName": "Far", "remoteServer": "far.lab", "connectionType": "RDP",
+            "rdpUseGlobalDefaults": false, "rdpMode": "External", "rdpGateway": " rdg.lab ",
+            "rdpRedirectPrinters": true, "rdpRedirectSmartCards": true, "rdpAudioCapture": true,
+            "rdpMultiMonitor": true, "rdpSelectedMonitorIndices": [0, 2, -1],
+            "rdpStrictServerAuthentication": true, "rdpDisableUdp": true,
+            "rdpBitmapCaching": false, "rdpFullScreen": true, "rdpHardwareAcceleration": true,
+            "rdpResolutionMode": "Auto", "rdpAspectRatio": "4:3",
+            "origin": 6, "sortOrder": 4, "tunnelsPanelExpanded": false},
+           {"id": "near", "remoteServer": "near.lab", "connectionType": "RDP",
+            "rdpResolutionMode": "Multimon", "rdpAspectRatio": "Preserve", "origin": "Manual"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let (far, near) = (&report.rdp[0], &report.rdp[1]);
+    assert_eq!(
+        far.extras,
+        RdpExtras {
+            external: true,
+            rd_gateway: Some("rdg.lab".to_owned()),
+            redirect_printers: true,
+            redirect_smart_cards: true,
+            microphone: true,
+            multi_monitor: true,
+            monitors: vec![0, 2],
+            strict_server_authentication: true,
+            disable_udp: true,
+            bitmap_caching: false,
+            hardware_acceleration: true,
+            full_screen: true,
+            ..RdpExtras::default()
+        }
+    );
+    assert_eq!(
+        (far.options.resolution, far.options.aspect),
+        (Resolution::Auto, Aspect::Standard)
+    );
+    assert_eq!(
+        (near.options.resolution, near.options.aspect, &near.extras),
+        (
+            Resolution::MultiMonitor,
+            Aspect::Stretch,
+            &RdpExtras::default()
+        ),
+        "Preserve fills the tab, as the C# draws it"
+    );
+    let far_metadata = report
+        .metadata
+        .iter()
+        .find(|(id, _)| id.as_str() == "far")
+        .map(|(_, metadata)| metadata)
+        .expect("far says something");
+    assert_eq!(
+        (
+            far_metadata.origin,
+            far_metadata.sort_order,
+            far_metadata.tunnels_expanded
+        ),
+        (Some(ProfileOrigin::RdcMan), Some(4), Some(false))
+    );
+    assert!(
+        report.metadata.iter().all(|(id, _)| id.as_str() != "near"),
+        "made by hand and in no particular place: nothing to keep"
+    );
+    assert_eq!(
+        report.dropped[0].settings,
+        [
+            Dropped::ExternalClient,
+            Dropped::RdGateway,
+            Dropped::RdpPrinters,
+            Dropped::RdpSmartCards,
+            Dropped::RdpMicrophone,
+            Dropped::RdpMultiMonitor,
+        ],
+        "said, as the built-in client does not use them"
     );
 }

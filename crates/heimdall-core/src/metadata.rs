@@ -122,6 +122,87 @@ impl MacAddress {
     }
 }
 
+/// Where a profile came from, as the C# `ProfileOrigin`: none for one made here.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ProfileOrigin {
+    /// A `.rdp` file.
+    RdpFile,
+    /// An OpenSSH configuration file.
+    OpenSsh,
+    /// `PuTTY`'s saved sessions.
+    Putty,
+    /// An `mRemoteNG` file.
+    MRemoteNg,
+    /// A `MobaXterm` file.
+    MobaXterm,
+    /// An `RDCMan` file.
+    RdcMan,
+}
+
+impl ProfileOrigin {
+    /// Every origin, in the C# enum's order.
+    pub const ALL: [Self; 6] = [
+        Self::RdpFile,
+        Self::OpenSsh,
+        Self::Putty,
+        Self::MRemoteNg,
+        Self::MobaXterm,
+        Self::RdcMan,
+    ];
+
+    /// Its name in the profile file.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::RdpFile => "rdp-file",
+            Self::OpenSsh => "openssh",
+            Self::Putty => "putty",
+            Self::MRemoteNg => "mremoteng",
+            Self::MobaXterm => "mobaxterm",
+            Self::RdcMan => "rdcman",
+        }
+    }
+
+    /// The origin named `name` in the profile file.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|origin| origin.name() == name.trim())
+    }
+
+    /// Its C# `ProfileOrigin` number.
+    #[must_use]
+    pub fn csharp_number(self) -> i64 {
+        let index = Self::ALL
+            .iter()
+            .position(|origin| *origin == self)
+            .unwrap_or_default();
+        i64::try_from(index).unwrap_or_default() + 1
+    }
+
+    /// The origin of a C# `ProfileOrigin`, written as its number or its name; `Manual` and
+    /// what is not known are none.
+    #[must_use]
+    pub fn csharp(value: &serde_json::Value) -> Option<Self> {
+        let number = match value {
+            serde_json::Value::Number(number) => number.as_i64()?,
+            serde_json::Value::String(name) => match name.trim() {
+                "ImportRdp" => 1,
+                "ImportOpenSsh" => 2,
+                "ImportPutty" => 3,
+                "ImportMRemoteNg" => 4,
+                "ImportMobaXterm" => 5,
+                "ImportRdcMan" => 6,
+                _ => return None,
+            },
+            _ => return None,
+        };
+        let index = usize::try_from(number.checked_sub(1)?).ok()?;
+        Self::ALL.get(index).copied()
+    }
+}
+
 /// What a profile says of its server besides how to reach it.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ProfileMetadata {
@@ -131,13 +212,25 @@ pub struct ProfileMetadata {
     pub tags: String,
     /// The MAC address Wake-on-LAN wakes it with.
     pub mac_address: Option<MacAddress>,
+    /// Where it came from, when imported.
+    pub origin: Option<ProfileOrigin>,
+    /// Its place among its folder's profiles, as the C# `SortOrder`; none sorts by name.
+    pub sort_order: Option<i32>,
+    /// Whether its tunnels panel was left open or closed, as the C#
+    /// `TunnelsPanelExpanded`; none follows the setting.
+    pub tunnels_expanded: Option<bool>,
 }
 
 impl ProfileMetadata {
     /// Whether it says nothing: then nothing is kept.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.environment.is_none() && self.tags.trim().is_empty() && self.mac_address.is_none()
+        self.environment.is_none()
+            && self.tags.trim().is_empty()
+            && self.mac_address.is_none()
+            && self.origin.is_none()
+            && self.sort_order.is_none()
+            && self.tunnels_expanded.is_none()
     }
 }
 
@@ -182,6 +275,35 @@ mod tests {
                 .chunks(6)
                 .all(|chunk| chunk == [1, 2, 3, 4, 5, 6])
         );
+    }
+
+    #[test]
+    fn an_origin_is_read_from_the_csharp_number_or_name_and_kept_by_its_own() {
+        use serde_json::json;
+        assert_eq!(ProfileOrigin::csharp(&json!(0)), None, "Manual");
+        assert_eq!(
+            ProfileOrigin::csharp(&json!(1)),
+            Some(ProfileOrigin::RdpFile)
+        );
+        assert_eq!(
+            ProfileOrigin::csharp(&json!(6)),
+            Some(ProfileOrigin::RdcMan)
+        );
+        assert_eq!(ProfileOrigin::csharp(&json!(7)), None);
+        assert_eq!(ProfileOrigin::csharp(&json!(-1)), None);
+        assert_eq!(
+            ProfileOrigin::csharp(&json!("ImportPutty")),
+            Some(ProfileOrigin::Putty)
+        );
+        assert_eq!(ProfileOrigin::csharp(&json!("Manual")), None);
+        for origin in ProfileOrigin::ALL {
+            assert_eq!(ProfileOrigin::named(origin.name()), Some(origin));
+            assert_eq!(
+                ProfileOrigin::csharp(&json!(origin.csharp_number())),
+                Some(origin)
+            );
+        }
+        assert_eq!(ProfileOrigin::named("elsewhere"), None);
     }
 
     #[test]

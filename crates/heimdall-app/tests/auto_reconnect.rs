@@ -36,6 +36,7 @@ fn app(dir: &Path) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     let dc = RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: None,

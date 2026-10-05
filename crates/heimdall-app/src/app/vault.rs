@@ -1168,6 +1168,7 @@ mod tests {
 
     fn rdp(domain: Option<&str>) -> TabProfile {
         TabProfile::Rdp(RdpProfile {
+            extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("r"),
             name: "r".to_owned(),
             group: None,

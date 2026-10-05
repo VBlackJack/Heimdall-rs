@@ -56,6 +56,7 @@ fn request(
     ssh.agent = AgentSource::Disabled;
     RdpRequest {
         profile: RdpProfile {
+            extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("rdp"),
             name: "rdp".to_owned(),
             group: None,

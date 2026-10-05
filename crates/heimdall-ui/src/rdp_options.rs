@@ -20,7 +20,7 @@
 use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField};
 use heimdall_app::{Message as AppMessage, SettingsMessage};
 use heimdall_core::profile::{
-    AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, Resolution,
+    Aspect, AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, Resolution,
 };
 use iced::widget::{checkbox, column, pick_list, row, text};
 use iced::{Element, Length};
@@ -194,6 +194,21 @@ impl std::fmt::Display for ResolutionChoice {
             Resolution::FitWindow => fl!("ui-profile-resolution-fit-window"),
             Resolution::Fixed => fl!("ui-profile-resolution-fixed"),
             Resolution::SmartSizing => fl!("ui-profile-resolution-smart-sizing"),
+            Resolution::MultiMonitor => fl!("ui-profile-resolution-multi-monitor"),
+            Resolution::Auto => fl!("ui-profile-resolution-auto"),
+        })
+    }
+}
+
+/// A proportion as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AspectChoice(Aspect);
+
+impl std::fmt::Display for AspectChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0.ratio() {
+            None => fl!("ui-profile-aspect-stretch"),
+            Some((wide, high)) => fl!("ui-profile-aspect-ratio-choice", wide = wide, high = high),
         })
     }
 }
@@ -245,6 +260,32 @@ pub fn resolution<'a>(
         .width(Length::Fill),
     ]
     .spacing(SPACING / 2.0);
+    if options.resolution == Resolution::Auto {
+        card = card.push(text(fl!("ui-profile-resolution-auto-desc")).size(LABEL_SIZE));
+    }
+    card = card
+        .push(text(fl!("ui-profile-aspect-ratio")).size(LABEL_SIZE))
+        .push(
+            pick_list(
+                Aspect::ALL.map(AspectChoice),
+                Some(AspectChoice(options.aspect)),
+                |picked: AspectChoice| choice(ProfileChoice::Aspect(picked.0)),
+            )
+            .width(Length::Fill),
+        );
+    // What an imported profile asks that the built-in client does not do: said, not lost.
+    let unused = draft.rdp_extras.unused();
+    if !unused.is_empty() {
+        let names: Vec<String> = unused.into_iter().map(crate::texts::rdp_extra).collect();
+        card = card.push(
+            text(fl!(
+                "ui-profile-rdp-extras",
+                extras = names.join(&fl!("ui-dialog-import-dropped-separator"))
+            ))
+            .size(LABEL_SIZE)
+            .style(text::secondary),
+        );
+    }
     if draft.shows(ProfileField::FixedWidth) {
         // The size typed, when it is one of the list's.
         let typed = (

@@ -24,10 +24,11 @@
 
 use serde::Serialize;
 
+use crate::metadata::ProfileOrigin;
 use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
-    AudioPlayback, Forwards, FtpProfile, LocalArguments, LocalProfile, RdpDefaults, RdpProfile,
-    Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    Aspect, AudioPlayback, Forwards, FtpProfile, LocalArguments, LocalProfile, RdpDefaults,
+    RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -103,6 +104,13 @@ struct Entry {
     tags: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     mac_address: Option<String>,
+    /// The C# `ProfileOrigin`, by number; absent is `Manual`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    origin: Option<i64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    sort_order: Option<i32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tunnels_panel_expanded: Option<bool>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ssh_agent_forwarding: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -184,6 +192,25 @@ struct RdpKeys {
     rdp_anti_idle: bool,
     rdp_auto_reconnect: bool,
     rdp_performance_flags: u32,
+    rdp_aspect_ratio: &'static str,
+    rdp_mode: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    rdp_gateway: Option<String>,
+    rdp_redirect_printers: bool,
+    rdp_redirect_com_ports: bool,
+    rdp_redirect_smart_cards: bool,
+    rdp_redirect_webcam: bool,
+    rdp_redirect_usb: bool,
+    rdp_audio_capture: bool,
+    rdp_multi_monitor: bool,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    rdp_selected_monitor_indices: Vec<u32>,
+    rdp_strict_server_authentication: bool,
+    rdp_disable_udp: bool,
+    rdp_bitmap_caching: bool,
+    rdp_compression: bool,
+    rdp_hardware_acceleration: bool,
+    rdp_full_screen: bool,
 }
 
 /// A post-connect step as the C# writes it.
@@ -292,6 +319,9 @@ fn with_metadata(mut server: Entry, store: &ProfileStore) -> Entry {
         server.environment = metadata.environment.map(|e| e.name().to_owned());
         server.tags = Some(metadata.tags.clone()).filter(|tags| !tags.is_empty());
         server.mac_address = metadata.mac_address.map(|mac| mac.to_string());
+        server.origin = metadata.origin.map(ProfileOrigin::csharp_number);
+        server.sort_order = metadata.sort_order;
+        server.tunnels_panel_expanded = metadata.tunnels_expanded;
     }
     server
 }
@@ -371,6 +401,8 @@ fn rdp(profile: &RdpProfile) -> Entry {
                 Resolution::FitWindow => "FitWindow",
                 Resolution::Fixed => "Fixed",
                 Resolution::SmartSizing => "SmartSizing",
+                Resolution::MultiMonitor => "Multimon",
+                Resolution::Auto => "Auto",
             },
             rdp_fixed_width: options.fixed_width,
             rdp_fixed_height: options.fixed_height,
@@ -379,6 +411,32 @@ fn rdp(profile: &RdpProfile) -> Entry {
             rdp_anti_idle: profile.anti_idle,
             rdp_auto_reconnect: profile.auto_reconnect,
             rdp_performance_flags: options.performance_flags,
+            rdp_aspect_ratio: match options.aspect {
+                Aspect::Stretch => "Stretch",
+                Aspect::Wide => "16:9",
+                Aspect::Standard => "4:3",
+                Aspect::UltraWide => "21:9",
+            },
+            rdp_mode: if profile.extras.external {
+                "External"
+            } else {
+                "Embedded"
+            },
+            rdp_gateway: profile.extras.rd_gateway().map(str::to_owned),
+            rdp_redirect_printers: profile.extras.redirect_printers,
+            rdp_redirect_com_ports: profile.extras.redirect_com_ports,
+            rdp_redirect_smart_cards: profile.extras.redirect_smart_cards,
+            rdp_redirect_webcam: profile.extras.redirect_webcam,
+            rdp_redirect_usb: profile.extras.redirect_usb,
+            rdp_audio_capture: profile.extras.microphone,
+            rdp_multi_monitor: profile.extras.multi_monitor,
+            rdp_selected_monitor_indices: profile.extras.monitors.clone(),
+            rdp_strict_server_authentication: profile.extras.strict_server_authentication,
+            rdp_disable_udp: profile.extras.disable_udp,
+            rdp_bitmap_caching: profile.extras.bitmap_caching,
+            rdp_compression: profile.extras.compression,
+            rdp_hardware_acceleration: profile.extras.hardware_acceleration,
+            rdp_full_screen: profile.extras.full_screen,
         }),
         ..server(
             &profile.id,
