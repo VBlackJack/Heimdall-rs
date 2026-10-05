@@ -227,6 +227,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::WakeOnLan(_)
             | Notice::FilesBatch(_)
             | Notice::FilesDuplicated) => files_notice(notice),
+            notice @ (Notice::MacroNothingRecorded
+            | Notice::MacroSaved(_)
+            | Notice::MacroDeleted(_)
+            | Notice::MacroEnded { .. }) => crate::macros_view::notice(notice),
             Notice::NoteOpened(name) => fl!("ui-status-note-opened", name = server_text(name)),
             Notice::NoteFailed(reason) => {
                 fl!("ui-status-note-failed", reason = server_text(reason))

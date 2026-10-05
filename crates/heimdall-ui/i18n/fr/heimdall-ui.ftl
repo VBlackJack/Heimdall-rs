@@ -1547,6 +1547,64 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
 ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+ui-macros-menu = Macros
+ui-macros-record = Enregistrer une macro
+ui-macros-stop-recording = { $count ->
+    [one] Arrêter l'enregistrement ({ $count } saisie)
+   *[other] Arrêter l'enregistrement ({ $count } saisies)
+}
+ui-macros-stop = Arrêter "{ $name }"
+ui-macros-play = Lire "{ $name }"
+ui-macros-none = Aucune macro enregistrée
+ui-macros-empty = Aucune macro pour l'instant. Enregistrez-en une depuis le menu d'un onglet de terminal : Macros, Enregistrer une macro.
+ui-macros-inputs = { $count ->
+    [one] { $count } saisie
+   *[other] { $count } saisies
+}
+ui-macros-delete = Supprimer
+ui-tab-recording-badge = REC
+ui-tab-macro-badge = macro
+ui-dialog-save-macro-title = Enregistrer la macro
+ui-dialog-save-macro-prompt = { $count ->
+    [one] { $count } saisie enregistrée. Nommez la macro :
+   *[other] { $count } saisies enregistrées. Nommez la macro :
+}
+ui-dialog-save-macro-confirm = Enregistrer
+ui-status-macro-nothing = Rien n'a été saisi : aucune macro enregistrée.
+ui-status-macro-saved = Macro "{ $name }" enregistrée.
+ui-status-macro-deleted = Macro "{ $name }" supprimée.
+ui-status-macro-completed = Macro "{ $name }" lue.
+ui-status-macro-stopped = Macro "{ $name }" arrêtée.
+ui-status-macro-timed-out = Macro "{ $name }" arrêtée : ce qu'attend la saisie { $entry } n'est pas venu à temps.
+ui-status-macro-closed = Macro "{ $name }" arrêtée : la session s'est terminée.
+ui-macros-edit = Modifier
+ui-dialog-save-macro-warning = Tout ce qui a été saisi est enregistré, mots de passe compris : la macro le garde tel quel.
+ui-dialog-delete-macro-body = Supprimer la macro "{ $name }" ? Cette action est irréversible.
+ui-macro-editor-title = Modifier la macro
+ui-macro-editor-name = Nom
+ui-macro-editor-input-hint = Les caractères de contrôle s'écrivent \r (Entrée), \n, \t, \xNN, et une barre oblique inverse \\.
+ui-macro-editor-input = Entrée
+ui-macro-editor-delay = Délai (ms)
+ui-macro-editor-move-up = Monter
+ui-macro-editor-move-down = Descendre
+ui-macro-editor-delete-entry = Supprimer l'entrée
+ui-macro-editor-expects = Attendre un texte d'abord
+ui-macro-editor-pattern = Motif attendu
+ui-macro-editor-regex = Regex
+ui-macro-editor-timeout = Timeout (ms)
+ui-macro-editor-timeout-abort = Arrêter
+ui-macro-editor-timeout-continue = Continuer
+ui-macro-editor-add-expect = Ajouter une étape expect
+ui-macro-editor-add-send = Ajouter une étape d'envoi
+ui-macro-editor-delete-macro = Supprimer la macro
+ui-macro-editor-name-required = Le nom de la macro est requis.
+ui-macro-editor-entry-invalid = Entrée { $entry } : { $reason }
+ui-macro-editor-input-trailing = la saisie se termine par une barre oblique inverse seule.
+ui-macro-editor-input-hex = \x demande deux chiffres hexadécimaux.
+ui-macro-editor-input-escape = \{ $escape } n'est pas un échappement connu de l'éditeur.
+ui-macro-editor-delay-invalid = le délai n'est pas un nombre de millisecondes.
+ui-macro-editor-timeout-range = Plage : { $min }-{ $max } ms
+ui-macro-editor-regex-invalid = Regex invalide : { $reason }
 ui-about-section-settings-file = Fichier de paramètres
 ui-about-export-settings = Exporter les paramètres...
 ui-about-import-settings = Importer des paramètres...
