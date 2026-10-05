@@ -479,3 +479,63 @@ fn a_folder_is_given_a_colour_from_its_menu_and_its_folders_show_it() {
     }));
     assert_eq!(app.folder_color(&child), None);
 }
+
+#[test]
+fn sessions_and_folders_dropped_move_and_ctrl_z_puts_them_back() {
+    use heimdall_app::{DropTarget, Notice};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let group = |app: &App, id: &str| {
+        app.profile_summary(&ProfileId::new(id))
+            .and_then(|profile| profile.group)
+    };
+    // Dropped on a folder: in it.
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("web"), ProfileId::new("loose")],
+        onto: DropTarget::Folder("dev".to_owned()),
+    });
+    assert_eq!(group(&app, "web").as_deref(), Some("dev"));
+    assert_eq!(group(&app, "loose").as_deref(), Some("dev"));
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::DroppedProfiles {
+            count: 2,
+            folder: Some("dev".to_owned())
+        })
+    );
+    // Ctrl+Z: each back where it was.
+    app.update(Message::UndoMove);
+    assert_eq!(group(&app, "web").as_deref(), Some("Prod/Web"));
+    assert_eq!(group(&app, "loose"), None);
+    assert_eq!(app.notice(), Some(&Notice::MoveUndone));
+    app.update(Message::UndoMove);
+    assert_eq!(app.notice(), Some(&Notice::NothingToUndo), "once");
+
+    // Dropped on a session: into its folder; on "(No Folder)": out of any.
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("loose")],
+        onto: DropTarget::Profile(ProfileId::new("db")),
+    });
+    assert_eq!(group(&app, "loose").as_deref(), Some("Prod"));
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("loose")],
+        onto: DropTarget::Folder(heimdall_app::NO_FOLDER.to_owned()),
+    });
+    assert_eq!(group(&app, "loose"), None);
+
+    // A folder dropped on another: moved into it, with all it holds; undone, back.
+    app.update(Message::DropFolder {
+        path: "Prod/Web".to_owned(),
+        onto: DropTarget::Folder("dev".to_owned()),
+    });
+    assert_eq!(group(&app, "web").as_deref(), Some("dev/Web"));
+    app.update(Message::UndoMove);
+    assert_eq!(group(&app, "web").as_deref(), Some("Prod/Web"));
+    // Into itself, or where it is: nothing moves.
+    app.update(Message::DropFolder {
+        path: "Prod".to_owned(),
+        onto: DropTarget::Folder("Prod/Web".to_owned()),
+    });
+    assert_eq!(group(&app, "db").as_deref(), Some("Prod"));
+}

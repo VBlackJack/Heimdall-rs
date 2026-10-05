@@ -96,6 +96,15 @@ const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
 /// Width of the profile list, in logical pixels.
 const SIDEBAR_WIDTH: f32 = 260.0;
+/// Narrowest the sidebar is dragged to, as the C# column's minimum.
+const SIDEBAR_MIN_WIDTH: f32 = 180.0;
+/// Widest it is dragged to.
+const SIDEBAR_MAX_WIDTH: f32 = 600.0;
+/// Width of the handle between the sidebar and the sessions, dragged to resize it.
+const SPLITTER_WIDTH: f32 = 4.0;
+/// Letters typed in the tree further apart than this start a new search, as a Windows
+/// tree's type-ahead.
+const TYPE_AHEAD_RESET: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Gap between stacked elements, in logical pixels.
 const SPACING: f32 = 8.0;
@@ -179,6 +188,40 @@ fn tree_shortcut(
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
         'k' => Some(TreeShortcut::QuickConnect),
+        'z' => Some(TreeShortcut::Undo),
+        'b' => Some(TreeShortcut::ToggleSidebar),
+        _ => None,
+    }
+}
+
+/// A character typed that no widget took, for the tree's type-ahead: printable, without
+/// Ctrl, Alt or the logo key.
+fn type_ahead(text: Option<&str>, modifiers: keyboard::Modifiers) -> Option<Message> {
+    if modifiers.control() || modifiers.alt() || modifiers.logo() {
+        return None;
+    }
+    let text = text?;
+    (!text.is_empty() && text.chars().all(|c| !c.is_control()))
+        .then(|| Message::TypeAhead(text.to_owned()))
+}
+
+/// While the sidebar's handle is dragged: where the pointer is, and its release.
+#[expect(
+    clippy::needless_pass_by_value,
+    reason = "the signature `event::listen_with` takes"
+)]
+fn sidebar_drag_event(
+    event: iced::Event,
+    _status: event::Status,
+    _window: window::Id,
+) -> Option<Message> {
+    match event {
+        iced::Event::Mouse(iced::mouse::Event::CursorMoved { position }) => {
+            Some(Message::SidebarDragged(position.x))
+        }
+        iced::Event::Mouse(iced::mouse::Event::ButtonReleased(iced::mouse::Button::Left)) => {
+            Some(Message::SidebarDragEnd)
+        }
         _ => None,
     }
 }
@@ -192,6 +235,11 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             Some(Message::Modifiers(modifiers))
         }
         iced::Event::Window(window::Event::Rescaled(scale)) => Some(Message::Rescaled(scale)),
+        // Whatever took it: a press on a Files tab's entry, which its button keeps.
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+            Some(Message::PointerPressed)
+        }
+        iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
         }
@@ -245,6 +293,7 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             physical_key,
             modifiers,
             repeat,
+            text,
             ..
         }) if status == event::Status::Ignored => {
             if is_search_key(&key, physical_key, modifiers) {
@@ -260,11 +309,20 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             {
                 return Some(Message::Shortcut(WindowShortcut::Help));
             }
+            // Shift+F10 or the menu key: the menu of what the tree has selected.
+            let menu_key = matches!(key, keyboard::Key::Named(Named::ContextMenu))
+                || (physical_key == keyboard::key::Physical::Code(keyboard::key::Code::F10)
+                    && modifiers == keyboard::Modifiers::SHIFT);
+            if menu_key {
+                return Some(Message::MenuKey);
+            }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
                 // A terminal or a field took its keys first.
-                None => files_view::files_key(&key, physical_key, modifiers).map(Message::FilesKey),
+                None => files_view::files_key(&key, physical_key, modifiers)
+                    .map(Message::FilesKey)
+                    .or_else(|| type_ahead(text.as_deref(), modifiers)),
             }
         }
         _ => None,
@@ -414,6 +472,37 @@ pub enum Message {
         /// Pane.
         side: heimdall_app::files::Side,
     },
+    /// The pointer came over a place in a Files tab's panes.
+    FilesHover(crate::files_drag::Spot),
+    /// The pointer left it.
+    FilesHoverLeft(crate::files_drag::Spot),
+    /// The left button went down, wherever: a press on a Files tab's entry starts a drag.
+    PointerPressed,
+    /// The pointer moved, a press on an entry held.
+    FilesDragMoved(Point),
+    /// That press is let go.
+    FilesDragEnd,
+    /// The pointer is over a row of the tree, where a drag would drop.
+    TreeHover(heimdall_app::DropTarget),
+    /// The pointer left that row.
+    TreeHoverLeft(heimdall_app::DropTarget),
+    /// The pointer moved, a press in the tree held.
+    TreeDragMoved(Point),
+    /// The press in the tree is let go.
+    TreeDragEnd,
+    /// Shift+F10 or the menu key, uncaptured by any widget.
+    MenuKey,
+    /// A character typed that no widget took: the tree's type-ahead, while it has the
+    /// keyboard.
+    TypeAhead(String),
+    /// The window was resized to this size.
+    WindowResized(iced::Size),
+    /// The handle between the sidebar and the sessions is pressed.
+    SidebarDragStart,
+    /// The pointer moved to this x while the handle is held.
+    SidebarDragged(f32),
+    /// The handle is let go.
+    SidebarDragEnd,
     /// Quick Connect's search changed.
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
@@ -461,6 +550,10 @@ pub enum TreeShortcut {
     New,
     /// Ctrl+K: Quick Connect.
     QuickConnect,
+    /// Ctrl+Z: the last move made by a drop in the tree undone.
+    Undo,
+    /// Ctrl+B: the sidebar shown or hidden, as the C# one.
+    ToggleSidebar,
 }
 
 impl fmt::Debug for Message {
@@ -524,6 +617,21 @@ impl fmt::Debug for Message {
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
             Self::EditPath { tab, side } => write!(f, "EditPath({}, {side:?})", tab.value()),
+            Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
+            Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
+            Self::PointerPressed => f.write_str("PointerPressed"),
+            Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
+            Self::FilesDragEnd => f.write_str("FilesDragEnd"),
+            Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
+            Self::TreeHoverLeft(target) => write!(f, "TreeHoverLeft({target:?})"),
+            Self::TreeDragMoved(_) => f.write_str("TreeDragMoved"),
+            Self::TreeDragEnd => f.write_str("TreeDragEnd"),
+            Self::MenuKey => f.write_str("MenuKey"),
+            Self::TypeAhead(_) => f.write_str("TypeAhead(..)"),
+            Self::SidebarDragStart => f.write_str("SidebarDragStart"),
+            Self::WindowResized(size) => write!(f, "WindowResized({size:?})"),
+            Self::SidebarDragged(x) => write!(f, "SidebarDragged({x})"),
+            Self::SidebarDragEnd => f.write_str("SidebarDragEnd"),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
@@ -682,6 +790,10 @@ impl SettingsTab {
     }
 }
 
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the window's independent states: focus, panels, drags"
+)]
 pub struct Shell {
     app: App,
     /// The texts of the Files tabs' integrated editors.
@@ -730,6 +842,24 @@ pub struct Shell {
     tree_focused: bool,
     /// The Files pane whose path bar is typed in, rather than showing its breadcrumb.
     path_editing: Option<(TabId, heimdall_app::files::Side)>,
+    /// Where the pointer is in a Files tab's panes.
+    files_hover: Option<crate::files_drag::Spot>,
+    /// A press on a Files tab's entry, held: a drag once the pointer moves.
+    files_drag: Option<crate::files_drag::FilesDrag>,
+    /// A press in the tree, held: a drag once the pointer moves.
+    tree_drag: Option<crate::tree_drag::TreeDrag>,
+    /// The sidebar is hidden, Ctrl+B having hidden it.
+    sidebar_hidden: bool,
+    /// Where the window's state is kept, and how it was left; none in tests.
+    window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
+    /// The window's size, as last resized out of full screen.
+    window_size: Option<iced::Size>,
+    /// The sidebar's width, as dragged.
+    sidebar_width: f32,
+    /// The handle between the sidebar and the sessions is held.
+    sidebar_drag: bool,
+    /// The letters typed in the tree so far, and when the last one was.
+    type_ahead: (String, Option<std::time::Instant>),
     /// Quick Connect, while open.
     palette: Option<Palette>,
     /// The terminal's search bar, while open.
@@ -803,7 +933,16 @@ impl Shell {
     /// The window, with the profiles on disk.
     #[must_use]
     pub fn new() -> Self {
-        let shell = Self::with_config(config());
+        let config = config();
+        let memory = heimdall_core::window_state::state_path(&config.profiles_file);
+        let mut shell = Self::with_config(config);
+        // The sidebar as the window was left.
+        let left = heimdall_core::window_state::load(&memory);
+        if let Some(width) = left.sidebar_width.filter(|width| width.is_finite()) {
+            shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        }
+        shell.sidebar_hidden = left.sidebar_hidden;
+        shell.window_memory = Some((memory, left));
         // The language chosen, once the settings are read; else the desktop's, set at start.
         if let Some(language) = shell.app.settings().language {
             crate::i18n::apply(Some(language));
@@ -848,6 +987,15 @@ impl Shell {
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
             path_editing: None,
+            files_hover: None,
+            files_drag: None,
+            tree_drag: None,
+            sidebar_hidden: false,
+            window_memory: None,
+            window_size: None,
+            sidebar_width: SIDEBAR_WIDTH,
+            sidebar_drag: false,
+            type_ahead: (String::new(), None),
             palette: None,
             finder: None,
             focus_next: None,
@@ -929,6 +1077,15 @@ impl Shell {
             )
         );
         let mut subscriptions = vec![events];
+        if self.files_drag.is_some() {
+            subscriptions.push(event::listen_with(crate::files_drag::drag_event));
+        }
+        if self.tree_drag.is_some() {
+            subscriptions.push(event::listen_with(crate::tree_drag::drag_event));
+        }
+        if self.sidebar_drag {
+            subscriptions.push(event::listen_with(sidebar_drag_event));
+        }
         if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
@@ -973,6 +1130,15 @@ impl Shell {
             && files.gesture().is_some()
         {
             self.path_editing = None;
+        }
+        // A press on a folder: the start of a drag of it.
+        if let Message::App(AppMessage::ToggleFolder(path)) = &message
+            && path != heimdall_app::NO_FOLDER
+        {
+            self.tree_drag = Some(crate::tree_drag::TreeDrag::pressed(
+                crate::tree_drag::DragSource::Folder(path.clone()),
+                self.cursor.get(),
+            ));
         }
         let reveal = matches!(
             message,
@@ -1048,14 +1214,28 @@ impl Shell {
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
-            message
-            @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
-                self.tree_input(message)
-            }
             Message::EditPath { tab, side } => {
                 self.edit_path(tab, side);
                 Vec::new()
             }
+            message @ (Message::TreeClick(_)
+            | Message::ContentFocus
+            | Message::TreeShortcut(_)
+            | Message::TreeHover(_)
+            | Message::TreeHoverLeft(_)
+            | Message::TreeDragMoved(_)
+            | Message::TreeDragEnd
+            | Message::MenuKey
+            | Message::TypeAhead(_)
+            | Message::SidebarDragStart
+            | Message::WindowResized(_)
+            | Message::SidebarDragged(_)
+            | Message::SidebarDragEnd) => self.tree_input(message),
+            message @ (Message::FilesHover(_)
+            | Message::FilesHoverLeft(_)
+            | Message::PointerPressed
+            | Message::FilesDragMoved(_)
+            | Message::FilesDragEnd) => self.files_drag_message(&message),
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
             | Message::PaletteClose) => self.palette_message(message),
@@ -1085,6 +1265,11 @@ impl Shell {
             self.sudo_password = Zeroizing::default();
         }
         self.forget_finished();
+        // The previous run's sessions, offered once nothing else is asked and the window is
+        // open to the user.
+        if !self.gated() {
+            self.app.offer_restore();
+        }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
         // The diagnostics log as the settings say now.
@@ -1267,6 +1452,15 @@ impl Shell {
     /// Closes the open menu, then hands `message` to the core.
     fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
         self.menu = None;
+        // Revealed in the tree: the tree takes the keyboard, its search cleared so the
+        // profile shows.
+        if matches!(
+            message,
+            AppMessage::TabMenu(heimdall_app::TabMenuMessage::RevealInTree(_))
+        ) {
+            self.search.clear();
+            self.tree_focused = true;
+        }
         self.app.update(message)
     }
 
@@ -1555,7 +1749,8 @@ impl Shell {
                 | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::MoveSelection
-                | TreeMenu::EditSelection,
+                | TreeMenu::EditSelection
+                | TreeMenu::GatewaySelection,
                 Some((_, at)),
             ) => *at,
             _ => self.cursor.get(),
@@ -2049,8 +2244,38 @@ impl Shell {
                     )))
                 },
             ),
-            Effect::Exit => iced::exit(),
+            Effect::Exit => self.exit(),
         }
+    }
+
+    /// Keeps how the window is left, then closes it. Maximized, its size is the one it had
+    /// before: the one kept when it was last not maximized.
+    fn exit(&self) -> Task<Message> {
+        let Some((path, left)) = self.window_memory.clone() else {
+            return iced::exit();
+        };
+        let leaving = heimdall_core::window_state::WindowState {
+            sidebar_width: Some(self.sidebar_width),
+            sidebar_hidden: self.sidebar_hidden,
+            ..left
+        };
+        let size = self.window_size;
+        let keep = move |maximized: bool| {
+            let mut state = leaving;
+            state.maximized = maximized;
+            if let (false, Some(size)) = (maximized, size) {
+                state.width = Some(size.width);
+                state.height = Some(size.height);
+            }
+            if let Err(error) = heimdall_core::window_state::save(&path, &state) {
+                log::warn!("the window's state could not be kept: {error}");
+            }
+            iced::exit()
+        };
+        window::latest().then(move |id| match id {
+            Some(id) => window::is_maximized(id).then(keep.clone()),
+            None => keep(false),
+        })
     }
 
     /// Draws the window.
@@ -2071,7 +2296,8 @@ impl Shell {
         } else {
             column![
                 row![
-                    self.sidebar(),
+                    (!self.sidebar_hidden).then(|| self.sidebar()),
+                    (!self.sidebar_hidden).then(splitter),
                     column![self.tab_bar(), self.focusable_content()]
                         .push(
                             self.app
@@ -2236,7 +2462,10 @@ impl Shell {
             tree_view::edit_selection_entries(
                 self.app
                     .bulk_targets(&selected, heimdall_app::BulkField::Username),
+                self.app.gateway_targets(&selected),
             )
+        } else if let TreeMenu::GatewaySelection = menu {
+            tree_view::gateway_selection_entries(self.app.gateways())
         } else {
             let profile = match menu {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
@@ -2251,6 +2480,7 @@ impl Shell {
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
                 | TreeMenu::EditSelection
+                | TreeMenu::GatewaySelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
@@ -2428,7 +2658,7 @@ impl Shell {
                 .spacing(SPACING)
                 .padding(PADDING),
         )
-        .width(SIDEBAR_WIDTH)
+        .width(self.sidebar_width)
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
@@ -2475,7 +2705,12 @@ impl Shell {
                 count,
             } => {
                 let color = self.app.folder_color(&path);
-                tree_view::folder_row(path, name, depth, open, count, color)
+                let target = heimdall_app::DropTarget::Folder(path.clone());
+                crate::tree_drag::drop_zone(
+                    tree_view::folder_row(path, name, depth, open, count, color),
+                    target,
+                    self.tree_drag.as_ref(),
+                )
             }
             TreeRow::Profile { mut profile, depth } => {
                 if !badge {
@@ -2486,9 +2721,14 @@ impl Shell {
                 let context = searching
                     .then(|| tree_view::search_context(&profile))
                     .flatten();
-                tree_view::indented(
-                    tree_view::owned_row(&profile, selected, state, context),
-                    depth,
+                let target = heimdall_app::DropTarget::Profile(profile.id.clone());
+                crate::tree_drag::drop_zone(
+                    tree_view::indented(
+                        tree_view::owned_row(&profile, selected, state, context),
+                        depth,
+                    ),
+                    target,
+                    self.tree_drag.as_ref(),
                 )
             }
         }));
@@ -3226,12 +3466,218 @@ impl Shell {
         Some(Vec::new())
     }
 
+    /// The pointer over a Files tab's panes, a press on an entry, its drag and its drop.
+    fn files_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::FilesHover(spot) => {
+                self.files_hover = Some(spot);
+                if let Some(drag) = self.files_drag.as_mut() {
+                    drag.over = Some(spot);
+                }
+            }
+            Message::FilesHoverLeft(spot) => {
+                // Off an entry is still in its pane; off a pane, nowhere.
+                let back = spot.index.map(|_| crate::files_drag::Spot {
+                    index: None,
+                    ..spot
+                });
+                if self.files_hover == Some(spot) {
+                    self.files_hover = back;
+                }
+                if let Some(drag) = self
+                    .files_drag
+                    .as_mut()
+                    .filter(|drag| drag.over == Some(spot))
+                {
+                    drag.over = back;
+                }
+            }
+            Message::PointerPressed => {
+                self.files_drag = self
+                    .files_hover
+                    .filter(|spot| spot.index.is_some())
+                    .map(|spot| crate::files_drag::FilesDrag::pressed(spot, self.cursor.get()));
+            }
+            Message::FilesDragMoved(at) => {
+                let started = self.files_drag.as_mut().is_some_and(|drag| drag.moved(at));
+                // The entry pressed, not among those chosen: it alone is dragged, as the C#
+                // selects it first.
+                if started && let Some(from) = self.files_drag.as_ref().map(|drag| drag.from) {
+                    let chosen = self
+                        .app
+                        .tab(from.tab)
+                        .and_then(|tab| tab.files.as_deref())
+                        .map(|files| match from.side {
+                            heimdall_app::files::Side::Remote => files.remote.chosen(),
+                            heimdall_app::files::Side::Local => files.local.chosen(),
+                        })
+                        .unwrap_or_default();
+                    if let Some(index) = from.index.filter(|index| !chosen.contains(index)) {
+                        return self.app.update(AppMessage::Files(FilesMessage::Select {
+                            tab: from.tab,
+                            side: from.side,
+                            index,
+                        }));
+                    }
+                }
+            }
+            Message::FilesDragEnd => {
+                if let Some(message) = self
+                    .files_drag
+                    .take()
+                    .and_then(crate::files_drag::FilesDrag::drop_message)
+                {
+                    return self.app.update(message);
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     /// A click on a profile of the tree, or one of the tree's shortcuts holding Ctrl.
     fn tree_input(&mut self, message: Message) -> Vec<Effect> {
         match message {
-            Message::TreeClick(id) => self.tree_click(id),
+            Message::TreeClick(id) => {
+                let effects = self.tree_click(id.clone());
+                self.press_profile(id);
+                effects
+            }
             Message::TreeShortcut(shortcut) => self.tree_shortcut(shortcut),
+            Message::TreeHover(target) => {
+                if let Some(drag) = self.tree_drag.as_mut() {
+                    drag.over = Some(target);
+                }
+                Vec::new()
+            }
+            Message::TreeHoverLeft(target) => {
+                if let Some(drag) = self
+                    .tree_drag
+                    .as_mut()
+                    .filter(|drag| drag.over.as_ref() == Some(&target))
+                {
+                    drag.over = None;
+                }
+                Vec::new()
+            }
+            Message::TreeDragMoved(at) => {
+                let started = self.tree_drag.as_mut().is_some_and(|drag| drag.moved(at));
+                // A folder pressed opened or closed: dragged, it is put back as it was.
+                match self.tree_drag.as_ref().map(|drag| &drag.source) {
+                    Some(crate::tree_drag::DragSource::Folder(path)) if started => {
+                        self.app.update(AppMessage::ToggleFolder(path.clone()))
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            Message::TreeDragEnd => {
+                match self
+                    .tree_drag
+                    .take()
+                    .and_then(crate::tree_drag::TreeDrag::drop_message)
+                {
+                    Some(message) => self.app.update(message),
+                    None => Vec::new(),
+                }
+            }
+            Message::MenuKey => {
+                if self.tree_focused
+                    && self.app.dialog.is_none()
+                    && let Some(id) = self.app.selected_profile.clone()
+                {
+                    self.open_tree_menu(TreeMenu::Profile(id));
+                }
+                Vec::new()
+            }
+            Message::TypeAhead(typed) => self.type_ahead(&typed),
+            Message::SidebarDragStart => {
+                self.sidebar_drag = true;
+                Vec::new()
+            }
+            // Full screen is not the window's own size.
+            Message::WindowResized(size) => {
+                if !self.fullscreen {
+                    self.window_size = Some(size);
+                }
+                Vec::new()
+            }
+            Message::SidebarDragged(x) if self.sidebar_drag => {
+                self.sidebar_width = x.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+                Vec::new()
+            }
+            Message::SidebarDragEnd => {
+                self.sidebar_drag = false;
+                Vec::new()
+            }
             _ => Vec::new(),
+        }
+    }
+
+    /// A press on session `id`: the start of a drag of it, or of the sessions selected with
+    /// it.
+    fn press_profile(&mut self, id: ProfileId) {
+        let selected = self.app.selected_profiles();
+        let source = if selected.contains(&id) {
+            selected
+        } else {
+            vec![id]
+        };
+        self.tree_drag = Some(crate::tree_drag::TreeDrag::pressed(
+            crate::tree_drag::DragSource::Profiles(source),
+            self.cursor.get(),
+        ));
+    }
+
+    /// A character typed while the tree has the keyboard: the next profile whose name starts
+    /// with what was typed within [`TYPE_AHEAD_RESET`] is selected, as a Windows tree's
+    /// type-ahead; the same letter again goes on to the next one.
+    fn type_ahead(&mut self, typed: &str) -> Vec<Effect> {
+        if !self.tree_focused || self.app.dialog.is_some() || self.gated() {
+            return Vec::new();
+        }
+        let now = std::time::Instant::now();
+        let (buffer, last) = &mut self.type_ahead;
+        if last.is_none_or(|at| now.duration_since(at) > TYPE_AHEAD_RESET) {
+            buffer.clear();
+        }
+        *last = Some(now);
+        buffer.push_str(&typed.to_lowercase());
+        let wanted = buffer.clone();
+        let order: Vec<(ProfileId, String)> = self
+            .app
+            .tree_rows(&self.search)
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Profile { profile, .. } => Some((profile.id, profile.name.to_lowercase())),
+                TreeRow::Folder { .. } => None,
+            })
+            .collect();
+        // A letter repeated looks for the next one starting with it.
+        let mut letters = wanted.chars();
+        let repeated = letters
+            .next()
+            .is_some_and(|first| letters.all(|c| c == first));
+        let prefix = if repeated {
+            wanted.chars().take(1).collect::<String>()
+        } else {
+            wanted
+        };
+        let at = self
+            .app
+            .selected_profile
+            .as_ref()
+            .and_then(|id| order.iter().position(|(found, _)| found == id));
+        let start = match at {
+            Some(at) if repeated => at + 1,
+            Some(at) => at,
+            None => 0,
+        };
+        let found = (0..order.len())
+            .map(|step| &order[(start + step) % order.len()])
+            .find(|(_, name)| name.starts_with(&prefix));
+        match found {
+            Some((id, _)) => self.app.update(AppMessage::SelectProfile(id.clone())),
+            None => Vec::new(),
         }
     }
 
@@ -3254,6 +3700,14 @@ impl Shell {
         }
         match shortcut {
             TreeShortcut::New => self.app.update(AppMessage::NewProfile),
+            TreeShortcut::Undo => self.app.update(AppMessage::UndoMove),
+            TreeShortcut::ToggleSidebar => {
+                self.sidebar_hidden = !self.sidebar_hidden;
+                if self.sidebar_hidden {
+                    self.tree_focused = false;
+                }
+                Vec::new()
+            }
             TreeShortcut::QuickConnect => {
                 self.menu = None;
                 self.palette = Some(Palette::default());
@@ -3300,6 +3754,25 @@ impl Shell {
                     None => Vec::new(),
                 }
             }
+            FilesKey::First | FilesKey::Last | FilesKey::SelectAll => {
+                let order = self.tree_order();
+                let (Some(first), Some(last)) = (order.first().cloned(), order.last().cloned())
+                else {
+                    return Some(Vec::new());
+                };
+                match key {
+                    FilesKey::First => self.app.update(AppMessage::SelectProfile(first)),
+                    FilesKey::Last => self.app.update(AppMessage::SelectProfile(last)),
+                    // Every profile shown, as the C# tree's Ctrl+A.
+                    _ => {
+                        let mut effects = self.app.update(AppMessage::SelectProfile(first));
+                        effects.extend(self.app.update(AppMessage::Selection(
+                            SelectionMessage::Range { to: last, order },
+                        )));
+                        effects
+                    }
+                }
+            }
             FilesKey::Open if several => self
                 .app
                 .update(AppMessage::Selection(SelectionMessage::Connect)),
@@ -3322,6 +3795,18 @@ impl Shell {
             },
             _ => Vec::new(),
         })
+    }
+
+    /// The profiles as the tree shows them, folders left out.
+    fn tree_order(&self) -> Vec<ProfileId> {
+        self.app
+            .tree_rows(&self.search)
+            .into_iter()
+            .filter_map(|row| match row {
+                TreeRow::Profile { profile, .. } => Some(profile.id),
+                TreeRow::Folder { .. } => None,
+            })
+            .collect()
     }
 
     /// Enter or Down in the tree's search, as the C# filter box: Enter opens the profile
@@ -3452,6 +3937,8 @@ impl Shell {
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
+            pinned: tab.pinned,
+            saveable: self.app.can_save_as_profile(tab),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -3481,6 +3968,9 @@ impl Shell {
             ]
             .spacing(SPACING / 2.0)
             .align_y(iced::Alignment::Center);
+            if tab.pinned {
+                label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+            }
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
             }
@@ -3568,6 +4058,10 @@ impl Shell {
                 self.path_editing
                     .filter(|(editing, _)| *editing == tab)
                     .map(|(_, side)| side),
+                self.files_drag
+                    .as_ref()
+                    .filter(|drag| drag.active)
+                    .and_then(|drag| drag.over),
             ),
         }
     }
@@ -3804,6 +4298,7 @@ impl Shell {
             saved: self.app.tab_profile(tab).is_some(),
             mode: tab.resolution_mode()?,
             shown: pane.tab_size(),
+            aspect: pane.aspect,
         })
     }
 
@@ -4206,6 +4701,22 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
         files,
         names: crate::rdp_view::names(),
     }))
+}
+
+/// The handle between the sidebar and the sessions, dragged to resize the sidebar, as the
+/// C# `GridSplitter`.
+fn splitter<'a>() -> Element<'a, Message> {
+    mouse_area(
+        container(iced::widget::space().width(SPLITTER_WIDTH))
+            .height(Length::Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.extended_palette().background.strong.color.into()),
+                ..container::Style::default()
+            }),
+    )
+    .on_press(Message::SidebarDragStart)
+    .interaction(iced::mouse::Interaction::ResizingHorizontally)
+    .into()
 }
 
 /// Opens `target`, a folder or a web address, with the system; one it cannot open is
@@ -7129,6 +7640,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ExportDone { .. }
@@ -7421,6 +7933,62 @@ mod tests {
         assert!(!matches!(
             routed("x", Modifiers::CTRL, event::Status::Ignored),
             Some(Message::TreeShortcut(_))
+        ));
+    }
+
+    #[test]
+    fn ctrl_b_the_menu_key_and_letters_reach_the_tree_only_when_no_widget_took_them() {
+        let pressed = |key: Key, physical: Physical, modifiers: Modifiers, text: Option<&str>| {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key: physical,
+                location: Location::Standard,
+                modifiers,
+                text: text.map(Into::into),
+                repeat: false,
+            })
+        };
+        let routed = |event, status| window_event(event, status, window::Id::unique());
+        let unknown = Physical::Unidentified(NativeCode::Unidentified);
+        let ctrl_b = || pressed(Key::Character("b".into()), unknown, Modifiers::CTRL, None);
+        assert!(matches!(
+            routed(ctrl_b(), event::Status::Ignored),
+            Some(Message::TreeShortcut(TreeShortcut::ToggleSidebar))
+        ));
+        assert!(
+            routed(ctrl_b(), event::Status::Captured).is_none(),
+            "tmux's prefix in a terminal stays its own"
+        );
+        let shift_f10 = pressed(
+            Key::Named(Named::F10),
+            Physical::Code(keyboard::key::Code::F10),
+            Modifiers::SHIFT,
+            None,
+        );
+        assert!(matches!(
+            routed(shift_f10, event::Status::Ignored),
+            Some(Message::MenuKey)
+        ));
+        let menu = pressed(
+            Key::Named(Named::ContextMenu),
+            unknown,
+            Modifiers::empty(),
+            None,
+        );
+        assert!(matches!(
+            routed(menu, event::Status::Ignored),
+            Some(Message::MenuKey)
+        ));
+        let letter = |modifiers| pressed(Key::Character("w".into()), unknown, modifiers, Some("w"));
+        assert!(matches!(
+            routed(letter(Modifiers::empty()), event::Status::Ignored),
+            Some(Message::TypeAhead(typed)) if typed == "w"
+        ));
+        assert!(routed(letter(Modifiers::empty()), event::Status::Captured).is_none());
+        assert!(!matches!(
+            routed(letter(Modifiers::ALT), event::Status::Ignored),
+            Some(Message::TypeAhead(_))
         ));
     }
 

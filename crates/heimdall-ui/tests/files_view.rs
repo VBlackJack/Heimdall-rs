@@ -1330,3 +1330,49 @@ async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
         }
     )));
 }
+
+#[tokio::test]
+async fn an_entry_dragged_onto_the_other_panes_folder_is_sent_into_it() {
+    use heimdall_ui::files_drag::Spot;
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let spot = |side, index| Spot { tab, side, index };
+    // Pressed on the server's backup, not chosen yet: it alone is dragged.
+    let _ = shell.update(Message::FilesHover(spot(Side::Remote, Some(1))));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesDragMoved(Point::new(30.0, 30.0)));
+    // Over this computer's Documents folder, then let go.
+    let _ = shell.update(Message::FilesHover(spot(Side::Local, None)));
+    let _ = shell.update(Message::FilesHover(spot(Side::Local, Some(0))));
+    let _ = shell.update(Message::FilesDragEnd);
+    let files = shell
+        .app()
+        .tab(tab)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    let [transfer] = files.transfers.as_slice() else {
+        panic!("{:?}", files.transfers.len());
+    };
+    assert_eq!(transfer.direction, Direction::Download);
+    let picked = transfer.picked.as_ref().expect("planned");
+    assert_eq!(
+        picked.root.local,
+        dir.path().join("Documents").join("backup.tar.gz"),
+        "into the folder dropped on"
+    );
+
+    // A click is no drag: nothing more is sent.
+    let _ = shell.update(Message::FilesHover(spot(Side::Remote, Some(1))));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesHover(spot(Side::Local, None)));
+    let _ = shell.update(Message::FilesDragEnd);
+    let files = shell
+        .app()
+        .tab(tab)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert_eq!(files.transfers.len(), 1);
+}

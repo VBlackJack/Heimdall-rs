@@ -25,6 +25,7 @@ pub mod desktop_view;
 pub mod editor_history;
 pub mod export_file;
 pub mod file_import_view;
+pub mod files_drag;
 mod files_view;
 pub mod finder;
 mod health_view;
@@ -41,6 +42,7 @@ mod provider_view;
 pub mod rdp_options;
 pub mod rdp_view;
 mod report;
+mod restore_view;
 pub mod route_test_view;
 mod screenshot;
 mod search_keys;
@@ -52,6 +54,7 @@ pub mod status_bar;
 pub mod terminal_view;
 mod texts;
 pub mod transcript_lines;
+mod tree_drag;
 pub mod tree_view;
 pub mod trusted_keys_view;
 pub mod tunnels_view;
@@ -71,6 +74,9 @@ const WINDOW_SIZE: Size = Size::new(1280.0, 800.0);
 /// Smallest window size, in logical pixels.
 const MIN_WINDOW_SIZE: Size = Size::new(640.0, 400.0);
 
+/// Largest side a window kept is opened at, in logical pixels: no screen is larger.
+const MAX_WINDOW_SIDE: f32 = 16_384.0;
+
 /// Runs the application until its window closes.
 ///
 /// # Errors
@@ -79,13 +85,26 @@ const MIN_WINDOW_SIZE: Size = Size::new(640.0, 400.0);
 pub fn run() -> iced::Result {
     logging::init(paths::log_dir());
     i18n::init();
+    // As the window was left: its size, and maximized or not.
+    let left = paths::profiles_file()
+        .map(|file| {
+            heimdall_core::window_state::load(&heimdall_core::window_state::state_path(&file))
+        })
+        .unwrap_or_default();
+    let size = left
+        .size_within(
+            (MIN_WINDOW_SIZE.width, MIN_WINDOW_SIZE.height),
+            (MAX_WINDOW_SIDE, MAX_WINDOW_SIDE),
+        )
+        .map_or(WINDOW_SIZE, |(width, height)| Size::new(width, height));
     let application = iced::application(Shell::new, Shell::update, Shell::view)
         .title(Shell::title)
         .theme(Shell::theme)
         .subscription(Shell::subscription)
         .default_font(Font::with_name(UI_FONT_FAMILY))
         .window(window::Settings {
-            size: WINDOW_SIZE,
+            size,
+            maximized: left.maximized,
             min_size: Some(MIN_WINDOW_SIZE),
             // Quitting with live sessions asks first; their sessions are then cancelled.
             exit_on_close_request: false,
