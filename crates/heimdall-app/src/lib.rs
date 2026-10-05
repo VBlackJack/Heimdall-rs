@@ -56,6 +56,7 @@ pub mod transcript;
 pub mod tunnel;
 pub mod tunnel_driver;
 pub mod vnc_driver;
+pub mod wake_on_lan;
 pub mod winrm_driver;
 pub mod winrm_preflight;
 
@@ -69,12 +70,12 @@ pub use app::{
     PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
     RDP_EXTENSION, RDP_MAX_ATTEMPTS, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow,
-    ResolutionChoice, Retry, SelectionMessage, SessionState, SessionStatus, SessionsCounts,
-    SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction,
-    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey,
-    TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME,
-    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
-    master_password_problem, open_vault,
+    ResolutionChoice, RestoreDialog, RestoreRow, Retry, SelectionMessage, SessionState,
+    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
+    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
+    TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
+    UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use desktop::{
     DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,

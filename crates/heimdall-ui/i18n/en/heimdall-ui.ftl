@@ -1493,6 +1493,28 @@ ui-settings-rdp-reset-defaults = Reset RDP defaults
 ui-settings-rdp-reset-defaults-tooltip = Reverts only the RDP defaults to their factory values. Other settings are untouched.
 ui-dialog-reset-rdp-title = Reset RDP defaults?
 ui-dialog-reset-rdp-body = Restore all RDP-related defaults to their factory values? Existing servers are not affected.
+ui-settings-tab-about = About
+ui-about-version = Version { $version }
+ui-about-tagline = Secure RDP/SSH/SFTP connection manager
+ui-about-section-system = System
+ui-about-platform = Platform
+ui-about-author = Author
+ui-about-license = License
+ui-about-section-data = Data
+ui-about-sessions = Sessions
+ui-about-gateways = Gateways
+ui-about-config-path = Config
+ui-about-log-path = Logs
+ui-about-section-links = Quick access
+ui-about-open-config = Open config folder
+ui-about-open-logs = Open logs folder
+ui-about-repository = GitHub
+ui-about-section-diagnostics = Diagnostics
+ui-about-diagnostics-log = Write the application diagnostics log (Heimdall's own events and errors)
+ui-about-diagnostics-log-hint = Applied at once. A crash report is written whatever this says: it is the only trace of a crash.
+ui-settings-provider-timeout = Command timeout
+ui-settings-provider-timeout-seconds = { $seconds } s
+ui-settings-provider-timeout-hint = How long the password command may run before Heimdall gives up on it. Raise it for a vault that asks for confirmation.
 ui-folder-color = Colour
 ui-folder-color-none = No colour
 ui-folder-color-blue = Blue
@@ -1549,3 +1571,43 @@ ui-status-bulk-gateway-updated = { $count ->
    *[other] Connection route updated on { $count } servers.
 }
 ui-status-bulk-gateway-unchanged = No route changes were applied.
+ui-restore-title = Restore previous sessions
+ui-restore-message = Heimdall found a saved session snapshot from the previous run. Select the sessions to restore.
+ui-restore-saved-at = Saved at { $time }
+ui-restore-select-all = Select all
+ui-restore-missing = Missing server ({ $id })
+ui-restore-files = { $protocol } files
+ui-restore-dont = Don't restore
+ui-restore-selected = Restore selected
+ui-profile-field-environment = Environment
+ui-profile-environment-none = (None)
+ui-profile-environment-production = Production
+ui-profile-environment-staging = Staging
+ui-profile-environment-lab = Lab
+ui-profile-environment-personal = Personal
+ui-profile-field-tags = Tags
+ui-profile-tags-placeholder = Words the search finds this session by
+ui-profile-field-mac-address = MAC address
+ui-profile-mac-address-placeholder = AA:BB:CC:DD:EE:FF, for Wake on LAN
+ui-profile-error-mac-address = The MAC address must be twelve hexadecimal digits, as AA:BB:CC:DD:EE:FF.
+ui-tree-wake-on-lan = Wake on LAN
+ui-status-wake-on-lan-sent = Wake-on-LAN magic packet sent.
+ui-status-wake-on-lan-failed = Failed to send Wake-on-LAN packet: { $reason }
+ui-tree-tooltip-environment = Environment: { $environment }
+ui-tree-tooltip-tags = Tags: { $tags }
+ui-files-batch-deleting = Deleting { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Changing the permissions of { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Cancel
+ui-files-batch-stopping = Stopping after this one...
+ui-status-files-delete-failed = Could not delete "{ $name }": { $reason }
+ui-status-files-permissions-failed = Could not change the permissions of "{ $name }": { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] { $failed } item out of { $total } could not be deleted. "{ $name }": { $reason }
+   *[other] { $failed } items out of { $total } could not be deleted. First, "{ $name }": { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] Permissions could not be changed on { $failed } item out of { $total }. "{ $name }": { $reason }
+   *[other] Permissions could not be changed on { $failed } items out of { $total }. First, "{ $name }": { $reason }
+}
+ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
+ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.

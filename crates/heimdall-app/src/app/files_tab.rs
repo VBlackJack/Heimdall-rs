@@ -26,8 +26,8 @@ use super::{App, ConflictRow, Dialog, Effect, NameAction};
 use heimdall_files::RemoteSession;
 
 use crate::files::{
-    Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey, FilesPane,
-    PlanRequest, PlannedRoot, Side, SortColumn, Transfer, TransferEvent, TransferId,
+    Batch, BatchKind, Direction, EntryKind, FileOperation, FileProperties, FilesError, FilesKey,
+    FilesPane, PlanRequest, PlannedRoot, Side, SortColumn, Transfer, TransferEvent, TransferId,
     TransferRequest, TransferState, Waiting, download_name, octal_mode, typed_name,
 };
 use crate::ids::TabId;
@@ -485,6 +485,19 @@ pub enum FilesMessage {
         /// What it does.
         key: FilesKey,
     },
+    /// The entry of a delete or a change of permissions being worked on ended.
+    BatchStepDone {
+        /// Tab.
+        tab: TabId,
+        /// How it went.
+        result: Result<(), FilesError>,
+    },
+    /// Stop the delete or the change of permissions running, after the entry being worked
+    /// on.
+    StopBatch {
+        /// Tab.
+        tab: TabId,
+    },
     /// A file operation finished.
     OperationDone {
         /// Tab.
@@ -676,6 +689,10 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "ShowProperties({}, {side:?})", tab.value())
             }
             Self::NameEdited(_) => f.write_str("NameEdited(..)"),
+            Self::BatchStepDone { tab, result } => {
+                write!(f, "BatchStepDone({}, {})", tab.value(), result.is_ok())
+            }
+            Self::StopBatch { tab } => write!(f, "StopBatch({})", tab.value()),
             Self::OperationDone { tab, side, result } => write!(
                 f,
                 "OperationDone({}, {side:?}, {})",
@@ -705,10 +722,13 @@ enum PendingKind {
     NewFolder,
     /// The entry at this path to rename in the same folder.
     Rename { remote: RemotePath, local: PathBuf },
-    /// The entries at these paths to delete.
-    Delete { targets: Vec<(RemotePath, PathBuf)> },
-    /// The entries of the server at these paths to give new permission bits.
-    Permissions { remotes: Vec<RemotePath> },
+    /// The entries at these paths to delete, each with its name.
+    Delete {
+        targets: Vec<(String, RemotePath, PathBuf)>,
+    },
+    /// The entries of the server at these paths to give new permission bits, each with its
+    /// name.
+    Permissions { remotes: Vec<(String, RemotePath)> },
 }
 
 /// A planned transfer waiting for the user's answers to the destinations in its way.
@@ -858,6 +878,7 @@ impl App {
         Vec::new()
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         if let Some((tab, side)) = message.gesture()
             && let Some(files) = self.files_mut(tab)
@@ -877,6 +898,8 @@ impl App {
                 }
                 Vec::new()
             }
+            FilesMessage::BatchStepDone { tab, result } => self.batch_step_done(tab, result),
+            FilesMessage::StopBatch { tab } => self.stop_batch(tab),
             FilesMessage::OperationDone { tab, side, result } => {
                 if let (Some(files), Err(error)) = (self.files_mut(tab), &result) {
                     match side {
@@ -1940,7 +1963,7 @@ impl App {
                     .chosen()
                     .into_iter()
                     .filter_map(|index| pane.entries.get(index))
-                    .map(|entry| pane.path.join(&entry.name))
+                    .map(|entry| (entry.label.clone(), pane.path.join(&entry.name)))
                     .collect();
                 (PendingKind::Permissions { remotes }, value)
             }
@@ -1966,6 +1989,14 @@ impl App {
     }
 
     fn ask_delete(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
+        // One run at a time in a tab: the one going on is stopped first.
+        if self
+            .tab(tab)
+            .and_then(|tab| tab.files.as_deref())
+            .is_some_and(|files| files.batch.is_some())
+        {
+            return Vec::new();
+        }
         let chosen = self.chosen(tab, side);
         let Some((name, ..)) = chosen.first().cloned() else {
             return Vec::new();
@@ -1974,7 +2005,7 @@ impl App {
         let count = chosen.len();
         let targets = chosen
             .into_iter()
-            .map(|(_, remote, local, _)| (remote, local))
+            .map(|(name, remote, local, _)| (name, remote, local))
             .collect();
         self.pending_operation = Some(PendingOperation {
             tab,
@@ -1997,50 +2028,19 @@ impl App {
             return Vec::new();
         };
         let (tab, side) = (pending.tab, pending.side);
+        let Some(client) = self.files_mut(tab).map(|files| files.client.clone()) else {
+            return Vec::new();
+        };
+        let kind = match pending.kind {
+            PendingKind::Permissions { remotes } => {
+                return self.confirm_permissions(tab, remotes, typed);
+            }
+            PendingKind::Delete { targets } => return self.confirm_delete(tab, side, targets),
+            kind => kind,
+        };
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        let client = files.client.clone();
-        let operation = |operation| Effect::FileOperation {
-            tab,
-            side,
-            operation: Box::new(operation),
-        };
-        if let PendingKind::Permissions { remotes } = pending.kind {
-            let mode = match octal_mode(typed.unwrap_or_default()) {
-                Ok(mode) => mode,
-                Err(error) => {
-                    files.remote.error = Some(error);
-                    return Vec::new();
-                }
-            };
-            let Some(client) = client else {
-                return Vec::new();
-            };
-            return remotes
-                .into_iter()
-                .map(|path| {
-                    operation(FileOperation::RemoteSetPermissions {
-                        client: client.clone(),
-                        path,
-                        mode,
-                    })
-                })
-                .collect();
-        }
-        if let PendingKind::Delete { targets } = pending.kind {
-            return targets
-                .into_iter()
-                .filter_map(|(remote, local)| match side {
-                    Side::Remote => Some(FileOperation::RemoteRemove {
-                        client: client.clone()?,
-                        path: remote,
-                    }),
-                    Side::Local => Some(FileOperation::LocalRemove { path: local }),
-                })
-                .map(operation)
-                .collect();
-        }
         let name = match typed {
             Some(typed) => match typed_name(side, typed) {
                 Ok(name) => Some(name),
@@ -2057,7 +2057,7 @@ impl App {
         let remote_folder = files.remote.path.clone();
         let local_folder = files.local.path.clone();
         let operation = (|| {
-            Some(match (side, pending.kind, name) {
+            Some(match (side, kind, name) {
                 (Side::Remote, PendingKind::NewFolder, Some(name)) => {
                     FileOperation::RemoteMakeFolder {
                         client: client?,
@@ -2093,6 +2093,122 @@ impl App {
                 operation: Box::new(done),
             })
             .collect()
+    }
+}
+
+impl App {
+    /// The permission bits `typed` given to `remotes`, one after another; typed wrong, the
+    /// pane says so and nothing changes.
+    fn confirm_permissions(
+        &mut self,
+        tab: TabId,
+        remotes: Vec<(String, RemotePath)>,
+        typed: Option<&str>,
+    ) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let mode = match octal_mode(typed.unwrap_or_default()) {
+            Ok(mode) => mode,
+            Err(error) => {
+                files.remote.error = Some(error);
+                return Vec::new();
+            }
+        };
+        let Some(client) = files.client.clone() else {
+            return Vec::new();
+        };
+        let entries = remotes
+            .into_iter()
+            .map(|(name, path)| {
+                let change = FileOperation::RemoteSetPermissions {
+                    client: client.clone(),
+                    path,
+                    mode,
+                };
+                (name, change)
+            })
+            .collect();
+        self.start_batch(tab, Side::Remote, BatchKind::Permissions, entries)
+    }
+
+    /// `targets` of `side` deleted, one after another.
+    fn confirm_delete(
+        &mut self,
+        tab: TabId,
+        side: Side,
+        targets: Vec<(String, RemotePath, PathBuf)>,
+    ) -> Vec<Effect> {
+        let client = self.files_mut(tab).and_then(|files| files.client.clone());
+        let entries = targets
+            .into_iter()
+            .filter_map(|(name, remote, local)| {
+                let removal = match side {
+                    Side::Remote => FileOperation::RemoteRemove {
+                        client: client.clone()?,
+                        path: remote,
+                    },
+                    Side::Local => FileOperation::LocalRemove { path: local },
+                };
+                Some((name, removal))
+            })
+            .collect();
+        self.start_batch(tab, side, BatchKind::Delete, entries)
+    }
+
+    /// Starts `entries` one after another in `side` of `tab`, as the C# deletes them, the
+    /// pane saying which one it is at.
+    fn start_batch(
+        &mut self,
+        tab: TabId,
+        side: Side,
+        kind: BatchKind,
+        entries: Vec<(String, FileOperation)>,
+    ) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab).filter(|files| files.batch.is_none()) else {
+            return Vec::new();
+        };
+        let Some((batch, first)) = Batch::start(side, kind, entries) else {
+            return Vec::new();
+        };
+        files.batch = Some(batch);
+        vec![Effect::FileBatchStep {
+            tab,
+            side,
+            operation: Box::new(first),
+        }]
+    }
+
+    /// The entry of `tab`'s run being worked on ended: the next one starts; or, the run
+    /// over, its pane is listed again and what did not go is said.
+    fn batch_step_done(&mut self, tab: TabId, result: Result<(), FilesError>) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let Some(batch) = files.batch.as_mut() else {
+            return Vec::new();
+        };
+        let side = batch.side;
+        if let Some(next) = batch.step(result) {
+            return vec![Effect::FileBatchStep {
+                tab,
+                side,
+                operation: Box::new(next),
+            }];
+        }
+        let outcome = files.batch.take().and_then(|batch| batch.outcome());
+        if let Some(outcome) = outcome {
+            self.tell(super::Notice::FilesBatch(outcome));
+        }
+        self.list(tab, side)
+    }
+
+    /// Stops `tab`'s run after the entry being worked on.
+    fn stop_batch(&mut self, tab: TabId) -> Vec<Effect> {
+        if let Some(batch) = self.files_mut(tab).and_then(|files| files.batch.as_mut()) {
+            batch.stopping = true;
+        }
+        Vec::new()
     }
 }
 

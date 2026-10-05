@@ -428,6 +428,19 @@ fn row_tooltip(profile: &ProfileSummary) -> String {
         "ui-tree-tooltip-protocol",
         protocol = profile.kind.label()
     ));
+    // What it says of its server, as the C# detail panel.
+    if let Some(environment) = profile.metadata.environment {
+        lines.push(fl!(
+            "ui-tree-tooltip-environment",
+            environment = crate::texts::environment_name(Some(environment))
+        ));
+    }
+    if !profile.metadata.tags.is_empty() {
+        lines.push(fl!(
+            "ui-tree-tooltip-tags",
+            tags = heimdall_app::server_text(&profile.metadata.tags)
+        ));
+    }
     if profile.favorite {
         lines.push(fl!("ui-tree-favorite"));
     }
@@ -696,6 +709,15 @@ fn profile_entries<'a>(
             Some(AppMessage::ProfileMenu(
                 ProfileMenuMessage::TestReachability(id.clone()),
             )),
+        ));
+    }
+    // Only for a server whose MAC address is known, as the C# menu.
+    if profile.metadata.mac_address.is_some() {
+        entries = entries.push(entry(
+            fl!("ui-tree-wake-on-lan"),
+            Some(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLan(
+                id.clone(),
+            ))),
         ));
     }
     entries = entries.push(separator()).push(

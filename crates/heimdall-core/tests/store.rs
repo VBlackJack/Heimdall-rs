@@ -183,7 +183,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 10);
+    assert_eq!(PROFILE_FILE_VERSION, 11);
 }
 
 #[test]
@@ -822,4 +822,50 @@ fn a_port_and_an_account_are_set_where_a_profile_has_them() {
         "Telnet names no account"
     );
     assert!(!store.set_port(&ProfileId::new("gone"), 1));
+}
+
+#[test]
+fn a_profile_s_metadata_is_kept_beside_it_read_leniently_and_goes_with_it() {
+    use heimdall_core::metadata::{Environment, ProfileMetadata};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("store");
+    store.merge([profile("web", "web.lab")]);
+    let id = store.ssh_profiles()[0].id.clone();
+    let metadata = ProfileMetadata {
+        environment: Some(Environment::Staging),
+        tags: "frontend".to_owned(),
+        mac_address: "0A:0B:0C:0D:0E:0F".parse().ok(),
+    };
+    assert!(
+        !store.set_metadata(
+            &heimdall_core::profile::ProfileId::new("nobody"),
+            metadata.clone()
+        ),
+        "a profile not in the store keeps none"
+    );
+    assert!(store.set_metadata(&id, metadata.clone()));
+    store.save().expect("save");
+    let mut store = ProfileStore::open(&path).expect("read back");
+    assert_eq!(store.metadata(&id), Some(&metadata));
+    assert!(store.remove(&id));
+    assert_eq!(store.metadata(&id), None, "gone with it");
+
+    // An environment or an address the file names that does not read is left out.
+    fs::write(
+        &path,
+        format!(
+            "version = {PROFILE_FILE_VERSION}\n[[ssh]]\nid = \"web\"\nname = \"web\"\nhost = \"h\"\nport = 22\n\n[metadata.web]\nenvironment = \"Moon\"\ntags = \"kept\"\nmac_address = \"zz\"\n"
+        ),
+    )
+    .expect("write");
+    let store = ProfileStore::open(&path).expect("read");
+    let read = store
+        .metadata(&heimdall_core::profile::ProfileId::new("web"))
+        .expect("the tags");
+    assert_eq!(
+        (read.environment, read.tags.as_str(), read.mac_address),
+        (None, "kept", None)
+    );
 }

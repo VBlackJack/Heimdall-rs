@@ -166,6 +166,10 @@ pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
 /// What the Settings page changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent on/off settings, one per C# checkbox"
+)]
 pub struct Settings {
     /// The terminal's colours.
     pub color_scheme: ColorScheme,
@@ -222,6 +226,8 @@ pub struct Settings {
     pub ssh_agent_preference: AgentPreference,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
+    /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
+    pub diagnostics_log: bool,
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -375,6 +381,7 @@ impl Default for Settings {
             external_editor: String::new(),
             ssh_agent_preference: AgentPreference::default(),
             collapse_tunnels_panel: true,
+            diagnostics_log: true,
         }
     }
 }
@@ -529,6 +536,9 @@ struct GeneralSection {
     /// Absent is the C# default: collapsed.
     #[serde(default)]
     collapse_tunnels_panel: Option<bool>,
+    /// Absent is the C# default: written.
+    #[serde(default)]
+    diagnostics_log: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -714,6 +724,7 @@ impl Settings {
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
+            diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -759,6 +770,7 @@ impl Settings {
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),
                 collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
+                diagnostics_log: Some(self.diagnostics_log),
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),

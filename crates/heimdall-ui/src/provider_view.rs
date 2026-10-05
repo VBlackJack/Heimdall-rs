@@ -20,7 +20,11 @@
 
 use heimdall_app::credential_provider::{ProviderFailure, ProviderTest};
 use heimdall_app::{App, Message as AppMessage, ProviderMessage};
-use heimdall_core::credential_provider::{PRESETS, ProviderKind, TemplateProblem};
+use std::time::Duration;
+
+use heimdall_core::credential_provider::{
+    MAX_TIMEOUT, MIN_TIMEOUT, PRESETS, ProviderKind, TemplateProblem,
+};
 use iced::widget::{
     Column, button, checkbox, column, container, pick_list, radio, row, text, text_input,
 };
@@ -42,6 +46,44 @@ const LABEL_WIDTH: f32 = 200.0;
 
 fn provider(message: ProviderMessage) -> Message {
     Message::App(AppMessage::CredentialProvider(message))
+}
+
+/// A command's time limit in the list, in seconds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct Seconds(u64);
+
+impl std::fmt::Display for Seconds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&fl!(
+            "ui-settings-provider-timeout-seconds",
+            seconds = self.0
+        ))
+    }
+}
+
+/// How long a command is given, chosen by the second within the C# range, as the C#
+/// "Command timeout" field, its hint under it.
+fn timeout_choice<'a>(timeout: Duration) -> Element<'a, Message> {
+    let choices: Vec<Seconds> = (MIN_TIMEOUT.as_secs()..=MAX_TIMEOUT.as_secs())
+        .map(Seconds)
+        .collect();
+    column![
+        row![
+            text(fl!("ui-settings-provider-timeout")).width(LABEL_WIDTH),
+            pick_list(
+                choices,
+                Some(Seconds(timeout.as_secs())),
+                |Seconds(seconds)| {
+                    provider(ProviderMessage::Timeout(Duration::from_secs(seconds)))
+                }
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+        text(fl!("ui-settings-provider-timeout-hint")).size(SMALL_SIZE),
+    ]
+    .spacing(SPACING / 2.0)
+    .into()
 }
 
 /// A quick setup preset, as the list shows it.
@@ -159,6 +201,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
                 .on_toggle(|on| provider(ProviderMessage::FirstLineOnly(on))),
         )
         .push(text(fl!("ui-settings-provider-first-line-help")).size(SMALL_SIZE))
+        .push(timeout_choice(settings.timeout))
         .push(text(fl!("ui-settings-provider-keepass2-hint")).size(SMALL_SIZE));
     boxed(card)
 }

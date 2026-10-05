@@ -621,3 +621,14 @@ fn resolution_presets_round_trip_and_reset_with_the_other_rdp_settings() {
     assert_eq!(settings.rdp_defaults, defaults.rdp_defaults);
     assert!(settings.ssh_auto_reconnect, "outside RDP, untouched");
 }
+
+#[test]
+fn the_diagnostics_log_is_written_unless_turned_off_as_the_csharp_default() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(settings.diagnostics_log);
+    settings.diagnostics_log = false;
+    settings.save(&path).expect("save");
+    assert!(!Settings::load(&path).expect("load").diagnostics_log);
+}
