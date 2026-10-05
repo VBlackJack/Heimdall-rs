@@ -1415,6 +1415,38 @@ ui-settings-rdp-reset-defaults = Restablecer valores predeterminados de RDP
 ui-settings-rdp-reset-defaults-tooltip = Revierte solo los valores predeterminados de RDP a sus valores de fábrica. No se tocan otros ajustes.
 ui-dialog-reset-rdp-title = ¿Restablecer valores predeterminados de RDP?
 ui-dialog-reset-rdp-body = ¿Restaurar todos los valores predeterminados relacionados con RDP a sus valores de fábrica? Los servidores existentes no se ven afectados.
+ui-settings-tab-about = Acerca de
+ui-about-version = Versión { $version }
+ui-about-tagline = Administrador seguro de conexiones RDP/SSH/SFTP
+ui-about-section-system = Sistema
+ui-about-platform = Plataforma
+ui-about-author = Autor
+ui-about-license = Licencia
+ui-about-section-data = Datos
+ui-about-sessions = Sesiones
+ui-about-gateways = Pasarelas
+ui-about-config-path = Configuración
+ui-about-log-path = Registros
+ui-about-section-links = Acceso rápido
+ui-about-open-config = Abrir carpeta de configuración
+ui-about-open-logs = Abrir carpeta de registros
+ui-about-repository = GitHub
+ui-about-section-diagnostics = Diagnóstico
+ui-about-diagnostics-log = Escribir el registro de diagnóstico de la aplicación (eventos y errores de Heimdall)
+ui-about-diagnostics-log-hint = Se aplica de inmediato. Un informe de fallo se escribe en todo caso: es el único rastro de un fallo.
+ui-settings-provider-timeout = Tiempo de espera del comando
+ui-settings-provider-timeout-seconds = { $seconds } s
+ui-settings-provider-timeout-hint = Cuánto tiempo puede ejecutarse el comando de contraseña antes de que Heimdall lo abandone. Auméntalo para un almacén que pide confirmación.
+ui-folder-color = Color
+ui-folder-color-none = Sin color
+ui-folder-color-blue = Azul
+ui-folder-color-green = Verde
+ui-folder-color-red = Rojo
+ui-folder-color-amber = Ámbar
+ui-folder-color-purple = Morado
+ui-folder-color-pink = Rosa
+ui-folder-color-cyan = Cian
+ui-folder-color-orange = Naranja
 ui-shortcuts-title = Atajos de teclado
 ui-shortcuts-hint = F1 para atajos
 ui-shortcuts-session-keys = En un terminal o un escritorio remoto, F1 y las teclas que usa la sesión van al servidor: abre esta lista desde la barra de estado.
@@ -1470,3 +1502,19 @@ ui-status-wake-on-lan-sent = Paquete mágico de Wake-on-LAN enviado.
 ui-status-wake-on-lan-failed = No se pudo enviar el paquete de Wake-on-LAN: { $reason }
 ui-tree-tooltip-environment = Entorno: { $environment }
 ui-tree-tooltip-tags = Etiquetas: { $tags }
+ui-files-batch-deleting = Eliminando { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Cambiando los permisos de { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Cancelar
+ui-files-batch-stopping = Deteniendo después de este...
+ui-status-files-delete-failed = No se pudo eliminar "{ $name }": { $reason }
+ui-status-files-permissions-failed = No se pudieron cambiar los permisos de "{ $name }": { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] No se pudo eliminar { $failed } elemento de { $total }. "{ $name }": { $reason }
+   *[other] No se pudieron eliminar { $failed } elementos de { $total }. El primero, "{ $name }": { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] No se pudieron cambiar los permisos de { $failed } elemento de { $total }. "{ $name }": { $reason }
+   *[other] No se pudieron cambiar los permisos de { $failed } elementos de { $total }. El primero, "{ $name }": { $reason }
+}
+ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
+ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.

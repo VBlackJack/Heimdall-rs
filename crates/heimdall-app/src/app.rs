@@ -1015,6 +1015,16 @@ pub enum Effect {
         /// Folder.
         path: PathBuf,
     },
+    /// Carry out the entry of a delete or a change of permissions being worked on, then send
+    /// [`FilesMessage::BatchStepDone`].
+    FileBatchStep {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// What to do.
+        operation: Box<FileOperation>,
+    },
     /// Carry out a file operation, then send [`FilesMessage::OperationDone`].
     FileOperation {
         /// Tab.
@@ -1293,6 +1303,9 @@ impl fmt::Debug for Effect {
                 write!(f, "ListRemote({}, {path:?})", tab.value())
             }
             Self::ListLocal { tab, path } => write!(f, "ListLocal({}, {path:?})", tab.value()),
+            Self::FileBatchStep { tab, side, .. } => {
+                write!(f, "FileBatchStep({}, {side:?})", tab.value())
+            }
             Self::FileOperation { tab, side, .. } => {
                 write!(f, "FileOperation({}, {side:?})", tab.value())
             }
@@ -2231,6 +2244,12 @@ impl fmt::Debug for App {
 }
 
 impl App {
+    /// The file the profiles are kept in; the settings and the trusted keys are beside it.
+    #[must_use]
+    pub fn profiles_file(&self) -> &std::path::Path {
+        &self.config.profiles_file
+    }
+
     /// The application with the profiles of `config.profiles_file`. A store that cannot
     /// be read starts empty and the problem is shown.
     #[must_use]

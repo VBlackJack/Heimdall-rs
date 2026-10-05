@@ -24,7 +24,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::folder::{self, FolderError};
+use crate::folder::{self, FolderColor, FolderError};
 use crate::metadata::{Environment, MacAddress, ProfileMetadata};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
@@ -36,10 +36,10 @@ use crate::profile::{
 ///
 /// 2 added RDP profiles, 3 Telnet profiles, 4 VNC profiles, 5 local profiles, 6 SSH
 /// gateways and the gateway an SSH profile goes through, 8 folders of their own, empty ones
-/// included, 9 the favorites, 10 the profiles' metadata and a profile's own session
-/// logging. A build that knows an older version refuses a newer file rather than reading
-/// it, dropping what it does not know, and saving it back.
-pub const PROFILE_FILE_VERSION: u32 = 10;
+/// included, 9 the favorites, 10 the folders' colours and a profile's own session logging,
+/// 11 the profiles' metadata. A build that knows an older version refuses a newer file
+/// rather than reading it, dropping what it does not know, and saving it back.
+pub const PROFILE_FILE_VERSION: u32 = 11;
 
 /// Oldest format version still read; its files hold SSH profiles only.
 const OLDEST_READ_VERSION: u32 = 1;
@@ -68,6 +68,9 @@ struct ProfileFile {
     folder: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     favorite: Vec<ProfileId>,
+    /// A folder's colour by its path, the colour by name; one not known is left out.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    folder_color: BTreeMap<String, String>,
     /// What each profile says of its server, by identifier.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     metadata: BTreeMap<String, MetadataEntry>,
@@ -172,6 +175,8 @@ pub struct ProfileStore {
     favorites: Vec<ProfileId>,
     /// What each profile says of its server, as the C# Metadata section; none empty.
     metadata: BTreeMap<ProfileId, ProfileMetadata>,
+    /// The colours given to folders, by normalised path, as the C# group colour.
+    folder_colors: BTreeMap<String, FolderColor>,
 }
 
 /// Why an SSH profile's gateways cannot be followed.
@@ -204,6 +209,7 @@ impl ProfileStore {
             folders: Vec::new(),
             favorites: Vec::new(),
             metadata: BTreeMap::new(),
+            folder_colors: BTreeMap::new(),
         }
     }
 
@@ -260,6 +266,15 @@ impl ProfileStore {
                 .iter()
                 .map(|(id, entry)| (ProfileId::new(id.clone()), entry.read()))
                 .filter(|(_, metadata)| !metadata.is_empty())
+                .collect(),
+            folder_colors: file
+                .folder_color
+                .iter()
+                .filter_map(|(path, name)| {
+                    let path = folder::normal(path);
+                    let color = FolderColor::named(name)?;
+                    (!path.is_empty()).then_some((path, color))
+                })
                 .collect(),
         })
     }
@@ -640,6 +655,18 @@ impl ProfileStore {
                 *kept = folder::relabel(kept, &path, to);
             }
         }
+        // Their colours follow them.
+        let colors = std::mem::take(&mut self.folder_colors);
+        self.folder_colors = colors
+            .into_iter()
+            .map(|(colored, color)| {
+                if folder::is_within(&colored, &path) {
+                    (folder::relabel(&colored, &path, to), color)
+                } else {
+                    (colored, color)
+                }
+            })
+            .collect();
         Ok(to.to_owned())
     }
 
@@ -785,7 +812,51 @@ impl ProfileStore {
             }
         }
         self.folders.retain(|kept| !folder::is_within(kept, path));
+        self.folder_colors
+            .retain(|colored, _| !folder::is_within(colored, path));
         moved
+    }
+
+    /// The colour folder `path` was given itself; `None` when it takes its parent's, or none.
+    #[must_use]
+    pub fn own_folder_color(&self, path: &str) -> Option<FolderColor> {
+        self.folder_colors.get(&folder::normal(path)).copied()
+    }
+
+    /// The colour folder `path` is shown in: its own, else the nearest one of the folders it
+    /// is in, as the C# folders inherit theirs.
+    #[must_use]
+    pub fn folder_color(&self, path: &str) -> Option<FolderColor> {
+        let mut path = folder::normal(path);
+        while !path.is_empty() {
+            if let Some(color) = self.folder_colors.get(&path) {
+                return Some(*color);
+            }
+            path = folder::parent(&path);
+        }
+        None
+    }
+
+    /// Gives folder `path` `color`, or takes its own away for `None`, so it shows its
+    /// parent's again.
+    ///
+    /// # Errors
+    ///
+    /// [`FolderError::Missing`] for no such folder.
+    pub fn set_folder_color(
+        &mut self,
+        path: &str,
+        color: Option<FolderColor>,
+    ) -> Result<(), FolderError> {
+        let path = folder::normal(path);
+        if path.is_empty() || !self.folder_paths().contains(&path) {
+            return Err(FolderError::Missing);
+        }
+        match color {
+            Some(color) => self.folder_colors.insert(path, color),
+            None => self.folder_colors.remove(&path),
+        };
+        Ok(())
     }
 
     /// Number of profiles, all protocols together.
@@ -838,6 +909,11 @@ impl ProfileStore {
                 .metadata
                 .iter()
                 .map(|(id, metadata)| (id.as_str().to_owned(), MetadataEntry::of(metadata)))
+                .collect(),
+            folder_color: self
+                .folder_colors
+                .iter()
+                .map(|(path, color)| (path.clone(), color.name().to_owned()))
                 .collect(),
         })?;
         write_atomic(&self.path, &text)

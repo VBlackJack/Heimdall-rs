@@ -167,6 +167,8 @@ pub enum Notice {
     FilesCopied(usize),
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// A delete or a change of permissions of entries did not do them all.
+    FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.
     FilesDuplicated,
     /// A transcript was started, in this file.

@@ -28,6 +28,7 @@ use heimdall_app::{
     RdpMessage, ResolutionChoice, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId,
     TabMenuMessage, TreeFilter,
 };
+use heimdall_core::folder::FolderColor;
 use heimdall_core::profile::{ProfileId, Resolution, fixed_desktop};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
@@ -83,6 +84,8 @@ pub enum TreeMenu {
     Folder(String),
     /// Where a folder can move to.
     MoveFolder(String),
+    /// Which colour a folder takes.
+    FolderColor(String),
     /// Which folder a profile can move to.
     MoveProfile(ProfileId),
     /// The tree's filters, as the C# filter button's menu.
@@ -171,13 +174,15 @@ pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message>
 }
 
 /// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
-/// The profiles it holds counted at its right, as the C# tree's.
+/// The profiles it holds counted at its right, as the C# tree's; its colour, its own or
+/// inherited, in a swatch before its name, as the C# folder icon takes it.
 pub fn folder_row<'a>(
     path: String,
     name: String,
     depth: usize,
     open: bool,
     count: usize,
+    color: Option<FolderColor>,
 ) -> Element<'a, Message> {
     let label = if path == NO_FOLDER {
         fl!("ui-sidebar-group-none")
@@ -188,6 +193,7 @@ pub fn folder_row<'a>(
     let body = container(
         row![
             text(marker).size(PROTOCOL_SIZE).style(text::secondary),
+            color.map(swatch),
             text(label).size(FOLDER_SIZE),
             iced::widget::space::horizontal(),
             text(count.to_string())
@@ -207,6 +213,80 @@ pub fn folder_row<'a>(
             .into(),
         depth,
     )
+}
+
+/// Side of a folder colour's swatch, as the C# menu's.
+const SWATCH_SIDE: f32 = 10.0;
+/// Corner radius of the swatch.
+const SWATCH_RADIUS: f32 = 2.0;
+
+/// A square of `color`, before a folder's name and in its menu.
+fn swatch<'a>(color: FolderColor) -> Element<'a, Message> {
+    let (red, green, blue) = color.rgb();
+    container(iced::widget::space().width(SWATCH_SIDE).height(SWATCH_SIDE))
+        .style(move |_: &iced::Theme| container::Style {
+            background: Some(iced::Color::from_rgb8(red, green, blue).into()),
+            border: iced::Border {
+                radius: SWATCH_RADIUS.into(),
+                ..iced::Border::default()
+            },
+            ..container::Style::default()
+        })
+        .into()
+}
+
+/// The name of `color`, in the window's language.
+fn color_name(color: FolderColor) -> String {
+    match color {
+        FolderColor::Blue => fl!("ui-folder-color-blue"),
+        FolderColor::Green => fl!("ui-folder-color-green"),
+        FolderColor::Red => fl!("ui-folder-color-red"),
+        FolderColor::Amber => fl!("ui-folder-color-amber"),
+        FolderColor::Purple => fl!("ui-folder-color-purple"),
+        FolderColor::Pink => fl!("ui-folder-color-pink"),
+        FolderColor::Cyan => fl!("ui-folder-color-cyan"),
+        FolderColor::Orange => fl!("ui-folder-color-orange"),
+    }
+}
+
+/// The colours folder `path` can take, its own `current` ticked, then "No colour", ticked
+/// when it has none of its own, as the C# "Colour" menu.
+#[must_use]
+pub fn folder_color_entries<'a>(path: &str, current: Option<FolderColor>) -> Element<'a, Message> {
+    let choose = |color| {
+        Message::MenuChoice(AppMessage::Folder(FolderMessage::Color {
+            path: path.to_owned(),
+            color,
+        }))
+    };
+    let item = |label: String, checked: bool, color: Option<FolderColor>| -> Element<'a, Message> {
+        button(
+            row![
+                text(if checked { CHECKED } else { "" })
+                    .size(MENU_TEXT_SIZE)
+                    .width(CHECK_WIDTH),
+                color.map(swatch),
+                text(label).size(MENU_TEXT_SIZE),
+            ]
+            .spacing(6.0)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .style(menu_style)
+        .on_press(choose(color))
+        .into()
+    };
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .extend(
+            FolderColor::ALL
+                .into_iter()
+                .map(|color| item(color_name(color), current == Some(color), Some(color))),
+        )
+        .push(separator())
+        .push(item(fl!("ui-folder-color-none"), current.is_none(), None));
+    menu_card(entries).into()
 }
 
 /// Size of the line under a found profile's name.
@@ -1186,6 +1266,14 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                     .width(Length::Fill)
                     .style(menu_style)
                     .on_press(Message::OpenTreeMenu(TreeMenu::MoveFolder(path.to_owned()))),
+            )
+            .push(
+                button(text(fl!("ui-folder-color")).size(MENU_TEXT_SIZE))
+                    .width(Length::Fill)
+                    .style(menu_style)
+                    .on_press(Message::OpenTreeMenu(TreeMenu::FolderColor(
+                        path.to_owned(),
+                    ))),
             )
             .push(
                 button(text(fl!("ui-folder-delete")).size(MENU_TEXT_SIZE))

@@ -66,6 +66,8 @@ pub enum SettingsMessage {
     RdpDefaults(RdpDefaults),
     /// The tunnels panel starts collapsed, or open.
     CollapseTunnelsPanel(bool),
+    /// The application writes its diagnostics log, or not.
+    DiagnosticsLog(bool),
     /// The sizes the Resolution menus offer, empty for the built-in ones; refused when one
     /// is out of the limits.
     RdpResolutionPresets(Vec<(u16, u16)>),
@@ -208,6 +210,7 @@ impl App {
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }
+            SettingsMessage::DiagnosticsLog(on) => self.settings.diagnostics_log = *on,
             SettingsMessage::RdpResolutionPresets(presets) => {
                 if !Settings::resolution_presets_accepted(presets) {
                     return Vec::new();

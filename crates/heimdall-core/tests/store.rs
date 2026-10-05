@@ -183,7 +183,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 10);
+    assert_eq!(PROFILE_FILE_VERSION, 11);
 }
 
 #[test]

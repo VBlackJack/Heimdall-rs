@@ -1493,6 +1493,38 @@ ui-settings-rdp-reset-defaults = Reset RDP defaults
 ui-settings-rdp-reset-defaults-tooltip = Reverts only the RDP defaults to their factory values. Other settings are untouched.
 ui-dialog-reset-rdp-title = Reset RDP defaults?
 ui-dialog-reset-rdp-body = Restore all RDP-related defaults to their factory values? Existing servers are not affected.
+ui-settings-tab-about = About
+ui-about-version = Version { $version }
+ui-about-tagline = Secure RDP/SSH/SFTP connection manager
+ui-about-section-system = System
+ui-about-platform = Platform
+ui-about-author = Author
+ui-about-license = License
+ui-about-section-data = Data
+ui-about-sessions = Sessions
+ui-about-gateways = Gateways
+ui-about-config-path = Config
+ui-about-log-path = Logs
+ui-about-section-links = Quick access
+ui-about-open-config = Open config folder
+ui-about-open-logs = Open logs folder
+ui-about-repository = GitHub
+ui-about-section-diagnostics = Diagnostics
+ui-about-diagnostics-log = Write the application diagnostics log (Heimdall's own events and errors)
+ui-about-diagnostics-log-hint = Applied at once. A crash report is written whatever this says: it is the only trace of a crash.
+ui-settings-provider-timeout = Command timeout
+ui-settings-provider-timeout-seconds = { $seconds } s
+ui-settings-provider-timeout-hint = How long the password command may run before Heimdall gives up on it. Raise it for a vault that asks for confirmation.
+ui-folder-color = Colour
+ui-folder-color-none = No colour
+ui-folder-color-blue = Blue
+ui-folder-color-green = Green
+ui-folder-color-red = Red
+ui-folder-color-amber = Amber
+ui-folder-color-purple = Purple
+ui-folder-color-pink = Pink
+ui-folder-color-cyan = Cyan
+ui-folder-color-orange = Orange
 ui-shortcuts-title = Keyboard Shortcuts
 ui-shortcuts-hint = F1 for shortcuts
 ui-shortcuts-session-keys = In a terminal or a remote desktop, F1 and the keys the session uses go to the server: open this list from the status bar.
@@ -1548,3 +1580,19 @@ ui-status-wake-on-lan-sent = Wake-on-LAN magic packet sent.
 ui-status-wake-on-lan-failed = Failed to send Wake-on-LAN packet: { $reason }
 ui-tree-tooltip-environment = Environment: { $environment }
 ui-tree-tooltip-tags = Tags: { $tags }
+ui-files-batch-deleting = Deleting { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Changing the permissions of { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Cancel
+ui-files-batch-stopping = Stopping after this one...
+ui-status-files-delete-failed = Could not delete "{ $name }": { $reason }
+ui-status-files-permissions-failed = Could not change the permissions of "{ $name }": { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] { $failed } item out of { $total } could not be deleted. "{ $name }": { $reason }
+   *[other] { $failed } items out of { $total } could not be deleted. First, "{ $name }": { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] Permissions could not be changed on { $failed } item out of { $total }. "{ $name }": { $reason }
+   *[other] Permissions could not be changed on { $failed } items out of { $total }. First, "{ $name }": { $reason }
+}
+ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
+ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.

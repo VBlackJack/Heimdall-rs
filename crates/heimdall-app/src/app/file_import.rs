@@ -232,6 +232,10 @@ impl App {
             for (id, metadata) in &report.metadata {
                 store.set_metadata(id, metadata.clone());
             }
+            // A folder no profile came into is not there to colour: left out.
+            for (path, color) in &report.folder_colors {
+                let _ = store.set_folder_color(path, Some(*color));
+            }
             [ssh, rdp, telnet, vnc, local, winrm, ftp, gateways]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {
