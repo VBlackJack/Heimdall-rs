@@ -246,7 +246,7 @@ async fn both_panes_show_their_folders_and_a_folder_click_selects_it() {
     ui.find("server a (files)").expect("tab title");
     ui.find("This computer").expect("local pane");
     ui.find("Server").expect("remote pane");
-    ui.find("/home/admin").expect("remote path");
+    ui.find("admin").expect("remote path, as its folders");
     ui.find("5.0 MiB").expect("size");
     ui.click("logs/").expect("folder");
     let messages = files_messages(ui);
@@ -443,6 +443,36 @@ async fn the_path_bar_is_typed_over_and_enter_goes_there() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
+    {
+        // Its folders first, as the C# breadcrumb: one goes there.
+        let mut ui = simulator(&shell);
+        assert!(ui.find("/home/admin").is_err(), "the folders, not the path");
+        ui.click("home").expect("a folder of the breadcrumb");
+        assert!(
+            files_messages(ui).iter().any(|message| matches!(
+                message,
+                FilesMessage::Ascend { tab: t, side: Side::Remote, levels: 1 } if *t == tab
+            )),
+            "one folder up"
+        );
+    }
+    // A click beside them gives the path to type in; Escape gives the folders back.
+    let _ = shell.update(Message::EditPath {
+        tab,
+        side: Side::Remote,
+    });
+    simulator(&shell)
+        .find("/home/admin")
+        .expect("the path, to type in");
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(
+        simulator(&shell).find("/home/admin").is_err(),
+        "the folders again"
+    );
+    let _ = shell.update(Message::EditPath {
+        tab,
+        side: Side::Remote,
+    });
     {
         let mut ui = simulator(&shell);
         ui.click("/home/admin").expect("the remote path bar");
@@ -1299,4 +1329,50 @@ async fn an_empty_pane_says_why_and_offers_the_way_out_as_the_csharp() {
             ..
         }
     )));
+}
+
+#[tokio::test]
+async fn an_entry_dragged_onto_the_other_panes_folder_is_sent_into_it() {
+    use heimdall_ui::files_drag::Spot;
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let spot = |side, index| Spot { tab, side, index };
+    // Pressed on the server's backup, not chosen yet: it alone is dragged.
+    let _ = shell.update(Message::FilesHover(spot(Side::Remote, Some(1))));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesDragMoved(Point::new(30.0, 30.0)));
+    // Over this computer's Documents folder, then let go.
+    let _ = shell.update(Message::FilesHover(spot(Side::Local, None)));
+    let _ = shell.update(Message::FilesHover(spot(Side::Local, Some(0))));
+    let _ = shell.update(Message::FilesDragEnd);
+    let files = shell
+        .app()
+        .tab(tab)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    let [transfer] = files.transfers.as_slice() else {
+        panic!("{:?}", files.transfers.len());
+    };
+    assert_eq!(transfer.direction, Direction::Download);
+    let picked = transfer.picked.as_ref().expect("planned");
+    assert_eq!(
+        picked.root.local,
+        dir.path().join("Documents").join("backup.tar.gz"),
+        "into the folder dropped on"
+    );
+
+    // A click is no drag: nothing more is sent.
+    let _ = shell.update(Message::FilesHover(spot(Side::Remote, Some(1))));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::FilesHover(spot(Side::Local, None)));
+    let _ = shell.update(Message::FilesDragEnd);
+    let files = shell
+        .app()
+        .tab(tab)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert_eq!(files.transfers.len(), 1);
 }

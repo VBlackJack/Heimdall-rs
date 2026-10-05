@@ -30,7 +30,7 @@ use std::time::SystemTime;
 use heimdall_app::external_edit::EditSession;
 use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
-    SortColumn, Special, Transfer, TransferState, symbolic_mode,
+    SortColumn, Special, Transfer, TransferState, local_segments, remote_segments, symbolic_mode,
 };
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use heimdall_core::utc::UtcTime;
@@ -38,8 +38,8 @@ use heimdall_files::Refusal;
 use iced::keyboard::{self, Modifiers, key::Named};
 use iced::widget::Id;
 use iced::widget::{
-    Column, button, column, container, mouse_area, responsive, row, scrollable, text, text_input,
-    tooltip,
+    Column, Row, button, column, container, mouse_area, responsive, row, scrollable, text,
+    text_input, tooltip,
 };
 use iced::{Alignment, Element, Length, Theme};
 
@@ -98,6 +98,15 @@ const FOLDER_MARK: &str = "/";
 
 /// Marks a link after its name.
 const LINK_MARK: &str = " ->";
+
+/// Between two folders of the breadcrumb: language-neutral, like a path.
+const SEGMENT_SEPARATOR: &str = ">";
+
+/// Room around the breadcrumb's folders, the path bar's own, so neither moves the other.
+const BREADCRUMB_PADDING: f32 = 5.0;
+
+/// Room between two folders of the breadcrumb and their separator, in logical pixels.
+const SEGMENT_SPACING: f32 = 4.0;
 
 /// A field of a pane the keyboard can be given to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -349,7 +358,7 @@ fn headers<'a>(tab: TabId, side: Side, columns: &[SortColumn], sort: Sort) -> El
 fn entry_row<'a, E: Listed>(
     entry: &E,
     columns: &[SortColumn],
-    selected: bool,
+    (selected, target): (bool, bool),
     (tab, side, index): (TabId, Side, usize),
 ) -> Element<'a, Message> {
     let on_press = files(FilesMessage::Select { tab, side, index });
@@ -364,20 +373,28 @@ fn entry_row<'a, E: Listed>(
     }
     let line = button(cells)
         .width(Length::Fill)
-        .style(if selected {
+        .style(if target {
+            // A drag over this folder: where the entries would go.
+            button::success
+        } else if selected {
             button::primary
         } else {
             button::text
         })
         .on_press(on_press);
     // A right click opens its menu, as in the C# Files tab.
-    mouse_area(line)
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+    crate::files_drag::spot(
+        mouse_area(line).on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
             tab,
             side,
             index,
-        }))
-        .into()
+        })),
+        crate::files_drag::Spot {
+            tab,
+            side,
+            index: Some(index),
+        },
+    )
 }
 
 /// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
@@ -477,6 +494,9 @@ struct PaneParts<'p, E> {
     side: Side,
     title: String,
     location: String,
+    /// The folders of the one shown, the root first, as the breadcrumb shows them; `None`
+    /// while the path bar is typed in.
+    breadcrumb: Option<Vec<String>>,
     typed: Option<&'p str>,
     entries: &'p [E],
     columns: &'p [SortColumn],
@@ -493,6 +513,8 @@ struct PaneParts<'p, E> {
     moves: Moves,
     /// The delete or the change of permissions running in this pane.
     batch: Option<&'p heimdall_app::files::Batch>,
+    /// Where a drag would drop in this pane.
+    drop: Option<DropHere>,
 }
 
 /// Where a pane can go besides up, as the C# Files tab's Back and Home.
@@ -502,6 +524,44 @@ struct Moves {
     back: bool,
     /// Home is known: a folder was shown.
     home: bool,
+}
+
+/// The folder shown as its folders, each a button going there, as the C# breadcrumb; a
+/// click beside them gives the path back to be typed in. The deepest stays in sight.
+fn breadcrumb_bar<'a>(tab: TabId, side: Side, segments: Vec<String>) -> Element<'a, Message> {
+    let last = segments.len().saturating_sub(1);
+    let mut trail = Row::new()
+        .spacing(SEGMENT_SPACING)
+        .align_y(Alignment::Center);
+    for (index, name) in segments.into_iter().enumerate() {
+        if index > 0 {
+            trail = trail.push(text(SEGMENT_SEPARATOR).size(SMALL_SIZE));
+        }
+        trail = trail.push(
+            button(text(name).size(SMALL_SIZE))
+                .style(button::text)
+                .padding(0)
+                .on_press(files(FilesMessage::Ascend {
+                    tab,
+                    side,
+                    levels: last - index,
+                })),
+        );
+    }
+    let trail = scrollable(trail)
+        .direction(scrollable::Direction::Horizontal(
+            scrollable::Scrollbar::hidden(),
+        ))
+        .anchor_right()
+        .width(Length::Fill);
+    mouse_area(
+        container(trail)
+            .padding(BREADCRUMB_PADDING)
+            .width(Length::Fill)
+            .style(container::bordered_box),
+    )
+    .on_press(Message::EditPath { tab, side })
+    .into()
 }
 
 /// What a pane listing nothing says, as the C# empty states: the folder is empty; or
@@ -594,6 +654,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         side,
         title,
         location,
+        breadcrumb,
         typed,
         entries,
         columns,
@@ -608,6 +669,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         focused,
         moves,
         batch,
+        drop,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
     let tools = pane_tools(tab, side, selected, chosen);
@@ -622,13 +684,18 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         button(text(fl!("ui-files-home-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press_maybe(moves.home.then(|| files(FilesMessage::Home { tab, side }))),
-        // The folder shown, typed over to go elsewhere, as the C# path bar.
-        text_input(&location, typed.unwrap_or(&location))
-            .id(field_id(side, PaneField::Path))
-            .size(SMALL_SIZE)
-            .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
-            .on_submit(files(FilesMessage::GoTo { tab, side }))
-            .width(Length::Fill),
+        // The folder shown, typed over to go elsewhere, as the C# path bar; its folders to
+        // click while it is not typed in.
+        match breadcrumb.filter(|_| typed.is_none()) {
+            Some(segments) => breadcrumb_bar(tab, side, segments),
+            None => text_input(&location, typed.unwrap_or(&location))
+                .id(field_id(side, PaneField::Path))
+                .size(SMALL_SIZE)
+                .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
+                .on_submit(files(FilesMessage::GoTo { tab, side }))
+                .width(Length::Fill)
+                .into(),
+        },
         button(text(fl!("ui-files-go-button")).size(SMALL_SIZE))
             .style(button::secondary)
             .on_press_maybe(typed.map(|_| files(FilesMessage::GoTo { tab, side }))),
@@ -652,7 +719,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         for (index, entry) in entries.iter().enumerate() {
             let place = (tab, side, index);
             let picked = selected == Some(index) || marked.contains(&index);
-            list = list.push(entry_row(entry, &shown, picked, place));
+            let target = drop == Some(DropHere::Entry(index));
+            list = list.push(entry_row(entry, &shown, (picked, target), place));
         }
         column![
             headers(tab, side, &shown, sort),
@@ -669,19 +737,55 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
     }
-    container(content.push(listing))
+    pane_frame(
+        content.push(listing),
+        (tab, side),
+        focused,
+        drop == Some(DropHere::Pane),
+    )
+}
+
+/// Where a drag would drop in a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DropHere {
+    /// The folder the pane shows.
+    Pane,
+    /// Its folder entry at this place.
+    Entry(usize),
+}
+
+/// A pane's frame: outlined when it has the keyboard, or when a drag over it would drop in
+/// the folder it shows; the pointer over it said.
+fn pane_frame(
+    content: Column<'_, Message>,
+    (tab, side): (TabId, Side),
+    focused: bool,
+    whole_target: bool,
+) -> Element<'_, Message> {
+    let pane = container(content)
         .padding(PADDING)
         .width(Length::FillPortion(1))
         .height(Length::Fill)
         .style(move |theme: &Theme| {
             let mut style = container::bordered_box(theme);
-            if focused {
+            if whole_target {
+                // A drag over it: where its entries would go.
+                style.border.color = theme.extended_palette().success.base.color;
+                style.border.width = FOCUS_BORDER_WIDTH;
+            } else if focused {
                 style.border.color = theme.extended_palette().primary.base.color;
                 style.border.width = FOCUS_BORDER_WIDTH;
             }
             style
-        })
-        .into()
+        });
+    crate::files_drag::spot(
+        pane,
+        crate::files_drag::Spot {
+            tab,
+            side,
+            index: None,
+        },
+    )
 }
 
 /// A file edited with the external editor: its state, its folder, a refused save sent
@@ -888,7 +992,17 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
 
 /// The Files tab.
 #[must_use]
-pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Message> {
+pub fn view(
+    tab: TabId,
+    files_pane: &FilesPane,
+    live: bool,
+    editing: Option<Side>,
+    drop: Option<crate::files_drag::Spot>,
+) -> Element<'_, Message> {
+    let drop_in = |side: Side| {
+        drop.filter(|spot| spot.tab == tab && spot.side == side)
+            .map(|spot| spot.index.map_or(DropHere::Pane, DropHere::Entry))
+    };
     let local_location = files_pane.local.path.display().to_string();
     let remote_location = files_pane.remote.path.display();
     let local = pane(PaneParts {
@@ -896,6 +1010,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
         side: Side::Local,
         title: fl!("ui-files-local-title"),
         location: local_location,
+        breadcrumb: (editing != Some(Side::Local)).then(|| local_segments(&files_pane.local.path)),
         typed: files_pane.local.typed.as_deref(),
         entries: &files_pane.local.entries,
         columns: LOCAL_COLUMNS,
@@ -916,12 +1031,15 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
             .batch
             .as_ref()
             .filter(|batch| batch.side == Side::Local),
+        drop: drop_in(Side::Local),
     });
     let remote = pane(PaneParts {
         tab,
         side: Side::Remote,
         title: fl!("ui-files-remote-title"),
         location: remote_location,
+        breadcrumb: (editing != Some(Side::Remote))
+            .then(|| remote_segments(&files_pane.remote.path)),
         typed: files_pane.remote.typed.as_deref(),
         entries: &files_pane.remote.entries,
         columns: REMOTE_COLUMNS,
@@ -942,6 +1060,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
             .batch
             .as_ref()
             .filter(|batch| batch.side == Side::Remote),
+        drop: drop_in(Side::Remote),
     });
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();

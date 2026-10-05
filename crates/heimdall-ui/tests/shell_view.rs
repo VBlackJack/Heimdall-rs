@@ -2176,6 +2176,64 @@ fn the_session_numbers_are_typed_in_the_ssh_settings_each_within_its_csharp_rang
 }
 
 #[test]
+fn the_reachability_check_is_set_in_the_general_settings_within_the_csharp_ranges() {
+    use heimdall_ui::shell::SessionField;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::General,
+    ));
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Session Health Monitor",
+            "Enable background reachability probes",
+            "Check interval",
+            "Probe timeout",
+            "Max concurrent probes",
+        ] {
+            ui.find(label).expect(label);
+        }
+    }
+    let cases: [SessionCase<'_>; 3] = [
+        (
+            SessionField::ReachabilityInterval,
+            "Check interval must be between 15 and 3600 seconds.",
+            &[("14", true), ("3601", true), (" 120 ", false)],
+        ),
+        (
+            SessionField::ReachabilityTimeout,
+            "Probe timeout must be between 250 and 30000 ms.",
+            &[("249", true), ("30001", true), ("750", false)],
+        ),
+        (
+            SessionField::ReachabilityProbes,
+            "Max concurrent probes must be between 1 and 50.",
+            &[("0", true), ("51", true), ("5", false)],
+        ),
+    ];
+    for (field, refusal, typed) in cases {
+        for (typed, refused) in typed {
+            let _ = shell.update(Message::SessionFieldEdited(field, (*typed).to_owned()));
+            let _ = shell.update(Message::SessionFieldApply(field));
+            let mut ui = simulator(&shell);
+            assert_eq!(ui.find(refusal).is_ok(), *refused, "{field:?} {typed}");
+        }
+    }
+    let reachability = shell.app().settings().reachability;
+    assert_eq!(
+        (
+            reachability.interval,
+            reachability.timeout,
+            reachability.probes
+        ),
+        (120, 750, 5)
+    );
+}
+
+#[test]
 fn the_tab_shows_the_post_connect_count_and_a_click_on_it_stops_the_steps() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = connected_shell(dir.path());
@@ -3144,6 +3202,36 @@ fn the_profile_form_saves_a_key_passphrase_and_then_says_it_is_saved() {
         ui.into_messages()
             .any(|message| matches!(message, Message::App(AppMessage::ClearPassphrase)))
     );
+}
+
+#[test]
+fn a_session_pressed_and_dragged_onto_a_folder_moves_into_it() {
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let group = |shell: &Shell| {
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("c"))
+            .and_then(|profile| profile.group)
+    };
+    // A click is no drag: nothing moves.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("c")));
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        "Production".to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group(&shell), None);
+
+    // Pressed, moved past the threshold, let go over the folder: in it.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("c")));
+    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        "Production".to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group(&shell).as_deref(), Some("Production"));
 }
 
 #[test]

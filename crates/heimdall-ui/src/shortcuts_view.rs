@@ -56,6 +56,7 @@ pub enum Action {
     EditSession,
     QuickConnect,
     Search,
+    UndoMove,
     SelectAllSessions,
     SessionMenu,
     FindByName,
@@ -99,6 +100,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("Ctrl+E", Action::EditSession),
             ("Ctrl+K", Action::QuickConnect),
             ("Ctrl+F", Action::Search),
+            ("Ctrl+Z", Action::UndoMove),
             ("Ctrl+A", Action::SelectAllSessions),
             ("Shift+F10", Action::SessionMenu),
             ("A-Z, 0-9", Action::FindByName),
@@ -172,6 +174,7 @@ pub fn action_text(action: Action) -> String {
         Action::EditSession => fl!("ui-shortcuts-edit-session"),
         Action::QuickConnect => fl!("ui-shortcuts-quick-connect"),
         Action::Search => fl!("ui-shortcuts-search"),
+        Action::UndoMove => fl!("ui-shortcuts-undo-move"),
         Action::SelectAllSessions => fl!("ui-shortcuts-select-all-sessions"),
         Action::SessionMenu => fl!("ui-shortcuts-session-menu"),
         Action::FindByName => fl!("ui-shortcuts-find-by-name"),
@@ -257,6 +260,7 @@ mod tests {
             assert!(!actions[index + 1..].contains(action), "{action:?} twice");
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
-        assert_eq!(actions.len(), 35, "every action listed");
+
+        assert_eq!(actions.len(), 36, "every action listed");
     }
 }

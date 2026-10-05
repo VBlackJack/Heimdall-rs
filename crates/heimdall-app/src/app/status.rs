@@ -168,6 +168,21 @@ pub enum Notice {
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.
     FilesCopied(usize),
+    /// This many sessions were dropped into a folder, none for no folder.
+    DroppedProfiles {
+        /// How many.
+        count: usize,
+        /// The folder.
+        folder: Option<String>,
+    },
+    /// A folder of this name was dropped into another.
+    DroppedFolder(String),
+    /// A folder was dropped where one of its name is already.
+    DropRefused,
+    /// The last move a drop made was undone.
+    MoveUndone,
+    /// No move made by a drop is there to undo.
+    NothingToUndo,
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
     /// A macro recording ended with nothing typed.
@@ -183,6 +198,14 @@ pub enum Notice {
         /// How.
         outcome: crate::macro_player::MacroOutcome,
     },
+    /// The gateway of this name was deleted.
+    GatewayDeleted(String),
+    /// This many sessions of a missing gateway were sent through another.
+    GatewaysReassigned(usize),
+    /// This many sessions of a missing gateway now connect directly.
+    GatewaysCleared(usize),
+    /// No session needed a change.
+    GatewaysUnchanged,
     /// A delete or a change of permissions of entries did not do them all.
     FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.

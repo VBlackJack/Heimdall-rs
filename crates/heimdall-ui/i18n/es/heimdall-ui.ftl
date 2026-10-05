@@ -1257,6 +1257,7 @@ ui-editor-lines = { $count ->
     [one] { $count } línea
    *[other] { $count } líneas
 }
+ui-editor-plain-text = Texto sin formato
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 con BOM
 ui-editor-encoding-utf16le = UTF-16 LE
@@ -1486,6 +1487,7 @@ ui-shortcuts-screenshot = Capturar la pantalla
 ui-shortcuts-lock = Bloquear
 ui-shortcuts-help = Mostrar esta ayuda
 ui-shortcuts-close = Cerrar un diálogo o un menú, salir de pantalla completa
+ui-resolution-match-aspect = Igualar a la ventana, { $wide }:{ $high }
 ui-tab-menu-pin = Fijar pestaña
 ui-tab-menu-unpin = Dejar de fijar pestaña
 ui-tab-menu-save-as-profile = Guardar como perfil...
@@ -1600,3 +1602,83 @@ ui-macro-editor-input-escape = \{ $escape } no es un escape que el editor conozc
 ui-macro-editor-delay-invalid = el retraso no es un número de milisegundos.
 ui-macro-editor-timeout-range = Rango: { $min }-{ $max } ms
 ui-macro-editor-regex-invalid = Expresión regular no válida: { $reason }
+ui-settings-tab-gateways = Pasarelas
+ui-gateways-title = Pasarelas SSH
+ui-gateways-description = Revisa qué sesiones usan cada pasarela SSH y encuentra referencias de pasarela sin resolver.
+ui-gateways-summary = { $gateways ->
+    [one] { $gateways } pasarela
+   *[other] { $gateways } pasarelas
+}, { $routed ->
+    [one] { $routed } sesión enrutada
+   *[other] { $routed } sesiones enrutadas
+}, { $unresolved ->
+    [one] { $unresolved } referencia sin resolver
+   *[other] { $unresolved } referencias sin resolver
+}
+ui-gateways-configured = Pasarelas configuradas
+ui-gateways-empty = No hay pasarelas SSH configuradas.
+ui-gateways-parent = Principal: { $name }
+ui-gateways-sessions = { $count ->
+    [one] { $count } sesión
+   *[other] { $count } sesiones
+}
+ui-gateways-no-sessions = Ninguna sesión usa esta pasarela.
+ui-gateways-edit = Editar
+ui-gateways-delete = Eliminar
+ui-gateways-unresolved = Referencias sin resolver
+ui-gateways-missing-description = Estas sesiones o pasarelas hijas hacen referencia a un id de pasarela que no está configurado.
+ui-gateways-missing-header = Falta el id de pasarela: { $id }
+ui-gateways-child = Pasarela hija: { $name }
+ui-gateways-reassign-to = Pasarela
+ui-gateways-reassign = Reasignar
+ui-gateways-clear = Borrar
+ui-dialog-delete-gateway-title = Eliminar pasarela
+ui-dialog-delete-gateway-body = ¿Eliminar la pasarela "{ $name }"?
+
+    Referencias a borrar:
+    - Servidores: { $servers }
+    - Pasarelas hijas: { $gateways }
+ui-status-gateway-deleted = Pasarela "{ $name }" eliminada.
+ui-status-gateways-reassigned = { $count ->
+    [one] Se reasignó { $count } sesión.
+   *[other] Se reasignaron { $count } sesiones.
+}
+ui-status-gateways-cleared = { $count ->
+    [one] Se borró la referencia de pasarela en { $count } sesión.
+   *[other] Se borró la referencia de pasarela en { $count } sesiones.
+}
+ui-status-gateways-unchanged = Ninguna sesión necesitaba cambios.
+ui-settings-reachability = Supervisor de estado de sesión
+ui-settings-reachability-enabled = Activar sondeos de accesibilidad en segundo plano
+ui-settings-reachability-hint = Cada servidor se llama desde este equipo, unos pocos a la vez, y su punto en la lista indica si respondió. Los servidores detrás de una pasarela no se llaman. No se envía nada salvo la conexión.
+ui-settings-reachability-interval = Intervalo de comprobación
+ui-settings-reachability-timeout = Tiempo de espera del sondeo
+ui-settings-reachability-probes = Máximo de sondeos simultáneos
+ui-settings-milliseconds-unit = ms
+ui-settings-reachability-interval-refused = El intervalo de comprobación debe estar entre { $min } y { $max } segundos.
+ui-settings-reachability-timeout-refused = El tiempo de espera del sondeo debe estar entre { $min } y { $max } ms.
+ui-settings-reachability-probes-refused = El máximo de sondeos simultáneos debe estar entre { $min } y { $max }.
+ui-tree-reachability-checking = Comprobando...
+ui-tree-reachability-up = Accesible ({ $millis } ms)
+ui-tree-reachability-down = No accesible: { $reason }
+ui-tree-reachability-unchecked = Desconocido: { $reason }
+ui-reachability-reason-timeout = Se agotó el tiempo de espera de la conexión
+ui-reachability-reason-refused = Conexión rechazada
+ui-reachability-reason-unreachable = Host no accesible
+ui-reachability-reason-dns = Falló la resolución DNS
+ui-reachability-reason-behind-gateway = Detrás de una pasarela SSH: no se sondeó
+ui-reachability-reason-no-port = No hay puerto de sondeo para este protocolo
+ui-reachability-reason-no-host = No hay ningún host configurado
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } sesión movida a { $folder }. Ctrl+Z lo deshace.
+   *[other] { $count } sesiones movidas a { $folder }. Ctrl+Z lo deshace.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } sesión sacada de su carpeta. Ctrl+Z lo deshace.
+   *[other] { $count } sesiones sacadas de sus carpetas. Ctrl+Z lo deshace.
+}
+ui-status-dropped-folder = Carpeta { $name } movida. Ctrl+Z lo deshace.
+ui-status-drop-refused = Ya hay una carpeta con ese nombre: no se movió nada.
+ui-status-move-undone = Movimiento deshecho.
+ui-status-nothing-to-undo = Nada que deshacer.
+ui-shortcuts-undo-move = Deshacer el último movimiento hecho arrastrando en el árbol

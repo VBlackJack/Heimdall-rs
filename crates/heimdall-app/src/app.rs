@@ -84,6 +84,7 @@ mod files_terminal;
 mod folder_menu;
 mod folders;
 mod ftp_tab;
+mod gateway_overview;
 mod gateways;
 mod health_tab;
 mod hostkeys_import;
@@ -100,6 +101,7 @@ mod provider_connect;
 mod quick_connect;
 mod rdp_import;
 mod rdp_tab;
+mod reachability_monitor;
 mod reconnect;
 mod resolution;
 mod route_test;
@@ -111,6 +113,7 @@ mod tab_menu;
 mod telnet_tab;
 mod transcripts;
 mod tree;
+mod tree_drag;
 mod tree_filter;
 mod trusted_keys;
 mod tunnels;
@@ -132,6 +135,9 @@ pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingPlan};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
+pub use gateway_overview::{
+    GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession,
+};
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use local_tab::LocalConfirmation;
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
@@ -153,6 +159,7 @@ pub use sessions_import::{
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
+pub use tree_drag::DropTarget;
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 pub use tunnels::TunnelMessage;
@@ -286,6 +293,15 @@ pub enum Message {
     TmoutResetTick,
     /// Time to ask the servers whose health panel is shown.
     HealthTick,
+    /// Time for the background check of every server.
+    ReachabilityTick,
+    /// A server answered the background check, or did not.
+    ReachabilityChecked {
+        /// The profile.
+        id: ProfileId,
+        /// What was found.
+        verdict: crate::reachability::Verdict,
+    },
     /// A server said how it is.
     HealthRead {
         /// Tab.
@@ -487,6 +503,22 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
+    /// Sessions dragged onto the tree's `onto`, as the C# tree drops them.
+    DropProfiles {
+        /// The sessions.
+        ids: Vec<ProfileId>,
+        /// Where.
+        onto: DropTarget,
+    },
+    /// A folder dragged onto the tree's `onto`.
+    DropFolder {
+        /// The folder.
+        path: String,
+        /// Where.
+        onto: DropTarget,
+    },
+    /// Undo the last move a drop made, as the C# tree's Ctrl+Z.
+    UndoMove,
     /// A session of the restore dialog ticked or not; every one for `None`, its
     /// "Select all".
     RestoreChoose {
@@ -652,6 +684,8 @@ pub enum Message {
     Settings(SettingsMessage),
     /// A step of the terminal macros.
     Macro(MacroMessage),
+    /// A step of the Settings page's Gateways tab.
+    Gateways(GatewaysMessage),
     /// A change of broadcast input.
     Broadcast(BroadcastMessage),
 }
@@ -702,6 +736,10 @@ impl fmt::Debug for Message {
             Self::DisplayScale(scale) => write!(f, "DisplayScale({scale})"),
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
+            Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::ReachabilityChecked { id, verdict } => {
+                write!(f, "ReachabilityChecked({id}, {verdict:?})")
+            }
             Self::HealthRead { tab, .. } => write!(f, "HealthRead({})", tab.value()),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
@@ -788,6 +826,9 @@ impl fmt::Debug for Message {
             Self::SkipPostConnect => f.write_str("SkipPostConnect"),
             Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
+            Self::DropProfiles { ids, onto } => write!(f, "DropProfiles({}, {onto:?})", ids.len()),
+            Self::DropFolder { onto, .. } => write!(f, "DropFolder({onto:?})"),
+            Self::UndoMove => f.write_str("UndoMove"),
             Self::RestoreChoose { index, chosen } => {
                 write!(f, "RestoreChoose({index:?}, {chosen})")
             }
@@ -850,6 +891,7 @@ impl fmt::Debug for Message {
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
             Self::Macro(MacroMessage::Draft(_)) => f.write_str("Macro(Draft)"),
             Self::Macro(message) => write!(f, "Macro({message:?})"),
+            Self::Gateways(message) => write!(f, "Gateways({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
     }
@@ -932,6 +974,16 @@ pub enum Effect {
         run: std::pin::Pin<
             Box<dyn std::future::Future<Output = crate::macro_player::MacroOutcome> + Send>,
         >,
+    },
+    /// Dial these servers, `at_once` at a time, each with `timeout` to answer, and say each
+    /// as [`Message::ReachabilityChecked`].
+    CheckReachability {
+        /// The servers.
+        probes: Vec<crate::reachability::Probe>,
+        /// The time each has.
+        timeout: std::time::Duration,
+        /// How many are dialled at once.
+        at_once: usize,
     },
     /// Test whether a profile's address answers, from the tree, and say it as
     /// [`ProfileMenuMessage::Tested`].
@@ -1308,6 +1360,9 @@ impl fmt::Debug for Effect {
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::WakeOnLan(_) => f.write_str("WakeOnLan"),
             Self::PlayMacro { tab, .. } => write!(f, "PlayMacro({})", tab.value()),
+            Self::CheckReachability { probes, .. } => {
+                write!(f, "CheckReachability({})", probes.len())
+            }
             Self::SurveyAgents(_) => f.write_str("SurveyAgents"),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
@@ -1496,6 +1551,8 @@ pub struct Tab {
     /// The desktop size the user chose from the tab's "Resolution" menu, kept for the
     /// session's reconnections; `None`, as its profile says.
     pub(crate) desktop_sizing: Option<heimdall_core::profile::DesktopSizing>,
+    /// The proportions chosen under "Match window", kept for the session's reconnections.
+    pub(crate) desktop_aspect: crate::desktop::Aspect,
     /// The desktop size the session connected again for, the server unable to take it
     /// live: asked at the next connection, then kept so the same refusal never loops.
     pub(crate) resize_fallback: Option<ResizeFallback>,
@@ -1637,6 +1694,7 @@ impl Tab {
             end_reason: None,
             retry: None,
             desktop_sizing: None,
+            desktop_aspect: crate::desktop::Aspect::Stretch,
             resize_fallback: None,
             last_input: std::sync::Mutex::new(None),
             early_output: None,
@@ -1929,6 +1987,17 @@ pub enum Dialog {
         name: String,
         /// What was recorded.
         entries: Vec<heimdall_core::macros::MacroEntry>,
+    },
+    /// Delete an SSH gateway, its references cleared, as the C# asks with what it clears.
+    ConfirmDeleteGateway {
+        /// The gateway.
+        id: ProfileId,
+        /// Its name.
+        name: String,
+        /// Servers going through it.
+        servers: usize,
+        /// Gateways reached through it.
+        gateways: usize,
     },
     /// Quit with live sessions, or text not saved in an integrated editor.
     ConfirmExit {
@@ -2248,6 +2317,8 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// Whether the tunnels panel is shown under the sessions.
     pub tunnels_panel: bool,
+    /// The last move a drop in the tree made, to undo.
+    last_move: Option<tree_drag::UndoMove>,
     /// The previous run's sessions, until they are offered.
     pending_restore: Option<heimdall_core::session_snapshot::SessionSnapshot>,
     /// The hosts connected to, newest first, with the protocol, as the C#
@@ -2255,6 +2326,8 @@ pub struct App {
     recent_hosts: Vec<(String, ProfileKind)>,
     /// The terminal macros kept.
     macros: heimdall_core::macros::Macros,
+    /// The background check of every server.
+    monitor: reachability_monitor::Monitor,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -2373,9 +2446,11 @@ impl App {
             tunnels: Vec::new(),
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
+            last_move: None,
             pending_restore,
             recent_hosts: Vec::new(),
             macros,
+            monitor: reachability_monitor::Monitor::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -2500,6 +2575,11 @@ impl App {
             message @ (Message::HealthTick | Message::HealthRead { .. }) => {
                 self.health_message(message)
             }
+            Message::ReachabilityTick => self.reachability_round(),
+            Message::ReachabilityChecked { id, verdict } => {
+                self.reachability_checked(&id, verdict);
+                Vec::new()
+            }
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),
             message @ (Message::TestRoute { .. }
@@ -2559,6 +2639,7 @@ impl App {
             | Message::Rdp(_)
             | Message::Settings(_)
             | Message::Macro(_)
+            | Message::Gateways(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
@@ -2581,6 +2662,18 @@ impl App {
             | Message::ChooseGateway(_)) => self.profile_form_message(message),
             message @ (Message::RefreshAgents | Message::AgentsSurveyed(_)) => {
                 self.agent_chip_message(message)
+            }
+            Message::DropProfiles { ids, onto } => {
+                self.drop_profiles(&ids, &onto);
+                Vec::new()
+            }
+            Message::DropFolder { path, onto } => {
+                self.drop_folder_on(&path, &onto);
+                Vec::new()
+            }
+            Message::UndoMove => {
+                self.undo_move();
+                Vec::new()
             }
             Message::RestoreChoose { index, chosen } => {
                 self.choose_restored(index, chosen);
@@ -3594,6 +3687,10 @@ impl App {
                 self.save_macro(&name, entries);
                 Vec::new()
             }
+            Some(Dialog::ConfirmDeleteGateway { id, name, .. }) => {
+                self.confirm_delete_gateway(&id, &name);
+                Vec::new()
+            }
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
                 Vec::new()
@@ -3689,6 +3786,10 @@ impl App {
             }
             Message::Settings(message) => self.settings_message(message),
             Message::Macro(message) => self.macro_message(message.clone()),
+            Message::Gateways(message) => {
+                self.gateways_message(message.clone());
+                Vec::new()
+            }
             Message::Broadcast(message) => self.broadcast_message(*message),
             _ => Vec::new(),
         }

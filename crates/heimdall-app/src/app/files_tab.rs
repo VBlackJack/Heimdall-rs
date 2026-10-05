@@ -83,6 +83,23 @@ pub enum FilesMessage {
         /// What is typed.
         text: String,
     },
+    /// What is typed in a pane's path bar given up: it shows the folder shown again.
+    PathCancelled {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+    },
+    /// Go `levels` folders up at once, as a click on a folder of the C# breadcrumb; none
+    /// lists the folder shown again.
+    Ascend {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: Side,
+        /// Folders up.
+        levels: usize,
+    },
     /// Select an entry with the others, or no longer: Ctrl+click.
     Toggle {
         /// Tab.
@@ -485,6 +502,18 @@ pub enum FilesMessage {
         /// What it does.
         key: FilesKey,
     },
+    /// The entries chosen in `from` dragged onto `onto`, into its folder entry at `into`, or
+    /// the folder it shows: sent to the other side, or moved into a folder of their own.
+    DropEntries {
+        /// Tab.
+        tab: TabId,
+        /// The pane dragged from.
+        from: Side,
+        /// The pane dropped on.
+        onto: Side,
+        /// The folder entry dropped on; `None` for the folder the pane shows.
+        into: Option<usize>,
+    },
     /// The entry of a delete or a change of permissions being worked on ended.
     BatchStepDone {
         /// Tab.
@@ -530,11 +559,13 @@ pub enum FilesMessage {
 
 impl FilesMessage {
     /// The pane a user gesture acts on: the one that takes the focus.
-    fn gesture(&self) -> Option<(TabId, Side)> {
+    #[must_use]
+    pub fn gesture(&self) -> Option<(TabId, Side)> {
         match *self {
             Self::Select { tab, side, .. }
             | Self::Open { tab, side, .. }
             | Self::Up { tab, side }
+            | Self::Ascend { tab, side, .. }
             | Self::Back { tab, side }
             | Self::Home { tab, side }
             | Self::Refresh { tab, side }
@@ -585,6 +616,12 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "PathEdited({}, {side:?}, ..)", tab.value())
             }
             Self::GoTo { tab, side } => write!(f, "GoTo({}, {side:?})", tab.value()),
+            Self::PathCancelled { tab, side } => {
+                write!(f, "PathCancelled({}, {side:?})", tab.value())
+            }
+            Self::Ascend { tab, side, levels } => {
+                write!(f, "Ascend({}, {side:?}, {levels})", tab.value())
+            }
             Self::CopyPath { tab, side } => write!(f, "CopyPath({}, {side:?})", tab.value()),
             Self::Cut { tab } => write!(f, "Cut({})", tab.value()),
             Self::UploadHere { tab } => write!(f, "UploadHere({})", tab.value()),
@@ -689,6 +726,16 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "ShowProperties({}, {side:?})", tab.value())
             }
             Self::NameEdited(_) => f.write_str("NameEdited(..)"),
+            Self::DropEntries {
+                tab,
+                from,
+                onto,
+                into,
+            } => write!(
+                f,
+                "DropEntries({}, {from:?} onto {onto:?} {into:?})",
+                tab.value()
+            ),
             Self::BatchStepDone { tab, result } => {
                 write!(f, "BatchStepDone({}, {})", tab.value(), result.is_ok())
             }
@@ -878,7 +925,6 @@ impl App {
         Vec::new()
     }
 
-    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         if let Some((tab, side)) = message.gesture()
             && let Some(files) = self.files_mut(tab)
@@ -910,25 +956,8 @@ impl App {
                 self.list(tab, side)
             }
             FilesMessage::Open { tab, side, index } => self.open_entry(tab, side, index),
-            FilesMessage::Up { tab, side } => {
-                let Some(files) = self.files_mut(tab) else {
-                    return Vec::new();
-                };
-                match side {
-                    Side::Remote => {
-                        files.remote.leave();
-                        files.remote.path = files.remote.path.parent();
-                    }
-                    Side::Local => {
-                        if let Some(parent) = files.local.path.parent() {
-                            let parent = parent.to_owned();
-                            files.local.leave();
-                            files.local.path = parent;
-                        }
-                    }
-                }
-                self.list(tab, side)
-            }
+            FilesMessage::Up { tab, side } => self.ascend(tab, side, 1),
+            FilesMessage::Ascend { tab, side, levels } => self.ascend(tab, side, levels),
             FilesMessage::Back { tab, side } => self.go_back(tab, side),
             FilesMessage::Home { tab, side } => self.go_home(tab, side),
             FilesMessage::Refresh { tab, side } => self.list(tab, side),
@@ -940,12 +969,19 @@ impl App {
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
+            FilesMessage::DropEntries {
+                tab,
+                from,
+                onto,
+                into,
+            } => self.drop_entries(tab, from, onto, into),
             FilesMessage::Copied {
                 tab,
                 results,
                 duplicate,
             } => self.copied(tab, results, duplicate),
             message @ (FilesMessage::PathEdited { .. }
+            | FilesMessage::PathCancelled { .. }
             | FilesMessage::GoTo { .. }
             | FilesMessage::SortBy { .. }
             | FilesMessage::CopyPath { .. }
@@ -994,6 +1030,15 @@ impl App {
                     match side {
                         Side::Remote => files.remote.typed = Some(text),
                         Side::Local => files.local.typed = Some(text),
+                    }
+                }
+                Vec::new()
+            }
+            FilesMessage::PathCancelled { tab, side } => {
+                if let Some(files) = self.files_mut(tab) {
+                    match side {
+                        Side::Remote => files.remote.typed = None,
+                        Side::Local => files.local.typed = None,
                     }
                 }
                 Vec::new()
@@ -1240,6 +1285,37 @@ impl App {
 
     /// Lists the folder typed in `side`'s path bar, from the folder shown when relative; the
     /// folder shown stays until the listing comes back.
+    /// `levels` folders up from the one `side` shows, as one move Back undoes; at the root,
+    /// no further. The folder reached is listed.
+    fn ascend(&mut self, tab: TabId, side: Side, levels: usize) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        if levels > 0 {
+            match side {
+                Side::Remote => {
+                    let target =
+                        (0..levels).fold(files.remote.path.clone(), |path, _| path.parent());
+                    files.remote.leave();
+                    files.remote.path = target;
+                }
+                Side::Local => {
+                    let target = files
+                        .local
+                        .path
+                        .ancestors()
+                        .nth(levels)
+                        .map(std::path::Path::to_owned);
+                    if let Some(target) = target {
+                        files.local.leave();
+                        files.local.path = target;
+                    }
+                }
+            }
+        }
+        self.list(tab, side)
+    }
+
     fn go_to(&mut self, tab: TabId, side: Side) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
@@ -1489,7 +1565,10 @@ impl App {
         };
         let roots: Vec<_> = chosen
             .into_iter()
-            .filter_map(|index| prepare(files, direction, index))
+            .filter_map(|index| {
+                let into = (files.local.path.clone(), files.remote.path.clone());
+                prepare(files, direction, index, &into)
+            })
             .collect();
         self.queue_transfer(tab, client, direction, roots)
     }
@@ -2214,7 +2293,12 @@ impl App {
 
 /// The selected entry at `index` as a transfer's picked entry. A refusal is recorded as a
 /// failed transfer.
-fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<PlannedRoot> {
+fn prepare(
+    files: &mut FilesPane,
+    direction: Direction,
+    index: usize,
+    (local_dir, remote_dir): &(PathBuf, RemotePath),
+) -> Option<PlannedRoot> {
     let kind = |entry_kind| {
         if entry_kind == EntryKind::Directory {
             Kind::Folder
@@ -2245,7 +2329,7 @@ fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<
             PlannedRoot {
                 root: Root {
                     remote: files.remote.path.join(&entry.name),
-                    local: files.local.path.join(&name.name),
+                    local: local_dir.join(&name.name),
                     kind: kind(entry.kind),
                     stamp: heimdall_files::Stamp {
                         size: entry.size,
@@ -2268,7 +2352,7 @@ fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<
             }
             PlannedRoot {
                 root: Root {
-                    remote: files.remote.path.join(&name_bytes(&entry.name)),
+                    remote: remote_dir.join(&name_bytes(&entry.name)),
                     local: files.local.path.join(&entry.name),
                     kind: kind(entry.kind),
                     stamp: heimdall_files::Stamp {
@@ -2282,6 +2366,120 @@ fn prepare(files: &mut FilesPane, direction: Direction, index: usize) -> Option<
             }
         }
     })
+}
+
+impl App {
+    /// The entries chosen in `from` dropped on `onto`, as the C# Files tab takes a drop: on
+    /// the other pane, sent there, into the folder entry dropped on or the folder it shows;
+    /// on a folder entry of their own pane, moved into it. Dropped where they are, nothing.
+    fn drop_entries(
+        &mut self,
+        tab: TabId,
+        from: Side,
+        onto: Side,
+        into: Option<usize>,
+    ) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let chosen = match from {
+            Side::Remote => files.remote.chosen(),
+            Side::Local => files.local.chosen(),
+        };
+        // Only a folder takes a drop: on a file, the drop is on the folder shown.
+        let into = into.filter(|index| match onto {
+            Side::Remote => files
+                .remote
+                .entries
+                .get(*index)
+                .is_some_and(|entry| entry.kind == EntryKind::Directory),
+            Side::Local => files
+                .local
+                .entries
+                .get(*index)
+                .is_some_and(|entry| entry.kind == EntryKind::Directory),
+        });
+        if chosen.is_empty() {
+            return Vec::new();
+        }
+        if from == onto {
+            let Some(folder) = into.filter(|index| !chosen.contains(index)) else {
+                return Vec::new();
+            };
+            return self.move_into(tab, from, &chosen, folder);
+        }
+        let destination = (
+            match (onto, into) {
+                (Side::Local, Some(index)) => {
+                    files.local.path.join(&files.local.entries[index].name)
+                }
+                _ => files.local.path.clone(),
+            },
+            match (onto, into) {
+                (Side::Remote, Some(index)) => {
+                    files.remote.path.join(&files.remote.entries[index].name)
+                }
+                _ => files.remote.path.clone(),
+            },
+        );
+        let Some(client) = files.client.clone() else {
+            return Vec::new();
+        };
+        let direction = match from {
+            Side::Remote => Direction::Download,
+            Side::Local => Direction::Upload,
+        };
+        let roots: Vec<_> = chosen
+            .into_iter()
+            .filter_map(|index| prepare(files, direction, index, &destination))
+            .collect();
+        self.queue_transfer(tab, client, direction, roots)
+    }
+
+    /// The entries `chosen` of `side` moved into its folder entry `folder`: renamed on the
+    /// server, moved on this computer.
+    fn move_into(
+        &mut self,
+        tab: TabId,
+        side: Side,
+        chosen: &[usize],
+        folder: usize,
+    ) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        match side {
+            Side::Remote => {
+                let Some(client) = files.client.clone() else {
+                    return Vec::new();
+                };
+                let pane = &files.remote;
+                let target = pane.path.join(&pane.entries[folder].name);
+                let moves = chosen
+                    .iter()
+                    .filter_map(|index| pane.entries.get(*index))
+                    .map(|entry| (pane.path.join(&entry.name), target.join(&entry.name)))
+                    .collect();
+                vec![Effect::MoveRemote { tab, client, moves }]
+            }
+            Side::Local => {
+                let pane = &files.local;
+                let target = pane.path.join(&pane.entries[folder].name);
+                chosen
+                    .iter()
+                    .filter_map(|index| pane.entries.get(*index))
+                    .map(|entry| Effect::FileOperation {
+                        tab,
+                        side,
+                        operation: Box::new(FileOperation::LocalRename {
+                            from: pane.path.join(&entry.name),
+                            to: target.join(&entry.name),
+                        }),
+                    })
+                    .collect()
+            }
+        }
+    }
 }
 
 /// A destination's names below the destination folder, joined as a path.
