@@ -27,6 +27,7 @@ pub mod export_file;
 pub mod file_import_view;
 mod files_view;
 pub mod finder;
+mod gateways_view;
 mod health_view;
 pub mod hostkeys_view;
 pub mod i18n;

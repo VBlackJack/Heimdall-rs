@@ -1540,3 +1540,49 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
 ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+ui-settings-tab-gateways = Passerelles
+ui-gateways-title = Passerelles SSH
+ui-gateways-description = Vérifie quelles sessions utilisent chaque passerelle SSH et repère les références introuvables.
+ui-gateways-summary = { $gateways ->
+    [one] { $gateways } passerelle
+   *[other] { $gateways } passerelles
+}, { $routed ->
+    [one] { $routed } session routée
+   *[other] { $routed } sessions routées
+}, { $unresolved ->
+    [one] { $unresolved } référence introuvable
+   *[other] { $unresolved } références introuvables
+}
+ui-gateways-configured = Passerelles configurées
+ui-gateways-empty = Aucune passerelle SSH n'est configurée.
+ui-gateways-parent = Parent : { $name }
+ui-gateways-sessions = { $count ->
+    [one] { $count } session
+   *[other] { $count } sessions
+}
+ui-gateways-no-sessions = Aucune session n'utilise cette passerelle.
+ui-gateways-edit = Modifier
+ui-gateways-delete = Supprimer
+ui-gateways-unresolved = Références non résolues
+ui-gateways-missing-description = Ces sessions ou passerelles enfants référencent un id de passerelle qui n'est pas configuré.
+ui-gateways-missing-header = Id de passerelle manquant : { $id }
+ui-gateways-child = Passerelle enfant : { $name }
+ui-gateways-reassign-to = Passerelle
+ui-gateways-reassign = Réassigner
+ui-gateways-clear = Vider
+ui-dialog-delete-gateway-title = Supprimer la passerelle
+ui-dialog-delete-gateway-body = Supprimer la passerelle "{ $name }" ?
+
+    Références à effacer :
+    - Serveurs : { $servers }
+    - Passerelles enfants : { $gateways }
+ui-status-gateway-deleted = Passerelle "{ $name }" supprimée.
+ui-status-gateways-reassigned = { $count ->
+    [one] { $count } session réassignée.
+   *[other] { $count } sessions réassignées.
+}
+ui-status-gateways-cleared = { $count ->
+    [one] Référence de passerelle vidée pour { $count } session.
+   *[other] Référence de passerelle vidée pour { $count } sessions.
+}
+ui-status-gateways-unchanged = Aucune session ne nécessitait de changement.

@@ -170,6 +170,14 @@ pub enum Notice {
     FilesCopied(usize),
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// The gateway of this name was deleted.
+    GatewayDeleted(String),
+    /// This many sessions of a missing gateway were sent through another.
+    GatewaysReassigned(usize),
+    /// This many sessions of a missing gateway now connect directly.
+    GatewaysCleared(usize),
+    /// No session needed a change.
+    GatewaysUnchanged,
     /// A delete or a change of permissions of entries did not do them all.
     FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.

@@ -1537,3 +1537,49 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
 ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-settings-tab-gateways = Pasarelas
+ui-gateways-title = Pasarelas SSH
+ui-gateways-description = Revisa qué sesiones usan cada pasarela SSH y encuentra referencias de pasarela sin resolver.
+ui-gateways-summary = { $gateways ->
+    [one] { $gateways } pasarela
+   *[other] { $gateways } pasarelas
+}, { $routed ->
+    [one] { $routed } sesión enrutada
+   *[other] { $routed } sesiones enrutadas
+}, { $unresolved ->
+    [one] { $unresolved } referencia sin resolver
+   *[other] { $unresolved } referencias sin resolver
+}
+ui-gateways-configured = Pasarelas configuradas
+ui-gateways-empty = No hay pasarelas SSH configuradas.
+ui-gateways-parent = Principal: { $name }
+ui-gateways-sessions = { $count ->
+    [one] { $count } sesión
+   *[other] { $count } sesiones
+}
+ui-gateways-no-sessions = Ninguna sesión usa esta pasarela.
+ui-gateways-edit = Editar
+ui-gateways-delete = Eliminar
+ui-gateways-unresolved = Referencias sin resolver
+ui-gateways-missing-description = Estas sesiones o pasarelas hijas hacen referencia a un id de pasarela que no está configurado.
+ui-gateways-missing-header = Falta el id de pasarela: { $id }
+ui-gateways-child = Pasarela hija: { $name }
+ui-gateways-reassign-to = Pasarela
+ui-gateways-reassign = Reasignar
+ui-gateways-clear = Borrar
+ui-dialog-delete-gateway-title = Eliminar pasarela
+ui-dialog-delete-gateway-body = ¿Eliminar la pasarela "{ $name }"?
+
+    Referencias a borrar:
+    - Servidores: { $servers }
+    - Pasarelas hijas: { $gateways }
+ui-status-gateway-deleted = Pasarela "{ $name }" eliminada.
+ui-status-gateways-reassigned = { $count ->
+    [one] Se reasignó { $count } sesión.
+   *[other] Se reasignaron { $count } sesiones.
+}
+ui-status-gateways-cleared = { $count ->
+    [one] Se borró la referencia de pasarela en { $count } sesión.
+   *[other] Se borró la referencia de pasarela en { $count } sesiones.
+}
+ui-status-gateways-unchanged = Ninguna sesión necesitaba cambios.

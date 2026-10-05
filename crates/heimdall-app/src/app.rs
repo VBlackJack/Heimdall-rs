@@ -84,6 +84,7 @@ mod files_terminal;
 mod folder_menu;
 mod folders;
 mod ftp_tab;
+mod gateway_overview;
 mod gateways;
 mod health_tab;
 mod hostkeys_import;
@@ -130,6 +131,9 @@ pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingPlan};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
+pub use gateway_overview::{
+    GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession,
+};
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use local_tab::LocalConfirmation;
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
@@ -646,6 +650,8 @@ pub enum Message {
     CredentialProvided(Box<ProviderAnswer>),
     /// A change from the Settings page.
     Settings(SettingsMessage),
+    /// A step of the Settings page's Gateways tab.
+    Gateways(GatewaysMessage),
     /// A change of broadcast input.
     Broadcast(BroadcastMessage),
 }
@@ -840,6 +846,7 @@ impl fmt::Debug for Message {
                 )
             }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
+            Self::Gateways(message) => write!(f, "Gateways({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
     }
@@ -1881,6 +1888,17 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// Delete an SSH gateway, its references cleared, as the C# asks with what it clears.
+    ConfirmDeleteGateway {
+        /// The gateway.
+        id: ProfileId,
+        /// Its name.
+        name: String,
+        /// Servers going through it.
+        servers: usize,
+        /// Gateways reached through it.
+        gateways: usize,
+    },
     /// Quit with live sessions, or text not saved in an integrated editor.
     ConfirmExit {
         /// Live sessions.
@@ -2499,6 +2517,7 @@ impl App {
             | Message::Sessions(_)
             | Message::Rdp(_)
             | Message::Settings(_)
+            | Message::Gateways(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
             | Message::EditProfile(_)
@@ -3510,6 +3529,10 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::ConfirmDeleteGateway { id, name, .. }) => {
+                self.confirm_delete_gateway(&id, &name);
+                Vec::new()
+            }
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
                 Vec::new()
@@ -3603,6 +3626,10 @@ impl App {
                 Vec::new()
             }
             Message::Settings(message) => self.settings_message(message),
+            Message::Gateways(message) => {
+                self.gateways_message(message.clone());
+                Vec::new()
+            }
             Message::Broadcast(message) => self.broadcast_message(*message),
             _ => Vec::new(),
         }
