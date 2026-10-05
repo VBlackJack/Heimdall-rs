@@ -246,7 +246,7 @@ async fn both_panes_show_their_folders_and_a_folder_click_selects_it() {
     ui.find("server a (files)").expect("tab title");
     ui.find("This computer").expect("local pane");
     ui.find("Server").expect("remote pane");
-    ui.find("/home/admin").expect("remote path");
+    ui.find("admin").expect("remote path, as its folders");
     ui.find("5.0 MiB").expect("size");
     ui.click("logs/").expect("folder");
     let messages = files_messages(ui);
@@ -443,6 +443,36 @@ async fn the_path_bar_is_typed_over_and_enter_goes_there() {
     let dir = tempfile::tempdir().expect("dir");
     let (core, tab) = files_tab(dir.path()).await;
     let mut shell = Shell::with_app(core);
+    {
+        // Its folders first, as the C# breadcrumb: one goes there.
+        let mut ui = simulator(&shell);
+        assert!(ui.find("/home/admin").is_err(), "the folders, not the path");
+        ui.click("home").expect("a folder of the breadcrumb");
+        assert!(
+            files_messages(ui).iter().any(|message| matches!(
+                message,
+                FilesMessage::Ascend { tab: t, side: Side::Remote, levels: 1 } if *t == tab
+            )),
+            "one folder up"
+        );
+    }
+    // A click beside them gives the path to type in; Escape gives the folders back.
+    let _ = shell.update(Message::EditPath {
+        tab,
+        side: Side::Remote,
+    });
+    simulator(&shell)
+        .find("/home/admin")
+        .expect("the path, to type in");
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(
+        simulator(&shell).find("/home/admin").is_err(),
+        "the folders again"
+    );
+    let _ = shell.update(Message::EditPath {
+        tab,
+        side: Side::Remote,
+    });
     {
         let mut ui = simulator(&shell);
         ui.click("/home/admin").expect("the remote path bar");

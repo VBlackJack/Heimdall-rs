@@ -465,6 +465,13 @@ pub enum Message {
     ContentFocus,
     /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
     TreeShortcut(TreeShortcut),
+    /// A click beside the folders of a Files pane's breadcrumb: its path, to type in.
+    EditPath {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: heimdall_app::files::Side,
+    },
     /// The pointer came over a place in a Files tab's panes.
     FilesHover(crate::files_drag::Spot),
     /// The pointer left it.
@@ -609,6 +616,7 @@ impl fmt::Debug for Message {
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::EditPath { tab, side } => write!(f, "EditPath({}, {side:?})", tab.value()),
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
             Self::PointerPressed => f.write_str("PointerPressed"),
@@ -832,6 +840,8 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// The Files pane whose path bar is typed in, rather than showing its breadcrumb.
+    path_editing: Option<(TabId, heimdall_app::files::Side)>,
     /// Where the pointer is in a Files tab's panes.
     files_hover: Option<crate::files_drag::Spot>,
     /// A press on a Files tab's entry, held: a drag once the pointer moves.
@@ -976,6 +986,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            path_editing: None,
             files_hover: None,
             files_drag: None,
             tree_drag: None,
@@ -1114,6 +1125,12 @@ impl Shell {
         }
         let message = self.files_click(message);
         self.note_focus(&message);
+        // A gesture in a Files pane, the path gone to among them, gives the breadcrumb back.
+        if let Message::App(AppMessage::Files(files)) = &message
+            && files.gesture().is_some()
+        {
+            self.path_editing = None;
+        }
         // A press on a folder: the start of a drag of it.
         if let Message::App(AppMessage::ToggleFolder(path)) = &message
             && path != heimdall_app::NO_FOLDER
@@ -1197,6 +1214,10 @@ impl Shell {
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
+            Message::EditPath { tab, side } => {
+                self.edit_path(tab, side);
+                Vec::new()
+            }
             message @ (Message::TreeClick(_)
             | Message::ContentFocus
             | Message::TreeShortcut(_)
@@ -1779,6 +1800,15 @@ impl Shell {
             // Escape closes the open menu first.
             return Vec::new();
         }
+        if !confirm
+            && self.app.dialog.is_none()
+            && let Some((tab, side)) = self.path_editing.take()
+        {
+            // Then a path bar typed in, back to the folder shown, as the C# one.
+            return self
+                .app
+                .update(AppMessage::Files(FilesMessage::PathCancelled { tab, side }));
+        }
         if self.app.dialog.is_none() {
             // Escape reaches here even when a terminal sent it to its session.
             return if confirm {
@@ -1818,10 +1848,19 @@ impl Shell {
         files.editor.is_none().then_some(files.focus)
     }
 
+    /// The path bar of `side` in `tab` given the keyboard, its path shown to type in.
+    fn edit_path(&mut self, tab: TabId, side: heimdall_app::files::Side) {
+        self.path_editing = Some((tab, side));
+        self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+    }
+
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
         if key == FilesKey::FocusPath {
-            if let Some(side) = self.shown_files_side() {
-                self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+            if let (Some(side), Some(tab)) = (
+                self.shown_files_side(),
+                self.app.active_tab().map(|tab| tab.id),
+            ) {
+                self.edit_path(tab, side);
             }
             return Vec::new();
         }
@@ -4016,6 +4055,9 @@ impl Shell {
                 tab,
                 pane,
                 live,
+                self.path_editing
+                    .filter(|(editing, _)| *editing == tab)
+                    .map(|(_, side)| side),
                 self.files_drag
                     .as_ref()
                     .filter(|drag| drag.active)
