@@ -330,6 +330,7 @@ mod tests {
             username: Some("webmaster".to_owned()),
             gateway: None,
             favorite: false,
+            metadata: heimdall_core::metadata::ProfileMetadata::default(),
         };
         assert_eq!(score(&profile, "web"), 130, "its host");
         assert_eq!(score(&profile, "alp"), 130, "its name");

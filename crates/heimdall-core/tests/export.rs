@@ -244,6 +244,24 @@ fn store(dir: &std::path::Path) -> ProfileStore {
             gateway: Some(ProfileId::new("edge")),
         },
     ]);
+    // What two of them say of their servers.
+    let first = store.ssh_profiles()[0].id.clone();
+    store.set_metadata(
+        &first,
+        heimdall_core::metadata::ProfileMetadata {
+            environment: Some(heimdall_core::metadata::Environment::Lab),
+            tags: "edge web".to_owned(),
+            mac_address: "00:11:22:33:44:55".parse().ok(),
+        },
+    );
+    let desktop = store.rdp_profiles()[0].id.clone();
+    store.set_metadata(
+        &desktop,
+        heimdall_core::metadata::ProfileMetadata {
+            environment: Some(heimdall_core::metadata::Environment::Production),
+            ..Default::default()
+        },
+    );
     store
 }
 
@@ -273,6 +291,15 @@ fn every_profile_comes_back_the_same_through_the_import() {
     assert_eq!(report.ftp, store.ftp_profiles());
     assert_eq!(report.local, store.local_profiles());
     assert_eq!(report.winrm, store.winrm_profiles());
+    let kept: Vec<_> = report
+        .metadata
+        .iter()
+        .map(|(id, metadata)| (id.clone(), Some(metadata)))
+        .collect();
+    assert_eq!(kept.len(), 2, "the metadata too");
+    for (id, metadata) in kept {
+        assert_eq!(store.metadata(&id), metadata, "{id}");
+    }
     assert_eq!(export::session_count(&store), 10);
 }
 

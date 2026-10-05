@@ -44,6 +44,10 @@ pub enum ProfileMenuMessage {
     },
     /// Test whether a profile's address answers, as the C# tree's "Test reachability".
     TestReachability(ProfileId),
+    /// Wake a profile's server with its MAC address, as the C# tree's "Wake on LAN".
+    WakeOnLan(ProfileId),
+    /// The magic packet was sent, or why not.
+    WakeOnLanSent(Result<(), String>),
     /// What that test found.
     Tested {
         /// The address tested.
@@ -71,6 +75,18 @@ impl App {
                 if let Some(Dialog::RenameProfile { value: typed, .. }) = self.dialog.as_mut() {
                     *typed = value;
                 }
+            }
+            ProfileMenuMessage::WakeOnLan(id) => {
+                let Some(mac) = self
+                    .profile_summary(&id)
+                    .and_then(|profile| profile.metadata.mac_address)
+                else {
+                    return Vec::new();
+                };
+                return vec![Effect::WakeOnLan(mac)];
+            }
+            ProfileMenuMessage::WakeOnLanSent(result) => {
+                self.tell(Notice::WakeOnLan(result));
             }
             ProfileMenuMessage::TestReachability(id) => {
                 let Some((host, port)) = self

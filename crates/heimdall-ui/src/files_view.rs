@@ -491,6 +491,8 @@ struct PaneParts<'p, E> {
     focused: bool,
     /// Where the pane can go besides up.
     moves: Moves,
+    /// The delete or the change of permissions running in this pane.
+    batch: Option<&'p heimdall_app::files::Batch>,
 }
 
 /// Where a pane can go besides up, as the C# Files tab's Back and Home.
@@ -550,6 +552,42 @@ fn empty_state<'a>(
     .into()
 }
 
+/// Where a delete or a change of permissions of several entries is, as the C# status says
+/// it, and Cancel, which stops it after the entry being worked on.
+fn batch_row<'a>(tab: TabId, batch: &heimdall_app::files::Batch) -> Element<'a, Message> {
+    let index = (batch.done + 1).min(batch.total);
+    let name = batch.current.as_str();
+    let at = match batch.kind {
+        heimdall_app::files::BatchKind::Delete => fl!(
+            "ui-files-batch-deleting",
+            name = name,
+            index = index,
+            total = batch.total
+        ),
+        heimdall_app::files::BatchKind::Permissions => fl!(
+            "ui-files-batch-permissions",
+            name = name,
+            index = index,
+            total = batch.total
+        ),
+    };
+    let stop: Element<'a, Message> = if batch.stopping {
+        text(fl!("ui-files-batch-stopping"))
+            .size(SMALL_SIZE)
+            .style(text::secondary)
+            .into()
+    } else {
+        button(text(fl!("ui-files-batch-stop")).size(SMALL_SIZE))
+            .style(button::secondary)
+            .on_press(files(FilesMessage::StopBatch { tab }))
+            .into()
+    };
+    row![text(at).size(SMALL_SIZE).width(Length::Fill), stop]
+        .spacing(SPACING)
+        .align_y(Alignment::Center)
+        .into()
+}
+
 fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     let PaneParts {
         tab,
@@ -569,6 +607,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         error,
         focused,
         moves,
+        batch,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
     let tools = pane_tools(tab, side, selected, chosen);
@@ -626,6 +665,9 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     let mut content = column![heading, header, tools, narrowing].spacing(SPACING);
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
+    }
+    if let Some(batch) = batch {
+        content = content.push(batch_row(tab, batch));
     }
     container(content.push(listing))
         .padding(PADDING)
@@ -870,6 +912,10 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
             back: files_pane.local.can_go_back(),
             home: files_pane.local.home.is_some(),
         },
+        batch: files_pane
+            .batch
+            .as_ref()
+            .filter(|batch| batch.side == Side::Local),
     });
     let remote = pane(PaneParts {
         tab,
@@ -892,6 +938,10 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
             back: files_pane.remote.can_go_back(),
             home: files_pane.remote.home.is_some(),
         },
+        batch: files_pane
+            .batch
+            .as_ref()
+            .filter(|batch| batch.side == Side::Remote),
     });
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();
