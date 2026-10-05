@@ -50,6 +50,7 @@ mod screenshot;
 mod search_keys;
 pub mod session_settings;
 pub mod sessions_view;
+mod settings_file;
 pub mod shell;
 mod shortcuts_view;
 pub mod status_bar;
