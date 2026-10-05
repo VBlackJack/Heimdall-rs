@@ -1494,6 +1494,13 @@ ui-tab-menu-unpin = Désépingler l'onglet
 ui-tab-menu-save-as-profile = Enregistrer comme profil...
 ui-tab-menu-reveal-in-tree = Afficher dans l'arborescence
 ui-tab-pinned-badge = épinglé
+ui-selection-set-gateway = Définir la passerelle... ({ $count })
+ui-selection-gateway-direct = Connexion directe (sans passerelle)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Route de connexion modifiée sur { $count } serveur.
+   *[other] Route de connexion modifiée sur { $count } serveurs.
+}
+ui-status-bulk-gateway-unchanged = Aucune route n'a été modifiée.
 ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
 ui-shortcuts-session-menu = Menu de la session sélectionnée
 ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé

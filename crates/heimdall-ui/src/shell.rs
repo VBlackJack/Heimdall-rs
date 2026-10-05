@@ -1641,7 +1641,8 @@ impl Shell {
                 | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::MoveSelection
-                | TreeMenu::EditSelection,
+                | TreeMenu::EditSelection
+                | TreeMenu::GatewaySelection,
                 Some((_, at)),
             ) => *at,
             _ => self.cursor.get(),
@@ -2305,7 +2306,10 @@ impl Shell {
             tree_view::edit_selection_entries(
                 self.app
                     .bulk_targets(&selected, heimdall_app::BulkField::Username),
+                self.app.gateway_targets(&selected),
             )
+        } else if let TreeMenu::GatewaySelection = menu {
+            tree_view::gateway_selection_entries(self.app.gateways())
         } else {
             let profile = match menu {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
@@ -2320,6 +2324,7 @@ impl Shell {
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
                 | TreeMenu::EditSelection
+                | TreeMenu::GatewaySelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)

@@ -1569,6 +1569,13 @@ ui-tab-menu-unpin = Unpin tab
 ui-tab-menu-save-as-profile = Save as profile...
 ui-tab-menu-reveal-in-tree = Reveal in tree
 ui-tab-pinned-badge = pinned
+ui-selection-set-gateway = Set gateway... ({ $count })
+ui-selection-gateway-direct = Direct connection (no gateway)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Connection route updated on { $count } server.
+   *[other] Connection route updated on { $count } servers.
+}
+ui-status-bulk-gateway-unchanged = No route changes were applied.
 ui-shortcuts-select-all-sessions = Select every session shown
 ui-shortcuts-session-menu = The selected session's menu
 ui-shortcuts-find-by-name = Go to the session whose name starts with what is typed
