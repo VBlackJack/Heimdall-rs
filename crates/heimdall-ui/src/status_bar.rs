@@ -189,6 +189,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::WakeOnLan(_)
             | Notice::FilesBatch(_)
             | Notice::FilesDuplicated) => files_notice(notice),
+            notice @ (Notice::MacroNothingRecorded
+            | Notice::MacroSaved(_)
+            | Notice::MacroDeleted(_)
+            | Notice::MacroEnded { .. }) => crate::macros_view::notice(notice),
             Notice::TranscriptStarted(path) => {
                 fl!("ui-status-transcript-started", path = path.as_str())
             }

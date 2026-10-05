@@ -1835,6 +1835,7 @@ impl Shell {
         let (next, field) = match &self.app.dialog {
             Some(
                 Dialog::AskName { .. }
+                | Dialog::SaveMacro { .. }
                 | Dialog::RenameTab { .. }
                 | Dialog::CustomResolution { .. }
                 | Dialog::FolderName { .. }
@@ -1997,6 +1998,12 @@ impl Shell {
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
+            Effect::PlayMacro { tab, run } => Task::perform(run, move |outcome| {
+                Message::App(AppMessage::Macro(heimdall_app::MacroMessage::Finished {
+                    tab,
+                    outcome,
+                }))
+            }),
             effect @ (Effect::TestReachability { .. }
             | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
@@ -2236,7 +2243,14 @@ impl Shell {
         CursorTracker::new(layers, self.cursor.clone()).into()
     }
 
+    /// A terminal tab's Macros menu; `None` once the tab takes none.
+    fn macros_menu(&self, tab: TabId) -> Option<Element<'_, Message>> {
+        let tab = self.app.tab(tab)?;
+        Some(tree_view::macro_entries(tab.id, &self.app.macro_menu(tab)?))
+    }
+
     /// The entries of `menu`, the open one; `None` once what it is for is gone.
+    #[expect(clippy::too_many_lines, reason = "one arm per menu")]
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
@@ -2255,6 +2269,8 @@ impl Shell {
         } else if let TreeMenu::Tunnel(id) = *menu {
             // Only while the tunnel is listed.
             tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
+        } else if let TreeMenu::Macros(tab) = *menu {
+            self.macros_menu(tab)?
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -2329,6 +2345,7 @@ impl Shell {
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
+                | TreeMenu::Macros(_)
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -2708,6 +2725,8 @@ impl Shell {
                 self.terminal_settings(),
                 text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
                 self.session_log_settings(),
+                text(fl!("ui-macros-menu")).size(BODY_SIZE),
+                crate::macros_view::card(self.app.macros()),
             ],
             SettingsTab::Ssh => column![
                 text(fl!("ui-settings-ssh-auto-reconnect")).size(BODY_SIZE),
@@ -3641,6 +3660,7 @@ impl Shell {
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
             pinned: tab.pinned,
             saveable: self.app.can_save_as_profile(tab),
+            macros: self.app.macro_menu(tab).is_some(),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -3672,6 +3692,16 @@ impl Shell {
             .align_y(iced::Alignment::Center);
             if tab.pinned {
                 label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+            }
+            // A macro recorded from it, or typed into it.
+            if tab.macro_recording.is_some() {
+                label = label.push(
+                    text(fl!("ui-tab-recording-badge"))
+                        .size(SMALL_SIZE)
+                        .style(text::danger),
+                );
+            } else if tab.macro_playing.is_some() {
+                label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
             }
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
@@ -6243,6 +6273,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::SaveMacro { name, entries } => return save_macro_dialog(name, entries.len()),
         Dialog::CustomResolution { value, .. } => return custom_resolution_dialog(value),
         Dialog::ConfirmPaste {
             command: Some(command),
@@ -6400,6 +6431,30 @@ fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-ok-button")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The name of the macro just recorded, of `count` inputs, asked before it is kept.
+fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
+    column![
+        text(fl!("ui-dialog-save-macro-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-save-macro-prompt", count = count)),
+        text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .id(name_field_id())
+            .on_input(|value| Message::App(AppMessage::Macro(
+                heimdall_app::MacroMessage::NameEdited(value)
+            )))
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-save-macro-confirm")))
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
         .spacing(SPACING),
@@ -7298,6 +7353,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
+        | Dialog::SaveMacro { .. }
         | Dialog::CustomResolution { .. }
         | Dialog::ConfirmPaste { .. } => tab_dialog(dialog),
         Dialog::FolderName { .. }

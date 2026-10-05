@@ -1545,3 +1545,33 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
 ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+ui-macros-menu = Macros
+ui-macros-record = Enregistrer une macro
+ui-macros-stop-recording = { $count ->
+    [one] Arrêter l'enregistrement ({ $count } saisie)
+   *[other] Arrêter l'enregistrement ({ $count } saisies)
+}
+ui-macros-stop = Arrêter "{ $name }"
+ui-macros-play = Lire "{ $name }"
+ui-macros-none = Aucune macro enregistrée
+ui-macros-empty = Aucune macro pour l'instant. Enregistrez-en une depuis le menu d'un onglet de terminal : Macros, Enregistrer une macro.
+ui-macros-inputs = { $count ->
+    [one] { $count } saisie
+   *[other] { $count } saisies
+}
+ui-macros-delete = Supprimer
+ui-tab-recording-badge = REC
+ui-tab-macro-badge = macro
+ui-dialog-save-macro-title = Enregistrer la macro
+ui-dialog-save-macro-prompt = { $count ->
+    [one] { $count } saisie enregistrée. Nommez la macro :
+   *[other] { $count } saisies enregistrées. Nommez la macro :
+}
+ui-dialog-save-macro-confirm = Enregistrer
+ui-status-macro-nothing = Rien n'a été saisi : aucune macro enregistrée.
+ui-status-macro-saved = Macro "{ $name }" enregistrée.
+ui-status-macro-deleted = Macro "{ $name }" supprimée.
+ui-status-macro-completed = Macro "{ $name }" lue.
+ui-status-macro-stopped = Macro "{ $name }" arrêtée.
+ui-status-macro-timed-out = Macro "{ $name }" arrêtée : ce qu'attend la saisie { $entry } n'est pas venu à temps.
+ui-status-macro-closed = Macro "{ $name }" arrêtée : la session s'est terminée.

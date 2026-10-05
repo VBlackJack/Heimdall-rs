@@ -37,6 +37,7 @@ pub mod integrated_edit;
 pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
+pub mod macro_player;
 mod paste_guard;
 mod post_connect;
 pub mod profile_draft;
@@ -65,17 +66,18 @@ pub use app::{
     ConflictRow, ConnectAs, Dialog, Effect, ExportOutcome, FileKind, FilesMessage, FilterMessage,
     FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome,
     HostKeysPreview, ImportFile, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS,
-    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER,
-    NameAction, Notice, OpenedVault, PendingImport, Phase, PinDialog, PinFailure, PinMessage,
-    PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
-    ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
-    RDP_EXTENSION, RDP_MAX_ATTEMPTS, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow,
-    ResolutionChoice, RestoreDialog, RestoreRow, Retry, SelectionMessage, SessionState,
-    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
-    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
-    TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
-    UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, MacroMenu,
+    MacroMessage, MacroPlaying, MacroRecording, Message, NO_FOLDER, NameAction, Notice,
+    OpenedVault, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode, PointerInput,
+    PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, Prompt,
+    ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult, RDP_EXTENSION, RDP_MAX_ATTEMPTS,
+    RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice, RestoreDialog,
+    RestoreRow, Retry, SelectionMessage, SessionState, SessionStatus, SessionsCounts,
+    SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction,
+    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey,
+    TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    master_password_problem, open_vault,
 };
 pub use desktop::{
     DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,

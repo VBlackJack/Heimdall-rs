@@ -170,6 +170,19 @@ pub enum Notice {
     FilesCopied(usize),
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// A macro recording ended with nothing typed.
+    MacroNothingRecorded,
+    /// The macro of this name was kept.
+    MacroSaved(String),
+    /// The macro of this name was forgotten.
+    MacroDeleted(String),
+    /// A macro typed into a session ended.
+    MacroEnded {
+        /// Its name.
+        name: String,
+        /// How.
+        outcome: crate::macro_player::MacroOutcome,
+    },
     /// A delete or a change of permissions of entries did not do them all.
     FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.

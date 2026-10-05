@@ -1542,3 +1542,33 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
 ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-macros-menu = Macros
+ui-macros-record = Grabar macro
+ui-macros-stop-recording = { $count ->
+    [one] Detener la grabación ({ $count } entrada)
+   *[other] Detener la grabación ({ $count } entradas)
+}
+ui-macros-stop = Detener "{ $name }"
+ui-macros-play = Reproducir "{ $name }"
+ui-macros-none = Aún no hay macros grabadas
+ui-macros-empty = Aún no hay macros. Graba una desde el menú de una pestaña de terminal: Macros, Grabar macro.
+ui-macros-inputs = { $count ->
+    [one] { $count } entrada
+   *[other] { $count } entradas
+}
+ui-macros-delete = Eliminar
+ui-tab-recording-badge = REC
+ui-tab-macro-badge = macro
+ui-dialog-save-macro-title = Guardar macro
+ui-dialog-save-macro-prompt = { $count ->
+    [one] { $count } entrada grabada. Nombra la macro:
+   *[other] { $count } entradas grabadas. Nombra la macro:
+}
+ui-dialog-save-macro-confirm = Guardar
+ui-status-macro-nothing = No se escribió nada: no se grabó ninguna macro.
+ui-status-macro-saved = Macro "{ $name }" guardada.
+ui-status-macro-deleted = Macro "{ $name }" eliminada.
+ui-status-macro-completed = Macro "{ $name }" reproducida.
+ui-status-macro-stopped = Macro "{ $name }" detenida.
+ui-status-macro-timed-out = Macro "{ $name }" detenida: lo que espera la entrada { $entry } no llegó a tiempo.
+ui-status-macro-closed = Macro "{ $name }" detenida: la sesión terminó.

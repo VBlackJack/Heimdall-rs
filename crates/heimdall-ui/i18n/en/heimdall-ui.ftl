@@ -1620,3 +1620,33 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
 ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-macros-menu = Macros
+ui-macros-record = Record macro
+ui-macros-stop-recording = { $count ->
+    [one] Stop recording ({ $count } input)
+   *[other] Stop recording ({ $count } inputs)
+}
+ui-macros-stop = Stop "{ $name }"
+ui-macros-play = Play "{ $name }"
+ui-macros-none = No macros recorded yet
+ui-macros-empty = No macros yet. Record one from a terminal tab's menu: Macros, Record macro.
+ui-macros-inputs = { $count ->
+    [one] { $count } input
+   *[other] { $count } inputs
+}
+ui-macros-delete = Delete
+ui-tab-recording-badge = REC
+ui-tab-macro-badge = macro
+ui-dialog-save-macro-title = Save macro
+ui-dialog-save-macro-prompt = { $count ->
+    [one] { $count } input recorded. Name the macro:
+   *[other] { $count } inputs recorded. Name the macro:
+}
+ui-dialog-save-macro-confirm = Save
+ui-status-macro-nothing = Nothing was typed: no macro was recorded.
+ui-status-macro-saved = Macro "{ $name }" saved.
+ui-status-macro-deleted = Macro "{ $name }" deleted.
+ui-status-macro-completed = Macro "{ $name }" played.
+ui-status-macro-stopped = Macro "{ $name }" stopped.
+ui-status-macro-timed-out = Macro "{ $name }" stopped: what input { $entry } waits for did not come in time.
+ui-status-macro-closed = Macro "{ $name }" stopped: the session ended.

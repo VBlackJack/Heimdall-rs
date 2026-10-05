@@ -2319,6 +2319,7 @@ dependencies = [
  "libunftp",
  "log",
  "rcgen",
+ "regex",
  "ring",
  "russh",
  "sealvault",
