@@ -1520,6 +1520,7 @@ impl Shell {
             (
                 TreeMenu::ConnectAs(_)
                 | TreeMenu::MoveFolder(_)
+                | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::MoveSelection
                 | TreeMenu::EditSelection,
@@ -2160,6 +2161,8 @@ impl Shell {
             tree_view::folder_menu_entries(path, self.app.folder_connectable(path))
         } else if let TreeMenu::MoveFolder(path) = menu {
             tree_view::move_folder_entries(path, &self.app.folder_targets(path))
+        } else if let TreeMenu::FolderColor(path) = menu {
+            tree_view::folder_color_entries(path, self.app.own_folder_color(path))
         } else if let TreeMenu::MoveProfile(id) = menu {
             tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
         } else if let TreeMenu::Filter = menu {
@@ -2192,6 +2195,7 @@ impl Shell {
                 | TreeMenu::Tab(_)
                 | TreeMenu::Folder(_)
                 | TreeMenu::MoveFolder(_)
+                | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
@@ -2418,7 +2422,10 @@ impl Shell {
                 depth,
                 open,
                 count,
-            } => tree_view::folder_row(path, name, depth, open, count),
+            } => {
+                let color = self.app.folder_color(&path);
+                tree_view::folder_row(path, name, depth, open, count, color)
+            }
             TreeRow::Profile { mut profile, depth } => {
                 if !badge {
                     profile.gateway = None;

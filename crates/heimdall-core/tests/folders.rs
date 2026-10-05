@@ -233,3 +233,65 @@ fn folders_written_by_hand_are_read_the_one_way() {
     assert_eq!(store.folders(), ["A/B"], "blank ones dropped");
     assert_eq!(store.folder_paths(), ["A", "A/B"]);
 }
+
+#[test]
+fn a_folder_s_colour_is_inherited_follows_it_and_goes_with_it() {
+    use heimdall_core::folder::FolderColor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("store");
+    store.merge([
+        ssh("web", Some("Lab/Linux/Web")),
+        ssh("db", Some("Lab/Windows")),
+    ]);
+    assert_eq!(
+        store.set_folder_color("Nowhere", Some(FolderColor::Red)),
+        Err(FolderError::Missing)
+    );
+    store
+        .set_folder_color("Lab", Some(FolderColor::Blue))
+        .expect("set");
+    store
+        .set_folder_color("Lab/Linux", Some(FolderColor::Green))
+        .expect("set");
+    assert_eq!(store.folder_color("Lab/Windows"), Some(FolderColor::Blue));
+    assert_eq!(store.own_folder_color("Lab/Windows"), None, "inherited");
+    assert_eq!(
+        store.folder_color("Lab/Linux/Web"),
+        Some(FolderColor::Green)
+    );
+    store.save().expect("save");
+    let mut store = ProfileStore::open(&path).expect("read back");
+    assert_eq!(
+        store.own_folder_color("Lab/Linux"),
+        Some(FolderColor::Green)
+    );
+
+    // Renamed then moved: its colour, and its folders', follow.
+    store.rename_folder("Lab/Linux", "Unix").expect("rename");
+    assert_eq!(store.own_folder_color("Lab/Unix"), Some(FolderColor::Green));
+    assert_eq!(store.own_folder_color("Lab/Linux"), None);
+    store.move_folder("Lab/Unix", "").expect("move");
+    assert_eq!(store.folder_color("Unix/Web"), Some(FolderColor::Green));
+
+    // Its own taken away: its parent's shows again.
+    store.set_folder_color("Unix", None).expect("unset");
+    assert_eq!(
+        store.folder_color("Unix/Web"),
+        None,
+        "at the top, nothing above"
+    );
+    store.delete_folder("Lab");
+    assert_eq!(store.own_folder_color("Lab"), None, "gone with it");
+
+    // A colour the file names that is not known is left out, the others kept.
+    std::fs::write(
+        &path,
+        "version = 1\nfolder = [\"A\", \"B\"]\n\n[folder_color]\nA = \"teal\"\nB = \"Purple\"\n",
+    )
+    .expect("write");
+    let store = ProfileStore::open(&path).expect("read");
+    assert_eq!(store.own_folder_color("A"), None);
+    assert_eq!(store.own_folder_color("B"), Some(FolderColor::Purple));
+}

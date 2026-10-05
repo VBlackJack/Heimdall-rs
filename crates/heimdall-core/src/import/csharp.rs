@@ -34,6 +34,7 @@ use std::path::PathBuf;
 use serde::Deserialize;
 use thiserror::Error;
 
+use crate::folder::FolderColor;
 use crate::post_connect::{DEFAULT_STEP_DELAY_MS, OnFailure, PostConnect, PostConnectStep};
 use crate::profile::{
     AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
@@ -155,6 +156,8 @@ pub struct ImportReport {
     pub skipped: Vec<Skipped>,
     /// The profiles among those imported marked as favorites.
     pub favorites: Vec<ProfileId>,
+    /// The colours `settings.json` gives folders, by path: those of its palette only.
+    pub folder_colors: Vec<(String, FolderColor)>,
 }
 
 /// A setting of a C# profile that Heimdall-rs does not have: the profile is imported
@@ -631,6 +634,8 @@ struct LegacyGateway {
 #[derive(Debug, Clone, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct LegacyGroupDefaults {
+    /// The folder's colour, `#RRGGBB`.
+    color: Option<String>,
     ssh_gateway_id: Option<String>,
     ssh_username: Option<String>,
     ssh_key_path: Option<String>,
@@ -657,6 +662,7 @@ pub fn import(
 
     let mut report = ImportReport {
         host_keys: trusted_host_keys(&settings),
+        folder_colors: folder_colors(&settings.group_defaults),
         ..ImportReport::default()
     };
     // The document's gateways, then the settings' ones: an identifier seen twice is the
@@ -875,6 +881,21 @@ fn chain_ends(gateway: &SshGateway, all: &HashMap<&str, SshGateway>) -> Result<(
         current = next;
     }
     Ok(())
+}
+
+/// The folders' colours of `all`, in path order; a colour out of the C# palette is left out,
+/// as a folder never takes one.
+fn folder_colors(all: &HashMap<String, LegacyGroupDefaults>) -> Vec<(String, FolderColor)> {
+    let mut colors: Vec<(String, FolderColor)> = all
+        .iter()
+        .filter_map(|(path, defaults)| {
+            let path = crate::folder::normal(path);
+            let color = FolderColor::from_hex(defaults.color.as_deref()?)?;
+            (!path.is_empty()).then_some((path, color))
+        })
+        .collect();
+    colors.sort_by(|(a, _), (b, _)| a.cmp(b));
+    colors
 }
 
 /// Group defaults in force for `group`, as `GroupDefaultsDto.Resolve` computes them.

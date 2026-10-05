@@ -17,7 +17,9 @@
 //! The external credential provider's settings, as the C# Settings page's card: each change
 //! saved at once, the unlock secret kept with the saved passwords, and the Test button.
 
-use heimdall_core::credential_provider::{PRESETS, ProviderKind};
+use std::time::Duration;
+
+use heimdall_core::credential_provider::{MAX_TIMEOUT, MIN_TIMEOUT, PRESETS, ProviderKind};
 use heimdall_ssh::Secret;
 
 use super::{App, Dialog, Effect};
@@ -44,6 +46,8 @@ pub enum ProviderMessage {
     KeyFile(String),
     /// Only the first line of the output.
     FirstLineOnly(bool),
+    /// How long a command is given; refused out of the C# range.
+    Timeout(Duration),
     /// The command of the preset at this place in [`PRESETS`].
     Preset(usize),
     /// Keep this unlock secret.
@@ -67,6 +71,7 @@ impl std::fmt::Debug for ProviderMessage {
             Self::Database(_) => f.write_str("Database(..)"),
             Self::KeyFile(_) => f.write_str("KeyFile(..)"),
             Self::FirstLineOnly(on) => write!(f, "FirstLineOnly({on})"),
+            Self::Timeout(timeout) => write!(f, "Timeout({timeout:?})"),
             Self::Preset(index) => write!(f, "Preset({index})"),
             Self::SaveUnlockSecret(_) => f.write_str("SaveUnlockSecret(..)"),
             Self::ForgetUnlockSecret => f.write_str("ForgetUnlockSecret"),
@@ -108,6 +113,12 @@ impl App {
             ProviderMessage::Database(path) => provider.database = path,
             ProviderMessage::KeyFile(path) => provider.key_file = path,
             ProviderMessage::FirstLineOnly(on) => provider.first_line_only = on,
+            ProviderMessage::Timeout(timeout) => {
+                if !(MIN_TIMEOUT..=MAX_TIMEOUT).contains(&timeout) {
+                    return Vec::new();
+                }
+                provider.timeout = timeout;
+            }
             ProviderMessage::Preset(index) => {
                 let Some((_, template)) = PRESETS.get(index) else {
                     return Vec::new();

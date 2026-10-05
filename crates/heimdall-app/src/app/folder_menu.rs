@@ -17,7 +17,7 @@
 //! A folder's menu, as the C# Heimdall's: connect all it holds, add a session or a folder
 //! in it, rename it, move it, delete it with its profiles going to no folder.
 
-use heimdall_core::folder::{self, FolderError};
+use heimdall_core::folder::{self, FolderColor, FolderError};
 use heimdall_core::store::ProfileStore;
 
 use super::folders::NO_FOLDER;
@@ -50,6 +50,13 @@ pub enum FolderMessage {
     RequestConnectAll(String),
     /// The session form, its folder written in.
     NewProfileIn(String),
+    /// Give a folder a colour, or take its own away for `None`, as the C# "Colour" menu.
+    Color {
+        /// The folder.
+        path: String,
+        /// Its colour.
+        color: Option<FolderColor>,
+    },
 }
 
 /// What a folder name is typed for.
@@ -118,6 +125,17 @@ impl App {
             FolderMessage::Move { path, to } => {
                 self.change_folders(&path, |store| store.move_folder(&path, &to));
             }
+            FolderMessage::Color { path, color } => {
+                // The menu offers only folders that are there.
+                if let Err(error) = self
+                    .store
+                    .apply(|store| store.set_folder_color(&path, color))
+                {
+                    self.dialog = Some(Dialog::StoreError {
+                        detail: error.to_string(),
+                    });
+                }
+            }
             FolderMessage::RequestDelete(path) => {
                 let count = held(self.profile_summaries(), &path).len();
                 self.dialog = Some(Dialog::ConfirmDeleteFolder {
@@ -150,6 +168,19 @@ impl App {
     #[must_use]
     pub fn folder_paths(&self) -> Vec<String> {
         self.store.folder_paths()
+    }
+
+    /// The colour folder `path` is shown in: its own, else that of the nearest folder it is
+    /// in.
+    #[must_use]
+    pub fn folder_color(&self, path: &str) -> Option<FolderColor> {
+        self.store.folder_color(path)
+    }
+
+    /// The colour folder `path` was given itself.
+    #[must_use]
+    pub fn own_folder_color(&self, path: &str) -> Option<FolderColor> {
+        self.store.own_folder_color(path)
     }
 
     /// How many sessions "Connect all" of `path` opens.
