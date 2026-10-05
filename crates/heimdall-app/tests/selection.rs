@@ -220,3 +220,72 @@ fn a_long_selection_is_counted_not_listed() {
         Some(Dialog::ConfirmDeleteProfiles { ids, names }) if ids.len() == 12 && names.is_empty()
     ));
 }
+
+#[test]
+fn set_gateway_routes_those_selected_that_can_be_through_one_or_directly() {
+    use heimdall_app::Notice;
+    use heimdall_core::profile::SshGateway;
+
+    let dir = tempfile::tempdir().expect("dir");
+    drop(app(dir.path()));
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge_gateways([SshGateway {
+        id: id("edge"),
+        name: "Edge".to_owned(),
+        host: "edge.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    let gateway_of = |app: &App, name: &str| {
+        app.profiles()
+            .iter()
+            .find(|profile| profile.id == id(name))
+            .and_then(|profile| profile.gateway.clone())
+    };
+    select(&mut app, "a");
+    toggle(&mut app, "b");
+    toggle(&mut app, "tool");
+    assert_eq!(
+        app.gateway_targets(&app.selected_profiles()),
+        2,
+        "a local program goes through none"
+    );
+
+    let set = |app: &mut App, gateway: Option<&str>| {
+        app.update(Message::Selection(SelectionMessage::SetGateway(
+            gateway.map(id),
+        )));
+    };
+    set(&mut app, Some("edge"));
+    assert_eq!(gateway_of(&app, "a"), Some(id("edge")));
+    assert_eq!(gateway_of(&app, "b"), Some(id("edge")));
+    assert_eq!(gateway_of(&app, "c"), None, "not selected");
+    assert_eq!(app.notice(), Some(&Notice::BulkGatewayUpdated(2)));
+    set(&mut app, Some("edge"));
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::BulkGatewayUpdated(0)),
+        "already so"
+    );
+    set(&mut app, Some("nowhere"));
+    assert_eq!(
+        gateway_of(&app, "a"),
+        Some(id("edge")),
+        "a gateway not saved is not set"
+    );
+    set(&mut app, None);
+    assert_eq!(gateway_of(&app, "a"), None, "direct");
+    assert_eq!(app.notice(), Some(&Notice::BulkGatewayUpdated(2)));
+}

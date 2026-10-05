@@ -96,6 +96,8 @@ pub enum TreeMenu {
     MoveSelection,
     /// What can be set on the profiles selected together at once.
     EditSelection,
+    /// The route the profiles selected together can be given: direct, or a gateway.
+    GatewaySelection,
     /// The server's folders bookmarked in a Files tab.
     FilesBookmarks(TabId),
     /// Which of a Files tab's bookmarks to take off.
@@ -426,6 +428,19 @@ fn row_tooltip(profile: &ProfileSummary) -> String {
         "ui-tree-tooltip-protocol",
         protocol = profile.kind.label()
     ));
+    // What it says of its server, as the C# detail panel.
+    if let Some(environment) = profile.metadata.environment {
+        lines.push(fl!(
+            "ui-tree-tooltip-environment",
+            environment = crate::texts::environment_name(Some(environment))
+        ));
+    }
+    if !profile.metadata.tags.is_empty() {
+        lines.push(fl!(
+            "ui-tree-tooltip-tags",
+            tags = heimdall_app::server_text(&profile.metadata.tags)
+        ));
+    }
     if profile.favorite {
         lines.push(fl!("ui-tree-favorite"));
     }
@@ -696,6 +711,15 @@ fn profile_entries<'a>(
             )),
         ));
     }
+    // Only for a server whose MAC address is known, as the C# menu.
+    if profile.metadata.mac_address.is_some() {
+        entries = entries.push(entry(
+            fl!("ui-tree-wake-on-lan"),
+            Some(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLan(
+                id.clone(),
+            ))),
+        ));
+    }
     entries = entries.push(separator()).push(
         button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
             .width(Length::Fill)
@@ -904,6 +928,10 @@ pub struct TabMenuState {
     pub resolution: bool,
     /// Its server health panel, for an SSH shell: shown or not.
     pub health: Option<bool>,
+    /// It is pinned.
+    pub pinned: bool,
+    /// Its session is saved nowhere, and can be saved as a profile.
+    pub saveable: bool,
 }
 
 /// The tab menu's entry showing or hiding an SSH shell's server health panel.
@@ -932,6 +960,8 @@ pub struct ResolutionMenuState {
     pub mode: Resolution,
     /// The tab's size, when known: a size larger than it is shown scaled.
     pub shown: Option<(u16, u16)>,
+    /// The proportions kept under "Match window".
+    pub aspect: heimdall_app::Aspect,
 }
 
 impl ResolutionMenuState {
@@ -1023,12 +1053,23 @@ pub fn resolution_entries<'a>(
         separator(),
         checked_entry(
             fl!("ui-resolution-match-window"),
-            state.fixed.is_none(),
+            state.fixed.is_none() && state.aspect == heimdall_app::Aspect::Stretch,
             choose(ResolutionChoice::MatchWindow),
         ),
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
+    // Under it, as the C# sub-menu: the window followed, fitted to a ratio.
+    for aspect in heimdall_app::Aspect::RATIOS {
+        let Some((wide, high)) = aspect.ratio() else {
+            continue;
+        };
+        entries = entries.push(checked_entry(
+            fl!("ui-resolution-match-aspect", wide = wide, high = high),
+            state.fixed.is_none() && state.aspect == aspect,
+            choose(ResolutionChoice::MatchAspect(aspect)),
+        ));
+    }
     for &(width, height) in presets {
         let size = fixed_desktop(width, height);
         let preset = checked_entry(
@@ -1063,6 +1104,45 @@ pub fn resolution_entries<'a>(
     menu_card(entries).into()
 }
 
+/// A tab's entries for the saved profile it was opened from: Edit, the copies, and Reveal
+/// in tree.
+fn profile_tab_entries<'a>(
+    entries: Column<'a, Message>,
+    tab: TabId,
+    profile: &ProfileSummary,
+    editable: bool,
+) -> Column<'a, Message> {
+    let id = profile.id.clone();
+    let has_user = profile
+        .username
+        .as_deref()
+        .is_some_and(|user| !user.is_empty());
+    entries
+        .push(separator())
+        .push(entry(
+            fl!("ui-tree-edit"),
+            editable.then(|| AppMessage::EditProfile(id.clone())),
+        ))
+        .push(entry(
+            fl!("ui-tree-copy-hostname"),
+            profile.endpoint.is_some().then(|| AppMessage::CopyProfile {
+                id: id.clone(),
+                what: ProfileCopy::Hostname,
+            }),
+        ))
+        .push(entry(
+            fl!("ui-tree-copy-username"),
+            has_user.then(|| AppMessage::CopyProfile {
+                id,
+                what: ProfileCopy::Username,
+            }),
+        ))
+        .push(entry(
+            fl!("ui-tab-menu-reveal-in-tree"),
+            Some(AppMessage::TabMenu(TabMenuMessage::RevealInTree(tab))),
+        ))
+}
+
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
 /// does: no pin, split, detach or macros.
 pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
@@ -1085,6 +1165,14 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::ResetTitle(tab)),
         ));
     }
+    entries = entries.push(entry(
+        if state.pinned {
+            fl!("ui-tab-menu-unpin")
+        } else {
+            fl!("ui-tab-menu-pin")
+        },
+        menu(TabMenuMessage::Pin(tab)),
+    ));
     if state.resolution {
         entries = entries.push(separator()).push(
             button(text(fl!("ui-resolution-menu")).size(MENU_TEXT_SIZE))
@@ -1111,32 +1199,14 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
                 .can_reopen
                 .then(|| AppMessage::TabMenu(TabMenuMessage::Duplicate(tab))),
         ));
+    if state.saveable {
+        entries = entries.push(entry(
+            fl!("ui-tab-menu-save-as-profile"),
+            menu(TabMenuMessage::SaveAsProfile(tab)),
+        ));
+    }
     if let Some(profile) = &state.profile {
-        let id = profile.id.clone();
-        let has_user = profile
-            .username
-            .as_deref()
-            .is_some_and(|user| !user.is_empty());
-        entries = entries
-            .push(separator())
-            .push(entry(
-                fl!("ui-tree-edit"),
-                state.editable.then(|| AppMessage::EditProfile(id.clone())),
-            ))
-            .push(entry(
-                fl!("ui-tree-copy-hostname"),
-                profile.endpoint.is_some().then(|| AppMessage::CopyProfile {
-                    id: id.clone(),
-                    what: ProfileCopy::Hostname,
-                }),
-            ))
-            .push(entry(
-                fl!("ui-tree-copy-username"),
-                has_user.then(|| AppMessage::CopyProfile {
-                    id,
-                    what: ProfileCopy::Username,
-                }),
-            ));
+        entries = profile_tab_entries(entries, tab, profile, state.editable);
     }
     entries = match state.transcript {
         TranscriptEntry::Absent => entries,
@@ -1358,7 +1428,7 @@ pub fn selection_menu_entries<'a>(
 
 /// What the profiles selected together can be set at once, as the C# "Edit" menu: their
 /// port, and the account of the `usernames` among them that take one.
-pub fn edit_selection_entries<'a>(usernames: usize) -> Element<'a, Message> {
+pub fn edit_selection_entries<'a>(usernames: usize, routed: usize) -> Element<'a, Message> {
     let edit = |field| Some(AppMessage::Selection(SelectionMessage::Edit(field)));
     let entries = column![]
         .spacing(0.0)
@@ -1367,8 +1437,39 @@ pub fn edit_selection_entries<'a>(usernames: usize) -> Element<'a, Message> {
         .push(entry(
             fl!("ui-selection-edit-username", count = usernames),
             edit(BulkField::Username).filter(|_| usernames > 0),
-        ));
+        ))
+        .push(
+            button(text(fl!("ui-selection-set-gateway", count = routed)).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press_maybe(
+                    (routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)),
+                ),
+        );
     menu_card(entries).into()
+}
+
+/// The routes the profiles selected together can be given, as the C# "Set gateway":
+/// directly, then through each gateway saved.
+#[must_use]
+pub fn gateway_selection_entries<'a>(
+    gateways: &[heimdall_core::profile::SshGateway],
+) -> Element<'a, Message> {
+    let set = |gateway| Some(AppMessage::Selection(SelectionMessage::SetGateway(gateway)));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-selection-gateway-direct"), set(None)))
+        .push(separator())
+        .extend(gateways.iter().map(|gateway| {
+            entry(
+                heimdall_app::server_text(&gateway.name),
+                set(Some(gateway.id.clone())),
+            )
+        }));
+    menu_card(scrollable(entries).height(Length::Shrink))
+        .max_height(MOVE_MENU_HEIGHT)
+        .into()
 }
 
 /// Which folder the profiles selected together can move to: "(No Folder)", then every

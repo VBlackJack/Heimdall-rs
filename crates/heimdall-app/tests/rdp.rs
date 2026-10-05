@@ -978,3 +978,71 @@ fn the_certificate_question_counts_the_other_certificates_and_names_the_route() 
         "nothing to copy once answered"
     );
 }
+
+#[test]
+fn match_window_fits_the_desktop_to_a_ratio_and_keeps_it_for_the_reconnections() {
+    use heimdall_app::{Aspect, ResolutionChoice, TabMenuMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let ready = |app: &mut App, attempt| {
+        let (input, _received) = mpsc::unbounded_channel();
+        let (size, watched) = tokio::sync::watch::channel(None);
+        app.update(Message::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::RdpReady {
+                framebuffer: Framebuffer::new(64, 48),
+                input,
+                size,
+                clipboard: None,
+            },
+        });
+        watched
+    };
+    let watched = ready(&mut app, attempt);
+    let choose = |app: &mut App, choice| {
+        app.update(Message::TabMenu(TabMenuMessage::Resolution { tab, choice }));
+    };
+    choose(&mut app, ResolutionChoice::MatchWindow);
+    app.update(Message::DesktopResize {
+        tab,
+        width: 1600,
+        height: 1000,
+    });
+    assert_eq!(*watched.borrow(), Some((1600, 1000)), "the whole tab");
+
+    choose(&mut app, ResolutionChoice::MatchAspect(Aspect::Wide));
+    assert_eq!(
+        *watched.borrow(),
+        Some((1600, 900)),
+        "16:9 inside, at once, as wide as the tab"
+    );
+    app.update(Message::DesktopResize {
+        tab,
+        width: 2000,
+        height: 900,
+    });
+    assert_eq!(
+        *watched.borrow(),
+        Some((1600, 900)),
+        "a tab wider than 16:9: as high, bars at the sides"
+    );
+
+    // Connected again by itself, as an auto-reconnect does: its new desktop keeps the
+    // ratio.
+    let watched = ready(&mut app, attempt);
+    app.update(Message::DesktopResize {
+        tab,
+        width: 1200,
+        height: 1200,
+    });
+    assert_eq!(
+        app.tab(tab)
+            .and_then(|tab| tab.desktop.as_ref())
+            .map(|pane| pane.aspect),
+        Some(Aspect::Wide)
+    );
+    assert_eq!(*watched.borrow(), Some((1200, 675)));
+}
