@@ -1055,6 +1055,11 @@ impl Shell {
             self.sudo_password = Zeroizing::default();
         }
         self.forget_finished();
+        // The previous run's sessions, offered once nothing else is asked and the window is
+        // open to the user.
+        if !self.gated() {
+            self.app.offer_restore();
+        }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
         // A reset, or presets that could not be saved, shown again in their box.
@@ -6990,6 +6995,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ExportDone { .. }

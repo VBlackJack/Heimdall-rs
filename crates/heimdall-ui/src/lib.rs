@@ -40,6 +40,7 @@ mod provider_view;
 pub mod rdp_options;
 pub mod rdp_view;
 mod report;
+mod restore_view;
 pub mod route_test_view;
 mod screenshot;
 mod search_keys;
