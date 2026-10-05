@@ -1177,6 +1177,11 @@ impl Shell {
             self.sudo_password = Zeroizing::default();
         }
         self.forget_finished();
+        // The previous run's sessions, offered once nothing else is asked and the window is
+        // open to the user.
+        if !self.gated() {
+            self.app.offer_restore();
+        }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
         // The diagnostics log as the settings say now.
@@ -1359,6 +1364,15 @@ impl Shell {
     /// Closes the open menu, then hands `message` to the core.
     fn closing_menu(&mut self, message: AppMessage) -> Vec<Effect> {
         self.menu = None;
+        // Revealed in the tree: the tree takes the keyboard, its search cleared so the
+        // profile shows.
+        if matches!(
+            message,
+            AppMessage::TabMenu(heimdall_app::TabMenuMessage::RevealInTree(_))
+        ) {
+            self.search.clear();
+            self.tree_focused = true;
+        }
         self.app.update(message)
     }
 
@@ -1647,7 +1661,8 @@ impl Shell {
                 | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
                 | TreeMenu::MoveSelection
-                | TreeMenu::EditSelection,
+                | TreeMenu::EditSelection
+                | TreeMenu::GatewaySelection,
                 Some((_, at)),
             ) => *at,
             _ => self.cursor.get(),
@@ -2003,6 +2018,7 @@ impl Shell {
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
             effect @ (Effect::TestReachability { .. }
+            | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
             | Effect::SurveyAgents(_)) => probe_task(effect),
             Effect::OpenTunnel { id, request } => {
@@ -2027,6 +2043,7 @@ impl Shell {
             | Effect::PlanTransfer { .. }
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }
+            | Effect::FileBatchStep { .. }
             | Effect::MoveRemote { .. }
             | Effect::CopyRemote { .. }
             | Effect::StartEdit { .. }
@@ -2339,7 +2356,10 @@ impl Shell {
             tree_view::edit_selection_entries(
                 self.app
                     .bulk_targets(&selected, heimdall_app::BulkField::Username),
+                self.app.gateway_targets(&selected),
             )
+        } else if let TreeMenu::GatewaySelection = menu {
+            tree_view::gateway_selection_entries(self.app.gateways())
         } else {
             let profile = match menu {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
@@ -2354,6 +2374,7 @@ impl Shell {
                 | TreeMenu::Selection
                 | TreeMenu::MoveSelection
                 | TreeMenu::EditSelection
+                | TreeMenu::GatewaySelection
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
@@ -3675,6 +3696,8 @@ impl Shell {
             right: !self.app.tab_group(id, TabGroup::Right).is_empty(),
             resolution: matches!(tab.profile, TabProfile::Rdp(_)) && tab.desktop.is_some(),
             health: (tab.health.shown || tab.health.available()).then_some(tab.health.shown),
+            pinned: tab.pinned,
+            saveable: self.app.can_save_as_profile(tab),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -3704,6 +3727,9 @@ impl Shell {
             ]
             .spacing(SPACING / 2.0)
             .align_y(iced::Alignment::Center);
+            if tab.pinned {
+                label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+            }
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
             }
@@ -5191,6 +5217,14 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-local-working-directory"),
             fl!("ui-profile-optional"),
         ),
+        ProfileField::Tags => (
+            fl!("ui-profile-field-tags"),
+            fl!("ui-profile-tags-placeholder"),
+        ),
+        ProfileField::MacAddress => (
+            fl!("ui-profile-field-mac-address"),
+            fl!("ui-profile-mac-address-placeholder"),
+        ),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -5330,6 +5364,11 @@ fn probe_task(effect: Effect) -> Task<Message> {
             async move { heimdall_ssh::survey_agents(&source).await },
             |found| Message::App(AppMessage::AgentsSurveyed(found)),
         ),
+        Effect::WakeOnLan(mac) => Task::perform(heimdall_app::wake_on_lan::send(mac), |sent| {
+            Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLanSent(
+                sent.map_err(|error| error.to_string()),
+            )))
+        }),
         Effect::TestReachability { host, port } => Task::perform(
             heimdall_app::reachability::test_from_tree(host.clone(), port),
             move |result| {
@@ -6009,6 +6048,7 @@ fn profile_form<'a>(
         .push(form_field(draft, ProfileField::Group))
         // As the C#: the separator is taught by the example and by a sentence that stays.
         .push(text(fl!("ui-profile-folder-hint")).size(SMALL_SIZE));
+    form = form.push(metadata_fields(draft));
     // With the C# metadata: the password manager's entry, for the protocols it serves.
     if draft.shows(ProfileField::VaultEntry) {
         form = form
@@ -6735,6 +6775,14 @@ fn files_task(effect: Effect) -> Task<Message> {
                 }))
             })
         }
+        Effect::FileBatchStep { tab, operation, .. } => {
+            Task::perform(file_operation(*operation), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::BatchStepDone {
+                    tab,
+                    result,
+                }))
+            })
+        }
         Effect::FileOperation {
             tab,
             side,
@@ -6837,6 +6885,44 @@ impl fmt::Display for DesktopMode {
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
+
+/// An environment in the form's list, as the C# names it; "(None)" for none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnvironmentChoice(Option<heimdall_core::metadata::Environment>);
+
+impl fmt::Display for EnvironmentChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&texts::environment_name(self.0))
+    }
+}
+
+/// The C# Metadata section's fields: the environment, the tags and the MAC address
+/// Wake-on-LAN wakes the server with.
+fn metadata_fields(draft: &ProfileDraft) -> Element<'_, Message> {
+    let choices: Vec<EnvironmentChoice> = std::iter::once(None)
+        .chain(heimdall_core::metadata::Environment::ALL.map(Some))
+        .map(EnvironmentChoice)
+        .collect();
+    column![
+        row![
+            text(fl!("ui-profile-field-environment")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                choices,
+                Some(EnvironmentChoice(draft.environment)),
+                |EnvironmentChoice(environment)| Message::App(AppMessage::ProfileChoice(
+                    ProfileChoice::Environment(environment)
+                )),
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+        form_field(draft, ProfileField::Tags),
+        form_field(draft, ProfileField::MacAddress),
+    ]
+    .spacing(SPACING)
+    .into()
+}
 
 /// A profile's session logging in its form's list, as the C# "Inherit", "On" and "Off".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -7301,6 +7387,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
         Dialog::ExportDone { .. }

@@ -102,6 +102,8 @@ pub struct ProfileSummary {
     pub gateway: Option<GatewayBadge>,
     /// Marked as a favorite, as the C# tree's star.
     pub favorite: bool,
+    /// What it says of its server: its environment, tags and MAC address.
+    pub metadata: heimdall_core::metadata::ProfileMetadata,
 }
 
 impl ProfileSummary {
@@ -119,6 +121,11 @@ impl ProfileSummary {
             self.group.as_deref(),
             self.username.as_deref(),
             Some(self.kind.label()),
+            // As the C# search: the environment and the tags too.
+            self.metadata
+                .environment
+                .map(heimdall_core::metadata::Environment::name),
+            Some(self.metadata.tags.as_str()).filter(|tags| !tags.is_empty()),
         ]
         .into_iter()
         .flatten()
@@ -173,6 +180,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: if profile.sftp {
@@ -189,6 +197,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Rdp,
@@ -201,6 +210,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Telnet,
@@ -213,6 +223,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Vnc,
@@ -225,6 +236,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Ftp,
@@ -237,6 +249,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::Local,
@@ -249,6 +262,7 @@ impl App {
             all.push(ProfileSummary {
                 id: profile.id.clone(),
                 favorite: self.store.is_favorite(&profile.id),
+                metadata: self.metadata_of(&profile.id),
                 name: profile.name.clone(),
                 group: profile.group.clone(),
                 kind: ProfileKind::WinRm,
@@ -276,6 +290,11 @@ impl App {
             .iter()
             .find(|known| known.id == *id)
             .map(|known| GatewayBadge::Via(known.name.clone()))
+    }
+
+    /// What profile `id` says of its server; empty when it says nothing.
+    fn metadata_of(&self, id: &ProfileId) -> heimdall_core::metadata::ProfileMetadata {
+        self.store.metadata(id).cloned().unwrap_or_default()
     }
 
     /// One profile, whatever its protocol.
@@ -435,6 +454,8 @@ impl App {
                     }
                 }
             }
+            // What it says of its server comes along, as the C# copy carries it.
+            store.set_metadata(&copy, source.metadata.clone());
         });
         if let Err(error) = result {
             self.dialog = Some(Dialog::StoreError {
@@ -528,6 +549,7 @@ mod tests {
             username: username.map(str::to_owned),
             gateway: None,
             favorite: false,
+            metadata: heimdall_core::metadata::ProfileMetadata::default(),
         }
     }
 

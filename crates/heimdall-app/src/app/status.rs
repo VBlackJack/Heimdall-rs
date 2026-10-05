@@ -111,6 +111,9 @@ pub enum Notice {
     BulkUsernameUpdated(usize),
     /// The account set at once was every profile's already.
     BulkUsernameUnchanged,
+    /// The route of this many profiles changed with the bulk "Set gateway"; none when they
+    /// all went that way already.
+    BulkGatewayUpdated(usize),
     /// The keys trusted were written into the user's OpenSSH `known_hosts`.
     KnownHostsExported {
         /// Keys written.
@@ -165,6 +168,10 @@ pub enum Notice {
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.
     FilesCopied(usize),
+    /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
+    WakeOnLan(Result<(), String>),
+    /// A delete or a change of permissions of entries did not do them all.
+    FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.
     FilesDuplicated,
     /// A transcript was started, in this file.

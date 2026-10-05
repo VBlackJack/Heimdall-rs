@@ -1489,7 +1489,59 @@ ui-shortcuts-screenshot = Capturer l'écran
 ui-shortcuts-lock = Verrouiller
 ui-shortcuts-help = Afficher cette aide
 ui-shortcuts-close = Fermer une boîte de dialogue ou un menu, quitter le plein écran
+ui-tab-menu-pin = Épingler l'onglet
+ui-tab-menu-unpin = Désépingler l'onglet
+ui-tab-menu-save-as-profile = Enregistrer comme profil...
+ui-tab-menu-reveal-in-tree = Afficher dans l'arborescence
+ui-tab-pinned-badge = épinglé
+ui-selection-set-gateway = Définir la passerelle... ({ $count })
+ui-selection-gateway-direct = Connexion directe (sans passerelle)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Route de connexion modifiée sur { $count } serveur.
+   *[other] Route de connexion modifiée sur { $count } serveurs.
+}
+ui-status-bulk-gateway-unchanged = Aucune route n'a été modifiée.
 ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
 ui-shortcuts-session-menu = Menu de la session sélectionnée
 ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
 ui-shortcuts-toggle-sidebar = Afficher ou masquer le panneau latéral
+ui-restore-title = Restaurer les sessions précédentes
+ui-restore-message = Heimdall a trouvé un instantané de session sauvegardé lors de l'exécution précédente. Sélectionnez les sessions à restaurer.
+ui-restore-saved-at = Sauvegardé le { $time }
+ui-restore-select-all = Tout sélectionner
+ui-restore-missing = Serveur introuvable ({ $id })
+ui-restore-files = Fichiers { $protocol }
+ui-restore-dont = Ne pas restaurer
+ui-restore-selected = Restaurer la sélection
+ui-profile-field-environment = Environnement
+ui-profile-environment-none = (Aucun)
+ui-profile-environment-production = Production
+ui-profile-environment-staging = Staging
+ui-profile-environment-lab = Lab
+ui-profile-environment-personal = Personnel
+ui-profile-field-tags = Tags
+ui-profile-tags-placeholder = Mots par lesquels la recherche trouve cette session
+ui-profile-field-mac-address = Adresse MAC
+ui-profile-mac-address-placeholder = AA:BB:CC:DD:EE:FF, pour Wake on LAN
+ui-profile-error-mac-address = L'adresse MAC doit comporter douze chiffres hexadécimaux, comme AA:BB:CC:DD:EE:FF.
+ui-tree-wake-on-lan = Réveil réseau (WOL)
+ui-status-wake-on-lan-sent = Paquet magique Wake-on-LAN envoyé.
+ui-status-wake-on-lan-failed = Échec de l'envoi du paquet Wake-on-LAN : { $reason }
+ui-tree-tooltip-environment = Environnement : { $environment }
+ui-tree-tooltip-tags = Tags : { $tags }
+ui-files-batch-deleting = Suppression de { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Modification des permissions de { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Annuler
+ui-files-batch-stopping = Arrêt après celui-ci...
+ui-status-files-delete-failed = Impossible de supprimer "{ $name }" : { $reason }
+ui-status-files-permissions-failed = Impossible de modifier les permissions de "{ $name }" : { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] { $failed } élément sur { $total } n'a pas pu être supprimé. "{ $name }" : { $reason }
+   *[other] { $failed } éléments sur { $total } n'ont pas pu être supprimés. Le premier, "{ $name }" : { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] Permissions non modifiées pour { $failed } élément sur { $total }. "{ $name }" : { $reason }
+   *[other] Permissions non modifiées pour { $failed } éléments sur { $total }. Le premier, "{ $name }" : { $reason }
+}
+ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
+ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
