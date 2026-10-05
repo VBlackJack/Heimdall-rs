@@ -641,6 +641,9 @@ pub enum Message {
     Selection(SelectionMessage),
     /// Select a profile in the tree.
     SelectProfile(ProfileId),
+    /// Fold every folder of the tree, or unfold them all, as the C# "Collapse all" and
+    /// "Expand all".
+    FoldAll(bool),
     /// Connect to a profile with its own protocol.
     ConnectProfile(ProfileId),
     /// Save a copy of a profile.
@@ -874,6 +877,7 @@ impl fmt::Debug for Message {
             Self::ProfileMenu(message) => write!(f, "ProfileMenu({message:?})"),
             Self::Selection(message) => write!(f, "Selection({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
+            Self::FoldAll(fold) => write!(f, "FoldAll({fold})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
             Self::RequestDeleteProfile(id) => write!(f, "RequestDeleteProfile({id})"),
@@ -2746,6 +2750,7 @@ impl App {
             | Message::SkipPostConnect
             | Message::StopPostConnect(_)) => self.dialog_message(&message),
             message @ (Message::SelectProfile(_)
+            | Message::FoldAll(_)
             | Message::ToggleFolder(_)
             | Message::Filter(_)
             | Message::Folder(_)

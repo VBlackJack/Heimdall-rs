@@ -348,6 +348,14 @@ impl App {
                 self.toggle_folder(&path);
                 Vec::new()
             }
+            Message::FoldAll(fold) => {
+                self.closed_folders.clear();
+                if fold {
+                    self.closed_folders.extend(self.store.folder_paths());
+                    self.closed_folders.insert(super::NO_FOLDER.to_owned());
+                }
+                Vec::new()
+            }
             Message::Filter(message) => {
                 self.filter_message(message);
                 Vec::new()

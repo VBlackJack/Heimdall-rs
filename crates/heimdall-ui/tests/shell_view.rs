@@ -3404,3 +3404,56 @@ fn escape_no_widget_took_leaves_full_screen_once_nothing_else_is_open() {
     ui.find("Local shell").expect("the tree again");
     assert!(ui.find("Exit fullscreen").is_err());
 }
+
+#[test]
+fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_button() {
+    use heimdall_ui::shell::TreeShortcut;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Expand all").expect("Expand all");
+        ui.click("Collapse all").expect("Collapse all");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::MenuChoice(AppMessage::FoldAll(true))))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::FoldAll(true)));
+    assert!(
+        simulator(&shell).find("server a").is_err(),
+        "every folder folded"
+    );
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Quick connect").expect("the navigation's button");
+        assert!(
+            ui.into_messages().any(|message| matches!(
+                message,
+                Message::TreeShortcut(TreeShortcut::QuickConnect)
+            ))
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("\u{2190}").expect("the sidebar's hide button");
+        assert!(
+            ui.into_messages().any(|message| matches!(
+                message,
+                Message::TreeShortcut(TreeShortcut::ToggleSidebar)
+            ))
+        );
+    }
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Local shell").is_err(), "hidden");
+    ui.click("\u{2192}").expect("a way to show it again");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::TreeShortcut(TreeShortcut::ToggleSidebar)))
+    );
+}
