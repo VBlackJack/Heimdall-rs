@@ -1286,6 +1286,24 @@ pub enum Effect {
         /// A duplicate, rather than a paste.
         duplicate: bool,
     },
+    /// Copy entries of another server's tab into a folder of this one, through this
+    /// computer, then send [`FilesMessage::Copied`].
+    CopyAcross {
+        /// Tab pasted in.
+        tab: TabId,
+        /// The session they are read from.
+        from: heimdall_files::RemoteSession,
+        /// The session they are written to.
+        to: heimdall_files::RemoteSession,
+        /// What to copy.
+        sources: Vec<crate::files::CopySource>,
+        /// Into this folder.
+        folder: heimdall_files::RemotePath,
+        /// Where a file is kept on this computer between the two.
+        staging: PathBuf,
+        /// Stops the copy running.
+        cancel: tokio_util::sync::CancellationToken,
+    },
     /// Plan a transfer whole, then send [`FilesMessage::Planned`].
     PlanTransfer {
         /// Tab.
@@ -1436,6 +1454,9 @@ impl fmt::Debug for Effect {
             Self::SudoSave { tab, .. } => write!(f, "SudoSave({})", tab.value()),
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
+            }
+            Self::CopyAcross { tab, sources, .. } => {
+                write!(f, "CopyAcross({}, {})", tab.value(), sources.len())
             }
             Self::MoveRemote { tab, moves, .. } => {
                 write!(f, "MoveRemote({}, {})", tab.value(), moves.len())
