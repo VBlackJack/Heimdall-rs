@@ -37,6 +37,7 @@ mod integrated_editor;
 pub mod keysym;
 pub mod local_form;
 mod logging;
+mod macros_view;
 pub mod palette;
 pub mod post_connect_form;
 pub mod presets_editor;

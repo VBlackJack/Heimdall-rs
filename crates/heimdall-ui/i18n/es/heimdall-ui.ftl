@@ -1544,6 +1544,64 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
 ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-macros-menu = Macros
+ui-macros-record = Grabar macro
+ui-macros-stop-recording = { $count ->
+    [one] Detener la grabación ({ $count } entrada)
+   *[other] Detener la grabación ({ $count } entradas)
+}
+ui-macros-stop = Detener "{ $name }"
+ui-macros-play = Reproducir "{ $name }"
+ui-macros-none = Aún no hay macros grabadas
+ui-macros-empty = Aún no hay macros. Graba una desde el menú de una pestaña de terminal: Macros, Grabar macro.
+ui-macros-inputs = { $count ->
+    [one] { $count } entrada
+   *[other] { $count } entradas
+}
+ui-macros-delete = Eliminar
+ui-tab-recording-badge = REC
+ui-tab-macro-badge = macro
+ui-dialog-save-macro-title = Guardar macro
+ui-dialog-save-macro-prompt = { $count ->
+    [one] { $count } entrada grabada. Nombra la macro:
+   *[other] { $count } entradas grabadas. Nombra la macro:
+}
+ui-dialog-save-macro-confirm = Guardar
+ui-status-macro-nothing = No se escribió nada: no se grabó ninguna macro.
+ui-status-macro-saved = Macro "{ $name }" guardada.
+ui-status-macro-deleted = Macro "{ $name }" eliminada.
+ui-status-macro-completed = Macro "{ $name }" reproducida.
+ui-status-macro-stopped = Macro "{ $name }" detenida.
+ui-status-macro-timed-out = Macro "{ $name }" detenida: lo que espera la entrada { $entry } no llegó a tiempo.
+ui-status-macro-closed = Macro "{ $name }" detenida: la sesión terminó.
+ui-macros-edit = Editar
+ui-dialog-save-macro-warning = Se grabó todo lo escrito, contraseñas incluidas: la macro lo guarda tal cual.
+ui-dialog-delete-macro-body = ¿Eliminar la macro "{ $name }"? Esto no se puede deshacer.
+ui-macro-editor-title = Editar macro
+ui-macro-editor-name = Nombre
+ui-macro-editor-input-hint = Los caracteres de control se escriben \r (Intro), \n, \t, \xNN, y una barra invertida \\.
+ui-macro-editor-input = Entrada
+ui-macro-editor-delay = Retraso (ms)
+ui-macro-editor-move-up = Subir
+ui-macro-editor-move-down = Bajar
+ui-macro-editor-delete-entry = Eliminar entrada
+ui-macro-editor-expects = Esperar un texto antes
+ui-macro-editor-pattern = Patrón esperado
+ui-macro-editor-regex = Regex
+ui-macro-editor-timeout = Tiempo de espera (ms)
+ui-macro-editor-timeout-abort = Cancelar
+ui-macro-editor-timeout-continue = Continuar
+ui-macro-editor-add-expect = Añadir paso de espera
+ui-macro-editor-add-send = Añadir paso de envío
+ui-macro-editor-delete-macro = Eliminar macro
+ui-macro-editor-name-required = El nombre de la macro es obligatorio.
+ui-macro-editor-entry-invalid = Entrada { $entry }: { $reason }
+ui-macro-editor-input-trailing = la entrada termina con una barra invertida sola.
+ui-macro-editor-input-hex = \x necesita dos dígitos hexadecimales.
+ui-macro-editor-input-escape = \{ $escape } no es un escape que el editor conozca.
+ui-macro-editor-delay-invalid = el retraso no es un número de milisegundos.
+ui-macro-editor-timeout-range = Rango: { $min }-{ $max } ms
+ui-macro-editor-regex-invalid = Expresión regular no válida: { $reason }
 ui-about-section-settings-file = Archivo de ajustes
 ui-about-export-settings = Exportar ajustes...
 ui-about-import-settings = Importar ajustes...

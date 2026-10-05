@@ -107,6 +107,8 @@ pub enum TreeMenu {
     Tunnel(heimdall_app::tunnel::TunnelId),
     /// An RDP tab's "Resolution" menu, as the C# one.
     Resolution(TabId),
+    /// A terminal tab's macros: record, play, stop.
+    Macros(TabId),
     /// The notes a session's menu writes about it, as the C# Notes submenu.
     Notes(ProfileId),
     /// The menu of an entry of a Files tab's pane, as the C# Files tab's.
@@ -1055,6 +1057,61 @@ pub struct TabMenuState {
     pub pinned: bool,
     /// Its session is saved nowhere, and can be saved as a profile.
     pub saveable: bool,
+    /// It takes terminal macros.
+    pub macros: bool,
+}
+
+/// A terminal tab's Macros menu: recording started or stopped, the macro typed stopped,
+/// or one of those kept typed.
+#[must_use]
+pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<'a, Message> {
+    let macro_message = |message| Some(AppMessage::Macro(message));
+    let mut entries = column![
+        container(
+            text(fl!("ui-macros-menu"))
+                .size(MENU_TEXT_SIZE)
+                .style(text::secondary)
+        )
+        .padding(MENU_PADDING),
+        separator(),
+    ]
+    .spacing(0.0)
+    .width(MENU_WIDTH);
+    entries = entries.push(match (menu.recording, &menu.playing) {
+        (Some(count), _) => entry(
+            fl!("ui-macros-stop-recording", count = count),
+            macro_message(heimdall_app::MacroMessage::StopRecording(tab)),
+        ),
+        (None, Some(_)) => entry(fl!("ui-macros-record"), None),
+        (None, None) => entry(
+            fl!("ui-macros-record"),
+            macro_message(heimdall_app::MacroMessage::Record(tab)),
+        ),
+    });
+    if let Some(name) = &menu.playing {
+        entries = entries.push(entry(
+            fl!("ui-macros-stop", name = heimdall_app::server_text(name)),
+            macro_message(heimdall_app::MacroMessage::Stop(tab)),
+        ));
+    }
+    entries = entries.push(separator());
+    if menu.macros.is_empty() {
+        entries = entries.push(entry(fl!("ui-macros-none"), None));
+    }
+    // One at a time, and not into what is being recorded.
+    let idle = menu.recording.is_none() && menu.playing.is_none();
+    for name in &menu.macros {
+        entries = entries.push(entry(
+            fl!("ui-macros-play", name = heimdall_app::server_text(name)),
+            idle.then(|| {
+                AppMessage::Macro(heimdall_app::MacroMessage::Play {
+                    tab,
+                    name: name.clone(),
+                })
+            }),
+        ));
+    }
+    entries.into()
 }
 
 /// The tab menu's entry showing or hiding an SSH shell's server health panel.
@@ -1302,6 +1359,14 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
                 .width(Length::Fill)
                 .style(menu_style)
                 .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab))),
+        );
+    }
+    if state.macros {
+        entries = entries.push(separator()).push(
+            button(text(fl!("ui-macros-menu")).size(MENU_TEXT_SIZE))
+                .width(Length::Fill)
+                .style(menu_style)
+                .on_press(Message::OpenTreeMenu(TreeMenu::Macros(tab))),
         );
     }
     entries = entries

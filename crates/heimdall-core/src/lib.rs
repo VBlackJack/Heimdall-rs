@@ -24,6 +24,7 @@ pub mod files_state;
 pub mod folder;
 pub mod import;
 pub mod lockout;
+pub mod macros;
 pub mod metadata;
 pub mod paths;
 pub mod pin;
