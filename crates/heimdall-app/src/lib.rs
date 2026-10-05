@@ -77,7 +77,7 @@ pub use app::{
     master_password_problem, open_vault,
 };
 pub use desktop::{
-    DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
+    Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};

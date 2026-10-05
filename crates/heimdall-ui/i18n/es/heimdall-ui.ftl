@@ -1467,3 +1467,4 @@ ui-shortcuts-screenshot = Capturar la pantalla
 ui-shortcuts-lock = Bloquear
 ui-shortcuts-help = Mostrar esta ayuda
 ui-shortcuts-close = Cerrar un diálogo o un menú, salir de pantalla completa
+ui-resolution-match-aspect = Igualar a la ventana, { $wide }:{ $high }

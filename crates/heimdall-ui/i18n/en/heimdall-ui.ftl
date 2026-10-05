@@ -1545,3 +1545,4 @@ ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-lock = Lock
 ui-shortcuts-help = Show this help
 ui-shortcuts-close = Close a dialog or a menu, exit fullscreen
+ui-resolution-match-aspect = Match window, { $wide }:{ $high }

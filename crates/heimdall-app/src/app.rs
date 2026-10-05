@@ -1442,6 +1442,8 @@ pub struct Tab {
     /// The desktop size the user chose from the tab's "Resolution" menu, kept for the
     /// session's reconnections; `None`, as its profile says.
     pub(crate) desktop_sizing: Option<heimdall_core::profile::DesktopSizing>,
+    /// The proportions chosen under "Match window", kept for the session's reconnections.
+    pub(crate) desktop_aspect: crate::desktop::Aspect,
     /// The desktop size the session connected again for, the server unable to take it
     /// live: asked at the next connection, then kept so the same refusal never loops.
     pub(crate) resize_fallback: Option<ResizeFallback>,
@@ -1576,6 +1578,7 @@ impl Tab {
             end_reason: None,
             retry: None,
             desktop_sizing: None,
+            desktop_aspect: crate::desktop::Aspect::Stretch,
             resize_fallback: None,
             last_input: std::sync::Mutex::new(None),
             early_output: None,

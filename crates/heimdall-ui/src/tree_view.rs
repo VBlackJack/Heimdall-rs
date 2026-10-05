@@ -932,6 +932,8 @@ pub struct ResolutionMenuState {
     pub mode: Resolution,
     /// The tab's size, when known: a size larger than it is shown scaled.
     pub shown: Option<(u16, u16)>,
+    /// The proportions kept under "Match window".
+    pub aspect: heimdall_app::Aspect,
 }
 
 impl ResolutionMenuState {
@@ -1023,12 +1025,23 @@ pub fn resolution_entries<'a>(
         separator(),
         checked_entry(
             fl!("ui-resolution-match-window"),
-            state.fixed.is_none(),
+            state.fixed.is_none() && state.aspect == heimdall_app::Aspect::Stretch,
             choose(ResolutionChoice::MatchWindow),
         ),
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
+    // Under it, as the C# sub-menu: the window followed, fitted to a ratio.
+    for aspect in heimdall_app::Aspect::RATIOS {
+        let Some((wide, high)) = aspect.ratio() else {
+            continue;
+        };
+        entries = entries.push(checked_entry(
+            fl!("ui-resolution-match-aspect", wide = wide, high = high),
+            state.fixed.is_none() && state.aspect == aspect,
+            choose(ResolutionChoice::MatchAspect(aspect)),
+        ));
+    }
     for &(width, height) in presets {
         let size = fixed_desktop(width, height);
         let preset = checked_entry(
