@@ -16,6 +16,7 @@
 
 //! A profile as typed into its form, and the checks that turn it into a saved profile.
 
+use heimdall_core::metadata::{Environment, MacAddress, ProfileMetadata};
 use std::hash::{BuildHasher as _, RandomState};
 use std::path::PathBuf;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -77,11 +78,15 @@ pub enum ProfileField {
     LocalArguments,
     /// The folder it starts in; empty is the current one.
     WorkingDirectory,
+    /// Its tags, the words the search finds it by.
+    Tags,
+    /// The MAC address Wake-on-LAN wakes it with.
+    MacAddress,
 }
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 16] = [
+    pub const ALL: [Self; 18] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -98,6 +103,8 @@ impl ProfileField {
         Self::LocalProgram,
         Self::LocalArguments,
         Self::WorkingDirectory,
+        Self::Tags,
+        Self::MacAddress,
     ];
 }
 
@@ -146,7 +153,11 @@ impl DraftProtocol {
     #[must_use]
     pub fn shows(self, field: ProfileField) -> bool {
         match field {
-            ProfileField::Name | ProfileField::Group => true,
+            // The metadata, as the C# Metadata section: every protocol's.
+            ProfileField::Name
+            | ProfileField::Group
+            | ProfileField::Tags
+            | ProfileField::MacAddress => true,
             // A local shell has no server.
             ProfileField::Host | ProfileField::Port => self != Self::Local,
             ProfileField::LocalProgram
@@ -327,6 +338,8 @@ pub enum ProfileChoice {
     DynamicResolution(bool),
     /// A box of the visual experience, ticked or cleared.
     Experience(Experience, bool),
+    /// The environment, none for `None`.
+    Environment(Option<Environment>),
     /// Whether its sessions keep a transcript; `None` follows the settings.
     SessionLogging(Option<bool>),
 }
@@ -409,6 +422,12 @@ pub struct ProfileDraft {
     pub working_directory: String,
     /// "Test address": not run, running, or what it found for the address shown.
     pub address_test: AddressTest,
+    /// The environment chosen, as the C# Metadata section's; `None` for none.
+    pub environment: Option<Environment>,
+    /// The tags, as typed.
+    pub tags: String,
+    /// The MAC address, as typed.
+    pub mac_address: String,
     /// SSH, Telnet and local: whether its sessions keep a transcript; `None` follows the
     /// settings, as the C# "Inherit".
     pub session_logging: Option<bool>,
@@ -478,6 +497,8 @@ pub enum DraftError {
     RemoteLocalPortInvalid,
     /// A local shell's arguments leave a quote open.
     ArgumentsInvalid,
+    /// The MAC address typed is not twelve hexadecimal digits.
+    MacAddressInvalid,
 }
 
 impl DraftError {
@@ -500,6 +521,7 @@ impl DraftError {
             Self::RemoteBindPortInvalid => ProfileField::RemoteBindPort,
             Self::RemoteLocalPortInvalid => ProfileField::RemoteLocalPort,
             Self::ArgumentsInvalid => ProfileField::LocalArguments,
+            Self::MacAddressInvalid => ProfileField::MacAddress,
         }
     }
 }
@@ -784,6 +806,37 @@ impl ProfileDraft {
             .filter(|_| self.shows_session_logging())
     }
 
+    /// The metadata typed, as the profile keeps it.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::MacAddressInvalid`] for an address typed that does not read.
+    pub fn metadata(&self) -> Result<ProfileMetadata, DraftError> {
+        let mac_address = match self.mac_address.trim() {
+            "" => None,
+            typed => Some(
+                typed
+                    .parse::<MacAddress>()
+                    .map_err(|_| DraftError::MacAddressInvalid)?,
+            ),
+        };
+        Ok(ProfileMetadata {
+            environment: self.environment,
+            tags: self.tags.trim().to_owned(),
+            mac_address,
+        })
+    }
+
+    /// The form filled with what a saved profile says of its server.
+    pub fn show_metadata(&mut self, metadata: &ProfileMetadata) {
+        self.environment = metadata.environment;
+        self.tags.clone_from(&metadata.tags);
+        self.mac_address = metadata
+            .mac_address
+            .map(|mac| mac.to_string())
+            .unwrap_or_default();
+    }
+
     /// Whether `toggle` is ticked.
     #[must_use]
     pub fn is_on(&self, toggle: ProfileToggle) -> bool {
@@ -829,6 +882,7 @@ impl ProfileDraft {
             ProfileChoice::ScaleFixed(on) => self.rdp_options.scale_fixed = on,
             ProfileChoice::DynamicResolution(on) => self.rdp_options.dynamic_resolution = on,
             ProfileChoice::Experience(experience, on) => self.rdp_options.set(experience, on),
+            ProfileChoice::Environment(environment) => self.environment = environment,
             ProfileChoice::SessionLogging(logging) => self.session_logging = logging,
         }
     }
@@ -1222,6 +1276,8 @@ impl ProfileDraft {
             ProfileField::FixedWidth => &self.fixed_width,
             ProfileField::FixedHeight => &self.fixed_height,
             ProfileField::VaultEntry => &self.vault_entry,
+            ProfileField::Tags => &self.tags,
+            ProfileField::MacAddress => &self.mac_address,
             ProfileField::SocksPort => &self.socks_port,
             ProfileField::RemoteBindPort => &self.remote_bind_port,
             ProfileField::RemoteLocalPort => &self.remote_local_port,
@@ -1248,6 +1304,8 @@ impl ProfileDraft {
             ProfileField::FixedWidth => &mut self.fixed_width,
             ProfileField::FixedHeight => &mut self.fixed_height,
             ProfileField::VaultEntry => &mut self.vault_entry,
+            ProfileField::Tags => &mut self.tags,
+            ProfileField::MacAddress => &mut self.mac_address,
             ProfileField::SocksPort => &mut self.socks_port,
             ProfileField::RemoteBindPort => &mut self.remote_bind_port,
             ProfileField::RemoteLocalPort => &mut self.remote_local_port,

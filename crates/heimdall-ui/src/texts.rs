@@ -322,10 +322,24 @@ pub fn skip_reason(reason: &SkipReason) -> String {
     }
 }
 
-/// The sentence explaining a Files error.
+/// The name of an environment, as the C# list says it; "(None)" for none.
+#[must_use]
+pub fn environment_name(environment: Option<heimdall_core::metadata::Environment>) -> String {
+    use heimdall_core::metadata::Environment;
+    match environment {
+        None => fl!("ui-profile-environment-none"),
+        Some(Environment::Production) => fl!("ui-profile-environment-production"),
+        Some(Environment::Staging) => fl!("ui-profile-environment-staging"),
+        Some(Environment::Lab) => fl!("ui-profile-environment-lab"),
+        Some(Environment::Personal) => fl!("ui-profile-environment-personal"),
+    }
+}
+
+/// The sentence explaining why the profile form does not save.
 #[must_use]
 pub fn draft_error(error: DraftError) -> String {
     match error {
+        DraftError::MacAddressInvalid => fl!("ui-profile-error-mac-address"),
         DraftError::NameMissing => fl!("ui-profile-error-name-missing"),
         DraftError::HostMissing => fl!("ui-profile-error-host-missing"),
         DraftError::HostInvalid => fl!("ui-profile-error-host-invalid"),
