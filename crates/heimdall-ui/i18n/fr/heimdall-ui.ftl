@@ -1496,6 +1496,10 @@ ui-status-bulk-gateway-updated = { $count ->
    *[other] Route de connexion modifiée sur { $count } serveurs.
 }
 ui-status-bulk-gateway-unchanged = Aucune route n'a été modifiée.
+ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
+ui-shortcuts-session-menu = Menu de la session sélectionnée
+ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
+ui-shortcuts-toggle-sidebar = Afficher ou masquer le panneau latéral
 ui-restore-title = Restaurer les sessions précédentes
 ui-restore-message = Heimdall a trouvé un instantané de session sauvegardé lors de l'exécution précédente. Sélectionnez les sessions à restaurer.
 ui-restore-saved-at = Sauvegardé le { $time }
