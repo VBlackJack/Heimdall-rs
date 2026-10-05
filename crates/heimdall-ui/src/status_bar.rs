@@ -138,6 +138,25 @@ fn files_notice(notice: &Notice) -> String {
     }
 }
 
+/// What carrying the settings did, as the C# messages say it.
+fn settings_notice(notice: &Notice) -> String {
+    match notice {
+        Notice::SettingsExported => fl!("ui-status-settings-exported"),
+        Notice::SettingsExportFailed(reason) => {
+            fl!("ui-status-settings-export-failed", reason = reason.as_str())
+        }
+        Notice::SettingsImported(count) => fl!("ui-status-settings-imported", count = (*count)),
+        Notice::SettingsImportNothing => fl!("ui-status-settings-import-nothing"),
+        Notice::SettingsImportInvalid | Notice::SettingsImportNewer => {
+            fl!("ui-status-settings-import-invalid")
+        }
+        Notice::SettingsImportFailed(reason) => {
+            fl!("ui-status-settings-import-failed", reason = reason.as_str())
+        }
+        _ => String::new(),
+    }
+}
+
 /// How saving the server's files ended, in the bar's words.
 fn save_ended(end: heimdall_rdp::SaveEnd) -> String {
     match end {
@@ -212,6 +231,13 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::NoteFailed(reason) => {
                 fl!("ui-status-note-failed", reason = server_text(reason))
             }
+            notice @ (Notice::SettingsExported
+            | Notice::SettingsExportFailed(_)
+            | Notice::SettingsImported(_)
+            | Notice::SettingsImportNothing
+            | Notice::SettingsImportInvalid
+            | Notice::SettingsImportNewer
+            | Notice::SettingsImportFailed(_)) => settings_notice(notice),
             Notice::GatewayDeleted(name) => {
                 fl!("ui-status-gateway-deleted", name = server_text(name))
             }

@@ -1547,6 +1547,41 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
 ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+ui-about-section-settings-file = Fichier de paramètres
+ui-about-export-settings = Exporter les paramètres...
+ui-about-import-settings = Importer des paramètres...
+ui-about-settings-file-hint = Emporte vos préférences vers un autre ordinateur. Le fichier ne contient aucun secret : ni mot de passe maître, ni PIN, ni mot de passe enregistré.
+ui-settings-file-filter = Paramètres Heimdall
+ui-dialog-settings-export-title = Exporter les paramètres
+ui-dialog-settings-export-paths = { $count ->
+    [one] { $count } paramètre désigne un dossier de votre profil utilisateur sur cet ordinateur (chemins d'outils, dossier des journaux, fichiers). L'inclure dans le fichier ?
+   *[other] { $count } paramètres désignent des dossiers de votre profil utilisateur sur cet ordinateur (chemins d'outils, dossier des journaux, fichiers). Les inclure dans le fichier ?
+}
+ui-dialog-settings-export-without = Laisser de côté
+ui-dialog-settings-export-with = Inclure
+ui-dialog-settings-import-title = Importer des paramètres
+ui-dialog-settings-import-body = { $count ->
+    [one] { $count } paramètre va changer :
+   *[other] { $count } paramètres vont changer :
+}
+ui-dialog-settings-import-line = { $key } : { $before } -> { $after }
+ui-dialog-settings-import-confirm = Importer
+ui-settings-value-on = Activé
+ui-settings-value-off = Désactivé
+ui-settings-value-empty = (vide)
+ui-settings-value-items = { $count ->
+    [one] { $count } élément
+   *[other] { $count } éléments
+}
+ui-status-settings-exported = Paramètres exportés. Le fichier ne contient aucun secret : ni mot de passe maître, ni PIN, ni mot de passe enregistré.
+ui-status-settings-export-failed = Les paramètres n'ont pas pu être exportés : { $reason }
+ui-status-settings-imported = { $count ->
+    [one] { $count } paramètre importé.
+   *[other] { $count } paramètres importés.
+}
+ui-status-settings-import-nothing = Le fichier contient les paramètres que vous avez déjà. Rien à modifier.
+ui-status-settings-import-invalid = Ce fichier n'est pas un fichier de paramètres Heimdall, ou il provient d'une version que celle-ci ne sait pas lire. Rien n'a été modifié.
+ui-status-settings-import-failed = Le fichier de paramètres n'a pas pu être lu : { $reason }
 ui-settings-tab-gateways = Passerelles
 ui-gateways-title = Passerelles SSH
 ui-gateways-description = Vérifie quelles sessions utilisent chaque passerelle SSH et repère les références introuvables.
@@ -1660,3 +1695,8 @@ ui-notes-tpl-references = Références
 ui-about-open-notes = Ouvrir le dossier des notes
 ui-status-note-opened = Note { $name } ouverte dans l'éditeur.
 ui-status-note-failed = La note n'a pas pu être ouverte : { $reason }
+ui-nav-sessions = Sessions
+ui-nav-tunnels = Tunnels
+ui-nav-settings = Paramètres
+ui-nav-about = À propos
+ui-tunnels-page-title = Tunnels actifs

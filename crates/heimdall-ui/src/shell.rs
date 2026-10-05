@@ -537,6 +537,8 @@ pub enum Message {
         /// What it starts as.
         template: heimdall_app::notes::NoteTemplate,
     },
+    /// Show a page of the window's navigation.
+    Navigate(Destination),
     /// The external editor typed in the Settings page.
     EditorEdited(String),
     /// Apply the external editor typed.
@@ -590,6 +592,7 @@ impl fmt::Debug for Message {
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
+            Self::Navigate(destination) => write!(f, "Navigate({destination:?})"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
@@ -783,20 +786,17 @@ pub enum SettingsTab {
     Gateways,
     /// The PIN, the master password and the external credential provider.
     Security,
-    /// The version, the data and where it is kept, and the diagnostics log.
-    About,
 }
 
 impl SettingsTab {
     /// Every tab, in the C# order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Terminal,
         Self::Ssh,
         Self::Rdp,
         Self::Gateways,
         Self::Security,
-        Self::About,
     ];
 
     fn label(self) -> String {
@@ -807,7 +807,6 @@ impl SettingsTab {
             Self::Rdp => fl!("ui-settings-tab-rdp"),
             Self::Gateways => fl!("ui-settings-tab-gateways"),
             Self::Security => fl!("ui-settings-tab-security"),
-            Self::About => fl!("ui-settings-tab-about"),
         }
     }
 }
@@ -862,6 +861,8 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// The language the texts are in, as last chosen in the settings.
+    language_shown: Option<heimdall_core::settings::Language>,
     /// The gateway picked for the references to each missing gateway, by its identifier.
     gateway_reassign: std::collections::BTreeMap<ProfileId, ProfileId>,
     /// The Files pane whose path bar is typed in, rather than showing its breadcrumb.
@@ -921,6 +922,10 @@ pub struct Shell {
 enum Page {
     /// The tab shown.
     Tab,
+    /// Every tunnel, as the C# Tunnels page.
+    Tunnels,
+    /// About Heimdall, as the C# About page.
+    About,
     /// The settings, over the tab shown when they were opened: showing another tab leaves
     /// them.
     Settings {
@@ -928,6 +933,46 @@ enum Page {
         over: Option<TabId>,
     },
 }
+
+/// A page of the window's navigation, as the C# toolbar's tabs. The C# Scheduled and Tools
+/// pages come with what they hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Destination {
+    /// The sessions: the tree beside them.
+    Sessions,
+    /// Every tunnel.
+    Tunnels,
+    /// The settings.
+    Settings,
+    /// About Heimdall.
+    About,
+}
+
+impl Destination {
+    /// Every page, in the C# order.
+    pub const ALL: [Self; 4] = [Self::Sessions, Self::Tunnels, Self::Settings, Self::About];
+
+    fn label(self) -> String {
+        match self {
+            Self::Sessions => fl!("ui-nav-sessions"),
+            Self::Tunnels => fl!("ui-nav-tunnels"),
+            Self::Settings => fl!("ui-nav-settings"),
+            Self::About => fl!("ui-nav-about"),
+        }
+    }
+}
+
+/// The application's name, at the head of the navigation: a name, not translated.
+const APP_NAME: &str = "Heimdall";
+
+/// Size of the application's name in the navigation.
+const NAV_TITLE_SIZE: f32 = 18.0;
+
+/// Room after the application's name.
+const NAV_TITLE_PADDING: [f32; 2] = [0.0, 16.0];
+
+/// Height of the line under the page shown.
+const NAV_UNDERLINE: f32 = 2.0;
 
 /// A field given focus in a dialog.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -987,6 +1032,7 @@ impl Shell {
         crate::logging::set_enabled(app.settings().diagnostics_log);
         let presets =
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
+        let language_shown = app.settings().language;
         Self {
             app,
             editors: crate::integrated_editor::Editors::default(),
@@ -1010,6 +1056,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            language_shown,
             gateway_reassign: std::collections::BTreeMap::new(),
             path_editing: None,
             files_hover: None,
@@ -1214,6 +1261,7 @@ impl Shell {
             | Message::WindowOpened(_)
             | Message::Rescaled(_)
             | Message::ShowSettings
+            | Message::Navigate(_)
             | Message::TrustedSearch(..)
             | Message::LanguageChosen(_)
             | Message::Modifiers(_)
@@ -1317,6 +1365,14 @@ impl Shell {
         self.editors.prune(&self.app);
         // The diagnostics log as the settings say now.
         crate::logging::set_enabled(self.app.settings().diagnostics_log);
+        // The language the settings name now: an import may have changed it.
+        let language = self.app.settings().language;
+        if language != self.language_shown {
+            if language.is_some() {
+                crate::i18n::apply(language);
+            }
+            self.language_shown = language;
+        }
         // A reset, or presets that could not be saved, shown again in their box.
         self.presets
             .sync(&self.app.settings().rdp_resolution_presets);
@@ -1422,6 +1478,16 @@ impl Shell {
             }
             Message::Modifiers(modifiers) => {
                 self.modifiers = *modifiers;
+                Task::none()
+            }
+            Message::Navigate(destination) => {
+                self.menu = None;
+                match destination {
+                    Destination::Sessions => self.page = Page::Tab,
+                    Destination::Tunnels => self.page = Page::Tunnels,
+                    Destination::About => self.page = Page::About,
+                    Destination::Settings => return self.view_message(&Message::ShowSettings),
+                }
                 Task::none()
             }
             Message::ShowSettings => {
@@ -2254,6 +2320,8 @@ impl Shell {
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
             Effect::PickSaveFolder { tab } => pick_save_folder(tab),
             Effect::PickSessionsFile => pick_sessions_file(),
+            Effect::SaveSettingsFile { document } => crate::settings_file::save(document),
+            Effect::PickSettingsFile => crate::settings_file::pick(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
             Effect::ReadPuttySessions => Task::perform(
@@ -2355,23 +2423,7 @@ impl Shell {
             // Full screen is the session's: no tree, no tabs.
             self.content()
         } else {
-            column![
-                row![
-                    (!self.sidebar_hidden).then(|| self.sidebar()),
-                    (!self.sidebar_hidden).then(splitter),
-                    column![self.tab_bar(), self.focusable_content()]
-                        .push(
-                            self.app
-                                .tunnels_panel
-                                .then(|| crate::tunnels_view::panel(&self.app.tunnels)),
-                        )
-                        .width(Length::Fill)
-                        .height(Length::Fill)
-                ]
-                .height(Length::Fill),
-                self.status_bar(),
-            ]
-            .into()
+            column![self.navigation(), self.shown_page(), self.status_bar()].into()
         };
         // Always a stack with the window first: a tree of one shape keeps the state of the
         // widgets under a dialog, such as how far a list is scrolled.
@@ -2620,6 +2672,88 @@ impl Shell {
         .into()
     }
 
+    /// The page of the window's navigation shown.
+    fn shown_page(&self) -> Element<'_, Message> {
+        // The Sessions page, the C#'s: the tree beside the sessions; the others the
+        // window's whole width, as the C# pages.
+        match self.page {
+            Page::Tab => row![
+                (!self.sidebar_hidden).then(|| self.sidebar()),
+                (!self.sidebar_hidden).then(splitter),
+                column![self.tab_bar(), self.focusable_content()]
+                    .push(
+                        self.app
+                            .tunnels_panel
+                            .then(|| crate::tunnels_view::panel(&self.app.tunnels)),
+                    )
+                    .width(Length::Fill)
+                    .height(Length::Fill)
+            ]
+            .height(Length::Fill)
+            .into(),
+            Page::Tunnels => crate::tunnels_view::page(&self.app.tunnels),
+            Page::About => scrollable(
+                container(crate::about_view::view(&self.app))
+                    .padding(PADDING)
+                    .width(Length::Fill),
+            )
+            .height(Length::Fill)
+            .into(),
+            Page::Settings { .. } => container(self.content())
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+        }
+    }
+
+    /// The window's navigation, as the C# toolbar's: the application's name, then its pages.
+    fn navigation(&self) -> Element<'_, Message> {
+        let shown = match self.page {
+            Page::Tab => Destination::Sessions,
+            Page::Tunnels => Destination::Tunnels,
+            Page::About => Destination::About,
+            Page::Settings { .. } => Destination::Settings,
+        };
+        let mut bar = row![
+            container(
+                text(APP_NAME)
+                    .size(NAV_TITLE_SIZE)
+                    .style(|theme: &Theme| text::Style {
+                        color: Some(theme.extended_palette().primary.base.color),
+                    })
+            )
+            .padding(NAV_TITLE_PADDING),
+        ]
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center);
+        for destination in Destination::ALL {
+            let active = destination == shown;
+            // The page shown in the accent colour, a line under it, as the C# tabs.
+            let entry = button(text(destination.label()))
+                .style(move |theme: &Theme, status| {
+                    let mut style = button::text(theme, status);
+                    if active {
+                        style.text_color = theme.extended_palette().primary.base.color;
+                    }
+                    style
+                })
+                .on_press(Message::Navigate(destination));
+            let underline = container(iced::widget::space())
+                .height(NAV_UNDERLINE)
+                .width(Length::Fill)
+                .style(move |theme: &Theme| container::Style {
+                    background: active.then(|| theme.extended_palette().primary.base.color.into()),
+                    ..container::Style::default()
+                });
+            bar = bar.push(column![entry, underline].width(Length::Shrink));
+        }
+        container(bar)
+            .padding([SPACING / 2.0, PADDING])
+            .width(Length::Fill)
+            .style(container::bordered_box)
+            .into()
+    }
+
     /// The status bar: the session shown, or what was just done; the sessions counted.
     fn status_bar(&self) -> Element<'_, Message> {
         let summaries = self.app.profile_summaries();
@@ -2715,13 +2849,6 @@ impl Shell {
             button(text(fl!("ui-sidebar-local-shell-button")))
                 .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
                 .style(button::secondary),
-            button(text(fl!("ui-sidebar-settings-button")))
-                .on_press(Message::ShowSettings)
-                .style(if self.settings_shown() {
-                    button::primary
-                } else {
-                    button::secondary
-                }),
         ]
         .spacing(SPACING / 2.0);
         // As the C# toolbar's lock: there only while a master password is set.
@@ -2990,7 +3117,6 @@ impl Shell {
             ],
             SettingsTab::Rdp => self.rdp_settings(),
             SettingsTab::Gateways => self.gateways_settings(),
-            SettingsTab::About => crate::about_view::view(&self.app),
             SettingsTab::Security => column![
                 pin_card,
                 vault_card,
@@ -7808,6 +7934,10 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             let (title, body, action) = plain_question(dialog);
             question(title, body, action).into()
         }
+        Dialog::ConfirmSettingsExportPaths { count } => {
+            crate::settings_file::export_question(*count)
+        }
+        Dialog::ConfirmSettingsImport(read) => crate::settings_file::import_question(read),
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
         Dialog::NewTunnel(form) => {
             crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)

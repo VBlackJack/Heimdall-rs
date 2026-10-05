@@ -106,6 +106,7 @@ mod route_test;
 mod selection;
 mod session_restore;
 mod sessions_import;
+mod settings_transfer;
 mod status;
 mod tab_menu;
 mod telnet_tab;
@@ -152,6 +153,7 @@ pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
 };
+pub use settings_transfer::SettingsTransferMessage;
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
@@ -680,6 +682,8 @@ pub enum Message {
     Settings(SettingsMessage),
     /// A note about a server was written and opened in the editor set, or why not.
     NoteOpened(Result<PathBuf, String>),
+    /// The settings carried to or from another computer.
+    SettingsTransfer(SettingsTransferMessage),
     /// A step of the Settings page's Gateways tab.
     Gateways(GatewaysMessage),
     /// A change of broadcast input.
@@ -884,6 +888,13 @@ impl fmt::Debug for Message {
             }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             Self::NoteOpened(result) => write!(f, "NoteOpened({})", result.is_ok()),
+            Self::SettingsTransfer(message) => match message {
+                // What the file says is not logged.
+                SettingsTransferMessage::Read(result) => {
+                    write!(f, "SettingsTransfer(Read({}))", result.is_ok())
+                }
+                other => write!(f, "SettingsTransfer({other:?})"),
+            },
             Self::Gateways(message) => write!(f, "Gateways({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
@@ -1033,6 +1044,15 @@ pub enum Effect {
     /// Ask which file "Import Sessions" imports, then read it; answered with
     /// [`SessionsMessage::FileRead`], or nothing when none is picked.
     PickSessionsFile,
+    /// Ask where to save the settings file, then write `document` there; answered with
+    /// [`SettingsTransferMessage::Written`], or nothing when no file is picked.
+    SaveSettingsFile {
+        /// The settings file.
+        document: String,
+    },
+    /// Ask which settings file to import, then read it; answered with
+    /// [`SettingsTransferMessage::Read`], or nothing when none is picked.
+    PickSettingsFile,
     /// Ask which `known_hosts` file to import, then read it; answered with
     /// [`HostKeysMessage::Read`], or nothing when none is picked.
     PickKnownHosts,
@@ -1361,6 +1381,8 @@ impl fmt::Debug for Effect {
             Self::ReadPuttySessions => f.write_str("ReadPuttySessions"),
             Self::PickRdpFiles => f.write_str("PickRdpFiles"),
             Self::PickSessionsFile => f.write_str("PickSessionsFile"),
+            Self::SaveSettingsFile { .. } => f.write_str("SaveSettingsFile"),
+            Self::PickSettingsFile => f.write_str("PickSettingsFile"),
             Self::PickKnownHosts => f.write_str("PickKnownHosts"),
             Self::ReadRdpFiles(paths) => write!(f, "ReadRdpFiles({})", paths.len()),
             Self::ReadClipboard { tab } => write!(f, "ReadClipboard({})", tab.value()),
@@ -1950,6 +1972,14 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// Whether the settings exported take the paths under this computer's user's folder,
+    /// as the C# asks: this many.
+    ConfirmSettingsExportPaths {
+        /// Settings naming such a path.
+        count: usize,
+    },
+    /// The settings read from a file, and what they change, taken once agreed to.
+    ConfirmSettingsImport(Box<heimdall_core::settings::SettingsImport>),
     /// Delete an SSH gateway, its references cleared, as the C# asks with what it clears.
     ConfirmDeleteGateway {
         /// The gateway.
@@ -2591,6 +2621,7 @@ impl App {
             | Message::Rdp(_)
             | Message::Settings(_)
             | Message::NoteOpened(_)
+            | Message::SettingsTransfer(_)
             | Message::Gateways(_)
             | Message::Broadcast(_)) => self.window_message(&message),
             message @ (Message::NewProfile
@@ -2689,6 +2720,7 @@ impl App {
                 .dismiss_vault()
                 .or_else(|| self.dismiss_pin())
                 .or_else(|| self.dismiss_tunnel_key())
+                .or_else(|| self.dismiss_settings_export())
                 .unwrap_or_else(|| self.dismiss_dialog()),
             _ => self.post_connect_message(message),
         }
@@ -3615,6 +3647,8 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::ConfirmSettingsExportPaths { .. }) => self.export_settings(true),
+            Some(Dialog::ConfirmSettingsImport(read)) => self.apply_imported_settings(*read),
             Some(Dialog::ConfirmDeleteGateway { id, name, .. }) => {
                 self.confirm_delete_gateway(&id, &name);
                 Vec::new()
@@ -3723,6 +3757,7 @@ impl App {
                 });
                 Vec::new()
             }
+            Message::SettingsTransfer(message) => self.settings_transfer(message.clone()),
             Message::Gateways(message) => {
                 self.gateways_message(message.clone());
                 Vec::new()

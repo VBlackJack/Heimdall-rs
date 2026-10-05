@@ -543,16 +543,61 @@ fn create_vault(core: &mut App) {
 }
 
 #[test]
+fn the_navigation_shows_the_sessions_the_tunnels_the_settings_and_about() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    snapshot(&shell, "navigation.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Heimdall",
+            "Sessions",
+            "Tunnels",
+            "Settings",
+            "About",
+            "Local shell",
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.click("Tunnels").expect("Tunnels");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::Navigate(Destination::Tunnels)))
+        );
+    }
+    // Every tunnel, the window's whole width: no tree beside them.
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Active Tunnels").expect("the Tunnels page");
+        ui.find("No active tunnels").expect("none open");
+        assert!(ui.find("Local shell").is_err(), "no tree");
+    }
+    let _ = shell.update(Message::Navigate(Destination::About));
+    simulator(&shell)
+        .find("Diagnostics")
+        .expect("the About page");
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    assert!(shell.settings_shown());
+    let _ = shell.update(Message::Navigate(Destination::Sessions));
+    simulator(&shell)
+        .find("Local shell")
+        .expect("the tree again");
+}
+
+#[test]
 fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     {
         let mut ui = simulator(&shell);
-        ui.click("Settings").expect("the sidebar's settings");
-        assert!(
-            ui.into_messages()
-                .any(|message| matches!(message, Message::ShowSettings))
-        );
+        ui.click("Settings").expect("the navigation's settings");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Navigate(heimdall_ui::shell::Destination::Settings)
+        )));
     }
     let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::SettingsTab(
@@ -3302,7 +3347,8 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     let _ = shell.update(Message::FilesKey(FilesKey::SelectAll));
     assert_eq!(shell.app().selected_profiles().len(), 3, "every one shown");
 
-    let title = |shell: &Shell| simulator(shell).find("Sessions").is_ok();
+    // The sidebar's own button: "Sessions" is the navigation's too.
+    let title = |shell: &Shell| simulator(shell).find("Local shell").is_ok();
     assert!(title(&shell));
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     assert!(!title(&shell), "hidden");
