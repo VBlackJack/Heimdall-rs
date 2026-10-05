@@ -121,6 +121,9 @@ pub enum FilesKey {
     Paste,
     /// Select every entry of the pane, Ctrl+A.
     SelectAll,
+    /// Add the entry at the cursor to the selection, or take it out, as a Windows list's
+    /// Ctrl+Space.
+    ToggleMark,
     /// Ask for a new folder's name, as the C# F7.
     NewFolder,
     /// Download the server's entries chosen, as the C# Ctrl+Shift+D.

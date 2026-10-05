@@ -644,6 +644,8 @@ pub enum Message {
     /// Fold every folder of the tree, or unfold them all, as the C# "Collapse all" and
     /// "Expand all".
     FoldAll(bool),
+    /// Select a folder in the tree, by its path, as the C# tree's keyboard reaches folders.
+    SelectFolder(String),
     /// Connect to a profile with its own protocol.
     ConnectProfile(ProfileId),
     /// Save a copy of a profile.
@@ -878,6 +880,7 @@ impl fmt::Debug for Message {
             Self::Selection(message) => write!(f, "Selection({message:?})"),
             Self::SelectProfile(id) => write!(f, "SelectProfile({id})"),
             Self::FoldAll(fold) => write!(f, "FoldAll({fold})"),
+            Self::SelectFolder(path) => write!(f, "SelectFolder({path})"),
             Self::ConnectProfile(id) => write!(f, "ConnectProfile({id})"),
             Self::DuplicateProfile { id, .. } => write!(f, "DuplicateProfile({id})"),
             Self::RequestDeleteProfile(id) => write!(f, "RequestDeleteProfile({id})"),
@@ -2399,6 +2402,8 @@ pub struct App {
     /// The profile selected in the tree, the last one clicked: where a Shift+click range
     /// starts.
     pub selected_profile: Option<ProfileId>,
+    /// The folder selected in the tree, by its path; a profile selected unselects it.
+    pub selected_folder: Option<String>,
     /// The profiles selected together, when more than one is.
     selection: std::collections::BTreeSet<ProfileId>,
     /// What the Settings page changes, and the file it is saved to.
@@ -2518,6 +2523,7 @@ impl App {
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
             selected_profile: None,
+            selected_folder: None,
             selection: std::collections::BTreeSet::new(),
             notice: None,
             trusted_keys: TrustedKeys::default(),
@@ -2751,6 +2757,7 @@ impl App {
             | Message::StopPostConnect(_)) => self.dialog_message(&message),
             message @ (Message::SelectProfile(_)
             | Message::FoldAll(_)
+            | Message::SelectFolder(_)
             | Message::ToggleFolder(_)
             | Message::Filter(_)
             | Message::Folder(_)

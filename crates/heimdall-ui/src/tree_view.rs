@@ -264,6 +264,7 @@ pub fn folder_row<'a>(
     open: bool,
     count: usize,
     color: Option<FolderColor>,
+    selected: bool,
 ) -> Element<'a, Message> {
     let label = if path == NO_FOLDER {
         fl!("ui-sidebar-group-none")
@@ -285,7 +286,8 @@ pub fn folder_row<'a>(
         .align_y(iced::Alignment::Center),
     )
     .width(Length::Fill)
-    .padding([2.0, 4.0]);
+    .padding([2.0, 4.0])
+    .style(move |theme: &Theme| row_style(theme, selected));
     indented(
         mouse_area(body)
             .on_press(Message::App(AppMessage::ToggleFolder(path.clone())))
