@@ -234,6 +234,7 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             Some(Message::Modifiers(modifiers))
         }
         iced::Event::Window(window::Event::Rescaled(scale)) => Some(Message::Rescaled(scale)),
+        iced::Event::Window(window::Event::Resized(size)) => Some(Message::WindowResized(size)),
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
         }
@@ -464,6 +465,8 @@ pub enum Message {
     /// A character typed that no widget took: the tree's type-ahead, while it has the
     /// keyboard.
     TypeAhead(String),
+    /// The window was resized to this size.
+    WindowResized(iced::Size),
     /// The handle between the sidebar and the sessions is pressed.
     SidebarDragStart,
     /// The pointer moved to this x while the handle is held.
@@ -584,6 +587,7 @@ impl fmt::Debug for Message {
             Self::MenuKey => f.write_str("MenuKey"),
             Self::TypeAhead(_) => f.write_str("TypeAhead(..)"),
             Self::SidebarDragStart => f.write_str("SidebarDragStart"),
+            Self::WindowResized(size) => write!(f, "WindowResized({size:?})"),
             Self::SidebarDragged(x) => write!(f, "SidebarDragged({x})"),
             Self::SidebarDragEnd => f.write_str("SidebarDragEnd"),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
@@ -796,6 +800,10 @@ pub struct Shell {
     tree_focused: bool,
     /// The sidebar is hidden, Ctrl+B having hidden it.
     sidebar_hidden: bool,
+    /// Where the window's state is kept, and how it was left; none in tests.
+    window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
+    /// The window's size, as last resized out of full screen.
+    window_size: Option<iced::Size>,
     /// The sidebar's width, as dragged.
     sidebar_width: f32,
     /// The handle between the sidebar and the sessions is held.
@@ -875,7 +883,16 @@ impl Shell {
     /// The window, with the profiles on disk.
     #[must_use]
     pub fn new() -> Self {
-        let shell = Self::with_config(config());
+        let config = config();
+        let memory = heimdall_core::window_state::state_path(&config.profiles_file);
+        let mut shell = Self::with_config(config);
+        // The sidebar as the window was left.
+        let left = heimdall_core::window_state::load(&memory);
+        if let Some(width) = left.sidebar_width.filter(|width| width.is_finite()) {
+            shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
+        }
+        shell.sidebar_hidden = left.sidebar_hidden;
+        shell.window_memory = Some((memory, left));
         // The language chosen, once the settings are read; else the desktop's, set at start.
         if let Some(language) = shell.app.settings().language {
             crate::i18n::apply(Some(language));
@@ -920,6 +937,8 @@ impl Shell {
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
             sidebar_hidden: false,
+            window_memory: None,
+            window_size: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
             type_ahead: (String::new(), None),
@@ -1126,6 +1145,7 @@ impl Shell {
             | Message::MenuKey
             | Message::TypeAhead(_)
             | Message::SidebarDragStart
+            | Message::WindowResized(_)
             | Message::SidebarDragged(_)
             | Message::SidebarDragEnd) => self.tree_input(message),
             message @ (Message::PaletteQuery(_)
@@ -2101,8 +2121,38 @@ impl Shell {
                     )))
                 },
             ),
-            Effect::Exit => iced::exit(),
+            Effect::Exit => self.exit(),
         }
+    }
+
+    /// Keeps how the window is left, then closes it. Maximized, its size is the one it had
+    /// before: the one kept when it was last not maximized.
+    fn exit(&self) -> Task<Message> {
+        let Some((path, left)) = self.window_memory.clone() else {
+            return iced::exit();
+        };
+        let leaving = heimdall_core::window_state::WindowState {
+            sidebar_width: Some(self.sidebar_width),
+            sidebar_hidden: self.sidebar_hidden,
+            ..left
+        };
+        let size = self.window_size;
+        let keep = move |maximized: bool| {
+            let mut state = leaving;
+            state.maximized = maximized;
+            if let (false, Some(size)) = (maximized, size) {
+                state.width = Some(size.width);
+                state.height = Some(size.height);
+            }
+            if let Err(error) = heimdall_core::window_state::save(&path, &state) {
+                log::warn!("the window's state could not be kept: {error}");
+            }
+            iced::exit()
+        };
+        window::latest().then(move |id| match id {
+            Some(id) => window::is_maximized(id).then(keep.clone()),
+            None => keep(false),
+        })
     }
 
     /// Draws the window.
@@ -3296,6 +3346,13 @@ impl Shell {
             Message::TypeAhead(typed) => self.type_ahead(&typed),
             Message::SidebarDragStart => {
                 self.sidebar_drag = true;
+                Vec::new()
+            }
+            // Full screen is not the window's own size.
+            Message::WindowResized(size) => {
+                if !self.fullscreen {
+                    self.window_size = Some(size);
+                }
                 Vec::new()
             }
             Message::SidebarDragged(x) if self.sidebar_drag => {
