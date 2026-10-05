@@ -179,6 +179,7 @@ fn tree_shortcut(
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
         'k' => Some(TreeShortcut::QuickConnect),
+        'z' => Some(TreeShortcut::Undo),
         _ => None,
     }
 }
@@ -407,6 +408,14 @@ pub enum Message {
     ContentFocus,
     /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
     TreeShortcut(TreeShortcut),
+    /// The pointer is over a row of the tree, where a drag would drop.
+    TreeHover(heimdall_app::DropTarget),
+    /// The pointer left that row.
+    TreeHoverLeft(heimdall_app::DropTarget),
+    /// The pointer moved, a press in the tree held.
+    TreeDragMoved(Point),
+    /// The press in the tree is let go.
+    TreeDragEnd,
     /// Quick Connect's search changed.
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
@@ -454,6 +463,8 @@ pub enum TreeShortcut {
     New,
     /// Ctrl+K: Quick Connect.
     QuickConnect,
+    /// Ctrl+Z: the last move made by a drop in the tree undone.
+    Undo,
 }
 
 impl fmt::Debug for Message {
@@ -516,6 +527,10 @@ impl fmt::Debug for Message {
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
+            Self::TreeHoverLeft(target) => write!(f, "TreeHoverLeft({target:?})"),
+            Self::TreeDragMoved(_) => f.write_str("TreeDragMoved"),
+            Self::TreeDragEnd => f.write_str("TreeDragEnd"),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
@@ -720,6 +735,8 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// A press in the tree, held: a drag once the pointer moves.
+    tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// Quick Connect, while open.
     palette: Option<Palette>,
     /// The terminal's search bar, while open.
@@ -837,6 +854,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            tree_drag: None,
             palette: None,
             finder: None,
             focus_next: None,
@@ -918,6 +936,9 @@ impl Shell {
             )
         );
         let mut subscriptions = vec![events];
+        if self.tree_drag.is_some() {
+            subscriptions.push(event::listen_with(crate::tree_drag::drag_event));
+        }
         if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
@@ -957,6 +978,15 @@ impl Shell {
         }
         let message = self.files_click(message);
         self.note_focus(&message);
+        // A press on a folder: the start of a drag of it.
+        if let Message::App(AppMessage::ToggleFolder(path)) = &message
+            && path != heimdall_app::NO_FOLDER
+        {
+            self.tree_drag = Some(crate::tree_drag::TreeDrag::pressed(
+                crate::tree_drag::DragSource::Folder(path.clone()),
+                self.cursor.get(),
+            ));
+        }
         let reveal = matches!(
             message,
             Message::FilesKey(_) | Message::DialogKey { .. } | Message::TabKey { .. }
@@ -1031,10 +1061,13 @@ impl Shell {
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
-            message
-            @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
-                self.tree_input(message)
-            }
+            message @ (Message::TreeClick(_)
+            | Message::ContentFocus
+            | Message::TreeShortcut(_)
+            | Message::TreeHover(_)
+            | Message::TreeHoverLeft(_)
+            | Message::TreeDragMoved(_)
+            | Message::TreeDragEnd) => self.tree_input(message),
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
             | Message::PaletteClose) => self.palette_message(message),
@@ -2435,7 +2468,12 @@ impl Shell {
                 count,
             } => {
                 let color = self.app.folder_color(&path);
-                tree_view::folder_row(path, name, depth, open, count, color)
+                let target = heimdall_app::DropTarget::Folder(path.clone());
+                crate::tree_drag::drop_zone(
+                    tree_view::folder_row(path, name, depth, open, count, color),
+                    target,
+                    self.tree_drag.as_ref(),
+                )
             }
             TreeRow::Profile { mut profile, depth } => {
                 if !badge {
@@ -2446,9 +2484,14 @@ impl Shell {
                 let context = searching
                     .then(|| tree_view::search_context(&profile))
                     .flatten();
-                tree_view::indented(
-                    tree_view::owned_row(&profile, selected, state, context),
-                    depth,
+                let target = heimdall_app::DropTarget::Profile(profile.id.clone());
+                crate::tree_drag::drop_zone(
+                    tree_view::indented(
+                        tree_view::owned_row(&profile, selected, state, context),
+                        depth,
+                    ),
+                    target,
+                    self.tree_drag.as_ref(),
                 )
             }
         }));
@@ -3189,10 +3232,65 @@ impl Shell {
     /// A click on a profile of the tree, or one of the tree's shortcuts holding Ctrl.
     fn tree_input(&mut self, message: Message) -> Vec<Effect> {
         match message {
-            Message::TreeClick(id) => self.tree_click(id),
+            Message::TreeClick(id) => {
+                let effects = self.tree_click(id.clone());
+                self.press_profile(id);
+                effects
+            }
             Message::TreeShortcut(shortcut) => self.tree_shortcut(shortcut),
+            Message::TreeHover(target) => {
+                if let Some(drag) = self.tree_drag.as_mut() {
+                    drag.over = Some(target);
+                }
+                Vec::new()
+            }
+            Message::TreeHoverLeft(target) => {
+                if let Some(drag) = self
+                    .tree_drag
+                    .as_mut()
+                    .filter(|drag| drag.over.as_ref() == Some(&target))
+                {
+                    drag.over = None;
+                }
+                Vec::new()
+            }
+            Message::TreeDragMoved(at) => {
+                let started = self.tree_drag.as_mut().is_some_and(|drag| drag.moved(at));
+                // A folder pressed opened or closed: dragged, it is put back as it was.
+                match self.tree_drag.as_ref().map(|drag| &drag.source) {
+                    Some(crate::tree_drag::DragSource::Folder(path)) if started => {
+                        self.app.update(AppMessage::ToggleFolder(path.clone()))
+                    }
+                    _ => Vec::new(),
+                }
+            }
+            Message::TreeDragEnd => {
+                match self
+                    .tree_drag
+                    .take()
+                    .and_then(crate::tree_drag::TreeDrag::drop_message)
+                {
+                    Some(message) => self.app.update(message),
+                    None => Vec::new(),
+                }
+            }
             _ => Vec::new(),
         }
+    }
+
+    /// A press on session `id`: the start of a drag of it, or of the sessions selected with
+    /// it.
+    fn press_profile(&mut self, id: ProfileId) {
+        let selected = self.app.selected_profiles();
+        let source = if selected.contains(&id) {
+            selected
+        } else {
+            vec![id]
+        };
+        self.tree_drag = Some(crate::tree_drag::TreeDrag::pressed(
+            crate::tree_drag::DragSource::Profiles(source),
+            self.cursor.get(),
+        ));
     }
 
     /// The session shown; while the tree has the keyboard, a click in it takes it back.
@@ -3214,6 +3312,7 @@ impl Shell {
         }
         match shortcut {
             TreeShortcut::New => self.app.update(AppMessage::NewProfile),
+            TreeShortcut::Undo => self.app.update(AppMessage::UndoMove),
             TreeShortcut::QuickConnect => {
                 self.menu = None;
                 self.palette = Some(Palette::default());

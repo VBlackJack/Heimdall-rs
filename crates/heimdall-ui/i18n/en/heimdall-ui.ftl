@@ -1580,3 +1580,16 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
 ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-status-dropped-profiles = { $count ->
+    [one] Moved { $count } session to { $folder }. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions to { $folder }. Ctrl+Z undoes it.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] Moved { $count } session out of its folder. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions out of their folders. Ctrl+Z undoes it.
+}
+ui-status-dropped-folder = Moved the folder { $name }. Ctrl+Z undoes it.
+ui-status-drop-refused = A folder of that name is already there: nothing was moved.
+ui-status-move-undone = Move undone.
+ui-status-nothing-to-undo = Nothing to undo.
+ui-shortcuts-undo-move = Undo the last move made by dragging in the tree
