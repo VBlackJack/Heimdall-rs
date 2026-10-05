@@ -92,7 +92,9 @@ pub(crate) fn reason(failure: &Unreached) -> String {
         Unreached::TcpTimeout(address) => {
             fl!("ui-address-test-tcp-timeout", address = address.as_str())
         }
-        Unreached::TcpFailed { address, detail } => fl!(
+        Unreached::TcpFailed {
+            address, detail, ..
+        } => fl!(
             "ui-address-test-tcp-failed",
             address = address.as_str(),
             reason = server_text(detail)

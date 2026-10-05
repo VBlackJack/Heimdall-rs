@@ -79,6 +79,7 @@ pub use app::{
     VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
     master_password_problem, open_vault,
 };
+pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };
