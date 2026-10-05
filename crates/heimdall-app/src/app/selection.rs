@@ -21,7 +21,7 @@
 use heimdall_core::profile::ProfileId;
 
 use super::tree::ProfileKind;
-use super::{App, Dialog, Effect};
+use super::{App, Dialog, Effect, Notice};
 
 /// Longest list of names the deletion question shows, as the C# one.
 const LISTED_NAMES: usize = 10;
@@ -48,6 +48,9 @@ pub enum SelectionMessage {
     },
     /// Put every one selected in a folder, none for `None`.
     Move(Option<String>),
+    /// Route every one selected that can be through this gateway, or directly for `None`,
+    /// as the C# bulk "Set gateway".
+    SetGateway(Option<ProfileId>),
     /// Mark every one selected as a favorite, or none of them.
     Favorite(bool),
     /// Set a field of every one selected that has it, as the C# "Edit" menu.
@@ -59,6 +62,25 @@ pub enum SelectionMessage {
 }
 
 impl App {
+    /// Routes the profiles selected that can be through `gateway`, or directly, and says
+    /// how many changed.
+    fn set_selection_gateway(&mut self, gateway: Option<&ProfileId>) {
+        let ids = self.selected_profiles();
+        let changed = self.store.apply(|store| {
+            ids.iter()
+                .filter(|id| store.set_gateway(id, gateway))
+                .count()
+        });
+        match changed {
+            Ok(changed) => self.tell(Notice::BulkGatewayUpdated(changed)),
+            Err(error) => {
+                self.dialog = Some(Dialog::StoreError {
+                    detail: error.to_string(),
+                });
+            }
+        }
+    }
+
     /// Applies a message about the profiles selected together.
     pub(super) fn selection_message(&mut self, message: SelectionMessage) -> Vec<Effect> {
         match message {
@@ -117,6 +139,10 @@ impl App {
                         detail: error.to_string(),
                     });
                 }
+                Vec::new()
+            }
+            SelectionMessage::SetGateway(gateway) => {
+                self.set_selection_gateway(gateway.as_ref());
                 Vec::new()
             }
             SelectionMessage::Edit(field) => {

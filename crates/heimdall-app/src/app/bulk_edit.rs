@@ -64,6 +64,21 @@ pub enum BulkRefusal {
 }
 
 impl App {
+    /// How many of `ids` can go through a gateway: SSH, SFTP, RDP and `WinRM`, the count the
+    /// C# "Set gateway..." entry acts on.
+    #[must_use]
+    pub fn gateway_targets(&self, ids: &[ProfileId]) -> usize {
+        ids.iter()
+            .filter_map(|id| self.profile_summary(id))
+            .filter(|profile| {
+                matches!(
+                    profile.kind,
+                    ProfileKind::Ssh | ProfileKind::Sftp | ProfileKind::Rdp | ProfileKind::WinRm
+                )
+            })
+            .count()
+    }
+
     /// How many of `ids` take `field`: the count the C# menu entry shows.
     #[must_use]
     pub fn bulk_targets(&self, ids: &[ProfileId], field: BulkField) -> usize {

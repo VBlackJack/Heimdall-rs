@@ -1260,6 +1260,7 @@ ui-editor-lines = { $count ->
     [one] { $count } ligne
    *[other] { $count } lignes
 }
+ui-editor-plain-text = Texte brut
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 avec BOM
 ui-editor-encoding-utf16le = UTF-16 LE
@@ -1489,6 +1490,23 @@ ui-shortcuts-screenshot = Capturer l'écran
 ui-shortcuts-lock = Verrouiller
 ui-shortcuts-help = Afficher cette aide
 ui-shortcuts-close = Fermer une boîte de dialogue ou un menu, quitter le plein écran
+ui-resolution-match-aspect = Adapter à la fenêtre, { $wide }:{ $high }
+ui-tab-menu-pin = Épingler l'onglet
+ui-tab-menu-unpin = Désépingler l'onglet
+ui-tab-menu-save-as-profile = Enregistrer comme profil...
+ui-tab-menu-reveal-in-tree = Afficher dans l'arborescence
+ui-tab-pinned-badge = épinglé
+ui-selection-set-gateway = Définir la passerelle... ({ $count })
+ui-selection-gateway-direct = Connexion directe (sans passerelle)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Route de connexion modifiée sur { $count } serveur.
+   *[other] Route de connexion modifiée sur { $count } serveurs.
+}
+ui-status-bulk-gateway-unchanged = Aucune route n'a été modifiée.
+ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
+ui-shortcuts-session-menu = Menu de la session sélectionnée
+ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
+ui-shortcuts-toggle-sidebar = Afficher ou masquer le panneau latéral
 ui-restore-title = Restaurer les sessions précédentes
 ui-restore-message = Heimdall a trouvé un instantané de session sauvegardé lors de l'exécution précédente. Sélectionnez les sessions à restaurer.
 ui-restore-saved-at = Sauvegardé le { $time }
@@ -1550,3 +1568,16 @@ ui-reachability-reason-dns = Résolution DNS échouée
 ui-reachability-reason-behind-gateway = Derrière une gateway SSH - non sondé
 ui-reachability-reason-no-port = Pas de port à sonder pour ce protocole
 ui-reachability-reason-no-host = Aucun hôte configuré
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } session déplacée dans { $folder }. Ctrl+Z l'annule.
+   *[other] { $count } sessions déplacées dans { $folder }. Ctrl+Z l'annule.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } session sortie de son dossier. Ctrl+Z l'annule.
+   *[other] { $count } sessions sorties de leurs dossiers. Ctrl+Z l'annule.
+}
+ui-status-dropped-folder = Dossier { $name } déplacé. Ctrl+Z l'annule.
+ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été déplacé.
+ui-status-move-undone = Déplacement annulé.
+ui-status-nothing-to-undo = Rien à annuler.
+ui-shortcuts-undo-move = Annuler le dernier déplacement fait en glissant dans l'arborescence
