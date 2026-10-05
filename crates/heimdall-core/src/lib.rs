@@ -33,5 +33,6 @@ pub mod session_snapshot;
 pub mod settings;
 pub mod store;
 pub mod utc;
+pub mod window_state;
 pub mod winrm;
 pub mod winrm_diagnostic;

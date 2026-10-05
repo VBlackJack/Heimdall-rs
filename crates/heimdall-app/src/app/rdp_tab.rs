@@ -69,6 +69,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
                 _ => DesktopSizing::FollowsTab,
             };
             let mut pane = DesktopPane::rdp(framebuffer, input, (size, sizing), clipboard);
+            pane.aspect = tab.desktop_aspect;
             // Started again on each connection, a reconnection included, as the C# one.
             pane.anti_idle = matches!(&tab.profile, TabProfile::Rdp(profile) if profile.anti_idle);
             tab.desktop = Some(Box::new(pane));

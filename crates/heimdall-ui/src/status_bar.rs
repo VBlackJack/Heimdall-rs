@@ -114,6 +114,20 @@ fn files_notice(notice: &Notice) -> String {
             reason = crate::texts::files_error(error)
         ),
         Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
+        Notice::DroppedProfiles { count, folder } => match folder {
+            Some(folder) => fl!(
+                "ui-status-dropped-profiles",
+                count = (*count),
+                folder = server_text(folder)
+            ),
+            None => fl!("ui-status-dropped-profiles-none", count = (*count)),
+        },
+        Notice::DroppedFolder(name) => {
+            fl!("ui-status-dropped-folder", name = server_text(name))
+        }
+        Notice::DropRefused => fl!("ui-status-drop-refused"),
+        Notice::MoveUndone => fl!("ui-status-move-undone"),
+        Notice::NothingToUndo => fl!("ui-status-nothing-to-undo"),
         Notice::WakeOnLan(Ok(())) => fl!("ui-status-wake-on-lan-sent"),
         Notice::WakeOnLan(Err(reason)) => {
             fl!("ui-status-wake-on-lan-failed", reason = reason.as_str())
@@ -186,6 +200,11 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::FilesSavedWithSudo(_)
             | Notice::FilesAutoUploadRefused { .. }
             | Notice::FilesCopied(_)
+            | Notice::DroppedProfiles { .. }
+            | Notice::DroppedFolder(_)
+            | Notice::DropRefused
+            | Notice::MoveUndone
+            | Notice::NothingToUndo
             | Notice::WakeOnLan(_)
             | Notice::FilesBatch(_)
             | Notice::FilesDuplicated) => files_notice(notice),
@@ -238,6 +257,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::FavoriteSaveFailed => fl!("ui-status-favorite-save-failed"),
             Notice::BulkPortUpdated(count) => fl!("ui-status-bulk-port-updated", count = (*count)),
             Notice::BulkPortUnchanged => fl!("ui-status-bulk-port-unchanged"),
+            Notice::BulkGatewayUpdated(0) => fl!("ui-status-bulk-gateway-unchanged"),
+            Notice::BulkGatewayUpdated(count) => {
+                fl!("ui-status-bulk-gateway-updated", count = (*count))
+            }
             Notice::BulkUsernameUpdated(count) => {
                 fl!("ui-status-bulk-username-updated", count = (*count))
             }

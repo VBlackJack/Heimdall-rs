@@ -1565,6 +1565,23 @@ ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-lock = Lock
 ui-shortcuts-help = Show this help
 ui-shortcuts-close = Close a dialog or a menu, exit fullscreen
+ui-resolution-match-aspect = Match window, { $wide }:{ $high }
+ui-tab-menu-pin = Pin tab
+ui-tab-menu-unpin = Unpin tab
+ui-tab-menu-save-as-profile = Save as profile...
+ui-tab-menu-reveal-in-tree = Reveal in tree
+ui-tab-pinned-badge = pinned
+ui-selection-set-gateway = Set gateway... ({ $count })
+ui-selection-gateway-direct = Direct connection (no gateway)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Connection route updated on { $count } server.
+   *[other] Connection route updated on { $count } servers.
+}
+ui-status-bulk-gateway-unchanged = No route changes were applied.
+ui-shortcuts-select-all-sessions = Select every session shown
+ui-shortcuts-session-menu = The selected session's menu
+ui-shortcuts-find-by-name = Go to the session whose name starts with what is typed
+ui-shortcuts-toggle-sidebar = Show or hide the sidebar
 ui-restore-title = Restore previous sessions
 ui-restore-message = Heimdall found a saved session snapshot from the previous run. Select the sessions to restore.
 ui-restore-saved-at = Saved at { $time }
@@ -1605,3 +1622,16 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
 ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-status-dropped-profiles = { $count ->
+    [one] Moved { $count } session to { $folder }. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions to { $folder }. Ctrl+Z undoes it.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] Moved { $count } session out of its folder. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions out of their folders. Ctrl+Z undoes it.
+}
+ui-status-dropped-folder = Moved the folder { $name }. Ctrl+Z undoes it.
+ui-status-drop-refused = A folder of that name is already there: nothing was moved.
+ui-status-move-undone = Move undone.
+ui-status-nothing-to-undo = Nothing to undo.
+ui-shortcuts-undo-move = Undo the last move made by dragging in the tree

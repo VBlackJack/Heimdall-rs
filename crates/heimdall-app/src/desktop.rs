@@ -236,6 +236,9 @@ struct VncSink {
 
 /// The desktop of a tab, once its session is open.
 pub struct DesktopPane {
+    /// The proportions an RDP desktop following its tab keeps, as the C# "Match window"
+    /// sub-menu: the tab's own, or a ratio fitted in it, letterboxed.
+    pub aspect: Aspect,
     /// Its pixels.
     pub framebuffer: DesktopFramebuffer,
     /// Grows each time the desktop changes: tells the view to draw it again.
@@ -252,6 +255,56 @@ pub struct DesktopPane {
     remote_files: bool,
     /// Saving the server's files, from the folder asked for until it ends.
     save: Option<SaveState>,
+}
+
+/// The proportions of a desktop that follows its tab, as the C# `AspectRatio` offers them
+/// under "Match window".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum Aspect {
+    /// The tab's own: the whole of it.
+    #[default]
+    Stretch,
+    /// 16:9.
+    Wide,
+    /// 4:3.
+    Standard,
+    /// 21:9.
+    UltraWide,
+}
+
+impl Aspect {
+    /// The ratios, in the C# menu's order.
+    pub const RATIOS: [Self; 3] = [Self::Wide, Self::Standard, Self::UltraWide];
+
+    /// Its width and height, in parts; `None` for the tab's own.
+    #[must_use]
+    pub fn ratio(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Stretch => None,
+            Self::Wide => Some((16, 9)),
+            Self::Standard => Some((4, 3)),
+            Self::UltraWide => Some((21, 9)),
+        }
+    }
+
+    /// The size asked of the server for a tab of `size`: the tab's own for Stretch; else the
+    /// largest of the ratio inside it, as the C# `AspectRatioManager` fits it, kept a size
+    /// an RDP server takes.
+    #[must_use]
+    pub fn fit(self, (width, height): (u16, u16)) -> (u16, u16) {
+        let Some((parts_wide, parts_high)) = self.ratio() else {
+            return (width, height);
+        };
+        let (width, height) = (u32::from(width), u32::from(height));
+        let (fitted_width, fitted_height) = if width * parts_high > height * parts_wide {
+            // Wider than the ratio: as high as the tab, bars at the sides.
+            (height * parts_wide / parts_high, height)
+        } else {
+            (width, width * parts_high / parts_wide)
+        };
+        let side = |value: u32| u16::try_from(value).unwrap_or(u16::MAX);
+        heimdall_core::profile::fixed_desktop(side(fitted_width), side(fitted_height))
+    }
 }
 
 /// Where saving an RDP server's copied files is.
@@ -286,6 +339,7 @@ impl DesktopPane {
         clipboard: Option<mpsc::UnboundedSender<LocalClipboard>>,
     ) -> Self {
         Self {
+            aspect: Aspect::Stretch,
             framebuffer: DesktopFramebuffer::Rdp(framebuffer),
             generation: 0,
             sink: DesktopSink::Rdp {
@@ -312,7 +366,7 @@ impl DesktopPane {
         if self.asks_tab_size()
             && let DesktopSink::Rdp { size, .. } = &self.sink
         {
-            size.send_replace(Some((width, height)));
+            size.send_replace(Some(self.aspect.fit((width, height))));
         }
     }
 
@@ -345,7 +399,7 @@ impl DesktopPane {
                 .get_mut()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(last) = last {
-                size.send_replace(Some(last));
+                size.send_replace(Some(self.aspect.fit(last)));
             }
         }
     }
@@ -560,6 +614,7 @@ impl DesktopPane {
         view_only: bool,
     ) -> Self {
         Self {
+            aspect: Aspect::Stretch,
             framebuffer: DesktopFramebuffer::Vnc(framebuffer),
             generation: 0,
             // Not by itself: VNC carries text in clear, sent on a click only.
@@ -868,6 +923,24 @@ mod tests {
             ),
             "{operations:?}"
         );
+    }
+
+    #[test]
+    fn a_ratio_is_fitted_inside_the_tab_as_the_csharp_letterboxes_it() {
+        assert_eq!(Aspect::Stretch.fit((1600, 1000)), (1600, 1000));
+        assert_eq!(
+            Aspect::Wide.fit((1600, 1000)),
+            (1600, 900),
+            "bars above and below"
+        );
+        assert_eq!(
+            Aspect::Standard.fit((1600, 900)),
+            (1200, 900),
+            "bars at the sides"
+        );
+        assert_eq!(Aspect::UltraWide.fit((2100, 1200)), (2100, 900));
+        // Never below what an RDP server takes.
+        assert_eq!(Aspect::UltraWide.fit((210, 90)), (208, 200));
     }
 
     #[test]

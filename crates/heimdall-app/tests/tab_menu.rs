@@ -357,3 +357,78 @@ fn a_tab_tells_its_protocol() {
     let winrm = app.tabs.last().expect("winrm tab");
     assert_eq!(app.tab_kind(winrm), ProfileKind::WinRm);
 }
+
+#[test]
+fn a_pinned_tab_goes_first_and_is_left_by_close_others_and_close_right() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let first = failed(&mut app);
+    let second = failed(&mut app);
+    let third = failed(&mut app);
+    app.update(Message::SelectTab(second));
+    menu(&mut app, TabMenuMessage::Pin(third));
+    assert_eq!(ids(&app), [third, first, second], "the pinned first");
+    assert!(app.tab(third).expect("tab").pinned);
+    assert_eq!(app.active, Some(second), "the tab shown stays shown");
+
+    assert_eq!(
+        app.tab_group(first, TabGroup::Others),
+        [second],
+        "the pinned left"
+    );
+    menu(
+        &mut app,
+        TabMenuMessage::Close {
+            tab: first,
+            group: TabGroup::Others,
+        },
+    );
+    assert_eq!(ids(&app), [third, first]);
+
+    menu(&mut app, TabMenuMessage::Pin(third));
+    assert!(!app.tab(third).expect("tab").pinned, "unpinned");
+}
+
+#[test]
+fn a_session_saved_nowhere_opens_the_form_of_a_new_profile_filled_from_it() {
+    use heimdall_app::QuickResult;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let saved = failed(&mut app);
+    assert!(!app.can_save_as_profile(app.tab(saved).expect("tab")));
+    app.update(Message::QuickConnect(QuickResult::Ssh {
+        username: Some("root".to_owned()),
+        host: "jump.lab".to_owned(),
+        port: 2222,
+    }));
+    let typed = *ids(&app).last().expect("the typed one");
+    assert!(app.can_save_as_profile(app.tab(typed).expect("tab")));
+    menu(&mut app, TabMenuMessage::SaveAsProfile(typed));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::EditProfile { draft, .. })
+            if draft.editing.is_none()
+                && draft.host == "jump.lab"
+                && draft.port == "2222"
+                && draft.username == "root"),
+        "{:?}",
+        app.dialog
+    );
+}
+
+#[test]
+fn reveal_in_tree_selects_the_profile_its_folders_opened() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let tab = failed(&mut app);
+    // Its folder closed: none, so "(No Folder)".
+    app.update(Message::ToggleFolder(heimdall_app::NO_FOLDER.to_owned()));
+    menu(&mut app, TabMenuMessage::RevealInTree(tab));
+    assert_eq!(app.selected_profile, Some(ProfileId::new("a")));
+    assert!(
+        app.tree_rows("")
+            .iter()
+            .any(|row| matches!(row, heimdall_app::TreeRow::Profile { profile, .. } if profile.id.as_str() == "a")),
+        "shown, its folder opened"
+    );
+}

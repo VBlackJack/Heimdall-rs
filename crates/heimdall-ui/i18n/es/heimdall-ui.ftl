@@ -1487,6 +1487,23 @@ ui-shortcuts-screenshot = Capturar la pantalla
 ui-shortcuts-lock = Bloquear
 ui-shortcuts-help = Mostrar esta ayuda
 ui-shortcuts-close = Cerrar un diálogo o un menú, salir de pantalla completa
+ui-resolution-match-aspect = Igualar a la ventana, { $wide }:{ $high }
+ui-tab-menu-pin = Fijar pestaña
+ui-tab-menu-unpin = Dejar de fijar pestaña
+ui-tab-menu-save-as-profile = Guardar como perfil...
+ui-tab-menu-reveal-in-tree = Mostrar en el árbol
+ui-tab-pinned-badge = fijada
+ui-selection-set-gateway = Establecer pasarela... ({ $count })
+ui-selection-gateway-direct = Conexión directa (sin pasarela)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Ruta de conexión actualizada en { $count } servidor.
+   *[other] Ruta de conexión actualizada en { $count } servidores.
+}
+ui-status-bulk-gateway-unchanged = No se aplicó ningún cambio de ruta.
+ui-shortcuts-select-all-sessions = Seleccionar todas las sesiones mostradas
+ui-shortcuts-session-menu = Menú de la sesión seleccionada
+ui-shortcuts-find-by-name = Ir a la sesión cuyo nombre empieza por lo escrito
+ui-shortcuts-toggle-sidebar = Mostrar u ocultar la barra lateral
 ui-restore-title = Restaurar sesiones anteriores
 ui-restore-message = Heimdall encontró una instantánea de sesión guardada de la ejecución anterior. Selecciona las sesiones a restaurar.
 ui-restore-saved-at = Guardado a las { $time }
@@ -1527,3 +1544,16 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
 ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } sesión movida a { $folder }. Ctrl+Z lo deshace.
+   *[other] { $count } sesiones movidas a { $folder }. Ctrl+Z lo deshace.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } sesión sacada de su carpeta. Ctrl+Z lo deshace.
+   *[other] { $count } sesiones sacadas de sus carpetas. Ctrl+Z lo deshace.
+}
+ui-status-dropped-folder = Carpeta { $name } movida. Ctrl+Z lo deshace.
+ui-status-drop-refused = Ya hay una carpeta con ese nombre: no se movió nada.
+ui-status-move-undone = Movimiento deshecho.
+ui-status-nothing-to-undo = Nada que deshacer.
+ui-shortcuts-undo-move = Deshacer el último movimiento hecho arrastrando en el árbol

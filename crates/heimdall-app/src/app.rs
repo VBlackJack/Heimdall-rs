@@ -109,6 +109,7 @@ mod tab_menu;
 mod telnet_tab;
 mod transcripts;
 mod tree;
+mod tree_drag;
 mod tree_filter;
 mod trusted_keys;
 mod tunnels;
@@ -149,6 +150,7 @@ pub use sessions_import::{
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
+pub use tree_drag::DropTarget;
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 pub use tunnels::TunnelMessage;
@@ -483,6 +485,22 @@ pub enum Message {
     StopPostConnect(TabId),
     /// Dismiss the open dialog.
     DismissDialog,
+    /// Sessions dragged onto the tree's `onto`, as the C# tree drops them.
+    DropProfiles {
+        /// The sessions.
+        ids: Vec<ProfileId>,
+        /// Where.
+        onto: DropTarget,
+    },
+    /// A folder dragged onto the tree's `onto`.
+    DropFolder {
+        /// The folder.
+        path: String,
+        /// Where.
+        onto: DropTarget,
+    },
+    /// Undo the last move a drop made, as the C# tree's Ctrl+Z.
+    UndoMove,
     /// A session of the restore dialog ticked or not; every one for `None`, its
     /// "Select all".
     RestoreChoose {
@@ -782,6 +800,9 @@ impl fmt::Debug for Message {
             Self::SkipPostConnect => f.write_str("SkipPostConnect"),
             Self::StopPostConnect(tab) => write!(f, "StopPostConnect({})", tab.value()),
             Self::DismissDialog => f.write_str("DismissDialog"),
+            Self::DropProfiles { ids, onto } => write!(f, "DropProfiles({}, {onto:?})", ids.len()),
+            Self::DropFolder { onto, .. } => write!(f, "DropFolder({onto:?})"),
+            Self::UndoMove => f.write_str("UndoMove"),
             Self::RestoreChoose { index, chosen } => {
                 write!(f, "RestoreChoose({index:?}, {chosen})")
             }
@@ -1456,6 +1477,10 @@ pub enum ExportOutcome {
 }
 
 /// One tab.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "a tab's independent states: bell, search, input, pinned"
+)]
 pub struct Tab {
     /// Identifier.
     pub id: TabId,
@@ -1472,6 +1497,8 @@ pub struct Tab {
     /// The desktop size the user chose from the tab's "Resolution" menu, kept for the
     /// session's reconnections; `None`, as its profile says.
     pub(crate) desktop_sizing: Option<heimdall_core::profile::DesktopSizing>,
+    /// The proportions chosen under "Match window", kept for the session's reconnections.
+    pub(crate) desktop_aspect: crate::desktop::Aspect,
     /// The desktop size the session connected again for, the server unable to take it
     /// live: asked at the next connection, then kept so the same refusal never loops.
     pub(crate) resize_fallback: Option<ResizeFallback>,
@@ -1520,6 +1547,9 @@ pub struct Tab {
     auto_answered: Vec<(AttemptId, ProfileId)>,
     /// How the tab opens again, for Reconnect.
     reopen: reconnect::Reopen,
+    /// Pinned, as the C# tab: before every tab not pinned, and left by "Close others" and
+    /// "Close to the right".
+    pub pinned: bool,
     /// The post-connect step running, while the sequence runs.
     pub post_connect: Option<PostConnectProgress>,
 }
@@ -1606,6 +1636,7 @@ impl Tab {
             end_reason: None,
             retry: None,
             desktop_sizing: None,
+            desktop_aspect: crate::desktop::Aspect::Stretch,
             resize_fallback: None,
             last_input: std::sync::Mutex::new(None),
             early_output: None,
@@ -1614,6 +1645,7 @@ impl Tab {
             find_found: None,
             transcript: None,
             health: crate::server_health::HealthPane::default(),
+            pinned: false,
             reopen: reconnect::Reopen::of(&profile),
             post_connect: None,
             profile,
@@ -2199,6 +2231,8 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// Whether the tunnels panel is shown under the sessions.
     pub tunnels_panel: bool,
+    /// The last move a drop in the tree made, to undo.
+    last_move: Option<tree_drag::UndoMove>,
     /// The previous run's sessions, until they are offered.
     pending_restore: Option<heimdall_core::session_snapshot::SessionSnapshot>,
     /// The hosts connected to, newest first, with the protocol, as the C#
@@ -2315,6 +2349,7 @@ impl App {
             tunnels: Vec::new(),
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
+            last_move: None,
             pending_restore,
             recent_hosts: Vec::new(),
             tunnel_runs: Vec::new(),
@@ -2521,6 +2556,18 @@ impl App {
             | Message::ChooseGateway(_)) => self.profile_form_message(message),
             message @ (Message::RefreshAgents | Message::AgentsSurveyed(_)) => {
                 self.agent_chip_message(message)
+            }
+            Message::DropProfiles { ids, onto } => {
+                self.drop_profiles(&ids, &onto);
+                Vec::new()
+            }
+            Message::DropFolder { path, onto } => {
+                self.drop_folder_on(&path, &onto);
+                Vec::new()
+            }
+            Message::UndoMove => {
+                self.undo_move();
+                Vec::new()
             }
             Message::RestoreChoose { index, chosen } => {
                 self.choose_restored(index, chosen);
