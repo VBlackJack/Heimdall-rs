@@ -240,7 +240,7 @@ impl<'a, M> DesktopView<'a, M> {
     fn placement(&self) -> Placement {
         if self.fit {
             Placement::Fitted
-        } else if self.pane.has_fixed_size() {
+        } else if self.pane.has_fixed_size() || self.pane.aspect != heimdall_app::Aspect::Stretch {
             Placement::Centred
         } else {
             Placement::Corner

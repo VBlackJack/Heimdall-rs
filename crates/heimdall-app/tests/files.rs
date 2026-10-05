@@ -20,7 +20,7 @@ use std::path::Path;
 
 use heimdall_app::files::{
     Direction, EntryKind, FilesError, LocalEntry, RemoteEntry, Side, TransferEvent, TransferState,
-    plan_transfer,
+    local_segments, plan_transfer, remote_segments,
 };
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, FilesMessage, Message, Phase,
@@ -251,6 +251,112 @@ async fn opening_a_folder_lists_it_and_up_goes_back() {
         up.as_slice(),
         [Effect::ListRemote { path, .. }] if path.as_bytes() == b"/home/admin"
     ));
+}
+
+#[tokio::test]
+async fn a_folder_of_the_breadcrumb_is_gone_to_as_one_move_and_a_typed_path_is_given_up() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    let side = Side::Remote;
+    listed_remote(&mut app, tab, "/home/admin/logs/old", Vec::new());
+    let history = |app: &App| {
+        app.tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .remote
+            .history
+            .iter()
+            .map(RemotePath::display)
+            .collect::<Vec<_>>()
+    };
+    let asked = |effects: &[Effect]| match effects {
+        [Effect::ListRemote { path, .. }] => path.display(),
+        other => panic!("{other:?}"),
+    };
+
+    // Two folders up at once: one folder left, Back's.
+    let up = files(
+        &mut app,
+        FilesMessage::Ascend {
+            tab,
+            side,
+            levels: 2,
+        },
+    );
+    assert_eq!(asked(&up), "/home/admin");
+    listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    assert_eq!(history(&app), ["/home/admin/logs/old"]);
+
+    // None: the folder shown, listed again, leaving nothing.
+    let again = files(
+        &mut app,
+        FilesMessage::Ascend {
+            tab,
+            side,
+            levels: 0,
+        },
+    );
+    assert_eq!(asked(&again), "/home/admin");
+    listed_remote(&mut app, tab, "/home/admin", Vec::new());
+    assert_eq!(history(&app), ["/home/admin/logs/old"]);
+
+    // More than there are: the root, no further.
+    let root = files(
+        &mut app,
+        FilesMessage::Ascend {
+            tab,
+            side,
+            levels: 9,
+        },
+    );
+    assert_eq!(asked(&root), "/");
+
+    // A path typed, then given up: the bar shows the folder shown again.
+    files(
+        &mut app,
+        FilesMessage::PathEdited {
+            tab,
+            side,
+            text: "/etc".to_owned(),
+        },
+    );
+    files(&mut app, FilesMessage::PathCancelled { tab, side });
+    let pane = &app
+        .tab(tab)
+        .expect("tab")
+        .files
+        .as_ref()
+        .expect("files")
+        .remote;
+    assert_eq!(pane.typed, None);
+}
+
+#[test]
+fn a_path_is_cut_into_its_folders_the_root_first() {
+    assert_eq!(
+        remote_segments(&RemotePath::from("/home/admin/logs/")),
+        ["/", "home", "admin", "logs"]
+    );
+    assert_eq!(remote_segments(&RemotePath::from("/")), ["/"]);
+    assert_eq!(
+        remote_segments(&RemotePath::from_bytes(b"/srv/caf\xe9".as_slice())),
+        ["/", "srv", "caf\\xE9"],
+        "a name not in UTF-8 named as the path shows it"
+    );
+    #[cfg(windows)]
+    assert_eq!(
+        local_segments(Path::new(r"C:\Users\admin")),
+        [r"C:\", "Users", "admin"],
+        "the drive with its separator"
+    );
+    #[cfg(not(windows))]
+    assert_eq!(
+        local_segments(Path::new("/home/admin")),
+        ["/", "home", "admin"]
+    );
 }
 
 #[tokio::test]

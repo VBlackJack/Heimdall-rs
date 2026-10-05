@@ -22,9 +22,10 @@ use std::path::PathBuf;
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
     ColorScheme, Language, Settings, anti_idle_interval_accepted,
-    rdp_auto_reconnect_attempts_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
-    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted,
-    terminal_font_size_accepted,
+    rdp_auto_reconnect_attempts_accepted, reachability_interval_accepted,
+    reachability_probes_accepted, reachability_timeout_accepted, settings_path,
+    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    ssh_tmout_reset_interval_accepted, terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -68,6 +69,14 @@ pub enum SettingsMessage {
     CollapseTunnelsPanel(bool),
     /// The application writes its diagnostics log, or not.
     DiagnosticsLog(bool),
+    /// The background check of every server runs, or not.
+    Reachability(bool),
+    /// Seconds between two background checks; refused out of the range.
+    ReachabilityInterval(u32),
+    /// Milliseconds a server has to answer it; refused out of the range.
+    ReachabilityTimeout(u32),
+    /// Servers it dials at once; refused out of the range.
+    ReachabilityProbes(u32),
     /// The sizes the Resolution menus offer, empty for the built-in ones; refused when one
     /// is out of the limits.
     RdpResolutionPresets(Vec<(u16, u16)>),
@@ -211,6 +220,25 @@ impl App {
                 self.settings.collapse_tunnels_panel = *collapse;
             }
             SettingsMessage::DiagnosticsLog(on) => self.settings.diagnostics_log = *on,
+            SettingsMessage::Reachability(on) => self.settings.reachability.enabled = *on,
+            SettingsMessage::ReachabilityInterval(seconds) => {
+                if !reachability_interval_accepted(*seconds) {
+                    return Vec::new();
+                }
+                self.settings.reachability.interval = *seconds;
+            }
+            SettingsMessage::ReachabilityTimeout(millis) => {
+                if !reachability_timeout_accepted(*millis) {
+                    return Vec::new();
+                }
+                self.settings.reachability.timeout = *millis;
+            }
+            SettingsMessage::ReachabilityProbes(count) => {
+                if !reachability_probes_accepted(*count) {
+                    return Vec::new();
+                }
+                self.settings.reachability.probes = *count;
+            }
             SettingsMessage::RdpResolutionPresets(presets) => {
                 if !Settings::resolution_presets_accepted(presets) {
                     return Vec::new();
@@ -231,6 +259,6 @@ impl App {
         for tab in &mut self.tabs {
             tab.terminal.set_palette(palette);
         }
-        Vec::new()
+        self.reachability_changed(before.reachability)
     }
 }

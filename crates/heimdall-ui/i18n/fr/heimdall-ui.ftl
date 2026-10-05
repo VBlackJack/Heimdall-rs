@@ -1260,6 +1260,7 @@ ui-editor-lines = { $count ->
     [one] { $count } ligne
    *[other] { $count } lignes
 }
+ui-editor-plain-text = Texte brut
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 avec BOM
 ui-editor-encoding-utf16le = UTF-16 LE
@@ -1489,6 +1490,19 @@ ui-shortcuts-screenshot = Capturer l'écran
 ui-shortcuts-lock = Verrouiller
 ui-shortcuts-help = Afficher cette aide
 ui-shortcuts-close = Fermer une boîte de dialogue ou un menu, quitter le plein écran
+ui-resolution-match-aspect = Adapter à la fenêtre, { $wide }:{ $high }
+ui-tab-menu-pin = Épingler l'onglet
+ui-tab-menu-unpin = Désépingler l'onglet
+ui-tab-menu-save-as-profile = Enregistrer comme profil...
+ui-tab-menu-reveal-in-tree = Afficher dans l'arborescence
+ui-tab-pinned-badge = épinglé
+ui-selection-set-gateway = Définir la passerelle... ({ $count })
+ui-selection-gateway-direct = Connexion directe (sans passerelle)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Route de connexion modifiée sur { $count } serveur.
+   *[other] Route de connexion modifiée sur { $count } serveurs.
+}
+ui-status-bulk-gateway-unchanged = Aucune route n'a été modifiée.
 ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
 ui-shortcuts-session-menu = Menu de la session sélectionnée
 ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
@@ -1568,3 +1582,37 @@ ui-status-settings-imported = { $count ->
 ui-status-settings-import-nothing = Le fichier contient les paramètres que vous avez déjà. Rien à modifier.
 ui-status-settings-import-invalid = Ce fichier n'est pas un fichier de paramètres Heimdall, ou il provient d'une version que celle-ci ne sait pas lire. Rien n'a été modifié.
 ui-status-settings-import-failed = Le fichier de paramètres n'a pas pu être lu : { $reason }
+ui-settings-reachability = Moniteur de santé des sessions
+ui-settings-reachability-enabled = Activer les sondes de joignabilité en arrière-plan
+ui-settings-reachability-hint = Chaque serveur est appelé depuis cet ordinateur, quelques-uns à la fois, et sa pastille dans la liste montre s'il a répondu. Les serveurs derrière une gateway ne sont pas appelés. Rien n'est envoyé hormis la connexion.
+ui-settings-reachability-interval = Intervalle de vérification
+ui-settings-reachability-timeout = Délai d'expiration des sondes
+ui-settings-reachability-probes = Sondes simultanées max
+ui-settings-milliseconds-unit = ms
+ui-settings-reachability-interval-refused = L'intervalle de vérification doit être compris entre { $min } et { $max } secondes.
+ui-settings-reachability-timeout-refused = Le délai d'expiration des sondes doit être compris entre { $min } et { $max } ms.
+ui-settings-reachability-probes-refused = Le nombre de sondes simultanées doit être compris entre { $min } et { $max }.
+ui-tree-reachability-checking = Vérification...
+ui-tree-reachability-up = Joignable ({ $millis } ms)
+ui-tree-reachability-down = Injoignable : { $reason }
+ui-tree-reachability-unchecked = Inconnu : { $reason }
+ui-reachability-reason-timeout = Délai de connexion dépassé
+ui-reachability-reason-refused = Connexion refusée
+ui-reachability-reason-unreachable = Hôte injoignable
+ui-reachability-reason-dns = Résolution DNS échouée
+ui-reachability-reason-behind-gateway = Derrière une gateway SSH - non sondé
+ui-reachability-reason-no-port = Pas de port à sonder pour ce protocole
+ui-reachability-reason-no-host = Aucun hôte configuré
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } session déplacée dans { $folder }. Ctrl+Z l'annule.
+   *[other] { $count } sessions déplacées dans { $folder }. Ctrl+Z l'annule.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } session sortie de son dossier. Ctrl+Z l'annule.
+   *[other] { $count } sessions sorties de leurs dossiers. Ctrl+Z l'annule.
+}
+ui-status-dropped-folder = Dossier { $name } déplacé. Ctrl+Z l'annule.
+ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été déplacé.
+ui-status-move-undone = Déplacement annulé.
+ui-status-nothing-to-undo = Rien à annuler.
+ui-shortcuts-undo-move = Annuler le dernier déplacement fait en glissant dans l'arborescence

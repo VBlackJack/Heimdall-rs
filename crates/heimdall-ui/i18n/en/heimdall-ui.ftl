@@ -1335,6 +1335,7 @@ ui-editor-lines = { $count ->
     [one] { $count } line
    *[other] { $count } lines
 }
+ui-editor-plain-text = Plain text
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 with BOM
 ui-editor-encoding-utf16le = UTF-16 LE
@@ -1564,6 +1565,19 @@ ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-lock = Lock
 ui-shortcuts-help = Show this help
 ui-shortcuts-close = Close a dialog or a menu, exit fullscreen
+ui-resolution-match-aspect = Match window, { $wide }:{ $high }
+ui-tab-menu-pin = Pin tab
+ui-tab-menu-unpin = Unpin tab
+ui-tab-menu-save-as-profile = Save as profile...
+ui-tab-menu-reveal-in-tree = Reveal in tree
+ui-tab-pinned-badge = pinned
+ui-selection-set-gateway = Set gateway... ({ $count })
+ui-selection-gateway-direct = Direct connection (no gateway)
+ui-status-bulk-gateway-updated = { $count ->
+    [one] Connection route updated on { $count } server.
+   *[other] Connection route updated on { $count } servers.
+}
+ui-status-bulk-gateway-unchanged = No route changes were applied.
 ui-shortcuts-select-all-sessions = Select every session shown
 ui-shortcuts-session-menu = The selected session's menu
 ui-shortcuts-find-by-name = Go to the session whose name starts with what is typed
@@ -1643,3 +1657,37 @@ ui-status-settings-imported = { $count ->
 ui-status-settings-import-nothing = The file holds the settings you already have. Nothing to change.
 ui-status-settings-import-invalid = This file is not a Heimdall settings file, or it comes from a version this one cannot read. Nothing was changed.
 ui-status-settings-import-failed = The settings file could not be read: { $reason }
+ui-settings-reachability = Session Health Monitor
+ui-settings-reachability-enabled = Enable background reachability probes
+ui-settings-reachability-hint = Every server is dialled from this computer, a few at a time, and its dot in the list shows whether it answered. Servers behind a gateway are not dialled. Nothing is sent but the connection.
+ui-settings-reachability-interval = Check interval
+ui-settings-reachability-timeout = Probe timeout
+ui-settings-reachability-probes = Max concurrent probes
+ui-settings-milliseconds-unit = ms
+ui-settings-reachability-interval-refused = Check interval must be between { $min } and { $max } seconds.
+ui-settings-reachability-timeout-refused = Probe timeout must be between { $min } and { $max } ms.
+ui-settings-reachability-probes-refused = Max concurrent probes must be between { $min } and { $max }.
+ui-tree-reachability-checking = Checking...
+ui-tree-reachability-up = Reachable ({ $millis } ms)
+ui-tree-reachability-down = Unreachable: { $reason }
+ui-tree-reachability-unchecked = Unknown: { $reason }
+ui-reachability-reason-timeout = Connection timed out
+ui-reachability-reason-refused = Connection refused
+ui-reachability-reason-unreachable = Host unreachable
+ui-reachability-reason-dns = DNS resolution failed
+ui-reachability-reason-behind-gateway = Behind SSH gateway - not probed
+ui-reachability-reason-no-port = No probe port for this protocol
+ui-reachability-reason-no-host = No host configured
+ui-status-dropped-profiles = { $count ->
+    [one] Moved { $count } session to { $folder }. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions to { $folder }. Ctrl+Z undoes it.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] Moved { $count } session out of its folder. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions out of their folders. Ctrl+Z undoes it.
+}
+ui-status-dropped-folder = Moved the folder { $name }. Ctrl+Z undoes it.
+ui-status-drop-refused = A folder of that name is already there: nothing was moved.
+ui-status-move-undone = Move undone.
+ui-status-nothing-to-undo = Nothing to undo.
+ui-shortcuts-undo-move = Undo the last move made by dragging in the tree
