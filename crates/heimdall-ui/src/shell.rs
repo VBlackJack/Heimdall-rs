@@ -6444,6 +6444,7 @@ fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
     column![
         text(fl!("ui-dialog-save-macro-title")).size(HEADING_SIZE),
         text(fl!("ui-dialog-save-macro-prompt", count = count)),
+        text(fl!("ui-dialog-save-macro-warning")).size(SMALL_SIZE),
         text_input(&fl!("ui-dialog-name-placeholder"), value)
             .id(name_field_id())
             .on_input(|value| Message::App(AppMessage::Macro(
@@ -7311,6 +7312,11 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-reset-rdp-body"),
             fl!("ui-settings-rdp-reset-defaults"),
         ),
+        Dialog::ConfirmDeleteMacro(name) => (
+            fl!("ui-macro-editor-delete-macro"),
+            fl!("ui-dialog-delete-macro-body", name = server_text(name)),
+            fl!("ui-macros-delete"),
+        ),
         _ => (
             fl!("ui-dialog-broadcast-title"),
             fl!("ui-dialog-broadcast-body"),
@@ -7366,12 +7372,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmExit { .. }
         | Dialog::ConfirmSessionLogging
         | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteProfile { .. }
         | Dialog::ConfirmDelete { .. } => {
             let (title, body, action) = plain_question(dialog);
             question(title, body, action).into()
         }
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
+        Dialog::EditMacro(edited) => crate::macros_view::editor(edited),
         Dialog::NewTunnel(form) => {
             crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)
         }

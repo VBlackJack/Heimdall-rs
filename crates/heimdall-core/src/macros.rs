@@ -18,6 +18,7 @@
 //! each input, kept to be typed again into any session. An input can wait first for text
 //! the session shows, as the C# "expect", for a while, then stop or go on.
 
+use std::fmt::Write as _;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -200,6 +201,71 @@ impl Macros {
     }
 }
 
+/// Why an input as written cannot be read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InputError {
+    /// It ends with a lone backslash.
+    TrailingEscape,
+    /// A `\x` is not followed by two hexadecimal digits.
+    BadHex,
+    /// A backslash is followed by something it does not escape.
+    UnknownEscape(char),
+}
+
+/// `input` as the macro editor shows it, as the C# `MacroInputEscaper`: a backslash, a new
+/// line, a carriage return and a tab written `\\`, `\n`, `\r` and `\t`, any other control
+/// character `\xNN`.
+#[must_use]
+pub fn written_input(input: &str) -> String {
+    let mut written = String::with_capacity(input.len());
+    for c in input.chars() {
+        match c {
+            '\\' => written.push_str("\\\\"),
+            '\r' => written.push_str("\\r"),
+            '\n' => written.push_str("\\n"),
+            '\t' => written.push_str("\\t"),
+            c if c.is_control() => {
+                let _ = write!(written, "\\x{:02X}", u32::from(c));
+            }
+            c => written.push(c),
+        }
+    }
+    written
+}
+
+/// The input written as [`written_input`] writes it.
+///
+/// # Errors
+///
+/// [`InputError`] when a backslash starts nothing it escapes.
+pub fn read_input(written: &str) -> Result<String, InputError> {
+    let mut input = String::with_capacity(written.len());
+    let mut chars = written.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            input.push(c);
+            continue;
+        }
+        match chars.next() {
+            None => return Err(InputError::TrailingEscape),
+            Some('\\') => input.push('\\'),
+            Some('r') => input.push('\r'),
+            Some('n') => input.push('\n'),
+            Some('t') => input.push('\t'),
+            Some('x') => {
+                let digits: String = chars.by_ref().take(2).collect();
+                let value = (digits.len() == 2)
+                    .then(|| u8::from_str_radix(&digits, 16).ok())
+                    .flatten()
+                    .ok_or(InputError::BadHex)?;
+                input.push(char::from(value));
+            }
+            Some(other) => return Err(InputError::UnknownEscape(other)),
+        }
+    }
+    Ok(input)
+}
+
 /// The macros' file beside `profiles_file`.
 #[must_use]
 pub fn macros_path(profiles_file: &Path) -> PathBuf {
@@ -265,6 +331,19 @@ mod tests {
         );
         assert!(macros.remove("deploy"));
         assert!(!macros.remove("deploy"));
+    }
+
+    #[test]
+    fn an_input_is_written_with_its_control_characters_escaped_and_read_back() {
+        let input = "cd C:\\tmp\r\u{1b}[A\tx\n";
+        let written = written_input(input);
+        assert_eq!(written, r"cd C:\\tmp\r\x1B[A\tx\n");
+        assert_eq!(read_input(&written), Ok(input.to_owned()));
+        assert_eq!(read_input(r"ok\"), Err(InputError::TrailingEscape));
+        assert_eq!(read_input(r"\xZ1"), Err(InputError::BadHex));
+        assert_eq!(read_input(r"\x1"), Err(InputError::BadHex));
+        assert_eq!(read_input(r"\q"), Err(InputError::UnknownEscape('q')));
+        assert_eq!(read_input("plain"), Ok("plain".to_owned()));
     }
 
     #[test]

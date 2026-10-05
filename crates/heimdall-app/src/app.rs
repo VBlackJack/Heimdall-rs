@@ -89,6 +89,7 @@ mod health_tab;
 mod hostkeys_import;
 mod keep_alive;
 mod local_tab;
+mod macro_editor;
 mod macros;
 mod pin;
 mod post_connect;
@@ -133,6 +134,7 @@ pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use local_tab::LocalConfirmation;
+pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
@@ -846,6 +848,7 @@ impl fmt::Debug for Message {
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             // What a macro types is not logged.
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
+            Self::Macro(MacroMessage::Draft(_)) => f.write_str("Macro(Draft)"),
             Self::Macro(message) => write!(f, "Macro({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
         }
@@ -1916,6 +1919,10 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// A macro's name and inputs, edited, as the C# macro editor.
+    EditMacro(Box<macro_editor::MacroDraft>),
+    /// Forget the macro of this name, as the C# asks.
+    ConfirmDeleteMacro(String),
     /// The name of the macro just recorded, asked before it is kept.
     SaveMacro {
         /// The name typed so far.
@@ -3575,6 +3582,14 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::EditMacro(draft)) => {
+                self.save_edited_macro(*draft);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteMacro(name)) => {
+                self.delete_macro(&name);
+                Vec::new()
+            }
             Some(Dialog::SaveMacro { name, entries }) => {
                 self.save_macro(&name, entries);
                 Vec::new()

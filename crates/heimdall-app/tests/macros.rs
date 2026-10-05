@@ -21,8 +21,8 @@ use std::sync::{Arc, Mutex};
 
 use heimdall_app::macro_player::MacroOutcome;
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, InputSink, KeyInput, MacroMessage,
-    Message, Notice, TabId,
+    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, EntryField, EntryProblem,
+    InputSink, KeyInput, MacroDraft, MacroEdit, MacroMessage, MacroProblem, Message, Notice, TabId,
 };
 use heimdall_core::macros::{Macros, macros_path};
 use heimdall_core::profile::{ProfileId, SshProfile};
@@ -226,7 +226,142 @@ async fn a_macro_kept_is_typed_into_a_session_one_at_a_time() {
         None
     );
 
-    macros(&mut app, MacroMessage::Delete("Who".to_owned()));
+    // Deleted once agreed to.
+    macros(&mut app, MacroMessage::AskDelete("Who".to_owned()));
+    assert_eq!(
+        app.dialog,
+        Some(Dialog::ConfirmDeleteMacro("Who".to_owned()))
+    );
+    app.update(Message::DismissDialog);
+    assert_eq!(app.macros().len(), 1);
+    macros(&mut app, MacroMessage::AskDelete("Who".to_owned()));
+    app.update(Message::ConfirmDialog);
     assert!(app.macros().is_empty());
     assert_eq!(app.notice(), Some(&Notice::MacroDeleted("Who".to_owned())));
+}
+
+/// A macro of one input, `id` then Enter, kept as "who".
+fn recorded(app: &mut App, tab: TabId) {
+    macros(app, MacroMessage::Record(tab));
+    typed(app, tab, "id");
+    enter(app, tab);
+    macros(app, MacroMessage::StopRecording(tab));
+    macros(app, MacroMessage::NameEdited("who".to_owned()));
+    app.update(Message::ConfirmDialog);
+}
+
+fn draft(app: &mut App, edit: MacroEdit) {
+    macros(app, MacroMessage::Draft(edit));
+}
+
+fn edited(app: &App) -> &MacroDraft {
+    match &app.dialog {
+        Some(Dialog::EditMacro(draft)) => draft,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn a_macro_is_edited_its_inputs_written_with_their_escapes_and_checked_before_kept() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _, _) = connected(&mut app);
+    recorded(&mut app, tab);
+
+    macros(&mut app, MacroMessage::Edit("WHO".to_owned()));
+    let shown = edited(&app);
+    assert_eq!(shown.name, "who");
+    assert_eq!(
+        shown.entries[0].input, r"id\r",
+        "Enter written as the C# writes it"
+    );
+
+    // A step waiting for the prompt, moved first.
+    draft(&mut app, MacroEdit::Add { expects: true });
+    draft(
+        &mut app,
+        MacroEdit::Field {
+            entry: 1,
+            field: EntryField::Pattern("[".to_owned()),
+        },
+    );
+    draft(
+        &mut app,
+        MacroEdit::Field {
+            entry: 1,
+            field: EntryField::Regex(true),
+        },
+    );
+    draft(&mut app, MacroEdit::MoveUp(1));
+    draft(&mut app, MacroEdit::Name("whoami".to_owned()));
+    // A regular expression that does not compile: not kept, said.
+    app.update(Message::ConfirmDialog);
+    assert!(matches!(
+        edited(&app).problem,
+        Some(MacroProblem::Entry {
+            entry: 1,
+            problem: EntryProblem::Regex(_)
+        })
+    ));
+    draft(
+        &mut app,
+        MacroEdit::Field {
+            entry: 0,
+            field: EntryField::Pattern(r"\$ $".to_owned()),
+        },
+    );
+    draft(
+        &mut app,
+        MacroEdit::Field {
+            entry: 1,
+            field: EntryField::Input(r"whoami\r".to_owned()),
+        },
+    );
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.dialog, None);
+
+    // Renamed: in place of the old one.
+    let names: Vec<&str> = app.macros().iter().map(|kept| kept.name.as_str()).collect();
+    assert_eq!(names, ["whoami"]);
+    let kept = &app.macros()[0];
+    assert_eq!(kept.entries.len(), 2);
+    assert_eq!(kept.entries[0].input, "");
+    assert!(
+        kept.entries[0]
+            .expect
+            .as_ref()
+            .is_some_and(|expect| expect.regex)
+    );
+    assert_eq!(kept.entries[1].input, "whoami\r");
+}
+
+#[test]
+fn a_macro_without_a_name_or_with_a_wrong_input_is_not_kept() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _, _) = connected(&mut app);
+    recorded(&mut app, tab);
+    macros(&mut app, MacroMessage::Edit("who".to_owned()));
+    draft(&mut app, MacroEdit::Name("  ".to_owned()));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(edited(&app).problem, Some(MacroProblem::NameRequired));
+    draft(&mut app, MacroEdit::Name("who".to_owned()));
+    draft(
+        &mut app,
+        MacroEdit::Field {
+            entry: 0,
+            field: EntryField::Delay("soon".to_owned()),
+        },
+    );
+    app.update(Message::ConfirmDialog);
+    assert_eq!(
+        edited(&app).problem,
+        Some(MacroProblem::Entry {
+            entry: 1,
+            problem: EntryProblem::Delay
+        })
+    );
+    // Cancelled: as it was.
+    app.update(Message::DismissDialog);
+    assert_eq!(app.macros()[0].entries[0].input, "id\r");
 }

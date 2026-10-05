@@ -130,8 +130,12 @@ pub enum MacroMessage {
         /// How.
         outcome: MacroOutcome,
     },
-    /// Forget the macro of this name.
-    Delete(String),
+    /// Forget the macro of this name, asked first as the C# asks.
+    AskDelete(String),
+    /// Open the editor of the macro of this name.
+    Edit(String),
+    /// A change in the macro editor.
+    Draft(super::macro_editor::MacroEdit),
 }
 
 /// What a tab's Macros menu offers.
@@ -224,13 +228,28 @@ impl App {
                 }
                 Vec::new()
             }
-            MacroMessage::Delete(name) => {
-                let mut kept = self.macros.clone();
-                if kept.remove(&name) {
-                    self.keep_macros(kept, Notice::MacroDeleted(name));
+            MacroMessage::AskDelete(name) => {
+                if self.macros.get(&name).is_some() {
+                    self.dialog = Some(Dialog::ConfirmDeleteMacro(name));
                 }
                 Vec::new()
             }
+            MacroMessage::Edit(name) => {
+                self.edit_macro(&name);
+                Vec::new()
+            }
+            MacroMessage::Draft(edit) => {
+                self.macro_edit(edit);
+                Vec::new()
+            }
+        }
+    }
+
+    /// The macro `name` forgotten, as the user agreed to.
+    pub(super) fn delete_macro(&mut self, name: &str) {
+        let mut kept = self.macros.clone();
+        if kept.remove(name) {
+            self.keep_macros(kept, Notice::MacroDeleted(name.to_owned()));
         }
     }
 
@@ -254,7 +273,7 @@ impl App {
     }
 
     /// `kept` saved beside the profiles, then in use, `done` said; a failure said instead.
-    fn keep_macros(&mut self, kept: heimdall_core::macros::Macros, done: Notice) {
+    pub(super) fn keep_macros(&mut self, kept: heimdall_core::macros::Macros, done: Notice) {
         match kept.save(&macros_path(&self.config.profiles_file)) {
             Ok(()) => {
                 self.macros = kept;
