@@ -1493,3 +1493,19 @@ ui-shortcuts-select-all-sessions = Sélectionner toutes les sessions affichées
 ui-shortcuts-session-menu = Menu de la session sélectionnée
 ui-shortcuts-find-by-name = Aller à la session dont le nom commence par ce qui est tapé
 ui-shortcuts-toggle-sidebar = Afficher ou masquer le panneau latéral
+ui-files-batch-deleting = Suppression de { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Modification des permissions de { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Annuler
+ui-files-batch-stopping = Arrêt après celui-ci...
+ui-status-files-delete-failed = Impossible de supprimer "{ $name }" : { $reason }
+ui-status-files-permissions-failed = Impossible de modifier les permissions de "{ $name }" : { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] { $failed } élément sur { $total } n'a pas pu être supprimé. "{ $name }" : { $reason }
+   *[other] { $failed } éléments sur { $total } n'ont pas pu être supprimés. Le premier, "{ $name }" : { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] Permissions non modifiées pour { $failed } élément sur { $total }. "{ $name }" : { $reason }
+   *[other] Permissions non modifiées pour { $failed } éléments sur { $total }. Le premier, "{ $name }" : { $reason }
+}
+ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
+ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.

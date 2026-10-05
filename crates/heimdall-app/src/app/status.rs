@@ -165,6 +165,8 @@ pub enum Notice {
     FilesPasted,
     /// This many entries of a Files tab were copied, to be pasted.
     FilesCopied(usize),
+    /// A delete or a change of permissions of entries did not do them all.
+    FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.
     FilesDuplicated,
     /// A transcript was started, in this file.
