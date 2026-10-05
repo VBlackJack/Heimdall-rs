@@ -425,6 +425,8 @@ pub enum Message {
     FileDropped(std::path::PathBuf),
     /// An action in the Settings page's box of resolution presets.
     PresetsEdited(iced::widget::text_editor::Action),
+    /// Open a folder, or a web address, with the system, as the About page's buttons do.
+    OpenWithSystem(std::path::PathBuf),
     /// The external editor typed in the Settings page.
     EditorEdited(String),
     /// Apply the external editor typed.
@@ -523,6 +525,7 @@ impl fmt::Debug for Message {
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
+            Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
@@ -644,16 +647,19 @@ pub enum SettingsTab {
     Rdp,
     /// The PIN, the master password and the external credential provider.
     Security,
+    /// The version, the data and where it is kept, and the diagnostics log.
+    About,
 }
 
 impl SettingsTab {
     /// Every tab, in the C# order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Terminal,
         Self::Ssh,
         Self::Rdp,
         Self::Security,
+        Self::About,
     ];
 
     fn label(self) -> String {
@@ -663,6 +669,7 @@ impl SettingsTab {
             Self::Ssh => fl!("ui-settings-tab-ssh"),
             Self::Rdp => fl!("ui-settings-tab-rdp"),
             Self::Security => fl!("ui-settings-tab-security"),
+            Self::About => fl!("ui-settings-tab-about"),
         }
     }
 }
@@ -804,6 +811,7 @@ impl Shell {
     #[must_use]
     pub fn with_app(mut app: App) -> Self {
         app.set_transcript_lines(crate::transcript_lines::lines());
+        crate::logging::set_enabled(app.settings().diagnostics_log);
         let presets =
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
         Self {
@@ -1045,6 +1053,7 @@ impl Shell {
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
+            Message::OpenWithSystem(target) => return open_with_system(target),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -1057,6 +1066,8 @@ impl Shell {
         self.forget_finished();
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // The diagnostics log as the settings say now.
+        crate::logging::set_enabled(self.app.settings().diagnostics_log);
         // A reset, or presets that could not be saved, shown again in their box.
         self.presets
             .sync(&self.app.settings().rdp_resolution_presets);
@@ -2593,6 +2604,7 @@ impl Shell {
                 self.trusted_keys_settings(TrustedList::HostKeys),
             ],
             SettingsTab::Rdp => self.rdp_settings(),
+            SettingsTab::About => crate::about_view::view(&self.app),
             SettingsTab::Security => column![
                 pin_card,
                 vault_card,
@@ -4146,6 +4158,25 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
         files,
         names: crate::rdp_view::names(),
     }))
+}
+
+/// Opens `target`, a folder or a web address, with the system; one it cannot open is
+/// logged, nothing else depends on it.
+fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || heimdall_app::external_edit::open_folder(&target))
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|opened| opened)
+        },
+        |result| {
+            if let Err(error) = result {
+                log::warn!("could not open with the system: {error}");
+            }
+            Message::Tick
+        },
+    )
 }
 
 /// The tabs of the Settings page, the one shown marked, as the C# `TabControl`.

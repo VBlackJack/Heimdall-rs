@@ -2227,6 +2227,12 @@ impl fmt::Debug for App {
 }
 
 impl App {
+    /// The file the profiles are kept in; the settings and the trusted keys are beside it.
+    #[must_use]
+    pub fn profiles_file(&self) -> &std::path::Path {
+        &self.config.profiles_file
+    }
+
     /// The application with the profiles of `config.profiles_file`. A store that cannot
     /// be read starts empty and the problem is shown.
     #[must_use]
