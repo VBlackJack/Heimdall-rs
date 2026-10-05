@@ -1622,6 +1622,73 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
 ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-settings-tab-gateways = Gateways
+ui-gateways-title = SSH Gateways
+ui-gateways-description = Review which sessions use each SSH gateway and find unresolved gateway references.
+ui-gateways-summary = { $gateways ->
+    [one] { $gateways } gateway
+   *[other] { $gateways } gateways
+}, { $routed ->
+    [one] { $routed } routed session
+   *[other] { $routed } routed sessions
+}, { $unresolved ->
+    [one] { $unresolved } unresolved reference
+   *[other] { $unresolved } unresolved references
+}
+ui-gateways-configured = Configured gateways
+ui-gateways-empty = No SSH gateways are configured.
+ui-gateways-parent = Parent: { $name }
+ui-gateways-sessions = { $count ->
+    [one] { $count } session
+   *[other] { $count } sessions
+}
+ui-gateways-no-sessions = No sessions use this gateway.
+ui-gateways-edit = Edit
+ui-gateways-delete = Delete
+ui-gateways-unresolved = Unresolved references
+ui-gateways-missing-description = These sessions or child gateways reference a gateway id that is not configured.
+ui-gateways-missing-header = Missing gateway id: { $id }
+ui-gateways-child = Child gateway: { $name }
+ui-gateways-reassign-to = Gateway
+ui-gateways-reassign = Reassign
+ui-gateways-clear = Clear
+ui-dialog-delete-gateway-title = Delete gateway
+ui-dialog-delete-gateway-body = Delete gateway "{ $name }"?
+
+    References to clear:
+    - Servers: { $servers }
+    - Child gateways: { $gateways }
+ui-status-gateway-deleted = Gateway "{ $name }" deleted.
+ui-status-gateways-reassigned = { $count ->
+    [one] Reassigned { $count } session.
+   *[other] Reassigned { $count } sessions.
+}
+ui-status-gateways-cleared = { $count ->
+    [one] Cleared gateway reference on { $count } session.
+   *[other] Cleared gateway reference on { $count } sessions.
+}
+ui-status-gateways-unchanged = No sessions needed changes.
+ui-settings-reachability = Session Health Monitor
+ui-settings-reachability-enabled = Enable background reachability probes
+ui-settings-reachability-hint = Every server is dialled from this computer, a few at a time, and its dot in the list shows whether it answered. Servers behind a gateway are not dialled. Nothing is sent but the connection.
+ui-settings-reachability-interval = Check interval
+ui-settings-reachability-timeout = Probe timeout
+ui-settings-reachability-probes = Max concurrent probes
+ui-settings-milliseconds-unit = ms
+ui-settings-reachability-interval-refused = Check interval must be between { $min } and { $max } seconds.
+ui-settings-reachability-timeout-refused = Probe timeout must be between { $min } and { $max } ms.
+ui-settings-reachability-probes-refused = Max concurrent probes must be between { $min } and { $max }.
+ui-tree-reachability-checking = Checking...
+ui-tree-reachability-up = Reachable ({ $millis } ms)
+ui-tree-reachability-down = Unreachable: { $reason }
+ui-tree-reachability-unchecked = Unknown: { $reason }
+ui-reachability-reason-timeout = Connection timed out
+ui-reachability-reason-refused = Connection refused
+ui-reachability-reason-unreachable = Host unreachable
+ui-reachability-reason-dns = DNS resolution failed
+ui-reachability-reason-behind-gateway = Behind SSH gateway - not probed
+ui-reachability-reason-no-port = No probe port for this protocol
+ui-reachability-reason-no-host = No host configured
 ui-status-dropped-profiles = { $count ->
     [one] Moved { $count } session to { $folder }. Ctrl+Z undoes it.
    *[other] Moved { $count } sessions to { $folder }. Ctrl+Z undoes it.
@@ -1649,3 +1716,8 @@ ui-detail-saved-key = key file { $name }
 ui-detail-saved-passphrase = key passphrase
 ui-detail-hints = Enter or double-click connects, Ctrl+E edits, Delete deletes, F1 lists every shortcut.
 ui-detail-edit = Edit
+ui-nav-sessions = Sessions
+ui-nav-tunnels = Tunnels
+ui-nav-settings = Settings
+ui-nav-about = About
+ui-tunnels-page-title = Active Tunnels

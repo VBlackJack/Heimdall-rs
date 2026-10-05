@@ -14,18 +14,21 @@
  * limitations under the License.
  */
 
-//! The numbers of the Settings page's session card, as the C# SSH/SFTP Session tab: each
-//! typed, then applied with Enter; one out of its range stays typed, its rule said under it.
+//! The numbers of the Settings page, as the C# SSH/SFTP Session tab and its session health
+//! monitor have them: each typed, then applied with Enter; one out of its range stays typed,
+//! its rule said under it.
 
 use heimdall_app::SettingsMessage;
 use heimdall_core::settings::{
-    self, ANTI_IDLE_INTERVAL_MAX, ANTI_IDLE_INTERVAL_MIN, SSH_KEEP_ALIVE_INTERVAL_MAX,
+    self, ANTI_IDLE_INTERVAL_MAX, ANTI_IDLE_INTERVAL_MIN, REACHABILITY_INTERVAL_MAX,
+    REACHABILITY_INTERVAL_MIN, REACHABILITY_PROBES_MAX, REACHABILITY_PROBES_MIN,
+    REACHABILITY_TIMEOUT_MAX, REACHABILITY_TIMEOUT_MIN, SSH_KEEP_ALIVE_INTERVAL_MAX,
     SSH_KEEP_ALIVE_INTERVAL_MIN, SSH_TMOUT_RESET_INTERVAL_MAX, Settings,
 };
 
 use crate::i18n::fl;
 
-/// A number of the session card.
+/// A number of the Settings page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum SessionField {
     /// Seconds between two SSH keep-alives.
@@ -34,18 +37,37 @@ pub enum SessionField {
     TmoutReset,
     /// Seconds between two anti-idle keys of an RDP session.
     AntiIdle,
+    /// Seconds between two background checks of every server.
+    ReachabilityInterval,
+    /// Milliseconds a server has to answer one.
+    ReachabilityTimeout,
+    /// Servers it dials at once.
+    ReachabilityProbes,
 }
 
 impl SessionField {
-    /// Every field, in the card's order, the C# tab's.
-    pub const ALL: [Self; 3] = [Self::KeepAlive, Self::TmoutReset, Self::AntiIdle];
+    /// The session card's, in the C# tab's order.
+    pub const SESSION: [Self; 3] = [Self::KeepAlive, Self::TmoutReset, Self::AntiIdle];
 
-    /// Its place in [`SessionField::ALL`].
+    /// The session health monitor's, in the C# order.
+    pub const REACHABILITY: [Self; 3] = [
+        Self::ReachabilityInterval,
+        Self::ReachabilityTimeout,
+        Self::ReachabilityProbes,
+    ];
+
+    /// How many there are.
+    pub(crate) const COUNT: usize = 6;
+
+    /// Its place among them all.
     pub(crate) fn index(self) -> usize {
         match self {
             Self::KeepAlive => 0,
             Self::TmoutReset => 1,
             Self::AntiIdle => 2,
+            Self::ReachabilityInterval => 3,
+            Self::ReachabilityTimeout => 4,
+            Self::ReachabilityProbes => 5,
         }
     }
 
@@ -55,6 +77,20 @@ impl SessionField {
             Self::KeepAlive => fl!("ui-settings-ssh-keep-alive-interval"),
             Self::TmoutReset => fl!("ui-settings-ssh-tmout-reset-interval"),
             Self::AntiIdle => fl!("ui-settings-anti-idle-interval"),
+            Self::ReachabilityInterval => fl!("ui-settings-reachability-interval"),
+            Self::ReachabilityTimeout => fl!("ui-settings-reachability-timeout"),
+            Self::ReachabilityProbes => fl!("ui-settings-reachability-probes"),
+        }
+    }
+
+    /// Its unit, after the number; none for a count.
+    pub(crate) fn unit(self) -> Option<String> {
+        match self {
+            Self::KeepAlive | Self::TmoutReset | Self::AntiIdle | Self::ReachabilityInterval => {
+                Some(fl!("ui-settings-anti-idle-unit"))
+            }
+            Self::ReachabilityTimeout => Some(fl!("ui-settings-milliseconds-unit")),
+            Self::ReachabilityProbes => None,
         }
     }
 
@@ -62,7 +98,7 @@ impl SessionField {
     pub(crate) fn hint(self) -> Option<String> {
         match self {
             Self::KeepAlive => Some(fl!("ui-settings-ssh-keep-alive-hint")),
-            Self::TmoutReset | Self::AntiIdle => None,
+            _ => None,
         }
     }
 
@@ -72,24 +108,33 @@ impl SessionField {
             Self::KeepAlive => settings.ssh_keep_alive_interval,
             Self::TmoutReset => settings.ssh_tmout_reset_interval,
             Self::AntiIdle => settings.anti_idle_interval,
+            Self::ReachabilityInterval => settings.reachability.interval,
+            Self::ReachabilityTimeout => settings.reachability.timeout,
+            Self::ReachabilityProbes => settings.reachability.probes,
         }
     }
 
-    /// Whether `seconds` is in its range.
-    pub(crate) fn accepted(self, seconds: u32) -> bool {
+    /// Whether `value` is in its range.
+    pub(crate) fn accepted(self, value: u32) -> bool {
         match self {
-            Self::KeepAlive => settings::ssh_keep_alive_interval_accepted(seconds),
-            Self::TmoutReset => settings::ssh_tmout_reset_interval_accepted(seconds),
-            Self::AntiIdle => settings::anti_idle_interval_accepted(seconds),
+            Self::KeepAlive => settings::ssh_keep_alive_interval_accepted(value),
+            Self::TmoutReset => settings::ssh_tmout_reset_interval_accepted(value),
+            Self::AntiIdle => settings::anti_idle_interval_accepted(value),
+            Self::ReachabilityInterval => settings::reachability_interval_accepted(value),
+            Self::ReachabilityTimeout => settings::reachability_timeout_accepted(value),
+            Self::ReachabilityProbes => settings::reachability_probes_accepted(value),
         }
     }
 
-    /// The change that sets it to `seconds`.
-    pub(crate) fn applied(self, seconds: u32) -> SettingsMessage {
+    /// The change that sets it to `value`.
+    pub(crate) fn applied(self, value: u32) -> SettingsMessage {
         match self {
-            Self::KeepAlive => SettingsMessage::SshKeepAliveInterval(seconds),
-            Self::TmoutReset => SettingsMessage::SshTmoutResetInterval(seconds),
-            Self::AntiIdle => SettingsMessage::AntiIdleInterval(seconds),
+            Self::KeepAlive => SettingsMessage::SshKeepAliveInterval(value),
+            Self::TmoutReset => SettingsMessage::SshTmoutResetInterval(value),
+            Self::AntiIdle => SettingsMessage::AntiIdleInterval(value),
+            Self::ReachabilityInterval => SettingsMessage::ReachabilityInterval(value),
+            Self::ReachabilityTimeout => SettingsMessage::ReachabilityTimeout(value),
+            Self::ReachabilityProbes => SettingsMessage::ReachabilityProbes(value),
         }
     }
 
@@ -110,6 +155,21 @@ impl SessionField {
                 "ui-settings-anti-idle-refused",
                 min = ANTI_IDLE_INTERVAL_MIN,
                 max = ANTI_IDLE_INTERVAL_MAX
+            ),
+            Self::ReachabilityInterval => fl!(
+                "ui-settings-reachability-interval-refused",
+                min = REACHABILITY_INTERVAL_MIN,
+                max = REACHABILITY_INTERVAL_MAX
+            ),
+            Self::ReachabilityTimeout => fl!(
+                "ui-settings-reachability-timeout-refused",
+                min = REACHABILITY_TIMEOUT_MIN,
+                max = REACHABILITY_TIMEOUT_MAX
+            ),
+            Self::ReachabilityProbes => fl!(
+                "ui-settings-reachability-probes-refused",
+                min = REACHABILITY_PROBES_MIN,
+                max = REACHABILITY_PROBES_MAX
             ),
         }
     }

@@ -543,16 +543,61 @@ fn create_vault(core: &mut App) {
 }
 
 #[test]
+fn the_navigation_shows_the_sessions_the_tunnels_the_settings_and_about() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    snapshot(&shell, "navigation.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Heimdall",
+            "Sessions",
+            "Tunnels",
+            "Settings",
+            "About",
+            "Local shell",
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.click("Tunnels").expect("Tunnels");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::Navigate(Destination::Tunnels)))
+        );
+    }
+    // Every tunnel, the window's whole width: no tree beside them.
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Active Tunnels").expect("the Tunnels page");
+        ui.find("No active tunnels").expect("none open");
+        assert!(ui.find("Local shell").is_err(), "no tree");
+    }
+    let _ = shell.update(Message::Navigate(Destination::About));
+    simulator(&shell)
+        .find("Diagnostics")
+        .expect("the About page");
+    let _ = shell.update(Message::Navigate(Destination::Settings));
+    assert!(shell.settings_shown());
+    let _ = shell.update(Message::Navigate(Destination::Sessions));
+    simulator(&shell)
+        .find("Local shell")
+        .expect("the tree again");
+}
+
+#[test]
 fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));
     {
         let mut ui = simulator(&shell);
-        ui.click("Settings").expect("the sidebar's settings");
-        assert!(
-            ui.into_messages()
-                .any(|message| matches!(message, Message::ShowSettings))
-        );
+        ui.click("Settings").expect("the navigation's settings");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Navigate(heimdall_ui::shell::Destination::Settings)
+        )));
     }
     let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::SettingsTab(
@@ -2194,6 +2239,64 @@ fn the_session_numbers_are_typed_in_the_ssh_settings_each_within_its_csharp_rang
 }
 
 #[test]
+fn the_reachability_check_is_set_in_the_general_settings_within_the_csharp_ranges() {
+    use heimdall_ui::shell::SessionField;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::General,
+    ));
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Session Health Monitor",
+            "Enable background reachability probes",
+            "Check interval",
+            "Probe timeout",
+            "Max concurrent probes",
+        ] {
+            ui.find(label).expect(label);
+        }
+    }
+    let cases: [SessionCase<'_>; 3] = [
+        (
+            SessionField::ReachabilityInterval,
+            "Check interval must be between 15 and 3600 seconds.",
+            &[("14", true), ("3601", true), (" 120 ", false)],
+        ),
+        (
+            SessionField::ReachabilityTimeout,
+            "Probe timeout must be between 250 and 30000 ms.",
+            &[("249", true), ("30001", true), ("750", false)],
+        ),
+        (
+            SessionField::ReachabilityProbes,
+            "Max concurrent probes must be between 1 and 50.",
+            &[("0", true), ("51", true), ("5", false)],
+        ),
+    ];
+    for (field, refusal, typed) in cases {
+        for (typed, refused) in typed {
+            let _ = shell.update(Message::SessionFieldEdited(field, (*typed).to_owned()));
+            let _ = shell.update(Message::SessionFieldApply(field));
+            let mut ui = simulator(&shell);
+            assert_eq!(ui.find(refusal).is_ok(), *refused, "{field:?} {typed}");
+        }
+    }
+    let reachability = shell.app().settings().reachability;
+    assert_eq!(
+        (
+            reachability.interval,
+            reachability.timeout,
+            reachability.probes
+        ),
+        (120, 750, 5)
+    );
+}
+
+#[test]
 fn the_tab_shows_the_post_connect_count_and_a_click_on_it_stops_the_steps() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = connected_shell(dir.path());
@@ -3233,7 +3336,8 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     let _ = shell.update(Message::FilesKey(FilesKey::SelectAll));
     assert_eq!(shell.app().selected_profiles().len(), 3, "every one shown");
 
-    let title = |shell: &Shell| simulator(shell).find("Sessions").is_ok();
+    // The sidebar's own button: "Sessions" is the navigation's too.
+    let title = |shell: &Shell| simulator(shell).find("Local shell").is_ok();
     assert!(title(&shell));
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     assert!(!title(&shell), "hidden");
