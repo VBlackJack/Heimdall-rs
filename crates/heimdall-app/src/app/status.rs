@@ -198,6 +198,20 @@ pub enum Notice {
         /// How.
         outcome: crate::macro_player::MacroOutcome,
     },
+    /// The settings were exported.
+    SettingsExported,
+    /// The settings could not be exported, for this reason.
+    SettingsExportFailed(String),
+    /// This many settings were imported.
+    SettingsImported(usize),
+    /// The settings file holds the settings already in use.
+    SettingsImportNothing,
+    /// The file is not a settings file, or not one this version reads.
+    SettingsImportInvalid,
+    /// The settings file was written by a newer version.
+    SettingsImportNewer,
+    /// The settings file could not be read, for this reason.
+    SettingsImportFailed(String),
     /// The gateway of this name was deleted.
     GatewayDeleted(String),
     /// This many sessions of a missing gateway were sent through another.
