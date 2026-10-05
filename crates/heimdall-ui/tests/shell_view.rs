@@ -3147,6 +3147,36 @@ fn the_profile_form_saves_a_key_passphrase_and_then_says_it_is_saved() {
 }
 
 #[test]
+fn a_session_pressed_and_dragged_onto_a_folder_moves_into_it() {
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let group = |shell: &Shell| {
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("c"))
+            .and_then(|profile| profile.group)
+    };
+    // A click is no drag: nothing moves.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("c")));
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        "Production".to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group(&shell), None);
+
+    // Pressed, moved past the threshold, let go over the folder: in it.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("c")));
+    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        "Production".to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(group(&shell).as_deref(), Some("Production"));
+}
+
+#[test]
 fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     use heimdall_app::files::FilesKey;
     use heimdall_ui::shell::TreeShortcut;
