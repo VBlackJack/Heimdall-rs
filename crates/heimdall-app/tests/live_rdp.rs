@@ -46,6 +46,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
     let mut events = rdp_events(
         RdpRequest {
             profile: RdpProfile {
+                extras: heimdall_core::profile::RdpExtras::default(),
                 id: ProfileId::new("xrdp"),
                 name: "xrdp".to_owned(),
                 group: None,

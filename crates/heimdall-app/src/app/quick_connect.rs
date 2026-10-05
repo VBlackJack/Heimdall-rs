@@ -273,6 +273,7 @@ impl App {
             ),
             QuickResult::Rdp { host } => (
                 TabProfile::Rdp(RdpProfile {
+                    extras: heimdall_core::profile::RdpExtras::default(),
                     id: super::connect_as::transient_id(),
                     name: host.clone(),
                     group: None,

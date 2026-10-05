@@ -166,6 +166,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
         ConnectAs::Sftp => ssh(Purpose::Files),
         ConnectAs::Rdp => (
             TabProfile::Rdp(RdpProfile {
+                extras: heimdall_core::profile::RdpExtras::default(),
                 id: transient_id(),
                 name,
                 group: None,

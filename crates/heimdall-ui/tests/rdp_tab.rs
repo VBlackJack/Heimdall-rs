@@ -51,6 +51,7 @@ fn app_with(dir: &Path, options: heimdall_core::profile::RdpOptions) -> App {
 /// The RDP profile "dc", given `options`.
 fn profile(options: heimdall_core::profile::RdpOptions) -> RdpProfile {
     RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "Domain controller".to_owned(),
         group: Some("Windows".to_owned()),

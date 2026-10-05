@@ -3262,7 +3262,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
     }));
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);
-    ui.find("Imported without settings Heimdall-rs does not have yet:")
+    ui.find("Imported with settings the built-in client does not use yet:")
         .expect("said");
     ui.find("desk: printers, smart cards")
         .expect("the profile and what it came without");

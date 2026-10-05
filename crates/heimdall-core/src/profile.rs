@@ -281,6 +281,158 @@ pub struct RdpProfile {
     /// `RdpAutoReconnect`: on unless cleared.
     #[serde(default = "shared", skip_serializing_if = "is_shared")]
     pub auto_reconnect: bool,
+    /// What the profile asks that the built-in client does not do yet, kept.
+    #[serde(flatten)]
+    pub extras: RdpExtras,
+}
+
+/// What a C# RDP profile asks that the built-in client does not do yet: kept, so that an
+/// import loses nothing and the external client can be given it, and shown as not used.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per C# RDP option, each saved on its own"
+)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RdpExtras {
+    /// Opened in the Windows client rather than in a tab, as the C# `RdpMode` External.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub external: bool,
+    /// The Remote Desktop Gateway the server is reached through, as the C# `RdpGateway`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rd_gateway: Option<String>,
+    /// Share this computer's printers, as the C# `RdpRedirectPrinters`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub redirect_printers: bool,
+    /// Share this computer's serial ports, as the C# `RdpRedirectComPorts`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub redirect_com_ports: bool,
+    /// Share this computer's smart cards, as the C# `RdpRedirectSmartCards`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub redirect_smart_cards: bool,
+    /// Share this computer's webcam, as the C# `RdpRedirectWebcam`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub redirect_webcam: bool,
+    /// Share this computer's USB devices, as the C# `RdpRedirectUsb`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub redirect_usb: bool,
+    /// Record from this computer's microphone, as the C# `RdpAudioCapture`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub microphone: bool,
+    /// Span the desktop over several monitors, as the C# `RdpMultiMonitor`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub multi_monitor: bool,
+    /// The monitors spanned, by index, as the C# `RdpSelectedMonitorIndices`; none for all.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub monitors: Vec<u32>,
+    /// Refuse a server whose identity cannot be checked, as the C#
+    /// `RdpStrictServerAuthentication`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub strict_server_authentication: bool,
+    /// Never use UDP, as the C# `RdpDisableUdp`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub disable_udp: bool,
+    /// Keep bitmaps in a cache, as the C# `RdpBitmapCaching`: on unless turned off.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub bitmap_caching: bool,
+    /// Compress the traffic, as the C# `RdpCompression`: on unless turned off.
+    #[serde(default = "shared", skip_serializing_if = "is_shared")]
+    pub compression: bool,
+    /// Decode through the graphics adapter, as the C# `RdpHardwareAcceleration`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hardware_acceleration: bool,
+    /// Open in full screen, as the C# `RdpFullScreen`.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub full_screen: bool,
+}
+
+impl Default for RdpExtras {
+    fn default() -> Self {
+        Self {
+            external: false,
+            rd_gateway: None,
+            redirect_printers: false,
+            redirect_com_ports: false,
+            redirect_smart_cards: false,
+            redirect_webcam: false,
+            redirect_usb: false,
+            microphone: false,
+            multi_monitor: false,
+            monitors: Vec::new(),
+            strict_server_authentication: false,
+            disable_udp: false,
+            bitmap_caching: true,
+            compression: true,
+            hardware_acceleration: false,
+            full_screen: false,
+        }
+    }
+}
+
+/// A choice of [`RdpExtras`] the built-in client does not honour yet.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum RdpExtra {
+    /// Opened in the Windows client.
+    External,
+    /// Through a Remote Desktop Gateway.
+    RdGateway,
+    /// Printers shared.
+    Printers,
+    /// Serial ports shared.
+    ComPorts,
+    /// Smart cards shared.
+    SmartCards,
+    /// Webcam shared.
+    Webcam,
+    /// USB devices shared.
+    Usb,
+    /// Microphone recorded.
+    Microphone,
+    /// Several monitors spanned.
+    MultiMonitor,
+    /// Strict server authentication.
+    StrictServerAuthentication,
+    /// Opened in full screen.
+    FullScreen,
+}
+
+impl RdpExtras {
+    /// The choices turned on that the built-in client does not honour yet, in a fixed order.
+    #[must_use]
+    pub fn unused(&self) -> Vec<RdpExtra> {
+        [
+            (self.external, RdpExtra::External),
+            (
+                self.rd_gateway
+                    .as_deref()
+                    .is_some_and(|host| !host.trim().is_empty()),
+                RdpExtra::RdGateway,
+            ),
+            (self.redirect_printers, RdpExtra::Printers),
+            (self.redirect_com_ports, RdpExtra::ComPorts),
+            (self.redirect_smart_cards, RdpExtra::SmartCards),
+            (self.redirect_webcam, RdpExtra::Webcam),
+            (self.redirect_usb, RdpExtra::Usb),
+            (self.microphone, RdpExtra::Microphone),
+            (self.multi_monitor, RdpExtra::MultiMonitor),
+            (
+                self.strict_server_authentication,
+                RdpExtra::StrictServerAuthentication,
+            ),
+            (self.full_screen, RdpExtra::FullScreen),
+        ]
+        .into_iter()
+        .filter_map(|(on, extra)| on.then_some(extra))
+        .collect()
+    }
+
+    /// The Remote Desktop Gateway the server is reached through, when one is named.
+    #[must_use]
+    pub fn rd_gateway(&self) -> Option<&str> {
+        self.rd_gateway
+            .as_deref()
+            .map(str::trim)
+            .filter(|host| !host.is_empty())
+    }
 }
 
 impl RdpProfile {
@@ -387,6 +539,86 @@ pub struct RdpOptions {
     /// `TS_PERF_*` bits of the [`Experience`] boxes ticked, 0 when none is.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub performance_flags: u32,
+    /// The proportions the desktop is first given, as the C# `RdpAspectRatio`.
+    #[serde(default, skip_serializing_if = "Aspect::is_default")]
+    pub aspect: Aspect,
+}
+
+/// The proportions of a desktop that follows its tab, as the C# `AspectRatio` offers them
+/// under "Match window" and in the session dialog.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Aspect {
+    /// The tab's own: the whole of it.
+    #[default]
+    #[serde(rename = "stretch")]
+    Stretch,
+    /// 16:9.
+    #[serde(rename = "16:9")]
+    Wide,
+    /// 4:3.
+    #[serde(rename = "4:3")]
+    Standard,
+    /// 21:9.
+    #[serde(rename = "21:9")]
+    UltraWide,
+}
+
+impl Aspect {
+    /// Every choice, in the C# dialog's order.
+    pub const ALL: [Self; 4] = [Self::Stretch, Self::Wide, Self::Standard, Self::UltraWide];
+
+    /// The ratios, in the C# menu's order.
+    pub const RATIOS: [Self; 3] = [Self::Wide, Self::Standard, Self::UltraWide];
+
+    /// The choice a C# `RdpAspectRatio` stands for: its `Auto`, `Preserve` and `Dynamic`
+    /// all fill the tab, as `AspectRatioManager` draws them.
+    #[must_use]
+    pub fn csharp(name: &str) -> Self {
+        match name.trim() {
+            "16:9" => Self::Wide,
+            "4:3" => Self::Standard,
+            "21:9" => Self::UltraWide,
+            _ => Self::Stretch,
+        }
+    }
+
+    /// Its width and height, in parts; `None` for the tab's own.
+    #[must_use]
+    pub fn ratio(self) -> Option<(u32, u32)> {
+        match self {
+            Self::Stretch => None,
+            Self::Wide => Some((16, 9)),
+            Self::Standard => Some((4, 3)),
+            Self::UltraWide => Some((21, 9)),
+        }
+    }
+
+    /// The size asked of the server for a tab of `size`: the tab's own for Stretch; else the
+    /// largest of the ratio inside it, as the C# `AspectRatioManager` fits it, kept a size
+    /// an RDP server takes.
+    #[must_use]
+    pub fn fit(self, (width, height): (u16, u16)) -> (u16, u16) {
+        let Some((parts_wide, parts_high)) = self.ratio() else {
+            return (width, height);
+        };
+        let (width, height) = (u32::from(width), u32::from(height));
+        let (fitted_width, fitted_height) = if width * parts_high > height * parts_wide {
+            // Wider than the ratio: as high as the tab, bars at the sides.
+            (height * parts_wide / parts_high, height)
+        } else {
+            (width, width * parts_high / parts_wide)
+        };
+        let side = |value: u32| u16::try_from(value).unwrap_or(u16::MAX);
+        fixed_desktop(side(fitted_width), side(fitted_height))
+    }
+
+    #[expect(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "serde's skip_serializing_if passes a reference"
+    )]
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
 }
 
 /// Whether `value` is 0: a field written down only when set.
@@ -457,6 +689,7 @@ impl Default for RdpOptions {
             scale_fixed: true,
             dynamic_resolution: true,
             performance_flags: 0,
+            aspect: Aspect::Stretch,
         }
     }
 }
@@ -485,10 +718,18 @@ impl RdpOptions {
                 let (width, height) = fixed_desktop(self.fixed_width, self.fixed_height);
                 DesktopSizing::Fixed { width, height }
             }
-            Resolution::FitWindow | Resolution::SmartSizing if self.dynamic_resolution => {
+            Resolution::FitWindow
+            | Resolution::SmartSizing
+            | Resolution::Auto
+            | Resolution::MultiMonitor
+                if self.dynamic_resolution =>
+            {
                 DesktopSizing::FollowsTab
             }
-            Resolution::FitWindow | Resolution::SmartSizing => DesktopSizing::TabSizeOnce,
+            Resolution::FitWindow
+            | Resolution::SmartSizing
+            | Resolution::Auto
+            | Resolution::MultiMonitor => DesktopSizing::TabSizeOnce,
         }
     }
 
@@ -514,11 +755,20 @@ pub enum Resolution {
     Fixed,
     /// The tab's size, scaled: in an embedded C# session, the same as fitting the window.
     SmartSizing,
+    /// Every monitor, as the Windows client spans them; a tab has one: the tab's size.
+    MultiMonitor,
+    /// The C# default for a new profile: in a tab, the tab's size, scaled, as
+    /// `RdpDisplayResolver` gives a windowed session.
+    Auto,
 }
 
 impl Resolution {
-    /// Every mode, in the order the C# list shows them; multi-monitor has no sense in a tab.
-    pub const ALL: [Self; 3] = [Self::FitWindow, Self::Fixed, Self::SmartSizing];
+    /// Every mode a tab offers, in the order the C# list shows them; multi-monitor is the
+    /// Windows client's.
+    pub const ALL: [Self; 4] = [Self::FitWindow, Self::Fixed, Self::SmartSizing, Self::Auto];
+
+    /// The mode of a new profile, as the C# dialog's.
+    pub const NEW_PROFILE: Self = Self::Auto;
 
     #[expect(
         clippy::trivially_copy_pass_by_ref,

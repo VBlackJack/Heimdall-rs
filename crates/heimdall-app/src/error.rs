@@ -67,6 +67,9 @@ pub enum UiError {
     InvalidUsername,
     /// `WinRM` over HTTPS through an SSH gateway, which the C# Heimdall refuses.
     WinRmHttpsThroughGateway,
+    /// The server is reached through this Remote Desktop Gateway, which the built-in client
+    /// does not go through yet.
+    NeedsRdGateway(String),
     /// The `WinRM` server's name does not resolve, as the C# preflight says.
     WinRmHostUnresolved {
         /// The name.

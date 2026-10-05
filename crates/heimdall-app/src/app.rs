@@ -1745,7 +1745,10 @@ impl Tab {
             end_reason: None,
             retry: None,
             desktop_sizing: None,
-            desktop_aspect: crate::desktop::Aspect::Stretch,
+            desktop_aspect: match &profile {
+                TabProfile::Rdp(rdp) => rdp.options.aspect,
+                _ => crate::desktop::Aspect::Stretch,
+            },
             resize_fallback: None,
             last_input: std::sync::Mutex::new(None),
             early_output: None,

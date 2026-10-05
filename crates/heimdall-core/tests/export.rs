@@ -110,6 +110,7 @@ fn ssh() -> Vec<SshProfile> {
 fn rdp() -> Vec<RdpProfile> {
     vec![
         RdpProfile {
+            extras: heimdall_core::profile::RdpExtras::default(),
             id: ProfileId::new("dc"),
             name: "DC".to_owned(),
             group: Some("Windows".to_owned()),
@@ -122,6 +123,7 @@ fn rdp() -> Vec<RdpProfile> {
             redirect_clipboard: false,
             redirect_drives: true,
             options: RdpOptions {
+                aspect: heimdall_core::profile::Aspect::Stretch,
                 color_depth: ColorDepth::Bpp16,
                 audio: AudioPlayback::OnServer,
                 admin_session: true,
@@ -141,6 +143,21 @@ fn rdp() -> Vec<RdpProfile> {
             auto_reconnect: true,
         },
         RdpProfile {
+            // What the built-in client does not do yet: kept through the C# document too.
+            extras: heimdall_core::profile::RdpExtras {
+                external: true,
+                rd_gateway: Some("rdg.lab".to_owned()),
+                redirect_printers: true,
+                redirect_smart_cards: true,
+                microphone: true,
+                multi_monitor: true,
+                monitors: vec![0, 2],
+                strict_server_authentication: true,
+                disable_udp: true,
+                bitmap_caching: false,
+                full_screen: true,
+                ..heimdall_core::profile::RdpExtras::default()
+            },
             id: ProfileId::new("desk"),
             name: "Desk".to_owned(),
             group: None,
@@ -154,7 +171,8 @@ fn rdp() -> Vec<RdpProfile> {
             redirect_drives: false,
             options: RdpOptions {
                 audio: AudioPlayback::Local,
-                resolution: Resolution::SmartSizing,
+                resolution: Resolution::Auto,
+                aspect: heimdall_core::profile::Aspect::Standard,
                 ..RdpOptions::default()
             },
             vault_entry: None,
@@ -249,6 +267,9 @@ fn store(dir: &std::path::Path) -> ProfileStore {
     store.set_metadata(
         &first,
         heimdall_core::metadata::ProfileMetadata {
+            origin: Some(heimdall_core::metadata::ProfileOrigin::Putty),
+            sort_order: Some(3),
+            tunnels_expanded: Some(false),
             environment: Some(heimdall_core::metadata::Environment::Lab),
             tags: "edge web".to_owned(),
             mac_address: "00:11:22:33:44:55".parse().ok(),

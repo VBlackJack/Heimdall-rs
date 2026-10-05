@@ -24,6 +24,7 @@ use std::path::Path;
 
 use heimdall_core::import::openssh::{self, Assessment, Candidate, Status};
 use heimdall_core::import::putty::{self, RawSession};
+use heimdall_core::metadata::ProfileOrigin;
 use heimdall_core::profile::ProfileId;
 
 use super::{App, Dialog, Effect};
@@ -264,9 +265,17 @@ impl App {
             invalid: plan.invalid.len(),
             warnings,
         };
+        let origin = match preview.source {
+            SessionsSource::OpenSsh => ProfileOrigin::OpenSsh,
+            SessionsSource::Putty => ProfileOrigin::Putty,
+        };
         let saved = self.store.apply(|store| {
+            let ids: Vec<ProfileId> = plan.profiles.iter().map(|p| p.id.clone()).collect();
             store.merge_gateways(plan.gateways);
             store.merge(plan.profiles);
+            for id in &ids {
+                store.set_origin(id, origin);
+            }
         });
         self.dialog = Some(match saved {
             Ok(()) => Dialog::SessionsDone {

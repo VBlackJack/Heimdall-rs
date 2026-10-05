@@ -23,7 +23,9 @@ use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::{Dropped, SkipReason};
-use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
+use heimdall_core::profile::{
+    FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, RdpExtra, display_address,
+};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
 use heimdall_rdp::{Ending, Refusal as RdpRefusal};
@@ -117,6 +119,9 @@ pub fn error(error: &UiError) -> String {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::InvalidUsername => fl!("ui-error-invalid-username"),
         UiError::WinRmHttpsThroughGateway => fl!("ui-error-winrm-https-gateway"),
+        UiError::NeedsRdGateway(gateway) => {
+            fl!("ui-error-rd-gateway", gateway = server_text(gateway))
+        }
         UiError::WinRmHostUnresolved { host } => {
             fl!("ui-error-winrm-unresolved", host = host.as_str())
         }
@@ -290,6 +295,7 @@ pub fn auth_method(method: AuthMethod) -> String {
 pub fn dropped_setting(dropped: Dropped) -> String {
     match dropped {
         Dropped::ExternalClient => fl!("ui-import-dropped-external-client"),
+        Dropped::RdGateway => fl!("ui-import-dropped-rd-gateway"),
         Dropped::X11Forwarding => fl!("ui-import-dropped-x11"),
         Dropped::RdpPrinters => fl!("ui-import-dropped-rdp-printers"),
         Dropped::RdpComPorts => fl!("ui-import-dropped-rdp-com-ports"),
@@ -301,12 +307,31 @@ pub fn dropped_setting(dropped: Dropped) -> String {
     }
 }
 
+/// A choice of an RDP profile the built-in client does not honour yet, as the form lists it.
+#[must_use]
+pub fn rdp_extra(extra: RdpExtra) -> String {
+    match extra {
+        RdpExtra::External => fl!("ui-import-dropped-external-client"),
+        RdpExtra::RdGateway => fl!("ui-import-dropped-rd-gateway"),
+        RdpExtra::Printers => fl!("ui-import-dropped-rdp-printers"),
+        RdpExtra::ComPorts => fl!("ui-import-dropped-rdp-com-ports"),
+        RdpExtra::SmartCards => fl!("ui-import-dropped-rdp-smart-cards"),
+        RdpExtra::Webcam => fl!("ui-import-dropped-rdp-webcam"),
+        RdpExtra::Usb => fl!("ui-import-dropped-rdp-usb"),
+        RdpExtra::Microphone => fl!("ui-import-dropped-rdp-microphone"),
+        RdpExtra::MultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
+        RdpExtra::StrictServerAuthentication => {
+            fl!("ui-rdp-extra-strict-server-authentication")
+        }
+        RdpExtra::FullScreen => fl!("ui-rdp-extra-full-screen"),
+    }
+}
+
 /// Why an imported profile was left out.
 #[must_use]
 pub fn skip_reason(reason: &SkipReason) -> String {
     match reason {
         SkipReason::NotSsh(kind) => fl!("ui-import-skip-not-ssh", kind = server_text(kind)),
-        SkipReason::NeedsRdGateway => fl!("ui-import-skip-rd-gateway"),
         SkipReason::MissingHost => fl!("ui-import-skip-missing-host"),
         SkipReason::MissingId => fl!("ui-import-skip-missing-id"),
         SkipReason::InvalidPort(port) => {

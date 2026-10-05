@@ -66,6 +66,7 @@ fn app(dir: &Path) -> App {
         ssh("dev", "Dev", None),
     ]);
     store.merge_rdp([RdpProfile {
+        extras: heimdall_core::profile::RdpExtras::default(),
         id: ProfileId::new("dc"),
         name: "dc".to_owned(),
         group: Some("Windows".to_owned()),
