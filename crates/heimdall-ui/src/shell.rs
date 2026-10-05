@@ -266,12 +266,17 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             })
         }
         // Escape even when a widget took it: a field in a dialog takes the first Escape to
-        // lose its focus, and the dialog would need a second one.
+        // lose its focus, and the dialog would need a second one. Taken by none, it may
+        // leave full screen; a terminal's or a desktop's is its session's.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
             key: keyboard::Key::Named(Named::Escape),
             repeat: false,
             ..
-        }) => Some(Message::DialogKey { confirm: false }),
+        }) => Some(if status == event::Status::Ignored {
+            Message::EscapeUntaken
+        } else {
+            Message::DialogKey { confirm: false }
+        }),
         // F11 whatever took it: the window's full screen, as in the C# Heimdall. A desktop
         // keeps it from its server.
         iced::Event::Keyboard(keyboard::Event::KeyPressed {
@@ -363,6 +368,9 @@ pub enum Message {
         /// Enter rather than Escape.
         confirm: bool,
     },
+    /// Escape, uncaptured by any widget: leaves full screen when nothing else answers it,
+    /// else as [`Message::DialogKey`].
+    EscapeUntaken,
     /// A key for the Files tab shown, uncaptured by any widget.
     FilesKey(FilesKey),
     /// Tab: the next field of a dialog, or the other pane of a Files tab.
@@ -588,6 +596,7 @@ impl fmt::Debug for Message {
             Self::Decline(tab) => write!(f, "Decline({})", tab.value()),
             Self::Shortcut(shortcut) => write!(f, "Shortcut({shortcut:?})"),
             Self::DialogKey { confirm } => write!(f, "DialogKey({confirm})"),
+            Self::EscapeUntaken => f.write_str("EscapeUntaken"),
             Self::FilesKey(key) => write!(f, "FilesKey({key:?})"),
             Self::TabKey { backward } => write!(f, "TabKey({backward})"),
             Self::LockKey => f.write_str("LockKey"),
@@ -1214,6 +1223,15 @@ impl Shell {
         if self.gated() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
             return Task::none();
         }
+        // Escape no widget took leaves full screen when there is nothing else to close, as
+        // the C# Heimdall's.
+        if matches!(message, Message::EscapeUntaken) {
+            return self.update(if self.escape_leaves_fullscreen() {
+                Message::ToggleFullscreen
+            } else {
+                Message::DialogKey { confirm: false }
+            });
+        }
         let message = self.files_click(message);
         self.note_focus(&message);
         // A gesture in a Files pane, the path gone to among them, gives the breadcrumb back.
@@ -1262,6 +1280,8 @@ impl Shell {
             Message::Shortcut(WindowShortcut::Screenshot) => return self.screenshot(),
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
+            // Answered above, before the rest.
+            Message::EscapeUntaken => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
                 if self.app.dialog.is_some() {
@@ -1914,6 +1934,29 @@ impl Shell {
         self.menu = Some((menu, at));
     }
 
+    /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
+    /// bar or path bar for Escape to close first.
+    fn escape_leaves_fullscreen(&self) -> bool {
+        self.fullscreen
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && self.finder.is_none()
+            && self.menu.is_none()
+            && self.path_editing.is_none()
+    }
+
+    /// Whether the page shown is a remote desktop under its bar, whose bar has its own way
+    /// out of full screen.
+    fn desktop_bar_shown(&self) -> bool {
+        !self.settings_shown()
+            && self.app.active_tab().is_some_and(|tab| {
+                tab.prompts.is_empty()
+                    && matches!(tab.phase, Phase::Connected)
+                    && tab.files.is_none()
+                    && tab.desktop.is_some()
+            })
+    }
+
     /// Enter confirms the open dialog, Escape dismisses it. Without a dialog, Enter opens
     /// the selection of a Files tab, and the core ignores the rest.
     fn dialog_key(&mut self, confirm: bool) -> Vec<Effect> {
@@ -2486,6 +2529,25 @@ impl Shell {
         // Always a stack with the window first: a tree of one shape keeps the state of the
         // widgets under a dialog, such as how far a list is scrolled.
         let mut layers = stack![body];
+        // Full screen, a way out the mouse finds, as the C# floating button; a desktop's bar
+        // has its own.
+        if self.fullscreen && !locked && !self.desktop_bar_shown() {
+            layers = layers.push(
+                container(
+                    tooltip(
+                        button(text(fl!("ui-fullscreen-exit")).size(SMALL_SIZE))
+                            .style(button::secondary)
+                            .on_press(Message::ToggleFullscreen),
+                        text(fl!("ui-fullscreen-exit-tooltip")).size(SMALL_SIZE),
+                        tooltip::Position::Left,
+                    )
+                    .style(container::rounded_box),
+                )
+                .padding(PADDING)
+                .width(Length::Fill)
+                .align_x(iced::alignment::Horizontal::Right),
+            );
+        }
         if let Some(dialog) = &self.app.dialog {
             // Built for the window's height: a long form scrolls above its buttons.
             layers = layers.push(opaque(
@@ -8719,6 +8781,13 @@ mod tests {
                 Some(Message::DialogKey { confirm: false })
             ),
             "a field taking Escape does not keep its dialog open"
+        );
+        assert!(
+            matches!(
+                message(Named::Escape, Modifiers::empty(), event::Status::Ignored),
+                Some(Message::EscapeUntaken)
+            ),
+            "taken by none, Escape may leave full screen"
         );
     }
 
