@@ -61,6 +61,7 @@ pub mod winrm_driver;
 pub mod winrm_preflight;
 
 pub use app::SavedCredentials;
+pub use app::SettingsTransferMessage;
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
     ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome, FileKind, FilesMessage,
