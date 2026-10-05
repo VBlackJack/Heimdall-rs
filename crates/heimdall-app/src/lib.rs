@@ -62,24 +62,25 @@ pub mod winrm_preflight;
 
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
-    ConflictRow, ConnectAs, Dialog, Effect, ExportOutcome, FileKind, FilesMessage, FilterMessage,
-    FolderMessage, FolderNaming, GatewayBadge, GatewayEntry, GatewayOverview, GatewaysMessage,
-    HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary,
-    KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message, MissingGateway, NO_FOLDER, NameAction, Notice,
-    OpenedVault, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode, PointerInput,
+    ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome, FileKind, FilesMessage,
+    FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage,
+    HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary, KeyInput,
+    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
+    PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode, PointerInput,
     PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary, Prompt,
     ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult, RDP_EXTENSION, RDP_MAX_ATTEMPTS,
     RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice, RestoreDialog,
-    RestoreRow, Retry, RoutedSession, SelectionMessage, SessionState, SessionStatus,
-    SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage,
-    SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow,
-    TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY,
-    VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
+    RestoreRow, Retry, SelectionMessage, SessionState, SessionStatus, SessionsCounts,
+    SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage, SudoAction,
+    SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey,
+    TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
     master_password_problem, open_vault,
 };
+pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
 pub use desktop::{
-    DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
+    Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};

@@ -1335,6 +1335,7 @@ ui-editor-lines = { $count ->
     [one] { $count } line
    *[other] { $count } lines
 }
+ui-editor-plain-text = Plain text
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 with BOM
 ui-editor-encoding-utf16le = UTF-16 LE
@@ -1564,6 +1565,12 @@ ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-lock = Lock
 ui-shortcuts-help = Show this help
 ui-shortcuts-close = Close a dialog or a menu, exit fullscreen
+ui-resolution-match-aspect = Match window, { $wide }:{ $high }
+ui-tab-menu-pin = Pin tab
+ui-tab-menu-unpin = Unpin tab
+ui-tab-menu-save-as-profile = Save as profile...
+ui-tab-menu-reveal-in-tree = Reveal in tree
+ui-tab-pinned-badge = pinned
 ui-selection-set-gateway = Set gateway... ({ $count })
 ui-selection-gateway-direct = Direct connection (no gateway)
 ui-status-bulk-gateway-updated = { $count ->
@@ -1661,3 +1668,16 @@ ui-status-gateways-cleared = { $count ->
    *[other] Cleared gateway reference on { $count } sessions.
 }
 ui-status-gateways-unchanged = No sessions needed changes.
+ui-status-dropped-profiles = { $count ->
+    [one] Moved { $count } session to { $folder }. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions to { $folder }. Ctrl+Z undoes it.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] Moved { $count } session out of its folder. Ctrl+Z undoes it.
+   *[other] Moved { $count } sessions out of their folders. Ctrl+Z undoes it.
+}
+ui-status-dropped-folder = Moved the folder { $name }. Ctrl+Z undoes it.
+ui-status-drop-refused = A folder of that name is already there: nothing was moved.
+ui-status-move-undone = Move undone.
+ui-status-nothing-to-undo = Nothing to undo.
+ui-shortcuts-undo-move = Undo the last move made by dragging in the tree

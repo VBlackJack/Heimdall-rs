@@ -1260,6 +1260,7 @@ ui-editor-lines = { $count ->
     [one] { $count } ligne
    *[other] { $count } lignes
 }
+ui-editor-plain-text = Texte brut
 ui-editor-encoding-utf8 = UTF-8
 ui-editor-encoding-utf8-bom = UTF-8 avec BOM
 ui-editor-encoding-utf16le = UTF-16 LE
@@ -1489,6 +1490,12 @@ ui-shortcuts-screenshot = Capturer l'écran
 ui-shortcuts-lock = Verrouiller
 ui-shortcuts-help = Afficher cette aide
 ui-shortcuts-close = Fermer une boîte de dialogue ou un menu, quitter le plein écran
+ui-resolution-match-aspect = Adapter à la fenêtre, { $wide }:{ $high }
+ui-tab-menu-pin = Épingler l'onglet
+ui-tab-menu-unpin = Désépingler l'onglet
+ui-tab-menu-save-as-profile = Enregistrer comme profil...
+ui-tab-menu-reveal-in-tree = Afficher dans l'arborescence
+ui-tab-pinned-badge = épinglé
 ui-selection-set-gateway = Définir la passerelle... ({ $count })
 ui-selection-gateway-direct = Connexion directe (sans passerelle)
 ui-status-bulk-gateway-updated = { $count ->
@@ -1586,3 +1593,16 @@ ui-status-gateways-cleared = { $count ->
    *[other] Référence de passerelle vidée pour { $count } sessions.
 }
 ui-status-gateways-unchanged = Aucune session ne nécessitait de changement.
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } session déplacée dans { $folder }. Ctrl+Z l'annule.
+   *[other] { $count } sessions déplacées dans { $folder }. Ctrl+Z l'annule.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } session sortie de son dossier. Ctrl+Z l'annule.
+   *[other] { $count } sessions sorties de leurs dossiers. Ctrl+Z l'annule.
+}
+ui-status-dropped-folder = Dossier { $name } déplacé. Ctrl+Z l'annule.
+ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été déplacé.
+ui-status-move-undone = Déplacement annulé.
+ui-status-nothing-to-undo = Rien à annuler.
+ui-shortcuts-undo-move = Annuler le dernier déplacement fait en glissant dans l'arborescence
