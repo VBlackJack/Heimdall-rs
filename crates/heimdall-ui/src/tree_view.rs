@@ -648,6 +648,15 @@ pub fn menu_entries<'a>(
                 .push(entry(
                     fl!("ui-tree-export-sessions"),
                     Some(AppMessage::ExportSessions),
+                ))
+                .push(separator())
+                .push(entry(
+                    fl!("ui-tree-expand-all"),
+                    Some(AppMessage::FoldAll(false)),
+                ))
+                .push(entry(
+                    fl!("ui-tree-collapse-all"),
+                    Some(AppMessage::FoldAll(true)),
                 ));
         }
         _ => {}

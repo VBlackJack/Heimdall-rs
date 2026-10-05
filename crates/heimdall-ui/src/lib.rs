@@ -105,8 +105,9 @@ pub fn run() -> iced::Result {
         )
         .map_or(WINDOW_SIZE, |(width, height)| Size::new(width, height));
     let hidden = screens::opens_hidden(&left);
+    let maximized = left.maximized && !hidden;
     let application = iced::application(
-        move || (Shell::new(), screens::restore(left)),
+        move || (Shell::new(), screens::restore(&left)),
         Shell::update,
         Shell::view,
     )
@@ -116,7 +117,7 @@ pub fn run() -> iced::Result {
     .default_font(Font::with_name(UI_FONT_FAMILY))
     .window(window::Settings {
         size,
-        maximized: left.maximized && !hidden,
+        maximized,
         visible: !hidden,
         min_size: Some(MIN_WINDOW_SIZE),
         // Quitting with live sessions asks first; their sessions are then cancelled.

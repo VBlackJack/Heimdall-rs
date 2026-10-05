@@ -350,3 +350,36 @@ fn the_hosts_last_connected_to_come_first_and_their_protocol_with_them() {
         [QuickResult::Ssh { .. }, QuickResult::Rdp { .. }]
     ));
 }
+
+#[test]
+fn a_session_is_found_by_its_environment_and_its_tags_too() {
+    use heimdall_core::metadata::{Environment, ProfileMetadata};
+
+    let dir = tempfile::tempdir().expect("dir");
+    drop(app(dir.path()));
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.set_metadata(
+        &ProfileId::new("mail"),
+        ProfileMetadata {
+            environment: Some(Environment::Staging),
+            tags: "smtp relay".to_owned(),
+            ..ProfileMetadata::default()
+        },
+    );
+    store.save().expect("save");
+    let app = App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::memory(),
+    });
+    assert_eq!(names(&app.quick_results("relay")), ["Mail"], "by a tag");
+    assert_eq!(
+        names(&app.quick_results("staging")),
+        ["Mail"],
+        "by its environment, as the C# palette"
+    );
+}

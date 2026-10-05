@@ -974,6 +974,12 @@ impl Destination {
     }
 }
 
+/// The button hiding the sidebar: an arrow toward where it goes.
+const HIDE_SIDEBAR_GLYPH: &str = "\u{2190}";
+
+/// The button showing the sidebar again: an arrow toward where it comes from.
+const SHOW_SIDEBAR_GLYPH: &str = "\u{2192}";
+
 /// The application's name, at the head of the navigation: a name, not translated.
 const APP_NAME: &str = "Heimdall";
 
@@ -1032,6 +1038,10 @@ impl Shell {
             shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
         }
         shell.sidebar_hidden = left.sidebar_hidden;
+        // The tree as it was left.
+        shell
+            .app
+            .restore_tree(&left.folded, left.selected.as_deref().map(ProfileId::new));
         shell.window_memory = Some((memory, left));
         // The language chosen, once the settings are read; else the desktop's, set at start.
         if let Some(language) = shell.app.settings().language {
@@ -2463,11 +2473,17 @@ impl Shell {
         let leaving = heimdall_core::window_state::WindowState {
             sidebar_width: Some(self.sidebar_width),
             sidebar_hidden: self.sidebar_hidden,
+            folded: self.app.folded_folders(),
+            selected: self
+                .app
+                .selected_profile
+                .as_ref()
+                .map(|id| id.as_str().to_owned()),
             ..left
         };
         let (size, fullscreen) = (self.window_size, self.fullscreen);
         let keep = move |maximized: bool, place: Option<((i32, i32), f32)>| {
-            let mut state = leaving;
+            let mut state = leaving.clone();
             state.maximized = maximized;
             if let (false, Some(size)) = (maximized, size) {
                 state.width = Some(size.width);
@@ -2914,6 +2930,17 @@ impl Shell {
                 });
             bar = bar.push(column![entry, underline].width(Length::Shrink));
         }
+        // Quick Connect at the end, as the C# toolbar's button.
+        let bar = bar.push(iced::widget::space::horizontal()).push(
+            tooltip(
+                button(text(fl!("ui-nav-quick-connect")))
+                    .style(button::secondary)
+                    .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect)),
+                text(fl!("ui-nav-quick-connect-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
+        );
         container(bar)
             .padding([SPACING / 2.0, PADDING])
             .width(Length::Fill)
@@ -3009,6 +3036,14 @@ impl Shell {
             iced::widget::space::horizontal(),
             tool("+", fl!("ui-tree-add-tooltip"), TreeMenu::Add),
             tool("...", fl!("ui-tree-more-tooltip"), TreeMenu::More),
+            tooltip(
+                button(text(HIDE_SIDEBAR_GLYPH))
+                    .style(button::secondary)
+                    .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
+                text(fl!("ui-sidebar-hide-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box),
         ]
         .spacing(SPACING / 2.0)
         .align_y(iced::Alignment::Center);
@@ -4546,6 +4581,19 @@ impl Shell {
 
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
+        // The sidebar hidden, a way to show it again, as the C# button where it was.
+        if self.sidebar_hidden {
+            tabs = tabs.push(
+                tooltip(
+                    button(text(SHOW_SIDEBAR_GLYPH))
+                        .style(button::secondary)
+                        .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
+                    text(fl!("ui-sidebar-show-tooltip")).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
         for tab in &self.app.tabs {
             let active = self.app.active == Some(tab.id);
             let title = if tab.files.is_some() && tab.custom_title.is_none() {
