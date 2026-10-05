@@ -98,6 +98,7 @@ mod provider_connect;
 mod quick_connect;
 mod rdp_import;
 mod rdp_tab;
+mod reachability_monitor;
 mod reconnect;
 mod resolution;
 mod route_test;
@@ -284,6 +285,15 @@ pub enum Message {
     TmoutResetTick,
     /// Time to ask the servers whose health panel is shown.
     HealthTick,
+    /// Time for the background check of every server.
+    ReachabilityTick,
+    /// A server answered the background check, or did not.
+    ReachabilityChecked {
+        /// The profile.
+        id: ProfileId,
+        /// What was found.
+        verdict: crate::reachability::Verdict,
+    },
     /// A server said how it is.
     HealthRead {
         /// Tab.
@@ -714,6 +724,10 @@ impl fmt::Debug for Message {
             Self::DisplayScale(scale) => write!(f, "DisplayScale({scale})"),
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
             Self::HealthTick => f.write_str("HealthTick"),
+            Self::ReachabilityTick => f.write_str("ReachabilityTick"),
+            Self::ReachabilityChecked { id, verdict } => {
+                write!(f, "ReachabilityChecked({id}, {verdict:?})")
+            }
             Self::HealthRead { tab, .. } => write!(f, "HealthRead({})", tab.value()),
             Self::StopAntiIdle(tab) => write!(f, "StopAntiIdle({})", tab.value()),
             Self::SendClipboard(tab) => write!(f, "SendClipboard({})", tab.value()),
@@ -935,6 +949,16 @@ pub enum Effect {
     /// Send the Wake-on-LAN magic packet for this card, and say how it went as
     /// [`ProfileMenuMessage::WakeOnLanSent`].
     WakeOnLan(heimdall_core::metadata::MacAddress),
+    /// Dial these servers, `at_once` at a time, each with `timeout` to answer, and say each
+    /// as [`Message::ReachabilityChecked`].
+    CheckReachability {
+        /// The servers.
+        probes: Vec<crate::reachability::Probe>,
+        /// The time each has.
+        timeout: std::time::Duration,
+        /// How many are dialled at once.
+        at_once: usize,
+    },
     /// Test whether a profile's address answers, from the tree, and say it as
     /// [`ProfileMenuMessage::Tested`].
     TestReachability {
@@ -1309,6 +1333,9 @@ impl fmt::Debug for Effect {
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::WakeOnLan(_) => f.write_str("WakeOnLan"),
+            Self::CheckReachability { probes, .. } => {
+                write!(f, "CheckReachability({})", probes.len())
+            }
             Self::SurveyAgents(_) => f.write_str("SurveyAgents"),
             Self::ConnectWinRm { tab, attempt, .. } => {
                 write!(f, "ConnectWinRm({}, {})", tab.value(), attempt.value())
@@ -2238,6 +2265,8 @@ pub struct App {
     /// The hosts connected to, newest first, with the protocol, as the C#
     /// `RecentConnectionTracker` keeps them: for this run only.
     recent_hosts: Vec<(String, ProfileKind)>,
+    /// The background check of every server.
+    monitor: reachability_monitor::Monitor,
     /// Tunnels being opened or open, with what stops them.
     tunnel_runs: Vec<tunnels::TunnelRun>,
     /// The identifier of the next tunnel.
@@ -2352,6 +2381,7 @@ impl App {
             last_move: None,
             pending_restore,
             recent_hosts: Vec::new(),
+            monitor: reachability_monitor::Monitor::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
@@ -2475,6 +2505,11 @@ impl App {
             | Message::StopAntiIdle(_)) => self.desktop_message(message),
             message @ (Message::HealthTick | Message::HealthRead { .. }) => {
                 self.health_message(message)
+            }
+            Message::ReachabilityTick => self.reachability_round(),
+            Message::ReachabilityChecked { id, verdict } => {
+                self.reachability_checked(&id, verdict);
+                Vec::new()
             }
             Message::Files(message) => self.files(message),
             Message::Tunnel(message) => self.tunnel_message(message),

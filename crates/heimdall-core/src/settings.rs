@@ -228,6 +228,82 @@ pub struct Settings {
     pub collapse_tunnels_panel: bool,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
     pub diagnostics_log: bool,
+    /// Whether, and how often, every server is checked for an answer in the background.
+    pub reachability: Reachability,
+}
+
+/// The background check of every server's address, as the C# session health monitor.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Reachability {
+    /// It runs, as the C# `SessionHealthMonitorEnabled`: on.
+    pub enabled: bool,
+    /// Seconds between two checks, within [`REACHABILITY_INTERVAL_MIN`] and
+    /// [`REACHABILITY_INTERVAL_MAX`].
+    pub interval: u32,
+    /// Milliseconds a server has to answer, within [`REACHABILITY_TIMEOUT_MIN`] and
+    /// [`REACHABILITY_TIMEOUT_MAX`].
+    pub timeout: u32,
+    /// Servers checked at once, within [`REACHABILITY_PROBES_MIN`] and
+    /// [`REACHABILITY_PROBES_MAX`].
+    pub probes: u32,
+}
+
+impl Default for Reachability {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            interval: REACHABILITY_INTERVAL_DEFAULT,
+            timeout: REACHABILITY_TIMEOUT_DEFAULT,
+            probes: REACHABILITY_PROBES_DEFAULT,
+        }
+    }
+}
+
+/// Seconds between two reachability checks by default, as the C#
+/// `SessionHealthCheckIntervalSeconds`.
+pub const REACHABILITY_INTERVAL_DEFAULT: u32 = 60;
+
+/// Shortest reachability interval accepted, in seconds, as the C# setting's range.
+pub const REACHABILITY_INTERVAL_MIN: u32 = 15;
+
+/// Longest reachability interval accepted, in seconds, as the C# setting's range.
+pub const REACHABILITY_INTERVAL_MAX: u32 = 3600;
+
+/// Whether `seconds` is a reachability interval the settings accept.
+#[must_use]
+pub fn reachability_interval_accepted(seconds: u32) -> bool {
+    (REACHABILITY_INTERVAL_MIN..=REACHABILITY_INTERVAL_MAX).contains(&seconds)
+}
+
+/// Milliseconds a server has to answer a reachability check by default, as the C#
+/// `SessionHealthProbeTimeoutMs`.
+pub const REACHABILITY_TIMEOUT_DEFAULT: u32 = 2000;
+
+/// Shortest reachability timeout accepted, in milliseconds, as the C# setting's range.
+pub const REACHABILITY_TIMEOUT_MIN: u32 = 250;
+
+/// Longest reachability timeout accepted, in milliseconds, as the C# setting's range.
+pub const REACHABILITY_TIMEOUT_MAX: u32 = 30_000;
+
+/// Whether `millis` is a reachability timeout the settings accept.
+#[must_use]
+pub fn reachability_timeout_accepted(millis: u32) -> bool {
+    (REACHABILITY_TIMEOUT_MIN..=REACHABILITY_TIMEOUT_MAX).contains(&millis)
+}
+
+/// Servers checked at once by default, as the C# `SessionHealthMaxConcurrent`.
+pub const REACHABILITY_PROBES_DEFAULT: u32 = 10;
+
+/// Fewest servers checked at once accepted, as the C# setting's range.
+pub const REACHABILITY_PROBES_MIN: u32 = 1;
+
+/// Most servers checked at once accepted, as the C# setting's range.
+pub const REACHABILITY_PROBES_MAX: u32 = 50;
+
+/// Whether `count` is a number of servers checked at once the settings accept.
+#[must_use]
+pub fn reachability_probes_accepted(count: u32) -> bool {
+    (REACHABILITY_PROBES_MIN..=REACHABILITY_PROBES_MAX).contains(&count)
 }
 
 /// A language the application is written in, as the C# language list offers them.
@@ -382,6 +458,7 @@ impl Default for Settings {
             ssh_agent_preference: AgentPreference::default(),
             collapse_tunnels_panel: true,
             diagnostics_log: true,
+            reachability: Reachability::default(),
         }
     }
 }
@@ -409,6 +486,23 @@ struct SettingsFile {
     rdp_session: RdpSessionSection,
     #[serde(default)]
     files: FilesSection,
+    #[serde(default)]
+    reachability: ReachabilitySection,
+}
+
+/// Absent values are the C# defaults.
+#[derive(Serialize, Deserialize, Default)]
+struct ReachabilitySection {
+    #[serde(default)]
+    enabled: Option<bool>,
+    /// Seconds.
+    #[serde(default)]
+    interval: Option<u32>,
+    /// Milliseconds.
+    #[serde(default)]
+    timeout: Option<u32>,
+    #[serde(default)]
+    probes: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -725,6 +819,24 @@ impl Settings {
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
+            reachability: Reachability {
+                enabled: file.reachability.enabled.unwrap_or(true),
+                interval: within(
+                    file.reachability.interval,
+                    reachability_interval_accepted,
+                    REACHABILITY_INTERVAL_DEFAULT,
+                ),
+                timeout: within(
+                    file.reachability.timeout,
+                    reachability_timeout_accepted,
+                    REACHABILITY_TIMEOUT_DEFAULT,
+                ),
+                probes: within(
+                    file.reachability.probes,
+                    reachability_probes_accepted,
+                    REACHABILITY_PROBES_DEFAULT,
+                ),
+            },
             // A language not offered is not guessed: the desktop's is followed.
             language: file
                 .general
@@ -804,6 +916,12 @@ impl Settings {
             },
             files: FilesSection {
                 external_editor: self.external_editor.clone(),
+            },
+            reachability: ReachabilitySection {
+                enabled: Some(self.reachability.enabled),
+                interval: Some(self.reachability.interval),
+                timeout: Some(self.reachability.timeout),
+                probes: Some(self.reachability.probes),
             },
         })?;
         write_atomic(path, &text)
