@@ -857,6 +857,130 @@ pub struct FilesPane {
     /// The server's file open in the integrated editor, shown in place of the lists: one
     /// at a time, as the C#.
     pub editor: Option<crate::integrated_edit::IntegratedEdit>,
+    /// The delete or the change of permissions running over several entries, one at a
+    /// time: one per tab.
+    pub batch: Option<Batch>,
+}
+
+/// What a run of entries goes through, one after another.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BatchKind {
+    /// Each is deleted, a folder with all it holds.
+    Delete,
+    /// Each is given the same permission bits.
+    Permissions,
+}
+
+/// A delete or a change of permissions of entries of one pane, carried out one entry at a
+/// time, as the C# deletes them: what it is at, what failed, and whether it was stopped.
+#[derive(Debug)]
+pub struct Batch {
+    /// The pane.
+    pub side: Side,
+    /// What is done to each.
+    pub kind: BatchKind,
+    /// How many entries in all.
+    pub total: usize,
+    /// How many are done, those that failed included.
+    pub done: usize,
+    /// The entry being worked on, as the pane names it.
+    pub current: String,
+    /// Those that failed, with why, in order.
+    pub failures: Vec<(String, FilesError)>,
+    /// Stop asked: the entry being worked on finishes, no other starts.
+    pub stopping: bool,
+    /// The entries left, in order, each with its name.
+    left: VecDeque<(String, FileOperation)>,
+}
+
+impl Batch {
+    /// A run of `kind` over `entries`, the first one being worked on, handed back to start;
+    /// `None` for none.
+    #[must_use]
+    pub fn start(
+        side: Side,
+        kind: BatchKind,
+        entries: Vec<(String, FileOperation)>,
+    ) -> Option<(Self, FileOperation)> {
+        let total = entries.len();
+        let mut left: VecDeque<(String, FileOperation)> = entries.into();
+        let (current, first) = left.pop_front()?;
+        Some((
+            Self {
+                side,
+                kind,
+                total,
+                done: 0,
+                current,
+                failures: Vec::new(),
+                stopping: false,
+                left,
+            },
+            first,
+        ))
+    }
+
+    /// The entry being worked on ended with `result`: the next one to start, unless none
+    /// is left or a stop was asked.
+    pub fn step(&mut self, result: Result<(), FilesError>) -> Option<FileOperation> {
+        self.done += 1;
+        if let Err(error) = result {
+            self.failures.push((self.current.clone(), error));
+        }
+        if self.stopping {
+            return None;
+        }
+        let (name, next) = self.left.pop_front()?;
+        self.current = name;
+        Some(next)
+    }
+
+    /// What the run comes to, once over: nothing to say when every entry was done.
+    #[must_use]
+    pub fn outcome(&self) -> Option<BatchOutcome> {
+        if self.done < self.total {
+            return Some(BatchOutcome::Stopped {
+                kind: self.kind,
+                done: self.done - self.failures.len(),
+                total: self.total,
+            });
+        }
+        let (name, reason) = self.failures.first()?;
+        Some(BatchOutcome::Failed {
+            kind: self.kind,
+            failed: self.failures.len(),
+            total: self.total,
+            first: name.clone(),
+            reason: reason.clone(),
+        })
+    }
+}
+
+/// What a delete or a change of permissions of several entries came to, when not all went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum BatchOutcome {
+    /// Some entries could not be done: the first one, and why, named.
+    Failed {
+        /// What was done to them.
+        kind: BatchKind,
+        /// How many failed.
+        failed: usize,
+        /// How many there were.
+        total: usize,
+        /// The first that failed, as the pane names it.
+        first: String,
+        /// Why it failed.
+        reason: FilesError,
+    },
+    /// The user stopped it.
+    Stopped {
+        /// What was done to them.
+        kind: BatchKind,
+        /// How many were done.
+        done: usize,
+        /// How many there were.
+        total: usize,
+    },
 }
 
 impl FilesPane {
@@ -877,6 +1001,7 @@ impl FilesPane {
             checking_edits: false,
             sudo_password: None,
             editor: None,
+            batch: None,
         }
     }
 

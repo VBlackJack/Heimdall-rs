@@ -425,6 +425,8 @@ pub enum Message {
     FileDropped(std::path::PathBuf),
     /// An action in the Settings page's box of resolution presets.
     PresetsEdited(iced::widget::text_editor::Action),
+    /// Open a folder, or a web address, with the system, as the About page's buttons do.
+    OpenWithSystem(std::path::PathBuf),
     /// The external editor typed in the Settings page.
     EditorEdited(String),
     /// Apply the external editor typed.
@@ -523,6 +525,7 @@ impl fmt::Debug for Message {
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
+            Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
@@ -644,16 +647,19 @@ pub enum SettingsTab {
     Rdp,
     /// The PIN, the master password and the external credential provider.
     Security,
+    /// The version, the data and where it is kept, and the diagnostics log.
+    About,
 }
 
 impl SettingsTab {
     /// Every tab, in the C# order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Terminal,
         Self::Ssh,
         Self::Rdp,
         Self::Security,
+        Self::About,
     ];
 
     fn label(self) -> String {
@@ -663,6 +669,7 @@ impl SettingsTab {
             Self::Ssh => fl!("ui-settings-tab-ssh"),
             Self::Rdp => fl!("ui-settings-tab-rdp"),
             Self::Security => fl!("ui-settings-tab-security"),
+            Self::About => fl!("ui-settings-tab-about"),
         }
     }
 }
@@ -804,6 +811,7 @@ impl Shell {
     #[must_use]
     pub fn with_app(mut app: App) -> Self {
         app.set_transcript_lines(crate::transcript_lines::lines());
+        crate::logging::set_enabled(app.settings().diagnostics_log);
         let presets =
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
         Self {
@@ -1045,6 +1053,7 @@ impl Shell {
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
+            Message::OpenWithSystem(target) => return open_with_system(target),
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -1062,6 +1071,8 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // The diagnostics log as the settings say now.
+        crate::logging::set_enabled(self.app.settings().diagnostics_log);
         // A reset, or presets that could not be saved, shown again in their box.
         self.presets
             .sync(&self.app.settings().rdp_resolution_presets);
@@ -1884,6 +1895,7 @@ impl Shell {
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
             effect @ (Effect::TestReachability { .. }
+            | Effect::WakeOnLan(_)
             | Effect::TestAddress { .. }
             | Effect::SurveyAgents(_)) => probe_task(effect),
             Effect::OpenTunnel { id, request } => {
@@ -1908,6 +1920,7 @@ impl Shell {
             | Effect::PlanTransfer { .. }
             | Effect::Transfer { .. }
             | Effect::FileOperation { .. }
+            | Effect::FileBatchStep { .. }
             | Effect::MoveRemote { .. }
             | Effect::CopyRemote { .. }
             | Effect::StartEdit { .. }
@@ -2598,6 +2611,7 @@ impl Shell {
                 self.trusted_keys_settings(TrustedList::HostKeys),
             ],
             SettingsTab::Rdp => self.rdp_settings(),
+            SettingsTab::About => crate::about_view::view(&self.app),
             SettingsTab::Security => column![
                 pin_card,
                 vault_card,
@@ -4153,6 +4167,25 @@ fn rdp_read(files: Vec<(std::path::PathBuf, Result<String, String>)>) -> Message
     }))
 }
 
+/// Opens `target`, a folder or a web address, with the system; one it cannot open is
+/// logged, nothing else depends on it.
+fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(move || heimdall_app::external_edit::open_folder(&target))
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|opened| opened)
+        },
+        |result| {
+            if let Err(error) = result {
+                log::warn!("could not open with the system: {error}");
+            }
+            Message::Tick
+        },
+    )
+}
+
 /// The tabs of the Settings page, the one shown marked, as the C# `TabControl`.
 fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
     SettingsTab::ALL
@@ -4885,6 +4918,14 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-local-working-directory"),
             fl!("ui-profile-optional"),
         ),
+        ProfileField::Tags => (
+            fl!("ui-profile-field-tags"),
+            fl!("ui-profile-tags-placeholder"),
+        ),
+        ProfileField::MacAddress => (
+            fl!("ui-profile-field-mac-address"),
+            fl!("ui-profile-mac-address-placeholder"),
+        ),
     };
     column![
         text(label).size(SMALL_SIZE),
@@ -5024,6 +5065,11 @@ fn probe_task(effect: Effect) -> Task<Message> {
             async move { heimdall_ssh::survey_agents(&source).await },
             |found| Message::App(AppMessage::AgentsSurveyed(found)),
         ),
+        Effect::WakeOnLan(mac) => Task::perform(heimdall_app::wake_on_lan::send(mac), |sent| {
+            Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::WakeOnLanSent(
+                sent.map_err(|error| error.to_string()),
+            )))
+        }),
         Effect::TestReachability { host, port } => Task::perform(
             heimdall_app::reachability::test_from_tree(host.clone(), port),
             move |result| {
@@ -5703,6 +5749,7 @@ fn profile_form<'a>(
         .push(form_field(draft, ProfileField::Group))
         // As the C#: the separator is taught by the example and by a sentence that stays.
         .push(text(fl!("ui-profile-folder-hint")).size(SMALL_SIZE));
+    form = form.push(metadata_fields(draft));
     // With the C# metadata: the password manager's entry, for the protocols it serves.
     if draft.shows(ProfileField::VaultEntry) {
         form = form
@@ -6429,6 +6476,14 @@ fn files_task(effect: Effect) -> Task<Message> {
                 }))
             })
         }
+        Effect::FileBatchStep { tab, operation, .. } => {
+            Task::perform(file_operation(*operation), move |result| {
+                Message::App(AppMessage::Files(FilesMessage::BatchStepDone {
+                    tab,
+                    result,
+                }))
+            })
+        }
         Effect::FileOperation {
             tab,
             side,
@@ -6531,6 +6586,44 @@ impl fmt::Display for DesktopMode {
 /// A key combination in the desktop's menu, by the C# Heimdall's name for it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
+
+/// An environment in the form's list, as the C# names it; "(None)" for none.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EnvironmentChoice(Option<heimdall_core::metadata::Environment>);
+
+impl fmt::Display for EnvironmentChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&texts::environment_name(self.0))
+    }
+}
+
+/// The C# Metadata section's fields: the environment, the tags and the MAC address
+/// Wake-on-LAN wakes the server with.
+fn metadata_fields(draft: &ProfileDraft) -> Element<'_, Message> {
+    let choices: Vec<EnvironmentChoice> = std::iter::once(None)
+        .chain(heimdall_core::metadata::Environment::ALL.map(Some))
+        .map(EnvironmentChoice)
+        .collect();
+    column![
+        row![
+            text(fl!("ui-profile-field-environment")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                choices,
+                Some(EnvironmentChoice(draft.environment)),
+                |EnvironmentChoice(environment)| Message::App(AppMessage::ProfileChoice(
+                    ProfileChoice::Environment(environment)
+                )),
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+        form_field(draft, ProfileField::Tags),
+        form_field(draft, ProfileField::MacAddress),
+    ]
+    .spacing(SPACING)
+    .into()
+}
 
 /// A profile's session logging in its form's list, as the C# "Inherit", "On" and "Off".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

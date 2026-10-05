@@ -226,7 +226,10 @@ fn select(app: &mut App, tab: TabId, side: Side, index: usize) -> Vec<Effect> {
 
 fn operation(effects: &[Effect]) -> FileOperation {
     match effects {
-        [Effect::FileOperation { operation, .. }] => (**operation).clone(),
+        // A delete or a change of permissions starts as the first step of its run.
+        [Effect::FileOperation { operation, .. } | Effect::FileBatchStep { operation, .. }] => {
+            (**operation).clone()
+        }
         other => panic!("expected an operation, got {other:?}"),
     }
 }
@@ -441,6 +444,14 @@ async fn a_delete_names_what_it_deletes_and_a_dismissed_one_does_nothing() {
         FileOperation::RemoteRemove { path, .. } => assert_eq!(path.as_bytes(), b"/srv/logs"),
         other => panic!("{other:?}"),
     }
+    // One delete at a time in a tab: this one over first.
+    files(
+        &mut app,
+        FilesMessage::BatchStepDone {
+            tab,
+            result: Ok(()),
+        },
+    );
     select(&mut app, tab, Side::Local, 1);
     files(
         &mut app,
@@ -1040,17 +1051,8 @@ async fn entries_selected_together_go_together() {
         &app.dialog,
         Some(Dialog::ConfirmDelete { count: 2, folder: true, name, .. }) if name == "logs"
     ));
-    let removed: Vec<Vec<u8>> = app
-        .update(Message::ConfirmDialog)
-        .iter()
-        .map(|effect| match effect {
-            Effect::FileOperation { operation, .. } => match &**operation {
-                FileOperation::RemoteRemove { path, .. } => path.as_bytes().to_vec(),
-                other => panic!("{other:?}"),
-            },
-            other => panic!("{other:?}"),
-        })
-        .collect();
+    // One after the other, as the C# deletes them.
+    let removed = run_batch(&mut app, tab, app_confirm());
     assert_eq!(removed, [b"/srv/logs".to_vec(), b"/srv/a.txt".to_vec()]);
 
     files(
@@ -1061,7 +1063,7 @@ async fn entries_selected_together_go_together() {
         },
     );
     files(&mut app, FilesMessage::NameEdited("700".to_owned()));
-    let changed = app.update(Message::ConfirmDialog);
+    let changed = run_batch(&mut app, tab, app_confirm());
     assert_eq!(changed.len(), 2, "both, the same bits");
 
     // A plain click leaves one selected.
@@ -2277,4 +2279,138 @@ async fn the_csharp_file_browser_keys_hold_paste_select_and_transfer() {
         key(&mut app, tab, FilesKey::Upload).as_slice(),
         [Effect::PlanTransfer { .. }]
     ));
+}
+
+/// Confirms the open dialog.
+fn app_confirm() -> Message {
+    Message::ConfirmDialog
+}
+
+/// The path the entry of a run being worked on is about, from the step `effects` start.
+fn step_path(effects: &[Effect]) -> Option<Vec<u8>> {
+    effects.iter().find_map(|effect| match effect {
+        Effect::FileBatchStep { operation, .. } => Some(match &**operation {
+            FileOperation::RemoteRemove { path, .. }
+            | FileOperation::RemoteSetPermissions { path, .. } => path.as_bytes().to_vec(),
+            other => panic!("{other:?}"),
+        }),
+        _ => None,
+    })
+}
+
+/// Starts a run with `start` and has every entry go: the paths, in the order worked on.
+fn run_batch(app: &mut App, tab: TabId, start: Message) -> Vec<Vec<u8>> {
+    let mut paths = Vec::new();
+    let mut effects = app.update(start);
+    while let Some(path) = step_path(&effects) {
+        paths.push(path);
+        effects = files(
+            app,
+            FilesMessage::BatchStepDone {
+                tab,
+                result: Ok(()),
+            },
+        );
+    }
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::ListRemote { .. })),
+        "listed again once over: {effects:?}"
+    );
+    paths
+}
+
+#[tokio::test]
+async fn a_run_says_where_it_is_can_be_stopped_and_sums_up_what_failed() {
+    use heimdall_app::Notice;
+    use heimdall_app::files::{BatchKind, BatchOutcome};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let batch = |app: &App| {
+        app.tab(tab)
+            .and_then(|tab| tab.files.as_ref())
+            .and_then(|files| files.batch.as_ref())
+            .map(|batch| (batch.current.clone(), batch.done, batch.total))
+    };
+    // Both entries of the server, marked once: the marks stay after a run.
+    toggle(&mut app, tab, Side::Remote, 0);
+    toggle(&mut app, tab, Side::Remote, 1);
+    let ask_delete = |app: &mut App| {
+        files(
+            app,
+            FilesMessage::AskDelete {
+                tab,
+                side: Side::Remote,
+            },
+        );
+        assert!(
+            matches!(app.dialog, Some(Dialog::ConfirmDelete { count: 2, .. })),
+            "{:?}",
+            app.dialog
+        );
+    };
+    ask_delete(&mut app);
+    assert!(step_path(&app.update(Message::ConfirmDialog)).is_some());
+    assert_eq!(batch(&app), Some(("logs".to_owned(), 0, 2)));
+    // Another delete waits for this one.
+    files(
+        &mut app,
+        FilesMessage::AskDelete {
+            tab,
+            side: Side::Remote,
+        },
+    );
+    assert_eq!(app.dialog, None);
+
+    // The first fails, the second goes: the failure is summed up, named.
+    let next = files(
+        &mut app,
+        FilesMessage::BatchStepDone {
+            tab,
+            result: Err(FilesError::Exists),
+        },
+    );
+    assert_eq!(step_path(&next), Some(b"/srv/a.txt".to_vec()));
+    assert_eq!(batch(&app), Some(("a.txt".to_owned(), 1, 2)));
+    files(
+        &mut app,
+        FilesMessage::BatchStepDone {
+            tab,
+            result: Ok(()),
+        },
+    );
+    assert_eq!(batch(&app), None);
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FilesBatch(BatchOutcome::Failed {
+            kind: BatchKind::Delete,
+            failed: 1,
+            total: 2,
+            first: "logs".to_owned(),
+            reason: FilesError::Exists,
+        }))
+    );
+
+    // Stopped: the entry being worked on finishes, no other starts.
+    ask_delete(&mut app);
+    app.update(Message::ConfirmDialog);
+    files(&mut app, FilesMessage::StopBatch { tab });
+    let over = files(
+        &mut app,
+        FilesMessage::BatchStepDone {
+            tab,
+            result: Ok(()),
+        },
+    );
+    assert!(step_path(&over).is_none(), "nothing more started");
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::FilesBatch(BatchOutcome::Stopped {
+            kind: BatchKind::Delete,
+            done: 1,
+            total: 2,
+        }))
+    );
 }

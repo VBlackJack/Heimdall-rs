@@ -488,6 +488,7 @@ fn the_search_folds_the_accents_of_the_profile_too() {
         username: Some("hélène".to_owned()),
         gateway: None,
         favorite: false,
+        metadata: heimdall_core::metadata::ProfileMetadata::default(),
     };
     for found in [
         "reseau",

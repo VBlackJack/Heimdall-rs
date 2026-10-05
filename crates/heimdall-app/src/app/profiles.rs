@@ -123,6 +123,9 @@ impl App {
         if self.store.is_favorite(id) {
             draft.toggle(ProfileToggle::Favorite, true);
         }
+        if let Some(metadata) = self.store.metadata(id) {
+            draft.show_metadata(metadata);
+        }
         self.dialog = Some(Dialog::EditProfile { draft, error: None });
     }
 
@@ -171,10 +174,10 @@ impl App {
             if typed.is_some() && draft.protocol.password_needs_username() && !has_account {
                 Err(DraftError::UsernameForPassword)
             } else {
-                Ok((profile, endpoint))
+                Ok((profile, endpoint, draft.metadata()?))
             }
         });
-        let (profile, endpoint) = match saved {
+        let (profile, endpoint, metadata) = match saved {
             Ok(saved) => saved,
             Err(error) => {
                 self.dialog = Some(Dialog::EditProfile {
@@ -233,6 +236,7 @@ impl App {
                 }
             };
             store.set_favorite(&id, favorite);
+            store.set_metadata(&id, metadata);
             if let Some(old_name) = &old_name {
                 store.freeze_vault_entry(&id, old_name);
             }

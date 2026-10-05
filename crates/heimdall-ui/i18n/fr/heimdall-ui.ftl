@@ -1418,6 +1418,28 @@ ui-settings-rdp-reset-defaults = Réinitialiser les valeurs RDP
 ui-settings-rdp-reset-defaults-tooltip = Restaure uniquement les valeurs RDP par défaut. Les autres réglages ne sont pas modifiés.
 ui-dialog-reset-rdp-title = Réinitialiser les valeurs RDP ?
 ui-dialog-reset-rdp-body = Restaurer toutes les valeurs RDP par défaut ? Les serveurs existants ne sont pas affectés.
+ui-settings-tab-about = À propos
+ui-about-version = Version { $version }
+ui-about-tagline = Gestionnaire de connexions sécurisé RDP/SSH/SFTP
+ui-about-section-system = Système
+ui-about-platform = Plateforme
+ui-about-author = Auteur
+ui-about-license = Licence
+ui-about-section-data = Données
+ui-about-sessions = Sessions
+ui-about-gateways = Passerelles
+ui-about-config-path = Config
+ui-about-log-path = Logs
+ui-about-section-links = Accès rapide
+ui-about-open-config = Ouvrir le dossier config
+ui-about-open-logs = Ouvrir le dossier logs
+ui-about-repository = GitHub
+ui-about-section-diagnostics = Diagnostic
+ui-about-diagnostics-log = Écrire le journal de diagnostic de l'application (événements et erreurs de Heimdall)
+ui-about-diagnostics-log-hint = Appliqué immédiatement. Un rapport de plantage est écrit quoi qu'il en soit : c'est la seule trace d'un plantage.
+ui-settings-provider-timeout = Délai d'expiration de la commande
+ui-settings-provider-timeout-seconds = { $seconds } s
+ui-settings-provider-timeout-hint = Durée pendant laquelle la commande de mot de passe peut s'exécuter avant que Heimdall y renonce. Augmentez-la pour un coffre qui demande une confirmation.
 ui-folder-color = Couleur
 ui-folder-color-none = Aucune couleur
 ui-folder-color-blue = Bleu
@@ -1475,3 +1497,35 @@ ui-restore-missing = Serveur introuvable ({ $id })
 ui-restore-files = Fichiers { $protocol }
 ui-restore-dont = Ne pas restaurer
 ui-restore-selected = Restaurer la sélection
+ui-profile-field-environment = Environnement
+ui-profile-environment-none = (Aucun)
+ui-profile-environment-production = Production
+ui-profile-environment-staging = Staging
+ui-profile-environment-lab = Lab
+ui-profile-environment-personal = Personnel
+ui-profile-field-tags = Tags
+ui-profile-tags-placeholder = Mots par lesquels la recherche trouve cette session
+ui-profile-field-mac-address = Adresse MAC
+ui-profile-mac-address-placeholder = AA:BB:CC:DD:EE:FF, pour Wake on LAN
+ui-profile-error-mac-address = L'adresse MAC doit comporter douze chiffres hexadécimaux, comme AA:BB:CC:DD:EE:FF.
+ui-tree-wake-on-lan = Réveil réseau (WOL)
+ui-status-wake-on-lan-sent = Paquet magique Wake-on-LAN envoyé.
+ui-status-wake-on-lan-failed = Échec de l'envoi du paquet Wake-on-LAN : { $reason }
+ui-tree-tooltip-environment = Environnement : { $environment }
+ui-tree-tooltip-tags = Tags : { $tags }
+ui-files-batch-deleting = Suppression de { $name } ({ $index }/{ $total })...
+ui-files-batch-permissions = Modification des permissions de { $name } ({ $index }/{ $total })...
+ui-files-batch-stop = Annuler
+ui-files-batch-stopping = Arrêt après celui-ci...
+ui-status-files-delete-failed = Impossible de supprimer "{ $name }" : { $reason }
+ui-status-files-permissions-failed = Impossible de modifier les permissions de "{ $name }" : { $reason }
+ui-status-files-delete-partial = { $failed ->
+    [one] { $failed } élément sur { $total } n'a pas pu être supprimé. "{ $name }" : { $reason }
+   *[other] { $failed } éléments sur { $total } n'ont pas pu être supprimés. Le premier, "{ $name }" : { $reason }
+}
+ui-status-files-permissions-partial = { $failed ->
+    [one] Permissions non modifiées pour { $failed } élément sur { $total }. "{ $name }" : { $reason }
+   *[other] Permissions non modifiées pour { $failed } éléments sur { $total }. Le premier, "{ $name }" : { $reason }
+}
+ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
+ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
