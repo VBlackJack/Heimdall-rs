@@ -1530,3 +1530,38 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
 ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-about-section-settings-file = Archivo de ajustes
+ui-about-export-settings = Exportar ajustes...
+ui-about-import-settings = Importar ajustes...
+ui-about-settings-file-hint = Lleva tus preferencias a otro equipo. El archivo no contiene ningún secreto: ni contraseña maestra, ni PIN, ni contraseña guardada.
+ui-settings-file-filter = Ajustes de Heimdall
+ui-dialog-settings-export-title = Exportar ajustes
+ui-dialog-settings-export-paths = { $count ->
+    [one] { $count } ajuste indica una carpeta de tu perfil de usuario en este equipo (rutas de herramientas, carpeta de registros, archivos). ¿Incluirlo en el archivo?
+   *[other] { $count } ajustes indican carpetas de tu perfil de usuario en este equipo (rutas de herramientas, carpeta de registros, archivos). ¿Incluirlos en el archivo?
+}
+ui-dialog-settings-export-without = Dejar fuera
+ui-dialog-settings-export-with = Incluir
+ui-dialog-settings-import-title = Importar ajustes
+ui-dialog-settings-import-body = { $count ->
+    [one] { $count } ajuste va a cambiar:
+   *[other] { $count } ajustes van a cambiar:
+}
+ui-dialog-settings-import-line = { $key }: { $before } -> { $after }
+ui-dialog-settings-import-confirm = Importar
+ui-settings-value-on = Activado
+ui-settings-value-off = Desactivado
+ui-settings-value-empty = (vacío)
+ui-settings-value-items = { $count ->
+    [one] { $count } elemento
+   *[other] { $count } elementos
+}
+ui-status-settings-exported = Ajustes exportados. El archivo no contiene ningún secreto: ni contraseña maestra, ni PIN, ni contraseña guardada.
+ui-status-settings-export-failed = No se pudieron exportar los ajustes: { $reason }
+ui-status-settings-imported = { $count ->
+    [one] { $count } ajuste importado.
+   *[other] { $count } ajustes importados.
+}
+ui-status-settings-import-nothing = El archivo contiene los ajustes que ya tienes. No hay nada que cambiar.
+ui-status-settings-import-invalid = Este archivo no es un archivo de ajustes de Heimdall, o procede de una versión que esta no sabe leer. No se ha cambiado nada.
+ui-status-settings-import-failed = No se pudo leer el archivo de ajustes: { $reason }

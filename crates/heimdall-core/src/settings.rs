@@ -611,7 +611,6 @@ impl Settings {
     ///
     /// Returns [`StoreError`] when the file exists and cannot be read, does not parse, or has
     /// a newer format version.
-    #[expect(clippy::too_many_lines, reason = "one field of the file per setting")]
     pub fn load(path: &Path) -> Result<Self, StoreError> {
         let text = match fs::read_to_string(path) {
             Ok(text) => text,
@@ -634,7 +633,12 @@ impl Settings {
                 expected: SETTINGS_FILE_VERSION,
             });
         }
-        Ok(Self {
+        Ok(Self::from_file(file))
+    }
+
+    /// The settings `file` says; a value out of its range is the default.
+    fn from_file(file: SettingsFile) -> Self {
+        Self {
             color_scheme: file
                 .terminal
                 .color_scheme
@@ -731,7 +735,7 @@ impl Settings {
                 .language
                 .as_deref()
                 .and_then(Language::from_code),
-        })
+        }
     }
 
     /// The folder transcripts go to: the one chosen when absolute, else under the folder of
@@ -756,7 +760,13 @@ impl Settings {
     ///
     /// Returns [`StoreError`] when serialisation or any file operation fails.
     pub fn save(&self, path: &Path) -> Result<(), StoreError> {
-        let text = toml::to_string_pretty(&SettingsFile {
+        let text = toml::to_string_pretty(&self.file())?;
+        write_atomic(path, &text)
+    }
+
+    /// The settings as their file holds them.
+    fn file(&self) -> SettingsFile {
+        SettingsFile {
             version: SETTINGS_FILE_VERSION,
             terminal: TerminalSection {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
@@ -805,7 +815,236 @@ impl Settings {
             files: FilesSection {
                 external_editor: self.external_editor.clone(),
             },
-        })?;
-        write_atomic(path, &text)
+        }
+    }
+
+    /// The sections of the settings file that travel, as a table: every preference, none of
+    /// the PIN and the master password's tries.
+    fn transferable(&self) -> toml::Table {
+        toml::Table::try_from(self.file())
+            .unwrap_or_default()
+            .into_iter()
+            .filter(|(section, _)| TRANSFERRED.contains(&section.as_str()))
+            .collect()
+    }
+
+    /// The portable settings file, as the C# "Export settings": every preference, nothing
+    /// secret and nothing of this computer's PIN or lockouts. A value naming a path under
+    /// `home` belongs to this computer's user and stays behind unless `with_home`; how many
+    /// stayed is returned with the text.
+    #[must_use]
+    pub fn export(&self, home: Option<&Path>, with_home: bool) -> (String, usize) {
+        let mut sections = self.transferable();
+        let mut held_back = 0;
+        if let Some(home) = home.filter(|_| !with_home) {
+            for (_, section) in &mut sections {
+                if let toml::Value::Table(values) = section {
+                    values.retain(|_, value| {
+                        let names = value.as_str().is_some_and(|text| under(text, home));
+                        held_back += usize::from(names);
+                        !names
+                    });
+                }
+            }
+        }
+        let mut document = toml::Table::new();
+        document.insert(
+            TRANSFER_FORMAT_KEY.to_owned(),
+            toml::Value::String(TRANSFER_FORMAT.to_owned()),
+        );
+        document.insert(
+            TRANSFER_VERSION_KEY.to_owned(),
+            toml::Value::Integer(TRANSFER_VERSION),
+        );
+        document.insert(
+            TRANSFER_SETTINGS_KEY.to_owned(),
+            toml::Value::Table(sections),
+        );
+        (
+            toml::to_string_pretty(&document).unwrap_or_default(),
+            held_back,
+        )
+    }
+
+    /// These settings with those of the portable settings file `text` laid over them, as the
+    /// C# "Import settings", and what that changes. Only the preferences an export carries
+    /// are taken: a PIN or a lockout written in by hand is not. A value out of its range is
+    /// the default, as when the settings are read.
+    ///
+    /// # Errors
+    ///
+    /// [`TransferError`] when `text` is not a settings file this version reads.
+    pub fn import(&self, text: &str) -> Result<SettingsImport, TransferError> {
+        let document: toml::Table = text.parse().map_err(|_| TransferError::NotSettings)?;
+        if document
+            .get(TRANSFER_FORMAT_KEY)
+            .and_then(toml::Value::as_str)
+            != Some(TRANSFER_FORMAT)
+        {
+            return Err(TransferError::NotSettings);
+        }
+        match document
+            .get(TRANSFER_VERSION_KEY)
+            .and_then(toml::Value::as_integer)
+        {
+            Some(TRANSFER_VERSION) => {}
+            Some(found) if found > TRANSFER_VERSION => return Err(TransferError::Newer),
+            _ => return Err(TransferError::NotSettings),
+        }
+        let Some(toml::Value::Table(incoming)) = document.get(TRANSFER_SETTINGS_KEY) else {
+            return Err(TransferError::NotSettings);
+        };
+        let mut merged = toml::Table::try_from(self.file()).unwrap_or_default();
+        for (section, values) in incoming {
+            let toml::Value::Table(values) = values else {
+                continue;
+            };
+            if !TRANSFERRED.contains(&section.as_str()) {
+                continue;
+            }
+            let target = merged
+                .entry(section.clone())
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()));
+            if let toml::Value::Table(target) = target {
+                for (key, value) in values {
+                    target.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        let file: SettingsFile = merged.try_into().map_err(|_| TransferError::NotSettings)?;
+        let settings = Self::from_file(file);
+        let changes = changes(&self.transferable(), &settings.transferable());
+        Ok(SettingsImport { settings, changes })
+    }
+}
+
+/// What a portable settings file says it is.
+const TRANSFER_FORMAT: &str = "heimdall-settings";
+
+/// The version of the portable settings file this build writes and reads.
+const TRANSFER_VERSION: i64 = 1;
+
+/// Its keys.
+const TRANSFER_FORMAT_KEY: &str = "format";
+const TRANSFER_VERSION_KEY: &str = "version";
+const TRANSFER_SETTINGS_KEY: &str = "settings";
+
+/// The sections of the settings file a portable settings file carries.
+const TRANSFERRED: [&str; 8] = [
+    "terminal",
+    "session_log",
+    "general",
+    "credential_provider",
+    "ssh",
+    "rdp",
+    "rdp_session",
+    "files",
+];
+
+/// The name a portable settings file is offered under.
+pub const SETTINGS_EXPORT_FILE_NAME: &str = "heimdall-settings.toml";
+
+/// Settings read from a portable settings file, and what they change.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsImport {
+    /// The settings with the file's laid over them.
+    pub settings: Settings,
+    /// Each setting the file changes, in the file's order of sections and keys.
+    pub changes: Vec<SettingChange>,
+}
+
+/// One setting a portable settings file changes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingChange {
+    /// Its section and key, as the file names it: `ssh.keep_alive_interval`.
+    pub key: String,
+    /// Its value now; `None` when it has none.
+    pub before: Option<SettingValue>,
+    /// Its value from the file; `None` when it has none.
+    pub after: Option<SettingValue>,
+}
+
+/// A setting's value, as a change shows it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingValue {
+    /// On or off.
+    Flag(bool),
+    /// Text, a number among them; empty text is shown as such.
+    Text(String),
+    /// A list of this many items.
+    List(usize),
+}
+
+impl SettingValue {
+    fn of(value: &toml::Value) -> Self {
+        match value {
+            toml::Value::Boolean(on) => Self::Flag(*on),
+            toml::Value::String(text) => Self::Text(text.clone()),
+            toml::Value::Array(items) => Self::List(items.len()),
+            other => Self::Text(other.to_string()),
+        }
+    }
+}
+
+/// Why a file is not imported as settings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TransferError {
+    /// It is not a portable settings file, or not one that can be read.
+    NotSettings,
+    /// It was written by a newer version.
+    Newer,
+}
+
+/// Whether the path `text` is under `home`, whatever the case of either.
+fn under(text: &str, home: &Path) -> bool {
+    let text = text.trim().to_lowercase();
+    let home = home.to_string_lossy().to_lowercase();
+    !home.is_empty() && Path::new(&text).starts_with(Path::new(&home))
+}
+
+/// Every value of `after` not the same in `before`, section by section.
+fn changes(before: &toml::Table, after: &toml::Table) -> Vec<SettingChange> {
+    let empty = toml::Table::new();
+    let table = |all: &toml::Table, section: &str| match all.get(section) {
+        Some(toml::Value::Table(values)) => values.clone(),
+        _ => empty.clone(),
+    };
+    let mut changed = Vec::new();
+    for section in TRANSFERRED {
+        let (was, now) = (table(before, section), table(after, section));
+        let mut keys: Vec<&String> = was.keys().chain(now.keys()).collect();
+        keys.sort();
+        keys.dedup();
+        for key in keys {
+            let (old, new) = (was.get(key), now.get(key));
+            if old != new {
+                changed.push(SettingChange {
+                    key: format!("{section}.{key}"),
+                    before: old.map(SettingValue::of),
+                    after: new.map(SettingValue::of),
+                });
+            }
+        }
+    }
+    changed
+}
+
+#[cfg(test)]
+mod transfer_tests {
+    use super::{Settings, TRANSFERRED};
+
+    /// The sections that never travel: this computer's PIN and lockouts, and the file's own
+    /// version.
+    const HELD_BACK: [&str; 3] = ["version", "vault_unlock", "pin"];
+
+    #[test]
+    fn every_section_of_the_settings_file_travels_or_is_held_back() {
+        let sections = toml::Table::try_from(Settings::default().file()).expect("table");
+        for section in sections.keys() {
+            assert!(
+                TRANSFERRED.contains(&section.as_str()) || HELD_BACK.contains(&section.as_str()),
+                "{section}: travels with an export or not? Say so in TRANSFERRED or HELD_BACK."
+            );
+        }
     }
 }

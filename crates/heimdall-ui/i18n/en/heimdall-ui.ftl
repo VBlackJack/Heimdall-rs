@@ -1608,3 +1608,38 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Deletion cancelled: { $done } of { $total } items deleted.
 ui-status-files-permissions-stopped = Permission change cancelled: { $done } of { $total } items changed.
+ui-about-section-settings-file = Settings file
+ui-about-export-settings = Export settings...
+ui-about-import-settings = Import settings...
+ui-about-settings-file-hint = Carries your preferences to another computer. The file holds no secret: no master password, PIN or saved password.
+ui-settings-file-filter = Heimdall settings
+ui-dialog-settings-export-title = Export settings
+ui-dialog-settings-export-paths = { $count ->
+    [one] { $count } setting names a folder in your user profile on this computer (tool paths, log folder, files). Include it in the file?
+   *[other] { $count } settings name folders in your user profile on this computer (tool paths, log folder, files). Include them in the file?
+}
+ui-dialog-settings-export-without = Leave out
+ui-dialog-settings-export-with = Include
+ui-dialog-settings-import-title = Import settings
+ui-dialog-settings-import-body = { $count ->
+    [one] { $count } setting will change:
+   *[other] { $count } settings will change:
+}
+ui-dialog-settings-import-line = { $key }: { $before } -> { $after }
+ui-dialog-settings-import-confirm = Import
+ui-settings-value-on = On
+ui-settings-value-off = Off
+ui-settings-value-empty = (empty)
+ui-settings-value-items = { $count ->
+    [one] { $count } item
+   *[other] { $count } items
+}
+ui-status-settings-exported = Settings exported. The file holds no secret: no master password, PIN or saved password.
+ui-status-settings-export-failed = The settings could not be exported: { $reason }
+ui-status-settings-imported = { $count ->
+    [one] { $count } setting imported.
+   *[other] { $count } settings imported.
+}
+ui-status-settings-import-nothing = The file holds the settings you already have. Nothing to change.
+ui-status-settings-import-invalid = This file is not a Heimdall settings file, or it comes from a version this one cannot read. Nothing was changed.
+ui-status-settings-import-failed = The settings file could not be read: { $reason }

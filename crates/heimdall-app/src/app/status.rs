@@ -167,6 +167,20 @@ pub enum Notice {
     FilesCopied(usize),
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// The settings were exported.
+    SettingsExported,
+    /// The settings could not be exported, for this reason.
+    SettingsExportFailed(String),
+    /// This many settings were imported.
+    SettingsImported(usize),
+    /// The settings file holds the settings already in use.
+    SettingsImportNothing,
+    /// The file is not a settings file, or not one this version reads.
+    SettingsImportInvalid,
+    /// The settings file was written by a newer version.
+    SettingsImportNewer,
+    /// The settings file could not be read, for this reason.
+    SettingsImportFailed(String),
     /// A delete or a change of permissions of entries did not do them all.
     FilesBatch(crate::files::BatchOutcome),
     /// The entries chosen were duplicated.

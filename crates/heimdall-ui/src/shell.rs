@@ -794,6 +794,8 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// The language the texts are in, as last chosen in the settings.
+    language_shown: Option<heimdall_core::settings::Language>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
     sidebar_hidden: bool,
     /// The sidebar's width, as dragged.
@@ -896,6 +898,7 @@ impl Shell {
         crate::logging::set_enabled(app.settings().diagnostics_log);
         let presets =
             crate::presets_editor::PresetsEditor::new(&app.settings().rdp_resolution_presets);
+        let language_shown = app.settings().language;
         Self {
             app,
             editors: crate::integrated_editor::Editors::default(),
@@ -919,6 +922,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            language_shown,
             sidebar_hidden: false,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
@@ -1166,6 +1170,14 @@ impl Shell {
         self.editors.prune(&self.app);
         // The diagnostics log as the settings say now.
         crate::logging::set_enabled(self.app.settings().diagnostics_log);
+        // The language the settings name now: an import may have changed it.
+        let language = self.app.settings().language;
+        if language != self.language_shown {
+            if language.is_some() {
+                crate::i18n::apply(language);
+            }
+            self.language_shown = language;
+        }
         // A reset, or presets that could not be saved, shown again in their box.
         self.presets
             .sync(&self.app.settings().rdp_resolution_presets);
@@ -2057,6 +2069,8 @@ impl Shell {
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
             Effect::PickSaveFolder { tab } => pick_save_folder(tab),
             Effect::PickSessionsFile => pick_sessions_file(),
+            Effect::SaveSettingsFile { document } => crate::settings_file::save(document),
+            Effect::PickSettingsFile => crate::settings_file::pick(),
             Effect::PickKnownHosts => pick_known_hosts(),
             // The registry or the files, read off the window's thread.
             Effect::ReadPuttySessions => Task::perform(
@@ -7296,6 +7310,10 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             let (title, body, action) = plain_question(dialog);
             question(title, body, action).into()
         }
+        Dialog::ConfirmSettingsExportPaths { count } => {
+            crate::settings_file::export_question(*count)
+        }
+        Dialog::ConfirmSettingsImport(read) => crate::settings_file::import_question(read),
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
         Dialog::NewTunnel(form) => {
             crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)

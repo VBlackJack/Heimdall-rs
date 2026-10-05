@@ -72,10 +72,10 @@ pub use app::{
     RDP_EXTENSION, RDP_MAX_ATTEMPTS, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow,
     ResolutionChoice, RestoreDialog, RestoreRow, Retry, SelectionMessage, SessionState,
     SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
-    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
-    TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
-    UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    SettingsMessage, SettingsTransferMessage, SudoAction, SystemCredentials, Tab, TabGroup,
+    TabMenuMessage, TabProfile, TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage,
+    TunnelMessage, UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
+    VaultProblem, VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use desktop::{
     DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
