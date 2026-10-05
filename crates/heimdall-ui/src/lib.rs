@@ -23,6 +23,7 @@ mod conflicts_view;
 mod desktop_texture;
 pub mod desktop_view;
 pub mod editor_history;
+mod editor_syntax;
 pub mod export_file;
 pub mod file_import_view;
 mod files_view;

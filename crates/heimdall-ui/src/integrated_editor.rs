@@ -120,6 +120,8 @@ pub struct EditorBuffer {
     history: crate::editor_history::History,
     /// The version of the text a save under way started from.
     saving: Option<u64>,
+    /// How the file is coloured, and the name of its language.
+    syntax: crate::editor_syntax::Syntax,
 }
 
 /// The texts of the integrated editors open, by editor.
@@ -152,6 +154,12 @@ impl Editors {
     pub fn update(&mut self, message: EditorMessage, app: &mut App) -> Vec<Effect> {
         match message {
             EditorMessage::Loaded { tab, id, result } => {
+                let name = app
+                    .tab(tab)
+                    .and_then(|tab| tab.files.as_deref()?.editor.as_ref())
+                    .filter(|edit| edit.id == id)
+                    .map(|edit| edit.name.clone())
+                    .unwrap_or_default();
                 let result = result.map(|opened| {
                     self.buffers.insert(
                         id,
@@ -159,6 +167,7 @@ impl Editors {
                             content: Content::with_text(&opened.text),
                             history: crate::editor_history::History::default(),
                             saving: None,
+                            syntax: crate::editor_syntax::of(&name),
                         },
                     );
                     (opened.encoding, opened.fingerprint)
@@ -429,11 +438,6 @@ pub fn view<'a>(
             )
             .into();
     };
-    let extension = edit
-        .name
-        .rsplit_once('.')
-        .map_or("txt", |(_, extension)| extension)
-        .to_owned();
     let body = editor(&buffer.content)
         .on_action(move |action| Message::Editor(EditorMessage::Action { tab, id, action }))
         .key_binding(move |press| {
@@ -444,7 +448,7 @@ pub fn view<'a>(
         .font(Font::MONOSPACE)
         .height(Length::Fill)
         .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
-        .highlight(&extension, iced::highlighter::Theme::Base16Ocean);
+        .highlight(&buffer.syntax.token, iced::highlighter::Theme::Base16Ocean);
     page.push(body)
         .push(status(edit, buffer))
         .padding(SPACING)
@@ -474,8 +478,8 @@ fn notice(edit: &IntegratedEdit, connected: bool) -> Option<String> {
     })
 }
 
-/// Where the cursor is, in characters, how many lines, how the file is stored and how
-/// its lines end.
+/// Where the cursor is, in characters, how many lines, the language the text is coloured
+/// as, how the file is stored and how its lines end.
 fn status<'a>(edit: &IntegratedEdit, buffer: &EditorBuffer) -> Element<'a, Message> {
     let cursor = buffer.content.cursor().position;
     let column = buffer
@@ -501,6 +505,14 @@ fn status<'a>(edit: &IntegratedEdit, buffer: &EditorBuffer) -> Element<'a, Messa
         ))
         .size(SMALL_SIZE),
         text(fl!("ui-editor-lines", count = buffer.content.line_count())).size(SMALL_SIZE),
+        text(
+            buffer
+                .syntax
+                .name
+                .clone()
+                .unwrap_or_else(|| fl!("ui-editor-plain-text"))
+        )
+        .size(SMALL_SIZE),
     ]
     .spacing(SPACING * 2.0);
     if let Some(encoding) = encoding {
