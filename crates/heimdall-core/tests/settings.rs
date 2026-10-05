@@ -634,6 +634,87 @@ fn the_diagnostics_log_is_written_unless_turned_off_as_the_csharp_default() {
 }
 
 #[test]
+fn an_export_carries_the_preferences_and_never_the_pin_nor_a_lockout() {
+    let mut settings = Settings {
+        color_scheme: ColorScheme::SolarizedDark,
+        ssh_keep_alive_interval: 45,
+        pin: Some(PinHash::new("2468").expect("pin")),
+        ..Settings::default()
+    };
+    settings.vault_unlock.register_failure(SystemTime::now());
+    let (text, held_back) = settings.export(None, false);
+    assert_eq!(held_back, 0);
+    assert!(text.contains("format = \"heimdall-settings\""), "{text}");
+    assert!(text.contains("color_scheme = \"Solarized Dark\""), "{text}");
+    assert!(!text.contains("[settings.pin]"), "{text}");
+    assert!(!text.contains("vault_unlock"), "{text}");
+
+    // Read back over the defaults: the preferences come, this computer's PIN stays.
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.color_scheme, ColorScheme::SolarizedDark);
+    assert_eq!(read.settings.ssh_keep_alive_interval, 45);
+    assert_eq!(read.settings.pin, None);
+    let keys: Vec<&str> = read
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect();
+    assert!(keys.contains(&"terminal.color_scheme"), "{keys:?}");
+    assert!(keys.contains(&"ssh.keep_alive_interval"), "{keys:?}");
+    // Read over the same settings: nothing to change.
+    assert!(settings.import(&text).expect("read").changes.is_empty());
+}
+
+#[test]
+fn a_path_under_the_home_folder_stays_behind_unless_asked() {
+    let home = Path::new("/home/admin");
+    let settings = Settings {
+        external_editor: "/home/admin/bin/edit".to_owned(),
+        session_log_directory: "/srv/logs".to_owned(),
+        ..Settings::default()
+    };
+    let (text, held_back) = settings.export(Some(home), false);
+    assert_eq!(held_back, 1);
+    assert!(!text.contains("/home/admin/bin/edit"), "{text}");
+    assert!(text.contains("/srv/logs"), "{text}");
+    let (text, _) = settings.export(Some(home), true);
+    assert!(text.contains("/home/admin/bin/edit"), "{text}");
+}
+
+#[test]
+fn a_file_that_is_not_a_settings_file_or_is_newer_is_refused() {
+    use heimdall_core::settings::TransferError;
+
+    let settings = Settings::default();
+    for text in [
+        "not toml at all [",
+        "version = 1\n",
+        "format = \"heimdall-settings\"\n",
+        "format = \"other\"\nversion = 1\n[settings]\n",
+        "format = \"heimdall-settings\"\nversion = 1\nsettings = 3\n",
+        "format = \"heimdall-settings\"\nversion = 1\n[settings.ssh]\nkeep_alive_interval = \"x\"\n",
+    ] {
+        assert_eq!(
+            settings.import(text),
+            Err(TransferError::NotSettings),
+            "{text}"
+        );
+    }
+    assert_eq!(
+        settings.import("format = \"heimdall-settings\"\nversion = 2\n[settings]\n"),
+        Err(TransferError::Newer)
+    );
+    // A PIN written in by hand is not taken.
+    let read = settings
+        .import(
+            "format = \"heimdall-settings\"\nversion = 1\n[settings.pin]\nsalt = \"AAAA\"\nhash = \"AAAA\"\n",
+        )
+        .expect("read");
+    assert_eq!(read.settings.pin, None);
+    assert!(read.changes.is_empty());
+}
+
+#[test]
 fn the_reachability_check_is_on_with_the_csharp_numbers_and_kept_within_their_ranges() {
     use heimdall_core::settings::Reachability;
 
