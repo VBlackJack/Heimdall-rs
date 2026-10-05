@@ -1188,6 +1188,24 @@ fn a_folder_has_the_csharp_menu_and_its_name_dialog_says_why_a_name_is_refused()
 }
 
 #[test]
+fn the_session_selected_is_shown_in_detail_until_one_is_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    assert!(simulator(&shell).find("Connect").is_err(), "none selected");
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    snapshot(&shell, "detail.png");
+    let mut ui = simulator(&shell);
+    for label in ["a.lab:22", "Folder:", "Username:", "admin"] {
+        ui.find(label).expect(label);
+    }
+    ui.click("Connect").expect("Connect");
+    assert!(ui.into_messages().any(|message| matches!(
+        &message,
+        Message::App(AppMessage::ConnectProfile(id)) if id.as_str() == "a"
+    )));
+}
+
+#[test]
 fn a_profile_renames_and_moves_to_another_folder_from_its_menu() {
     use heimdall_app::ProfileMenuMessage;
     use heimdall_ui::tree_view::TreeMenu;

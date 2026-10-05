@@ -193,7 +193,9 @@ fn a_saved_profile_is_edited_from_its_menu_and_a_refused_form_says_why() {
     }
     let _ = shell.update(app(AppMessage::ConfirmDialog));
     let id = shell.app().profiles()[0].id.clone();
-    // As in the C# tree: right click, then Edit.
+    // As in the C# tree: right click, then Edit. The Settings page behind, so that the
+    // menu's Edit is the only one: the profile selected shows its own in the detail panel.
+    let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(id.clone())));
     {
         let mut ui = simulator(&shell);
