@@ -220,3 +220,27 @@ fn a_change_that_cannot_be_saved_is_not_kept() {
     assert!(!app.settings().credential_provider.enabled);
     assert!(matches!(app.dialog, Some(Dialog::StoreError { .. })));
 }
+
+#[test]
+fn the_command_timeout_is_chosen_within_the_csharp_range_and_saved() {
+    use heimdall_core::credential_provider::{DEFAULT_TIMEOUT, MAX_TIMEOUT};
+    use std::time::Duration;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), &system);
+    assert_eq!(app.settings().credential_provider.timeout, DEFAULT_TIMEOUT);
+    send(&mut app, ProviderMessage::Timeout(Duration::from_secs(45)));
+    assert_eq!(
+        saved(dir.path()).credential_provider.timeout,
+        Duration::from_secs(45)
+    );
+    for refused in [Duration::ZERO, MAX_TIMEOUT + Duration::from_secs(1)] {
+        send(&mut app, ProviderMessage::Timeout(refused));
+        assert_eq!(
+            app.settings().credential_provider.timeout,
+            Duration::from_secs(45),
+            "{refused:?} refused"
+        );
+    }
+}
