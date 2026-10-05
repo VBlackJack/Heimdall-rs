@@ -1310,3 +1310,26 @@ fn a_profile_s_session_logging_is_imported_as_the_csharp_override_says() {
     );
     assert_eq!(report.telnet[0].session_logging, Some(false));
 }
+
+#[test]
+fn the_folders_colours_of_settings_json_are_imported_those_of_the_palette_only() {
+    use heimdall_core::folder::FolderColor;
+
+    let report = import(
+        &servers(
+            r#"{"id": "a", "remoteServer": "a.lab", "connectionType": "SSH", "group": "Lab"}"#,
+        ),
+        Some(&settings(
+            r##""Lab": {"color": "#3b82f6"}, "Lab/Linux": {"color": "#F97316"},
+               "Odd": {"color": "#123456"}, "Plain": {"sshUsername": "ops"}"##,
+        )),
+    )
+    .expect("valid JSON");
+    assert_eq!(
+        report.folder_colors,
+        [
+            ("Lab".to_owned(), FolderColor::Blue),
+            ("Lab/Linux".to_owned(), FolderColor::Orange),
+        ]
+    );
+}
