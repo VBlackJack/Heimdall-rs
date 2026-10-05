@@ -156,3 +156,110 @@ mod tests {
         assert!(!same_folder("Prod", "Prod/Web"));
     }
 }
+
+/// A folder's colour, from the C# `BadgeColorPalette`: shown on the folder, and on every
+/// folder in it without a colour of its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FolderColor {
+    /// `#3B82F6`.
+    Blue,
+    /// `#22C55E`.
+    Green,
+    /// `#EF4444`.
+    Red,
+    /// `#F59E0B`.
+    Amber,
+    /// `#8B5CF6`.
+    Purple,
+    /// `#EC4899`.
+    Pink,
+    /// `#06B6D4`.
+    Cyan,
+    /// `#F97316`.
+    Orange,
+}
+
+impl FolderColor {
+    /// Every colour, in the C# palette's order.
+    pub const ALL: [Self; 8] = [
+        Self::Blue,
+        Self::Green,
+        Self::Red,
+        Self::Amber,
+        Self::Purple,
+        Self::Pink,
+        Self::Cyan,
+        Self::Orange,
+    ];
+
+    /// Its red, green and blue, as the C# palette's.
+    #[must_use]
+    pub fn rgb(self) -> (u8, u8, u8) {
+        match self {
+            Self::Blue => (0x3B, 0x82, 0xF6),
+            Self::Green => (0x22, 0xC5, 0x5E),
+            Self::Red => (0xEF, 0x44, 0x44),
+            Self::Amber => (0xF5, 0x9E, 0x0B),
+            Self::Purple => (0x8B, 0x5C, 0xF6),
+            Self::Pink => (0xEC, 0x48, 0x99),
+            Self::Cyan => (0x06, 0xB6, 0xD4),
+            Self::Orange => (0xF9, 0x73, 0x16),
+        }
+    }
+
+    /// The name the profile file keeps it under.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Blue => "blue",
+            Self::Green => "green",
+            Self::Red => "red",
+            Self::Amber => "amber",
+            Self::Purple => "purple",
+            Self::Pink => "pink",
+            Self::Cyan => "cyan",
+            Self::Orange => "orange",
+        }
+    }
+
+    /// The colour the profile file names `name`, whatever its case; `None` for another.
+    #[must_use]
+    pub fn named(name: &str) -> Option<Self> {
+        Self::ALL
+            .into_iter()
+            .find(|color| color.name().eq_ignore_ascii_case(name.trim()))
+    }
+
+    /// The colour the C# keeps as `hex`, `#RRGGBB` whatever its case; `None` for one out of
+    /// its palette.
+    #[must_use]
+    pub fn from_hex(hex: &str) -> Option<Self> {
+        let digits = hex.trim().strip_prefix('#')?;
+        let value = u32::from_str_radix(digits, 16)
+            .ok()
+            .filter(|_| digits.len() == 6)?;
+        let [_, red, green, blue] = value.to_be_bytes();
+        Self::ALL
+            .into_iter()
+            .find(|color| color.rgb() == (red, green, blue))
+    }
+}
+
+#[cfg(test)]
+mod color_tests {
+    use super::FolderColor;
+
+    #[test]
+    fn a_colour_is_kept_by_name_and_read_from_the_csharp_hex() {
+        for color in FolderColor::ALL {
+            assert_eq!(FolderColor::named(color.name()), Some(color));
+        }
+        assert_eq!(FolderColor::named(" Blue "), Some(FolderColor::Blue));
+        assert_eq!(FolderColor::named("teal"), None);
+        assert_eq!(FolderColor::from_hex("#3b82f6"), Some(FolderColor::Blue));
+        assert_eq!(FolderColor::from_hex("#F97316"), Some(FolderColor::Orange));
+        assert_eq!(FolderColor::from_hex("#123456"), None, "out of the palette");
+        assert_eq!(FolderColor::from_hex("3B82F6"), None);
+        assert_eq!(FolderColor::from_hex("#3B82F"), None);
+    }
+}
