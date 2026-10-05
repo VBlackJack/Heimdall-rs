@@ -114,6 +114,10 @@ fn files_notice(notice: &Notice) -> String {
             reason = crate::texts::files_error(error)
         ),
         Notice::FilesCopied(count) => fl!("ui-status-files-copied", count = (*count)),
+        Notice::WakeOnLan(Ok(())) => fl!("ui-status-wake-on-lan-sent"),
+        Notice::WakeOnLan(Err(reason)) => {
+            fl!("ui-status-wake-on-lan-failed", reason = reason.as_str())
+        }
         Notice::FilesDuplicated => fl!("ui-status-files-duplicated"),
         Notice::FilesBatch(outcome) => batch_outcome(outcome),
         _ => String::new(),
@@ -182,6 +186,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::FilesSavedWithSudo(_)
             | Notice::FilesAutoUploadRefused { .. }
             | Notice::FilesCopied(_)
+            | Notice::WakeOnLan(_)
             | Notice::FilesBatch(_)
             | Notice::FilesDuplicated) => files_notice(notice),
             Notice::TranscriptStarted(path) => {
@@ -233,6 +238,10 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::FavoriteSaveFailed => fl!("ui-status-favorite-save-failed"),
             Notice::BulkPortUpdated(count) => fl!("ui-status-bulk-port-updated", count = (*count)),
             Notice::BulkPortUnchanged => fl!("ui-status-bulk-port-unchanged"),
+            Notice::BulkGatewayUpdated(0) => fl!("ui-status-bulk-gateway-unchanged"),
+            Notice::BulkGatewayUpdated(count) => {
+                fl!("ui-status-bulk-gateway-updated", count = (*count))
+            }
             Notice::BulkUsernameUpdated(count) => {
                 fl!("ui-status-bulk-username-updated", count = (*count))
             }

@@ -20,8 +20,10 @@
 
 use super::reconnect::Reopen;
 use super::tree::{ProfileKind, ProfileSummary};
-use super::{App, Dialog, Effect, Tab};
+use super::{App, Dialog, Effect, Tab, TabProfile};
+use crate::driver::Purpose;
 use crate::ids::TabId;
+use crate::profile_draft::{DraftProtocol, ProfileDraft};
 use crate::text::server_text;
 
 /// Something from a tab's menu.
@@ -50,6 +52,14 @@ pub enum TabMenuMessage {
     },
     /// The size typed so far in "Custom resolution".
     ResolutionEdited(String),
+    /// Pin a tab, or no longer.
+    Pin(TabId),
+    /// Open the form of a new profile filled from the session of a tab saved nowhere, as the
+    /// C# "Save as profile...".
+    SaveAsProfile(TabId),
+    /// Select the profile a tab was opened from in the tree, its folders opened, as the C#
+    /// "Reveal in tree".
+    RevealInTree(TabId),
     /// Close the tabs of a group, asking first when a live session would end.
     Close {
         /// The tab the menu is for.
@@ -101,6 +111,18 @@ impl App {
                 Vec::new()
             }
             TabMenuMessage::ToggleHealth(tab) => self.toggle_health(tab),
+            TabMenuMessage::Pin(tab) => {
+                self.toggle_pin(tab);
+                Vec::new()
+            }
+            TabMenuMessage::SaveAsProfile(tab) => {
+                self.save_tab_as_profile(tab);
+                Vec::new()
+            }
+            TabMenuMessage::RevealInTree(tab) => {
+                self.reveal_in_tree(tab);
+                Vec::new()
+            }
             TabMenuMessage::Close { tab, group } => {
                 self.close_group(tab, group);
                 Vec::new()
@@ -139,11 +161,75 @@ impl App {
             TabGroup::Others => 0,
             TabGroup::Right => index,
         };
+        // A pinned tab is left, as the C# leaves it.
         self.tabs[from..]
             .iter()
-            .filter(|tab| tab.id != tab_id)
+            .filter(|tab| tab.id != tab_id && !tab.pinned)
             .map(|tab| tab.id)
             .collect()
+    }
+
+    /// Pins `tab_id`, or no longer: the pinned tabs come first, each group in its order, as
+    /// the C# `SetPinned` keeps them; the tab shown stays shown.
+    fn toggle_pin(&mut self, tab_id: TabId) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        tab.pinned = !tab.pinned;
+        // A stable sort: each group keeps its order.
+        self.tabs.sort_by_key(|tab| !tab.pinned);
+    }
+
+    /// The form of a new profile, filled from `tab_id`'s session when it is saved nowhere: a
+    /// session typed in Quick Connect, or opened with "Connect as".
+    fn save_tab_as_profile(&mut self, tab_id: TabId) {
+        let Some(tab) = self.tab(tab_id) else {
+            return;
+        };
+        let Reopen::Transient(profile, purpose) = &tab.reopen else {
+            return;
+        };
+        let mut draft = match profile.as_ref() {
+            TabProfile::Ssh(profile) => {
+                let mut draft = ProfileDraft::from_profile(profile);
+                if *purpose == Purpose::Files {
+                    draft.protocol = DraftProtocol::Sftp;
+                }
+                draft
+            }
+            TabProfile::Rdp(profile) => ProfileDraft::from_rdp(profile),
+            TabProfile::Telnet(profile) => ProfileDraft::from_telnet(profile),
+            TabProfile::Vnc(profile) => ProfileDraft::from_vnc(profile),
+            TabProfile::Ftp(profile) => ProfileDraft::from_ftp(profile),
+            TabProfile::WinRm(profile) => ProfileDraft::from_winrm(profile),
+            TabProfile::Local(_) => return,
+        };
+        // A new profile: saved under an identifier of its own.
+        draft.editing = None;
+        self.dialog = Some(Dialog::EditProfile {
+            draft: Box::new(draft),
+            error: None,
+        });
+    }
+
+    /// Selects the profile `tab_id` was opened from in the tree, every folder on the way to
+    /// it opened.
+    fn reveal_in_tree(&mut self, tab_id: TabId) {
+        let Some(Reopen::Profile(id)) = self.tab(tab_id).map(|tab| tab.reopen.clone()) else {
+            return;
+        };
+        let Some(profile) = self.profile_summary(&id) else {
+            return;
+        };
+        if let Some(group) = profile.group.as_deref() {
+            let parts = heimdall_core::folder::parts(group);
+            for end in 1..=parts.len() {
+                self.closed_folders.remove(&parts[..end].join("/"));
+            }
+        } else {
+            self.closed_folders.remove(super::NO_FOLDER);
+        }
+        self.update(super::Message::SelectProfile(id));
     }
 
     /// Closes the tabs of `group`, once asked when some are live, as the C# Heimdall asks
@@ -166,6 +252,13 @@ impl App {
         for tab in tabs {
             self.close_tab(tab);
         }
+    }
+
+    /// Whether `tab`'s session is saved nowhere, to be saved as a profile: one typed in
+    /// Quick Connect or opened with "Connect as"; a local shell is the sidebar's own.
+    #[must_use]
+    pub fn can_save_as_profile(&self, tab: &Tab) -> bool {
+        matches!(&tab.reopen, Reopen::Transient(profile, _) if !matches!(**profile, TabProfile::Local(_)))
     }
 
     /// Whether the session of `tab` can open again, in its place or in a new tab: what it
