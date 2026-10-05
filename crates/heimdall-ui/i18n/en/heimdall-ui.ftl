@@ -1668,6 +1668,27 @@ ui-status-gateways-cleared = { $count ->
    *[other] Cleared gateway reference on { $count } sessions.
 }
 ui-status-gateways-unchanged = No sessions needed changes.
+ui-settings-reachability = Session Health Monitor
+ui-settings-reachability-enabled = Enable background reachability probes
+ui-settings-reachability-hint = Every server is dialled from this computer, a few at a time, and its dot in the list shows whether it answered. Servers behind a gateway are not dialled. Nothing is sent but the connection.
+ui-settings-reachability-interval = Check interval
+ui-settings-reachability-timeout = Probe timeout
+ui-settings-reachability-probes = Max concurrent probes
+ui-settings-milliseconds-unit = ms
+ui-settings-reachability-interval-refused = Check interval must be between { $min } and { $max } seconds.
+ui-settings-reachability-timeout-refused = Probe timeout must be between { $min } and { $max } ms.
+ui-settings-reachability-probes-refused = Max concurrent probes must be between { $min } and { $max }.
+ui-tree-reachability-checking = Checking...
+ui-tree-reachability-up = Reachable ({ $millis } ms)
+ui-tree-reachability-down = Unreachable: { $reason }
+ui-tree-reachability-unchecked = Unknown: { $reason }
+ui-reachability-reason-timeout = Connection timed out
+ui-reachability-reason-refused = Connection refused
+ui-reachability-reason-unreachable = Host unreachable
+ui-reachability-reason-dns = DNS resolution failed
+ui-reachability-reason-behind-gateway = Behind SSH gateway - not probed
+ui-reachability-reason-no-port = No probe port for this protocol
+ui-reachability-reason-no-host = No host configured
 ui-status-dropped-profiles = { $count ->
     [one] Moved { $count } session to { $folder }. Ctrl+Z undoes it.
    *[other] Moved { $count } sessions to { $folder }. Ctrl+Z undoes it.

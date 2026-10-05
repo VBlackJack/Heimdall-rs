@@ -632,3 +632,38 @@ fn the_diagnostics_log_is_written_unless_turned_off_as_the_csharp_default() {
     settings.save(&path).expect("save");
     assert!(!Settings::load(&path).expect("load").diagnostics_log);
 }
+
+#[test]
+fn the_reachability_check_is_on_with_the_csharp_numbers_and_kept_within_their_ranges() {
+    use heimdall_core::settings::Reachability;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.reachability,
+        Reachability {
+            enabled: true,
+            interval: 60,
+            timeout: 2000,
+            probes: 10,
+        }
+    );
+    settings.reachability = Reachability {
+        enabled: false,
+        interval: 300,
+        timeout: 500,
+        probes: 4,
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path).expect("load").reachability,
+        settings.reachability
+    );
+    // Out of the C# ranges: the default, as the C# load keeps it.
+    let read = written(
+        dir.path(),
+        "version = 1\n[reachability]\ninterval = 5\ntimeout = 99999\nprobes = 0\n",
+    );
+    assert_eq!(read.reachability, Reachability::default());
+}

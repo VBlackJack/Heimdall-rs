@@ -1590,6 +1590,27 @@ ui-status-gateways-cleared = { $count ->
    *[other] Se borró la referencia de pasarela en { $count } sesiones.
 }
 ui-status-gateways-unchanged = Ninguna sesión necesitaba cambios.
+ui-settings-reachability = Supervisor de estado de sesión
+ui-settings-reachability-enabled = Activar sondeos de accesibilidad en segundo plano
+ui-settings-reachability-hint = Cada servidor se llama desde este equipo, unos pocos a la vez, y su punto en la lista indica si respondió. Los servidores detrás de una pasarela no se llaman. No se envía nada salvo la conexión.
+ui-settings-reachability-interval = Intervalo de comprobación
+ui-settings-reachability-timeout = Tiempo de espera del sondeo
+ui-settings-reachability-probes = Máximo de sondeos simultáneos
+ui-settings-milliseconds-unit = ms
+ui-settings-reachability-interval-refused = El intervalo de comprobación debe estar entre { $min } y { $max } segundos.
+ui-settings-reachability-timeout-refused = El tiempo de espera del sondeo debe estar entre { $min } y { $max } ms.
+ui-settings-reachability-probes-refused = El máximo de sondeos simultáneos debe estar entre { $min } y { $max }.
+ui-tree-reachability-checking = Comprobando...
+ui-tree-reachability-up = Accesible ({ $millis } ms)
+ui-tree-reachability-down = No accesible: { $reason }
+ui-tree-reachability-unchecked = Desconocido: { $reason }
+ui-reachability-reason-timeout = Se agotó el tiempo de espera de la conexión
+ui-reachability-reason-refused = Conexión rechazada
+ui-reachability-reason-unreachable = Host no accesible
+ui-reachability-reason-dns = Falló la resolución DNS
+ui-reachability-reason-behind-gateway = Detrás de una pasarela SSH: no se sondeó
+ui-reachability-reason-no-port = No hay puerto de sondeo para este protocolo
+ui-reachability-reason-no-host = No hay ningún host configurado
 ui-status-dropped-profiles = { $count ->
     [one] { $count } sesión movida a { $folder }. Ctrl+Z lo deshace.
    *[other] { $count } sesiones movidas a { $folder }. Ctrl+Z lo deshace.
