@@ -530,6 +530,13 @@ pub enum Message {
     PresetsEdited(iced::widget::text_editor::Action),
     /// Open a folder, or a web address, with the system, as the About page's buttons do.
     OpenWithSystem(std::path::PathBuf),
+    /// Write a note about the session `id` from `template`, then open it in the editor set.
+    NewNote {
+        /// The session.
+        id: ProfileId,
+        /// What it starts as.
+        template: heimdall_app::notes::NoteTemplate,
+    },
     /// Show a page of the window's navigation.
     Navigate(Destination),
     /// The external editor typed in the Settings page.
@@ -655,6 +662,7 @@ impl fmt::Debug for Message {
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
+            Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
@@ -1330,6 +1338,10 @@ impl Shell {
                 self.drop_message(message)
             }
             Message::OpenWithSystem(target) => return open_with_system(target),
+            Message::NewNote { id, template } => {
+                self.menu = None;
+                return self.new_note(&id, template);
+            }
         };
         let mut tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
@@ -1351,6 +1363,8 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // What the detail panel says of the session selected, read again once it changed.
+        self.app.refresh_detail();
         // The diagnostics log as the settings say now.
         crate::logging::set_enabled(self.app.settings().diagnostics_log);
         // The language the settings name now: an import may have changed it.
@@ -2058,6 +2072,7 @@ impl Shell {
         let (next, field) = match &self.app.dialog {
             Some(
                 Dialog::AskName { .. }
+                | Dialog::SaveMacro { .. }
                 | Dialog::RenameTab { .. }
                 | Dialog::CustomResolution { .. }
                 | Dialog::FolderName { .. }
@@ -2220,6 +2235,12 @@ impl Shell {
             | Effect::ConnectLocal { .. }
             | Effect::ConnectWinRm { .. }) => self.start_attempt(effect),
             Effect::TestRoute { run, request } => route_test_task(run, *request),
+            Effect::PlayMacro { tab, run } => Task::perform(run, move |outcome| {
+                Message::App(AppMessage::Macro(heimdall_app::MacroMessage::Finished {
+                    tab,
+                    outcome,
+                }))
+            }),
             Effect::CheckReachability {
                 probes,
                 timeout,
@@ -2267,6 +2288,7 @@ impl Shell {
             | Effect::FileBatchStep { .. }
             | Effect::MoveRemote { .. }
             | Effect::CopyRemote { .. }
+            | Effect::CopyAcross { .. }
             | Effect::StartEdit { .. }
             | Effect::LaunchEditor { .. }
             | Effect::CheckEdits { .. }
@@ -2493,7 +2515,40 @@ impl Shell {
         CursorTracker::new(layers, self.cursor.clone()).into()
     }
 
+    /// A terminal tab's Macros menu; `None` once the tab takes none.
+    fn macros_menu(&self, tab: TabId) -> Option<Element<'_, Message>> {
+        let tab = self.app.tab(tab)?;
+        Some(tree_view::macro_entries(tab.id, &self.app.macro_menu(tab)?))
+    }
+
+    /// A note about the session `id`, written from `template` now, then opened in the editor
+    /// set; the day's note, written already, opened again.
+    fn new_note(
+        &self,
+        id: &ProfileId,
+        template: heimdall_app::notes::NoteTemplate,
+    ) -> Task<Message> {
+        let Some(context) = self.app.profile_summary_note(id) else {
+            return Task::none();
+        };
+        let draft = heimdall_app::notes::draft(
+            template,
+            &context,
+            heimdall_app::notes::LocalTime::now(),
+            &note_labels(),
+        );
+        Task::perform(
+            heimdall_app::notes::open(
+                self.app.notes_dir(),
+                draft,
+                self.app.settings().external_editor.clone(),
+            ),
+            |opened| Message::App(AppMessage::NoteOpened(opened)),
+        )
+    }
+
     /// The entries of `menu`, the open one; `None` once what it is for is gone.
+    #[expect(clippy::too_many_lines, reason = "one arm per menu")]
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
         let entries = if let TreeMenu::Tab(tab) = menu {
             tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
@@ -2512,6 +2567,12 @@ impl Shell {
         } else if let TreeMenu::Tunnel(id) = *menu {
             // Only while the tunnel is listed.
             tree_view::tunnel_menu_entries(id, self.app.tunnel(id)?.interrupted)
+        } else if let TreeMenu::Macros(tab) = *menu {
+            self.macros_menu(tab)?
+        } else if let TreeMenu::Notes(id) = menu {
+            // Only while the session is saved.
+            self.app.profile_summary(id)?;
+            tree_view::notes_entries(id)
         } else if let TreeMenu::Resolution(tab) = *menu {
             // Only while its desktop is shown.
             tree_view::resolution_entries(
@@ -2586,6 +2647,8 @@ impl Shell {
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_)
                 | TreeMenu::Resolution(_)
+                | TreeMenu::Macros(_)
+                | TreeMenu::Notes(_)
                 | TreeMenu::Tunnel(_) => None,
             };
             let editable = profile.as_ref().is_some_and(|p| self.app.can_edit(&p.id));
@@ -2602,7 +2665,21 @@ impl Shell {
     /// to add one; otherwise, how to open one.
     fn home(&self) -> Element<'_, Message> {
         if !self.app.profile_summaries().is_empty() {
-            return center(text(fl!("ui-home-select"))).into();
+            // The session selected, as the C# detail panel shows it.
+            let selected = self
+                .app
+                .selected_profile
+                .as_ref()
+                .and_then(|id| self.app.profile_summary(id));
+            return match selected {
+                Some(profile) => center(crate::detail_view::view(
+                    &profile,
+                    self.app.selected_credentials(),
+                    self.app.can_edit(&profile.id),
+                ))
+                .into(),
+                None => center(text(fl!("ui-home-select"))).into(),
+            };
         }
         center(
             column![
@@ -2990,6 +3067,18 @@ impl Shell {
         )
     }
 
+    /// The Terminal tab: the terminals' look, the transcripts, the macros.
+    fn terminal_tab(&self) -> Column<'_, Message> {
+        column![
+            text(fl!("ui-settings-terminal")).size(BODY_SIZE),
+            self.terminal_settings(),
+            text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
+            self.session_log_settings(),
+            text(fl!("ui-macros-menu")).size(BODY_SIZE),
+            crate::macros_view::card(self.app.macros()),
+        ]
+    }
+
     /// The settings, as the C# Settings tab's Security page: the master password card.
     fn settings_page(&self) -> Element<'_, Message> {
         let enabled = self.app.vault_status() != VaultStatus::Missing;
@@ -3056,12 +3145,7 @@ impl Shell {
         .style(container::bordered_box);
         let body: Column<'_, Message> = match self.settings_tab {
             SettingsTab::General => self.general_settings(),
-            SettingsTab::Terminal => column![
-                text(fl!("ui-settings-terminal")).size(BODY_SIZE),
-                self.terminal_settings(),
-                text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
-                self.session_log_settings(),
-            ],
+            SettingsTab::Terminal => self.terminal_tab(),
             SettingsTab::Ssh => column![
                 text(fl!("ui-settings-ssh-auto-reconnect")).size(BODY_SIZE),
                 self.ssh_reconnect_settings(),
@@ -4161,6 +4245,7 @@ impl Shell {
                 .as_ref()
                 .and_then(|pane| pane.vnc_remote_resize()),
             saveable: self.app.can_save_as_profile(tab),
+            macros: self.app.macro_menu(tab).is_some(),
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -4192,6 +4277,16 @@ impl Shell {
             .align_y(iced::Alignment::Center);
             if tab.pinned {
                 label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+            }
+            // A macro recorded from it, or typed into it.
+            if tab.macro_recording.is_some() {
+                label = label.push(
+                    text(fl!("ui-tab-recording-badge"))
+                        .size(SMALL_SIZE)
+                        .style(text::danger),
+                );
+            } else if tab.macro_playing.is_some() {
+                label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
             }
             if tab.bell && !active {
                 label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
@@ -5831,6 +5926,37 @@ fn route_test_task(run: u64, request: heimdall_app::route_test::RouteTestRequest
     })
 }
 
+/// The words of the note templates, in the language shown.
+fn note_labels() -> heimdall_app::notes::NoteLabels {
+    heimdall_app::notes::NoteLabels {
+        working_note: fl!("ui-notes-tpl-working-note"),
+        notes: fl!("ui-notes-tpl-notes"),
+        commands: fl!("ui-notes-tpl-commands"),
+        next: fl!("ui-notes-tpl-next"),
+        daily_note: fl!("ui-notes-tpl-daily-note"),
+        focus: fl!("ui-notes-tpl-focus"),
+        journal: fl!("ui-notes-tpl-journal"),
+        follow_up: fl!("ui-notes-tpl-follow-up"),
+        incident: fl!("ui-notes-tpl-incident"),
+        incident_report: fl!("ui-notes-tpl-incident-report"),
+        summary: fl!("ui-notes-tpl-summary"),
+        impact: fl!("ui-notes-tpl-impact"),
+        timeline: fl!("ui-notes-tpl-timeline"),
+        incident_started: fl!("ui-notes-tpl-incident-started"),
+        investigation: fl!("ui-notes-tpl-investigation"),
+        actions: fl!("ui-notes-tpl-actions"),
+        resolution: fl!("ui-notes-tpl-resolution"),
+        procedure: fl!("ui-notes-tpl-procedure"),
+        purpose: fl!("ui-notes-tpl-purpose"),
+        scope: fl!("ui-notes-tpl-scope"),
+        preconditions: fl!("ui-notes-tpl-preconditions"),
+        steps: fl!("ui-notes-tpl-steps"),
+        validation: fl!("ui-notes-tpl-validation"),
+        rollback: fl!("ui-notes-tpl-rollback"),
+        references: fl!("ui-notes-tpl-references"),
+    }
+}
+
 /// The task asking what answers: an address, from the tree or the profile form, or the SSH
 /// agents, for the form's chip.
 fn probe_task(effect: Effect) -> Task<Message> {
@@ -6775,6 +6901,7 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
 fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let (title, body, action) = match dialog {
         Dialog::RenameTab { value, .. } => return rename_tab_dialog(value),
+        Dialog::SaveMacro { name, entries } => return save_macro_dialog(name, entries.len()),
         Dialog::CustomResolution { value, .. } => return custom_resolution_dialog(value),
         Dialog::ConfirmPaste {
             command: Some(command),
@@ -6932,6 +7059,31 @@ fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-ok-button")))
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The name of the macro just recorded, of `count` inputs, asked before it is kept.
+fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
+    column![
+        text(fl!("ui-dialog-save-macro-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-save-macro-prompt", count = count)),
+        text(fl!("ui-dialog-save-macro-warning")).size(SMALL_SIZE),
+        text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .id(name_field_id())
+            .on_input(|value| Message::App(AppMessage::Macro(
+                heimdall_app::MacroMessage::NameEdited(value)
+            )))
+            .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-save-macro-confirm")))
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
         .spacing(SPACING),
@@ -7216,6 +7368,7 @@ fn edit_task(effect: Effect) -> Task<Message> {
 }
 
 /// The work of a Files tab: listing, transferring, changing entries.
+#[expect(clippy::too_many_lines, reason = "one arm per effect")]
 fn files_task(effect: Effect) -> Task<Message> {
     match effect {
         Effect::ListRemote { tab, client, path } => {
@@ -7281,6 +7434,24 @@ fn files_task(effect: Effect) -> Task<Message> {
         | Effect::SudoSave { .. }
         | Effect::SendEditAnyway { .. }
         | Effect::OpenFolder { .. }) => edit_task(effect),
+        Effect::CopyAcross {
+            tab,
+            from,
+            to,
+            sources,
+            folder,
+            staging,
+            cancel,
+        } => Task::perform(
+            heimdall_app::files::copy_across(from, to, sources, folder, staging, cancel),
+            move |results| {
+                Message::App(AppMessage::Files(FilesMessage::Copied {
+                    tab,
+                    results,
+                    duplicate: false,
+                }))
+            },
+        ),
         Effect::CopyRemote {
             tab,
             client,
@@ -7788,6 +7959,11 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-reset-rdp-body"),
             fl!("ui-settings-rdp-reset-defaults"),
         ),
+        Dialog::ConfirmDeleteMacro(name) => (
+            fl!("ui-macro-editor-delete-macro"),
+            fl!("ui-dialog-delete-macro-body", name = server_text(name)),
+            fl!("ui-macros-delete"),
+        ),
         Dialog::ConfirmDeleteGateway {
             name,
             servers,
@@ -7845,6 +8021,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
+        | Dialog::SaveMacro { .. }
         | Dialog::CustomResolution { .. }
         | Dialog::ConfirmPaste { .. } => tab_dialog(dialog),
         Dialog::FolderName { .. }
@@ -7857,6 +8034,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmExit { .. }
         | Dialog::ConfirmSessionLogging
         | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteGateway { .. }
         | Dialog::ConfirmDeleteProfile { .. }
         | Dialog::ConfirmDelete { .. } => {
@@ -7868,6 +8046,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         }
         Dialog::ConfirmSettingsImport(read) => crate::settings_file::import_question(read),
         Dialog::FileConflicts { rows, .. } => crate::conflicts_view::view(rows),
+        Dialog::EditMacro(edited) => crate::macros_view::editor(edited),
         Dialog::NewTunnel(form) => {
             crate::tunnels_view::new_tunnel(form, forms.gateways, forms.tunnel_problem)
         }

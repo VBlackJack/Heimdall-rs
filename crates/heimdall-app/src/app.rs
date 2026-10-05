@@ -75,6 +75,7 @@ mod auto_reconnect;
 mod broadcast;
 mod bulk_edit;
 mod connect_as;
+mod detail;
 mod file_import;
 mod files_clipboard;
 mod files_edit;
@@ -90,6 +91,8 @@ mod health_tab;
 mod hostkeys_import;
 mod keep_alive;
 mod local_tab;
+mod macro_editor;
+mod macros;
 mod pin;
 mod post_connect;
 mod profile_menu;
@@ -127,6 +130,7 @@ pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
 pub use connect_as::ConnectAs;
+pub use detail::SavedCredentials;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
 pub use files_edit::SudoAction;
@@ -139,6 +143,8 @@ pub use gateway_overview::{
 };
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use local_tab::LocalConfirmation;
+pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
+pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
 pub use post_connect::PostConnectConfirmation;
 pub use profile_menu::ProfileMenuMessage;
@@ -680,6 +686,10 @@ pub enum Message {
     CredentialProvided(Box<ProviderAnswer>),
     /// A change from the Settings page.
     Settings(SettingsMessage),
+    /// A step of the terminal macros.
+    Macro(MacroMessage),
+    /// A note about a server was written and opened in the editor set, or why not.
+    NoteOpened(Result<PathBuf, String>),
     /// The settings carried to or from another computer.
     SettingsTransfer(SettingsTransferMessage),
     /// A step of the Settings page's Gateways tab.
@@ -885,6 +895,11 @@ impl fmt::Debug for Message {
                 )
             }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
+            // What a macro types is not logged.
+            Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
+            Self::Macro(MacroMessage::Draft(_)) => f.write_str("Macro(Draft)"),
+            Self::Macro(message) => write!(f, "Macro({message:?})"),
+            Self::NoteOpened(result) => write!(f, "NoteOpened({})", result.is_ok()),
             Self::SettingsTransfer(message) => match message {
                 // What the file says is not logged.
                 SettingsTransferMessage::Read(result) => {
@@ -967,6 +982,15 @@ pub enum Effect {
     /// Send the Wake-on-LAN magic packet for this card, and say how it went as
     /// [`ProfileMenuMessage::WakeOnLanSent`].
     WakeOnLan(heimdall_core::metadata::MacAddress),
+    /// Type a macro into `tab`, then say how it ended as [`MacroMessage::Finished`].
+    PlayMacro {
+        /// The tab.
+        tab: TabId,
+        /// The typing.
+        run: std::pin::Pin<
+            Box<dyn std::future::Future<Output = crate::macro_player::MacroOutcome> + Send>,
+        >,
+    },
     /// Dial these servers, `at_once` at a time, each with `timeout` to answer, and say each
     /// as [`Message::ReachabilityChecked`].
     CheckReachability {
@@ -1283,6 +1307,24 @@ pub enum Effect {
         /// A duplicate, rather than a paste.
         duplicate: bool,
     },
+    /// Copy entries of another server's tab into a folder of this one, through this
+    /// computer, then send [`FilesMessage::Copied`].
+    CopyAcross {
+        /// Tab pasted in.
+        tab: TabId,
+        /// The session they are read from.
+        from: heimdall_files::RemoteSession,
+        /// The session they are written to.
+        to: heimdall_files::RemoteSession,
+        /// What to copy.
+        sources: Vec<crate::files::CopySource>,
+        /// Into this folder.
+        folder: heimdall_files::RemotePath,
+        /// Where a file is kept on this computer between the two.
+        staging: PathBuf,
+        /// Stops the copy running.
+        cancel: tokio_util::sync::CancellationToken,
+    },
     /// Plan a transfer whole, then send [`FilesMessage::Planned`].
     PlanTransfer {
         /// Tab.
@@ -1360,6 +1402,7 @@ impl fmt::Debug for Effect {
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
             Self::TestReachability { port, .. } => write!(f, "TestReachability(port {port})"),
             Self::WakeOnLan(_) => f.write_str("WakeOnLan"),
+            Self::PlayMacro { tab, .. } => write!(f, "PlayMacro({})", tab.value()),
             Self::CheckReachability { probes, .. } => {
                 write!(f, "CheckReachability({})", probes.len())
             }
@@ -1433,6 +1476,9 @@ impl fmt::Debug for Effect {
             Self::SudoSave { tab, .. } => write!(f, "SudoSave({})", tab.value()),
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
+            }
+            Self::CopyAcross { tab, sources, .. } => {
+                write!(f, "CopyAcross({}, {})", tab.value(), sources.len())
             }
             Self::MoveRemote { tab, moves, .. } => {
                 write!(f, "MoveRemote({}, {})", tab.value(), moves.len())
@@ -1608,6 +1654,10 @@ pub struct Tab {
     pub pinned: bool,
     /// The post-connect step running, while the sequence runs.
     pub post_connect: Option<PostConnectProgress>,
+    /// The macro being recorded from what is typed into it.
+    pub macro_recording: Option<MacroRecording>,
+    /// The macro being typed into it.
+    pub macro_playing: Option<MacroPlaying>,
 }
 
 impl fmt::Debug for Tab {
@@ -1704,6 +1754,8 @@ impl Tab {
             pinned: false,
             reopen: reconnect::Reopen::of(&profile),
             post_connect: None,
+            macro_recording: None,
+            macro_playing: None,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -1744,6 +1796,10 @@ impl Tab {
 
     fn stop(&mut self) {
         self.cancel.cancel();
+        self.macro_recording = None;
+        if let Some(playing) = self.macro_playing.take() {
+            playing.stop();
+        }
         self.desktop = None;
         // Its footer is written as it goes.
         self.transcript = None;
@@ -1969,6 +2025,17 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// A macro's name and inputs, edited, as the C# macro editor.
+    EditMacro(Box<macro_editor::MacroDraft>),
+    /// Forget the macro of this name, as the C# asks.
+    ConfirmDeleteMacro(String),
+    /// The name of the macro just recorded, asked before it is kept.
+    SaveMacro {
+        /// The name typed so far.
+        name: String,
+        /// What was recorded.
+        entries: Vec<heimdall_core::macros::MacroEntry>,
+    },
     /// Whether the settings exported take the paths under this computer's user's folder,
     /// as the C# asks: this many.
     ConfirmSettingsExportPaths {
@@ -2313,6 +2380,10 @@ pub struct App {
     /// The hosts connected to, newest first, with the protocol, as the C#
     /// `RecentConnectionTracker` keeps them: for this run only.
     recent_hosts: Vec<(String, ProfileKind)>,
+    /// The credentials kept for the session selected, as last read.
+    detail: detail::DetailCache,
+    /// The terminal macros kept.
+    macros: heimdall_core::macros::Macros,
     /// The background check of every server.
     monitor: reachability_monitor::Monitor,
     /// Tunnels being opened or open, with what stops them.
@@ -2398,6 +2469,13 @@ impl App {
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
         let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
         let tunnels_panel = !settings.collapse_tunnels_panel;
+        let macros = heimdall_core::macros::Macros::load(&heimdall_core::macros::macros_path(
+            &config.profiles_file,
+        ))
+        .unwrap_or_else(|error| {
+            log::warn!("macros not read: {error}");
+            heimdall_core::macros::Macros::default()
+        });
         let files_state = heimdall_core::files_state::FilesState::open(
             config
                 .profiles_file
@@ -2429,6 +2507,8 @@ impl App {
             last_move: None,
             pending_restore,
             recent_hosts: Vec::new(),
+            detail: detail::DetailCache::default(),
+            macros,
             monitor: reachability_monitor::Monitor::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
@@ -2617,6 +2697,8 @@ impl App {
             | Message::Sessions(_)
             | Message::Rdp(_)
             | Message::Settings(_)
+            | Message::Macro(_)
+            | Message::NoteOpened(_)
             | Message::SettingsTransfer(_)
             | Message::Gateways(_)
             | Message::Broadcast(_)) => self.window_message(&message),
@@ -3027,6 +3109,9 @@ impl App {
                 self.files_ready(tab_id)
             }
             ConnectionEvent::Output(bytes) => {
+                if let Some(playing) = &tab.macro_playing {
+                    playing.saw(&bytes);
+                }
                 let output = tab.terminal.feed(&bytes);
                 handle_feed(tab, output, active)
             }
@@ -3201,6 +3286,9 @@ impl App {
         };
         if let Some(bytes) = encode_key(&press, &tab.terminal.input_mode()) {
             tab.terminal.scroll_to_bottom();
+            if let Some(recording) = tab.macro_recording.as_mut() {
+                recording.note(&bytes);
+            }
             tab.write(bytes);
         }
     }
@@ -3409,9 +3497,15 @@ impl App {
     }
 
     /// Pastes `text` into the sessions of `targets`, each as its modes ask.
-    fn paste_to(&self, targets: &[TabId], text: &str) {
-        for tab in targets.iter().filter_map(|target| self.tab(*target)) {
-            tab.write(encode_paste(text, &tab.terminal.input_mode()));
+    fn paste_to(&mut self, targets: &[TabId], text: &str) {
+        for target in targets {
+            if let Some(tab) = self.tab_mut(*target) {
+                let bytes = encode_paste(text, &tab.terminal.input_mode());
+                if let Some(recording) = tab.macro_recording.as_mut() {
+                    recording.note(&bytes);
+                }
+                tab.write(bytes);
+            }
         }
     }
 
@@ -3643,6 +3737,18 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::EditMacro(draft)) => {
+                self.save_edited_macro(*draft);
+                Vec::new()
+            }
+            Some(Dialog::ConfirmDeleteMacro(name)) => {
+                self.delete_macro(&name);
+                Vec::new()
+            }
+            Some(Dialog::SaveMacro { name, entries }) => {
+                self.save_macro(&name, entries);
+                Vec::new()
+            }
             Some(Dialog::ConfirmSettingsExportPaths { .. }) => self.export_settings(true),
             Some(Dialog::ConfirmSettingsImport(read)) => self.apply_imported_settings(*read),
             Some(Dialog::ConfirmDeleteGateway { id, name, .. }) => {
@@ -3663,7 +3769,8 @@ impl App {
             Some(Dialog::RestoreSessions(dialog)) => self.restore_sessions(dialog),
             Some(Dialog::ConfirmPaste { .. }) => {
                 if let Some((tab_id, text)) = self.pending_paste.take() {
-                    self.paste_to(&self.input_targets(tab_id), &text);
+                    let targets = self.input_targets(tab_id);
+                    self.paste_to(&targets, &text);
                 }
                 Vec::new()
             }
@@ -3742,6 +3849,18 @@ impl App {
                 Vec::new()
             }
             Message::Settings(message) => self.settings_message(message),
+            Message::Macro(message) => self.macro_message(message.clone()),
+            Message::NoteOpened(result) => {
+                self.tell(match result {
+                    Ok(path) => Notice::NoteOpened(
+                        path.file_name()
+                            .map(|name| name.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    ),
+                    Err(reason) => Notice::NoteFailed(reason.clone()),
+                });
+                Vec::new()
+            }
             Message::SettingsTransfer(message) => self.settings_transfer(message.clone()),
             Message::Gateways(message) => {
                 self.gateways_message(message.clone());

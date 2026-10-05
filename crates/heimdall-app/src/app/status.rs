@@ -185,6 +185,23 @@ pub enum Notice {
     NothingToUndo,
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.
     WakeOnLan(Result<(), String>),
+    /// A macro recording ended with nothing typed.
+    MacroNothingRecorded,
+    /// The macro of this name was kept.
+    MacroSaved(String),
+    /// The macro of this name was forgotten.
+    MacroDeleted(String),
+    /// A macro typed into a session ended.
+    MacroEnded {
+        /// Its name.
+        name: String,
+        /// How.
+        outcome: crate::macro_player::MacroOutcome,
+    },
+    /// The note of this file name was opened in the editor.
+    NoteOpened(String),
+    /// A note could not be written or opened, for this reason.
+    NoteFailed(String),
     /// The settings were exported.
     SettingsExported,
     /// The settings could not be exported, for this reason.

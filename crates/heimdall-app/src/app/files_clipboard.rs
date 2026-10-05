@@ -15,8 +15,9 @@
  */
 
 //! Cut, Copy, Paste and Duplicate in a Files tab, as the C# SFTP view's: the entries cut or
-//! copied are held for every Files tab, and pasted, on the same server, into the folder a
-//! tab shows.
+//! copied are held for every Files tab, and pasted into the folder a tab shows: cut ones on
+//! the same server; copied ones on the same server, or on another one, as the C# pastes
+//! across servers, while the tab they were copied in is still connected.
 //!
 //! - Cut entries are moved by a rename that never replaces what is there. What was moved
 //!   leaves the clipboard; what could not stays, to be pasted again, as the C# keeps it.
@@ -42,6 +43,8 @@ pub struct FilesClipboard {
     pub mode: ClipMode,
     /// The server they are on: protocol, account, host, port and gateway.
     endpoint: String,
+    /// The tab they were cut or copied in, whose connection reads them for another server.
+    source: TabId,
 }
 
 /// What a paste does with the entries held.
@@ -120,6 +123,7 @@ impl App {
             entries,
             mode,
             endpoint,
+            source: tab_id,
         });
         self.tell(match mode {
             ClipMode::Cut => Notice::FilesCut(count),
@@ -136,17 +140,27 @@ impl App {
             .is_some_and(|files| files.shell.is_some())
     }
 
-    /// Whether `tab_id` can paste what is held: something is, on its own server.
+    /// Whether `tab_id` can paste what is held: something is, on its own server; or, copied
+    /// on another server, the tab it was copied in is still connected.
     #[must_use]
     pub fn can_paste(&self, tab_id: TabId) -> bool {
         match (&self.files_clipboard, self.files_endpoint(tab_id)) {
-            (Some(clipboard), Some(endpoint)) => {
-                !clipboard.entries.is_empty()
-                    && clipboard.endpoint == endpoint
-                    && (clipboard.mode == ClipMode::Cut || self.can_copy(tab_id))
+            (Some(clipboard), Some(endpoint)) if !clipboard.entries.is_empty() => {
+                if clipboard.endpoint == endpoint {
+                    clipboard.mode == ClipMode::Cut || self.can_copy(tab_id)
+                } else {
+                    clipboard.mode == ClipMode::Copy
+                        && self.files_client(clipboard.source).is_some()
+                        && self.files_client(tab_id).is_some()
+                }
             }
             _ => false,
         }
+    }
+
+    /// The connection of `tab_id`'s Files tab, while it is connected.
+    fn files_client(&self, tab_id: TabId) -> Option<heimdall_files::RemoteSession> {
+        self.tab(tab_id)?.files.as_deref()?.client.clone()
     }
 
     /// "Paste": the entries held moved or copied into the folder `tab_id` shows, one after
@@ -158,6 +172,9 @@ impl App {
         let Some(clipboard) = self.files_clipboard.clone() else {
             return Vec::new();
         };
+        if self.files_endpoint(tab_id).as_ref() != Some(&clipboard.endpoint) {
+            return self.copy_across(tab_id, clipboard.source, clipboard.entries);
+        }
         match clipboard.mode {
             ClipMode::Cut => self.move_held(tab_id, clipboard.entries),
             ClipMode::Copy => self.copy_into_shown(tab_id, clipboard.entries, false),
@@ -189,6 +206,40 @@ impl App {
             tab: tab_id,
             client,
             moves,
+        }]
+    }
+
+    /// The entries copied in `source`, on another server, copied into the folder `tab_id`
+    /// shows, through this computer, unless a copy runs there already.
+    fn copy_across(
+        &mut self,
+        tab_id: TabId,
+        source: TabId,
+        sources: Vec<CopySource>,
+    ) -> Vec<Effect> {
+        let Some(from) = self.files_client(source) else {
+            return Vec::new();
+        };
+        let staging = self.edit_dir.clone().unwrap_or_else(std::env::temp_dir);
+        let Some(files) = self.files_mut(tab_id) else {
+            return Vec::new();
+        };
+        let Some(to) = files.client.clone() else {
+            return Vec::new();
+        };
+        if files.copying.is_some() {
+            return Vec::new();
+        }
+        let cancel = tokio_util::sync::CancellationToken::new();
+        files.copying = Some(cancel.clone());
+        vec![Effect::CopyAcross {
+            tab: tab_id,
+            from,
+            to,
+            sources,
+            folder: files.remote.path.clone(),
+            staging,
+            cancel,
         }]
     }
 

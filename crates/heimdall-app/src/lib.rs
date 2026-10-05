@@ -37,6 +37,8 @@ pub mod integrated_edit;
 pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
+pub mod macro_player;
+pub mod notes;
 mod paste_guard;
 mod post_connect;
 pub mod profile_draft;
@@ -60,6 +62,7 @@ pub mod wake_on_lan;
 pub mod winrm_driver;
 pub mod winrm_preflight;
 
+pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
@@ -79,7 +82,9 @@ pub use app::{
     VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
     master_password_problem, open_vault,
 };
+pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
+pub use app::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use desktop::{
     Aspect, DesktopFramebuffer, DesktopInput, DesktopPane, PointerButton, SaveState, SpecialKeys,
 };
