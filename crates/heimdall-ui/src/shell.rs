@@ -3989,6 +3989,7 @@ impl Shell {
             saved: self.app.tab_profile(tab).is_some(),
             mode: tab.resolution_mode()?,
             shown: pane.tab_size(),
+            aspect: pane.aspect,
         })
     }
 

@@ -25,8 +25,11 @@ use crate::ids::TabId;
 /// What the user chose in an RDP tab's "Resolution" menu.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResolutionChoice {
-    /// The tab's size, followed from then on.
+    /// The tab's size, followed from then on, the whole of it.
     MatchWindow,
+    /// The tab's size followed, fitted to these proportions, as the C# "Match window"
+    /// sub-menu.
+    MatchAspect(crate::desktop::Aspect),
     /// A size of its own.
     Fixed {
         /// Width, in pixels.
@@ -47,7 +50,10 @@ impl App {
     /// Applies a choice of `tab_id`'s "Resolution" menu.
     pub(super) fn choose_resolution(&mut self, tab_id: TabId, choice: ResolutionChoice) {
         match choice {
-            ResolutionChoice::MatchWindow => self.size_desktop(tab_id, None),
+            ResolutionChoice::MatchWindow => {
+                self.shape_desktop(tab_id, crate::desktop::Aspect::Stretch);
+            }
+            ResolutionChoice::MatchAspect(aspect) => self.shape_desktop(tab_id, aspect),
             ResolutionChoice::Fixed { width, height } => {
                 self.size_desktop(tab_id, Some(fixed_desktop(width, height)));
             }
@@ -61,6 +67,19 @@ impl App {
             }
             ResolutionChoice::SaveDefault => self.save_resolution(tab_id),
         }
+    }
+
+    /// `tab_id`'s desktop follows its tab again, fitted to `aspect`, kept for its
+    /// reconnections.
+    fn shape_desktop(&mut self, tab_id: TabId, aspect: crate::desktop::Aspect) {
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return;
+        };
+        tab.desktop_aspect = aspect;
+        if let Some(pane) = tab.desktop.as_deref_mut() {
+            pane.aspect = aspect;
+        }
+        self.size_desktop(tab_id, None);
     }
 
     /// "Custom...": the size typed, or, not one, the C# line saying how to type it.

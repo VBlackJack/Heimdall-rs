@@ -1564,6 +1564,7 @@ ui-shortcuts-screenshot = Capture screenshot
 ui-shortcuts-lock = Lock
 ui-shortcuts-help = Show this help
 ui-shortcuts-close = Close a dialog or a menu, exit fullscreen
+ui-resolution-match-aspect = Match window, { $wide }:{ $high }
 ui-tab-menu-pin = Pin tab
 ui-tab-menu-unpin = Unpin tab
 ui-tab-menu-save-as-profile = Save as profile...
