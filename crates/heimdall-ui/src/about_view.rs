@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use heimdall_app::{App, Message as AppMessage, SettingsMessage};
+use heimdall_app::{App, Message as AppMessage, SettingsMessage, SettingsTransferMessage};
 use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Element, Length};
 
@@ -125,6 +125,27 @@ pub fn view(app: &App) -> Column<'_, Message> {
                 .spacing(SPACING)
                 .wrap(),
             ],
+        ),
+        card(
+            fl!("ui-about-section-settings-file"),
+            column![
+                row![
+                    button(text(fl!("ui-about-export-settings")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::SettingsTransfer(
+                            SettingsTransferMessage::Export
+                        ))),
+                    button(text(fl!("ui-about-import-settings")))
+                        .style(button::secondary)
+                        .on_press(Message::App(AppMessage::SettingsTransfer(
+                            SettingsTransferMessage::Import
+                        ))),
+                ]
+                .spacing(SPACING)
+                .wrap(),
+                text(fl!("ui-about-settings-file-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
         ),
         card(
             fl!("ui-about-section-diagnostics"),
