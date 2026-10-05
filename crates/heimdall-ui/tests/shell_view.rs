@@ -3373,3 +3373,34 @@ fn home_end_select_all_and_letters_move_in_the_tree_and_ctrl_b_hides_it() {
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     assert!(title(&shell), "shown again");
 }
+
+#[test]
+fn escape_no_widget_took_leaves_full_screen_once_nothing_else_is_open() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ToggleFullscreen);
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Local shell").is_err(), "no tree in full screen");
+        ui.click("Exit fullscreen")
+            .expect("a way out for the mouse");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ToggleFullscreen))
+        );
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(ProfileId::new(
+        "a",
+    ))));
+    let _ = shell.update(Message::EscapeUntaken);
+    assert!(
+        simulator(&shell).find("Exit fullscreen").is_ok(),
+        "the menu closes first"
+    );
+    let _ = shell.update(Message::EscapeUntaken);
+    let mut ui = simulator(&shell);
+    ui.find("Local shell").expect("the tree again");
+    assert!(ui.find("Exit fullscreen").is_err());
+}
