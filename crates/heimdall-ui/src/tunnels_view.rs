@@ -274,6 +274,42 @@ pub fn panel(tunnels: &[Tunnel]) -> Element<'_, Message> {
     .into()
 }
 
+/// The Tunnels page of the window's navigation, as the C# one: its title, New and Close
+/// All, then every tunnel, the whole height.
+pub fn page(tunnels: &[Tunnel]) -> Element<'_, Message> {
+    let header = row![
+        text(fl!("ui-tunnels-page-title")).size(HEADING_SIZE),
+        space::horizontal(),
+        button(text(fl!("ui-tunnels-new"))).on_press(tunnel(TunnelMessage::New)),
+        button(text(fl!("ui-tunnels-close-all")))
+            .style(button::danger)
+            .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll))),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center);
+    let body: Element<'_, Message> = if tunnels.is_empty() {
+        text(fl!("ui-tunnels-empty")).style(text::secondary).into()
+    } else {
+        let rows = tunnels.iter().map(tunnel_row);
+        scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
+            .height(Length::Fill)
+            .into()
+    };
+    container(
+        column![header, columns(), rule::horizontal(1), body]
+            .spacing(SPACING)
+            .width(Length::Fill)
+            .height(Length::Fill),
+    )
+    .padding(PAGE_PADDING)
+    .width(Length::Fill)
+    .height(Length::Fill)
+    .into()
+}
+
+/// Room around the Tunnels page.
+const PAGE_PADDING: f32 = 16.0;
+
 /// The panel's column titles, as the C# grid's.
 fn columns<'a>() -> Element<'a, Message> {
     let title = |label: String| text(label).size(PANEL_TEXT_SIZE).style(text::secondary);

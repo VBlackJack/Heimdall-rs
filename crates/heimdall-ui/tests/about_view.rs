@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-//! The Settings page's About tab: what it says, and its diagnostics log switch.
+//! The About page of the window's navigation: what it says, and its diagnostics log switch.
 
 mod common;
 
@@ -23,7 +23,7 @@ use std::path::Path;
 use heimdall_app::{App, AppConfig, SystemCredentials};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, SettingsTab, Shell};
+use heimdall_ui::shell::{Destination, Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};
 
@@ -40,8 +40,7 @@ fn shell(dir: &Path) -> Shell {
         files_start: dir.to_owned(),
         system_credentials: SystemCredentials::memory(),
     }));
-    let _ = shell.update(Message::ShowSettings);
-    let _ = shell.update(Message::SettingsTab(SettingsTab::About));
+    let _ = shell.update(Message::Navigate(Destination::About));
     shell
 }
 
