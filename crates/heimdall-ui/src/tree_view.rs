@@ -928,6 +928,10 @@ pub struct TabMenuState {
     pub resolution: bool,
     /// Its server health panel, for an SSH shell: shown or not.
     pub health: Option<bool>,
+    /// It is pinned.
+    pub pinned: bool,
+    /// Its session is saved nowhere, and can be saved as a profile.
+    pub saveable: bool,
 }
 
 /// The tab menu's entry showing or hiding an SSH shell's server health panel.
@@ -1100,6 +1104,45 @@ pub fn resolution_entries<'a>(
     menu_card(entries).into()
 }
 
+/// A tab's entries for the saved profile it was opened from: Edit, the copies, and Reveal
+/// in tree.
+fn profile_tab_entries<'a>(
+    entries: Column<'a, Message>,
+    tab: TabId,
+    profile: &ProfileSummary,
+    editable: bool,
+) -> Column<'a, Message> {
+    let id = profile.id.clone();
+    let has_user = profile
+        .username
+        .as_deref()
+        .is_some_and(|user| !user.is_empty());
+    entries
+        .push(separator())
+        .push(entry(
+            fl!("ui-tree-edit"),
+            editable.then(|| AppMessage::EditProfile(id.clone())),
+        ))
+        .push(entry(
+            fl!("ui-tree-copy-hostname"),
+            profile.endpoint.is_some().then(|| AppMessage::CopyProfile {
+                id: id.clone(),
+                what: ProfileCopy::Hostname,
+            }),
+        ))
+        .push(entry(
+            fl!("ui-tree-copy-username"),
+            has_user.then(|| AppMessage::CopyProfile {
+                id,
+                what: ProfileCopy::Username,
+            }),
+        ))
+        .push(entry(
+            fl!("ui-tab-menu-reveal-in-tree"),
+            Some(AppMessage::TabMenu(TabMenuMessage::RevealInTree(tab))),
+        ))
+}
+
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
 /// does: no pin, split, detach or macros.
 pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
@@ -1122,6 +1165,14 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::ResetTitle(tab)),
         ));
     }
+    entries = entries.push(entry(
+        if state.pinned {
+            fl!("ui-tab-menu-unpin")
+        } else {
+            fl!("ui-tab-menu-pin")
+        },
+        menu(TabMenuMessage::Pin(tab)),
+    ));
     if state.resolution {
         entries = entries.push(separator()).push(
             button(text(fl!("ui-resolution-menu")).size(MENU_TEXT_SIZE))
@@ -1148,32 +1199,14 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
                 .can_reopen
                 .then(|| AppMessage::TabMenu(TabMenuMessage::Duplicate(tab))),
         ));
+    if state.saveable {
+        entries = entries.push(entry(
+            fl!("ui-tab-menu-save-as-profile"),
+            menu(TabMenuMessage::SaveAsProfile(tab)),
+        ));
+    }
     if let Some(profile) = &state.profile {
-        let id = profile.id.clone();
-        let has_user = profile
-            .username
-            .as_deref()
-            .is_some_and(|user| !user.is_empty());
-        entries = entries
-            .push(separator())
-            .push(entry(
-                fl!("ui-tree-edit"),
-                state.editable.then(|| AppMessage::EditProfile(id.clone())),
-            ))
-            .push(entry(
-                fl!("ui-tree-copy-hostname"),
-                profile.endpoint.is_some().then(|| AppMessage::CopyProfile {
-                    id: id.clone(),
-                    what: ProfileCopy::Hostname,
-                }),
-            ))
-            .push(entry(
-                fl!("ui-tree-copy-username"),
-                has_user.then(|| AppMessage::CopyProfile {
-                    id,
-                    what: ProfileCopy::Username,
-                }),
-            ));
+        entries = profile_tab_entries(entries, tab, profile, state.editable);
     }
     entries = match state.transcript {
         TranscriptEntry::Absent => entries,
