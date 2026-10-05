@@ -465,6 +465,13 @@ pub enum Message {
     ContentFocus,
     /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
     TreeShortcut(TreeShortcut),
+    /// The gateway picked, in the Gateways tab, for the references to a missing one.
+    GatewayReassignPicked {
+        /// The missing gateway's identifier.
+        missing: ProfileId,
+        /// The gateway picked.
+        to: ProfileId,
+    },
     /// A click beside the folders of a Files pane's breadcrumb: its path, to type in.
     EditPath {
         /// Tab.
@@ -619,6 +626,9 @@ impl fmt::Debug for Message {
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::GatewayReassignPicked { missing, to } => {
+                write!(f, "GatewayReassignPicked({missing}, {to})")
+            }
             Self::EditPath { tab, side } => write!(f, "EditPath({}, {side:?})", tab.value()),
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
@@ -764,17 +774,20 @@ pub enum SettingsTab {
     Ssh,
     /// The trusted RDP certificates.
     Rdp,
+    /// The SSH gateways and what goes through each.
+    Gateways,
     /// The PIN, the master password and the external credential provider.
     Security,
 }
 
 impl SettingsTab {
     /// Every tab, in the C# order.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::General,
         Self::Terminal,
         Self::Ssh,
         Self::Rdp,
+        Self::Gateways,
         Self::Security,
     ];
 
@@ -784,6 +797,7 @@ impl SettingsTab {
             Self::Terminal => fl!("ui-settings-tab-terminal"),
             Self::Ssh => fl!("ui-settings-tab-ssh"),
             Self::Rdp => fl!("ui-settings-tab-rdp"),
+            Self::Gateways => fl!("ui-settings-tab-gateways"),
             Self::Security => fl!("ui-settings-tab-security"),
         }
     }
@@ -839,6 +853,8 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// The gateway picked for the references to each missing gateway, by its identifier.
+    gateway_reassign: std::collections::BTreeMap<ProfileId, ProfileId>,
     /// The Files pane whose path bar is typed in, rather than showing its breadcrumb.
     path_editing: Option<(TabId, heimdall_app::files::Side)>,
     /// Where the pointer is in a Files tab's panes.
@@ -1029,6 +1045,7 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            gateway_reassign: std::collections::BTreeMap::new(),
             path_editing: None,
             files_hover: None,
             files_drag: None,
@@ -1281,6 +1298,10 @@ impl Shell {
             | Message::WindowResized(_)
             | Message::SidebarDragged(_)
             | Message::SidebarDragEnd) => self.tree_input(message),
+            Message::GatewayReassignPicked { missing, to } => {
+                self.gateway_reassign.insert(missing, to);
+                Vec::new()
+            }
             message @ (Message::FilesHover(_)
             | Message::FilesHoverLeft(_)
             | Message::PointerPressed
@@ -2945,6 +2966,16 @@ impl Shell {
         search.into()
     }
 
+    /// The Gateways tab: the gateways, what goes through each, and the references to one
+    /// that is not configured.
+    fn gateways_settings(&self) -> Column<'_, Message> {
+        crate::gateways_view::view(
+            self.app.gateway_overview(),
+            self.app.gateways(),
+            &self.gateway_reassign,
+        )
+    }
+
     /// The settings, as the C# Settings tab's Security page: the master password card.
     fn settings_page(&self) -> Element<'_, Message> {
         let enabled = self.app.vault_status() != VaultStatus::Missing;
@@ -3027,6 +3058,7 @@ impl Shell {
                 self.trusted_keys_settings(TrustedList::HostKeys),
             ],
             SettingsTab::Rdp => self.rdp_settings(),
+            SettingsTab::Gateways => self.gateways_settings(),
             SettingsTab::Security => column![
                 pin_card,
                 vault_card,
@@ -7738,6 +7770,21 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-reset-rdp-body"),
             fl!("ui-settings-rdp-reset-defaults"),
         ),
+        Dialog::ConfirmDeleteGateway {
+            name,
+            servers,
+            gateways,
+            ..
+        } => (
+            fl!("ui-dialog-delete-gateway-title"),
+            fl!(
+                "ui-dialog-delete-gateway-body",
+                name = server_text(name),
+                servers = (*servers),
+                gateways = (*gateways)
+            ),
+            fl!("ui-gateways-delete"),
+        ),
         _ => (
             fl!("ui-dialog-broadcast-title"),
             fl!("ui-dialog-broadcast-body"),
@@ -7792,6 +7839,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmExit { .. }
         | Dialog::ConfirmSessionLogging
         | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmDeleteGateway { .. }
         | Dialog::ConfirmDeleteProfile { .. }
         | Dialog::ConfirmDelete { .. } => {
             let (title, body, action) = plain_question(dialog);
