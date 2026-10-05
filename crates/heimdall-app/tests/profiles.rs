@@ -213,3 +213,100 @@ fn an_import_whose_save_fails_leaves_the_list_as_its_file_is() {
     assert!(matches!(&app.dialog, Some(Dialog::StoreError { .. })));
     assert!(app.profiles().is_empty());
 }
+
+#[test]
+fn the_metadata_is_saved_searched_offered_to_wake_the_server_and_checked() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_app::{Effect, Notice, ProfileMenuMessage};
+    use heimdall_core::metadata::{Environment, MacAddress};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("profiles.toml");
+    let mut app = App::new(config(file.clone(), dir.path()));
+    app.update(Message::NewProfile);
+    app.update(Message::ChooseProtocol(DraftProtocol::Rdp));
+    fill(&mut app, "dc", "dc.lab", "3389");
+    app.update(Message::ProfileChoice(ProfileChoice::Environment(Some(
+        Environment::Production,
+    ))));
+    type_in(&mut app, ProfileField::Tags, " domain controller ");
+    type_in(&mut app, ProfileField::MacAddress, "aa-bb-cc-dd-ee-0f");
+    app.update(Message::ConfirmDialog);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+
+    let id = app.profile_summaries()[0].id.clone();
+    let store = ProfileStore::open(&file).expect("readable");
+    let kept = store.metadata(&id).expect("kept");
+    assert_eq!(kept.environment, Some(Environment::Production));
+    assert_eq!(kept.tags, "domain controller");
+    assert_eq!(
+        kept.mac_address,
+        Some(MacAddress([0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0x0F]))
+    );
+
+    // A copy carries it, as the C# one.
+    app.update(Message::DuplicateProfile {
+        id: id.clone(),
+        suffix: " (copy)".to_owned(),
+    });
+    let copy = app.selected_profile.clone().expect("the copy selected");
+    assert_ne!(copy, id);
+    assert_eq!(
+        app.profile_summary(&copy).expect("copy").metadata,
+        kept.clone()
+    );
+    app.update(Message::RequestDeleteProfile(copy));
+    app.update(Message::ConfirmDialog);
+
+    // Found by its environment and its tags, as the C# search.
+    let found = |app: &App, term: &str| {
+        app.profile_summaries()
+            .iter()
+            .filter(|profile| profile.matches(term))
+            .count()
+    };
+    assert_eq!(found(&app, "production"), 1);
+    assert_eq!(found(&app, "controller"), 1);
+    assert_eq!(found(&app, "staging"), 0);
+
+    // Woken from its menu: the packet is for its card, and the outcome said.
+    let effects = app.update(Message::ProfileMenu(ProfileMenuMessage::WakeOnLan(
+        id.clone(),
+    )));
+    assert!(
+        matches!(effects.as_slice(), [Effect::WakeOnLan(mac)] if *mac == kept.mac_address.expect("mac")),
+        "{effects:?}"
+    );
+    app.update(Message::ProfileMenu(ProfileMenuMessage::WakeOnLanSent(Ok(
+        (),
+    ))));
+    assert_eq!(app.notice(), Some(&Notice::WakeOnLan(Ok(()))));
+
+    // The form shows it again, and an address that does not read is refused, named.
+    app.update(Message::EditProfile(id.clone()));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::EditProfile { draft, .. })
+        if draft.mac_address == "AA:BB:CC:DD:EE:0F" && draft.tags == "domain controller")
+    );
+    type_in(&mut app, ProfileField::MacAddress, "not a card");
+    app.update(Message::ConfirmDialog);
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::EditProfile {
+            error: Some(DraftError::MacAddressInvalid),
+            ..
+        })
+    ));
+
+    // Emptied, nothing is kept; deleted, its metadata goes with it.
+    type_in(&mut app, ProfileField::MacAddress, "");
+    type_in(&mut app, ProfileField::Tags, "");
+    app.update(Message::ProfileChoice(ProfileChoice::Environment(None)));
+    app.update(Message::ConfirmDialog);
+    assert!(
+        ProfileStore::open(&file)
+            .expect("readable")
+            .metadata(&id)
+            .is_none()
+    );
+}

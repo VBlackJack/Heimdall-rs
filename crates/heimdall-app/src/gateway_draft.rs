@@ -163,7 +163,9 @@ impl GatewayDraft {
             | ProfileField::RemoteLocalPort
             | ProfileField::LocalProgram
             | ProfileField::LocalArguments
-            | ProfileField::WorkingDirectory => "",
+            | ProfileField::WorkingDirectory
+            | ProfileField::Tags
+            | ProfileField::MacAddress => "",
         }
     }
 
@@ -187,7 +189,9 @@ impl GatewayDraft {
             | ProfileField::RemoteLocalPort
             | ProfileField::LocalProgram
             | ProfileField::LocalArguments
-            | ProfileField::WorkingDirectory => {}
+            | ProfileField::WorkingDirectory
+            | ProfileField::Tags
+            | ProfileField::MacAddress => {}
         }
     }
 
