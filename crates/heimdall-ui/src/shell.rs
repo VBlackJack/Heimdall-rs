@@ -1363,6 +1363,8 @@ impl Shell {
         }
         // The texts of editors closed, with their tab or not, go.
         self.editors.prune(&self.app);
+        // What the detail panel says of the session selected, read again once it changed.
+        self.app.refresh_detail();
         // The diagnostics log as the settings say now.
         crate::logging::set_enabled(self.app.settings().diagnostics_log);
         // The language the settings name now: an import may have changed it.
@@ -2663,7 +2665,21 @@ impl Shell {
     /// to add one; otherwise, how to open one.
     fn home(&self) -> Element<'_, Message> {
         if !self.app.profile_summaries().is_empty() {
-            return center(text(fl!("ui-home-select"))).into();
+            // The session selected, as the C# detail panel shows it.
+            let selected = self
+                .app
+                .selected_profile
+                .as_ref()
+                .and_then(|id| self.app.profile_summary(id));
+            return match selected {
+                Some(profile) => center(crate::detail_view::view(
+                    &profile,
+                    self.app.selected_credentials(),
+                    self.app.can_edit(&profile.id),
+                ))
+                .into(),
+                None => center(text(fl!("ui-home-select"))).into(),
+            };
         }
         center(
             column![

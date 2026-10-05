@@ -75,6 +75,7 @@ mod auto_reconnect;
 mod broadcast;
 mod bulk_edit;
 mod connect_as;
+mod detail;
 mod file_import;
 mod files_clipboard;
 mod files_edit;
@@ -129,6 +130,7 @@ pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
 pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
 pub use connect_as::ConnectAs;
+pub use detail::SavedCredentials;
 pub use file_import::{FileKind, ImportFile, PendingImport};
 pub use files_clipboard::{ClipMode, FilesClipboard};
 pub use files_edit::SudoAction;
@@ -2378,6 +2380,8 @@ pub struct App {
     /// The hosts connected to, newest first, with the protocol, as the C#
     /// `RecentConnectionTracker` keeps them: for this run only.
     recent_hosts: Vec<(String, ProfileKind)>,
+    /// The credentials kept for the session selected, as last read.
+    detail: detail::DetailCache,
     /// The terminal macros kept.
     macros: heimdall_core::macros::Macros,
     /// The background check of every server.
@@ -2503,6 +2507,7 @@ impl App {
             last_move: None,
             pending_restore,
             recent_hosts: Vec::new(),
+            detail: detail::DetailCache::default(),
             macros,
             monitor: reachability_monitor::Monitor::default(),
             tunnel_runs: Vec::new(),
