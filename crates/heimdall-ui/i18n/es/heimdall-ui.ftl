@@ -1543,3 +1543,16 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Eliminación cancelada: { $done } de { $total } elementos eliminados.
 ui-status-files-permissions-stopped = Cambio de permisos cancelado: { $done } de { $total } elementos cambiados.
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } sesión movida a { $folder }. Ctrl+Z lo deshace.
+   *[other] { $count } sesiones movidas a { $folder }. Ctrl+Z lo deshace.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } sesión sacada de su carpeta. Ctrl+Z lo deshace.
+   *[other] { $count } sesiones sacadas de sus carpetas. Ctrl+Z lo deshace.
+}
+ui-status-dropped-folder = Carpeta { $name } movida. Ctrl+Z lo deshace.
+ui-status-drop-refused = Ya hay una carpeta con ese nombre: no se movió nada.
+ui-status-move-undone = Movimiento deshecho.
+ui-status-nothing-to-undo = Nada que deshacer.
+ui-shortcuts-undo-move = Deshacer el último movimiento hecho arrastrando en el árbol

@@ -285,7 +285,7 @@ impl App {
     }
 
     /// The folds of folder `path` and those it holds, carried to its new path `to`.
-    fn follow_folds(&mut self, path: &str, to: &str) {
+    pub(super) fn follow_folds(&mut self, path: &str, to: &str) {
         let closed: Vec<String> = self.closed_folders.iter().cloned().collect();
         for key in closed {
             if key != NO_FOLDER && folder::is_within(&key, path) {

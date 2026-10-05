@@ -1546,3 +1546,16 @@ ui-status-files-permissions-partial = { $failed ->
 }
 ui-status-files-delete-stopped = Suppression annulée : { $done } éléments sur { $total } supprimés.
 ui-status-files-permissions-stopped = Modification des permissions annulée : { $done } éléments sur { $total } modifiés.
+ui-status-dropped-profiles = { $count ->
+    [one] { $count } session déplacée dans { $folder }. Ctrl+Z l'annule.
+   *[other] { $count } sessions déplacées dans { $folder }. Ctrl+Z l'annule.
+}
+ui-status-dropped-profiles-none = { $count ->
+    [one] { $count } session sortie de son dossier. Ctrl+Z l'annule.
+   *[other] { $count } sessions sorties de leurs dossiers. Ctrl+Z l'annule.
+}
+ui-status-dropped-folder = Dossier { $name } déplacé. Ctrl+Z l'annule.
+ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été déplacé.
+ui-status-move-undone = Déplacement annulé.
+ui-status-nothing-to-undo = Rien à annuler.
+ui-shortcuts-undo-move = Annuler le dernier déplacement fait en glissant dans l'arborescence
