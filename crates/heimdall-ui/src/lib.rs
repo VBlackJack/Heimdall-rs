@@ -25,6 +25,7 @@ pub mod desktop_view;
 pub mod editor_history;
 pub mod export_file;
 pub mod file_import_view;
+pub mod files_drag;
 mod files_view;
 pub mod finder;
 mod health_view;

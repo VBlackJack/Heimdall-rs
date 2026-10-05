@@ -192,6 +192,10 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             Some(Message::Modifiers(modifiers))
         }
         iced::Event::Window(window::Event::Rescaled(scale)) => Some(Message::Rescaled(scale)),
+        // Whatever took it: a press on a Files tab's entry, which its button keeps.
+        iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left)) => {
+            Some(Message::PointerPressed)
+        }
         iced::Event::Window(window::Event::Focused) => {
             Some(Message::App(AppMessage::WindowFocus(true)))
         }
@@ -407,6 +411,16 @@ pub enum Message {
     ContentFocus,
     /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
     TreeShortcut(TreeShortcut),
+    /// The pointer came over a place in a Files tab's panes.
+    FilesHover(crate::files_drag::Spot),
+    /// The pointer left it.
+    FilesHoverLeft(crate::files_drag::Spot),
+    /// The left button went down, wherever: a press on a Files tab's entry starts a drag.
+    PointerPressed,
+    /// The pointer moved, a press on an entry held.
+    FilesDragMoved(Point),
+    /// That press is let go.
+    FilesDragEnd,
     /// Quick Connect's search changed.
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
@@ -516,6 +530,11 @@ impl fmt::Debug for Message {
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
             Self::TreeShortcut(shortcut) => write!(f, "TreeShortcut({shortcut:?})"),
+            Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
+            Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
+            Self::PointerPressed => f.write_str("PointerPressed"),
+            Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
+            Self::FilesDragEnd => f.write_str("FilesDragEnd"),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
@@ -720,6 +739,10 @@ pub struct Shell {
     modifiers: keyboard::Modifiers,
     /// The tree has the keyboard: a click in it took it from the session shown.
     tree_focused: bool,
+    /// Where the pointer is in a Files tab's panes.
+    files_hover: Option<crate::files_drag::Spot>,
+    /// A press on a Files tab's entry, held: a drag once the pointer moves.
+    files_drag: Option<crate::files_drag::FilesDrag>,
     /// Quick Connect, while open.
     palette: Option<Palette>,
     /// The terminal's search bar, while open.
@@ -837,6 +860,8 @@ impl Shell {
             density: 1.0,
             modifiers: keyboard::Modifiers::empty(),
             tree_focused: false,
+            files_hover: None,
+            files_drag: None,
             palette: None,
             finder: None,
             focus_next: None,
@@ -918,6 +943,9 @@ impl Shell {
             )
         );
         let mut subscriptions = vec![events];
+        if self.files_drag.is_some() {
+            subscriptions.push(event::listen_with(crate::files_drag::drag_event));
+        }
         if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
@@ -1035,6 +1063,11 @@ impl Shell {
             @ (Message::TreeClick(_) | Message::ContentFocus | Message::TreeShortcut(_)) => {
                 self.tree_input(message)
             }
+            message @ (Message::FilesHover(_)
+            | Message::FilesHoverLeft(_)
+            | Message::PointerPressed
+            | Message::FilesDragMoved(_)
+            | Message::FilesDragEnd) => self.files_drag_message(&message),
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
             | Message::PaletteClose) => self.palette_message(message),
@@ -3186,6 +3219,75 @@ impl Shell {
         Some(Vec::new())
     }
 
+    /// The pointer over a Files tab's panes, a press on an entry, its drag and its drop.
+    fn files_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::FilesHover(spot) => {
+                self.files_hover = Some(spot);
+                if let Some(drag) = self.files_drag.as_mut() {
+                    drag.over = Some(spot);
+                }
+            }
+            Message::FilesHoverLeft(spot) => {
+                // Off an entry is still in its pane; off a pane, nowhere.
+                let back = spot.index.map(|_| crate::files_drag::Spot {
+                    index: None,
+                    ..spot
+                });
+                if self.files_hover == Some(spot) {
+                    self.files_hover = back;
+                }
+                if let Some(drag) = self
+                    .files_drag
+                    .as_mut()
+                    .filter(|drag| drag.over == Some(spot))
+                {
+                    drag.over = back;
+                }
+            }
+            Message::PointerPressed => {
+                self.files_drag = self
+                    .files_hover
+                    .filter(|spot| spot.index.is_some())
+                    .map(|spot| crate::files_drag::FilesDrag::pressed(spot, self.cursor.get()));
+            }
+            Message::FilesDragMoved(at) => {
+                let started = self.files_drag.as_mut().is_some_and(|drag| drag.moved(at));
+                // The entry pressed, not among those chosen: it alone is dragged, as the C#
+                // selects it first.
+                if started && let Some(from) = self.files_drag.as_ref().map(|drag| drag.from) {
+                    let chosen = self
+                        .app
+                        .tab(from.tab)
+                        .and_then(|tab| tab.files.as_deref())
+                        .map(|files| match from.side {
+                            heimdall_app::files::Side::Remote => files.remote.chosen(),
+                            heimdall_app::files::Side::Local => files.local.chosen(),
+                        })
+                        .unwrap_or_default();
+                    if let Some(index) = from.index.filter(|index| !chosen.contains(index)) {
+                        return self.app.update(AppMessage::Files(FilesMessage::Select {
+                            tab: from.tab,
+                            side: from.side,
+                            index,
+                        }));
+                    }
+                }
+            }
+            Message::FilesDragEnd => {
+                if let Some(message) = self
+                    .files_drag
+                    .take()
+                    .and_then(crate::files_drag::FilesDrag::drop_message)
+                {
+                    return self.app.update(message);
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     /// A click on a profile of the tree, or one of the tree's shortcuts holding Ctrl.
     fn tree_input(&mut self, message: Message) -> Vec<Effect> {
         match message {
@@ -3521,7 +3623,15 @@ impl Shell {
                 self.editors.get(edit.id),
                 pane.client.is_some(),
             ),
-            None => crate::files_view::view(tab, pane, live),
+            None => crate::files_view::view(
+                tab,
+                pane,
+                live,
+                self.files_drag
+                    .as_ref()
+                    .filter(|drag| drag.active)
+                    .and_then(|drag| drag.over),
+            ),
         }
     }
 

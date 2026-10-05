@@ -349,7 +349,7 @@ fn headers<'a>(tab: TabId, side: Side, columns: &[SortColumn], sort: Sort) -> El
 fn entry_row<'a, E: Listed>(
     entry: &E,
     columns: &[SortColumn],
-    selected: bool,
+    (selected, target): (bool, bool),
     (tab, side, index): (TabId, Side, usize),
 ) -> Element<'a, Message> {
     let on_press = files(FilesMessage::Select { tab, side, index });
@@ -364,20 +364,28 @@ fn entry_row<'a, E: Listed>(
     }
     let line = button(cells)
         .width(Length::Fill)
-        .style(if selected {
+        .style(if target {
+            // A drag over this folder: where the entries would go.
+            button::success
+        } else if selected {
             button::primary
         } else {
             button::text
         })
         .on_press(on_press);
     // A right click opens its menu, as in the C# Files tab.
-    mouse_area(line)
-        .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+    crate::files_drag::spot(
+        mouse_area(line).on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
             tab,
             side,
             index,
-        }))
-        .into()
+        })),
+        crate::files_drag::Spot {
+            tab,
+            side,
+            index: Some(index),
+        },
+    )
 }
 
 /// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
@@ -493,6 +501,8 @@ struct PaneParts<'p, E> {
     moves: Moves,
     /// The delete or the change of permissions running in this pane.
     batch: Option<&'p heimdall_app::files::Batch>,
+    /// Where a drag would drop in this pane.
+    drop: Option<DropHere>,
 }
 
 /// Where a pane can go besides up, as the C# Files tab's Back and Home.
@@ -608,6 +618,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         focused,
         moves,
         batch,
+        drop,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
     let tools = pane_tools(tab, side, selected, chosen);
@@ -652,7 +663,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         for (index, entry) in entries.iter().enumerate() {
             let place = (tab, side, index);
             let picked = selected == Some(index) || marked.contains(&index);
-            list = list.push(entry_row(entry, &shown, picked, place));
+            let target = drop == Some(DropHere::Entry(index));
+            list = list.push(entry_row(entry, &shown, (picked, target), place));
         }
         column![
             headers(tab, side, &shown, sort),
@@ -669,19 +681,55 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
     }
-    container(content.push(listing))
+    pane_frame(
+        content.push(listing),
+        (tab, side),
+        focused,
+        drop == Some(DropHere::Pane),
+    )
+}
+
+/// Where a drag would drop in a pane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DropHere {
+    /// The folder the pane shows.
+    Pane,
+    /// Its folder entry at this place.
+    Entry(usize),
+}
+
+/// A pane's frame: outlined when it has the keyboard, or when a drag over it would drop in
+/// the folder it shows; the pointer over it said.
+fn pane_frame(
+    content: Column<'_, Message>,
+    (tab, side): (TabId, Side),
+    focused: bool,
+    whole_target: bool,
+) -> Element<'_, Message> {
+    let pane = container(content)
         .padding(PADDING)
         .width(Length::FillPortion(1))
         .height(Length::Fill)
         .style(move |theme: &Theme| {
             let mut style = container::bordered_box(theme);
-            if focused {
+            if whole_target {
+                // A drag over it: where its entries would go.
+                style.border.color = theme.extended_palette().success.base.color;
+                style.border.width = FOCUS_BORDER_WIDTH;
+            } else if focused {
                 style.border.color = theme.extended_palette().primary.base.color;
                 style.border.width = FOCUS_BORDER_WIDTH;
             }
             style
-        })
-        .into()
+        });
+    crate::files_drag::spot(
+        pane,
+        crate::files_drag::Spot {
+            tab,
+            side,
+            index: None,
+        },
+    )
 }
 
 /// A file edited with the external editor: its state, its folder, a refused save sent
@@ -888,7 +936,16 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
 
 /// The Files tab.
 #[must_use]
-pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Message> {
+pub fn view(
+    tab: TabId,
+    files_pane: &FilesPane,
+    live: bool,
+    drop: Option<crate::files_drag::Spot>,
+) -> Element<'_, Message> {
+    let drop_in = |side: Side| {
+        drop.filter(|spot| spot.tab == tab && spot.side == side)
+            .map(|spot| spot.index.map_or(DropHere::Pane, DropHere::Entry))
+    };
     let local_location = files_pane.local.path.display().to_string();
     let remote_location = files_pane.remote.path.display();
     let local = pane(PaneParts {
@@ -916,6 +973,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
             .batch
             .as_ref()
             .filter(|batch| batch.side == Side::Local),
+        drop: drop_in(Side::Local),
     });
     let remote = pane(PaneParts {
         tab,
@@ -942,6 +1000,7 @@ pub fn view(tab: TabId, files_pane: &FilesPane, live: bool) -> Element<'_, Messa
             .batch
             .as_ref()
             .filter(|batch| batch.side == Side::Remote),
+        drop: drop_in(Side::Remote),
     });
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();
