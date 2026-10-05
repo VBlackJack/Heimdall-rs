@@ -179,6 +179,15 @@ pub struct ProfileStore {
     folder_colors: BTreeMap<String, FolderColor>,
 }
 
+/// What removing a gateway changed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GatewayRemoval {
+    /// Servers that went through it, now connecting directly.
+    pub servers: usize,
+    /// Gateways reached through it, now reached directly.
+    pub gateways: usize,
+}
+
 /// Why an SSH profile's gateways cannot be followed.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
 pub enum RouteError {
@@ -366,6 +375,38 @@ impl ProfileStore {
         }
         route.reverse();
         Ok(route)
+    }
+
+    /// Removes the SSH gateway `id`, as the C# delete does: the servers that went through
+    /// it connect directly, and the gateways reached through it are reached directly. What
+    /// it changed; `None` when there was no such gateway.
+    pub fn remove_gateway(&mut self, id: &ProfileId) -> Option<GatewayRemoval> {
+        if !self.gateways.iter().any(|gateway| gateway.id == *id) {
+            return None;
+        }
+        let mut servers = 0;
+        let routes = self
+            .ssh
+            .iter_mut()
+            .map(|profile| &mut profile.gateway)
+            .chain(self.rdp.iter_mut().map(|profile| &mut profile.gateway))
+            .chain(self.winrm.iter_mut().map(|profile| &mut profile.gateway));
+        for route in routes.filter(|route| route.as_ref() == Some(id)) {
+            *route = None;
+            servers += 1;
+        }
+        let mut gateways = 0;
+        for parent in self
+            .gateways
+            .iter_mut()
+            .map(|gateway| &mut gateway.parent)
+            .filter(|parent| parent.as_ref() == Some(id))
+        {
+            *parent = None;
+            gateways += 1;
+        }
+        self.gateways.retain(|gateway| gateway.id != *id);
+        Some(GatewayRemoval { servers, gateways })
     }
 
     /// Adds or replaces SSH gateways by identifier; the order of existing ones is kept.
