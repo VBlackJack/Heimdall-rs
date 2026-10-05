@@ -22,6 +22,7 @@
 
 use std::collections::{BTreeSet, VecDeque};
 use std::ffi::OsString;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant, SystemTime};
@@ -1750,6 +1751,121 @@ async fn copy_one(
     } else {
         Err(FilesError::CopyRefused)
     }
+}
+
+/// Copies each of `sources`, on `from`'s server, into `folder` on `to`'s, as the C#
+/// cross-server paste: each file read into `staging` on this computer, then written where
+/// nothing is, under its own name or, taken, its first free copy name; a folder copied whole,
+/// its links and special files left out. Nothing on `to` is ever replaced: the write fails
+/// instead. The first failure stops the rest. Each result names the copy made.
+pub async fn copy_across(
+    from: RemoteSession,
+    to: RemoteSession,
+    sources: Vec<CopySource>,
+    folder: RemotePath,
+    staging: PathBuf,
+    cancel: CancellationToken,
+) -> Vec<(RemotePath, Result<RemotePath, FilesError>)> {
+    let mut results = Vec::with_capacity(sources.len());
+    for source in sources {
+        let result = copy_across_one(&from, &to, &source, &folder, &staging, &cancel).await;
+        let failed = result.is_err();
+        results.push((source.path, result));
+        if failed {
+            break;
+        }
+    }
+    results
+}
+
+async fn copy_across_one(
+    from: &RemoteSession,
+    to: &RemoteSession,
+    source: &CopySource,
+    folder: &RemotePath,
+    staging: &Path,
+    cancel: &CancellationToken,
+) -> Result<RemotePath, FilesError> {
+    let remote = |error: RemoteError| FilesError::from(&error);
+    let name = source.path.file_name().ok_or(FilesError::NotAFile)?;
+    let taken: Vec<Vec<u8>> = to
+        .list(folder)
+        .await
+        .map_err(remote)?
+        .into_iter()
+        .map(|item| item.name)
+        .collect();
+    let is_taken = |name: &[u8]| taken.iter().any(|found| found == name);
+    let free = if is_taken(name) {
+        heimdall_files::conflict::copy_names(name)
+            .find(|candidate| !is_taken(candidate))
+            .ok_or(FilesError::Exists)?
+    } else {
+        name.to_vec()
+    };
+    let destination = folder.join(&free);
+    tokio::fs::create_dir_all(staging)
+        .await
+        .map_err(|error| FilesError::Local {
+            detail: error.to_string(),
+        })?;
+    if !source.folder {
+        copy_file_across(from, to, &source.path, &destination, staging, cancel).await?;
+        return Ok(destination);
+    }
+    // A folder: made, then what it holds, folder by folder, as many entries as a transfer
+    // walks at most.
+    to.make_folder(&destination).await.map_err(remote)?;
+    let mut pending = vec![(source.path.clone(), destination.clone())];
+    let mut walked = 0;
+    while let Some((from_folder, to_folder)) = pending.pop() {
+        for item in from.list(&from_folder).await.map_err(remote)? {
+            walked += 1;
+            if walked > heimdall_sftp::tree::MAX_ENTRIES {
+                return Err(FilesError::TooLarge);
+            }
+            let (inside, target) = (from_folder.join(&item.name), to_folder.join(&item.name));
+            match item.kind {
+                ItemKind::Directory => {
+                    to.make_folder(&target).await.map_err(remote)?;
+                    pending.push((inside, target));
+                }
+                ItemKind::File => {
+                    copy_file_across(from, to, &inside, &target, staging, cancel).await?;
+                }
+                // Links and special files are not copied, as a folder transfer leaves them.
+                ItemKind::Link | ItemKind::Other(_) => {}
+            }
+        }
+    }
+    Ok(destination)
+}
+
+/// The file `source` on `from`'s server read into `staging`, then written at `target` on
+/// `to`'s, where nothing may be; the file read is removed whatever happened.
+async fn copy_file_across(
+    from: &RemoteSession,
+    to: &RemoteSession,
+    source: &RemotePath,
+    target: &RemotePath,
+    staging: &Path,
+    cancel: &CancellationToken,
+) -> Result<(), FilesError> {
+    let token = heimdall_files::server_copy::random_token().ok_or(FilesError::Local {
+        detail: "no random source".to_owned(),
+    })?;
+    let local = staging.join(token.iter().fold(String::new(), |mut name, byte| {
+        let _ = write!(name, "{byte:02x}");
+        name
+    }));
+    let copied = async {
+        from.download_with(source, &local, true, cancel, |_| {})
+            .await?;
+        to.upload(&local, target, false, cancel, |_| {}).await
+    }
+    .await;
+    let _ = tokio::fs::remove_file(&local).await;
+    copied.map(drop).map_err(|error| FilesError::from(&error))
 }
 
 /// A name typed for a new or renamed entry, checked for `side`.

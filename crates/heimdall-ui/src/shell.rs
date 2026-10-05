@@ -2113,6 +2113,7 @@ impl Shell {
             | Effect::FileBatchStep { .. }
             | Effect::MoveRemote { .. }
             | Effect::CopyRemote { .. }
+            | Effect::CopyAcross { .. }
             | Effect::StartEdit { .. }
             | Effect::LaunchEditor { .. }
             | Effect::CheckEdits { .. }
@@ -6952,6 +6953,7 @@ fn edit_task(effect: Effect) -> Task<Message> {
 }
 
 /// The work of a Files tab: listing, transferring, changing entries.
+#[expect(clippy::too_many_lines, reason = "one arm per effect")]
 fn files_task(effect: Effect) -> Task<Message> {
     match effect {
         Effect::ListRemote { tab, client, path } => {
@@ -7017,6 +7019,24 @@ fn files_task(effect: Effect) -> Task<Message> {
         | Effect::SudoSave { .. }
         | Effect::SendEditAnyway { .. }
         | Effect::OpenFolder { .. }) => edit_task(effect),
+        Effect::CopyAcross {
+            tab,
+            from,
+            to,
+            sources,
+            folder,
+            staging,
+            cancel,
+        } => Task::perform(
+            heimdall_app::files::copy_across(from, to, sources, folder, staging, cancel),
+            move |results| {
+                Message::App(AppMessage::Files(FilesMessage::Copied {
+                    tab,
+                    results,
+                    duplicate: false,
+                }))
+            },
+        ),
         Effect::CopyRemote {
             tab,
             client,

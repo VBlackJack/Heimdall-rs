@@ -176,3 +176,82 @@ async fn a_certificate_trusted_for_this_run_goes_through_without_being_recorded(
     );
     assert!(!known.exists(), "never written");
 }
+
+/// The Files session of the FTP server on `port`.
+async fn session(port: u16, known_hosts: &Path) -> heimdall_files::RemoteSession {
+    match first(request(port, false, known_hosts)).await {
+        ConnectionEvent::FilesReady { client, .. } => client,
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn entries_copied_on_one_server_are_pasted_on_another_never_over_what_is_there() {
+    use heimdall_app::files::{CopySource, copy_across};
+    use heimdall_files::RemotePath;
+
+    let (first_root, second_root) = (
+        tempfile::tempdir().expect("root"),
+        tempfile::tempdir().expect("root"),
+    );
+    std::fs::write(first_root.path().join("notes.txt"), "from the first").expect("file");
+    std::fs::create_dir_all(first_root.path().join("site").join("css")).expect("folder");
+    std::fs::write(first_root.path().join("site").join("index.html"), "<p>").expect("file");
+    std::fs::write(
+        first_root.path().join("site").join("css").join("main.css"),
+        "p {}",
+    )
+    .expect("file");
+    // Taken on the second server: the copy takes its first free copy name.
+    std::fs::write(second_root.path().join("notes.txt"), "already there").expect("file");
+
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_ftps_hosts");
+    let from = session(serve(first_root.path(), None).await, &known).await;
+    let to = session(serve(second_root.path(), None).await, &known).await;
+    let top = |name: &str| RemotePath::from("/").join(name.as_bytes());
+    let results = copy_across(
+        from,
+        to,
+        vec![
+            CopySource {
+                path: top("notes.txt"),
+                folder: false,
+            },
+            CopySource {
+                path: top("site"),
+                folder: true,
+            },
+        ],
+        RemotePath::from("/"),
+        dir.path().join("staging"),
+        CancellationToken::new(),
+    )
+    .await;
+    assert!(
+        results.iter().all(|(_, result)| result.is_ok()),
+        "{results:?}"
+    );
+    assert_eq!(
+        results[0].1.as_ref().map(RemotePath::display),
+        Ok("/notes (copy).txt".to_owned())
+    );
+    let read = |path: &[&str]| {
+        let mut file = second_root.path().to_owned();
+        for part in path {
+            file.push(part);
+        }
+        std::fs::read_to_string(file).expect("copied")
+    };
+    assert_eq!(read(&["notes.txt"]), "already there", "never written over");
+    assert_eq!(read(&["notes (copy).txt"]), "from the first");
+    assert_eq!(read(&["site", "index.html"]), "<p>");
+    assert_eq!(read(&["site", "css", "main.css"]), "p {}");
+    // Nothing is left on this computer.
+    assert_eq!(
+        std::fs::read_dir(dir.path().join("staging"))
+            .expect("staging")
+            .count(),
+        0
+    );
+}
