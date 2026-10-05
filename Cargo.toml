@@ -88,6 +88,9 @@ rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] 
 clipboard-win = "5.4.1"
 # windows-registry: PuTTY's saved sessions, read-only, on Windows; already in the tree.
 windows-registry = "0.100.0"
+# winsafe: the screens' working areas, listed on Windows for the window's place; safe
+# wrappers, no dependency of its own.
+winsafe = { version = "0.0.29", features = ["user"] }
 tempfile = "3.27.0"
 # des: VNC Authentication only, a DES challenge the protocol mandates.
 des = "0.9.0"

@@ -45,6 +45,8 @@ zeroize.workspace = true
 [target.'cfg(windows)'.dependencies]
 # The files copied in Explorer, which iced's clipboard does not read.
 clipboard-win.workspace = true
+# The screens the window is put back on.
+winsafe.workspace = true
 
 [dev-dependencies]
 # The fake SFTP server of the Files view tests.

@@ -46,6 +46,7 @@ pub mod rdp_view;
 mod report;
 mod restore_view;
 pub mod route_test_view;
+mod screens;
 mod screenshot;
 mod search_keys;
 pub mod session_settings;
@@ -88,7 +89,8 @@ const MAX_WINDOW_SIDE: f32 = 16_384.0;
 pub fn run() -> iced::Result {
     logging::init(paths::log_dir());
     i18n::init();
-    // As the window was left: its size, and maximized or not.
+    // As the window was left: its place and size, and maximized or not. Its place kept, it
+    // opens hidden, to be put back there and shown.
     let left = paths::profiles_file()
         .map(|file| {
             heimdall_core::window_state::load(&heimdall_core::window_state::state_path(&file))
@@ -100,19 +102,25 @@ pub fn run() -> iced::Result {
             (MAX_WINDOW_SIDE, MAX_WINDOW_SIDE),
         )
         .map_or(WINDOW_SIZE, |(width, height)| Size::new(width, height));
-    let application = iced::application(Shell::new, Shell::update, Shell::view)
-        .title(Shell::title)
-        .theme(Shell::theme)
-        .subscription(Shell::subscription)
-        .default_font(Font::with_name(UI_FONT_FAMILY))
-        .window(window::Settings {
-            size,
-            maximized: left.maximized,
-            min_size: Some(MIN_WINDOW_SIZE),
-            // Quitting with live sessions asks first; their sessions are then cancelled.
-            exit_on_close_request: false,
-            ..window::Settings::default()
-        });
+    let hidden = screens::opens_hidden(&left);
+    let application = iced::application(
+        move || (Shell::new(), screens::restore(left)),
+        Shell::update,
+        Shell::view,
+    )
+    .title(Shell::title)
+    .theme(Shell::theme)
+    .subscription(Shell::subscription)
+    .default_font(Font::with_name(UI_FONT_FAMILY))
+    .window(window::Settings {
+        size,
+        maximized: left.maximized && !hidden,
+        visible: !hidden,
+        min_size: Some(MIN_WINDOW_SIZE),
+        // Quitting with live sessions asks first; their sessions are then cancelled.
+        exit_on_close_request: false,
+        ..window::Settings::default()
+    });
     FONTS
         .iter()
         .fold(application, |application, face| application.font(*face))
