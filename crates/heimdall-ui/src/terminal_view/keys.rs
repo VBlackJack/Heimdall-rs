@@ -86,6 +86,17 @@ pub fn shortcut(
     }
 }
 
+/// Whether `key` is Ctrl+V alone, whatever the keyboard's layout: the paste `choice` may
+/// take it from the session.
+#[must_use]
+pub fn is_ctrl_v(key: &keyboard::Key, physical: Physical, modifiers: keyboard::Modifiers) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && letter(key, physical) == Some('v')
+}
+
 /// A shortcut of the window, left uncaptured by the terminal so the window sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowShortcut {
