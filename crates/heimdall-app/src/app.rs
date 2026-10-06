@@ -2411,6 +2411,8 @@ pub struct App {
     next_address_test: u64,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
+    /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
+    replacing: bool,
     /// Whether the tunnels panel is shown under the sessions while no session is: as the
     /// settings say at start, then as it is toggled.
     tunnels_panel: bool,
@@ -2548,6 +2550,7 @@ impl App {
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
             last_move: None,
+            replacing: false,
             pending_restore,
             recent_hosts: Vec::new(),
             detail: detail::DetailCache::default(),
@@ -2993,8 +2996,31 @@ impl App {
         self.open_ssh(profile, purpose)
     }
 
+    /// Whether one more session may not open, as the C# `MaxEmbeddedSessions`, which is
+    /// said: no limit at 0; this computer's own shells are not counted, nor a session
+    /// opening in a tab's place.
+    pub(super) fn session_limit_reached(&mut self) -> bool {
+        let max = self.settings.max_sessions;
+        if max == 0 || self.replacing {
+            return false;
+        }
+        let open = self
+            .tabs
+            .iter()
+            .filter(|tab| !matches!(tab.profile, TabProfile::Local(_)))
+            .count();
+        let reached = open >= usize::try_from(max).unwrap_or(usize::MAX);
+        if reached {
+            self.tell(Notice::SessionLimitReached(max));
+        }
+        reached
+    }
+
     /// Opens a tab for `profile`, a shell or its files, without asking about its steps.
     pub(super) fn open_ssh_now(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
+        if self.session_limit_reached() {
+            return Vec::new();
+        }
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();

@@ -432,3 +432,43 @@ fn reveal_in_tree_selects_the_profile_its_folders_opened() {
         "shown, its folder opened"
     );
 }
+
+#[test]
+fn the_sessions_limit_refuses_one_more_but_not_a_reconnect_nor_a_local_shell() {
+    use heimdall_app::{Notice, SettingsMessage};
+    use heimdall_term::local::LocalArguments;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    assert_eq!(app.settings().max_sessions, 0, "no limit by default");
+    app.update(Message::Settings(SettingsMessage::MaxSessions(21)));
+    assert_eq!(app.settings().max_sessions, 0, "out of the C# range: kept");
+    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+
+    let first = failed(&mut app);
+    assert!(
+        app.update(Message::OpenProfile(ProfileId::new("a")))
+            .is_empty(),
+        "a second one refused"
+    );
+    assert_eq!(app.tabs.len(), 1);
+    assert_eq!(app.notice(), Some(&Notice::SessionLimitReached(1)));
+
+    // In the first one's place: no more room taken.
+    assert!(
+        !app.update(Message::ReconnectTab(first)).is_empty(),
+        "reconnected"
+    );
+    assert_eq!(app.tabs.len(), 1);
+
+    // This computer's own shells are not counted.
+    let effects = app.update(Message::OpenLocal(heimdall_app::local_driver::LocalShell {
+        name: "shell".to_owned(),
+        program: None,
+        arguments: LocalArguments::List(Vec::new()),
+        working_directory: None,
+        environment: Vec::new(),
+    }));
+    assert!(!effects.is_empty());
+    assert_eq!(app.tabs.len(), 2);
+}
