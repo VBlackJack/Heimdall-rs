@@ -175,6 +175,8 @@ pub struct RemoteEntry {
     pub owner: Option<u32>,
     /// The group's number.
     pub group: Option<u32>,
+    /// Its inode, when listed as root: what a delete through sudo checks again.
+    pub inode: Option<u64>,
 }
 
 impl RemoteEntry {
@@ -195,6 +197,16 @@ impl RemoteEntry {
             permissions: item.permissions,
             owner: item.owner,
             group: item.group,
+            inode: None,
+        }
+    }
+
+    /// The entry for an item listed as root, with its inode.
+    #[must_use]
+    pub fn from_sudo_listing(listed: heimdall_files::privileged_mode::ListedEntry) -> Self {
+        Self {
+            inode: Some(listed.inode),
+            ..Self::from_listing(listed.item)
         }
     }
 }
@@ -904,6 +916,12 @@ pub enum FilesError {
     SudoToolingMissing,
     /// sudo did not do it, for a reason it gave in the log.
     SudoFailed,
+    /// Not deleted as root: `/`, a top-level system folder, a home folder itself, or a path
+    /// that is not absolute or goes up with `..`.
+    SudoProtected,
+    /// Not deleted: the entry changed on the server since the delete was confirmed, or is
+    /// gone; it was left as it is.
+    ChangedSinceConfirmed,
     /// A folder pasted into itself or one of its own folders.
     PasteIntoItself {
         /// The folder's name, made safe.
@@ -963,9 +981,16 @@ pub struct FilesPane {
     pub edits: Vec<crate::external_edit::EditSession>,
     /// A look at the files being edited runs: one at a time.
     pub checking_edits: bool,
-    /// The password sudo took for this tab, kept until the tab's session ends or sudo
-    /// refuses it, as the user chose; never shown, wiped when dropped.
+    /// The password sudo took for this tab, kept until the tab's session ends, sudo
+    /// refuses it or the sudo mode is turned off, as the user chose; never shown, wiped
+    /// when dropped.
     pub sudo_password: Option<crate::sudo_edit::SudoPassword>,
+    /// The server pane's sudo mode, as the C# "sudo" toggle: its folders listed as root, its
+    /// entries deleted as root once confirmed, permissions changed as root when refused.
+    /// Only ever turned on by the user, and only over SSH: unlike the C#, which escalates a
+    /// listing, a delete or a change refused for permissions by itself, nothing here runs
+    /// as root unless asked for. Off with the session.
+    pub sudo_mode: bool,
     /// The server's file open in the integrated editor, shown in place of the lists: one
     /// at a time, as the C#.
     pub editor: Option<crate::integrated_edit::IntegratedEdit>,
@@ -1112,6 +1137,7 @@ impl FilesPane {
             edits: Vec::new(),
             checking_edits: false,
             sudo_password: None,
+            sudo_mode: false,
             editor: None,
             batch: None,
         }
@@ -1135,6 +1161,7 @@ impl FilesPane {
         self.client = None;
         self.shell = None;
         self.sudo_password = None;
+        self.sudo_mode = false;
     }
 
     /// Transfers still running, waiting their turn or prepared again.
@@ -1625,6 +1652,24 @@ pub enum FileOperation {
         path: RemotePath,
         /// The bits.
         mode: u32,
+        /// While the sudo mode is on: given as root when the server refuses them to the
+        /// account, as the C# chmod fallback.
+        sudo: Option<crate::sudo_mode::SudoAccess>,
+    },
+    /// Delete on the server as root, as the sudo mode's delete: only while the entry is
+    /// still of the kind and inode it had when the delete was confirmed; a folder with
+    /// everything in it on its own file system, never following a link.
+    RemoteSudoRemove {
+        /// The connection and the password.
+        access: crate::sudo_mode::SudoAccess,
+        /// What to delete.
+        path: RemotePath,
+        /// Its kind, as confirmed.
+        kind: EntryKind,
+        /// Its inode, as listed when confirmed; none when not listed as root.
+        inode: Option<u64>,
+        /// The account's home folder, never deleted itself.
+        home: Option<RemotePath>,
     },
 }
 
@@ -1718,10 +1763,37 @@ pub async fn file_operation(operation: FileOperation) -> Result<(), FilesError> 
         FileOperation::RemoteRemove { client, path } => {
             client.remove(&path).await.map_err(|e| FilesError::from(&e))
         }
-        FileOperation::RemoteSetPermissions { client, path, mode } => client
-            .set_permissions(&path, mode)
+        FileOperation::RemoteSetPermissions {
+            client,
+            path,
+            mode,
+            sudo,
+        } => {
+            crate::sudo_mode::chmod_or_sudo(
+                &client,
+                sudo.as_ref(),
+                &path,
+                mode,
+                heimdall_files::privileged::Sudo::System,
+            )
             .await
-            .map_err(|e| FilesError::from(&e)),
+        }
+        FileOperation::RemoteSudoRemove {
+            access,
+            path,
+            kind,
+            inode,
+            home,
+        } => {
+            crate::sudo_mode::sudo_remove(
+                &access,
+                &path,
+                (kind, inode),
+                home.as_ref(),
+                heimdall_files::privileged::Sudo::System,
+            )
+            .await
+        }
         local => tokio::task::spawn_blocking(move || local_operation(&local))
             .await
             .unwrap_or_else(|error| {

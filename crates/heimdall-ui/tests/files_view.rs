@@ -111,6 +111,7 @@ fn remote(name: &str, kind: EntryKind, size: u64) -> RemoteEntry {
         permissions: None,
         owner: None,
         group: None,
+        inode: None,
     }
 }
 
@@ -540,6 +541,7 @@ async fn the_server_pane_shows_the_csharp_columns_and_a_header_sorts_by_its_colu
                     permissions: Some(0o4755),
                     owner: Some(1000),
                     group: None,
+                    inode: None,
                 }],
             )),
         },
@@ -890,6 +892,7 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
                     permissions: Some(0o755),
                     owner: Some(1000),
                     group: Some(50),
+                    inode: None,
                 }],
             )),
         },
@@ -1294,6 +1297,40 @@ async fn sudo_s_question_gives_the_password_typed_and_keeps_none_of_it() {
         .and_then(|files| files.sudo_password.as_ref())
         .map(|password| password.bytes().to_vec());
     assert_eq!(kept.as_deref(), Some(&b"hunter2"[..]), "kept for the tab");
+}
+
+#[tokio::test]
+async fn the_delete_as_root_question_names_the_entries_then_how_many_more() {
+    use heimdall_app::Dialog;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab) = files_tab(dir.path()).await;
+    core.dialog = Some(Dialog::ConfirmSudoDelete {
+        tab,
+        names: vec!["logs".to_owned(), "backup.tar.gz".to_owned()],
+        more: 3,
+    });
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Delete as root?").expect("title");
+    for named in ["logs", "backup.tar.gz", "and 3 more"] {
+        assert!(ui.find(named).is_ok(), "{named}");
+    }
+    ui.click("Delete as root").expect("the danger action");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+    );
+}
+
+#[tokio::test]
+async fn a_tab_without_ssh_offers_no_sudo_toggle() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, _) = files_tab(dir.path()).await;
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Server").expect("the server's pane");
+    assert!(ui.find("sudo").is_err(), "no shell to run sudo on");
 }
 
 #[tokio::test]

@@ -169,7 +169,7 @@ pub fn replace_script(
 
 /// The start of every sudo script: the system's `PATH` and sudo, then sudo asked without a
 /// password, else with `password` alone, once; `m` says how it answered (`n` or `S`).
-fn prelude(password: Option<&[u8]>, sudo: Sudo<'_>) -> Result<Vec<u8>, Unquotable> {
+pub(crate) fn prelude(password: Option<&[u8]>, sudo: Sudo<'_>) -> Result<Vec<u8>, Unquotable> {
     if password.is_some_and(|password| password.contains(&b'\n') || password.contains(&b'\r')) {
         return Err(Unquotable::Control);
     }
@@ -318,7 +318,7 @@ pub fn read_output(output: &[u8], done: &[u8]) -> Option<Vec<u8>> {
 }
 
 /// `bytes` in lowercase hexadecimal.
-fn hex(bytes: &[u8]) -> String {
+pub(crate) fn hex(bytes: &[u8]) -> String {
     bytes.iter().fold(String::new(), |mut out, byte| {
         let _ = write!(out, "{byte:02x}");
         out

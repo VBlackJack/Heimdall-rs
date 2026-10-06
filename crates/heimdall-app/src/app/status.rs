@@ -154,6 +154,8 @@ pub enum Notice {
     FilesAutoUploaded(String),
     /// A save of a file being edited was sent with sudo.
     FilesSavedWithSudo(String),
+    /// A Files tab's sudo mode was turned on, its folders listed as root, or off.
+    FilesSudoMode(bool),
     /// A save of a file being edited was not sent, and is not tried again until saved
     /// again.
     FilesAutoUploadRefused {

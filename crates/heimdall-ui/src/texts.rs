@@ -484,6 +484,8 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::SudoUntrusted => fl!("ui-files-error-sudo-untrusted"),
         FilesError::SudoToolingMissing => fl!("ui-files-error-sudo-tooling"),
         FilesError::SudoFailed => fl!("ui-files-error-sudo-failed"),
+        FilesError::SudoProtected => fl!("ui-files-error-sudo-protected"),
+        FilesError::ChangedSinceConfirmed => fl!("ui-files-error-changed-since-confirmed"),
         FilesError::PasteIntoItself { name } => {
             fl!("ui-files-error-paste-into-itself", name = name.as_str())
         }

@@ -132,6 +132,7 @@ async fn tab(dir: &Path) -> (App, TabId) {
         permissions: None,
         owner: None,
         group: None,
+        inode: None,
     };
     let local = |name: &str, kind| LocalEntry {
         name: name.into(),
@@ -919,6 +920,7 @@ async fn a_servers_entry_gets_new_permissions_typed_in_octal() {
                     permissions: Some(0o755),
                     owner: Some(1000),
                     group: Some(50),
+                    inode: None,
                 }],
             )),
         },
@@ -1386,6 +1388,7 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
                         permissions: None,
                         owner: None,
                         group: None,
+                        inode: None,
                     }],
                 )),
             },
@@ -2059,6 +2062,7 @@ async fn a_file_too_large_for_the_integrated_editor_points_to_the_external_one()
         permissions: None,
         owner: None,
         group: None,
+        inode: None,
     };
     files(
         &mut app,
@@ -2208,6 +2212,7 @@ async fn opening_a_file_too_large_to_edit_downloads_it_as_before() {
         permissions: None,
         owner: None,
         group: None,
+        inode: None,
     };
     files(
         &mut app,

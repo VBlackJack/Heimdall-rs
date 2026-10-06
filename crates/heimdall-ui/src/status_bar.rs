@@ -108,6 +108,8 @@ fn files_notice(notice: &Notice) -> String {
         Notice::FilesSavedWithSudo(name) => {
             fl!("ui-status-files-saved-sudo", name = name.as_str())
         }
+        Notice::FilesSudoMode(true) => fl!("ui-files-sudo-on"),
+        Notice::FilesSudoMode(false) => fl!("ui-files-sudo-off"),
         Notice::FilesAutoUploadRefused { name, error } => fl!(
             "ui-status-files-auto-upload-refused",
             name = name.as_str(),
@@ -282,6 +284,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::FilesEditing(_)
             | Notice::FilesAutoUploaded(_)
             | Notice::FilesSavedWithSudo(_)
+            | Notice::FilesSudoMode(_)
             | Notice::FilesAutoUploadRefused { .. }
             | Notice::FilesCopied(_)
             | Notice::DroppedProfiles { .. }

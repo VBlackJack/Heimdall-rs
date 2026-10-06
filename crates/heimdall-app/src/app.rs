@@ -82,6 +82,7 @@ mod file_import;
 mod files_clipboard;
 mod files_edit;
 mod files_editor;
+mod files_sudo;
 mod files_tab;
 mod files_terminal;
 mod folder_menu;
@@ -1374,6 +1375,18 @@ pub enum Effect {
         /// The password sudo took for the tab.
         password: Option<crate::sudo_edit::SudoPassword>,
     },
+    /// List a remote folder as root, the tab's sudo mode being on, then send
+    /// [`FilesMessage::SudoListed`].
+    SudoListRemote {
+        /// Tab.
+        tab: TabId,
+        /// The SSH connection.
+        shell: heimdall_ssh::Connection,
+        /// Folder.
+        path: heimdall_files::RemotePath,
+        /// The password sudo took for the tab.
+        password: Option<crate::sudo_edit::SudoPassword>,
+    },
     /// Copy entries of the server on the server, one after another, then send
     /// [`FilesMessage::Copied`].
     CopyRemote {
@@ -1562,6 +1575,9 @@ impl fmt::Debug for Effect {
                 write!(f, "SudoOpen({}, {remote:?})", tab.value())
             }
             Self::SudoSave { tab, .. } => write!(f, "SudoSave({})", tab.value()),
+            Self::SudoListRemote { tab, path, .. } => {
+                write!(f, "SudoListRemote({}, {path:?})", tab.value())
+            }
             Self::CopyRemote { tab, sources, .. } => {
                 write!(f, "CopyRemote({}, {})", tab.value(), sources.len())
             }
@@ -2224,6 +2240,16 @@ pub enum Dialog {
         folder: bool,
         /// How many entries go.
         count: usize,
+    },
+    /// Delete entries of the server as root, the tab's sudo mode being on: a danger
+    /// question naming them, as the C# "Delete as root?".
+    ConfirmSudoDelete {
+        /// Tab.
+        tab: TabId,
+        /// The first entries' names, made safe, in order.
+        names: Vec<String>,
+        /// How many more go, not named.
+        more: usize,
     },
     /// What to do with each destination already taken, for a whole transfer, before it
     /// starts, as the C# file conflict dialog.
@@ -3070,6 +3096,12 @@ impl App {
         let mut effects = Vec::new();
         match self.dialog.take() {
             Some(Dialog::FileConflicts { .. }) => effects = self.cancel_conflicts(),
+            // The password asked to list as root not given: the sudo mode is not turned on.
+            Some(Dialog::SudoPassword {
+                tab,
+                action: SudoAction::List(_),
+                ..
+            }) => effects = self.sudo_mode_off(tab),
             // "Don't restore": answered, the snapshot goes.
             Some(Dialog::RestoreSessions(_)) => self.forget_snapshot(),
             _ => {}
@@ -4000,7 +4032,9 @@ impl App {
             }
             Some(Dialog::FileConflicts { rows, .. }) => self.confirm_conflicts(&rows),
             Some(Dialog::AskName { value, .. }) => self.confirm_operation(Some(&value)),
-            Some(Dialog::ConfirmDelete { .. }) => self.confirm_operation(None),
+            Some(Dialog::ConfirmDelete { .. } | Dialog::ConfirmSudoDelete { .. }) => {
+                self.confirm_operation(None)
+            }
             Some(Dialog::EditProfile { draft, .. }) => {
                 self.save_profile(draft, None, None);
                 Vec::new()
