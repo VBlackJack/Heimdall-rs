@@ -96,7 +96,9 @@ impl App {
         }
         let (reopen, purpose) = (self.tabs[index].reopen.clone(), self.tabs[index].purpose);
         let before = self.tabs.len();
+        self.replacing = true;
         let effects = self.open_again(reopen, purpose);
+        self.replacing = false;
         if self.tabs.len() > before
             && let Some(reopened) = self.tabs.pop()
         {

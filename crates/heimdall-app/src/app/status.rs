@@ -181,6 +181,9 @@ pub enum Notice {
     DropRefused,
     /// A Files tab's listing on its way was given up with Escape.
     ListingCancelled,
+    /// A session was not opened: this many are open already, the most the settings allow,
+    /// as the C# "Embedded session limit reached".
+    SessionLimitReached(u32),
     /// The last move a drop made was undone.
     MoveUndone,
     /// No move made by a drop is there to undo.
