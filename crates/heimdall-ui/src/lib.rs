@@ -56,6 +56,7 @@ pub mod sessions_view;
 mod settings_file;
 pub mod shell;
 mod shortcuts_view;
+mod sleep_guard;
 pub mod status_bar;
 pub mod terminal_view;
 mod texts;
@@ -108,7 +109,7 @@ pub fn run() -> iced::Result {
     let maximized = left.maximized && !hidden;
     let application = iced::application(
         move || (Shell::new(), screens::restore(&left)),
-        Shell::update,
+        Shell::step,
         Shell::view,
     )
     .title(Shell::title)

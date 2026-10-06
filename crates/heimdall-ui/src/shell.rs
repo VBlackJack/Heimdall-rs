@@ -893,6 +893,8 @@ pub struct Shell {
     files_hover: Option<crate::files_drag::Spot>,
     /// A press on a Files tab's entry, held: a drag once the pointer moves.
     files_drag: Option<crate::files_drag::FilesDrag>,
+    /// The computer kept from sleeping while a session is open.
+    sleep_guard: crate::sleep_guard::SleepGuard,
     /// A press in the tree, held: a drag once the pointer moves.
     tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
@@ -1137,6 +1139,7 @@ impl Shell {
             path_editing: None,
             files_hover: None,
             files_drag: None,
+            sleep_guard: crate::sleep_guard::SleepGuard::new(),
             tree_drag: None,
             sidebar_hidden: false,
             window_memory: None,
@@ -1270,6 +1273,26 @@ impl Shell {
             );
         }
         Subscription::batch(subscriptions)
+    }
+
+    /// Applies a message, then keeps the computer awake while a session is connected, as
+    /// the C# `SleepPrevention` does when the setting is on.
+    pub fn step(&mut self, message: Message) -> Task<Message> {
+        let task = self.update(message);
+        let awake = self.app.settings().prevent_sleep
+            && self
+                .app
+                .tabs
+                .iter()
+                .any(|tab| tab.phase == Phase::Connected);
+        self.sleep_guard.hold(awake);
+        task
+    }
+
+    /// Whether the computer is kept from sleeping now.
+    #[must_use]
+    pub fn keeps_awake(&self) -> bool {
+        self.sleep_guard.held()
     }
 
     /// Applies a message.
@@ -3765,6 +3788,12 @@ impl Shell {
                         )))
                     }),
                 text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
+                checkbox(self.app.settings().prevent_sleep)
+                    .label(fl!("ui-settings-prevent-sleep"))
+                    .on_toggle(|on| {
+                        Message::App(AppMessage::Settings(SettingsMessage::PreventSleep(on)))
+                    }),
+                text(fl!("ui-settings-prevent-sleep-hint")).size(SMALL_SIZE),
             ]
             .spacing(SPACING),
         )

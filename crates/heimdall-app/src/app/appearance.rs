@@ -69,6 +69,8 @@ pub enum SettingsMessage {
     SshTmoutResetInterval(u32),
     /// The RDP options profiles following the application's take.
     RdpDefaults(RdpDefaults),
+    /// The computer kept from sleeping while a session is open, or not.
+    PreventSleep(bool),
     /// The tunnels panel starts collapsed, or open.
     CollapseTunnelsPanel(bool),
     /// The application writes its diagnostics log, or not.
@@ -252,6 +254,7 @@ impl App {
                 self.settings.rdp_connect_timeout = *seconds;
             }
             SettingsMessage::RdpConnectTimeout(_) => return Vec::new(),
+            SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }

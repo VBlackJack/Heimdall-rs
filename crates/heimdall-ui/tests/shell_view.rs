@@ -3797,3 +3797,35 @@ fn an_imported_profile_carries_its_origin_in_the_tree_and_in_its_form() {
     ui.find("Imported from PuTTY registry")
         .expect("the C# sentence under the form");
 }
+
+#[test]
+fn the_computer_is_kept_awake_while_a_session_is_connected_unless_turned_off() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    let mut shell = Shell::with_app(core);
+    let _ = shell.step(Message::Tick);
+    assert!(!shell.keeps_awake(), "connecting: not yet");
+    let _ = shell.step(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: Arc::new(NullSink),
+        },
+    }));
+    assert!(shell.keeps_awake(), "as the C# default");
+    let _ = shell.step(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::PreventSleep(false),
+    )));
+    assert!(!shell.keeps_awake(), "turned off");
+    let _ = shell.step(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::PreventSleep(true),
+    )));
+    assert!(shell.keeps_awake());
+    let _ = shell.step(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Closed { exit_status: None },
+    }));
+    assert!(!shell.keeps_awake(), "no session left");
+}
