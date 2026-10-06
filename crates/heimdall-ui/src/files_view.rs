@@ -60,17 +60,39 @@ const SMALL_SIZE: f32 = 12.0;
 /// Size of pane titles, in logical pixels.
 const TITLE_SIZE: f32 = 16.0;
 
-/// Width of the size column, in logical pixels.
+/// Width of the size column until resized, in logical pixels.
 const SIZE_WIDTH: f32 = 90.0;
 
-/// Width of the modification time column, in logical pixels.
+/// Width of the modification time column until resized, in logical pixels.
 const MODIFIED_WIDTH: f32 = 130.0;
 
-/// Width of the permissions column, in logical pixels.
+/// Width of the permissions column until resized, in logical pixels.
 const PERMISSIONS_WIDTH: f32 = 90.0;
 
-/// Width of the owner column, in logical pixels.
+/// Width of the owner column until resized, in logical pixels.
 const OWNER_WIDTH: f32 = 55.0;
+
+/// Narrowest the size column is resized to, in logical pixels.
+const SIZE_MIN_WIDTH: f32 = 40.0;
+
+/// Narrowest the modification time column is resized to, in logical pixels.
+const MODIFIED_MIN_WIDTH: f32 = 60.0;
+
+/// Narrowest the permissions column is resized to, in logical pixels.
+const PERMISSIONS_MIN_WIDTH: f32 = 40.0;
+
+/// Narrowest the owner column is resized to, in logical pixels.
+const OWNER_MIN_WIDTH: f32 = 30.0;
+
+/// Room left and right of an entry's cells, inside its row, and of the headers above them.
+const ROW_PADDING_X: f32 = 10.0;
+
+/// Room above and below an entry's cells, inside its row.
+const ROW_PADDING_Y: f32 = 5.0;
+
+/// How many of a pane's entries a double click on a separator measures, from the first: a
+/// folder of tens of thousands is not measured whole for a click.
+const FIT_ROWS: usize = 1_000;
 
 /// Width of a Properties dialog's labels, in logical pixels.
 const PROPERTY_LABEL_WIDTH: f32 = 100.0;
@@ -208,19 +230,100 @@ fn files(message: FilesMessage) -> Message {
     Message::App(AppMessage::Files(message))
 }
 
-/// Narrowest a name is left before a column gives way, in logical pixels.
+/// Narrowest a name is left before a column gives way, or is resized to, in logical pixels.
 const NAME_MIN_WIDTH: f32 = 160.0;
 
-/// The first of `columns` that fit in `width` beside a name at least
+/// The widths of a pane's columns besides the name, which takes the rest: dragged on their
+/// header, kept for the session, as the C# list keeps them for the view's life.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ColumnWidths {
+    size: f32,
+    modified: f32,
+    permissions: f32,
+    owner: f32,
+}
+
+impl Default for ColumnWidths {
+    fn default() -> Self {
+        Self {
+            size: SIZE_WIDTH,
+            modified: MODIFIED_WIDTH,
+            permissions: PERMISSIONS_WIDTH,
+            owner: OWNER_WIDTH,
+        }
+    }
+}
+
+impl ColumnWidths {
+    /// The width of `column`; none for the name, which takes the rest.
+    fn of(self, column: SortColumn) -> Option<f32> {
+        match column {
+            SortColumn::Name => None,
+            SortColumn::Size => Some(self.size),
+            SortColumn::Modified => Some(self.modified),
+            SortColumn::Permissions => Some(self.permissions),
+            SortColumn::Owner => Some(self.owner),
+        }
+    }
+
+    /// These widths, those of `columns` laid out at `laid`; the name's is the rest, left out.
+    fn resized(mut self, columns: &[SortColumn], laid: &[f32]) -> Self {
+        for (column, width) in columns.iter().zip(laid.iter().copied()) {
+            match column {
+                SortColumn::Name => {}
+                SortColumn::Size => self.size = width,
+                SortColumn::Modified => self.modified = width,
+                SortColumn::Permissions => self.permissions = width,
+                SortColumn::Owner => self.owner = width,
+            }
+        }
+        self
+    }
+}
+
+/// The column widths of a Files tab's two panes.
+#[derive(Debug, Clone, Copy, PartialEq, Default)]
+pub struct TabColumns {
+    /// This computer's pane.
+    pub local: ColumnWidths,
+    /// The server's pane.
+    pub remote: ColumnWidths,
+}
+
+impl TabColumns {
+    /// These widths, `side`'s pane's set to `widths`.
+    #[must_use]
+    pub fn with(mut self, side: Side, widths: ColumnWidths) -> Self {
+        match side {
+            Side::Local => self.local = widths,
+            Side::Remote => self.remote = widths,
+        }
+        self
+    }
+}
+
+/// The narrowest `column` is resized to.
+fn column_min_width(column: SortColumn) -> f32 {
+    match column {
+        SortColumn::Name => NAME_MIN_WIDTH,
+        SortColumn::Size => SIZE_MIN_WIDTH,
+        SortColumn::Modified => MODIFIED_MIN_WIDTH,
+        SortColumn::Permissions => PERMISSIONS_MIN_WIDTH,
+        SortColumn::Owner => OWNER_MIN_WIDTH,
+    }
+}
+
+/// The first of `columns` that fit in `width` at `widths` beside a name at least
 /// [`NAME_MIN_WIDTH`] wide: the last ones give way first, the name and the size never.
-fn fitting_columns(columns: &[SortColumn], width: f32) -> Vec<SortColumn> {
+fn fitting_columns(columns: &[SortColumn], widths: ColumnWidths, width: f32) -> Vec<SortColumn> {
     let mut shown = columns.to_vec();
     let needed = |shown: &[SortColumn]| {
         shown
             .iter()
-            .map(|column| match column_width(*column) {
-                Length::Fixed(fixed) => fixed + SPACING,
-                _ => NAME_MIN_WIDTH,
+            .map(|column| {
+                widths
+                    .of(*column)
+                    .map_or(NAME_MIN_WIDTH, |fixed| fixed + SPACING)
             })
             .sum::<f32>()
     };
@@ -230,15 +333,20 @@ fn fitting_columns(columns: &[SortColumn], width: f32) -> Vec<SortColumn> {
     shown
 }
 
-/// The width of `column`.
-fn column_width(column: SortColumn) -> Length {
-    match column {
-        SortColumn::Name => Length::Fill,
-        SortColumn::Size => Length::Fixed(SIZE_WIDTH),
-        SortColumn::Modified => Length::Fixed(MODIFIED_WIDTH),
-        SortColumn::Permissions => Length::Fixed(PERMISSIONS_WIDTH),
-        SortColumn::Owner => Length::Fixed(OWNER_WIDTH),
-    }
+/// The widths `shown` are laid out at in `room`: each its own, the name the rest.
+fn laid_widths(shown: &[SortColumn], widths: ColumnWidths, room: f32) -> Vec<f32> {
+    let fixed: f32 = shown.iter().filter_map(|column| widths.of(*column)).sum();
+    let gaps: f32 = shown.iter().skip(1).map(|_| SPACING).sum();
+    let name = (room - fixed - gaps).max(0.0);
+    shown
+        .iter()
+        .map(|column| widths.of(*column).unwrap_or(name))
+        .collect()
+}
+
+/// The size of `column`'s cells; none for the name's, at the window's size.
+fn cell_size(column: SortColumn) -> Option<f32> {
+    (column != SortColumn::Name).then_some(SMALL_SIZE)
 }
 
 /// What `kind` of entry it is, as the C# Properties dialog names it.
@@ -401,42 +509,93 @@ fn column_title(column: SortColumn, sort: Sort) -> String {
     }
 }
 
-/// The headers of `columns`, a click sorting by one.
-fn headers<'a>(tab: TabId, side: Side, columns: &[SortColumn], sort: Sort) -> Element<'a, Message> {
-    let mut line = row![].spacing(SPACING);
-    for column in columns {
-        line = line.push(
-            button(text(column_title(*column, sort)).size(SMALL_SIZE))
-                .style(button::text)
-                .padding(0)
-                .width(column_width(*column))
-                .on_press(files(FilesMessage::SortBy {
-                    tab,
-                    side,
-                    column: *column,
-                })),
-        );
-    }
-    line.into()
+/// What `column` shows, its header first, each with its size: what a double click on its
+/// separator fits it to, from the first [`FIT_ROWS`] entries.
+fn column_texts<E: Listed>(
+    entries: &[E],
+    column: SortColumn,
+    sort: Sort,
+) -> Vec<(String, Option<f32>)> {
+    std::iter::once((column_title(column, sort), Some(SMALL_SIZE)))
+        .chain(
+            entries
+                .iter()
+                .take(FIT_ROWS)
+                .map(|entry| (cell_text(entry, column), cell_size(column))),
+        )
+        .collect()
 }
 
+/// The headers of the columns `shown`, laid out at `laid` as the entries below: a click
+/// sorts by one, a separator between two dragged resizes them, a double click on it fits
+/// the column on its left to `entries`.
+fn headers<'a, E: Listed>(
+    (tab, side): (TabId, Side),
+    entries: &'a [E],
+    (shown, laid): (&[SortColumn], &[f32]),
+    (sort, widths): (Sort, ColumnWidths),
+) -> Element<'a, Message> {
+    let cells = shown
+        .iter()
+        .zip(laid.iter().copied())
+        .map(|(column, width)| {
+            button(
+                text(column_title(*column, sort))
+                    .size(SMALL_SIZE)
+                    .wrapping(text::Wrapping::None),
+            )
+            .style(button::text)
+            .padding(0)
+            .width(width)
+            .clip(true)
+            .on_press(files(FilesMessage::SortBy {
+                tab,
+                side,
+                column: *column,
+            }))
+            .into()
+        })
+        .collect();
+    let least = shown.iter().copied().map(column_min_width).collect();
+    let (fitted, resized) = (shown.to_vec(), shown.to_vec());
+    crate::column_header::ColumnHeader::new(cells, laid.to_vec())
+        .least(least)
+        .inset(ROW_PADDING_X)
+        .spacing(SPACING)
+        .contents(move |index| {
+            fitted
+                .get(index)
+                .map(|column| column_texts(entries, *column, sort))
+                .unwrap_or_default()
+        })
+        .on_resize(move |laid| Message::FileColumns {
+            tab,
+            side,
+            widths: widths.resized(&resized, &laid),
+        })
+        .into()
+}
+
+/// An entry's row: its cells laid out at `laid` as the headers above, each cut at its
+/// column's edge.
 fn entry_row<'a, E: Listed>(
     entry: &E,
-    columns: &[SortColumn],
+    (columns, laid): (&[SortColumn], &[f32]),
     (selected, target): (bool, bool),
     (tab, side, index): (TabId, Side, usize),
 ) -> Element<'a, Message> {
     let on_press = files(FilesMessage::Select { tab, side, index });
     let mut cells = row![].spacing(SPACING);
-    for column in columns {
-        let cell = text(cell_text(entry, *column)).width(column_width(*column));
-        cells = cells.push(if *column == SortColumn::Name {
-            cell
-        } else {
-            cell.size(SMALL_SIZE)
-        });
+    for (column, width) in columns.iter().zip(laid.iter().copied()) {
+        let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
+        let cell = match cell_size(*column) {
+            Some(small) => cell.size(small),
+            None => cell,
+        };
+        cells = cells.push(container(cell).width(width).clip(true));
     }
     let line = button(cells)
+        .padding([ROW_PADDING_Y, ROW_PADDING_X])
         .width(Length::Fill)
         .style(if target {
             // A drag over this folder: where the entries would go.
@@ -639,6 +798,8 @@ struct PaneParts<'p, E> {
     typed: Option<&'p str>,
     entries: &'p [E],
     columns: &'p [SortColumn],
+    /// The widths of the columns besides the name.
+    widths: ColumnWidths,
     sort: Sort,
     selected: Option<usize>,
     marked: &'p BTreeSet<usize>,
@@ -802,6 +963,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         typed,
         entries,
         columns,
+        widths,
         sort,
         selected,
         marked,
@@ -854,7 +1016,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     let failed = error.is_some();
     // The columns that fit beside a name still readable, laid out for the pane's width.
     let listing = responsive(move |size| {
-        let shown = fitting_columns(columns, size.width);
+        let shown = fitting_columns(columns, widths, size.width);
+        let laid = laid_widths(&shown, widths, size.width - 2.0 * ROW_PADDING_X);
         let mut list = Column::new().spacing(2.0);
         if loading {
             list = list.push(text(fl!("ui-files-loading")).size(SMALL_SIZE));
@@ -865,7 +1028,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             let place = (tab, side, index);
             let picked = selected == Some(index) || marked.contains(&index);
             let target = drop == Some(DropHere::Entry(index));
-            list = list.push(entry_row(entry, &shown, (picked, target), place));
+            list = list.push(entry_row(entry, (&shown, &laid), (picked, target), place));
         }
         // A right click beside the entries: the menu of the folder shown, as the C# list's.
         let list = mouse_area(scrollable(list).id(list_id(side)).height(Length::Fill))
@@ -874,9 +1037,8 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
                 side,
                 index: None,
             }));
-        column![headers(tab, side, &shown, sort), list]
-            .spacing(SPACING)
-            .into()
+        let header = headers((tab, side), entries, (&shown, &laid), (sort, widths));
+        column![header, list].spacing(SPACING).into()
     });
     let heading = pane_heading(
         title,
@@ -1181,7 +1343,7 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
     line.into()
 }
 
-/// The Files tab.
+/// The Files tab, its panes' columns at `columns`.
 #[must_use]
 pub fn view(
     tab: TabId,
@@ -1189,6 +1351,7 @@ pub fn view(
     live: bool,
     editing: Option<Side>,
     drop: Option<crate::files_drag::Spot>,
+    columns: TabColumns,
 ) -> Element<'_, Message> {
     let drop_in = |side: Side| {
         drop.filter(|spot| spot.tab == tab && spot.side == side)
@@ -1205,6 +1368,7 @@ pub fn view(
         typed: files_pane.local.typed.as_deref(),
         entries: &files_pane.local.entries,
         columns: LOCAL_COLUMNS,
+        widths: columns.local,
         sort: files_pane.local.sort,
         selected: files_pane.local.selected,
         marked: &files_pane.local.marked,
@@ -1235,6 +1399,7 @@ pub fn view(
         typed: files_pane.remote.typed.as_deref(),
         entries: &files_pane.remote.entries,
         columns: REMOTE_COLUMNS,
+        widths: columns.remote,
         sort: files_pane.remote.sort,
         selected: files_pane.remote.selected,
         marked: &files_pane.remote.marked,
@@ -1340,20 +1505,91 @@ mod tests {
 
     #[test]
     fn the_last_columns_give_way_to_a_readable_name_but_never_the_size() {
-        use SortColumn::{Modified, Name, Permissions, Size};
-        assert_eq!(fitting_columns(REMOTE_COLUMNS, 2000.0), REMOTE_COLUMNS);
-        // Name 160 + size 98 + modified 138 + permissions 98 + owner 63 = 557.
-        assert_eq!(fitting_columns(REMOTE_COLUMNS, 557.0), REMOTE_COLUMNS);
+        use SortColumn::{Modified, Name, Owner, Permissions, Size};
+        let widths = ColumnWidths::default();
         assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, 556.0),
+            fitting_columns(REMOTE_COLUMNS, widths, 2000.0),
+            REMOTE_COLUMNS
+        );
+        // Name 160 + size 98 + modified 138 + permissions 98 + owner 63 = 557.
+        assert_eq!(
+            fitting_columns(REMOTE_COLUMNS, widths, 557.0),
+            REMOTE_COLUMNS
+        );
+        assert_eq!(
+            fitting_columns(REMOTE_COLUMNS, widths, 556.0),
             [Name, Size, Modified, Permissions]
         );
-        assert_eq!(fitting_columns(REMOTE_COLUMNS, 300.0), [Name, Size]);
+        assert_eq!(fitting_columns(REMOTE_COLUMNS, widths, 300.0), [Name, Size]);
         assert_eq!(
-            fitting_columns(REMOTE_COLUMNS, 10.0),
+            fitting_columns(REMOTE_COLUMNS, widths, 10.0),
             [Name, Size],
             "never fewer"
         );
+        let wider = widths.resized(&[Owner], &[155.0]);
+        assert_eq!(
+            fitting_columns(REMOTE_COLUMNS, wider, 600.0),
+            [Name, Size, Modified, Permissions],
+            "the owner widened by 100 gives way sooner"
+        );
+    }
+
+    #[test]
+    fn the_name_takes_the_room_the_other_columns_leave() {
+        use SortColumn::{Modified, Name, Size};
+        let widths = ColumnWidths::default();
+        // 500 - size 90 - modified 130 - two gaps of 8.
+        assert_eq!(
+            laid_widths(&[Name, Size, Modified], widths, 500.0),
+            [264.0, 90.0, 130.0]
+        );
+        assert_eq!(
+            laid_widths(&[Name, Size], widths, 50.0),
+            [0.0, 90.0],
+            "never less than nothing"
+        );
+    }
+
+    #[test]
+    fn resized_widths_keep_every_column_but_the_name() {
+        use SortColumn::{Modified, Name, Owner, Permissions, Size};
+        let widths =
+            ColumnWidths::default().resized(&[Name, Size, Modified], &[400.0, 70.0, 150.0]);
+        assert_eq!(widths.of(Name), None, "the rest, never kept");
+        assert_eq!(widths.of(Size), Some(70.0));
+        assert_eq!(widths.of(Modified), Some(150.0));
+        assert_eq!(
+            widths.of(Permissions),
+            Some(PERMISSIONS_WIDTH),
+            "not shown, kept"
+        );
+        assert_eq!(widths.of(Owner), Some(OWNER_WIDTH));
+        let tab = TabColumns::default().with(Side::Remote, widths);
+        assert_eq!(tab.remote, widths);
+        assert_eq!(tab.local, ColumnWidths::default(), "each pane its own");
+    }
+
+    #[test]
+    fn a_column_is_fitted_to_its_header_and_its_cells() {
+        let entry = |name: &str, kind, size| heimdall_app::files::LocalEntry {
+            name: name.into(),
+            label: name.to_owned(),
+            kind,
+            size,
+            modified: None,
+        };
+        let entries = [
+            entry("a.txt", EntryKind::File, Some(2048)),
+            entry("docs", EntryKind::Directory, None),
+        ];
+        let sort = Sort::default();
+        let names = column_texts(&entries, SortColumn::Name, sort);
+        assert_eq!(names.len(), 3, "the header, then each entry");
+        assert_eq!(names[0].1, Some(SMALL_SIZE), "the header's size");
+        assert_eq!(names[2], (format!("docs{FOLDER_MARK}"), None), "as listed");
+        let sizes = column_texts(&entries, SortColumn::Size, sort);
+        assert_eq!(sizes[1].1, Some(SMALL_SIZE));
+        assert_eq!(sizes[2].0, "", "a folder shows no size");
     }
 
     #[test]

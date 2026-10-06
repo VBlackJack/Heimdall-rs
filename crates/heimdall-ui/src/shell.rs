@@ -501,6 +501,16 @@ pub enum Message {
         /// Pane.
         side: heimdall_app::files::Side,
     },
+    /// A Files pane's columns resized by a separator of their header, dragged or double
+    /// clicked: kept for the session, as the C# list keeps them.
+    FileColumns {
+        /// Tab.
+        tab: TabId,
+        /// Pane.
+        side: heimdall_app::files::Side,
+        /// The widths of its columns besides the name.
+        widths: crate::files_view::ColumnWidths,
+    },
     /// The pointer came over a place in a Files tab's panes.
     FilesHover(crate::files_drag::Spot),
     /// The pointer left it.
@@ -700,6 +710,9 @@ impl fmt::Debug for Message {
                 write!(f, "GatewayReassignPicked({missing}, {to})")
             }
             Self::EditPath { tab, side } => write!(f, "EditPath({}, {side:?})", tab.value()),
+            Self::FileColumns { tab, side, widths } => {
+                write!(f, "FileColumns({}, {side:?}, {widths:?})", tab.value())
+            }
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
             Self::PointerPressed => f.write_str("PointerPressed"),
@@ -949,6 +962,8 @@ pub struct Shell {
     gateway_reassign: std::collections::BTreeMap<ProfileId, ProfileId>,
     /// The Files pane whose path bar is typed in, rather than showing its breadcrumb.
     path_editing: Option<(TabId, heimdall_app::files::Side)>,
+    /// The Files tabs' column widths, as resized; for this run only, as the C#.
+    file_columns: HashMap<TabId, crate::files_view::TabColumns>,
     /// Where the pointer is in a Files tab's panes.
     files_hover: Option<crate::files_drag::Spot>,
     /// A press on a Files tab's entry, held: a drag once the pointer moves.
@@ -1204,6 +1219,7 @@ impl Shell {
             language_shown,
             gateway_reassign: std::collections::BTreeMap::new(),
             path_editing: None,
+            file_columns: HashMap::new(),
             files_hover: None,
             files_drag: None,
             tab_hover: None,
@@ -1536,6 +1552,14 @@ impl Shell {
             }
             Message::EditPath { tab, side } => {
                 self.edit_path(tab, side);
+                Vec::new()
+            }
+            Message::FileColumns { tab, side, widths } => {
+                // Tabs closed since leave their widths behind no longer.
+                self.file_columns
+                    .retain(|id, _| self.app.tab(*id).is_some());
+                let columns = self.file_columns.entry(tab).or_default();
+                *columns = columns.with(side, widths);
                 Vec::new()
             }
             message @ (Message::TreeClick(_)
@@ -5557,6 +5581,7 @@ impl Shell {
                     .as_ref()
                     .filter(|drag| drag.active)
                     .and_then(|drag| drag.over),
+                self.file_columns.get(&tab).copied().unwrap_or_default(),
             ),
         }
     }
