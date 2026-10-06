@@ -933,3 +933,13 @@ fn an_rdp_profile_keeps_what_the_built_in_client_does_not_use_and_its_metadata_i
         "the origin marked, the tags kept"
     );
 }
+
+#[test]
+fn each_origin_has_the_csharp_badge_code() {
+    use heimdall_core::metadata::ProfileOrigin;
+    let codes: Vec<&str> = ProfileOrigin::ALL
+        .into_iter()
+        .map(ProfileOrigin::badge)
+        .collect();
+    assert_eq!(codes, ["RDP", "OSSH", "PTY", "MRNG", "MXTM", "RDCM"]);
+}
