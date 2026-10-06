@@ -43,6 +43,24 @@ pub fn error_report(protocol: &str, server: Option<&str>, error: &str, now: Syst
     lines.join("\n")
 }
 
+/// The report "Copy anonymized report" copies, as the C# RDP one: when, which version, and
+/// what kind of failure, its name in the code; never the server, the account nor the
+/// message, which can name them.
+pub fn anonymous_report(protocol: &str, kind: &str, now: SystemTime) -> String {
+    [
+        fl!("ui-error-report-anonymous-header", protocol = protocol),
+        format!("{} {}", fl!("ui-error-report-time"), utc_time(now)),
+        format!(
+            "{} {APPLICATION} v{}",
+            fl!("ui-error-report-app"),
+            env!("CARGO_PKG_VERSION")
+        ),
+        format!("{} {kind}", fl!("ui-error-report-kind")),
+        fl!("ui-error-report-anonymous-hint"),
+    ]
+    .join("\n")
+}
+
 /// `time` in UTC as `2026-09-27 21:05:03Z`, the C# report's "u" format; the epoch for a time
 /// before it.
 fn utc_time(time: SystemTime) -> String {

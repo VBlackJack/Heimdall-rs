@@ -249,6 +249,8 @@ pub enum VncEvent {
     Bell,
     /// The server's clipboard: untrusted text.
     CutText(String),
+    /// The desktop's new name: untrusted text.
+    Renamed(String),
     /// The session ended. Last event.
     Closed(CloseReason),
 }
@@ -497,6 +499,7 @@ async fn receive(
             }
             RfbEvent::Bell => VncEvent::Bell,
             RfbEvent::ServerCutText(text) => VncEvent::CutText(text),
+            RfbEvent::Renamed(name) => VncEvent::Renamed(name),
             // Only during the handshake.
             RfbEvent::PasswordRequired | RfbEvent::Connected { .. } => continue,
         };

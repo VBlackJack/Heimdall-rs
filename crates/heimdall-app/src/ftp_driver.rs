@@ -242,6 +242,7 @@ async fn certificate_refused(
                     host: profile.host.clone(),
                     port: profile.port,
                     fingerprint: presented,
+                    subject: None,
                 })
                 .await;
             Ok(())
