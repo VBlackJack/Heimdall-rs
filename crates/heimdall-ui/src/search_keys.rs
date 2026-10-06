@@ -67,6 +67,25 @@ impl<'a, Message> SearchKeys<'a, Message> {
 #[derive(Default)]
 struct HasFocus(bool);
 
+/// Whether a field of the window has the keyboard: asked before a key the window acts on
+/// that a field lets through, as Ctrl+W, which a text field does not take.
+#[derive(Default)]
+pub struct AnyFocused(bool);
+
+impl Operation<bool> for AnyFocused {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<bool>)) {
+        operate(self);
+    }
+
+    fn focusable(&mut self, _id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+        self.0 |= state.is_focused();
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<bool> {
+        iced::advanced::widget::operation::Outcome::Some(self.0)
+    }
+}
+
 impl Operation for HasFocus {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
         operate(self);
