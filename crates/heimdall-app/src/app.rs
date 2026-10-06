@@ -115,6 +115,7 @@ mod selection;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
+mod shell_directory;
 pub mod split;
 mod status;
 mod tab_menu;
@@ -1785,6 +1786,11 @@ pub struct Tab {
     /// How the tab is split, while it shows other tabs' sessions beside its own; only a tab
     /// of the strip is.
     pub layout: Option<split::Layout>,
+    /// The working folder its shell last reported (OSC 7), an absolute path, the host left
+    /// aside: the server's word, untrusted. Kept for any terminal tab, SSH or local, for the
+    /// panes that follow the shell; none until the shell reports one, and none after a
+    /// reconnect, which opens a tab of its own.
+    pub working_directory: Option<String>,
 }
 
 impl fmt::Debug for Tab {
@@ -1897,6 +1903,7 @@ impl Tab {
             macro_recording: None,
             macro_playing: None,
             layout: None,
+            working_directory: None,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -3250,7 +3257,13 @@ impl App {
             cancel,
         );
         let start = self.files_start();
-        tab.files = (purpose == Purpose::Files).then(|| Box::new(FilesPane::new(start)));
+        let follow = self.settings.sftp_browser.follow_ssh_directory;
+        tab.files = (purpose == Purpose::Files).then(|| {
+            let mut files = FilesPane::new(start);
+            // As the C# seeds every SFTP pane's "cwd" toggle when it opens.
+            files.follow = Some(crate::files::ShellFollow::seeded(follow));
+            Box::new(files)
+        });
         let effects = match request {
             Ok(request) => vec![Effect::Connect {
                 tab: tab_id,
@@ -3424,8 +3437,13 @@ impl App {
                 if let Some(playing) = &tab.macro_playing {
                     playing.saw(&bytes);
                 }
-                let output = tab.terminal.feed(&bytes);
-                handle_feed(tab, output, active)
+                let mut output = tab.terminal.feed(&bytes);
+                let directory = output.working_directory.take();
+                let mut effects = handle_feed(tab, output, active);
+                if let Some(directory) = directory {
+                    effects.extend(self.working_directory_reported(tab_id, directory));
+                }
+                effects
             }
             ConnectionEvent::PostConnect(progress) => {
                 tab.post_connect = Some(progress);

@@ -1000,6 +1000,31 @@ pub struct FilesPane {
     /// The delete or the change of permissions running over several entries, one at a
     /// time: one per tab.
     pub batch: Option<Batch>,
+    /// Following the working folder of the SSH shell beside it, as the C# "cwd" toggle of
+    /// an SFTP pane; none over FTP, which the C# never lets follow.
+    pub follow: Option<ShellFollow>,
+}
+
+/// An SFTP pane following the working folder its SSH shell reports (OSC 7), as the C#
+/// `SftpFollowSshDirectory` of a pane: on or off for this pane alone, seeded from the
+/// setting when the pane opens, its toggle never changing the setting.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ShellFollow {
+    /// The pane goes where the shell reports it is.
+    pub on: bool,
+    /// The folder the pane last went to after the shell: the same folder reported again,
+    /// at each prompt, is not listed again, and the user browsing elsewhere stays there
+    /// until the shell moves. Forgotten when the toggle is turned on, the next report then
+    /// followed whatever it names.
+    pub followed: Option<String>,
+}
+
+impl ShellFollow {
+    /// Following, or not, as the setting says, nothing followed yet.
+    #[must_use]
+    pub fn seeded(on: bool) -> Self {
+        Self { on, followed: None }
+    }
 }
 
 /// What a run of entries goes through, one after another.
@@ -1144,6 +1169,7 @@ impl FilesPane {
             sudo_mode: false,
             editor: None,
             batch: None,
+            follow: None,
         }
     }
 

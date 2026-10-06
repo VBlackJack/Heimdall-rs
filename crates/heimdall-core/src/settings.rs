@@ -354,9 +354,9 @@ pub struct SftpBrowser {
     /// An SSH shell, once connected, gets its server's files in a pane beside it, as the C#
     /// `SftpAutoOpenOnSsh`: on.
     pub auto_open_on_ssh: bool,
-    /// The SFTP pane beside a shell follows the shell's working folder, as the C#
-    /// `SftpFollowSshDirectory`: off. Kept, read and written, but not applied yet: the
-    /// pane does not follow the shell until the shell reports its folder (OSC 7).
+    /// The SFTP pane beside a shell follows the working folder the shell reports (OSC 7),
+    /// as the C# `SftpFollowSshDirectory`: off. It seeds each SFTP pane's "cwd" toggle when
+    /// the pane opens; the toggle then acts on its pane alone.
     pub follow_ssh_directory: bool,
 }
 

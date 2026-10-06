@@ -19,6 +19,7 @@
 //! [`Terminal`] turns the server's output into a [`Screen`] to draw and replies to send
 //! back. [`encode_key`], [`encode_mouse`] and [`encode_paste`] turn user input into bytes
 //! for the server, following the modes the application set ([`Terminal::input_mode`]).
+//! [`FeedOutput::working_directory`] carries the working folder a shell reports (OSC 7).
 
 pub mod keys;
 pub mod local;
@@ -28,6 +29,7 @@ pub mod palette;
 pub mod paste;
 pub mod plain;
 pub mod terminal;
+pub mod working_directory;
 
 pub use keys::{Key, KeyLocation, KeyPress, Modifiers, NamedKey, encode_key};
 pub use mode::{InputMode, MouseEncoding, MouseTracking};
@@ -43,3 +45,4 @@ pub use terminal::{
     Found, GridSize, Screen, ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig,
     TitleChange, Underline,
 };
+pub use working_directory::{MAX_REPORT_LENGTH, WorkingDirectoryScanner};

@@ -361,6 +361,12 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Turn the SFTP pane's following of its SSH shell's working folder on or off, as the
+    /// C# "cwd" toggle; over SFTP only.
+    ToggleFollow {
+        /// Tab.
+        tab: TabId,
+    },
     /// A remote folder listed as root arrived.
     SudoListed {
         /// Tab.
@@ -693,6 +699,7 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "SudoPasswordGiven({}, ..)", tab.value())
             }
             Self::ToggleSudo { tab } => write!(f, "ToggleSudo({})", tab.value()),
+            Self::ToggleFollow { tab } => write!(f, "ToggleFollow({})", tab.value()),
             Self::SudoListed { tab, result, .. } => write!(
                 f,
                 "SudoListed({}, {})",
@@ -792,6 +799,13 @@ pub(super) struct PendingOperation {
     tab: TabId,
     side: Side,
     kind: PendingKind,
+}
+
+impl PendingOperation {
+    /// The Files tab the operation is asked about.
+    pub(super) fn tab(&self) -> TabId {
+        self.tab
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -1038,6 +1052,7 @@ impl App {
             | FilesMessage::ToggleHidden { .. }
             | FilesMessage::ToggleLocal { .. }
             | FilesMessage::ToggleSudo { .. }
+            | FilesMessage::ToggleFollow { .. }
             | FilesMessage::Dropped { .. }
             | FilesMessage::UploadPicked { .. }
             | FilesMessage::ExplorerFilesRead { .. }) => self.pane_message(message),
@@ -1151,6 +1166,7 @@ impl App {
                 self.ask(tab, side, NameAction::Permissions)
             }
             FilesMessage::ToggleSudo { tab } => self.toggle_sudo(tab),
+            FilesMessage::ToggleFollow { tab } => self.toggle_follow(tab),
             FilesMessage::ShowProperties { tab, side } => {
                 self.show_properties(tab, side);
                 Vec::new()

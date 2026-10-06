@@ -15,8 +15,8 @@
  */
 
 //! The SFTP pane docked beside an SSH shell, drawn headless: the C# "SFTP browser" card of
-//! the Settings page, and the pane showing the server's files alone until its toggle shows
-//! this computer's again.
+//! the Settings page, the pane showing the server's files alone until its toggle shows
+//! this computer's again, and its C# "cwd" toggle following the shell's working folder.
 
 mod common;
 
@@ -25,8 +25,8 @@ use std::sync::Arc;
 
 use heimdall_app::files::{EntryKind, LocalEntry};
 use heimdall_app::{
-    App, AppConfig, ConnectionEvent, Effect, FilesMessage, InputSink, Message as AppMessage,
-    SettingsMessage, TabId,
+    App, AppConfig, AttemptId, ConnectionEvent, Effect, FilesMessage, InputSink,
+    Message as AppMessage, SettingsMessage, TabId,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::settings::SftpBrowser;
@@ -116,8 +116,9 @@ async fn idle_client() -> RemoteSession {
     )
 }
 
-/// A shell of profile `a` connected, the SFTP pane docked beside it connected and listed.
-async fn docked(dir: &Path) -> (App, TabId) {
+/// A shell of profile `a` connected, the SFTP pane docked beside it connected and listed;
+/// the pane, and its attempt.
+async fn docked(dir: &Path) -> (App, TabId, AttemptId) {
     let mut core = app(dir);
     let (shell, attempt) = match core
         .update(AppMessage::OpenProfile(ProfileId::new("a")))
@@ -163,7 +164,7 @@ async fn docked(dir: &Path) -> (App, TabId) {
         )),
     }));
     assert_eq!(core.active, Some(shell), "the keyboard on the shell");
-    (core, pane)
+    (core, pane, attempt)
 }
 
 fn simulator(shell: &Shell, size: Size) -> common::Drawn<'_> {
@@ -195,10 +196,6 @@ fn the_sftp_browser_card_toggles_the_settings_with_the_csharp_wording() {
     {
         let mut ui = simulator(&shell, SETTINGS_WINDOW);
         ui.find("SFTP browser").expect("the C# section");
-        assert!(
-            ui.find("SFTP follows SSH working directory").is_err(),
-            "not offered while it is not applied"
-        );
     }
     let defaults = SftpBrowser::default();
     let auto_open_off = SftpBrowser {
@@ -208,6 +205,15 @@ fn the_sftp_browser_card_toggles_the_settings_with_the_csharp_wording() {
     assert_eq!(
         clicked(&shell, "Auto-open SFTP panel on SSH connection"),
         [auto_open_off]
+    );
+    let follow_on = SftpBrowser {
+        follow_ssh_directory: true,
+        ..defaults
+    };
+    assert_eq!(
+        clicked(&shell, "SFTP follows SSH working directory"),
+        [follow_on],
+        "the C# checkbox, off by default"
     );
     let browser_off = SftpBrowser {
         enabled: false,
@@ -225,12 +231,64 @@ fn the_sftp_browser_card_toggles_the_settings_with_the_csharp_wording() {
         clicked(&shell, "Auto-open SFTP panel on SSH connection").is_empty(),
         "under the browser, as the C# checkbox it enables"
     );
+    assert!(
+        clicked(&shell, "SFTP follows SSH working directory").is_empty(),
+        "under the browser too, as the C# checkbox it enables"
+    );
+}
+
+/// The toggles of the docked pane's "cwd" button clicked.
+fn follow_clicks(shell: &Shell, pane: TabId) -> usize {
+    let mut ui = simulator(shell, WINDOW);
+    ui.click("cwd").expect("the C# toggle");
+    ui.into_messages()
+        .filter(|message| {
+            matches!(
+                message,
+                Message::App(AppMessage::Files(FilesMessage::ToggleFollow { tab })) if *tab == pane
+            )
+        })
+        .count()
+}
+
+#[tokio::test]
+async fn the_docked_pane_offers_the_csharp_cwd_toggle_while_connected() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, pane, attempt) = docked(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    assert_eq!(follow_clicks(&shell, pane), 1);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::ToggleFollow { tab: pane },
+    )));
+    assert_eq!(
+        shell
+            .app()
+            .tab(pane)
+            .and_then(|tab| tab.files.as_deref())
+            .and_then(|files| files.follow.as_ref())
+            .map(|follow| follow.on),
+        Some(true)
+    );
+    assert_eq!(
+        follow_clicks(&shell, pane),
+        1,
+        "lit, and turned off the same way"
+    );
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab: pane,
+        attempt,
+        event: ConnectionEvent::Closed { exit_status: None },
+    }));
+    assert!(
+        simulator(&shell, WINDOW).find("cwd").is_err(),
+        "disconnected, not offered, as the C# toolbar"
+    );
 }
 
 #[tokio::test]
 async fn a_docked_sftp_pane_shows_the_server_files_alone_until_asked() {
     let dir = tempfile::tempdir().expect("dir");
-    let (core, pane) = docked(dir.path()).await;
+    let (core, pane, _) = docked(dir.path()).await;
     let mut shell = Shell::with_app(core);
     {
         let mut ui = simulator(&shell, WINDOW);
