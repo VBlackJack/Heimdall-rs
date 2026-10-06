@@ -834,6 +834,25 @@ impl App {
         self.active = next.map(|id| self.focus_of(id));
     }
 
+    /// Pane `tab` taken out of its split, a tab of its own again, as the C# `MoveIntoOwnTab`:
+    /// the panes left keep the split, a single one back to a plain tab. The host taken out
+    /// hands its split and its place on the strip to the pane left first. The tab of the
+    /// strip that shows the panes left; `None` when `tab` is in no split.
+    pub(super) fn take_out_pane(&mut self, tab: TabId) -> Option<TabId> {
+        let host = self.host_of(tab)?;
+        self.tab(host)?.layout.as_ref()?;
+        if host == tab {
+            let heir = self.hand_over_split(tab)?;
+            // A shell leaving its file browser docks none again, as the browser closed.
+            self.local_browser_left(tab, heir);
+            Some(heir)
+        } else {
+            self.leave_split(host, tab);
+            self.local_browser_left(host, tab);
+            Some(host)
+        }
+    }
+
     /// Pane `tab` out of `host`'s split; the split gone once a single pane is left.
     fn leave_split(&mut self, host: TabId, tab: TabId) {
         let Some(found) = self.tab_mut(host) else {
