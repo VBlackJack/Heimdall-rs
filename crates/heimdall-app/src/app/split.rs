@@ -22,7 +22,9 @@
 //! session, but leaves the strip. The window's `active` tab is the pane with the keyboard;
 //! the tab shown on the strip is its host.
 
-use super::{App, Dialog, Effect, Notice, Tab};
+use heimdall_core::profile::ProfileId;
+
+use super::{App, Dialog, Effect, Message, Notice, QuickResult, Tab};
 use crate::ids::TabId;
 
 /// Most panes a tab is split in. The C# allows eight; two for now.
@@ -55,6 +57,15 @@ impl Axis {
             Self::Stacked => Self::SideBySide,
         }
     }
+}
+
+/// Which side of the split a tab merged takes, beside the pane it splits.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Placement {
+    /// Left or above: a tab dropped on the left or top part of the content.
+    First,
+    /// Right or below, as the C# merge always places it.
+    Second,
 }
 
 /// A node of a split tab's tree: a pane showing one tab's session, or two nodes split.
@@ -153,19 +164,35 @@ impl Node {
 
     /// The node `leaf` stands in split with `added`, `added` second, as the C# merge does.
     pub fn split_leaf(&mut self, leaf: TabId, added: TabId, axis: Axis) -> bool {
+        self.split_leaf_at(leaf, added, axis, Placement::Second)
+    }
+
+    /// The node `leaf` stands in split with `added`, `added` on the side `placement` says.
+    pub fn split_leaf_at(
+        &mut self,
+        leaf: TabId,
+        added: TabId,
+        axis: Axis,
+        placement: Placement,
+    ) -> bool {
         match self {
             Self::Leaf(id) if *id == leaf => {
+                let (first, second) = match placement {
+                    Placement::First => (added, leaf),
+                    Placement::Second => (leaf, added),
+                };
                 *self = Self::Split {
                     axis,
                     ratio: DEFAULT_RATIO,
-                    first: Box::new(Self::Leaf(leaf)),
-                    second: Box::new(Self::Leaf(added)),
+                    first: Box::new(Self::Leaf(first)),
+                    second: Box::new(Self::Leaf(second)),
                 };
                 true
             }
             Self::Leaf(_) => false,
             Self::Split { first, second, .. } => {
-                first.split_leaf(leaf, added, axis) || second.split_leaf(leaf, added, axis)
+                first.split_leaf_at(leaf, added, axis, placement)
+                    || second.split_leaf_at(leaf, added, axis, placement)
             }
         }
     }
@@ -235,10 +262,11 @@ impl Layout {
 }
 
 /// Something done to a split tab, or to one of its panes.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SplitMessage {
-    /// Show `tab` in a pane of `host`, as the C# "Merge with...": refused when it is the
-    /// host, already in a split, or would make more than [`MAX_PANES`].
+    /// Show `tab` in a pane of `host`, as the C# "Merge with..." and a tab dropped on the
+    /// content: refused when it is the host, already in a split, or would make more than
+    /// [`MAX_PANES`].
     Merge {
         /// The tab of the strip split.
         host: TabId,
@@ -246,7 +274,33 @@ pub enum SplitMessage {
         tab: TabId,
         /// How the two are placed.
         axis: Axis,
+        /// The side the merged tab takes; the C# always gives it the second.
+        placement: Placement,
     },
+    /// Open a profile in a new tab and merge it into the tab shown, as the tree's "Open in
+    /// split": nothing opens beyond [`MAX_PANES`], nothing merges when it does not open.
+    OpenInSplit {
+        /// The profile opened.
+        profile: ProfileId,
+        /// How the two are placed.
+        axis: Axis,
+    },
+    /// Open what Quick Connect offered and merge it into `host`, as the C# palette in split
+    /// mode, opened from a tab's "Split...".
+    QuickConnect {
+        /// The tab split.
+        host: TabId,
+        /// How the two are placed.
+        axis: Axis,
+        /// What was chosen.
+        result: QuickResult,
+    },
+    /// Give the keyboard to the pane after the focused one of `host`'s split, the last one
+    /// handing it to the first.
+    FocusNext(TabId),
+    /// Give the keyboard to the pane before the focused one of `host`'s split, the first
+    /// one handing it to the last.
+    FocusPrevious(TabId),
     /// Every pane of `host` back on the strip as a tab of its own, right after it.
     Unsplit(TabId),
     /// The two sides of `host`'s outer split change places.
@@ -352,7 +406,24 @@ impl App {
     /// Applies a message about a split.
     pub(super) fn split_message(&mut self, message: SplitMessage) -> Vec<Effect> {
         match message {
-            SplitMessage::Merge { host, tab, axis } => return self.merge(host, tab, axis),
+            SplitMessage::Merge {
+                host,
+                tab,
+                axis,
+                placement,
+            } => return self.merge(host, tab, axis, placement),
+            SplitMessage::OpenInSplit { profile, axis } => {
+                // The tab shown when chosen, as the C# reads the active session on the click.
+                let Some(host) = self.shown_tab().map(|tab| tab.id) else {
+                    return Vec::new();
+                };
+                return self.open_merged(host, axis, Message::ConnectProfile(profile));
+            }
+            SplitMessage::QuickConnect { host, axis, result } => {
+                return self.open_merged(host, axis, Message::QuickConnect(result));
+            }
+            SplitMessage::FocusNext(host) => return self.cycle_focus(host, true),
+            SplitMessage::FocusPrevious(host) => return self.cycle_focus(host, false),
             SplitMessage::Unsplit(host) => self.unsplit(host),
             SplitMessage::Swap(host) => self.edit_layout(host, Layout::swap),
             SplitMessage::ToggleAxis(host) => self.edit_layout(host, Layout::toggle_axis),
@@ -386,9 +457,10 @@ impl App {
         }
     }
 
-    /// Docks `tab` in a pane of `host`, beside the pane that had the keyboard, and shows
-    /// them. A tab still connecting is merged too: it connects in its pane.
-    fn merge(&mut self, host: TabId, tab: TabId, axis: Axis) -> Vec<Effect> {
+    /// Docks `tab` in a pane of `host`, beside the pane that had the keyboard on the side
+    /// `placement` says, and shows them. A tab still connecting is merged too: it connects
+    /// in its pane.
+    fn merge(&mut self, host: TabId, tab: TabId, axis: Axis, placement: Placement) -> Vec<Effect> {
         let mergeable = host != tab
             && self.tab(host).is_some()
             && self.tab(tab).is_some_and(|found| found.layout.is_none())
@@ -412,13 +484,57 @@ impl App {
             focus: host,
         });
         let beside = layout.focus;
-        layout.root.split_leaf(beside, tab, axis);
+        layout.root.split_leaf_at(beside, tab, axis, placement);
         layout.focus = focus;
         // Off the strip, a tab is never pinned.
         if let Some(merged) = self.tab_mut(tab) {
             merged.pinned = false;
         }
         self.select_tab(host)
+    }
+
+    /// Opens a session with `open`, then merges the tab it opened into `host`, the new pane
+    /// with the keyboard. Beyond [`MAX_PANES`] it is said and nothing opens; an open
+    /// refused, by the session limit or a question asked first, merges nothing.
+    fn open_merged(&mut self, host: TabId, axis: Axis, open: Message) -> Vec<Effect> {
+        if self.tab(host).is_none() || self.is_docked(host) {
+            return Vec::new();
+        }
+        if self.panes_of(host).len() >= MAX_PANES {
+            self.tell(Notice::SplitMaxPanesReached(MAX_PANES));
+            return Vec::new();
+        }
+        let before: Vec<TabId> = self.tabs.iter().map(|tab| tab.id).collect();
+        let mut effects = self.update(open);
+        let opened = self
+            .tabs
+            .iter()
+            .map(|tab| tab.id)
+            .find(|id| !before.contains(id));
+        if let Some(opened) = opened {
+            effects.extend(self.merge(host, opened, axis, Placement::Second));
+        }
+        effects
+    }
+
+    /// Gives the keyboard to the pane of `host`'s split after the focused one, or before it
+    /// when not `forward`, round from the last to the first, as Next and Previous go round
+    /// the tabs; nothing when it is not split.
+    fn cycle_focus(&mut self, host: TabId, forward: bool) -> Vec<Effect> {
+        let Some(layout) = self.tab(host).and_then(|tab| tab.layout.as_ref()) else {
+            return Vec::new();
+        };
+        let panes = layout.leaves();
+        let at = panes
+            .iter()
+            .position(|id| *id == layout.focus)
+            .unwrap_or_default();
+        let next = if forward {
+            (at + 1) % panes.len()
+        } else {
+            (at + panes.len() - 1) % panes.len()
+        };
+        self.focus_pane(panes[next])
     }
 
     /// Every docked pane of `host` back on the strip, right after it, in the order of the
@@ -670,6 +786,18 @@ mod tests {
             Node::Split { axis: Axis::SideBySide, second, .. } if **second == Node::Leaf(c)
         ));
         assert_eq!(Node::Leaf(a).remove_leaf(a), None);
+    }
+
+    #[test]
+    fn a_leaf_split_first_puts_the_added_pane_before_it() {
+        let (a, b, _) = ids();
+        let mut root = Node::Leaf(a);
+        assert!(root.split_leaf_at(a, b, Axis::Stacked, Placement::First));
+        assert_eq!(root.leaves(), [b, a]);
+        assert!(!root.split_leaf_at(TabId::fresh(), b, Axis::Stacked, Placement::First));
+        let mut root = Node::Leaf(a);
+        assert!(root.split_leaf_at(a, b, Axis::SideBySide, Placement::Second));
+        assert_eq!(root.leaves(), [a, b], "as the C# merge");
     }
 
     #[test]

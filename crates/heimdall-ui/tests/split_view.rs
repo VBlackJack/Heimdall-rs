@@ -16,14 +16,16 @@
 
 //! A split tab drawn headless, as the C# one: both panes under their headers, the keyboard
 //! with the focused one only, a press giving it to the other, the divider dragged then kept
-//! once let go, a double click giving each half, the tab's menu and Ctrl+Shift+O.
+//! once let go, a double click giving each half, the tab's menu and Ctrl+Shift+O; a tab
+//! dropped on the content, the tree's "Open in split", "Split..." through Quick Connect,
+//! and the keys that move between the panes.
 
 mod common;
 
 use std::path::Path;
 use std::sync::Arc;
 
-use heimdall_app::split::{Axis, DEFAULT_RATIO, SplitMessage};
+use heimdall_app::split::{Axis, DEFAULT_RATIO, Placement, SplitMessage};
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Dialog, Message as AppMessage, TabId,
     TabMenuMessage,
@@ -34,6 +36,7 @@ use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::split_view::{self, DIVIDER, NUDGE};
+use heimdall_ui::tab_drag;
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::{WindowShortcut, window_shortcut};
 use heimdall_ui::tree_view::TreeMenu;
@@ -142,6 +145,7 @@ fn split_shell(dir: &Path) -> (Shell, TabId, TabId) {
         host: left,
         tab: right,
         axis: Axis::SideBySide,
+        placement: Placement::Second,
     }));
     assert_eq!(core.active, Some(right));
     (Shell::with_app(core), left, right)
@@ -512,6 +516,7 @@ fn merge_with_lists_the_other_tabs_and_how_to_place_them() {
             host,
             tab: other,
             axis,
+            placement: Placement::Second,
         }));
         let got = chosen(&shell, entry);
         assert!(
@@ -590,4 +595,267 @@ fn the_tab_shortcuts_and_the_settings_follow_the_strip_not_the_panes() {
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
     assert!(shell.app().tab(left).is_none() && shell.app().tab(right).is_none());
     assert_eq!(shell.app().active, Some(third));
+}
+
+/// Two live shells on the strip, "left pane" shown, "right pane" beside it.
+fn two_tabs(dir: &Path) -> (Shell, TabId, TabId) {
+    let mut core = app(dir);
+    let left = live(&mut core, "a", "left pane");
+    let right = live(&mut core, "b", "right pane");
+    core.update(AppMessage::SelectTab(left));
+    (Shell::with_app(core), left, right)
+}
+
+/// Where the content is drawn, under the tab bar.
+fn content_area(shell: &Shell) -> Rectangle {
+    let mut ui = simulator(shell);
+    ui.find(tab_drag::content_area_id())
+        .expect("the content")
+        .bounds()
+}
+
+/// `tab` pressed on the strip and dragged to `to`, the content's area read as the drag
+/// starts.
+fn drag_to(shell: &mut Shell, tab: TabId, to: Point) {
+    let area = content_area(shell);
+    let _ = shell.update(Message::TabHover(tab));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::TabHoverLeft(tab));
+    let _ = shell.update(Message::TabDragMoved(to));
+    let _ = shell.update(Message::TabDropArea(Some(area)));
+}
+
+/// Where "Drop to split" is drawn, if it is.
+fn drop_label(shell: &Shell) -> Option<Rectangle> {
+    let mut ui = simulator(shell);
+    ui.find("Drop to split").ok().map(|found| found.bounds())
+}
+
+fn layout_of(shell: &Shell, host: TabId) -> Option<heimdall_app::split::Layout> {
+    shell.app().tab(host).and_then(|tab| tab.layout.clone())
+}
+
+#[test]
+fn a_tab_dragged_over_the_content_shows_its_half_and_splits_the_tab_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    let area = content_area(&shell);
+    // Near the left edge: side by side, the dragged tab first.
+    drag_to(
+        &mut shell,
+        right,
+        Point::new(area.x + area.width * 0.1, area.center_y()),
+    );
+    let label = drop_label(&shell).expect("the overlay");
+    assert!(
+        label.center_x() < area.center_x() && label.center_y() > area.y,
+        "over the left half: {label:?} in {area:?}"
+    );
+    let _ = shell.update(Message::TabDragEnd);
+    let split = layout_of(&shell, left).expect("split");
+    assert_eq!(split.axis(), Some(Axis::SideBySide));
+    assert_eq!(split.leaves(), [right, left], "dropped on the left: first");
+    assert!(drop_label(&shell).is_none(), "gone once let go");
+
+    // Near the bottom edge: stacked, the dragged tab second, as the C#.
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    drag_to(
+        &mut shell,
+        right,
+        Point::new(area.center_x(), area.y + area.height * 0.95),
+    );
+    let label = drop_label(&shell).expect("the overlay");
+    assert!(
+        label.center_y() > area.center_y(),
+        "over the bottom half: {label:?} in {area:?}"
+    );
+    let _ = shell.update(Message::TabDragEnd);
+    let split = layout_of(&shell, left).expect("split");
+    assert_eq!(split.axis(), Some(Axis::Stacked));
+    assert_eq!(split.leaves(), [left, right]);
+}
+
+#[test]
+fn a_tab_dropped_on_the_strip_still_takes_the_place_of_another() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    let area = content_area(&shell);
+    drag_to(&mut shell, right, Point::new(area.x + 10.0, area.y - 10.0));
+    let _ = shell.update(Message::TabHover(left));
+    assert!(drop_label(&shell).is_none(), "over the strip: no overlay");
+    let _ = shell.update(Message::TabDragEnd);
+    let strip: Vec<TabId> = shell.app().strip().iter().map(|tab| tab.id).collect();
+    assert_eq!(strip, [right, left]);
+    assert!(layout_of(&shell, left).is_none() && layout_of(&shell, right).is_none());
+}
+
+#[test]
+fn no_overlay_for_the_tab_shown_a_split_tab_or_onto_a_full_split() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, _) = two_tabs(dir.path());
+    let area = content_area(&shell);
+    let inside = Point::new(area.x + area.width * 0.1, area.center_y());
+    drag_to(&mut shell, left, inside);
+    assert!(drop_label(&shell).is_none(), "the tab shown onto itself");
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(layout_of(&shell, left).is_none());
+
+    // Onto a split of two panes already: no overlay, and the drop says why.
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, left, _) = split_shell(dir.path());
+    let mut core = shell.into_app();
+    let third = live(&mut core, "c", "third");
+    core.update(AppMessage::SelectTab(left));
+    let mut shell = Shell::with_app(core);
+    drag_to(&mut shell, third, inside);
+    assert!(drop_label(&shell).is_none(), "full already");
+    let _ = shell.update(Message::TabDragEnd);
+    assert_eq!(layout_of(&shell, left).expect("split").leaves().len(), 2);
+    assert_eq!(
+        shell.app().notice(),
+        Some(&heimdall_app::Notice::SplitMaxPanesReached(
+            heimdall_app::split::MAX_PANES
+        ))
+    );
+
+    // The split tab dragged over another: no overlay, nothing merged.
+    let _ = shell.update(Message::App(AppMessage::SelectTab(third)));
+    drag_to(&mut shell, left, inside);
+    assert!(drop_label(&shell).is_none(), "a split tab is not merged");
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(layout_of(&shell, third).is_none());
+}
+
+#[test]
+fn the_tree_menu_opens_a_session_in_a_split_once_one_is_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let profile = ProfileId::new("c");
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(profile.clone())));
+    let got = chosen(&shell, "Open in split");
+    assert!(got.is_empty(), "no session open: disabled, {got:?}");
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = two_tabs(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Profile(profile.clone())));
+    let got = chosen(&shell, "Open in split");
+    assert!(
+        matches!(got.as_slice(), [Message::OpenTreeMenu(TreeMenu::OpenInSplit(id))] if *id == profile),
+        "{got:?}"
+    );
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::OpenInSplit(
+        profile.clone(),
+    )));
+    for (entry, axis) in [
+        ("Horizontal", Axis::Stacked),
+        ("Vertical", Axis::SideBySide),
+    ] {
+        let expected = Message::MenuChoice(AppMessage::Split(SplitMessage::OpenInSplit {
+            profile: profile.clone(),
+            axis,
+        }));
+        let got = chosen(&shell, entry);
+        assert!(
+            matches!(got.as_slice(), [message] if same(message, &expected)),
+            "{entry}: {got:?}"
+        );
+    }
+}
+
+#[test]
+fn split_opens_quick_connect_to_merge_into_the_tab_and_escape_cancels_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(left)));
+    let got = chosen(&shell, "Split...");
+    assert!(
+        matches!(got.as_slice(), [Message::OpenTreeMenu(TreeMenu::SplitAxis(tab))] if *tab == left),
+        "{got:?}"
+    );
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::SplitAxis(left)));
+    let mut ui = sized(&shell, TALL_WINDOW);
+    ui.click("Vertical").expect("Vertical");
+    let split = ui
+        .into_messages()
+        .find(|message| matches!(message, Message::SplitPalette { .. }))
+        .expect("the palette asked for");
+    assert!(
+        matches!(split, Message::SplitPalette { host, axis: Axis::SideBySide } if host == left),
+        "{split:?}"
+    );
+
+    // Escape: the split mode goes with the palette.
+    let _ = shell.update(split.clone());
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    let _ = shell.update(Message::PaletteChoose(0));
+    assert_eq!(shell.app().tabs.len(), 2, "nothing opened");
+
+    let _ = shell.update(split);
+    let _ = shell.update(Message::PaletteQuery("server c".to_owned()));
+    let _ = shell.update(Message::PaletteChoose(0));
+    let leaves = layout_of(&shell, left).expect("split").leaves();
+    assert_eq!(leaves.len(), 2);
+    assert_eq!(leaves[0], left);
+    let strip: Vec<TabId> = shell.app().strip().iter().map(|tab| tab.id).collect();
+    assert_eq!(strip, [left, right], "merged, not on the strip");
+
+    // A tab split offers no "Split...".
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(left)));
+    let mut ui = sized(&shell, TALL_WINDOW);
+    assert!(ui.find("Split...").is_err());
+}
+
+#[test]
+fn the_pane_shortcuts_move_the_keyboard_and_terminals_leave_them_to_the_window() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = split_shell(dir.path());
+    for (key, physical, modifiers, expected) in [
+        (
+            keyboard::Key::Named(Named::ArrowRight),
+            keyboard::key::Physical::Code(keyboard::key::Code::ArrowRight),
+            keyboard::Modifiers::CTRL | keyboard::Modifiers::ALT,
+            WindowShortcut::NextPane,
+        ),
+        (
+            keyboard::Key::Named(Named::F6),
+            keyboard::key::Physical::Code(keyboard::key::Code::F6),
+            keyboard::Modifiers::CTRL | keyboard::Modifiers::SHIFT,
+            WindowShortcut::PreviousPane,
+        ),
+    ] {
+        assert_eq!(window_shortcut(&key, physical, modifiers), Some(expected));
+        let mut ui = simulator(&shell);
+        let status = ui.simulate([iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: physical,
+            location: keyboard::Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })]);
+        assert_eq!(status, [event::Status::Ignored], "{expected:?}");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { tab, .. }) if tab == right)),
+            "not the session's"
+        );
+    }
+    let _ = shell.update(Message::Shortcut(WindowShortcut::NextPane));
+    assert_eq!(shell.app().active, Some(left), "round to the first");
+    let _ = shell.update(Message::Shortcut(WindowShortcut::NextPane));
+    assert_eq!(shell.app().active, Some(right));
+    let _ = shell.update(Message::Shortcut(WindowShortcut::PreviousPane));
+    assert_eq!(shell.app().active, Some(left));
+    let mut ui = simulator(&shell);
+    ui.typewrite("z");
+    let keys: Vec<TabId> = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::Key { tab, .. }) => Some(tab),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(keys, [left], "typing follows the keyboard");
 }

@@ -119,6 +119,12 @@ pub enum WindowShortcut {
     CloseTab,
     /// Place the panes of the split tab shown the other way: Ctrl+Shift+O, as the C# one.
     ToggleSplit,
+    /// Give the keyboard to the next pane of the split tab shown: Ctrl+Alt+Right, or
+    /// Ctrl+F6 where a graphics driver takes Ctrl+Alt and an arrow to turn the screen.
+    NextPane,
+    /// Give the keyboard to the previous pane of the split tab shown: Ctrl+Alt+Left, or
+    /// Ctrl+Shift+F6.
+    PreviousPane,
     /// The terminal's text larger, smaller or back to its size: Ctrl +, Ctrl -, Ctrl 0.
     Zoom(Zoom),
     /// Open or close the terminal's search bar: Ctrl+Shift+F.
@@ -216,15 +222,23 @@ pub fn window_shortcut(
 ) -> Option<WindowShortcut> {
     let (ctrl, shift, alt) = (modifiers.control(), modifiers.shift(), modifiers.alt());
     if ctrl && alt && !shift {
-        // The character itself, never the key's place: AltGr is Ctrl+Alt, and AltGr+B
-        // types a character on some layouts.
-        return matches!(key, keyboard::Key::Character(c) if c.eq_ignore_ascii_case("b"))
-            .then_some(WindowShortcut::Broadcast);
+        return match key {
+            keyboard::Key::Named(Named::ArrowRight) => Some(WindowShortcut::NextPane),
+            keyboard::Key::Named(Named::ArrowLeft) => Some(WindowShortcut::PreviousPane),
+            // The character itself, never the key's place: AltGr is Ctrl+Alt, and AltGr+B
+            // types a character on some layouts.
+            keyboard::Key::Character(c) if c.eq_ignore_ascii_case("b") => {
+                Some(WindowShortcut::Broadcast)
+            }
+            _ => None,
+        };
     }
     if !ctrl || alt {
         return None;
     }
     match key {
+        keyboard::Key::Named(Named::F6) if shift => Some(WindowShortcut::PreviousPane),
+        keyboard::Key::Named(Named::F6) => Some(WindowShortcut::NextPane),
         keyboard::Key::Named(Named::Tab) if shift => Some(WindowShortcut::PreviousTab),
         keyboard::Key::Named(Named::Tab) => Some(WindowShortcut::NextTab),
         keyboard::Key::Named(Named::PageUp) if !shift => Some(WindowShortcut::PreviousTab),
@@ -419,6 +433,40 @@ mod tests {
                 "{modifiers:?}"
             );
         }
+    }
+
+    #[test]
+    fn ctrl_alt_arrows_and_ctrl_f6_move_between_the_panes() {
+        let (right, left, f6) = (
+            keyboard::Key::Named(Named::ArrowRight),
+            keyboard::Key::Named(Named::ArrowLeft),
+            keyboard::Key::Named(Named::F6),
+        );
+        let ctrl_alt = Modifiers::CTRL | Modifiers::ALT;
+        assert_eq!(
+            window_shortcut(&right, ANY_PLACE, ctrl_alt),
+            Some(WindowShortcut::NextPane)
+        );
+        assert_eq!(
+            window_shortcut(&left, ANY_PLACE, ctrl_alt),
+            Some(WindowShortcut::PreviousPane)
+        );
+        assert_eq!(
+            window_shortcut(&f6, ANY_PLACE, Modifiers::CTRL),
+            Some(WindowShortcut::NextPane)
+        );
+        assert_eq!(
+            window_shortcut(&f6, ANY_PLACE, Modifiers::CTRL | Modifiers::SHIFT),
+            Some(WindowShortcut::PreviousPane)
+        );
+        // The shell's own: word moves with Ctrl, F6 alone for its programs.
+        assert_eq!(window_shortcut(&right, ANY_PLACE, Modifiers::CTRL), None);
+        assert_eq!(
+            window_shortcut(&left, ANY_PLACE, ctrl_alt | Modifiers::SHIFT),
+            None
+        );
+        assert_eq!(window_shortcut(&f6, ANY_PLACE, Modifiers::empty()), None);
+        assert_eq!(window_shortcut(&f6, ANY_PLACE, ctrl_alt), None);
     }
 
     #[test]
