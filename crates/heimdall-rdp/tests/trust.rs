@@ -224,6 +224,19 @@ fn expected_pin() -> Fingerprint {
         .expect("fixture pin")
 }
 
+/// The address and key of each line, the attributes after them left out.
+fn pins(path: &Path) -> Vec<String> {
+    lines(path)
+        .iter()
+        .map(|line| {
+            line.split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        })
+        .collect()
+}
+
 fn lines(path: &Path) -> Vec<String> {
     std::fs::read_to_string(path)
         .map(|text| text.lines().map(str::to_owned).collect())
@@ -235,6 +248,16 @@ fn the_pin_is_the_spki_hash_openssl_computes() {
     let certificate = ServerCertificate::from_der(CERT).expect("fixture");
     assert_eq!(certificate.fingerprint, expected_pin());
     assert_eq!(certificate.subject, "CN=rdp.test");
+    assert_eq!(certificate.issuer, "CN=rdp.test", "signed by itself");
+}
+
+#[test]
+fn the_issuer_is_read_apart_from_the_subject() {
+    // Issued by `O=Heimdall Lab, CN=Lab Root CA` to `CN=dc.lab`, made by openssl.
+    let issued =
+        ServerCertificate::from_der(include_bytes!("fixtures/issued-cert.der")).expect("fixture");
+    assert_eq!(issued.subject, "CN=dc.lab");
+    assert_eq!(issued.issuer, "CN=Lab Root CA,O=Heimdall Lab");
 }
 
 #[tokio::test]
@@ -287,7 +310,17 @@ async fn an_accepted_key_is_recorded_once_and_then_known() {
         seen.asked,
         "the credentials come once the server is trusted"
     );
-    assert_eq!(lines(&known), [format!("{HOST}:{PORT} {}", expected_pin())]);
+    assert_eq!(pins(&known), [format!("{HOST}:{PORT} {}", expected_pin())]);
+    let recorded = KnownRdpHosts::new(&known).entries().expect("read");
+    assert_eq!(
+        (
+            recorded[0].subject.as_deref(),
+            recorded[0].issuer.as_deref()
+        ),
+        (Some("CN=rdp.test"), Some("CN=rdp.test")),
+        "recorded with the names of its certificate"
+    );
+    assert!(recorded[0].trusted.is_some(), "and the time");
 
     // Known now: no decision needed, and nothing is recorded twice.
     let (outcome, seen) = attempt(&config(&known, None, PORT), KEY).await;
@@ -392,7 +425,7 @@ async fn at_an_address_several_servers_answer_a_new_key_is_asked_about_and_trust
         "the credentials come once the server is trusted"
     );
     assert_eq!(
-        lines(&known),
+        pins(&known),
         [
             format!("{HOST}:{PORT} {other}"),
             format!("{HOST}:{PORT} {}", expected_pin())

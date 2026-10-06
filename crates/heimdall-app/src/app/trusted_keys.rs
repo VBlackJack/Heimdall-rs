@@ -29,6 +29,10 @@ const OPENSSH_FOLDER: &str = ".ssh";
 /// The file of the keys OpenSSH trusts, in that folder.
 const OPENSSH_KNOWN_HOSTS: &str = "known_hosts";
 
+/// The format of the C# "Trusted since" column: the day and the minute, as its general
+/// format, in an order every language reads.
+const TRUSTED_SINCE_FORMAT: &str = "%Y-%m-%d %H:%M";
+
 /// A key trusted for a server.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TrustedKey {
@@ -54,6 +58,20 @@ impl TrustedKey {
         match self {
             Self::Ssh(entry) => entry.fingerprint.clone(),
             Self::Rdp(entry) => entry.fingerprint.to_string(),
+        }
+    }
+
+    /// When an RDP certificate was trusted, in this computer's time, as the C# "Trusted
+    /// since" column; `None` for an SSH key or a certificate recorded without the time.
+    #[must_use]
+    pub fn trusted_since(&self) -> Option<String> {
+        match self {
+            Self::Ssh(_) => None,
+            Self::Rdp(entry) => entry.trusted.map(|time| {
+                chrono::DateTime::<chrono::Local>::from(time)
+                    .format(TRUSTED_SINCE_FORMAT)
+                    .to_string()
+            }),
         }
     }
 }
