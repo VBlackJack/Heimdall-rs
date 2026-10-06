@@ -1197,7 +1197,10 @@ impl Shell {
         if self.sidebar_drag {
             subscriptions.push(event::listen_with(sidebar_drag_event));
         }
-        if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
+        if locked_out
+            || self.app.tabs.iter().any(|tab| tab.retry.is_some())
+            || self.app.undo_offer().is_some()
+        {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
         if let Some(interval) = self.app.tmout_reset_interval() {
@@ -3128,6 +3131,7 @@ impl Shell {
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
         container(
             column![header, actions, self.search_box(), tree]
+                .push(self.undo_bar())
                 .spacing(SPACING)
                 .padding(PADDING),
         )
@@ -3135,6 +3139,29 @@ impl Shell {
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// Under the tree for 30 seconds after the tree's organization changed, as the C# bar:
+    /// what changed, and Undo.
+    fn undo_bar(&self) -> Option<Element<'_, Message>> {
+        let said = match self.app.undo_offer()? {
+            heimdall_app::OrganizationChange::Move => fl!("ui-tree-changed-move"),
+            heimdall_app::OrganizationChange::Reorder => fl!("ui-tree-changed-reorder"),
+            heimdall_app::OrganizationChange::Rename => fl!("ui-tree-changed-rename"),
+            heimdall_app::OrganizationChange::FolderMove => fl!("ui-tree-changed-folder-move"),
+        };
+        Some(
+            row![
+                text(said).size(SMALL_SIZE).style(text::secondary),
+                button(text(fl!("ui-tree-undo")).size(SMALL_SIZE))
+                    .style(button::text)
+                    .on_press(Message::App(AppMessage::UndoMove)),
+            ]
+            .spacing(SPACING / 2.0)
+            .align_y(iced::Alignment::Center)
+            .wrap()
+            .into(),
+        )
     }
 
     /// The tree's rows, searched and filtered, and what it says when none passes.
@@ -3197,14 +3224,17 @@ impl Shell {
                     .flatten();
                 let target = heimdall_app::DropTarget::Profile(profile.id.clone());
                 let reach = self.app.reachability(&profile.id).cloned();
-                crate::tree_drag::drop_zone(
-                    tree_view::indented(
-                        tree_view::owned_row(&profile, selected, (state, reach), context),
-                        depth,
-                    ),
-                    target,
-                    self.tree_drag.as_ref(),
-                )
+                let row = tree_view::indented(
+                    tree_view::owned_row(&profile, selected, (state, reach), context),
+                    depth,
+                );
+                // Sessions dragged go before or after a session; a folder, into its folder.
+                match self.tree_drag.as_ref().filter(|drag| {
+                    drag.active && matches!(drag.source, crate::tree_drag::DragSource::Profiles(_))
+                }) {
+                    Some(drag) => crate::tree_drag::positioned_zone(row, &profile.id, drag),
+                    None => crate::tree_drag::drop_zone(row, target, self.tree_drag.as_ref()),
+                }
             }
         }));
         list
@@ -4357,6 +4387,7 @@ impl Shell {
                     .update(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id))),
                 _ => Vec::new(),
             },
+            FilesKey::Parent | FilesKey::Lower => self.nudge(cursor, key == FilesKey::Lower),
             // The row the keyboard is on: where a Shift range ended, else the one selected.
             FilesKey::ToggleMark => match (self.tree_focus.take(), cursor) {
                 (Some(id), _) | (None, Some(TreeCursor::Profile(id))) => self
@@ -4366,6 +4397,15 @@ impl Shell {
             },
             _ => Vec::new(),
         })
+    }
+
+    /// The session the keyboard is on, one place up or `down`, as the C# Alt+Up and
+    /// Alt+Down; a folder does not move.
+    fn nudge(&mut self, cursor: Option<TreeCursor>, down: bool) -> Vec<Effect> {
+        match cursor {
+            Some(TreeCursor::Profile(id)) => self.app.update(AppMessage::NudgeProfile { id, down }),
+            _ => Vec::new(),
+        }
     }
 
     /// Left (`unfold` false): a folder open closes; else up to the folder holding the row.

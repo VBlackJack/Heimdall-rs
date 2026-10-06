@@ -3544,3 +3544,38 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
             .any(|message| matches!(message, Message::TreeShortcut(TreeShortcut::ToggleSidebar)))
     );
 }
+
+#[test]
+fn alt_down_moves_the_session_and_the_undo_bar_puts_it_back() {
+    use heimdall_app::files::FilesKey;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let order = |shell: &Shell| -> Vec<String> {
+        shell
+            .app()
+            .tree_rows("")
+            .into_iter()
+            .filter_map(|row| match row {
+                heimdall_app::TreeRow::Profile { profile, .. } => Some(profile.id.to_string()),
+                heimdall_app::TreeRow::Folder { .. } => None,
+            })
+            .collect()
+    };
+    assert_eq!(order(&shell), ["a", "b", "c"]);
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Undo").is_err(), "nothing to undo");
+    }
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::FilesKey(FilesKey::Lower));
+    assert_eq!(order(&shell), ["b", "a", "c"], "within its folder");
+    let mut ui = simulator(&shell);
+    ui.find("Sessions reordered.").expect("the C# bar");
+    ui.click("Undo").expect("Undo");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    assert_eq!(order(&shell), ["a", "b", "c"]);
+}

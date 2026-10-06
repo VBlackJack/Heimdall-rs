@@ -126,7 +126,25 @@ fn files_notice(notice: &Notice) -> String {
             fl!("ui-status-dropped-folder", name = server_text(name))
         }
         Notice::DropRefused => fl!("ui-status-drop-refused"),
+        Notice::Reordered {
+            count,
+            name,
+            folder,
+        } => {
+            let folder = folder
+                .as_deref()
+                .map_or_else(|| fl!("ui-sidebar-group-none"), server_text);
+            match name {
+                Some(name) => fl!(
+                    "ui-status-reordered-one",
+                    name = server_text(name),
+                    folder = folder
+                ),
+                None => fl!("ui-status-reordered", count = (*count), folder = folder),
+            }
+        }
         Notice::MoveUndone => fl!("ui-status-move-undone"),
+        Notice::UndoConflict => fl!("ui-status-undo-conflict"),
         Notice::NothingToUndo => fl!("ui-status-nothing-to-undo"),
         Notice::WakeOnLan(Ok(())) => fl!("ui-status-wake-on-lan-sent"),
         Notice::WakeOnLan(Err(reason)) => {
@@ -222,7 +240,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::DroppedProfiles { .. }
             | Notice::DroppedFolder(_)
             | Notice::DropRefused
+            | Notice::Reordered { .. }
             | Notice::MoveUndone
+            | Notice::UndoConflict
             | Notice::NothingToUndo
             | Notice::WakeOnLan(_)
             | Notice::FilesBatch(_)

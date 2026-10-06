@@ -129,6 +129,7 @@ impl App {
             }
             SelectionMessage::Move(to) => {
                 let ids = self.selected_profiles();
+                let before = self.organizations(&ids);
                 let moved = self.store.apply(|store| {
                     for id in &ids {
                         store.set_group(id, to.clone());
@@ -138,6 +139,8 @@ impl App {
                     self.dialog = Some(Dialog::StoreError {
                         detail: error.to_string(),
                     });
+                } else {
+                    self.record_organization(super::tree_drag::OrganizationChange::Move, before);
                 }
                 Vec::new()
             }
