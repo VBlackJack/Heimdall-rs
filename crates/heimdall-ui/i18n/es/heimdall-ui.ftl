@@ -1714,6 +1714,7 @@ ui-status-dropped-profiles-none = { $count ->
 ui-status-dropped-folder = Carpeta { $name } movida. Ctrl+Z lo deshace.
 ui-status-drop-refused = Ya hay una carpeta con ese nombre: no se movió nada.
 ui-status-move-undone = Movimiento deshecho.
+ui-status-listing-cancelled = Carga cancelada.
 ui-status-nothing-to-undo = Nada que deshacer.
 ui-shortcuts-undo-move = Deshacer el último movimiento hecho arrastrando en el árbol
 ui-tab-menu-vnc-remote-resize = Ajustar el escritorio remoto a la pestaña

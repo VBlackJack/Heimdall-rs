@@ -179,6 +179,8 @@ pub enum Notice {
     DroppedFolder(String),
     /// A folder was dropped where one of its name is already.
     DropRefused,
+    /// A Files tab's listing on its way was given up with Escape.
+    ListingCancelled,
     /// The last move a drop made was undone.
     MoveUndone,
     /// No move made by a drop is there to undo.

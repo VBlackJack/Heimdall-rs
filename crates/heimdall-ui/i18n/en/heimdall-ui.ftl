@@ -1792,6 +1792,7 @@ ui-status-dropped-profiles-none = { $count ->
 ui-status-dropped-folder = Moved the folder { $name }. Ctrl+Z undoes it.
 ui-status-drop-refused = A folder of that name is already there: nothing was moved.
 ui-status-move-undone = Move undone.
+ui-status-listing-cancelled = Loading cancelled.
 ui-status-nothing-to-undo = Nothing to undo.
 ui-shortcuts-undo-move = Undo the last move made by dragging in the tree
 ui-tab-menu-vnc-remote-resize = Resize the remote desktop to the tab

@@ -2052,12 +2052,13 @@ impl Shell {
                 .update(AppMessage::Files(FilesMessage::PathCancelled { tab, side }));
         }
         if self.app.dialog.is_none() {
-            // Escape reaches here even when a terminal sent it to its session.
-            return if confirm {
-                self.files_key(FilesKey::Open)
+            // Escape reaches here even when a terminal sent it to its session; in a Files tab
+            // it gives up the listing on its way, as the C# one.
+            return self.files_key(if confirm {
+                FilesKey::Open
             } else {
-                Vec::new()
-            };
+                FilesKey::CancelLoad
+            });
         }
         let enter_confirms = self
             .app
