@@ -115,6 +115,8 @@ impl App {
             self.tabs[index].pinned = old.pinned;
             self.tabs[index].layout = old.layout.take();
             self.repoint_pane(tab_id, reopened);
+            // A local file browser the user closed stays closed.
+            self.tabs[index].local_browser_closed = old.local_browser_closed;
             // A health panel shown stays shown, asked again once connected.
             self.tabs[index].health.shown = old.health.shown;
             self.tabs[index].tunnels_panel = old.tunnels_panel;

@@ -661,6 +661,9 @@ impl App {
             .into_iter()
             .filter(|id| *id != host)
             .collect();
+        for id in &docked {
+            self.local_browser_left(host, *id);
+        }
         for (offset, id) in docked.iter().enumerate() {
             let Some(from) = self.tabs.iter().position(|tab| tab.id == *id) else {
                 continue;
@@ -808,6 +811,7 @@ impl App {
             heir = self.hand_over_split(tab_id);
         } else {
             self.leave_split(host, tab_id);
+            self.local_browser_left(host, tab_id);
         }
         let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
             return;

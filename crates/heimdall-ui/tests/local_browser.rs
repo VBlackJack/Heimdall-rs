@@ -16,7 +16,9 @@
 
 //! The file browser docked beside a local shell, drawn headless: this computer's files
 //! alone, with no server pane, no toggle and nothing to send; its entries' menu offers the
-//! C# "Open in Explorer" and nothing that would reach a server or the shell.
+//! C# "Open in Explorer" and "Open in terminal", a new shell, and nothing that would reach
+//! a server or the shell beside it; a file that would run is asked about first; and the
+//! Settings page docks it or not.
 
 mod common;
 
@@ -26,18 +28,23 @@ use std::sync::Arc;
 use heimdall_app::files::{EntryKind, LocalEntry, Side};
 use heimdall_app::local_driver::LocalShell;
 use heimdall_app::{
-    App, AppConfig, ConnectionEvent, Effect, FilesMessage, InputSink, Message as AppMessage, TabId,
+    App, AppConfig, ConnectionEvent, Effect, FilesMessage, InputSink, Message as AppMessage,
+    SettingsMessage, TabId,
 };
+use heimdall_core::settings::SftpBrowser;
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
 use heimdall_term::local::LocalArguments;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, SettingsTab, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::{FilesEntryFacts, FilesTabFacts};
 use iced::{Settings, Size};
 
 /// Size of the simulated window, in logical pixels: wide enough for two panes.
 const WINDOW: Size = Size::new(1400.0, 720.0);
+
+/// Size of the simulated Settings page: tall enough for the whole SSH tab.
+const SETTINGS_WINDOW: Size = Size::new(1100.0, 2400.0);
 
 #[derive(Debug, Default)]
 struct Sink;
@@ -167,20 +174,148 @@ fn the_browsers_entry_menu_opens_in_explorer_and_sends_nothing() {
     ] {
         ui.find(label).expect(label);
     }
-    for label in ["Upload", "Open in terminal"] {
-        assert!(ui.find(label).is_err(), "{label}");
+    assert!(ui.find("Upload").is_err(), "nowhere to send it");
+    for (label, message) in [
+        (
+            "Open in Explorer",
+            FilesMessage::OpenInExplorer { tab: pane },
+        ),
+        (
+            "Open in terminal",
+            FilesMessage::OpenInTerminal { tab: pane },
+        ),
+    ] {
+        let mut ui = menu();
+        ui.click(label).expect("the C# entry");
+        let chosen: Vec<String> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(AppMessage::Files(files)) => Some(format!("{files:?}")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chosen, [format!("{message:?}")], "{label}");
     }
-    let mut ui = menu();
-    ui.click("Open in Explorer").expect("the C# entry");
-    let chosen: Vec<String> = ui
-        .into_messages()
+    // On the folder shown too, nothing selected.
+    let mut ui = common::simulator(
+        settings(),
+        WINDOW,
+        heimdall_ui::tree_view::files_entry_menu((pane, Side::Local), None, facts),
+    );
+    ui.find("Open in terminal").expect("the folder shown");
+}
+
+#[test]
+fn a_file_that_would_run_is_asked_about_with_its_full_path() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = docked(dir.path());
+    let file = dir.path().join("setup.exe");
+    std::fs::write(&file, b"MZ").expect("file");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o755)).expect("mode");
+    }
+    core.update(AppMessage::Files(FilesMessage::LocalListed {
+        tab: pane,
+        result: Ok((
+            PathBuf::from(dir.path()),
+            vec![LocalEntry {
+                name: "setup.exe".into(),
+                label: "setup.exe".to_owned(),
+                kind: EntryKind::File,
+                size: Some(2),
+                modified: None,
+            }],
+        )),
+    }));
+    assert!(
+        core.update(AppMessage::Files(FilesMessage::Open {
+            tab: pane,
+            side: Side::Local,
+            index: 0,
+        }))
+        .is_empty(),
+        "nothing opened before agreeing"
+    );
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("Open a program").expect("the question");
+    ui.click("Open").expect("its button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog))),
+        "agreed by a click"
+    );
+}
+
+#[test]
+fn a_file_or_folder_that_did_not_open_says_so_not_that_an_editor_failed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = docked(dir.path());
+    core.update(AppMessage::Files(FilesMessage::EditorLaunched {
+        tab: pane,
+        result: Err(heimdall_app::files::FilesError::OpenFailed {
+            detail: "no handler".to_owned(),
+        }),
+    }));
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("Could not open it on this computer: no handler")
+        .expect("its own wording");
+    assert!(
+        ui.find("The external editor could not be started: no handler. Check the editor path in Settings.")
+            .is_err(),
+        "no editor involved"
+    );
+}
+
+/// The settings a click on the card's `label` asks for.
+fn clicked(shell: &Shell, label: &str) -> Vec<SftpBrowser> {
+    let mut ui = common::simulator(settings(), SETTINGS_WINDOW, shell.view());
+    ui.click(label).expect(label);
+    ui.into_messages()
         .filter_map(|message| match message {
-            Message::MenuChoice(AppMessage::Files(files)) => Some(format!("{files:?}")),
+            Message::App(AppMessage::Settings(SettingsMessage::SftpBrowser(sftp))) => Some(sftp),
             _ => None,
         })
-        .collect();
+        .collect()
+}
+
+#[test]
+fn the_settings_card_docks_the_local_browser_or_not_whatever_the_sftp_browser() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let label = "Dock a file browser beside local shells";
+    let defaults = SftpBrowser::default();
+    let off = SftpBrowser {
+        dock_local_browser: false,
+        ..defaults
+    };
+    let asked = clicked(&shell, label);
+    assert_eq!(asked, [off]);
+    for sftp in asked {
+        let _ = shell.update(Message::App(AppMessage::Settings(
+            SettingsMessage::SftpBrowser(sftp),
+        )));
+    }
+    assert!(!shell.app().settings().sftp_browser.dock_local_browser);
+    assert_eq!(clicked(&shell, label), [defaults], "on again");
+    // The SFTP browser off leaves it: no server is involved.
+    let sftp_off = SftpBrowser {
+        enabled: false,
+        ..defaults
+    };
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        SettingsMessage::SftpBrowser(sftp_off),
+    )));
     assert_eq!(
-        chosen,
-        [format!("{:?}", FilesMessage::OpenInExplorer { tab: pane })]
+        clicked(&shell, label),
+        [SftpBrowser {
+            dock_local_browser: false,
+            ..sftp_off
+        }]
     );
 }

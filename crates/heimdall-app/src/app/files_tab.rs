@@ -1658,6 +1658,10 @@ impl App {
                     files.local.path = path;
                     return self.list(tab, side);
                 }
+                // The local file browser has nowhere to send it: the file is opened.
+                if files.local_only {
+                    return self.open_local_file(tab, index);
+                }
                 files.local.select_only(Some(index));
                 self.start_transfer(tab, Direction::Upload)
             }

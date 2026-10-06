@@ -19,13 +19,19 @@
 //! The C# docks it beside every local shell it embeds, whatever the program, side by side
 //! at an even share, with no setting; an elevated shell started in a window of its own has
 //! none. It starts in the shell's folder when it is there, else in the home folder, and its
-//! Home goes back to where it started.
+//! Home goes back to where it started. Here a setting, on by default, can leave it out, and
+//! a browser the user closed is not docked again when the same shell starts again.
 //!
 //! The C# also types into the shell from it: `cd` into a folder for "Open in terminal", and
 //! a script's path for "Run in shell", each followed by Enter. Heimdall-rs never types into
 //! a shell already running, as `files_terminal` says: the shell may be running something,
-//! which would take the line as its own input. Neither is offered, and nothing the browser
+//! which would take the line as its own input. "Open in terminal" opens a new tab instead,
+//! the user's default shell started in the folder, as the sidebar's "Local shell" button
+//! opens it: never the program or the profile of the shell beside it. Nothing the browser
 //! does reaches the shell.
+//!
+//! Opening a file is as [`crate::local_open`] says: a text file in the external editor, a
+//! file that would run only once agreed, anything else with the system's default program.
 //!
 //! Here the browser is a Files tab of this computer's files alone, docked as the second
 //! pane of the shell's tab once it started, the keyboard left on the shell. It is no
@@ -33,14 +39,21 @@
 //! already split has no room for it: a reconnect keeps the browser it had rather than
 //! docking another.
 
+use std::path::PathBuf;
+
+use heimdall_term::local::LocalArguments;
 use tokio_util::sync::CancellationToken;
 
 use super::reconnect::Reopen;
 use super::split::{Axis, MAX_PANES, Placement, SplitMessage};
-use super::{App, Effect, Phase, Tab, TabProfile};
+use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
-use crate::files::{EntryKind, FilesPane, Side};
+use crate::external_edit::editor;
+use crate::files::{EntryKind, FilesPane, LocalPane, Side};
 use crate::ids::{AttemptId, TabId};
+use crate::local_driver::LocalShell;
+use crate::local_open::{self, LocalOpening};
+use crate::text::{server_text, visible_text};
 
 impl Tab {
     /// Whether it is the file browser docked beside a local shell, or once beside one:
@@ -59,9 +72,13 @@ impl App {
         if self.is_floating(shell) {
             return Vec::new();
         }
+        // Left out by the settings, or closed by the user beside this shell.
+        if !self.settings.sftp_browser.dock_local_browser {
+            return Vec::new();
+        }
         let Some(local) = self
             .tab(shell)
-            .filter(|tab| tab.purpose == Purpose::Shell)
+            .filter(|tab| tab.purpose == Purpose::Shell && !tab.local_browser_closed)
             .and_then(|tab| match &tab.profile {
                 TabProfile::Local(local) => Some(local.clone()),
                 _ => None,
@@ -134,12 +151,95 @@ impl App {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
-        let local = &files.local;
-        let folder = local
-            .selected
-            .and_then(|index| local.entries.get(index))
-            .filter(|entry| entry.kind == EntryKind::Directory)
-            .map_or_else(|| local.path.clone(), |entry| local.path.join(&entry.name));
+        let folder = chosen_folder(&files.local);
         vec![Effect::OpenFolder { tab, folder }]
     }
+
+    /// "Open in terminal" in local file browser `tab`: a new tab of the user's default
+    /// shell, as the sidebar's "Local shell" button opens it, started in the folder
+    /// selected, else in the folder shown, and named after it. The shell beside the browser
+    /// is left as it is: its program, its profile and what it runs are not taken, and
+    /// nothing is typed into it.
+    pub(super) fn open_local_terminal(&mut self, tab: TabId) -> Vec<Effect> {
+        let Some(files) = self.files_mut(tab).filter(|files| files.local_only) else {
+            return Vec::new();
+        };
+        let folder = chosen_folder(&files.local);
+        let name = folder.file_name().map_or_else(
+            || folder.to_string_lossy().into_owned(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        self.open_local(LocalShell {
+            name: server_text(&name),
+            program: None,
+            arguments: LocalArguments::default(),
+            working_directory: Some(folder),
+            environment: Vec::new(),
+        })
+    }
+
+    /// Opens entry `index` of local file browser `tab`, a file or a link to one, as
+    /// [`crate::local_open`] says: a text file in the external editor set, nothing
+    /// watched; a file that would run once the user agreed to its full path; anything else
+    /// with the system's default program. A link to a folder goes into it; a device, a pipe
+    /// or a socket opens nothing.
+    pub(super) fn open_local_file(&mut self, tab: TabId, index: usize) -> Vec<Effect> {
+        let setting = self.settings.external_editor.clone();
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let Some(entry) = files.local.entries.get(index) else {
+            return Vec::new();
+        };
+        let file = files.local.path.join(&entry.name);
+        let name = entry.name.to_string_lossy().into_owned();
+        let kind = entry.kind;
+        if !matches!(kind, EntryKind::File | EntryKind::Link) {
+            return Vec::new();
+        }
+        if kind == EntryKind::Link && file.is_dir() {
+            files.local.leave();
+            files.local.path = file;
+            return self.list(tab, Side::Local);
+        }
+        files.local.select_only(Some(index));
+        match local_open::opening(&name, local_open::runnable(&name, &file)) {
+            LocalOpening::Edit => match editor(&setting) {
+                Ok(editor) => vec![Effect::LaunchEditor { tab, editor, file }],
+                Err(refused) => {
+                    files.local.error = Some(super::files_edit::editor_error(refused));
+                    Vec::new()
+                }
+            },
+            LocalOpening::Confirm => {
+                self.dialog = Some(Dialog::ConfirmOpenRunnable {
+                    tab,
+                    shown: visible_text(&file.to_string_lossy()),
+                    file,
+                });
+                Vec::new()
+            }
+            LocalOpening::Open => vec![Effect::OpenLocalFile { tab, file }],
+        }
+    }
+
+    /// Pane `pane` left the split of `host`, closed or taken out by the user: when it is
+    /// the local file browser, `host` docks none again when its shell starts again.
+    pub(super) fn local_browser_left(&mut self, host: TabId, pane: TabId) {
+        if !self.tab(pane).is_some_and(Tab::is_local_browser) {
+            return;
+        }
+        if let Some(shell) = self.tab_mut(host) {
+            shell.local_browser_closed = true;
+        }
+    }
+}
+
+/// The folder selected in `local`, else the folder it shows.
+fn chosen_folder(local: &LocalPane) -> PathBuf {
+    local
+        .selected
+        .and_then(|index| local.entries.get(index))
+        .filter(|entry| entry.kind == EntryKind::Directory)
+        .map_or_else(|| local.path.clone(), |entry| local.path.join(&entry.name))
 }
