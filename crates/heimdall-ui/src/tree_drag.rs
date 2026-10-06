@@ -19,14 +19,17 @@
 
 use heimdall_app::{DropTarget, Message as AppMessage};
 use heimdall_core::profile::ProfileId;
-use iced::widget::{container, mouse_area};
-use iced::{Element, Point, Theme, event, mouse, window};
+use iced::widget::{column, container, mouse_area, space, stack};
+use iced::{Element, Length, Point, Theme, event, mouse, window};
 
 use crate::shell::Message;
 
 /// How far the pointer moves, held down, before a press becomes a drag, in logical pixels,
 /// as the system's drag threshold.
 pub(crate) const DRAG_THRESHOLD: f32 = 5.0;
+
+/// Height of the line saying where dropped sessions go, before or after a session.
+const INSERT_LINE: f32 = 2.0;
 
 /// Width of the drop target's outline.
 const TARGET_BORDER: f32 = 1.5;
@@ -135,6 +138,37 @@ pub fn drop_zone<'a>(
             ..container::Style::default()
         })
         .into()
+}
+
+/// A session's row while sessions are dragged, as the C# tree's: its upper half places them
+/// just before it, its lower half just after; a line says which.
+pub fn positioned_zone<'a>(
+    row: Element<'a, Message>,
+    id: &ProfileId,
+    drag: &TreeDrag,
+) -> Element<'a, Message> {
+    let before = DropTarget::Before(id.clone());
+    let after = DropTarget::After(id.clone());
+    let line = |shown: bool| {
+        container(space().height(INSERT_LINE))
+            .width(Length::Fill)
+            .style(move |theme: &Theme| container::Style {
+                background: shown.then(|| theme.extended_palette().primary.base.color.into()),
+                ..container::Style::default()
+            })
+    };
+    let half = |target: DropTarget| {
+        mouse_area(space().width(Length::Fill).height(Length::Fill))
+            .on_enter(Message::TreeHover(target.clone()))
+            .on_exit(Message::TreeHoverLeft(target))
+            .interaction(mouse::Interaction::Grabbing)
+    };
+    let over = drag.over.as_ref();
+    stack![
+        column![line(over == Some(&before)), row, line(over == Some(&after))],
+        column![half(before), half(after)],
+    ]
+    .into()
 }
 
 #[cfg(test)]

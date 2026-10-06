@@ -574,3 +574,148 @@ fn every_folder_folds_and_unfolds_at_once_and_the_tree_comes_back_as_it_was_left
         "a session gone is not selected"
     );
 }
+
+/// The sessions of folder `path`, in the tree's order.
+fn in_folder(app: &App, path: &str) -> Vec<String> {
+    app.tree_rows("")
+        .into_iter()
+        .filter_map(|row| match row {
+            TreeRow::Profile { profile, .. }
+                if profile
+                    .group
+                    .as_deref()
+                    .map(heimdall_core::folder::normal)
+                    .as_deref()
+                    == Some(path) =>
+            {
+                Some(profile.id.to_string())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+fn rank(app: &App, id: &str) -> Option<i32> {
+    app.profile_summary(&ProfileId::new(id))
+        .and_then(|profile| profile.metadata.sort_order)
+}
+
+#[test]
+fn sessions_dropped_before_or_after_another_take_that_place_and_ctrl_z_undoes_it() {
+    use heimdall_app::{DropTarget, Notice, OrganizationChange};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    assert_eq!(in_folder(&app, "Prod/Web"), ["api", "web"], "by name");
+    assert_eq!(app.undo_offer(), None);
+
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("web")],
+        onto: DropTarget::Before(ProfileId::new("api")),
+    });
+    assert_eq!(in_folder(&app, "Prod/Web"), ["web", "api"]);
+    assert_eq!(
+        (rank(&app, "web"), rank(&app, "api")),
+        (Some(10), Some(20)),
+        "as the C# tens"
+    );
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::Reordered {
+            count: 1,
+            name: Some("web".to_owned()),
+            folder: Some("Prod/Web".to_owned()),
+        })
+    );
+    assert_eq!(app.undo_offer(), Some(OrganizationChange::Reorder));
+    // Dropped on itself: nothing moves, nothing is offered anew.
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("web")],
+        onto: DropTarget::After(ProfileId::new("web")),
+    });
+    assert_eq!(in_folder(&app, "Prod/Web"), ["web", "api"]);
+
+    app.update(Message::UndoMove);
+    assert_eq!(in_folder(&app, "Prod/Web"), ["api", "web"]);
+    assert_eq!((rank(&app, "web"), rank(&app, "api")), (None, None));
+    assert_eq!(app.notice(), Some(&Notice::MoveUndone));
+
+    // From another folder, two at once: moved in, placed after, in the tree's order.
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("loose"), ProfileId::new("db")],
+        onto: DropTarget::After(ProfileId::new("api")),
+    });
+    assert_eq!(in_folder(&app, "Prod/Web"), ["api", "db", "loose", "web"]);
+    assert_eq!(group_of(&app, "loose").as_deref(), Some("Prod/Web"));
+    app.update(Message::UndoMove);
+    assert_eq!(group_of(&app, "loose"), None);
+    assert_eq!(group_of(&app, "db").as_deref(), Some("Prod"));
+}
+
+#[test]
+fn alt_up_and_alt_down_move_a_session_within_its_folder_never_out_of_it() {
+    use heimdall_app::OrganizationChange;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let nudge = |app: &mut App, id: &str, down: bool| {
+        app.update(Message::NudgeProfile {
+            id: ProfileId::new(id),
+            down,
+        });
+    };
+    nudge(&mut app, "api", false);
+    assert_eq!(in_folder(&app, "Prod/Web"), ["api", "web"], "first already");
+    assert_eq!(app.undo_offer(), None, "nothing changed");
+    nudge(&mut app, "api", true);
+    assert_eq!(in_folder(&app, "Prod/Web"), ["web", "api"]);
+    assert_eq!(app.undo_offer(), Some(OrganizationChange::Reorder));
+    nudge(&mut app, "api", true);
+    assert_eq!(in_folder(&app, "Prod/Web"), ["web", "api"], "last already");
+    nudge(&mut app, "api", false);
+    assert_eq!(in_folder(&app, "Prod/Web"), ["api", "web"]);
+}
+
+#[test]
+fn a_move_from_the_menu_or_a_rename_is_undone_but_not_once_changed_since() {
+    use heimdall_app::{DropTarget, Notice, OrganizationChange};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Move {
+        id: ProfileId::new("db"),
+        to: Some("dev".to_owned()),
+    }));
+    assert_eq!(app.undo_offer(), Some(OrganizationChange::Move));
+    app.update(Message::UndoMove);
+    assert_eq!(group_of(&app, "db").as_deref(), Some("Prod"));
+
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Rename(
+        ProfileId::new("db"),
+    )));
+    app.update(Message::ProfileMenu(ProfileMenuMessage::NameEdited(
+        "Database".to_owned(),
+    )));
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.undo_offer(), Some(OrganizationChange::Rename));
+    app.update(Message::UndoMove);
+    assert_eq!(
+        app.profile_summary(&ProfileId::new("db")).expect("db").name,
+        "db"
+    );
+
+    // Moved, then its folder renamed, which keeps no undo: the move is not undone over it.
+    app.update(Message::DropProfiles {
+        ids: vec![ProfileId::new("loose")],
+        onto: DropTarget::Folder("dev".to_owned()),
+    });
+    folder(&mut app, FolderMessage::Rename("dev".to_owned()));
+    named(&mut app, "Dev2");
+    app.update(Message::UndoMove);
+    assert_eq!(app.notice(), Some(&Notice::UndoConflict));
+    assert_eq!(
+        group_of(&app, "loose").as_deref(),
+        Some("Dev2"),
+        "left as it is"
+    );
+}
