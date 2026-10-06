@@ -1268,6 +1268,7 @@ ui-status-files-auto-upload-refused = La subida automática de { $name } fue rec
 ui-files-error-working-folder-unprotected = El archivo no se abrió: su carpeta de trabajo local no pudo restringirse a tu cuenta, así que su contenido podría haber sido legible por otros usuarios de este equipo.
 ui-files-error-editor-failed = No se pudo iniciar el editor externo: { $detail }. Comprueba la ruta del editor en Ajustes.
 ui-files-error-editor-runs-files = Iniciar intérpretes de shell u hosts de scripts como editores está bloqueado por motivos de seguridad.
+ui-files-error-open-failed = No se pudo abrir en este equipo: { $detail }
 ui-settings-external-editor = Editor externo
 ui-settings-external-editor-path = Ruta del editor externo
 ui-settings-external-editor-hint = Ruta al editor de texto para la edición remota SFTP (déjalo vacío para el predeterminado del sistema)
@@ -1352,6 +1353,10 @@ ui-dialog-open-link-title = Abrir enlace
 ui-dialog-open-link-body = El texto pulsado lleva a esta dirección, que se abrirá en su navegador:
     { $url }
 ui-dialog-open-link-confirm = Abrir
+ui-dialog-open-runnable-title = Abrir un programa
+ui-dialog-open-runnable-body = Este archivo se ejecuta como un programa en este equipo, con sus permisos. Ábralo solo si confía en él:
+    { $path }
+ui-dialog-open-runnable-confirm = Abrir
 ui-tab-menu-show-health = Mostrar el estado del servidor
 ui-tab-menu-hide-health = Ocultar el estado del servidor
 ui-health-cpu = CPU
@@ -1997,6 +2002,7 @@ ui-settings-sftp = Navegador SFTP
 ui-settings-sftp-browser-enabled = Activar el explorador SFTP integrado
 ui-settings-sftp-auto-open = Abrir automáticamente el panel SFTP al conectar por SSH
 ui-settings-sftp-follow = SFTP sigue el directorio de trabajo de SSH
+ui-settings-dock-local-browser = Acoplar un explorador de archivos junto a los shells locales
 ui-settings-ssh-tmout-reset-interval = Intervalo de reinicio de TMOUT (0 = desactivado)
 ui-settings-ssh-tmout-reset-refused = El intervalo de reinicio de TMOUT de SSH debe estar entre { $min } y { $max } segundos.
 ui-status-link-not-a-folder = { $name } no apunta a una carpeta.

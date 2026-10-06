@@ -904,6 +904,12 @@ pub enum FilesError {
     /// The external editor set is a shell, a script host or an interpreter: it would run
     /// the file, not show it.
     EditorRunsFiles,
+    /// The system's file manager, or the default program of a file of this computer, could
+    /// not be started to open it.
+    OpenFailed {
+        /// What the system said.
+        detail: String,
+    },
     /// sudo asks for a password and none was given.
     SudoPasswordNeeded,
     /// sudo refused the password.

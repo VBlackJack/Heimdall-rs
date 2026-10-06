@@ -2764,7 +2764,8 @@ impl Shell {
             | Effect::SudoSave { .. }
             | Effect::SudoListRemote { .. }
             | Effect::SendEditAnyway { .. }
-            | Effect::OpenFolder { .. }) => files_task(effect),
+            | Effect::OpenFolder { .. }
+            | Effect::OpenLocalFile { .. }) => files_task(effect),
             effect @ (Effect::OpenEditor { .. } | Effect::SaveEditor { .. }) => {
                 crate::integrated_editor::task(effect)
             }
@@ -4289,7 +4290,8 @@ impl Shell {
 
     /// The C# "SFTP browser" card: the browser on or off, and under it the pane opened beside
     /// an SSH shell and that pane following the shell's working folder, as the C# checkboxes
-    /// it enables.
+    /// it enables; then the file browser docked beside a local shell, whatever the SFTP
+    /// browser's state, as it reaches no server.
     fn sftp_settings(&self) -> Element<'_, Message> {
         let sftp = self.app.settings().sftp_browser;
         let set = |sftp| Message::App(AppMessage::Settings(SettingsMessage::SftpBrowser(sftp)));
@@ -4314,6 +4316,14 @@ impl Shell {
                             ..sftp
                         })
                     })),
+                checkbox(sftp.dock_local_browser)
+                    .label(fl!("ui-settings-dock-local-browser"))
+                    .on_toggle(move |dock_local_browser| {
+                        set(SftpBrowser {
+                            dock_local_browser,
+                            ..sftp
+                        })
+                    }),
             ]
             .spacing(SPACING),
         )
@@ -8672,6 +8682,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-open-link-body", url = server_text(url)),
             fl!("ui-dialog-open-link-confirm"),
         ),
+        Dialog::ConfirmOpenRunnable { shown, .. } => (
+            fl!("ui-dialog-open-runnable-title"),
+            fl!("ui-dialog-open-runnable-body", path = shown.as_str()),
+            fl!("ui-dialog-open-runnable-confirm"),
+        ),
         Dialog::ConfirmDownloadBinary { name, .. } => (
             fl!("ui-dialog-binary-title"),
             fl!("ui-dialog-binary-body", name = name.as_str()),
@@ -9006,8 +9021,32 @@ fn sudo_task(effect: Effect) -> Task<Message> {
     }
 }
 
+/// Starts a program of this computer's for `tab` with `start`, away from the interface's
+/// thread, then sends [`FilesMessage::EditorLaunched`]: a failure as `failed` says it.
+fn started(
+    tab: TabId,
+    start: impl FnOnce() -> std::io::Result<()> + Send + 'static,
+    failed: fn(String) -> FilesError,
+) -> Task<Message> {
+    Task::perform(
+        async move {
+            tokio::task::spawn_blocking(start)
+                .await
+                .map_err(std::io::Error::other)
+                .and_then(|started| started)
+                .map_err(|error| failed(error.to_string()))
+        },
+        move |result| {
+            Message::App(AppMessage::Files(FilesMessage::EditorLaunched {
+                tab,
+                result,
+            }))
+        },
+    )
+}
+
 /// The work of a file edited with the external editor: opening it, starting the editor
-/// again, looking at its saves.
+/// again, looking at its saves; and a local file or folder opened with a program.
 fn edit_task(effect: Effect) -> Task<Message> {
     match effect {
         effect @ (Effect::SudoOpen { .. }
@@ -9026,24 +9065,15 @@ fn edit_task(effect: Effect) -> Task<Message> {
                 }))
             },
         ),
-        Effect::OpenFolder { tab, folder } => Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    heimdall_app::external_edit::open_folder(&folder)
-                })
-                .await
-                .map_err(std::io::Error::other)
-                .and_then(|opened| opened)
-                .map_err(|error| FilesError::EditorFailed {
-                    detail: error.to_string(),
-                })
-            },
-            move |result| {
-                Message::App(AppMessage::Files(FilesMessage::EditorLaunched {
-                    tab,
-                    result,
-                }))
-            },
+        Effect::OpenFolder { tab, folder } => started(
+            tab,
+            move || heimdall_app::external_edit::open_folder(&folder),
+            |detail| FilesError::OpenFailed { detail },
+        ),
+        Effect::OpenLocalFile { tab, file } => started(
+            tab,
+            move || heimdall_app::external_edit::open_with_default(&file),
+            |detail| FilesError::OpenFailed { detail },
         ),
         Effect::StartEdit {
             tab,
@@ -9062,24 +9092,10 @@ fn edit_task(effect: Effect) -> Task<Message> {
                 }))
             },
         ),
-        Effect::LaunchEditor { tab, editor, file } => Task::perform(
-            async move {
-                tokio::task::spawn_blocking(move || {
-                    heimdall_app::external_edit::launch(&editor, &file)
-                })
-                .await
-                .map_err(std::io::Error::other)
-                .and_then(|launched| launched)
-                .map_err(|error| FilesError::EditorFailed {
-                    detail: error.to_string(),
-                })
-            },
-            move |result| {
-                Message::App(AppMessage::Files(FilesMessage::EditorLaunched {
-                    tab,
-                    result,
-                }))
-            },
+        Effect::LaunchEditor { tab, editor, file } => started(
+            tab,
+            move || heimdall_app::external_edit::launch(&editor, &file),
+            |detail| FilesError::EditorFailed { detail },
         ),
         Effect::CheckEdits {
             tab,
@@ -9175,7 +9191,8 @@ fn files_task(effect: Effect) -> Task<Message> {
         | Effect::SudoSave { .. }
         | Effect::SudoListRemote { .. }
         | Effect::SendEditAnyway { .. }
-        | Effect::OpenFolder { .. }) => edit_task(effect),
+        | Effect::OpenFolder { .. }
+        | Effect::OpenLocalFile { .. }) => edit_task(effect),
         Effect::CopyAcross {
             tab,
             from,
@@ -9839,6 +9856,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmDownloadBinary { .. }
         | Dialog::ConfirmOpenLink { .. }
+        | Dialog::ConfirmOpenRunnable { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::SaveMacro { .. }

@@ -885,6 +885,36 @@ fn the_sftp_browser_opens_beside_ssh_by_default_and_an_older_file_keeps_the_csha
 }
 
 #[test]
+fn a_local_shell_docks_its_file_browser_by_default_and_an_older_file_keeps_it() {
+    use heimdall_core::settings::SftpBrowser;
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert!(
+        SftpBrowser::default().dock_local_browser,
+        "as the C# always docks it"
+    );
+    // Written before the setting was: the browser still docks.
+    let older = written(
+        dir.path(),
+        "version = 1\n[files]\nbrowser_enabled = false\nauto_open_on_ssh = false\n",
+    );
+    assert!(older.sftp_browser.dock_local_browser);
+    assert!(
+        !older.sftp_browser.enabled,
+        "apart from the SFTP browser's own"
+    );
+    let off = written(
+        dir.path(),
+        "version = 1\n[files]\ndock_local_browser = false\n",
+    );
+    assert!(!off.sftp_browser.dock_local_browser);
+    assert!(
+        off.sftp_browser.auto_opens(),
+        "the SFTP pane left as it was"
+    );
+}
+
+#[test]
 fn the_sftp_browser_settings_are_kept_and_the_auto_open_needs_the_browser() {
     use heimdall_core::settings::SftpBrowser;
 
@@ -894,6 +924,7 @@ fn the_sftp_browser_settings_are_kept_and_the_auto_open_needs_the_browser() {
         enabled: false,
         auto_open_on_ssh: true,
         follow_ssh_directory: true,
+        dock_local_browser: false,
     };
     assert!(
         !chosen.auto_opens(),
@@ -907,6 +938,7 @@ fn the_sftp_browser_settings_are_kept_and_the_auto_open_needs_the_browser() {
     .expect("saved");
     let text = std::fs::read_to_string(&path).expect("text");
     assert!(text.contains("browser_enabled = false"), "{text}");
+    assert!(text.contains("dock_local_browser = false"), "{text}");
     assert_eq!(Settings::load(&path).expect("read").sftp_browser, chosen);
     let off = written(
         dir.path(),

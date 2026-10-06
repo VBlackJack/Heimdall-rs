@@ -478,6 +478,9 @@ pub fn files_error(error: &FilesError) -> String {
             fl!("ui-files-error-editor-failed", detail = detail.as_str())
         }
         FilesError::EditorRunsFiles => fl!("ui-files-error-editor-runs-files"),
+        FilesError::OpenFailed { detail } => {
+            fl!("ui-files-error-open-failed", detail = detail.as_str())
+        }
         FilesError::SudoPasswordNeeded => fl!("ui-files-error-sudo-password-needed"),
         FilesError::SudoPasswordRejected => fl!("ui-files-error-sudo-password-rejected"),
         FilesError::SudoNeedsTerminal => fl!("ui-files-error-sudo-needs-terminal"),

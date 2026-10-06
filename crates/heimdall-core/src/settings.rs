@@ -340,13 +340,19 @@ pub struct Settings {
     pub diagnostics_log: bool,
     /// Whether, and how often, every server is checked for an answer in the background.
     pub reachability: Reachability,
-    /// The SFTP browser, and the pane it docks beside an SSH shell.
+    /// The SFTP browser, the pane it docks beside an SSH shell, and the file browser docked
+    /// beside a local shell.
     pub sftp_browser: SftpBrowser,
 }
 
 /// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
-/// `SftpFollowSshDirectory`: the last two only apply while the first is on.
+/// `SftpFollowSshDirectory`: the last two only apply while the first is on. With them, the
+/// file browser docked beside a local shell, which the C# always docks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent on/off settings, one per checkbox of the card"
+)]
 pub struct SftpBrowser {
     /// A server's files can be browsed over SFTP, as the C# `SftpBrowserEnabled`: on. Off,
     /// no SFTP Files tab opens.
@@ -358,6 +364,9 @@ pub struct SftpBrowser {
     /// as the C# `SftpFollowSshDirectory`: off. It seeds each SFTP pane's "cwd" toggle when
     /// the pane opens; the toggle then acts on its pane alone.
     pub follow_ssh_directory: bool,
+    /// A local shell, once started, gets this computer's files in a browser beside it: on,
+    /// as the C# always docks it. Apart from the SFTP browser: no server is involved.
+    pub dock_local_browser: bool,
 }
 
 impl SftpBrowser {
@@ -375,6 +384,7 @@ impl Default for SftpBrowser {
             enabled: true,
             auto_open_on_ssh: true,
             follow_ssh_directory: false,
+            dock_local_browser: true,
         }
     }
 }
@@ -707,6 +717,8 @@ struct FilesSection {
     auto_open_on_ssh: Option<bool>,
     #[serde(default)]
     follow_ssh_directory: Option<bool>,
+    #[serde(default)]
+    dock_local_browser: Option<bool>,
 }
 
 impl FilesSection {
@@ -719,6 +731,9 @@ impl FilesSection {
             follow_ssh_directory: self
                 .follow_ssh_directory
                 .unwrap_or(defaults.follow_ssh_directory),
+            dock_local_browser: self
+                .dock_local_browser
+                .unwrap_or(defaults.dock_local_browser),
         }
     }
 }
@@ -1177,6 +1192,7 @@ impl Settings {
                 browser_enabled: Some(self.sftp_browser.enabled),
                 auto_open_on_ssh: Some(self.sftp_browser.auto_open_on_ssh),
                 follow_ssh_directory: Some(self.sftp_browser.follow_ssh_directory),
+                dock_local_browser: Some(self.sftp_browser.dock_local_browser),
             },
             reachability: ReachabilitySection {
                 enabled: Some(self.reachability.enabled),
