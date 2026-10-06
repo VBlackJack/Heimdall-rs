@@ -1888,3 +1888,14 @@ ui-settings-powershell-policy = PowerShell Execution Policy
 ui-settings-powershell-policy-hint = Applied when launching local PowerShell/pwsh sessions
 ui-settings-powershell-policy-default = Default
 ui-connect-via = via { $route }
+ui-desktop-shortcuts = Keyboard shortcuts...
+ui-desktop-shares-clipboard = Clipboard
+ui-desktop-shares-clipboard-tooltip = Clipboard redirection
+ui-desktop-shares-drives = Drives
+ui-desktop-shares-drives-tooltip = Drive redirection
+ui-desktop-shares-audio = Sound
+ui-desktop-shares-audio-tooltip = Audio redirection
+ui-settings-rdp-connect-timeout = RDP connection watchdog timeout (0 = off)
+ui-settings-rdp-connect-timeout-off = Off
+ui-settings-rdp-connect-timeout-seconds = { $seconds } s
+ui-shortcuts-release-desktop = Give the keyboard back from a remote desktop

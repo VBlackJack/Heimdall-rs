@@ -83,6 +83,8 @@ pub enum Action {
     FilesPath,
     FilesSwitchPane,
     FullScreen,
+    /// Ctrl+Alt+Home: the keyboard back from a remote desktop.
+    ReleaseDesktop,
     Settings,
     Screenshot,
     Lock,
@@ -147,6 +149,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
         Group::Window,
         &[
             ("F11", Action::FullScreen),
+            ("Ctrl+Alt+Home", Action::ReleaseDesktop),
             ("Ctrl+,", Action::Settings),
             ("Ctrl+Shift+S", Action::Screenshot),
             ("Ctrl+L", Action::Lock),
@@ -201,6 +204,7 @@ pub fn action_text(action: Action) -> String {
         Action::FilesPath => fl!("ui-shortcuts-files-path"),
         Action::FilesSwitchPane => fl!("ui-shortcuts-files-switch-pane"),
         Action::FullScreen => fl!("ui-shortcuts-full-screen"),
+        Action::ReleaseDesktop => fl!("ui-shortcuts-release-desktop"),
         Action::Settings => fl!("ui-shortcuts-settings"),
         Action::Screenshot => fl!("ui-shortcuts-screenshot"),
         Action::Lock => fl!("ui-shortcuts-lock"),
@@ -261,6 +265,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 36, "every action listed");
+        assert_eq!(actions.len(), 37, "every action listed");
     }
 }
