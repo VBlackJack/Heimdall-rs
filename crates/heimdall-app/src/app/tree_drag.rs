@@ -59,6 +59,8 @@ pub enum OrganizationChange {
     Rename,
     /// A folder moved.
     FolderMove,
+    /// A folder renamed.
+    FolderRename,
 }
 
 /// What places a session in the tree: its name, folder and rank.
@@ -81,6 +83,13 @@ pub(super) enum UndoMove {
         before: Vec<(ProfileId, Organization)>,
         /// The same sessions after.
         after: Vec<(ProfileId, Organization)>,
+    },
+    /// A folder renamed, now at `now`, back to the name it had, `was`.
+    FolderRename {
+        /// Where it is now.
+        now: String,
+        /// Its name before.
+        was: String,
     },
     /// A folder moved, now at `now`, back under `was_in`, the top for an empty one.
     Folder {
@@ -108,6 +117,7 @@ impl App {
         (at.elapsed() < UNDO_OFFER).then_some(match last {
             UndoMove::Sessions { change, .. } => *change,
             UndoMove::Folder { .. } => OrganizationChange::FolderMove,
+            UndoMove::FolderRename { .. } => OrganizationChange::FolderRename,
         })
     }
 
@@ -356,6 +366,18 @@ impl App {
         };
         let undone = match &last {
             UndoMove::Sessions { before, after, .. } => self.undo_sessions(before, after),
+            // Renamed back, unless a folder of its old name came there since, or it went.
+            UndoMove::FolderRename { now, was } => {
+                let back = self.store.apply(|store| store.rename_folder(now, was));
+                match back {
+                    Ok(Ok(at)) => {
+                        self.follow_folds(now, &at);
+                        Ok(true)
+                    }
+                    Ok(Err(_)) => Ok(false),
+                    Err(error) => Err(error),
+                }
+            }
             UndoMove::Folder { now, was_in } => {
                 let back = self.store.apply(|store| store.move_folder(now, was_in));
                 match back {

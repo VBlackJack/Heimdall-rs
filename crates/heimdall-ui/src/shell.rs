@@ -925,6 +925,8 @@ pub struct Shell {
     tab_hover: Option<TabId>,
     /// A press on a tab, a drag once the pointer moves.
     tab_drag: Option<crate::tab_drag::TabDrag>,
+    /// The computer kept from sleeping while a session is open.
+    sleep_guard: crate::sleep_guard::SleepGuard,
     /// A press in the tree, held: a drag once the pointer moves.
     tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
@@ -1171,6 +1173,7 @@ impl Shell {
             files_drag: None,
             tab_hover: None,
             tab_drag: None,
+            sleep_guard: crate::sleep_guard::SleepGuard::new(),
             tree_drag: None,
             sidebar_hidden: false,
             window_memory: None,
@@ -1307,6 +1310,26 @@ impl Shell {
             );
         }
         Subscription::batch(subscriptions)
+    }
+
+    /// Applies a message, then keeps the computer awake while a session is connected, as
+    /// the C# `SleepPrevention` does when the setting is on.
+    pub fn step(&mut self, message: Message) -> Task<Message> {
+        let task = self.update(message);
+        let awake = self.app.settings().prevent_sleep
+            && self
+                .app
+                .tabs
+                .iter()
+                .any(|tab| tab.phase == Phase::Connected);
+        self.sleep_guard.hold(awake);
+        task
+    }
+
+    /// Whether the computer is kept from sleeping now.
+    #[must_use]
+    pub fn keeps_awake(&self) -> bool {
+        self.sleep_guard.held()
     }
 
     /// Ctrl+W, as the C#: the session shown closes when nothing that takes text has the
@@ -3312,6 +3335,9 @@ impl Shell {
             heimdall_app::OrganizationChange::Reorder => fl!("ui-tree-changed-reorder"),
             heimdall_app::OrganizationChange::Rename => fl!("ui-tree-changed-rename"),
             heimdall_app::OrganizationChange::FolderMove => fl!("ui-tree-changed-folder-move"),
+            heimdall_app::OrganizationChange::FolderRename => {
+                fl!("ui-tree-changed-folder-rename")
+            }
         };
         Some(
             row![
@@ -3841,6 +3867,12 @@ impl Shell {
                         )))
                     }),
                 text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
+                checkbox(self.app.settings().prevent_sleep)
+                    .label(fl!("ui-settings-prevent-sleep"))
+                    .on_toggle(|on| {
+                        Message::App(AppMessage::Settings(SettingsMessage::PreventSleep(on)))
+                    }),
+                text(fl!("ui-settings-prevent-sleep-hint")).size(SMALL_SIZE),
                 row![
                     text(fl!("ui-settings-max-sessions")),
                     iced::widget::space::horizontal(),
