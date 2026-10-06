@@ -57,6 +57,7 @@ mod settings_file;
 pub mod shell;
 mod shortcuts_view;
 pub mod status_bar;
+mod tab_drag;
 pub mod terminal_view;
 mod texts;
 pub mod transcript_lines;

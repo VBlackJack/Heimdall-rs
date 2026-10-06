@@ -180,6 +180,22 @@ impl App {
             .collect()
     }
 
+    /// Tab `tab_id` put where `onto` is, as the C# `MoveSession`: the place asked for, then
+    /// the pinned tabs first again, so that a drag never mixes the two groups.
+    pub(super) fn move_tab(&mut self, tab_id: TabId, onto: TabId) {
+        let at = |id: TabId| self.tabs.iter().position(|tab| tab.id == id);
+        let (Some(from), Some(to)) = (at(tab_id), at(onto)) else {
+            return;
+        };
+        if from == to {
+            return;
+        }
+        let moved = self.tabs.remove(from);
+        self.tabs.insert(to, moved);
+        // A stable sort: each group keeps the order the move gave it.
+        self.tabs.sort_by_key(|tab| !tab.pinned);
+    }
+
     /// Pins `tab_id`, or no longer: the pinned tabs come first, each group in its order, as
     /// the C# `SetPinned` keeps them; the tab shown stays shown.
     fn toggle_pin(&mut self, tab_id: TabId) {
