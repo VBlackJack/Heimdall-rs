@@ -1720,3 +1720,291 @@ async fn escape_in_a_filter_empties_it_first_then_leaves_it() {
         );
     }
 }
+
+/// Gap between two columns, a separator in its middle, as the Files tab lays them out.
+const COLUMN_GAP: f32 = 8.0;
+
+/// Width of a window wide enough for every column of the server's pane.
+const WIDE_WINDOW: Size = Size::new(1800.0, 800.0);
+
+/// Least width of the owner column, as the Files tab keeps it.
+const OWNER_LEAST: f32 = 30.0;
+
+/// Width of the owner column until resized.
+const OWNER_DEFAULT: f32 = 55.0;
+
+/// Least width of the modification time column.
+const MODIFIED_LEAST: f32 = 60.0;
+
+/// How close two edges laid out from the same widths are, in logical pixels.
+const EDGE_TOLERANCE: f32 = 0.5;
+
+/// Times a double click is tried: iced tells one by the real time between the presses.
+const DOUBLE_CLICK_TRIES: usize = 3;
+
+/// A Files tab whose server pane lists one file with every column filled.
+async fn columns_shell(dir: &Path) -> Shell {
+    use std::time::{Duration, UNIX_EPOCH};
+
+    let (core, tab) = files_tab(dir).await;
+    let mut shell = Shell::with_app(core);
+    list_remote(
+        &mut shell,
+        tab,
+        vec![RemoteEntry {
+            name: b"run.sh".to_vec(),
+            label: "run.sh".to_owned(),
+            kind: EntryKind::File,
+            size: Some(10),
+            // 2026-09-27 19:15:03 UTC.
+            modified: Some(UNIX_EPOCH + Duration::from_secs(1_790_536_503)),
+            permissions: Some(0o4755),
+            owner: Some(1000),
+            group: None,
+            inode: None,
+        }],
+    );
+    shell
+}
+
+/// The window drawn wide enough for every column.
+fn wide(shell: &Shell) -> common::Drawn<'_> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    common::simulator(settings, WIDE_WINDOW, shell.view())
+}
+
+/// Where the text `label` is drawn.
+fn bounds_of(ui: &mut common::Drawn<'_>, label: &str) -> iced::Rectangle {
+    ui.find(label).expect(label).bounds()
+}
+
+/// The middle of the separator before the header `label`.
+fn separator_before(ui: &mut common::Drawn<'_>, label: &str) -> iced::Point {
+    let header = bounds_of(ui, label);
+    iced::Point::new(header.x - COLUMN_GAP / 2.0, header.center_y())
+}
+
+fn press() -> iced::Event {
+    iced::Event::Mouse(iced::mouse::Event::ButtonPressed(iced::mouse::Button::Left))
+}
+
+fn release() -> iced::Event {
+    iced::Event::Mouse(iced::mouse::Event::ButtonReleased(
+        iced::mouse::Button::Left,
+    ))
+}
+
+/// The pointer moved to `to`, as the window says it.
+fn moved(ui: &mut common::Drawn<'_>, to: iced::Point) {
+    ui.point_at(to);
+    let _ = ui.simulate([iced::Event::Mouse(iced::mouse::Event::CursorMoved {
+        position: to,
+    })]);
+}
+
+/// The column widths `messages` resized the server's pane to, from each one sent.
+fn resized(messages: &[Message]) -> Vec<Message> {
+    messages
+        .iter()
+        .filter(|message| {
+            matches!(
+                message,
+                Message::FileColumns {
+                    side: Side::Remote,
+                    ..
+                }
+            )
+        })
+        .cloned()
+        .collect()
+}
+
+/// Whether `messages` sort a pane.
+fn sorts(messages: &[Message]) -> bool {
+    messages.iter().any(|message| {
+        matches!(
+            message,
+            Message::App(AppMessage::Files(FilesMessage::SortBy { .. }))
+        )
+    })
+}
+
+/// The width of the server's permissions column, between its header and the owner's.
+fn permissions_width(ui: &mut common::Drawn<'_>) -> f32 {
+    bounds_of(ui, "Owner").x - COLUMN_GAP - bounds_of(ui, "Permissions").x
+}
+
+fn assert_near(actual: f32, expected: f32, what: &str) {
+    assert!(
+        (actual - expected).abs() <= EDGE_TOLERANCE,
+        "{what}: {actual} for {expected}"
+    );
+}
+
+#[tokio::test]
+async fn a_separator_dragged_resizes_its_columns_live_and_the_cells_follow_the_headers() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = columns_shell(dir.path()).await;
+    let (permissions, owner, width) = {
+        let mut ui = wide(&shell);
+        let width = permissions_width(&mut ui);
+        (
+            bounds_of(&mut ui, "Permissions").x,
+            bounds_of(&mut ui, "Owner").x,
+            width,
+        )
+    };
+    let messages: Vec<Message> = {
+        let mut ui = wide(&shell);
+        let from = separator_before(&mut ui, "Owner");
+        ui.point_at(from);
+        let _ = ui.simulate([press()]);
+        moved(&mut ui, iced::Point::new(from.x + 10.0, from.y));
+        moved(&mut ui, iced::Point::new(from.x + 20.0, from.y));
+        let _ = ui.simulate([release()]);
+        ui.into_messages().collect()
+    };
+    assert!(!sorts(&messages), "a drag on a separator sorts nothing");
+    let sent = resized(&messages);
+    assert_eq!(sent.len(), 2, "each move sent, as it happens: {messages:?}");
+    for message in sent {
+        let _ = shell.update(message);
+    }
+    let mut ui = wide(&shell);
+    assert_near(
+        bounds_of(&mut ui, "Permissions").x,
+        permissions,
+        "the column dragged starts where it did",
+    );
+    assert_near(
+        bounds_of(&mut ui, "Owner").x,
+        owner + 20.0,
+        "the separator stays where let go",
+    );
+    assert_near(
+        permissions_width(&mut ui),
+        width + 20.0,
+        "the left one widened",
+    );
+    // Each cell under its header; both panes are sorted by name, either found first.
+    for (cell, header) in [("rwsr-xr-x", "Permissions"), ("1000", "Owner")] {
+        let (cell_x, header_x) = (bounds_of(&mut ui, cell).x, bounds_of(&mut ui, header).x);
+        assert_near(cell_x, header_x, cell);
+    }
+    let name = bounds_of(&mut ui, "Name \u{25b2}").x;
+    let (local, remote) = (
+        bounds_of(&mut ui, "Documents/").x,
+        bounds_of(&mut ui, "run.sh").x,
+    );
+    assert!(
+        (name - local).abs() <= EDGE_TOLERANCE || (name - remote).abs() <= EDGE_TOLERANCE,
+        "a name under its header: {name}, {local}, {remote}"
+    );
+    // A click on a header still sorts.
+    ui.click("Owner").expect("the header");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Files(FilesMessage::SortBy {
+                side: Side::Remote,
+                column: heimdall_app::files::SortColumn::Owner,
+                ..
+            }))
+        )),
+        "{messages:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_separator_dragged_keeps_both_columns_at_their_least_width() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = columns_shell(dir.path()).await;
+    let (owner, width) = {
+        let mut ui = wide(&shell);
+        let width = permissions_width(&mut ui);
+        (bounds_of(&mut ui, "Owner").x, width)
+    };
+    let messages: Vec<Message> = {
+        let mut ui = wide(&shell);
+        let from = separator_before(&mut ui, "Owner");
+        ui.point_at(from);
+        let _ = ui.simulate([press()]);
+        moved(&mut ui, iced::Point::new(from.x + 500.0, from.y));
+        let _ = ui.simulate([release()]);
+        ui.into_messages().collect()
+    };
+    for message in resized(&messages) {
+        let _ = shell.update(message);
+    }
+    {
+        let mut ui = wide(&shell);
+        let gained = OWNER_DEFAULT - OWNER_LEAST;
+        assert_near(
+            bounds_of(&mut ui, "Owner").x,
+            owner + gained,
+            "the owner kept at its least",
+        );
+        assert_near(permissions_width(&mut ui), width + gained, "what it gave");
+    }
+    // The modification time's separator: it gives the permissions its room, down to its
+    // least.
+    let messages: Vec<Message> = {
+        let mut ui = wide(&shell);
+        let from = separator_before(&mut ui, "Permissions");
+        ui.point_at(from);
+        let _ = ui.simulate([press()]);
+        moved(&mut ui, iced::Point::new(from.x - 500.0, from.y));
+        let _ = ui.simulate([release()]);
+        ui.into_messages().collect()
+    };
+    for message in resized(&messages) {
+        let _ = shell.update(message);
+    }
+    let mut ui = wide(&shell);
+    let modified = bounds_of(&mut ui, "2026-09-27 19:15").x;
+    assert_near(
+        bounds_of(&mut ui, "Permissions").x,
+        modified + MODIFIED_LEAST + COLUMN_GAP,
+        "the modification time kept at its least",
+    );
+}
+
+#[tokio::test]
+async fn a_double_click_on_a_separator_fits_the_column_on_its_left_to_its_widest_text() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = columns_shell(dir.path()).await;
+    let mut fitted = Vec::new();
+    for _ in 0..DOUBLE_CLICK_TRIES {
+        let mut ui = wide(&shell);
+        let at = separator_before(&mut ui, "Owner");
+        ui.point_at(at);
+        let _ = ui.simulate([press(), release(), press(), release()]);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            !sorts(&messages),
+            "a double click on a separator sorts nothing"
+        );
+        fitted = resized(&messages);
+        if !fitted.is_empty() {
+            break;
+        }
+    }
+    let [fitted] = fitted.as_slice() else {
+        panic!("one fit: {fitted:?}");
+    };
+    let _ = shell.update(fitted.clone());
+    let mut ui = wide(&shell);
+    let widest = bounds_of(&mut ui, "Permissions")
+        .width
+        .max(bounds_of(&mut ui, "rwsr-xr-x").width)
+        .ceil();
+    assert_near(
+        permissions_width(&mut ui),
+        widest,
+        "as wide as its header or its widest cell",
+    );
+}
