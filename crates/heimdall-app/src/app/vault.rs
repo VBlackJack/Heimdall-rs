@@ -40,8 +40,9 @@ use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 
 use heimdall_core::credentials::{
-    CredentialProtocol, Endpoint, SavedPassphrase, SavedPassword, decode, decode_passphrase,
-    encode, encode_passphrase, passphrase_entry, password_entry, rdp_account,
+    CredentialProtocol, Endpoint, SavedPassphrase, SavedPassword, citrix_launch_entry, decode,
+    decode_citrix_launch, decode_passphrase, encode, encode_citrix_launch, encode_passphrase,
+    passphrase_entry, password_entry, rdp_account,
 };
 use heimdall_core::lockout::Lockout;
 use heimdall_core::profile::ProfileId;
@@ -51,6 +52,7 @@ use sealvault::{Vault, VaultError};
 use zeroize::Zeroizing;
 
 use super::{App, Dialog, Effect, Message, Tab, TabProfile};
+use crate::citrix::CitrixRefusal;
 use crate::event::{Answer, QuestionKind};
 use crate::ids::TabId;
 
@@ -789,14 +791,25 @@ impl App {
         done
     }
 
-    /// The entry of every profile and gateway that may have a saved password: the system's
-    /// store cannot be listed.
+    /// The entry of every secret a profile or gateway may have saved: its password, its key
+    /// passphrase, a Citrix profile's cache launch line. The system's store cannot be listed.
     fn password_entries(&self) -> Vec<String> {
-        self.profiles()
+        let store = &self.store;
+        store
+            .ssh_profiles()
             .iter()
             .map(|profile| &profile.id)
-            .chain(self.gateways().iter().map(|gateway| &gateway.id))
-            .map(password_entry)
+            .chain(store.rdp_profiles().iter().map(|profile| &profile.id))
+            .chain(store.vnc_profiles().iter().map(|profile| &profile.id))
+            .chain(store.ftp_profiles().iter().map(|profile| &profile.id))
+            .chain(store.gateways().iter().map(|gateway| &gateway.id))
+            .flat_map(|id| [password_entry(id), passphrase_entry(id)])
+            .chain(
+                store
+                    .citrix_profiles()
+                    .iter()
+                    .map(|profile| citrix_launch_entry(&profile.id)),
+            )
             .collect()
     }
 
@@ -959,9 +972,10 @@ impl App {
         }
     }
 
-    /// Saves `from`'s password and key passphrase for `to` as well, a copy of the profile.
+    /// Saves `from`'s password, key passphrase and Citrix launch line for `to` as well, a
+    /// copy of the profile.
     pub(super) fn copy_password(&mut self, from: &ProfileId, to: &ProfileId) {
-        for entry in [password_entry, passphrase_entry] {
+        for entry in [password_entry, passphrase_entry, citrix_launch_entry] {
             if let Some(bytes) = self.vault.read(&entry(from))
                 && let Err(error) = self.vault.write(&entry(to), Some(&bytes))
             {
@@ -970,15 +984,48 @@ impl App {
         }
     }
 
-    /// Forgets the saved password and key passphrase of a profile being deleted.
+    /// Forgets the saved password, key passphrase and Citrix launch line of a profile being
+    /// deleted.
     pub(super) fn forget_password(&mut self, profile: &ProfileId) {
-        for entry in [password_entry(profile), passphrase_entry(profile)] {
+        for entry in [
+            password_entry(profile),
+            passphrase_entry(profile),
+            citrix_launch_entry(profile),
+        ] {
             if self.vault.read(&entry).is_some()
                 && let Err(error) = self.vault.write(&entry, None)
             {
                 self.password_save_failed(&error);
             }
         }
+    }
+
+    /// The line Citrix Workspace's cache gave Citrix profile `profile`, saved at its import.
+    /// A locked vault may hold one it cannot give: refused, as the C#
+    /// `CitrixLaunchVaultLocked`, rather than launched another way.
+    pub(super) fn citrix_launch_line(
+        &self,
+        profile: &ProfileId,
+    ) -> Result<Option<Zeroizing<String>>, CitrixRefusal> {
+        if self.vault_status() == VaultStatus::Locked {
+            return Err(CitrixRefusal::VaultLocked);
+        }
+        Ok(self
+            .vault
+            .read(&citrix_launch_entry(profile))
+            .and_then(|bytes| decode_citrix_launch(&bytes)))
+    }
+
+    /// Saves `line` as Citrix profile `profile`'s cache launch line.
+    pub(super) fn save_citrix_launch_line(
+        &mut self,
+        profile: &ProfileId,
+        line: &str,
+    ) -> Result<(), String> {
+        self.vault.write(
+            &citrix_launch_entry(profile),
+            Some(&encode_citrix_launch(line)),
+        )
     }
 
     /// The saved passphrase of the key file at `key_path`, for the first question of an

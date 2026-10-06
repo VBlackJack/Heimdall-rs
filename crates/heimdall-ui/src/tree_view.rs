@@ -669,6 +669,10 @@ pub fn menu_entries<'a>(
                     Some(AppMessage::Sessions(SessionsMessage::Putty)),
                 ))
                 .push(entry(
+                    fl!("ui-tree-import-citrix"),
+                    Some(AppMessage::ImportCitrix),
+                ))
+                .push(entry(
                     fl!("ui-tree-import-known-hosts"),
                     Some(crate::hostkeys_view::app_message(HostKeysMessage::Start)),
                 ))

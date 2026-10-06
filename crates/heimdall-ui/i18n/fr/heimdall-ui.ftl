@@ -479,6 +479,7 @@ ui-openssh-done-gateways = { $count ->
 ui-openssh-unreadable = Impossible de lire le fichier sélectionné : { $detail }
 ui-openssh-empty = Le fichier sélectionné ne contient aucune entrée importable.
 ui-tree-import-putty = Importer des sessions PuTTY...
+ui-tree-import-citrix = Importer apps Citrix
 ui-putty-title = Importer des sessions PuTTY
 ui-sessions-summary-invalid = { $total ->
     [one] { $total } candidat
@@ -1823,6 +1824,24 @@ ui-import-dropped-rdp-usb = périphériques USB
 ui-import-dropped-rdp-microphone = microphone
 ui-import-dropped-rdp-multi-monitor = plusieurs écrans
 ui-import-dropped-citrix-cache-launch = lancement depuis le cache Citrix Workspace, non importé
+ui-citrix-import-title = Applications Citrix
+ui-citrix-import-none = Aucune application Citrix trouvée dans le cache local. Ouvrez Citrix Workspace et connectez-vous à un magasin.
+ui-citrix-import-confirm = { $count ->
+    [one] Importer { $count } application Citrix depuis le cache Workspace local ?
+   *[other] Importer { $count } applications Citrix depuis le cache Workspace local ?
+}
+ui-citrix-import-done = { $count ->
+    [one] { $count } application Citrix importée avec succès.
+   *[other] { $count } applications Citrix importées avec succès.
+}
+ui-citrix-import-refreshed = { $count ->
+    [one] { $count } application déjà enregistrée : sa ligne de lancement a été mise à jour.
+   *[other] { $count } applications déjà enregistrées : leurs lignes de lancement ont été mises à jour.
+}
+ui-citrix-import-no-launch-lines = Le coffre est verrouillé ou indisponible : les lignes de lancement du cache Workspace n'ont pas été enregistrées. Ces applications se lancent par leur StoreFront.
+ui-citrix-cache-folder-missing = Dossier du cache Citrix SelfService introuvable.
+ui-citrix-cache-no-files = Aucun fichier de cache Citrix trouvé. Ouvrez Citrix Workspace et connectez-vous à un magasin.
+ui-citrix-cache-unreadable = { $file } : { $detail }
 ui-fullscreen-exit = Quitter le plein écran
 ui-fullscreen-exit-tooltip = F11, ou Échap hors d'un terminal ou d'un bureau distant
 ui-files-selected-with-size = { $selection } ({ $size })
@@ -1937,6 +1956,8 @@ ui-status-citrix-invalid-ica-file = Le fichier ICA doit être un fichier .ica de
 ui-status-citrix-not-configured = Aucune URL StoreFront Citrix ou fichier ICA configuré.
 ui-status-citrix-launch-failed = Échec du lancement de la session Citrix.
 ui-status-citrix-not-started = Échec du lancement de la session Citrix : { $reason }
+ui-status-citrix-command-rejected = La commande de lancement Citrix contient des caractères interdits (|, &, ;, `, $, retours à la ligne).
+ui-status-citrix-vault-locked = Déverrouillez le coffre avant de lancer cette session Citrix.
 ui-status-winrm-gateway-ntlm = WinRM par une passerelle : Kerberos n'est pas disponible, l'authentification passe par NTLM.
 ui-winrm-diagnostic-ntlm-loopback = L'authentification WinRM a échoué pour l'identité Windows actuelle. Utilisez un compte enregistré pour localhost ou les hôtes hors domaine.
 ui-winrm-diagnostic-wsman-invalid = WinRM a reçu une réponse WSMan invalide. Si cette session passe par une passerelle, vérifiez que WinRM utilise HTTP dans le tunnel.

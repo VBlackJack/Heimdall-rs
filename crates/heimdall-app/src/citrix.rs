@@ -15,13 +15,14 @@
  */
 
 //! A Citrix application launched as the C# `CitrixHandler` launches it, outside Heimdall:
-//! an ICA file opened by the program it belongs to, or the published application asked of
-//! its `StoreFront` through Citrix Workspace's own launcher. Its window is Citrix's own:
-//! none is embedded in a tab.
+//! the line Citrix Workspace's cache gave it, an ICA file opened by the program it belongs
+//! to, or the published application asked of its `StoreFront` through Citrix Workspace's
+//! own launcher. Its window is Citrix's own: none is embedded in a tab.
 
 use std::path::{Path, PathBuf};
 
 use heimdall_core::profile::CitrixProfile;
+use zeroize::Zeroizing;
 
 /// The extension of the files Citrix Workspace opens.
 const ICA_EXTENSION: &str = "ica";
@@ -38,9 +39,14 @@ const STOREBROWSE_NO_SSO: &str = "-L";
 const SELF_SERVICE_COMMAND: &str = "storebrowse";
 const SELF_SERVICE_SSO: &str = "-q";
 
+/// What a cache launch line may not hold, as the C# refuses it: what a shell would read.
+const FORBIDDEN_IN_LAUNCH_LINE: [char; 7] = ['|', '&', ';', '`', '$', '\n', '\r'];
+
 /// How a Citrix application is launched.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CitrixLaunch {
+    /// The line Citrix Workspace's cache gave it, passed to `SelfService.exe` as it is.
+    CacheLine(Zeroizing<String>),
     /// An ICA file, opened by the program Windows gives it.
     IcaFile(PathBuf),
     /// The published application `app`, asked of the `StoreFront` at `url`.
@@ -52,6 +58,22 @@ pub enum CitrixLaunch {
         /// With this Windows account's Kerberos identity.
         sso: bool,
     },
+}
+
+impl std::fmt::Debug for CitrixLaunch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // Pre-authenticated: never shown.
+            Self::CacheLine(_) => f.write_str("CacheLine(..)"),
+            Self::IcaFile(path) => f.debug_tuple("IcaFile").field(path).finish(),
+            Self::StoreFront { app, url, sso } => f
+                .debug_struct("StoreFront")
+                .field("app", app)
+                .field("url", url)
+                .field("sso", sso)
+                .finish(),
+        }
+    }
 }
 
 /// Why a Citrix application is not launched, as the C# says it.
@@ -71,15 +93,23 @@ pub enum CitrixRefusal {
     Failed,
     /// The launcher could not be started, and why.
     NotStarted(String),
+    /// The cache launch line holds what a shell would read.
+    CommandRejected,
+    /// The vault, which may hold the cache launch line, is locked.
+    VaultLocked,
 }
 
 /// How `profile` launches, in the C# order: its `StoreFront` checked first when it names
-/// one; an ICA file of this computer that is there; else its `StoreFront` application.
+/// one; `cache_line`, its saved cache launch line, when it has one; an ICA file of this
+/// computer that is there; else its `StoreFront` application.
 ///
 /// # Errors
 ///
 /// [`CitrixRefusal`] when it cannot launch.
-pub fn plan(profile: &CitrixProfile) -> Result<CitrixLaunch, CitrixRefusal> {
+pub fn plan(
+    profile: &CitrixProfile,
+    cache_line: Option<&str>,
+) -> Result<CitrixLaunch, CitrixRefusal> {
     let url = profile
         .store_front_url
         .as_deref()
@@ -87,6 +117,12 @@ pub fn plan(profile: &CitrixProfile) -> Result<CitrixLaunch, CitrixRefusal> {
         .filter(|url| !url.is_empty())
         .map(store_front_url)
         .transpose()?;
+    if let Some(line) = cache_line.filter(|line| !line.trim().is_empty()) {
+        if !cache_line_allowed(line) {
+            return Err(CitrixRefusal::CommandRejected);
+        }
+        return Ok(CitrixLaunch::CacheLine(Zeroizing::new(line.to_owned())));
+    }
     if let Some(file) = profile
         .ica_file
         .as_deref()
@@ -113,6 +149,12 @@ pub fn plan(profile: &CitrixProfile) -> Result<CitrixLaunch, CitrixRefusal> {
         }),
         _ => Err(CitrixRefusal::NotConfigured),
     }
+}
+
+/// Whether `line` may be passed to `SelfService.exe`: none of the C# forbidden characters.
+#[must_use]
+pub fn cache_line_allowed(line: &str) -> bool {
+    !line.contains(FORBIDDEN_IN_LAUNCH_LINE)
 }
 
 /// `url` when it is a `StoreFront` address: absolute, `http` or `https`, naming a host, and
@@ -174,6 +216,21 @@ pub fn launcher_candidates(program_files_x86: &Path, program_files: &Path) -> Ve
     ]
 }
 
+/// Where `SelfService.exe` may be, in the C# probe order of a cache launch.
+#[must_use]
+pub fn self_service_candidates(program_files_x86: &Path, program_files: &Path) -> Vec<PathBuf> {
+    let client = |root: &Path| root.join("Citrix").join("ICA Client");
+    vec![
+        client(program_files_x86)
+            .join("SelfServicePlugin")
+            .join(SELF_SERVICE),
+        client(program_files_x86).join(SELF_SERVICE),
+        client(program_files)
+            .join("SelfServicePlugin")
+            .join(SELF_SERVICE),
+    ]
+}
+
 /// The arguments `launcher` takes to ask for `app` at `url`, by its own grammar; `None`
 /// when it has none for that: `SelfService.exe` without single sign-on, or another program.
 #[must_use]
@@ -199,37 +256,57 @@ pub fn launcher_arguments(launcher: &Path, app: &str, url: &str, sso: bool) -> O
     Some(arguments)
 }
 
-/// The Citrix Workspace launcher of this computer: the first candidate there, else one on
-/// the `PATH`.
-fn find_launcher() -> Option<PathBuf> {
+/// The first of `candidates`, given the Program Files folders, that is there; else one of
+/// `names` on the `PATH`.
+fn find_program(candidates: fn(&Path, &Path) -> Vec<PathBuf>, names: &[&str]) -> Option<PathBuf> {
     let folder = |name: &str| std::env::var_os(name).map(PathBuf::from);
     let (x86, native) = (
         folder("ProgramFiles(x86)").or_else(|| folder("ProgramFiles")),
         folder("ProgramFiles"),
     );
     if let (Some(x86), Some(native)) = (x86, native)
-        && let Some(found) = launcher_candidates(&x86, &native)
+        && let Some(found) = candidates(&x86, &native)
             .into_iter()
             .find(|path| path.is_file())
     {
         return Some(found);
     }
     let path = std::env::var_os("PATH")?;
-    [STOREBROWSE, SELF_SERVICE].into_iter().find_map(|name| {
+    names.iter().find_map(|name| {
         std::env::split_paths(&path)
             .map(|folder| folder.join(name))
             .find(|candidate| candidate.is_file())
     })
 }
 
-/// Launches `launch`: the ICA file opened as a double click opens it, or the launcher
-/// started with its arguments, no shell reading them, no console shown.
-///
-/// # Errors
-///
-/// [`CitrixRefusal`] when nothing was started.
-pub fn launch(launch: &CitrixLaunch) -> Result<(), CitrixRefusal> {
-    let mut command = match launch {
+/// The Citrix Workspace launcher of this computer: the first candidate there, else one on
+/// the `PATH`.
+fn find_launcher() -> Option<PathBuf> {
+    find_program(launcher_candidates, &[STOREBROWSE, SELF_SERVICE])
+}
+
+/// The command starting `SelfService.exe` with cache launch line `line`, passed unchanged as
+/// the C# passes its arguments: no shell reads it, the forbidden characters were refused.
+#[cfg(windows)]
+fn cache_command(line: &str) -> Result<std::process::Command, CitrixRefusal> {
+    use std::os::windows::process::CommandExt;
+    let launcher = find_program(self_service_candidates, &[SELF_SERVICE])
+        .ok_or(CitrixRefusal::WorkspaceNotFound)?;
+    let mut command = std::process::Command::new(launcher);
+    command.raw_arg(line);
+    Ok(command)
+}
+
+/// A cache launch line is `SelfService.exe`'s grammar, which only Windows has.
+#[cfg(not(windows))]
+fn cache_command(_line: &str) -> Result<std::process::Command, CitrixRefusal> {
+    Err(CitrixRefusal::Failed)
+}
+
+/// The command starting `launch`.
+fn command(launch: &CitrixLaunch) -> Result<std::process::Command, CitrixRefusal> {
+    Ok(match launch {
+        CitrixLaunch::CacheLine(line) => cache_command(line)?,
         CitrixLaunch::IcaFile(path) => {
             let mut command = if cfg!(windows) {
                 // The file's own program, given the path alone: no shell reads it.
@@ -250,7 +327,18 @@ pub fn launch(launch: &CitrixLaunch) -> Result<(), CitrixRefusal> {
             command.args(arguments);
             command
         }
-    };
+    })
+}
+
+/// Launches `launch`: `SelfService.exe` given the cache line, the ICA file opened as a
+/// double click opens it, or the launcher started with its arguments; no shell reading
+/// them, no console shown.
+///
+/// # Errors
+///
+/// [`CitrixRefusal`] when nothing was started.
+pub fn launch(launch: &CitrixLaunch) -> Result<(), CitrixRefusal> {
+    let mut command = command(launch)?;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -287,7 +375,7 @@ mod tests {
     #[test]
     fn a_store_front_application_is_asked_for_by_name() {
         assert_eq!(
-            plan(&profile()),
+            plan(&profile(), None),
             Ok(CitrixLaunch::StoreFront {
                 app: "Outlook 365".to_owned(),
                 url: "https://store.lab/Citrix/Store".to_owned(),
@@ -298,7 +386,38 @@ mod tests {
             app_name: Some("  ".to_owned()),
             ..profile()
         };
-        assert_eq!(plan(&unnamed), Err(CitrixRefusal::NotConfigured));
+        assert_eq!(plan(&unnamed, None), Err(CitrixRefusal::NotConfigured));
+    }
+
+    #[test]
+    fn a_cache_line_launches_first_unless_a_shell_would_read_it() {
+        let line = "-qlaunch \"Outlook 365\" -s store";
+        assert_eq!(
+            plan(&profile(), Some(line)),
+            Ok(CitrixLaunch::CacheLine(Zeroizing::new(line.to_owned())))
+        );
+        assert!(matches!(
+            plan(&profile(), Some("  ")),
+            Ok(CitrixLaunch::StoreFront { .. })
+        ));
+        for bad in ['|', '&', ';', '`', '$', '\n', '\r'] {
+            assert_eq!(
+                plan(&profile(), Some(&format!("-qlaunch a{bad}b"))),
+                Err(CitrixRefusal::CommandRejected),
+                "{bad:?}"
+            );
+        }
+        let shown = format!(
+            "{:?}",
+            CitrixLaunch::CacheLine(Zeroizing::new(line.to_owned()))
+        );
+        assert!(!shown.contains("Outlook"), "{shown}");
+        assert_eq!(
+            self_service_candidates(Path::new("X86"), Path::new("PF")).first(),
+            Some(&PathBuf::from(
+                "X86/Citrix/ICA Client/SelfServicePlugin/SelfService.exe"
+            ))
+        );
     }
 
     #[test]
@@ -308,15 +427,15 @@ mod tests {
             ..profile()
         };
         assert_eq!(
-            plan(&with("ftp://store.lab")),
+            plan(&with("ftp://store.lab"), None),
             Err(CitrixRefusal::InvalidStoreFront)
         );
         assert_eq!(
-            plan(&with("https://admin:secret@store.lab/")),
+            plan(&with("https://admin:secret@store.lab/"), None),
             Err(CitrixRefusal::StoreFrontCredentials)
         );
         assert_eq!(
-            plan(&with("store.lab")),
+            plan(&with("store.lab"), None),
             Err(CitrixRefusal::InvalidStoreFront)
         );
     }
@@ -340,13 +459,16 @@ mod tests {
             ica_file: Some(file.display().to_string()),
             ..profile()
         };
-        assert_eq!(plan(&launching), Ok(CitrixLaunch::IcaFile(file)));
+        assert_eq!(plan(&launching, None), Ok(CitrixLaunch::IcaFile(file)));
         // Not there: its StoreFront application instead, as the C#.
         let gone = CitrixProfile {
             ica_file: Some(dir.path().join("gone.ica").display().to_string()),
             ..profile()
         };
-        assert!(matches!(plan(&gone), Ok(CitrixLaunch::StoreFront { .. })));
+        assert!(matches!(
+            plan(&gone, None),
+            Ok(CitrixLaunch::StoreFront { .. })
+        ));
     }
 
     #[test]

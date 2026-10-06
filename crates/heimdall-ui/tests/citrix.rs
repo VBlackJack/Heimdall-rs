@@ -16,7 +16,8 @@
 
 //! Citrix profiles in the window, drawn headless: listed in the tree with their protocol,
 //! their form asking for a `StoreFront` and an application rather than a server, and the
-//! status bar saying how a launch went, as the C# does.
+//! status bar saying how a launch went, and the import from Citrix Workspace's cache, as
+//! the C# does.
 
 mod common;
 
@@ -159,4 +160,61 @@ fn the_status_bar_says_how_a_launch_went_in_the_csharp_words() {
         )))
         .contains("access denied")
     );
+    assert_eq!(
+        said(Notice::CitrixRefused(CitrixRefusal::VaultLocked)),
+        "Unlock the vault before launching this Citrix session."
+    );
+    assert_eq!(
+        said(Notice::CitrixRefused(CitrixRefusal::CommandRejected)),
+        "The Citrix launch command contains forbidden characters (|, &, ;, `, $, newlines)."
+    );
+}
+
+#[test]
+fn the_more_menu_imports_citrix_apps_after_the_csharp_question() {
+    use heimdall_core::import::citrix_cache::{self, CacheScan};
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path(), None));
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::More));
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.click("Import Citrix Apps").expect("the entry");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::MenuChoice(AppMessage::ImportCitrix)))
+    );
+
+    let scan = CacheScan {
+        apps: citrix_cache::parse(
+            "<resources><resource><FriendlyName>Excel</FriendlyName>             <LaunchCommandLine>-qlaunch Excel</LaunchCommandLine></resource></resources>",
+        )
+        .expect("parsed"),
+        warnings: Vec::new(),
+    };
+    let _ = shell.update(Message::App(AppMessage::CitrixScanned(scan)));
+    {
+        let mut ui = common::simulator(settings(), WINDOW, shell.view());
+        ui.find("Citrix Applications").expect("title");
+        ui.find("Import 1 Citrix application from local Workspace cache?")
+            .expect("the C# question");
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("1 Citrix application imported successfully.")
+        .expect("the C# result");
+}
+
+#[test]
+fn an_empty_cache_says_so_in_the_csharp_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path(), None));
+    let _ = shell.update(Message::App(AppMessage::CitrixScanned(
+        heimdall_core::import::citrix_cache::CacheScan::default(),
+    )));
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find(
+        "No Citrix applications found in the local cache. Open Citrix Workspace and connect to a store first.",
+    )
+    .expect("the C# words");
 }
