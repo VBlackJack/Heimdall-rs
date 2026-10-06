@@ -340,6 +340,43 @@ pub struct Settings {
     pub diagnostics_log: bool,
     /// Whether, and how often, every server is checked for an answer in the background.
     pub reachability: Reachability,
+    /// The SFTP browser, and the pane it docks beside an SSH shell.
+    pub sftp_browser: SftpBrowser,
+}
+
+/// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
+/// `SftpFollowSshDirectory`: the last two only apply while the first is on.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SftpBrowser {
+    /// A server's files can be browsed over SFTP, as the C# `SftpBrowserEnabled`: on. Off,
+    /// no SFTP Files tab opens.
+    pub enabled: bool,
+    /// An SSH shell, once connected, gets its server's files in a pane beside it, as the C#
+    /// `SftpAutoOpenOnSsh`: on.
+    pub auto_open_on_ssh: bool,
+    /// The SFTP pane beside a shell follows the shell's working folder, as the C#
+    /// `SftpFollowSshDirectory`: off. Kept, read and written, but not applied yet: the
+    /// pane does not follow the shell until the shell reports its folder (OSC 7).
+    pub follow_ssh_directory: bool,
+}
+
+impl SftpBrowser {
+    /// Whether an SSH shell connected opens its files beside it: the browser on, and the
+    /// auto-open on.
+    #[must_use]
+    pub const fn auto_opens(self) -> bool {
+        self.enabled && self.auto_open_on_ssh
+    }
+}
+
+impl Default for SftpBrowser {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            auto_open_on_ssh: true,
+            follow_ssh_directory: false,
+        }
+    }
 }
 
 /// The background check of every server's address, as the C# session health monitor.
@@ -600,6 +637,7 @@ impl Default for Settings {
             max_sessions: MAX_SESSIONS_DEFAULT,
             diagnostics_log: true,
             reachability: Reachability::default(),
+            sftp_browser: SftpBrowser::default(),
         }
     }
 }
@@ -658,10 +696,31 @@ struct RdpSessionSection {
     resolution_presets: Option<Vec<String>>,
 }
 
+/// Absent flags are the C# defaults.
 #[derive(Serialize, Deserialize, Default)]
 struct FilesSection {
     #[serde(default)]
     external_editor: String,
+    #[serde(default)]
+    browser_enabled: Option<bool>,
+    #[serde(default)]
+    auto_open_on_ssh: Option<bool>,
+    #[serde(default)]
+    follow_ssh_directory: Option<bool>,
+}
+
+impl FilesSection {
+    /// The SFTP browser's settings the section holds, each absent one its default.
+    fn sftp_browser(&self) -> SftpBrowser {
+        let defaults = SftpBrowser::default();
+        SftpBrowser {
+            enabled: self.browser_enabled.unwrap_or(defaults.enabled),
+            auto_open_on_ssh: self.auto_open_on_ssh.unwrap_or(defaults.auto_open_on_ssh),
+            follow_ssh_directory: self
+                .follow_ssh_directory
+                .unwrap_or(defaults.follow_ssh_directory),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -995,6 +1054,7 @@ impl Settings {
                 .map(CtrlVPaste::named)
                 .unwrap_or_default(),
             rdp_defaults: file.rdp,
+            sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
             prevent_sleep: file.general.prevent_sleep.unwrap_or(true),
@@ -1114,6 +1174,9 @@ impl Settings {
             },
             files: FilesSection {
                 external_editor: self.external_editor.clone(),
+                browser_enabled: Some(self.sftp_browser.enabled),
+                auto_open_on_ssh: Some(self.sftp_browser.auto_open_on_ssh),
+                follow_ssh_directory: Some(self.sftp_browser.follow_ssh_directory),
             },
             reachability: ReachabilitySection {
                 enabled: Some(self.reachability.enabled),

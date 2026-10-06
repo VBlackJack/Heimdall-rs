@@ -140,6 +140,11 @@ pub enum FilesMessage {
         /// What is typed.
         text: String,
     },
+    /// Show this computer's pane beside the server's, or hide it.
+    ToggleLocal {
+        /// Tab.
+        tab: TabId,
+    },
     /// Show a pane's hidden entries, or no longer.
     ToggleHidden {
         /// Tab.
@@ -706,6 +711,7 @@ impl std::fmt::Debug for FilesMessage {
             Self::Bookmark { tab } => write!(f, "Bookmark({})", tab.value()),
             Self::Dropped { tab, .. } => write!(f, "Dropped({}, ..)", tab.value()),
             Self::Filter { tab, side, .. } => write!(f, "Filter({}, {side:?}, ..)", tab.value()),
+            Self::ToggleLocal { tab } => write!(f, "ToggleLocal({})", tab.value()),
             Self::ToggleHidden { tab, side } => {
                 write!(f, "ToggleHidden({}, {side:?})", tab.value())
             }
@@ -1030,6 +1036,7 @@ impl App {
             | FilesMessage::RemoveBookmark { .. }
             | FilesMessage::Filter { .. }
             | FilesMessage::ToggleHidden { .. }
+            | FilesMessage::ToggleLocal { .. }
             | FilesMessage::ToggleSudo { .. }
             | FilesMessage::Dropped { .. }
             | FilesMessage::UploadPicked { .. }
@@ -1104,6 +1111,12 @@ impl App {
                         Side::Remote => files.remote.filter_by(text),
                         Side::Local => files.local.filter_by(text),
                     }
+                }
+                Vec::new()
+            }
+            FilesMessage::ToggleLocal { tab } => {
+                if let Some(files) = self.files_mut(tab) {
+                    files.show_local(files.local_hidden);
                 }
                 Vec::new()
             }
@@ -1494,6 +1507,8 @@ impl App {
             },
             FilesKey::First => last.map(|_| 0),
             FilesKey::Last => last,
+            // This computer's pane hidden, the server's keeps the keys.
+            FilesKey::SwitchPane | FilesKey::Focus(_) if files.local_hidden => return Vec::new(),
             FilesKey::SwitchPane => {
                 files.focus = side.other();
                 return Vec::new();

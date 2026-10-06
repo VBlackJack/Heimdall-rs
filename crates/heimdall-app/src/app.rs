@@ -78,6 +78,7 @@ mod citrix_import;
 mod citrix_launch;
 mod connect_as;
 mod detail;
+mod docked_sftp;
 mod file_import;
 mod files_clipboard;
 mod files_edit;
@@ -2558,6 +2559,9 @@ pub struct App {
     pub tunnels: Vec<crate::tunnel::Tunnel>,
     /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
     replacing: bool,
+    /// The SFTP panes opened beside an SSH shell by themselves, until they connect: one
+    /// that fails before is closed and said, as the C# auto-open.
+    docking_sftp: Vec<TabId>,
     /// Whether the tunnels panel is shown under the sessions while no session is: as the
     /// settings say at start, then as it is toggled.
     tunnels_panel: bool,
@@ -2707,6 +2711,7 @@ impl App {
             tunnels_panel,
             last_move: None,
             replacing: false,
+            docking_sftp: Vec::new(),
             pending_restore,
             recent_hosts: Vec::new(),
             detail: detail::DetailCache::default(),
@@ -3209,11 +3214,27 @@ impl App {
         reached
     }
 
-    /// Opens a tab for `profile`, a shell or its files, without asking about its steps.
+    /// Opens a tab for `profile`, a shell or its files, without asking about its steps:
+    /// within the session limit, and its files only while the SFTP browser is on, as the C#
+    /// SFTP handler refuses them.
     pub(super) fn open_ssh_now(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
+        if purpose == Purpose::Files && !self.settings.sftp_browser.enabled {
+            self.tell(Notice::SftpBrowserDisabled);
+            return Vec::new();
+        }
         if self.session_limit_reached() {
             return Vec::new();
         }
+        self.open_ssh_tab(profile, purpose).1
+    }
+
+    /// Opens a tab for `profile`, a shell or its files, the last of the tabs and the active
+    /// one, whatever the session limit; the tab, and what connects it.
+    pub(super) fn open_ssh_tab(
+        &mut self,
+        profile: SshProfile,
+        purpose: Purpose,
+    ) -> (TabId, Vec<Effect>) {
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
@@ -3244,7 +3265,7 @@ impl App {
         };
         self.tabs.push(tab);
         self.active = Some(tab_id);
-        effects
+        (tab_id, effects)
     }
 
     /// The user answered `question`; `None` declines it.
@@ -3307,6 +3328,10 @@ impl App {
             }
             _ => None,
         };
+        let shell_up = matches!(event, ConnectionEvent::Connected { .. });
+        if matches!(event, ConnectionEvent::FilesReady { .. }) {
+            self.docking_sftp.retain(|docking| *docking != tab_id);
+        }
         let mut effects = self.apply_connection_event(tab_id, event);
         self.follow_transcript(tab_id, was_connected);
         if !was_connected {
@@ -3315,7 +3340,12 @@ impl App {
         if !was_connected && self.active == Some(tab_id) {
             self.warn_winrm(tab_id);
         }
-        if let Some((error, was_live)) = failure {
+        if shell_up {
+            effects.extend(self.dock_sftp(tab_id));
+        }
+        if let Some((error, was_live)) = failure
+            && !self.docked_sftp_failed(tab_id, error.clone())
+        {
             effects.extend(self.retry_after(tab_id, &error, was_live));
         }
         effects

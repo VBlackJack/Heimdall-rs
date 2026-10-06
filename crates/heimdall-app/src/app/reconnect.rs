@@ -120,6 +120,8 @@ impl App {
                 old.files.as_deref_mut(),
             ) {
                 files.edits = std::mem::take(&mut before.edits);
+                // The server's files alone, when they were.
+                files.show_local(!before.local_hidden);
                 // The transfers listed stay, those cut short stopped: Retry runs them on
                 // the new connection.
                 files.transfers = before.hand_over_transfers();
