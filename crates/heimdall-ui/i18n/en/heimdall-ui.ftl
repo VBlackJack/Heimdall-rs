@@ -1888,6 +1888,15 @@ ui-settings-powershell-policy = PowerShell Execution Policy
 ui-settings-powershell-policy-hint = Applied when launching local PowerShell/pwsh sessions
 ui-settings-powershell-policy-default = Default
 ui-connect-via = via { $route }
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Remove filter: { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } session
+   *[other] { $total } sessions
+}
+ui-tree-selection-count = { $count } sessions selected
+ui-tree-selection-move = Move
+ui-tree-selection-more = More actions
 ui-tunnels-session-routes = Sessions through a gateway ({ $count })
 ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Carried inside Heimdall: no local port
