@@ -3544,3 +3544,27 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
             .any(|message| matches!(message, Message::TreeShortcut(TreeShortcut::ToggleSidebar)))
     );
 }
+
+#[test]
+fn an_imported_profile_carries_its_origin_in_the_tree_and_in_its_form() {
+    use heimdall_core::metadata::ProfileOrigin;
+
+    let dir = tempfile::tempdir().expect("dir");
+    {
+        let shell = Shell::with_app(app(dir.path()));
+        let mut ui = simulator(&shell);
+        assert!(ui.find("PTY").is_err(), "made here: no badge");
+    }
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    assert!(store.set_origin(&ProfileId::new("a"), ProfileOrigin::Putty));
+    store.save().expect("save");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("PTY").expect("the C# badge code");
+    }
+    let _ = shell.update(Message::App(AppMessage::EditProfile(ProfileId::new("a"))));
+    let mut ui = simulator(&shell);
+    ui.find("Imported from PuTTY registry")
+        .expect("the C# sentence under the form");
+}

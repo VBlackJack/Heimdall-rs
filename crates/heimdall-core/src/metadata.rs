@@ -150,6 +150,20 @@ impl ProfileOrigin {
         Self::RdcMan,
     ];
 
+    /// The code the tree's badge shows, as the C# `ProfileOriginDisplay.GetBadgeCode`: the
+    /// abbreviation of a product's name, the same in every language.
+    #[must_use]
+    pub fn badge(self) -> &'static str {
+        match self {
+            Self::RdpFile => "RDP",
+            Self::OpenSsh => "OSSH",
+            Self::Putty => "PTY",
+            Self::MRemoteNg => "MRNG",
+            Self::MobaXterm => "MXTM",
+            Self::RdcMan => "RDCM",
+        }
+    }
+
     /// Its name in the profile file.
     #[must_use]
     pub fn name(self) -> &'static str {
