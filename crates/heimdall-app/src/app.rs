@@ -341,6 +341,14 @@ pub enum Message {
     Tunnel(TunnelMessage),
     /// Show a tab.
     SelectTab(TabId),
+    /// A tab dragged onto another: it takes that one's place, within its own group, pinned
+    /// or not, as the C# `MoveSession`.
+    MoveTab {
+        /// The tab dragged.
+        tab: TabId,
+        /// The tab it was let go over.
+        onto: TabId,
+    },
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
     /// End a tab's remote desktop from its bar, the tab kept to reconnect.
@@ -774,6 +782,9 @@ impl fmt::Debug for Message {
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
+            Self::MoveTab { tab, onto } => {
+                write!(f, "MoveTab({} onto {})", tab.value(), onto.value())
+            }
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
             Self::DisconnectDesktop(tab) => write!(f, "DisconnectDesktop({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
@@ -2721,6 +2732,10 @@ impl App {
             | Message::CancelAddressTest
             | Message::AddressTested { .. }) => self.address_test_message(message),
             Message::SelectTab(tab) => self.select_tab(tab),
+            Message::MoveTab { tab, onto } => {
+                self.move_tab(tab, onto);
+                Vec::new()
+            }
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::DisconnectDesktop(tab) => {
                 self.request_disconnect_desktop(tab);
