@@ -252,3 +252,53 @@ fn the_tunnels_page_says_when_each_started_and_leads_to_the_gateways() {
         .expect("the Gateways tab of the settings");
     assert!(ui.find("Manage gateways in Settings...").is_err());
 }
+
+#[test]
+fn a_session_through_a_gateway_says_so_on_its_tab_and_is_a_row_of_its_own_in_the_panel() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([heimdall_core::profile::SshProfile {
+        id: ProfileId::new("inner"),
+        name: "Inner".to_owned(),
+        group: None,
+        host: "inner.lab".to_owned(),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: Some(ProfileId::new("bastion")),
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+        session_logging: None,
+    }]);
+    store.save().expect("save");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    let _ = shell.update(Message::App(AppMessage::ConnectProfile(ProfileId::new(
+        "inner",
+    ))));
+    let tab = shell.app().active.expect("a tab");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("via").expect("the tab's mark, the panel closed");
+    }
+    let _ = shell.update(tunnel(TunnelMessage::TogglePanel));
+    let mut ui = simulator(&shell);
+    assert!(ui.find("via").is_err(), "the panel lists it: no mark");
+    ui.find("Tunnels (0)").expect("the hand-opened ones only");
+    ui.find("Sessions through a gateway (1)")
+        .expect("a group of their own");
+    ui.click("Bastion").expect("the route's row");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::SelectTab(selected)) if *selected == tab
+        )),
+        "{messages:?}"
+    );
+}
