@@ -2875,7 +2875,7 @@ impl Shell {
                 column![self.tab_bar(), self.focusable_content()]
                     .push(
                         self.app
-                            .tunnels_panel
+                            .tunnels_panel()
                             .then(|| crate::tunnels_view::panel(&self.app.tunnels)),
                     )
                     .width(Length::Fill)
@@ -3016,7 +3016,7 @@ impl Shell {
     fn tunnels_toggle(&self) -> Element<'_, Message> {
         tooltip(
             button(text(fl!("ui-tunnels-count", count = self.app.live_tunnels())).size(SMALL_SIZE))
-                .style(if self.app.tunnels_panel {
+                .style(if self.app.tunnels_panel() {
                     button::primary
                 } else {
                     button::text

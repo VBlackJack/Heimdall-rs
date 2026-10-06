@@ -55,6 +55,17 @@ impl Reopen {
     }
 }
 
+impl Tab {
+    /// The saved profile it opened, when it opened one: not a local shell started from the
+    /// sidebar, nor a session "Connect as..." opened.
+    pub(super) fn saved_profile(&self) -> Option<&ProfileId> {
+        match &self.reopen {
+            Reopen::Profile(id) => Some(id),
+            Reopen::Shell(_) | Reopen::Transient(..) => None,
+        }
+    }
+}
+
 impl App {
     /// Whether `tab` offers Reconnect on its card: its session failed or ended, and what it
     /// ran can run again, its profile still saved.
@@ -93,6 +104,7 @@ impl App {
             self.tabs[index].custom_title = old.custom_title.take();
             // A health panel shown stays shown, asked again once connected.
             self.tabs[index].health.shown = old.health.shown;
+            self.tabs[index].tunnels_panel = old.tunnels_panel;
             // Files open in an external editor go on being watched: their saves are sent
             // once the new connection is up.
             if let (Some(files), Some(before)) = (
