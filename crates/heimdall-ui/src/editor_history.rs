@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! Undo and redo for iced's text editor, which has neither.
+//! Undo and redo for the integrated editor's text widget, which, as iced's text editor it
+//! derives from, has neither.
 //!
 //! Each edit is recorded as a replacement: where it starts, what it removed, what it
 //! inserted, and where what it inserted ends. Undoing selects what was inserted and puts
@@ -28,7 +29,9 @@
 
 use std::sync::Arc;
 
-use iced::widget::text_editor::{Action, Content, Cursor, Edit, Position};
+use iced::widget::text_editor::{Action, Cursor, Edit, Position};
+
+use crate::code_editor::Content;
 
 /// Most edits kept for undo; the oldest go first.
 const MAX_CHANGES: usize = 1_000;
@@ -398,9 +401,10 @@ fn earliest(first: Position, second: Position) -> Position {
 mod tests {
     use std::sync::Arc;
 
-    use iced::widget::text_editor::{Action, Content, Cursor, Edit, Motion, Position};
+    use iced::widget::text_editor::{Action, Cursor, Edit, Motion, Position};
 
     use super::{History, select_line, select_word};
+    use crate::code_editor::Content;
 
     type Text = Content<iced::Renderer>;
 

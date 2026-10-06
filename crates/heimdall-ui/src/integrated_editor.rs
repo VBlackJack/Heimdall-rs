@@ -27,10 +27,11 @@ use heimdall_app::text_codec::TextEncoding;
 use heimdall_app::{App, Effect, FilesMessage, Message as AppMessage};
 use heimdall_app::{EditorId, TabId};
 use iced::keyboard::{Key, key::Named};
-use iced::widget::text_editor::{self, Action, Binding, Content, Edit, KeyPress, LineEnding};
-use iced::widget::{Space, button, column, container, row, text, text_editor as editor};
+use iced::widget::text_editor::{self, Action, Binding, Edit, KeyPress, LineEnding};
+use iced::widget::{Space, button, column, container, row, text};
 use iced::{Element, Font, Length, Task};
 
+use crate::code_editor::{Content, code_editor};
 use crate::i18n::fl;
 use crate::shell::Message;
 
@@ -438,7 +439,8 @@ pub fn view<'a>(
             )
             .into();
     };
-    let body = editor(&buffer.content)
+    // Numbered lines, never wrapped, as the C# editor's.
+    let body = code_editor(&buffer.content)
         .on_action(move |action| Message::Editor(EditorMessage::Action { tab, id, action }))
         .key_binding(move |press| {
             binding(press, |key| {
@@ -446,8 +448,6 @@ pub fn view<'a>(
             })
         })
         .font(Font::MONOSPACE)
-        .height(Length::Fill)
-        .wrapping(iced::widget::text::Wrapping::WordOrGlyph)
         .highlight(&buffer.syntax.token, iced::highlighter::Theme::Base16Ocean);
     page.push(body)
         .push(status(edit, buffer))
@@ -537,7 +537,9 @@ fn encoding_label(encoding: TextEncoding) -> String {
 mod tests {
     use iced::keyboard::key::{Code, Physical};
     use iced::keyboard::{Key, Modifiers};
-    use iced::widget::text_editor::{Content, Edit, KeyPress, Status};
+    use iced::widget::text_editor::{Edit, KeyPress, Status};
+
+    use crate::code_editor::Content;
 
     use iced::widget::text_editor::Binding;
 

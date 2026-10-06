@@ -45,5 +45,15 @@ A copy of the crate, patched, is built into the binaries in place of the publish
   texts are in that directory.
 - The change and its reason are stated in [`vendor/PATCHES.md`](vendor/PATCHES.md).
 
+## iced_widget 0.14.2, text editor, modified
+
+The integrated editor's text widget,
+[`crates/heimdall-ui/src/code_editor.rs`](crates/heimdall-ui/src/code_editor.rs), is
+derived from iced's text editor (`src/text_editor.rs` of iced_widget 0.14.2), with a
+line-number gutter and horizontal scrolling added.
+
+- Copyright 2019 Héctor Ramón, Iced contributors.
+- Licensed under the MIT license; its full text heads that file, and states what changed.
+
 Rust crates linked into the binaries are listed with their licences by
 `cargo deny list`; `deny.toml` holds the licences the project accepts.
