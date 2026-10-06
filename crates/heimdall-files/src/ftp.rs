@@ -31,12 +31,20 @@
 //!   and date as when it started, recorded beside the part file; otherwise it starts over.
 //! - an upload goes to a hidden temporary file beside the target, renamed onto it once
 //!   complete: nobody sees a partial file under the real name.
+//! - a file replaced (an upload asked to, an editor's save) is replaced recoverably, as the
+//!   C# FTP commit: FTP has no rename that replaces on every server, so the old file is
+//!   moved aside to a hidden backup name, the new one renamed onto its name, and the backup
+//!   deleted only then. A failed rename puts the old file back; should that fail too, the
+//!   old file is kept under its backup name, never deleted. Between the two renames, a few
+//!   milliseconds, the name is free. The new file takes the server's permissions for a new
+//!   file: a listing does not always say the old one's, and guessing them could open it up.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, UNIX_EPOCH};
 
 use heimdall_sftp::RemotePath;
+use heimdall_sftp::transfer::Fingerprint;
 use suppaftp::list::{File as Listed, ListParser};
 use suppaftp::tokio::{AsyncRustlsConnector, AsyncRustlsFtpStream};
 use suppaftp::types::{FileType, Mode};
@@ -59,6 +67,18 @@ const RESUME_HEADER: &str = "heimdall-ftp-resume 1";
 
 /// Prefix of an upload's temporary name: hidden, beside the target.
 const UPLOAD_PREFIX: &str = ".heimdall-upload-";
+
+/// Prefix of the name a replaced file is moved aside to until its successor is in place:
+/// hidden, beside it, with a random part.
+const BACKUP_PREFIX: &str = ".heimdall-backup-";
+
+/// Random bytes in a backup's name: two replaces of one file never share it.
+const BACKUP_TOKEN_BYTES: usize = 6;
+
+/// The file type bits of a fingerprint's mode, as POSIX: a folder, a regular file, a link.
+const TYPE_DIRECTORY: u32 = 0o040_000;
+const TYPE_FILE: u32 = 0o100_000;
+const TYPE_LINK: u32 = 0o120_000;
 
 /// Bytes moved at a time, and between two progress reports.
 const CHUNK: usize = 64 * 1024;
@@ -417,6 +437,210 @@ impl FtpClient {
         let mut control = self.control.lock().await;
         upload_locked(self, &mut control, local, remote, replace, cancel, progress).await
     }
+
+    /// What the server says of `path` itself, a link not followed: its kind, size, time,
+    /// permissions and owner, the size and time of a file asked exactly (`SIZE`, `MDTM`)
+    /// when the server answers.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError`] from the server; [`Refusal::NoSuchFile`] when nothing is there.
+    pub async fn fingerprint(&self, path: &RemotePath) -> Result<Fingerprint, RemoteError> {
+        let mut control = self.control.lock().await;
+        self.fingerprint_locked(&mut control, path)
+            .await
+            .map(|(_, fingerprint)| fingerprint)
+    }
+
+    /// The entry at `path` and its fingerprint, with the control connection held.
+    async fn fingerprint_locked(
+        &self,
+        control: &mut AsyncRustlsFtpStream,
+        path: &RemotePath,
+    ) -> Result<(RemoteItem, Fingerprint), RemoteError> {
+        let entry = self
+            .entry_locked(control, path)
+            .await?
+            .ok_or_else(|| refused(Refusal::NoSuchFile))?;
+        let (mut size, mut modified) = (None, None);
+        if entry.kind == ItemKind::File {
+            let name = text(path);
+            size = control
+                .size(&name)
+                .await
+                .ok()
+                .and_then(|size| u64::try_from(size).ok());
+            modified = control
+                .mdtm(&name)
+                .await
+                .ok()
+                .and_then(|date| u32::try_from(date.and_utc().timestamp()).ok());
+        }
+        let fingerprint = Fingerprint {
+            size: size.or(entry.size),
+            modified: modified.or_else(|| {
+                entry
+                    .modified
+                    .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
+                    .and_then(|since| u32::try_from(since.as_secs()).ok())
+            }),
+            // The kind is part of it, as in an SFTP mode: a file become a folder is a change.
+            permissions: Some(type_bits(entry.kind) | entry.permissions.unwrap_or_default()),
+            uid_gid: entry.owner.zip(entry.group),
+        };
+        Ok((entry, fingerprint))
+    }
+
+    /// The regular file `path` read whole, `cap` bytes at most, with the fingerprint of that
+    /// very content: described before and after the read, a change between the two refused.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError::NotAFile`], [`RemoteError::FileTooLarge`] (said by its size, or found
+    /// while reading), [`RemoteError::Changed`], [`RemoteError::Cancelled`], or the server's.
+    pub async fn read_whole(
+        &self,
+        path: &RemotePath,
+        cap: u64,
+        cancel: &CancellationToken,
+    ) -> Result<(Vec<u8>, Fingerprint), RemoteError> {
+        let mut control = self.control.lock().await;
+        let (entry, before) = self.fingerprint_locked(&mut control, path).await?;
+        if entry.kind != ItemKind::File {
+            return Err(RemoteError::NotAFile);
+        }
+        if before.size.is_some_and(|size| size > cap) {
+            return Err(RemoteError::FileTooLarge);
+        }
+        let mut stream = control
+            .retr_as_stream(text(path))
+            .await
+            .map_err(|e| ftp_error(&e))?;
+        let mut data = Vec::new();
+        // One byte past the cap tells a file too large without reading it all.
+        let mut limited = (&mut stream).take(cap.saturating_add(1));
+        let copied = copy(&mut limited, &mut data, 0, cancel, &mut |_| {}).await;
+        // The reply of a read stopped early is a refusal: the file is too large regardless.
+        let finished = stream.finish().await;
+        copied?;
+        if data.len() as u64 > cap {
+            return Err(RemoteError::FileTooLarge);
+        }
+        finished.map_err(|e| ftp_error(&e))?;
+        let (_, after) = self.fingerprint_locked(&mut control, path).await?;
+        if after != before || after.size.is_some_and(|size| size != data.len() as u64) {
+            return Err(RemoteError::Changed);
+        }
+        Ok((data, after))
+    }
+
+    /// Replaces the regular file `path` with `data`, only while it still has the fingerprint
+    /// `expected`: checked first, and again once the data is on the server, just before the
+    /// commit; returns its fingerprint once replaced. The data goes to a hidden temporary
+    /// file beside it, then takes its place recoverably, as the module says.
+    ///
+    /// # Errors
+    ///
+    /// [`RemoteError::Changed`] with the file left as it is,
+    /// [`RemoteError::DestinationNotAFile`], [`RemoteError::Cancelled`], or the server's. The
+    /// temporary file is removed whatever stopped the replace.
+    pub async fn replace_if(
+        &self,
+        path: &RemotePath,
+        data: &[u8],
+        expected: &Fingerprint,
+        cancel: &CancellationToken,
+    ) -> Result<Fingerprint, RemoteError> {
+        let mut control = self.control.lock().await;
+        let temporary = beside(path, UPLOAD_PREFIX.as_bytes());
+        let replaced = async {
+            self.unchanged_locked(&mut control, path, expected).await?;
+            let mut source = data;
+            let mut stream = control
+                .put_with_stream(text(&temporary))
+                .await
+                .map_err(|e| ftp_error(&e))?;
+            let copied = copy(&mut source, &mut stream, 0, cancel, &mut |_| {}).await;
+            let finished = stream.finish().await;
+            copied?;
+            finished.map_err(|e| ftp_error(&e))?;
+            // Checked again once the data is there: the window left is the commit's.
+            self.unchanged_locked(&mut control, path, expected).await?;
+            commit_replace(&mut control, &temporary, path).await
+        }
+        .await;
+        if let Err(error) = replaced {
+            let _ = control.rm(text(&temporary)).await;
+            return Err(error);
+        }
+        self.fingerprint_locked(&mut control, path)
+            .await
+            .map(|(_, fingerprint)| fingerprint)
+    }
+
+    /// Whether `path` is still the regular file `expected` describes.
+    async fn unchanged_locked(
+        &self,
+        control: &mut AsyncRustlsFtpStream,
+        path: &RemotePath,
+        expected: &Fingerprint,
+    ) -> Result<(), RemoteError> {
+        let (entry, now) = self.fingerprint_locked(control, path).await?;
+        if entry.kind != ItemKind::File {
+            return Err(RemoteError::DestinationNotAFile);
+        }
+        if now != *expected {
+            return Err(RemoteError::Changed);
+        }
+        Ok(())
+    }
+}
+
+/// Puts the complete file `temporary` in place of the existing file `target`, recoverably:
+/// `target` moved aside to a hidden backup name, `temporary` renamed onto its name, the
+/// backup deleted only then. A failed rename puts `target` back; should that fail too, the
+/// old file stays under its backup name. `temporary` is left for the caller to remove.
+async fn commit_replace(
+    control: &mut AsyncRustlsFtpStream,
+    temporary: &RemotePath,
+    target: &RemotePath,
+) -> Result<(), RemoteError> {
+    let token = crate::server_copy::random_token().ok_or(RemoteError::ReplaceNotSafe)?;
+    let mut prefix = BACKUP_PREFIX.as_bytes().to_vec();
+    for byte in &token[..BACKUP_TOKEN_BYTES] {
+        prefix.extend_from_slice(format!("{byte:02x}").as_bytes());
+    }
+    prefix.push(b'-');
+    let backup = beside(target, &prefix);
+    control
+        .rename(text(target), text(&backup))
+        .await
+        .map_err(|e| ftp_error(&e))?;
+    if let Err(error) = control.rename(text(temporary), text(target)).await {
+        // The old file back under its name; failing that, kept under the backup name.
+        let _ = control.rename(text(&backup), text(target)).await;
+        return Err(ftp_error(&error));
+    }
+    // A backup left behind, the delete refused, is a stale copy, never the file.
+    let _ = control.rm(text(&backup)).await;
+    Ok(())
+}
+
+/// The hidden name beside `path`: its own name after `prefix`.
+fn beside(path: &RemotePath, prefix: &[u8]) -> RemotePath {
+    let mut name = prefix.to_vec();
+    name.extend_from_slice(path.file_name().unwrap_or_default());
+    path.parent().join(&name)
+}
+
+/// The POSIX file type bits a fingerprint gives an entry of `kind`.
+fn type_bits(kind: ItemKind) -> u32 {
+    match kind {
+        ItemKind::Directory => TYPE_DIRECTORY,
+        ItemKind::File => TYPE_FILE,
+        ItemKind::Link => TYPE_LINK,
+        ItemKind::Other(_) => 0,
+    }
 }
 
 /// Downloads with the control connection held.
@@ -513,10 +737,14 @@ async fn upload_locked(
     if existing.is_some() && !replace {
         return Err(exists());
     }
-    let name = remote.file_name().unwrap_or_default();
-    let mut temporary_name = UPLOAD_PREFIX.as_bytes().to_vec();
-    temporary_name.extend_from_slice(name);
-    let temporary = remote.parent().join(&temporary_name);
+    // Only a regular file is replaced: a folder or a link is left as it is, as over SFTP.
+    if existing
+        .as_ref()
+        .is_some_and(|entry| entry.kind != ItemKind::File)
+    {
+        return Err(RemoteError::DestinationNotAFile);
+    }
+    let temporary = beside(remote, UPLOAD_PREFIX.as_bytes());
     let mut source = tokio::fs::File::open(local)
         .await
         .map_err(|e| local_error(&e))?;
@@ -530,9 +758,11 @@ async fn upload_locked(
         let total = copied?;
         finished.map_err(|e| ftp_error(&e))?;
         if existing.is_some() {
-            // FTP has no atomic replace: the old file goes just before the new one lands.
-            control.rm(text(remote)).await.map_err(|e| ftp_error(&e))?;
-        } else if !replace && client.entry_locked(control, remote).await?.is_some() {
+            // FTP has no atomic replace: the old file is moved aside until the new one lands.
+            commit_replace(control, &temporary, remote).await?;
+            return Ok(total);
+        }
+        if !replace && client.entry_locked(control, remote).await?.is_some() {
             // As the C#: the name is checked again just before the move, since a rename can
             // replace what someone else put there while the data was sent. A file arriving
             // between this check and the move still can: FTP has no exclusive rename.

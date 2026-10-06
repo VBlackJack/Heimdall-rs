@@ -279,6 +279,118 @@ async fn a_file_put_there_by_someone_else_during_an_upload_is_never_replaced() {
 }
 
 #[tokio::test]
+async fn a_file_read_whole_is_replaced_only_while_unchanged_and_nothing_is_left_beside_it() {
+    let root = tempfile::tempdir().expect("root");
+    let file = root.path().join("nginx.conf");
+    std::fs::write(&file, b"listen 80;\n").expect("file");
+    std::fs::create_dir(root.path().join("conf.d")).expect("folder");
+    let session = session(root.path()).await;
+    let top = session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("top");
+    let remote = top.join(b"nginx.conf");
+    let cancel = CancellationToken::new();
+
+    let (data, opened) = session
+        .read_whole(&remote, 1024, &cancel)
+        .await
+        .expect("read");
+    assert_eq!(data, b"listen 80;\n");
+    assert_eq!(opened.size, Some(11));
+    assert_eq!(
+        session.fingerprint(&remote).await.expect("described"),
+        opened,
+        "described the same way twice"
+    );
+    assert_eq!(
+        session.read_whole(&remote, 4, &cancel).await,
+        Err(RemoteError::FileTooLarge)
+    );
+    assert_eq!(
+        session
+            .read_whole(&top.join(b"conf.d"), 1024, &cancel)
+            .await,
+        Err(RemoteError::NotAFile)
+    );
+
+    let saved = session
+        .replace_if(&remote, b"listen 443;\n", &opened, &cancel)
+        .await
+        .expect("replaced");
+    assert_eq!(std::fs::read(&file).expect("read"), b"listen 443;\n");
+    assert_eq!(saved.size, Some(12));
+    let left: Vec<_> = std::fs::read_dir(root.path())
+        .expect("listed")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(left.len(), 2, "no temporary file nor backup left: {left:?}");
+
+    // Over what was first read: the file changed since, left as it is.
+    assert_eq!(
+        session
+            .replace_if(&remote, b"stale\n", &opened, &cancel)
+            .await,
+        Err(RemoteError::Changed)
+    );
+    assert_eq!(std::fs::read(&file).expect("read"), b"listen 443;\n");
+    // Changed by someone else: refused too.
+    std::fs::write(&file, b"listen 8080; # by someone else\n").expect("changed");
+    assert_eq!(
+        session
+            .replace_if(&remote, b"mine\n", &saved, &cancel)
+            .await,
+        Err(RemoteError::Changed)
+    );
+    assert_eq!(
+        std::fs::read(&file).expect("read"),
+        b"listen 8080; # by someone else\n"
+    );
+    // A folder is never replaced.
+    let folder = session
+        .fingerprint(&top.join(b"conf.d"))
+        .await
+        .expect("described");
+    assert_eq!(
+        session
+            .replace_if(&top.join(b"conf.d"), b"x", &folder, &cancel)
+            .await,
+        Err(RemoteError::DestinationNotAFile)
+    );
+    assert!(root.path().join("conf.d").is_dir());
+    let left: Vec<_> = std::fs::read_dir(root.path())
+        .expect("listed")
+        .map(|entry| entry.expect("entry").file_name())
+        .collect();
+    assert_eq!(left.len(), 2, "nothing left by a refusal: {left:?}");
+}
+
+#[tokio::test]
+async fn an_upload_never_replaces_a_folder() {
+    let root = tempfile::tempdir().expect("root");
+    std::fs::create_dir(root.path().join("logs")).expect("folder");
+    let local = tempfile::tempdir().expect("local");
+    let source = local.path().join("logs");
+    std::fs::write(&source, b"a file").expect("source");
+    let session = session(root.path()).await;
+    let top = session
+        .canonical(&RemotePath::from("."))
+        .await
+        .expect("top");
+    let refused = session
+        .upload(
+            &source,
+            &top.join(b"logs"),
+            true,
+            &CancellationToken::new(),
+            |_| {},
+        )
+        .await;
+    assert_eq!(refused, Err(RemoteError::DestinationNotAFile));
+    assert!(root.path().join("logs").is_dir());
+}
+
+#[tokio::test]
 async fn only_a_regular_file_is_downloaded() {
     let root = tempfile::tempdir().expect("root");
     std::fs::create_dir(root.path().join("folder")).expect("folder");
