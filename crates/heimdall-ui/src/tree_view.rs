@@ -25,10 +25,10 @@ use heimdall_app::files::{Direction, Side};
 use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
 use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
-    ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
-    Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
-    RdpMessage, ResolutionChoice, SelectionMessage, SessionState, SessionsMessage, TabGroup, TabId,
-    TabMenuMessage, TreeFilter,
+    ConnectAs, FilesMessage, FilterMessage, FloatMessage, FolderMessage, GatewayBadge,
+    HostKeysMessage, Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind,
+    ProfileMenuMessage, ProfileSummary, RdpMessage, ResolutionChoice, SelectionMessage,
+    SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
 use heimdall_core::folder::FolderColor;
 use heimdall_core::profile::{ProfileId, Resolution, fixed_desktop};
@@ -1252,6 +1252,9 @@ pub struct TabMenuState {
     pub pane: bool,
     /// It is a pane docked in another tab's split: off the strip, it is never pinned.
     pub docked: bool,
+    /// It can be detached to a window of its own: a tab of the strip, not split, not a
+    /// Files tab.
+    pub detach: bool,
     /// What it offers of a split.
     pub split: SplitEntries,
 }
@@ -1540,7 +1543,7 @@ fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
 }
 
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
-/// does: no detach.
+/// does: no "Detach Secondary Pane".
 pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let tab = state.tab;
     let menu = |message| Some(AppMessage::TabMenu(message));
@@ -1616,20 +1619,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     if let Some(profile) = &state.profile {
         entries = profile_tab_entries(entries, tab, profile, state.editable);
     }
-    entries = match state.transcript {
-        TranscriptEntry::Absent => entries,
-        TranscriptEntry::Start(can) => entries.push(separator()).push(entry(
-            fl!("ui-tab-menu-start-transcript"),
-            can.then(|| AppMessage::TabMenu(TabMenuMessage::StartTranscript(tab))),
-        )),
-        TranscriptEntry::Stop => entries.push(separator()).push(entry(
-            fl!("ui-tab-menu-stop-transcript"),
-            menu(TabMenuMessage::StopTranscript(tab)),
-        )),
-    };
-    if let Some(shown) = state.health {
-        entries = entries.push(health_entry(tab, shown));
-    }
+    entries = session_entries(entries, state);
     let close = |group| menu(TabMenuMessage::Close { tab, group });
     entries = entries
         .push(separator())
@@ -1642,6 +1632,36 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             close(TabGroup::Right).filter(|_| state.right),
         ));
     menu_card(split_entries(entries, tab, state.split)).into()
+}
+
+/// A tab's entries after its profile's, in the C# order: "Detach to Window", as the C#
+/// `AppendDetachItem` places it, then the transcript and the server health panel.
+fn session_entries<'a>(
+    mut entries: Column<'a, Message>,
+    state: &TabMenuState,
+) -> Column<'a, Message> {
+    let tab = state.tab;
+    if state.detach {
+        entries = entries.push(separator()).push(entry(
+            fl!("ui-tab-menu-detach"),
+            Some(AppMessage::Float(FloatMessage::Detach(tab))),
+        ));
+    }
+    entries = match state.transcript {
+        TranscriptEntry::Absent => entries,
+        TranscriptEntry::Start(can) => entries.push(separator()).push(entry(
+            fl!("ui-tab-menu-start-transcript"),
+            can.then(|| AppMessage::TabMenu(TabMenuMessage::StartTranscript(tab))),
+        )),
+        TranscriptEntry::Stop => entries.push(separator()).push(entry(
+            fl!("ui-tab-menu-stop-transcript"),
+            Some(AppMessage::TabMenu(TabMenuMessage::StopTranscript(tab))),
+        )),
+    };
+    if let Some(shown) = state.health {
+        entries = entries.push(health_entry(tab, shown));
+    }
+    entries
 }
 
 /// What a tab menu's Disconnect closes: from a pane's header the pane alone, asked as its

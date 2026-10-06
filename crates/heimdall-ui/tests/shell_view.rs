@@ -47,6 +47,9 @@ const GRID: GridSize = GridSize { cols: 80, rows: 24 };
 /// Size of the simulated window, in logical pixels.
 const WINDOW: Size = Size::new(1100.0, 700.0);
 
+/// A window tall enough for a tab's whole menu opened where the pointer was left.
+const TALL_WINDOW: Size = Size::new(1100.0, 1200.0);
+
 /// Environment variable naming a directory for PNG snapshots.
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
@@ -1950,7 +1953,11 @@ fn a_transcript_starts_from_the_tab_menu_and_its_tab_says_rec() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, _) = connected_shell(dir.path());
     let chosen = |shell: &Shell, entry: &str| {
-        let mut ui = simulator(shell);
+        let settings = Settings {
+            fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+            ..Settings::default()
+        };
+        let mut ui = common::simulator(settings, TALL_WINDOW, shell.view());
         ui.click(entry).expect(entry);
         ui.into_messages()
             .filter_map(|message| match message {

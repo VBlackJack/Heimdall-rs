@@ -413,6 +413,8 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 )
             }
             Notice::SplitMaxPanesReached(max) => fl!("ui-split-max-panes-reached", max = (*max)),
+            Notice::DetachSplitRefused => fl!("ui-status-detach-split-refused"),
+            Notice::DetachFilesRefused => fl!("ui-status-detach-files-refused"),
             Notice::ScreenshotCopied => fl!("ui-status-screenshot-copied"),
             Notice::ScreenshotFailed => fl!("ui-status-screenshot-failed"),
             Notice::FingerprintCopied(server) => {

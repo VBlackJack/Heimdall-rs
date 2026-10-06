@@ -3,6 +3,7 @@
 
 ui-window-title = Heimdall
 ui-window-title-tab = { $tab } - Heimdall
+ui-window-title-detached = { $tab } - Separada
 
 ui-sidebar-title = Sesiones
 ui-sidebar-empty = Aún no hay perfiles guardados.
@@ -827,6 +828,8 @@ ui-tab-menu-reset-title = Restablecer título
 ui-tab-menu-fullscreen = Pantalla completa (F11)
 ui-tab-menu-reconnect = Reconectar sesión
 ui-tab-menu-duplicate = Duplicar sesión
+ui-tab-menu-detach = Separar a ventana
+ui-detach-reattach = Volver a adjuntar a la ventana principal
 ui-tab-menu-close-others = Cerrar las demás
 ui-tab-menu-close-right = Cerrar las de la derecha
 ui-split-merge-with = Fusionar con...
@@ -837,6 +840,8 @@ ui-split-swap-panes = Intercambiar paneles
 ui-split-toggle-orientation = Alternar orientación de la división
 ui-split-close-secondary = Cerrar panel secundario
 ui-split-max-panes-reached = Se alcanzó el número máximo de paneles ({ $max }).
+ui-status-detach-split-refused = Una pestaña dividida no se puede mover a su propia ventana. Deshaga primero la división.
+ui-status-detach-files-refused = Una pestaña de archivos todavía no se puede mover a su propia ventana.
 ui-split-menu = Dividir...
 ui-split-palette-hint = Buscar servidor con el que dividir...
 ui-split-drop-to-split = Soltar para dividir
@@ -919,6 +924,7 @@ ui-palette-nothing = Ninguna sesión coincide, y no es un host al que conectarse
 
 ui-status-ready = Listo. Selecciona una sesión para empezar.
 ui-status-connected = Conectado a: { $name }
+ui-status-connected-short = Conectado
 ui-status-state = { $name }: { $state }
 ui-status-connecting = Conectando...
 ui-status-reconnecting = Reconectando...
@@ -1486,6 +1492,7 @@ ui-certificate-already-trusted = { $count ->
    *[other] Este perfil ya confía en otros { $count } certificados para este nombre, lo que normalmente significa que varias máquinas responden a él.
 }
 ui-certificate-route = Alcanzado a través de: { $route }
+ui-certificate-owner-tab = Esta pregunta pertenece a la pestaña "{ $tab }".
 ui-settings-rdp-resolution-presets = Resoluciones predefinidas
 ui-settings-rdp-resolution-presets-hint = Una resolución predefinida por línea, formato ANCHOxALTO (por ejemplo, 1920x1080). Deja el cuadro vacío para usar la lista integrada.
 ui-settings-rdp-resolution-presets-reset = Restablecer valores predeterminados

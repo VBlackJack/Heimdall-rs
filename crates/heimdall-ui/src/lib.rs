@@ -34,6 +34,7 @@ pub mod file_import_view;
 pub mod files_drag;
 mod files_view;
 pub mod finder;
+pub mod floating_view;
 mod gateways_view;
 mod health_view;
 pub mod hostkeys_view;

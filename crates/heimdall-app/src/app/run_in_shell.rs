@@ -139,11 +139,12 @@ impl App {
                 .iter()
                 .position(|tab| tab.id == old && self.can_restart(tab))
         });
+        let keyboard = index.map(|index| self.keyboard_kept(self.tabs[index].id));
         let count = self.tabs.len();
         let effects = self.open_local_built(shell.clone());
         self.reopened_by(Reopen::Script(Box::new(shell)));
-        if let Some(index) = index {
-            self.take_place(index, count);
+        if let (Some(index), Some(keyboard)) = (index, keyboard) {
+            self.take_place(index, count, keyboard);
         }
         effects
     }

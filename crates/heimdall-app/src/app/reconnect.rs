@@ -74,6 +74,15 @@ impl Tab {
     }
 }
 
+/// Where the keyboard goes once a tab is opened again in its place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyboardAfter {
+    /// To the reopened tab.
+    Reopened,
+    /// It stays with this pane, or with none: the tab is detached to a window of its own.
+    Kept(Option<TabId>),
+}
+
 impl App {
     /// Whether `tab` offers Reconnect on its card: its session failed or ended, and what it
     /// ran can run again, its profile still saved.
@@ -108,18 +117,31 @@ impl App {
             self.ask_script(*shell, Some(tab_id));
             return Vec::new();
         }
+        let keyboard = self.keyboard_kept(tab_id);
         let before = self.tabs.len();
         self.replacing = true;
         let effects = self.open_again(reopen, purpose);
         self.replacing = false;
-        self.take_place(index, before);
+        self.take_place(index, before, keyboard);
         effects
+    }
+
+    /// Where the keyboard goes when tab `tab_id` is opened again: it stays with the pane
+    /// that has it now, read before the new tab takes it, when the tab is detached to a
+    /// window of its own, which it stays in; else to the reopened tab.
+    pub(super) fn keyboard_kept(&self, tab_id: TabId) -> KeyboardAfter {
+        if self.is_floating(tab_id) {
+            KeyboardAfter::Kept(self.active)
+        } else {
+            KeyboardAfter::Reopened
+        }
     }
 
     /// Puts the tab opened last, when one opened since there were `count` tabs, in the
     /// place of tab `index`, which is stopped: its title, its pin, its split and what it
-    /// showed go with it.
-    pub(super) fn take_place(&mut self, index: usize, count: usize) {
+    /// showed go with it. The keyboard goes where `keyboard` says, as
+    /// [`App::keyboard_kept`] reads it.
+    pub(super) fn take_place(&mut self, index: usize, count: usize, keyboard: KeyboardAfter) {
         if self.tabs.len() > count
             && index < count
             && let Some(reopened) = self.tabs.pop()
@@ -154,7 +176,10 @@ impl App {
                 files.editor = before.editor.take();
             }
             old.stop();
-            self.active = Some(reopened);
+            self.active = match keyboard {
+                KeyboardAfter::Reopened => Some(reopened),
+                KeyboardAfter::Kept(pane) => pane,
+            };
             self.sync_focus();
         }
     }
