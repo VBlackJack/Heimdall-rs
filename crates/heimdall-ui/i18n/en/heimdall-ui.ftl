@@ -1898,6 +1898,15 @@ ui-status-reordered = Moved { $count } sessions within { $folder }
 ui-status-undo-conflict = Cannot undo: the affected sessions or folders have changed since this action.
 ui-tree-no-folder-zone = Drop here to take it out of its folder
 ui-tree-no-folder-zone-tooltip = Drop a session or a folder here to take it out of its folder.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Remove filter: { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } session
+   *[other] { $total } sessions
+}
+ui-tree-selection-count = { $count } sessions selected
+ui-tree-selection-move = Move
+ui-tree-selection-more = More actions
 ui-tunnels-session-routes = Sessions through a gateway ({ $count })
 ui-tunnels-session-route-local = -
 ui-tunnels-session-route-local-tooltip = Carried inside Heimdall: no local port

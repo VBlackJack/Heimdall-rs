@@ -1939,3 +1939,12 @@ ui-status-reordered = { $count } sessions déplacées dans { $folder }
 ui-status-undo-conflict = Annulation impossible : les sessions ou dossiers concernés ont changé depuis cette action.
 ui-tree-no-folder-zone = Déposer ici pour le sortir de son dossier
 ui-tree-no-folder-zone-tooltip = Déposez une session ou un dossier ici pour le sortir de son dossier.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Retirer le filtre : { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } session
+   *[other] { $total } sessions
+}
+ui-tree-selection-count = { $count } sessions sélectionnées
+ui-tree-selection-move = Déplacer
+ui-tree-selection-more = Autres actions

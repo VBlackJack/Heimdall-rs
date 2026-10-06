@@ -1936,3 +1936,12 @@ ui-status-reordered = Se movieron { $count } sesiones dentro de { $folder }
 ui-status-undo-conflict = No se puede deshacer: las sesiones o carpetas afectadas han cambiado desde esta acción.
 ui-tree-no-folder-zone = Suelta aquí para sacarlo de su carpeta
 ui-tree-no-folder-zone-tooltip = Suelta una sesión o una carpeta aquí para sacarla de su carpeta.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Quitar filtro: { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } sesión
+   *[other] { $total } sesiones
+}
+ui-tree-selection-count = { $count } sesiones seleccionadas
+ui-tree-selection-move = Mover
+ui-tree-selection-more = Más acciones

@@ -3189,8 +3189,11 @@ impl Shell {
         )
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
         container(
-            column![header, actions, self.search_box(), tree]
+            column![header, actions, self.search_box()]
+                .push(self.filter_feedback())
+                .push(tree)
                 .push(self.no_folder_zone())
+                .push(self.selection_bar())
                 .push(self.undo_bar())
                 .spacing(SPACING)
                 .padding(PADDING),
@@ -3301,6 +3304,140 @@ impl Shell {
         .push(error.map(|error| text(error).size(SMALL_SIZE).style(text::danger)))
         .spacing(2.0);
         Some(tree_view::indented(editor.into(), depth))
+    }
+
+    /// Under the search box, as the C# tree's: a chip per search or filter applied, a click
+    /// taking it off; "Reset all filters"; how many sessions pass of how many.
+    fn filter_feedback(&self) -> Option<Element<'_, Message>> {
+        let filter = self.app.tree_filter();
+        let search = self.search.trim();
+        let mut chips: Vec<(String, Message)> = Vec::new();
+        if !search.is_empty() {
+            chips.push((search.to_owned(), Message::Search(String::new())));
+        }
+        let toggle = |message| Message::App(AppMessage::Filter(message));
+        for kind in heimdall_app::ProfileKind::ALL {
+            if filter.has_protocol(kind) {
+                chips.push((
+                    kind.label().to_owned(),
+                    toggle(FilterMessage::Protocol(kind)),
+                ));
+            }
+        }
+        for (on, label, message) in [
+            (
+                filter.favorites(),
+                fl!("ui-tree-filter-favorites"),
+                FilterMessage::Favorites,
+            ),
+            (
+                filter.connected(),
+                fl!("ui-tree-filter-connected"),
+                FilterMessage::Connected,
+            ),
+            (
+                filter.gateway(),
+                fl!("ui-tree-filter-gateway"),
+                FilterMessage::Gateway,
+            ),
+        ] {
+            if on {
+                chips.push((label, toggle(message)));
+            }
+        }
+        if chips.is_empty() {
+            return None;
+        }
+        let chips = row(chips.into_iter().map(|(label, message)| {
+            let remove = fl!("ui-tree-filter-chip-tooltip", filter = label.as_str());
+            tooltip(
+                button(
+                    row![
+                        text(label).size(SMALL_SIZE).wrapping(text::Wrapping::None),
+                        text(fl!("ui-tree-filter-chip-remove")).size(SMALL_SIZE),
+                    ]
+                    .spacing(SPACING / 2.0),
+                )
+                .style(button::secondary)
+                .padding([2.0, 6.0])
+                .on_press(message),
+                text(remove).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into()
+        }))
+        .spacing(SPACING / 2.0)
+        .wrap();
+        let shown = self
+            .app
+            .tree_rows(&self.search)
+            .iter()
+            .filter(|row| matches!(row, TreeRow::Profile { .. }))
+            .count();
+        let total = self.app.profile_summaries().len();
+        Some(
+            column![
+                chips,
+                button(text(fl!("ui-tree-filter-reset")).size(SMALL_SIZE))
+                    .style(button::text)
+                    .padding(0.0)
+                    .on_press(Message::ResetTreeFilters),
+                text(fl!(
+                    "ui-tree-filter-result-count",
+                    shown = shown,
+                    total = total
+                ))
+                .size(SMALL_SIZE)
+                .style(text::secondary),
+            ]
+            .spacing(SPACING / 2.0)
+            .into(),
+        )
+    }
+
+    /// Under the tree while several sessions are selected, as the C# bulk bar: how many,
+    /// then Connect selected, Move and the rest of the selection's menu.
+    fn selection_bar(&self) -> Option<Element<'_, Message>> {
+        let selected = self.app.selected_profiles();
+        if selected.len() < 2 {
+            return None;
+        }
+        let connectable = selected
+            .iter()
+            .filter(|id| self.app.connects_in_bulk(id))
+            .count();
+        let action = |label: String, message: Option<Message>| {
+            button(text(label).size(SMALL_SIZE))
+                .style(button::text)
+                .on_press_maybe(message)
+        };
+        Some(
+            column![
+                text(fl!("ui-tree-selection-count", count = selected.len()))
+                    .size(SMALL_SIZE)
+                    .style(text::secondary),
+                row![
+                    action(
+                        fl!("ui-selection-connect", count = connectable),
+                        (connectable > 0).then_some(Message::App(AppMessage::Selection(
+                            heimdall_app::SelectionMessage::Connect
+                        ))),
+                    ),
+                    action(
+                        fl!("ui-tree-selection-move"),
+                        Some(Message::OpenTreeMenu(TreeMenu::MoveSelection)),
+                    ),
+                    action(
+                        fl!("ui-tree-selection-more"),
+                        Some(Message::OpenTreeMenu(TreeMenu::Selection)),
+                    ),
+                ]
+                .wrap(),
+            ]
+            .spacing(SPACING / 2.0)
+            .into(),
+        )
     }
 
     /// The tree's rows, searched and filtered, and what it says when none passes.
