@@ -67,6 +67,9 @@ pub enum UiError {
     InvalidUsername,
     /// `WinRM` over HTTPS through an SSH gateway, which the C# Heimdall refuses.
     WinRmHttpsThroughGateway,
+    /// Strict server authentication: the RDP server's certificate is neither trusted yet
+    /// nor validated by this computer's certificate authorities.
+    RdpServerNotAuthenticated,
     /// The server is reached through this Remote Desktop Gateway, which the built-in client
     /// does not go through yet.
     NeedsRdGateway(String),

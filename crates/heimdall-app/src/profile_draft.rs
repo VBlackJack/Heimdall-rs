@@ -221,6 +221,9 @@ pub enum ProfileToggle {
     RedirectClipboard,
     /// RDP: share this computer's drives.
     RedirectDrives,
+    /// RDP: never ask about a certificate not trusted yet; this computer's certificate
+    /// authorities decide, as the C# "Require server identity validation".
+    StrictServerAuthentication,
     /// `WinRM`: log in with a stored account rather than the current Windows identity.
     StoredCredential,
     /// `WinRM`: over HTTPS.
@@ -275,6 +278,7 @@ impl ProfileToggle {
                 Self::AntiIdle,
                 Self::AutoReconnect,
                 Self::Nla,
+                Self::StrictServerAuthentication,
                 Self::AdminSession,
                 Self::SeveralServers,
                 Self::Favorite,
@@ -671,6 +675,9 @@ impl ProfileDraft {
         }
         if profile.several_servers {
             toggles.push(ProfileToggle::SeveralServers);
+        }
+        if profile.extras.strict_server_authentication {
+            toggles.push(ProfileToggle::StrictServerAuthentication);
         }
         if profile.anti_idle {
             toggles.push(ProfileToggle::AntiIdle);
@@ -1206,7 +1213,11 @@ impl ProfileDraft {
                 session_logging: self.saved_session_logging(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
-                extras: self.rdp_extras.clone(),
+                extras: RdpExtras {
+                    strict_server_authentication: self
+                        .is_on(ProfileToggle::StrictServerAuthentication),
+                    ..self.rdp_extras.clone()
+                },
                 id,
                 name,
                 group,
@@ -1588,6 +1599,7 @@ mod tests {
                 ProfileToggle::AntiIdle,
                 ProfileToggle::AutoReconnect,
                 ProfileToggle::Nla,
+                ProfileToggle::StrictServerAuthentication,
                 ProfileToggle::AdminSession,
                 // Not in the C# dialog, which always asks: after its boxes.
                 ProfileToggle::SeveralServers,
@@ -2011,6 +2023,20 @@ mod tests {
         );
         form.choose(ProfileChoice::Aspect(Aspect::Standard));
         assert_eq!(form.rdp_options.aspect, Aspect::Standard);
+    }
+
+    #[test]
+    fn strict_server_authentication_is_a_box_of_the_form_and_no_longer_said_unused() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::Rdp);
+        form.name = "dc".to_owned();
+        form.host = "dc.lab".to_owned();
+        form.toggle(ProfileToggle::StrictServerAuthentication, true);
+        let Ok(DraftProfile::Rdp(saved)) = form.to_saved(id()) else {
+            panic!("an RDP profile");
+        };
+        assert!(saved.extras.strict_server_authentication);
+        assert!(saved.extras.unused().is_empty(), "honoured, so not listed");
+        assert!(ProfileDraft::from_rdp(&saved).is_on(ProfileToggle::StrictServerAuthentication));
     }
 
     #[test]

@@ -298,6 +298,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         trusted_for_run: request.trusted_for_run.clone(),
         options: profile.options,
         several_servers: profile.several_servers,
+        strict_server_authentication: profile.extras.strict_server_authentication,
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),
         desktop_scale: request.desktop_scale,
@@ -401,6 +402,7 @@ fn ui_error(error: RdpError) -> UiError {
             detail: error.to_string(),
         },
         RdpError::Authentication(refusal) => UiError::RdpRefused { refusal },
+        RdpError::ServerNotAuthenticated => UiError::RdpServerNotAuthenticated,
         RdpError::Ended(ending) => UiError::RdpEnded {
             ending: safe(ending),
         },

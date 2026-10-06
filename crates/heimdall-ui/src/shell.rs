@@ -6325,6 +6325,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
+        ProfileToggle::StrictServerAuthentication => fl!("ui-profile-toggle-strict-server-auth"),
         ProfileToggle::AntiIdle => fl!("ui-profile-toggle-anti-idle"),
         ProfileToggle::AutoReconnect => fl!("ui-profile-toggle-auto-reconnect"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
