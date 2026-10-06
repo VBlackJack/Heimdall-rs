@@ -1888,6 +1888,26 @@ ui-settings-powershell-policy = PowerShell Execution Policy
 ui-settings-powershell-policy-hint = Applied when launching local PowerShell/pwsh sessions
 ui-settings-powershell-policy-default = Default
 ui-connect-via = via { $route }
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Remove filter: { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } session
+   *[other] { $total } sessions
+}
+ui-tree-selection-count = { $count } sessions selected
+ui-tree-selection-move = Move
+ui-tree-selection-more = More actions
+ui-tunnels-session-routes = Sessions through a gateway ({ $count })
+ui-tunnels-session-route-local = -
+ui-tunnels-session-route-local-tooltip = Carried inside Heimdall: no local port
+ui-tunnels-close-all-tooltip = Closes the tunnels opened by hand; sessions through a gateway stay open
+ui-tab-route-badge = via
+ui-origin-rdp-file = Imported from RDP file
+ui-origin-openssh = Imported from OpenSSH config
+ui-origin-putty = Imported from PuTTY registry
+ui-origin-mremoteng = Imported from mRemoteNG
+ui-origin-mobaxterm = Imported from MobaXterm
+ui-origin-rdcman = Imported from RDCMan
 ui-desktop-shortcuts = Keyboard shortcuts...
 ui-desktop-shares-clipboard = Clipboard
 ui-desktop-shares-clipboard-tooltip = Clipboard redirection

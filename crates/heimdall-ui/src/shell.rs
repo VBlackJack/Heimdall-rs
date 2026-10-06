@@ -2948,17 +2948,17 @@ impl Shell {
                 (!self.sidebar_hidden).then(|| self.sidebar()),
                 (!self.sidebar_hidden).then(splitter),
                 column![self.tab_bar(), self.focusable_content()]
-                    .push(
-                        self.app
-                            .tunnels_panel
-                            .then(|| crate::tunnels_view::panel(&self.app.tunnels)),
-                    )
+                    .push(self.app.tunnels_panel().then(|| {
+                        crate::tunnels_view::panel(&self.app.tunnels, &self.app.session_routes())
+                    }),)
                     .width(Length::Fill)
                     .height(Length::Fill)
             ]
             .height(Length::Fill)
             .into(),
-            Page::Tunnels => crate::tunnels_view::page(&self.app.tunnels),
+            Page::Tunnels => {
+                crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
+            }
             Page::About => scrollable(
                 container(crate::about_view::view(&self.app))
                     .padding(PADDING)
@@ -3091,7 +3091,7 @@ impl Shell {
     fn tunnels_toggle(&self) -> Element<'_, Message> {
         tooltip(
             button(text(fl!("ui-tunnels-count", count = self.app.live_tunnels())).size(SMALL_SIZE))
-                .style(if self.app.tunnels_panel {
+                .style(if self.app.tunnels_panel() {
                     button::primary
                 } else {
                     button::text
@@ -3194,7 +3194,10 @@ impl Shell {
         )
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
         container(
-            column![header, actions, self.search_box(), tree]
+            column![header, actions, self.search_box()]
+                .push(self.filter_feedback())
+                .push(tree)
+                .push(self.selection_bar())
                 .spacing(SPACING)
                 .padding(PADDING),
         )
@@ -3202,6 +3205,140 @@ impl Shell {
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// Under the search box, as the C# tree's: a chip per search or filter applied, a click
+    /// taking it off; "Reset all filters"; how many sessions pass of how many.
+    fn filter_feedback(&self) -> Option<Element<'_, Message>> {
+        let filter = self.app.tree_filter();
+        let search = self.search.trim();
+        let mut chips: Vec<(String, Message)> = Vec::new();
+        if !search.is_empty() {
+            chips.push((search.to_owned(), Message::Search(String::new())));
+        }
+        let toggle = |message| Message::App(AppMessage::Filter(message));
+        for kind in heimdall_app::ProfileKind::ALL {
+            if filter.has_protocol(kind) {
+                chips.push((
+                    kind.label().to_owned(),
+                    toggle(FilterMessage::Protocol(kind)),
+                ));
+            }
+        }
+        for (on, label, message) in [
+            (
+                filter.favorites(),
+                fl!("ui-tree-filter-favorites"),
+                FilterMessage::Favorites,
+            ),
+            (
+                filter.connected(),
+                fl!("ui-tree-filter-connected"),
+                FilterMessage::Connected,
+            ),
+            (
+                filter.gateway(),
+                fl!("ui-tree-filter-gateway"),
+                FilterMessage::Gateway,
+            ),
+        ] {
+            if on {
+                chips.push((label, toggle(message)));
+            }
+        }
+        if chips.is_empty() {
+            return None;
+        }
+        let chips = row(chips.into_iter().map(|(label, message)| {
+            let remove = fl!("ui-tree-filter-chip-tooltip", filter = label.as_str());
+            tooltip(
+                button(
+                    row![
+                        text(label).size(SMALL_SIZE).wrapping(text::Wrapping::None),
+                        text(fl!("ui-tree-filter-chip-remove")).size(SMALL_SIZE),
+                    ]
+                    .spacing(SPACING / 2.0),
+                )
+                .style(button::secondary)
+                .padding([2.0, 6.0])
+                .on_press(message),
+                text(remove).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into()
+        }))
+        .spacing(SPACING / 2.0)
+        .wrap();
+        let shown = self
+            .app
+            .tree_rows(&self.search)
+            .iter()
+            .filter(|row| matches!(row, TreeRow::Profile { .. }))
+            .count();
+        let total = self.app.profile_summaries().len();
+        Some(
+            column![
+                chips,
+                button(text(fl!("ui-tree-filter-reset")).size(SMALL_SIZE))
+                    .style(button::text)
+                    .padding(0.0)
+                    .on_press(Message::ResetTreeFilters),
+                text(fl!(
+                    "ui-tree-filter-result-count",
+                    shown = shown,
+                    total = total
+                ))
+                .size(SMALL_SIZE)
+                .style(text::secondary),
+            ]
+            .spacing(SPACING / 2.0)
+            .into(),
+        )
+    }
+
+    /// Under the tree while several sessions are selected, as the C# bulk bar: how many,
+    /// then Connect selected, Move and the rest of the selection's menu.
+    fn selection_bar(&self) -> Option<Element<'_, Message>> {
+        let selected = self.app.selected_profiles();
+        if selected.len() < 2 {
+            return None;
+        }
+        let connectable = selected
+            .iter()
+            .filter(|id| self.app.connects_in_bulk(id))
+            .count();
+        let action = |label: String, message: Option<Message>| {
+            button(text(label).size(SMALL_SIZE))
+                .style(button::text)
+                .on_press_maybe(message)
+        };
+        Some(
+            column![
+                text(fl!("ui-tree-selection-count", count = selected.len()))
+                    .size(SMALL_SIZE)
+                    .style(text::secondary),
+                row![
+                    action(
+                        fl!("ui-selection-connect", count = connectable),
+                        (connectable > 0).then_some(Message::App(AppMessage::Selection(
+                            heimdall_app::SelectionMessage::Connect
+                        ))),
+                    ),
+                    action(
+                        fl!("ui-tree-selection-move"),
+                        Some(Message::OpenTreeMenu(TreeMenu::MoveSelection)),
+                    ),
+                    action(
+                        fl!("ui-tree-selection-more"),
+                        Some(Message::OpenTreeMenu(TreeMenu::Selection)),
+                    ),
+                ]
+                .wrap(),
+            ]
+            .spacing(SPACING / 2.0)
+            .into(),
+        )
     }
 
     /// The tree's rows, searched and filtered, and what it says when none passes.
@@ -4834,6 +4971,70 @@ impl Shell {
             .into()
     }
 
+    /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
+    /// goes straight.
+    fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
+        let route = self.app.tab_route(tab);
+        if route.is_empty() {
+            return None;
+        }
+        let names = route
+            .iter()
+            .map(|name| server_text(name))
+            .collect::<Vec<_>>()
+            .join(&fl!("ui-route-test-separator"));
+        Some(
+            tooltip(
+                text(fl!("ui-tab-route-badge")).size(SMALL_SIZE),
+                text(fl!("ui-connect-via", route = names)).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into(),
+        )
+    }
+
+    /// What a tab says of itself: its state, protocol and title, then its marks.
+    fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
+        let title = if tab.files.is_some() && tab.custom_title.is_none() {
+            fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
+        } else {
+            tab_label(tab.display_title())
+        };
+        // The session's state and protocol before the name, as the C# tab's dot and icon;
+        // the protocol in the button's own colour, which a secondary one would lose on
+        // both the active and the other tabs.
+        let mut label = row![
+            tree_view::state_dot(Some(SessionState::of(tab))),
+            text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
+            text(title),
+        ]
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center);
+        if tab.pinned {
+            label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+        }
+        // Through gateways, said on the tab while the tunnels panel that lists it is
+        // closed, as the C# tab's tunnel badge; its health is the tab's own dot.
+        if !self.app.tunnels_panel() {
+            label = label.push(self.route_badge(tab));
+        }
+        // A macro recorded from it, or typed into it.
+        if tab.macro_recording.is_some() {
+            label = label.push(
+                text(fl!("ui-tab-recording-badge"))
+                    .size(SMALL_SIZE)
+                    .style(text::danger),
+            );
+        } else if tab.macro_playing.is_some() {
+            label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
+        }
+        if tab.bell && !active {
+            label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+        }
+        label
+    }
+
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
@@ -4851,37 +5052,7 @@ impl Shell {
         }
         for tab in &self.app.tabs {
             let active = self.app.active == Some(tab.id);
-            let title = if tab.files.is_some() && tab.custom_title.is_none() {
-                fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
-            } else {
-                tab_label(tab.display_title())
-            };
-            // The session's state and protocol before the name, as the C# tab's dot and icon;
-            // the protocol in the button's own colour, which a secondary one would lose on
-            // both the active and the other tabs.
-            let mut label = row![
-                tree_view::state_dot(Some(SessionState::of(tab))),
-                text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
-                text(title),
-            ]
-            .spacing(SPACING / 2.0)
-            .align_y(iced::Alignment::Center);
-            if tab.pinned {
-                label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
-            }
-            // A macro recorded from it, or typed into it.
-            if tab.macro_recording.is_some() {
-                label = label.push(
-                    text(fl!("ui-tab-recording-badge"))
-                        .size(SMALL_SIZE)
-                        .style(text::danger),
-                );
-            } else if tab.macro_playing.is_some() {
-                label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
-            }
-            if tab.bell && !active {
-                label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
-            }
+            let mut label = self.tab_title(tab, active);
             let marked = self.app.broadcasting()
                 && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
                 && shows_terminal(tab);
@@ -7254,6 +7425,18 @@ fn profile_form<'a>(
     // The fields scroll; the error and the buttons stay in view under them, as the C#
     // dialog's footer does.
     let mut footer = Column::new().spacing(SPACING);
+    // Above the error, as the C# dialog's footer: where an imported profile came from.
+    if let Some(origin) = draft.metadata_kept.origin {
+        footer = footer.push(
+            text(texts::origin_name(origin))
+                .size(SMALL_SIZE)
+                .style(text::secondary)
+                .font(iced::Font {
+                    style: iced::font::Style::Italic,
+                    ..iced::Font::DEFAULT
+                }),
+        );
+    }
     if let Some(error) = error {
         footer = footer.push(text(texts::draft_error(error)).style(text::danger));
     }

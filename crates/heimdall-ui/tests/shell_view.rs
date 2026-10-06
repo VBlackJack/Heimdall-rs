@@ -3581,3 +3581,101 @@ fn a_tab_pressed_and_dragged_onto_another_takes_its_place() {
     let _ = shell.update(Message::TabDragEnd);
     assert_eq!(order(&shell), [b, a]);
 }
+
+#[test]
+fn a_search_or_a_filter_shows_as_a_chip_with_the_count_it_leaves() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Reset all filters").is_err(), "nothing applied");
+    }
+    let _ = shell.update(Message::Search("a.lab".to_owned()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("1 / 3 sessions").expect("the C# count");
+        ui.find("Reset all filters").expect("the way back");
+        // The search box says it too: the chip is clicked by its cross, the only one with
+        // no tab open.
+        ui.click("\u{2715}").expect("the search's chip");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Search(text) if text.is_empty())),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(Message::Search(String::new()));
+    let _ = shell.update(Message::App(AppMessage::Filter(
+        heimdall_app::FilterMessage::Connected,
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("0 / 3 sessions").expect("none connected");
+    ui.click("Connected").expect("the filter's chip");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages.iter().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Filter(heimdall_app::FilterMessage::Connected))
+        )),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn several_sessions_selected_get_the_csharp_bulk_bar() {
+    use heimdall_app::SelectionMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Selection(
+        SelectionMessage::Toggle(ProfileId::new("a")),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("More actions").is_err(), "one: no bar");
+    }
+    let _ = shell.update(Message::App(AppMessage::Selection(
+        SelectionMessage::Toggle(ProfileId::new("b")),
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("2 sessions selected").expect("the count");
+    ui.find("Connect selected (2)").expect("what Connect opens");
+    ui.click("Move").expect("Move");
+    ui.click("More actions").expect("the rest");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    for menu in [TreeMenu::MoveSelection, TreeMenu::Selection] {
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::OpenTreeMenu(open) if *open == menu)),
+            "{menu:?} in {messages:?}"
+        );
+    }
+}
+
+#[test]
+fn an_imported_profile_carries_its_origin_in_the_tree_and_in_its_form() {
+    use heimdall_core::metadata::ProfileOrigin;
+
+    let dir = tempfile::tempdir().expect("dir");
+    {
+        let shell = Shell::with_app(app(dir.path()));
+        let mut ui = simulator(&shell);
+        assert!(ui.find("PTY").is_err(), "made here: no badge");
+    }
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    assert!(store.set_origin(&ProfileId::new("a"), ProfileOrigin::Putty));
+    store.save().expect("save");
+    let mut shell = Shell::with_app(app(dir.path()));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("PTY").expect("the C# badge code");
+    }
+    let _ = shell.update(Message::App(AppMessage::EditProfile(ProfileId::new("a"))));
+    let mut ui = simulator(&shell);
+    ui.find("Imported from PuTTY registry")
+        .expect("the C# sentence under the form");
+}

@@ -1900,6 +1900,17 @@ ui-status-winrm-certificate-skipped = La validation du certificat TLS WinRM a é
 ui-status-winrm-gateway-ntlm = WinRM par une passerelle : Kerberos n'est pas disponible, l'authentification passe par NTLM.
 ui-winrm-diagnostic-ntlm-loopback = L'authentification WinRM a échoué pour l'identité Windows actuelle. Utilisez un compte enregistré pour localhost ou les hôtes hors domaine.
 ui-winrm-diagnostic-wsman-invalid = WinRM a reçu une réponse WSMan invalide. Si cette session passe par une passerelle, vérifiez que WinRM utilise HTTP dans le tunnel.
+ui-tunnels-session-routes = Sessions via une passerelle ({ $count })
+ui-tunnels-session-route-local = -
+ui-tunnels-session-route-local-tooltip = Acheminé dans Heimdall : aucun port local
+ui-tunnels-close-all-tooltip = Ferme les tunnels ouverts à la main ; les sessions via une passerelle restent ouvertes
+ui-tab-route-badge = via
+ui-origin-rdp-file = Importé depuis un fichier RDP
+ui-origin-openssh = Importé depuis la configuration OpenSSH
+ui-origin-putty = Importé depuis le registre PuTTY
+ui-origin-mremoteng = Importé depuis mRemoteNG
+ui-origin-mobaxterm = Importé depuis MobaXterm
+ui-origin-rdcman = Importé depuis RDCMan
 ui-desktop-shortcuts = Raccourcis clavier...
 ui-desktop-shares-clipboard = Presse-papiers
 ui-desktop-shares-clipboard-tooltip = Redirection du presse-papiers
@@ -1918,3 +1929,12 @@ ui-session-copy-anonymous-button = Copier le rapport anonymisé
 ui-error-report-anonymous-header = Rapport de diagnostic { $protocol } (anonymisé)
 ui-error-report-kind = Échec :
 ui-error-report-anonymous-hint = Contient la date, la version et le type d'échec. Exclut les adresses, les comptes et le texte des erreurs.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Retirer le filtre : { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } session
+   *[other] { $total } sessions
+}
+ui-tree-selection-count = { $count } sessions sélectionnées
+ui-tree-selection-move = Déplacer
+ui-tree-selection-more = Autres actions

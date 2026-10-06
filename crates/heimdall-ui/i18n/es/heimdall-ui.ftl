@@ -1897,6 +1897,17 @@ ui-status-winrm-certificate-skipped = Se omitió la validación del certificado 
 ui-status-winrm-gateway-ntlm = WinRM a través de una puerta de enlace: Kerberos no está disponible, la autenticación pasa a NTLM.
 ui-winrm-diagnostic-ntlm-loopback = La autenticación WinRM falló para la identidad de Windows actual. Use una cuenta guardada para localhost o para hosts fuera del dominio.
 ui-winrm-diagnostic-wsman-invalid = WinRM recibió una respuesta WSMan no válida. Si esta sesión pasa por una puerta de enlace, compruebe que WinRM usa HTTP dentro del túnel.
+ui-tunnels-session-routes = Sesiones a través de una pasarela ({ $count })
+ui-tunnels-session-route-local = -
+ui-tunnels-session-route-local-tooltip = Transportado dentro de Heimdall: sin puerto local
+ui-tunnels-close-all-tooltip = Cierra los túneles abiertos a mano; las sesiones a través de una pasarela siguen abiertas
+ui-tab-route-badge = vía
+ui-origin-rdp-file = Importado desde archivo RDP
+ui-origin-openssh = Importado desde configuración de OpenSSH
+ui-origin-putty = Importado desde el registro de PuTTY
+ui-origin-mremoteng = Importado desde mRemoteNG
+ui-origin-mobaxterm = Importado desde MobaXterm
+ui-origin-rdcman = Importado desde RDCMan
 ui-desktop-shortcuts = Atajos de teclado...
 ui-desktop-shares-clipboard = Portapapeles
 ui-desktop-shares-clipboard-tooltip = Redirección del portapapeles
@@ -1915,3 +1926,12 @@ ui-session-copy-anonymous-button = Copiar informe anonimizado
 ui-error-report-anonymous-header = Informe de diagnóstico { $protocol } (anonimizado)
 ui-error-report-kind = Fallo:
 ui-error-report-anonymous-hint = Incluye la hora, la versión de la aplicación y el tipo de fallo. Excluye direcciones de servidor, nombres de cuenta y texto de mensajes de error.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Quitar filtro: { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } sesión
+   *[other] { $total } sesiones
+}
+ui-tree-selection-count = { $count } sesiones seleccionadas
+ui-tree-selection-move = Mover
+ui-tree-selection-more = Más acciones

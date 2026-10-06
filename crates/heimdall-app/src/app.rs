@@ -1667,6 +1667,11 @@ pub struct Tab {
     auto_answered: Vec<(AttemptId, ProfileId)>,
     /// How the tab opens again, for Reconnect.
     reopen: reconnect::Reopen,
+    /// Whether the tunnels panel was opened or closed while this tab was shown, as the C#
+    /// `TunnelsPanelManualOverride`: it wins over its profile's choice.
+    pub(crate) tunnels_panel: Option<bool>,
+    /// When it opened: a session through a gateway lists it as its route's start.
+    pub(crate) opened: std::time::SystemTime,
     /// Pinned, as the C# tab: before every tab not pinned, and left by "Close others" and
     /// "Close to the right".
     pub pinned: bool,
@@ -1781,6 +1786,8 @@ impl Tab {
             transcript: None,
             health: crate::server_health::HealthPane::default(),
             pinned: false,
+            tunnels_panel: None,
+            opened: std::time::SystemTime::now(),
             reopen: reconnect::Reopen::of(&profile),
             post_connect: None,
             macro_recording: None,
@@ -2415,8 +2422,9 @@ pub struct App {
     next_address_test: u64,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
-    /// Whether the tunnels panel is shown under the sessions.
-    pub tunnels_panel: bool,
+    /// Whether the tunnels panel is shown under the sessions while no session is: as the
+    /// settings say at start, then as it is toggled.
+    tunnels_panel: bool,
     /// The last move a drop in the tree made, to undo.
     last_move: Option<tree_drag::UndoMove>,
     /// The previous run's sessions, until they are offered.
@@ -2623,6 +2631,23 @@ impl App {
             .legacy_dir
             .as_ref()
             .is_some_and(|dir| dir.join(LEGACY_SERVERS_FILE_NAME).is_file())
+    }
+
+    /// Whether the tunnels panel is shown under the sessions, resolved as the C# does it:
+    /// the choice made while the tab shown was, else the one its profile keeps, else the
+    /// window's.
+    #[must_use]
+    pub fn tunnels_panel(&self) -> bool {
+        let Some(tab) = self.active_tab() else {
+            return self.tunnels_panel;
+        };
+        tab.tunnels_panel
+            .or_else(|| {
+                tab.saved_profile()
+                    .and_then(|id| self.store.metadata(id))
+                    .and_then(|metadata| metadata.tunnels_expanded)
+            })
+            .unwrap_or(self.tunnels_panel)
     }
 
     /// The tab shown.
