@@ -19,9 +19,10 @@
 use std::path::Path;
 
 use heimdall_app::rdp_driver::DEFAULT_DESKTOP;
+use heimdall_app::rdp_external::ExternalRefusal;
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, DesktopInput, Effect, Message, Phase, Purpose,
-    TabId, TabProfile, UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, DesktopInput, Effect, Message, Notice, Phase,
+    Purpose, TabId, TabProfile, UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
@@ -1105,16 +1106,98 @@ fn a_desktop_starts_at_the_proportions_its_profile_keeps() {
 }
 
 #[test]
-fn a_server_behind_a_remote_desktop_gateway_is_not_reached_straight() {
+fn a_server_behind_a_remote_desktop_gateway_opens_in_remote_desktop_connection() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app_with(dir.path(), |profile| {
         profile.extras.rd_gateway = Some("rdg.lab".to_owned());
     });
     let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
-    assert!(effects.is_empty(), "nothing connects: {effects:?}");
-    let tab = app.active_tab().expect("the tab says why");
+    let [
+        Effect::LaunchRdpExternal {
+            name,
+            gateway,
+            content,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(name, "Domain controller");
     assert_eq!(
-        tab.phase,
-        Phase::Failed(UiError::NeedsRdGateway("rdg.lab".to_owned()))
+        gateway.as_deref(),
+        Some("rdg.lab"),
+        "the gateway sent it there"
+    );
+    assert!(
+        content.contains("\r\ngatewayhostname:s:rdg.lab\r\n"),
+        "{content}"
+    );
+    assert!(content.contains("\r\nusername:s:admin\r\ndomain:s:LAB\r\n"));
+    assert!(
+        app.tabs.is_empty(),
+        "no tab: the window is Remote Desktop Connection's"
+    );
+
+    app.update(Message::RdpExternalLaunched {
+        name: name.clone(),
+        gateway: gateway.clone(),
+        result: Ok(()),
+    });
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::RdpExternalLaunched {
+            name: "Domain controller".to_owned(),
+            gateway: Some("rdg.lab".to_owned()),
+        })
+    );
+}
+
+#[test]
+fn a_profile_set_to_the_external_client_opens_in_it_and_no_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    // Saved, then read back by the application: the choice is kept.
+    let mut app = app_with(dir.path(), |profile| profile.extras.external = true);
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    let [
+        Effect::LaunchRdpExternal {
+            name,
+            gateway: None,
+            content,
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("{effects:?}");
+    };
+    assert!(content.starts_with("full address:s:dc.lab:3389\r\n"));
+    assert!(
+        !content.lines().any(|line| line.starts_with("password")),
+        "no password: Remote Desktop Connection asks for it"
+    );
+    assert!(app.tabs.is_empty());
+
+    app.update(Message::RdpExternalLaunched {
+        name: name.clone(),
+        gateway: None,
+        result: Err(ExternalRefusal::NotFound),
+    });
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::RdpExternalRefused(ExternalRefusal::NotFound))
+    );
+}
+
+#[test]
+fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), |profile| {
+        profile.extras.external = true;
+        profile.gateway = Some(ProfileId::new("bastion"));
+    });
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(app.tabs.is_empty());
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::RdpExternalRefused(ExternalRefusal::SshGateway))
     );
 }

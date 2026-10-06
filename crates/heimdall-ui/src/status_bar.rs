@@ -219,6 +219,39 @@ fn citrix_notice(notice: &Notice) -> String {
     }
 }
 
+/// What the bar says of an RDP profile opened in Remote Desktop Connection, or not.
+fn rdp_external_notice(notice: &Notice) -> String {
+    use heimdall_app::rdp_external::ExternalRefusal;
+    match notice {
+        Notice::RdpExternalLaunched {
+            name,
+            gateway: None,
+        } => fl!("ui-status-rdp-external-launched", name = server_text(name)),
+        Notice::RdpExternalLaunched {
+            name,
+            gateway: Some(gateway),
+        } => fl!(
+            "ui-status-rdp-external-launched-gateway",
+            name = server_text(name),
+            gateway = server_text(gateway)
+        ),
+        Notice::RdpExternalRefused(refusal) => match refusal {
+            ExternalRefusal::NotWindows => fl!("ui-status-rdp-external-not-windows"),
+            ExternalRefusal::SshGateway => fl!("ui-status-rdp-external-ssh-gateway"),
+            ExternalRefusal::NotFound => fl!("ui-status-rdp-external-not-found"),
+            ExternalRefusal::NotWritten(reason) => fl!(
+                "ui-status-rdp-external-not-written",
+                reason = server_text(reason)
+            ),
+            ExternalRefusal::NotStarted(reason) => fl!(
+                "ui-status-rdp-external-not-started",
+                reason = server_text(reason)
+            ),
+        },
+        _ => String::new(),
+    }
+}
+
 /// What the bar says of a desktop: its size, or the files copied not offered to it.
 fn desktop_notice(notice: &Notice) -> String {
     match notice {
@@ -404,6 +437,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::CitrixLaunching
             | Notice::CitrixLaunched(_)
             | Notice::CitrixRefused(_)) => citrix_notice(notice),
+            notice @ (Notice::RdpExternalLaunched { .. } | Notice::RdpExternalRefused(_)) => {
+                rdp_external_notice(notice)
+            }
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",
@@ -497,6 +533,43 @@ mod tests {
             }),
             "Deletion cancelled: 1 of 4 items deleted."
         );
+    }
+
+    #[test]
+    fn an_rdp_profile_opened_in_remote_desktop_connection_is_said_with_its_reason() {
+        use heimdall_app::rdp_external::ExternalRefusal;
+
+        let said = |notice: Notice| status_text(&SessionStatus::Ready, Some(&notice), 0);
+        assert_eq!(
+            said(Notice::RdpExternalLaunched {
+                name: named("dc"),
+                gateway: None,
+            }),
+            "External client launched: dc opened in Remote Desktop Connection."
+        );
+        let gateway = said(Notice::RdpExternalLaunched {
+            name: named("dc"),
+            gateway: Some(named("rdg.lab")),
+        });
+        assert!(
+            gateway.contains("rdg.lab")
+                && gateway.ends_with("opened in Remote Desktop Connection."),
+            "{gateway}"
+        );
+        assert_eq!(
+            said(Notice::RdpExternalRefused(ExternalRefusal::NotStarted(
+                named("denied")
+            ))),
+            "mstsc.exe did not start: denied"
+        );
+        for refusal in [
+            ExternalRefusal::NotWindows,
+            ExternalRefusal::SshGateway,
+            ExternalRefusal::NotFound,
+            ExternalRefusal::NotWritten(named("full")),
+        ] {
+            assert!(!said(Notice::RdpExternalRefused(refusal)).is_empty());
+        }
     }
 
     #[test]

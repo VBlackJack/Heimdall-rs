@@ -213,6 +213,40 @@ impl std::fmt::Display for AspectChoice {
     }
 }
 
+/// A session mode as the list names it: in a tab, or in Remote Desktop Connection.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct ModeChoice(bool);
+
+impl std::fmt::Display for ModeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&if self.0 {
+            fl!("ui-profile-rdp-mode-external")
+        } else {
+            fl!("ui-profile-rdp-mode-embedded")
+        })
+    }
+}
+
+/// The C# "Session mode" list of `draft`: in a tab, or in Remote Desktop Connection, which
+/// is then explained.
+fn session_mode<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
+    let external = draft.rdp_extras.external;
+    let mut mode = column![
+        text(fl!("ui-profile-rdp-session-mode")).size(LABEL_SIZE),
+        pick_list(
+            [ModeChoice(false), ModeChoice(true)],
+            Some(ModeChoice(external)),
+            |picked: ModeChoice| choice(ProfileChoice::External(picked.0)),
+        )
+        .width(Length::Fill),
+    ]
+    .spacing(SPACING / 2.0);
+    if external {
+        mode = mode.push(text(fl!("ui-profile-rdp-mode-external-desc")).size(LABEL_SIZE));
+    }
+    mode.into()
+}
+
 /// The common sizes the C# dialog offers for a fixed desktop.
 const PRESETS: [(u16, u16); 5] = [
     (1280, 720),
@@ -264,6 +298,7 @@ pub fn resolution<'a>(
         card = card.push(text(fl!("ui-profile-resolution-auto-desc")).size(LABEL_SIZE));
     }
     card = card
+        .push(session_mode(draft))
         .push(text(fl!("ui-profile-aspect-ratio")).size(LABEL_SIZE))
         .push(
             pick_list(

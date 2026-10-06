@@ -154,13 +154,18 @@ impl App {
         self.open_rdp_profile(profile)
     }
 
-    /// Opens an RDP tab for `profile`.
+    /// Opens an RDP tab for `profile`; in Remote Desktop Connection instead when it is set
+    /// to, or names an RD Gateway.
     pub(super) fn open_rdp_profile(&mut self, profile: RdpProfile) -> Vec<Effect> {
+        // With the application's options when the profile follows them, as they are now.
+        let profile = profile.effective(&self.settings.rdp_defaults);
+        // Remote Desktop Connection's window, not a tab: no session counted.
+        if let Some(effects) = self.open_rdp_external(&profile) {
+            return effects;
+        }
         if self.session_limit_reached() {
             return Vec::new();
         }
-        // With the application's options when the profile follows them, as they are now.
-        let profile = profile.effective(&self.settings.rdp_defaults);
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();

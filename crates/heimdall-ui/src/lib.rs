@@ -95,6 +95,9 @@ const MAX_WINDOW_SIDE: f32 = 16_384.0;
 pub fn run() -> iced::Result {
     logging::init(paths::log_dir());
     i18n::init();
+    // The connection files Remote Desktop Connection was given by a run that ended before
+    // removing them, swept beside the start.
+    std::thread::spawn(heimdall_app::rdp_external::sweep_stale);
     // As the window was left: its place and size, and maximized or not. Its place kept, it
     // opens hidden, to be put back there and shown.
     let left = paths::profiles_file()
