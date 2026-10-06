@@ -69,3 +69,37 @@ fn wide_characters_before_an_address_do_not_shift_it() {
     assert_eq!(at(&term, 0, 5).as_deref(), Some("https://jp.lab"));
     assert_eq!(at(&term, 0, 4), None);
 }
+
+#[test]
+fn text_an_application_tied_an_address_to_leads_there_and_is_underlined_apart() {
+    use heimdall_term::Underline;
+
+    let term = shown("go \x1b]8;;https://wiki.lab/page\x1b\\the wiki\x1b]8;;\x1b\\ now\r\n");
+    let link = |col: usize| {
+        term.hyperlink_at(CellPoint {
+            row: 0,
+            col,
+            right_half: false,
+        })
+    };
+    assert_eq!(
+        link(3).as_deref(),
+        Some("https://wiki.lab/page"),
+        "its first letter"
+    );
+    assert_eq!(
+        link(10).as_deref(),
+        Some("https://wiki.lab/page"),
+        "its last"
+    );
+    assert_eq!(link(2), None, "before it");
+    assert_eq!(link(11), None, "after it");
+    // Not a web address in the text: the plain search finds nothing there.
+    assert_eq!(at(&term, 0, 4), None);
+    let screen = term.snapshot();
+    assert_eq!(
+        screen.cell(0, 4).expect("cell").underline,
+        Underline::Dashed
+    );
+    assert_eq!(screen.cell(0, 12).expect("cell").underline, Underline::None);
+}

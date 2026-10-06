@@ -210,6 +210,54 @@ impl ExecutionPolicy {
     }
 }
 
+/// What Ctrl+V does in a terminal. The C# pastes; vim and readline take ^V as "the next
+/// key as it is", which full-screen programs use most.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CtrlVPaste {
+    /// Ctrl+V pastes, as the C# and Windows Terminal.
+    Always,
+    /// Ctrl+V pastes, except while a full-screen program (the alternate screen) is shown,
+    /// which gets ^V.
+    #[default]
+    OutsideFullScreenPrograms,
+    /// Ctrl+V is ^V for the session; Ctrl+Shift+V pastes.
+    Never,
+}
+
+impl CtrlVPaste {
+    /// Every choice, in the order the list shows them.
+    pub const ALL: [Self; 3] = [Self::Always, Self::OutsideFullScreenPrograms, Self::Never];
+
+    /// Its name in the settings file.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Always => "always",
+            Self::OutsideFullScreenPrograms => "outside-full-screen-programs",
+            Self::Never => "never",
+        }
+    }
+
+    /// The choice named `name`; the default for a name not known.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.name() == name.trim())
+            .unwrap_or_default()
+    }
+
+    /// Whether Ctrl+V pastes, the alternate screen shown or not.
+    #[must_use]
+    pub const fn pastes(self, alternate_screen: bool) -> bool {
+        match self {
+            Self::Always => true,
+            Self::OutsideFullScreenPrograms => !alternate_screen,
+            Self::Never => false,
+        }
+    }
+}
+
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
@@ -278,6 +326,8 @@ pub struct Settings {
     pub ssh_agent_preference: AgentPreference,
     /// The execution policy a local `PowerShell` is started with.
     pub powershell_execution_policy: ExecutionPolicy,
+    /// What Ctrl+V does in a terminal.
+    pub ctrl_v_paste: CtrlVPaste,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
@@ -526,6 +576,7 @@ impl Default for Settings {
             external_editor: String::new(),
             ssh_agent_preference: AgentPreference::default(),
             powershell_execution_policy: ExecutionPolicy::default(),
+            ctrl_v_paste: CtrlVPaste::default(),
             collapse_tunnels_panel: true,
             diagnostics_log: true,
             reachability: Reachability::default(),
@@ -727,6 +778,9 @@ struct TerminalSection {
     /// The C# name of the local `PowerShell` execution policy.
     #[serde(default)]
     powershell_execution_policy: Option<String>,
+    /// What Ctrl+V does, by its name.
+    #[serde(default)]
+    ctrl_v_paste: Option<String>,
 }
 
 /// The instant `seconds` after 1970, UTC.
@@ -908,6 +962,12 @@ impl Settings {
                 .as_deref()
                 .map(ExecutionPolicy::named)
                 .unwrap_or_default(),
+            ctrl_v_paste: file
+                .terminal
+                .ctrl_v_paste
+                .as_deref()
+                .map(CtrlVPaste::named)
+                .unwrap_or_default(),
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
@@ -976,6 +1036,7 @@ impl Settings {
                 powershell_execution_policy: Some(
                     self.powershell_execution_policy.name().to_owned(),
                 ),
+                ctrl_v_paste: Some(self.ctrl_v_paste.name().to_owned()),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,

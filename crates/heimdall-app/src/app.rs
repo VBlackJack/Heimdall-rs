@@ -2049,6 +2049,12 @@ pub enum Dialog {
         /// The file, as the question names it.
         name: String,
     },
+    /// Open the address an application tied to a terminal's text with OSC 8: what the
+    /// text says may not be where it leads, so the address itself is shown first.
+    ConfirmOpenLink {
+        /// The address, http or https only.
+        url: String,
+    },
     /// Download a server's file Open found not to be text, as the C# "Binary file"
     /// question offers.
     ConfirmDownloadBinary {
@@ -2372,6 +2378,9 @@ impl Dialog {
                 | Self::Vault(_)
                 | Self::Pin(_)
                 | Self::EditGateway { .. }
+                // A link is opened by a click on its button, never by an Enter meant for the
+                // terminal.
+                | Self::ConfirmOpenLink { .. }
         )
     }
 }
@@ -3404,6 +3413,17 @@ impl App {
             }
             return Vec::new();
         }
+        // Ctrl+click on an OSC 8 link: its address is asked about first, as the text may
+        // hide it; an address neither http nor https is not opened, as the C# policy.
+        if matches!(input.action, MouseAction::Press(MouseButton::Left))
+            && input.modifiers.ctrl
+            && let Some(link) = tab.terminal.hyperlink_at(input.at)
+        {
+            if let Some(url) = crate::external_url::launchable_url(&link) {
+                self.dialog = Some(Dialog::ConfirmOpenLink { url });
+            }
+            return Vec::new();
+        }
         // Ctrl+click on a web address opens it, as the C# terminal does, rather than select.
         if matches!(input.action, MouseAction::Press(MouseButton::Left))
             && input.modifiers.ctrl
@@ -3775,6 +3795,7 @@ impl App {
             Some(Dialog::ConfirmDownloadBinary { tab, remote, .. }) => {
                 self.download_remote(tab, &remote)
             }
+            Some(Dialog::ConfirmOpenLink { url }) => vec![Effect::OpenUrl(url)],
             Some(Dialog::ConfirmDiscardEditor { tab, .. }) => {
                 if let Some(files) = self.files_mut(tab) {
                     files.editor = None;
