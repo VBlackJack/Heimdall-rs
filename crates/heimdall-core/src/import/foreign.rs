@@ -80,6 +80,7 @@ impl Parsed {
         report.telnet.iter_mut().for_each(|p| fresh(&mut p.id));
         report.vnc.iter_mut().for_each(|p| fresh(&mut p.id));
         report.ftp.iter_mut().for_each(|p| fresh(&mut p.id));
+        report.citrix.iter_mut().for_each(|p| fresh(&mut p.id));
         report.local.iter_mut().for_each(|p| fresh(&mut p.id));
         report.winrm.iter_mut().for_each(|p| fresh(&mut p.id));
         // What the sessions say of their servers follows them to their new identifiers.

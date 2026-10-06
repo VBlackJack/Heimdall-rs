@@ -47,6 +47,8 @@ zeroize.workspace = true
 clipboard-win.workspace = true
 # The screens the window is put back on.
 winsafe.workspace = true
+# The computer kept from sleeping while a session is open.
+keepawake.workspace = true
 
 [dev-dependencies]
 # The fake SFTP server of the Files view tests.

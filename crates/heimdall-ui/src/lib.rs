@@ -19,6 +19,7 @@
 mod about_view;
 pub mod address_test_view;
 pub mod agent_chip_view;
+pub mod citrix_form;
 mod conflicts_view;
 mod desktop_texture;
 pub mod desktop_view;
@@ -56,6 +57,7 @@ pub mod sessions_view;
 mod settings_file;
 pub mod shell;
 mod shortcuts_view;
+mod sleep_guard;
 pub mod status_bar;
 mod tab_drag;
 pub mod terminal_view;
@@ -109,7 +111,7 @@ pub fn run() -> iced::Result {
     let maximized = left.maximized && !hidden;
     let application = iced::application(
         move || (Shell::new(), screens::restore(&left)),
-        Shell::update,
+        Shell::step,
         Shell::view,
     )
     .title(Shell::title)

@@ -23,9 +23,9 @@ use heimdall_core::export;
 use heimdall_core::import::csharp::import;
 use heimdall_core::post_connect::{OnFailure, PostConnect, PostConnectStep};
 use heimdall_core::profile::{
-    AudioPlayback, ColorDepth, Forwards, FtpProfile, LocalArguments, LocalCommand, LocalProfile,
-    ProfileId, RdpDefaults, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile,
-    TelnetProfile, VncProfile, WinRmProfile,
+    AudioPlayback, CitrixProfile, ColorDepth, Forwards, FtpProfile, LocalArguments, LocalCommand,
+    LocalProfile, ProfileId, RdpDefaults, RdpOptions, RdpProfile, Resolution, SshGateway,
+    SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 use heimdall_core::store::ProfileStore;
 
@@ -234,6 +234,16 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         tls: true,
         vault_entry: Some("Ftp/Ops".to_owned()),
     }]);
+    store.merge_citrix([CitrixProfile {
+        id: ProfileId::new("mail"),
+        name: "Mail".to_owned(),
+        group: Some("Apps".to_owned()),
+        store_front_url: Some("https://store.lab/Citrix/Store".to_owned()),
+        app_name: Some("Outlook".to_owned()),
+        ica_file: Some(r"C:\apps\mail.ica".to_owned()),
+        seamless: false,
+        sso: true,
+    }]);
     store.merge_local([local(LocalArguments::WindowsLine(
         r#"/c "echo hi""#.to_owned(),
     ))]);
@@ -310,6 +320,11 @@ fn every_profile_comes_back_the_same_through_the_import() {
         "a server asking a password still must"
     );
     assert_eq!(report.ftp, store.ftp_profiles());
+    assert_eq!(report.citrix, store.citrix_profiles());
+    assert!(
+        report.dropped.iter().all(|dropped| dropped.name != "Mail"),
+        "no Workspace cache launch written, none said dropped"
+    );
     assert_eq!(report.local, store.local_profiles());
     assert_eq!(report.winrm, store.winrm_profiles());
     let kept: Vec<_> = report
@@ -321,7 +336,7 @@ fn every_profile_comes_back_the_same_through_the_import() {
     for (id, metadata) in kept {
         assert_eq!(store.metadata(&id), metadata, "{id}");
     }
-    assert_eq!(export::session_count(&store), 10);
+    assert_eq!(export::session_count(&store), 11);
 }
 
 /// A Windows line as written; a list, which this test does not quote, marked.
@@ -371,6 +386,7 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
         ("switch", "Telnet"),
         ("screen", "VNC"),
         ("ftp", "FTP"),
+        ("mail", "Citrix"),
         ("tool", "Local"),
         ("ps", "WINRM"),
     ]
@@ -389,6 +405,19 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
     assert_eq!(by_id("desk")["useDirectConnection"], true);
     assert_eq!(by_id("ps")["winRmIdentityMode"], "Credential");
     assert_eq!(by_id("ps-me")["winRmIdentityMode"], "CurrentUser");
+    let mail = by_id("mail");
+    assert_eq!(
+        mail["citrixStoreFrontUrl"],
+        "https://store.lab/Citrix/Store"
+    );
+    assert_eq!(mail["citrixAppName"], "Outlook");
+    assert_eq!(mail["citrixIcaFilePath"], r"C:\apps\mail.ica");
+    assert_eq!(mail["citrixSeamlessMode"], false);
+    assert_eq!(mail["citrixUseSso"], true);
+    assert!(
+        mail.get("citrixLaunchCommandLine").is_none(),
+        "the Workspace cache launch line is a secret"
+    );
     assert_eq!(by_id("web")["postConnectSteps"][1]["onFailure"], 1);
     assert!(by_id("web").get("postConnectCommand").is_none());
     assert_eq!(document["gateways"][1]["parentGatewayId"], "edge");

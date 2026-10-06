@@ -23,11 +23,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use heimdall_core::post_connect::PostConnect;
 use heimdall_core::profile::{
-    Aspect, AudioPlayback, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT, DEFAULT_TELNET_PORT,
-    DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Experience,
-    FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile, LocalCommand,
-    LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution, SshProfile,
-    TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
+    DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
+    Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile,
+    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
+    SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 use crate::local_draft;
@@ -54,6 +54,12 @@ pub enum ProfileField {
     Host,
     /// Server port.
     Port,
+    /// Citrix: the `StoreFront` address, as the C# `CitrixStoreFrontUrl`.
+    StoreFrontUrl,
+    /// Citrix: the published application's name, as the C# "Application name".
+    AppName,
+    /// Citrix: an ICA file launched instead, as the C# "ICA file path".
+    IcaFile,
     /// User name.
     Username,
     /// Private key file.
@@ -86,11 +92,14 @@ pub enum ProfileField {
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 18] = [
+    pub const ALL: [Self; 21] = [
         Self::Name,
         Self::Group,
         Self::Host,
         Self::Port,
+        Self::StoreFrontUrl,
+        Self::AppName,
+        Self::IcaFile,
         Self::Username,
         Self::Domain,
         Self::KeyPath,
@@ -126,13 +135,15 @@ pub enum DraftProtocol {
     Telnet,
     /// FTP, plain or explicit FTPS: a Files tab.
     Ftp,
+    /// A Citrix Workspace published application, launched outside Heimdall.
+    Citrix,
     /// A shell on this computer.
     Local,
 }
 
 impl DraftProtocol {
     /// Every protocol, in the order the picker shows them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -140,6 +151,7 @@ impl DraftProtocol {
         Self::Vnc,
         Self::Telnet,
         Self::Ftp,
+        Self::Citrix,
         Self::Local,
     ];
 
@@ -158,8 +170,11 @@ impl DraftProtocol {
             | ProfileField::Group
             | ProfileField::Tags
             | ProfileField::MacAddress => true,
-            // A local shell has no server.
-            ProfileField::Host | ProfileField::Port => self != Self::Local,
+            // A local shell has no server; a Citrix application names its own.
+            ProfileField::Host | ProfileField::Port => !self.is_serverless(),
+            ProfileField::StoreFrontUrl | ProfileField::AppName | ProfileField::IcaFile => {
+                self == Self::Citrix
+            }
             ProfileField::LocalProgram
             | ProfileField::LocalArguments
             | ProfileField::WorkingDirectory => self == Self::Local,
@@ -180,6 +195,13 @@ impl DraftProtocol {
             | ProfileField::RemoteBindPort
             | ProfileField::RemoteLocalPort => self.routes_through_gateway() && self != Self::WinRm,
         }
+    }
+
+    /// Whether its profiles have no host and port of their own: a local shell, and a Citrix
+    /// application, which its `StoreFront` or ICA file names.
+    #[must_use]
+    pub fn is_serverless(self) -> bool {
+        matches!(self, Self::Local | Self::Citrix)
     }
 
     /// Whether a password can be saved with this protocol's profiles. A `WinRM` password is
@@ -262,6 +284,11 @@ pub enum ProfileToggle {
     /// RDP: open a dropped desktop again by itself, as the C# "Automatically reconnect",
     /// ticked for a new profile.
     AutoReconnect,
+    /// Citrix: seamless windows, as the C# "Seamless mode", ticked for a new profile.
+    Seamless,
+    /// Citrix: single sign-on with this Windows account's Kerberos identity, as the C# "Use
+    /// SSO (Kerberos)", ticked for a new profile.
+    Sso,
     /// Every protocol: marked as a favorite, as the C# "Mark as favorite"; kept by the
     /// store beside the profile.
     Favorite,
@@ -299,6 +326,7 @@ impl ProfileToggle {
             // No shell to forward the agent to.
             DraftProtocol::Sftp => &[Self::Compression, Self::LegacyAlgorithms, Self::Favorite],
             DraftProtocol::Ftp => &[Self::Passive, Self::Tls, Self::Favorite],
+            DraftProtocol::Citrix => &[Self::Seamless, Self::Sso, Self::Favorite],
             DraftProtocol::Telnet | DraftProtocol::Local => &[Self::Favorite],
         }
     }
@@ -367,6 +395,8 @@ pub enum DraftProfile {
     Local(LocalProfile),
     /// FTP.
     Ftp(FtpProfile),
+    /// Citrix.
+    Citrix(CitrixProfile),
 }
 
 /// What the form holds, as typed.
@@ -432,6 +462,12 @@ pub struct ProfileDraft {
     pub local_arguments: String,
     /// Local: the folder it starts in, as typed.
     pub working_directory: String,
+    /// Citrix: the `StoreFront` address, as typed.
+    pub store_front_url: String,
+    /// Citrix: the published application's name, as typed.
+    pub app_name: String,
+    /// Citrix: the ICA file, as typed.
+    pub ica_file: String,
     /// "Test address": not run, running, or what it found for the address shown.
     pub address_test: AddressTest,
     /// The environment chosen, as the C# Metadata section's; `None` for none.
@@ -601,6 +637,45 @@ impl ProfileDraft {
             .collect(),
             ..Self::default()
         }
+    }
+
+    /// A form filled from a saved Citrix profile.
+    #[must_use]
+    pub fn from_citrix(profile: &CitrixProfile) -> Self {
+        Self {
+            editing: Some(profile.id.clone()),
+            name: profile.name.clone(),
+            group: profile.group.clone().unwrap_or_default(),
+            store_front_url: profile.store_front_url.clone().unwrap_or_default(),
+            app_name: profile.app_name.clone().unwrap_or_default(),
+            ica_file: profile.ica_file.clone().unwrap_or_default(),
+            protocol: DraftProtocol::Citrix,
+            protocol_chosen: true,
+            toggles: [
+                (profile.seamless, ProfileToggle::Seamless),
+                (profile.sso, ProfileToggle::Sso),
+            ]
+            .into_iter()
+            .filter_map(|(on, toggle)| on.then_some(toggle))
+            .collect(),
+            ..Self::default()
+        }
+    }
+
+    /// The Citrix profile this form describes, under `id`: a blank text saved as none, and
+    /// none of them required, as the C# dialog saves them.
+    fn saved_citrix(&self, id: ProfileId, name: String, group: Option<String>) -> DraftProfile {
+        let optional = |text: &str| Some(text.trim().to_owned()).filter(|text| !text.is_empty());
+        DraftProfile::Citrix(CitrixProfile {
+            id,
+            name,
+            group,
+            store_front_url: optional(&self.store_front_url),
+            app_name: optional(&self.app_name),
+            ica_file: optional(&self.ica_file),
+            seamless: self.is_on(ProfileToggle::Seamless),
+            sso: self.is_on(ProfileToggle::Sso),
+        })
     }
 
     /// A form filled from a saved local shell profile.
@@ -797,6 +872,8 @@ impl ProfileDraft {
                 ],
                 // Passive by default, as a new C# FTP profile.
                 DraftProtocol::Ftp => vec![ProfileToggle::Passive],
+                // Seamless and single sign-on by default, as a new C# Citrix profile.
+                DraftProtocol::Citrix => vec![ProfileToggle::Seamless, ProfileToggle::Sso],
                 _ => Vec::new(),
             },
             rdp_options: options,
@@ -1036,6 +1113,9 @@ impl ProfileDraft {
             &self.local_program,
             &self.local_arguments,
             &self.working_directory,
+            &self.store_front_url,
+            &self.app_name,
+            &self.ica_file,
         ]
         .iter()
         .any(|text| text.trim().chars().any(char::is_control))
@@ -1099,10 +1179,11 @@ impl ProfileDraft {
     }
 
     /// The address and port "Test address" dials: what the form holds, checked as a save
-    /// checks them; `None` for a local shell, which has no address, or while they are wrong.
+    /// checks them; `None` for a local shell or a Citrix application, which have no address,
+    /// or while they are wrong.
     #[must_use]
     pub fn test_target(&self) -> Option<(String, u16)> {
-        if self.protocol == DraftProtocol::Local {
+        if self.protocol.is_serverless() {
             return None;
         }
         Some((host(&self.host).ok()?, self.typed_port().ok()?))
@@ -1125,7 +1206,7 @@ impl ProfileDraft {
             DraftProtocol::Telnet => DEFAULT_TELNET_PORT,
             DraftProtocol::WinRm if self.uses_ssl() => DEFAULT_WINRM_HTTPS_PORT,
             DraftProtocol::WinRm => DEFAULT_WINRM_HTTP_PORT,
-            DraftProtocol::Local => NO_PORT,
+            DraftProtocol::Local | DraftProtocol::Citrix => NO_PORT,
             DraftProtocol::Ftp => DEFAULT_FTP_PORT,
         }
     }
@@ -1147,14 +1228,18 @@ impl ProfileDraft {
         if self.has_control_character() {
             return Err(DraftError::ControlCharacter);
         }
-        // A local shell has no server.
-        let local = self.protocol == DraftProtocol::Local;
-        let host = if local {
+        // A local shell has no server; a Citrix application names its own.
+        let serverless = self.protocol.is_serverless();
+        let host = if serverless {
             String::new()
         } else {
             host(&self.host)?
         };
-        let port = if local { NO_PORT } else { self.typed_port()? };
+        let port = if serverless {
+            NO_PORT
+        } else {
+            self.typed_port()?
+        };
         let username = self.checked_username()?;
         if domain.chars().any(|c| c.is_whitespace() || c == '"') {
             return Err(DraftError::DomainInvalid);
@@ -1267,6 +1352,7 @@ impl ProfileDraft {
                 })
             }
             DraftProtocol::Local => self.saved_local(id, name, group)?,
+            DraftProtocol::Citrix => self.saved_citrix(id, name, group),
             DraftProtocol::Ftp => DraftProfile::Ftp(FtpProfile {
                 id,
                 name,
@@ -1297,6 +1383,9 @@ impl ProfileDraft {
             ProfileField::Group => &self.group,
             ProfileField::Host => &self.host,
             ProfileField::Port => &self.port,
+            ProfileField::StoreFrontUrl => &self.store_front_url,
+            ProfileField::AppName => &self.app_name,
+            ProfileField::IcaFile => &self.ica_file,
             ProfileField::Username => &self.username,
             ProfileField::KeyPath => &self.key_path,
             ProfileField::Domain => &self.domain,
@@ -1325,6 +1414,9 @@ impl ProfileDraft {
             ProfileField::Group => &mut self.group,
             ProfileField::Host => &mut self.host,
             ProfileField::Port => &mut self.port,
+            ProfileField::StoreFrontUrl => &mut self.store_front_url,
+            ProfileField::AppName => &mut self.app_name,
+            ProfileField::IcaFile => &mut self.ica_file,
             ProfileField::Username => &mut self.username,
             ProfileField::KeyPath => &mut self.key_path,
             ProfileField::Domain => &mut self.domain,
@@ -1807,9 +1899,10 @@ mod tests {
                 DraftProtocol::Vnc,
                 DraftProtocol::Telnet,
                 DraftProtocol::Ftp,
+                DraftProtocol::Citrix,
                 DraftProtocol::Local,
             ],
-            "the C# picker's order, Citrix aside"
+            "the C# picker's order"
         );
         let mut draft = ProfileDraft::new_for(DraftProtocol::Sftp);
         assert_eq!(draft.port, "22");

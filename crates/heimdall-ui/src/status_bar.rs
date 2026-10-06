@@ -205,6 +205,18 @@ fn save_ended(end: heimdall_rdp::SaveEnd) -> String {
     }
 }
 
+/// What the bar says of a Citrix application's launch.
+fn citrix_notice(notice: &Notice) -> String {
+    match notice {
+        Notice::CitrixLaunching => fl!("ui-status-citrix-launching"),
+        Notice::CitrixLaunched(name) => {
+            fl!("ui-status-citrix-launched", name = server_text(name))
+        }
+        Notice::CitrixRefused(refusal) => crate::texts::citrix_refusal(refusal),
+        _ => String::new(),
+    }
+}
+
 /// What the bar says of a desktop: its size, or the files copied not offered to it.
 fn desktop_notice(notice: &Notice) -> String {
     match notice {
@@ -386,6 +398,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::RdpFilesTooLarge
             | Notice::RdpFilesSaveEnded(_)) => desktop_notice(notice),
             Notice::WinRmCertificateSkipped => fl!("ui-status-winrm-certificate-skipped"),
+            notice @ (Notice::CitrixLaunching
+            | Notice::CitrixLaunched(_)
+            | Notice::CitrixRefused(_)) => citrix_notice(notice),
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",

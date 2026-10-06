@@ -330,6 +330,9 @@ pub struct Settings {
     pub ctrl_v_paste: CtrlVPaste,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
+    /// The computer kept from sleeping while a session is open, as the C#
+    /// `PreventSleepDuringSession`: on.
+    pub prevent_sleep: bool,
     /// Most sessions open at once, as the C# `MaxEmbeddedSessions`; 0 for no limit, the
     /// default here: a session costs no embedded control as the C# one does.
     pub max_sessions: u32,
@@ -593,6 +596,7 @@ impl Default for Settings {
             powershell_execution_policy: ExecutionPolicy::default(),
             ctrl_v_paste: CtrlVPaste::default(),
             collapse_tunnels_panel: true,
+            prevent_sleep: true,
             max_sessions: MAX_SESSIONS_DEFAULT,
             diagnostics_log: true,
             reachability: Reachability::default(),
@@ -770,6 +774,9 @@ struct GeneralSection {
     /// Absent is the C# default: collapsed.
     #[serde(default)]
     collapse_tunnels_panel: Option<bool>,
+    /// Absent is the C# default: on.
+    #[serde(default)]
+    prevent_sleep: Option<bool>,
     /// Absent is no limit.
     #[serde(default)]
     max_sessions: Option<u32>,
@@ -990,6 +997,7 @@ impl Settings {
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
+            prevent_sleep: file.general.prevent_sleep.unwrap_or(true),
             max_sessions: within(
                 file.general.max_sessions,
                 max_sessions_accepted,
@@ -1069,6 +1077,7 @@ impl Settings {
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),
                 collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
+                prevent_sleep: Some(self.prevent_sleep),
                 max_sessions: Some(self.max_sessions),
                 diagnostics_log: Some(self.diagnostics_log),
             },

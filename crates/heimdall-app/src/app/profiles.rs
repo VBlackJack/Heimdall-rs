@@ -113,6 +113,8 @@ impl App {
             ProfileDraft::from_local(profile)
         } else if let Some(profile) = self.store.ftp_profiles().iter().find(|p| p.id == *id) {
             ProfileDraft::from_ftp(profile)
+        } else if let Some(profile) = self.store.citrix_profiles().iter().find(|p| p.id == *id) {
+            ProfileDraft::from_citrix(profile)
         } else {
             return;
         };
@@ -217,6 +219,7 @@ impl App {
                 DraftProfile::WinRm(profile) => store.merge_winrm([profile]),
                 DraftProfile::Telnet(profile) => store.merge_telnet([profile]),
                 DraftProfile::Ftp(profile) => store.merge_ftp([profile]),
+                DraftProfile::Citrix(profile) => store.merge_citrix([profile]),
                 // Written in the form: approved by the one who wrote it, the program as it is
                 // found now, as the C# dialog confirms it when it saves. A program found
                 // nowhere is saved unapproved; opening it says why it cannot run.
@@ -286,6 +289,7 @@ fn saved_id(profile: &DraftProfile) -> &ProfileId {
         DraftProfile::Telnet(profile) => &profile.id,
         DraftProfile::Local(profile) => &profile.id,
         DraftProfile::Ftp(profile) => &profile.id,
+        DraftProfile::Citrix(profile) => &profile.id,
     }
 }
 
@@ -320,6 +324,9 @@ fn password_endpoint(profile: &DraftProfile) -> Option<Endpoint> {
             port: profile.port,
             username: profile.username.clone(),
         }),
-        DraftProfile::WinRm(_) | DraftProfile::Telnet(_) | DraftProfile::Local(_) => None,
+        DraftProfile::WinRm(_)
+        | DraftProfile::Telnet(_)
+        | DraftProfile::Local(_)
+        | DraftProfile::Citrix(_) => None,
     }
 }

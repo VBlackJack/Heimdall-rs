@@ -237,6 +237,16 @@ impl App {
             .map(|renamed| {
                 renamed.map(|renamed| {
                     self.follow_folds(path, &renamed);
+                    // As the C#: offered to undo, the old name kept.
+                    if renamed != folder::normal(path) {
+                        self.last_move = Some((
+                            super::tree_drag::UndoMove::FolderRename {
+                                now: renamed,
+                                was: folder::name(path),
+                            },
+                            std::time::Instant::now(),
+                        ));
+                    }
                 })
             });
         self.after_folder_change(result, naming, value);

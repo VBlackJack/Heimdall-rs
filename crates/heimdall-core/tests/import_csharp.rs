@@ -141,7 +141,7 @@ fn an_rdp_profile_goes_through_its_gateway_unless_direct() {
 #[test]
 fn every_skip_reason_is_reported() {
     let json = servers(
-        r#"{"id": "citrix", "remoteServer": "h", "connectionType": "Citrix"},
+        r#"{"id": "serial", "remoteServer": "h", "connectionType": "Serial"},
            {"id": "gw", "remoteServer": "h", "connectionType": "SSH", "sshGatewayId": "g1"},
            {"id": "nohost", "remoteServer": "  ", "connectionType": "SSH"},
            {"id": "", "remoteServer": "h", "connectionType": "SSH"},
@@ -158,7 +158,7 @@ fn every_skip_reason_is_reported() {
     assert_eq!(
         reasons,
         vec![
-            ("citrix".to_owned(), SkipReason::NotSsh("Citrix".to_owned())),
+            ("serial".to_owned(), SkipReason::NotSsh("Serial".to_owned())),
             // Its gateway is not in the settings, which this import has none of.
             ("gw".to_owned(), SkipReason::MissingGateway),
             ("nohost".to_owned(), SkipReason::MissingHost),
@@ -1194,6 +1194,68 @@ fn an_ftp_profile_is_imported_as_the_csharp_one_reads_it() {
     );
     assert_eq!(report.skipped.len(), 1);
     assert_eq!(report.skipped[0].reason, SkipReason::InvalidPort(70000));
+}
+
+#[test]
+fn a_citrix_profile_is_imported_without_its_workspace_cache_launch() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+    let report = import(
+        &servers(
+            r#"{"id": "mail", "displayName": "Mail", "remoteServer": "", "connectionType": "Citrix",
+                "citrixStoreFrontUrl": "https://store.lab/Citrix/Store", "citrixAppName": "Outlook",
+                "citrixSeamlessMode": false, "citrixUseSso": false,
+                "citrixLaunchCommandLine": "storebrowse.exe -launch secret-ticket"},
+               {"id": "erp", "remoteServer": "", "connectionType": "citrix",
+                "citrixAppName": " ERP ", "citrixIcaFilePath": "C:\\apps\\erp.ica",
+                "citrixStoreFrontUrl": "   "}"#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert_eq!(report.citrix.len(), 2);
+    let mail = &report.citrix[0];
+    assert_eq!(
+        (
+            mail.name.as_str(),
+            mail.store_front_url.as_deref(),
+            mail.app_name.as_deref(),
+            mail.ica_file.as_deref(),
+            mail.seamless,
+            mail.sso
+        ),
+        (
+            "Mail",
+            Some("https://store.lab/Citrix/Store"),
+            Some("Outlook"),
+            None,
+            false,
+            false
+        )
+    );
+    let erp = &report.citrix[1];
+    assert_eq!(
+        (
+            erp.name.as_str(),
+            erp.store_front_url.as_deref(),
+            erp.ica_file.as_deref(),
+            erp.seamless,
+            erp.sso
+        ),
+        ("ERP", None, Some(r"C:\apps\erp.ica"), true, true),
+        "named after its application, the C# defaults on"
+    );
+    assert_eq!(
+        report.dropped,
+        [DroppedSettings {
+            name: "Mail".to_owned(),
+            settings: vec![Dropped::CitrixCacheLaunch],
+        }]
+    );
+    assert!(
+        !format!("{:?}", report.citrix).contains("secret-ticket"),
+        "the launch line is never kept"
+    );
 }
 
 #[test]

@@ -37,11 +37,11 @@ use thiserror::Error;
 use crate::folder::FolderColor;
 use crate::post_connect::{DEFAULT_STEP_DELAY_MS, OnFailure, PostConnect, PostConnectStep};
 use crate::profile::{
-    Aspect, AudioPlayback, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
-    DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT,
-    DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments, LocalCommand, LocalProfile,
-    ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution, SshGateway, SshProfile,
-    TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FIXED_SIZE, DEFAULT_FTP_PORT,
+    DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
+    DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments,
+    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
+    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -61,6 +61,9 @@ const VNC_CONNECTION_TYPE: &str = "VNC";
 
 /// `connectionType` of an FTP profile, compared without case as the C# catalog does.
 const FTP_CONNECTION_TYPE: &str = "FTP";
+
+/// `connectionType` of a Citrix profile, compared without case as the C# catalog does.
+const CITRIX_CONNECTION_TYPE: &str = "Citrix";
 
 /// `connectionType` of a local shell profile, compared without case as the C# trust check
 /// does.
@@ -143,6 +146,9 @@ pub struct ImportReport {
     pub winrm: Vec<WinRmProfile>,
     /// FTP profiles ready to be merged into the store.
     pub ftp: Vec<FtpProfile>,
+    /// Citrix profiles ready to be merged into the store, without their Workspace cache
+    /// launch line, a secret the C# import and export drop too.
+    pub citrix: Vec<CitrixProfile>,
     /// SSH gateways ready to be merged into the store; each one's parent is among them.
     pub gateways: Vec<SshGateway>,
     /// Profiles imported without some of their settings, which Heimdall-rs does not have.
@@ -172,6 +178,7 @@ impl ImportReport {
             .chain(self.telnet.iter().map(|p| p.id.clone()))
             .chain(self.vnc.iter().map(|p| p.id.clone()))
             .chain(self.ftp.iter().map(|p| p.id.clone()))
+            .chain(self.citrix.iter().map(|p| p.id.clone()))
             .chain(self.local.iter().map(|p| p.id.clone()))
             .chain(self.winrm.iter().map(|p| p.id.clone()))
             .collect();
@@ -214,6 +221,9 @@ pub enum Dropped {
     RdpMicrophone,
     /// RDP across several monitors.
     RdpMultiMonitor,
+    /// A Citrix application's launch from the Workspace cache: a secret, never carried by a
+    /// file, as the C# import drops it too.
+    CitrixCacheLaunch,
 }
 
 /// A profile imported without some of its settings.
@@ -418,6 +428,15 @@ struct LegacyServer {
     /// "Enable SSL/TLS (FTPS)"; absent is off.
     #[serde(default)]
     ftp_use_ssl: bool,
+    citrix_store_front_url: Option<String>,
+    citrix_app_name: Option<String>,
+    citrix_ica_file_path: Option<String>,
+    /// Absent is the C# default: on.
+    citrix_seamless_mode: Option<bool>,
+    /// Absent is the C# default: on.
+    citrix_use_sso: Option<bool>,
+    /// Read only to say it is left out: a secret, never kept from a file.
+    citrix_launch_command_line: Option<String>,
     /// The SOCKS5 proxy's local port; 0 opens none.
     socks_proxy_port: Option<i64>,
     /// The post-connect sequence; a null entry is dropped, as the C# migration does.
@@ -647,6 +666,14 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
     .any(|other| kind.eq_ignore_ascii_case(other))
     {
         Vec::new()
+    } else if kind.eq_ignore_ascii_case(CITRIX_CONNECTION_TYPE) {
+        turned_on(&[(
+            server
+                .citrix_launch_command_line
+                .as_deref()
+                .is_some_and(|line| !line.trim().is_empty()),
+            Dropped::CitrixCacheLaunch,
+        )])
     } else {
         turned_on(&[
             (
@@ -840,6 +867,11 @@ pub fn import(
             .eq_ignore_ascii_case(FTP_CONNECTION_TYPE)
         {
             convert_ftp(&server).map(|profile| report.ftp.push(profile))
+        } else if server
+            .connection_type
+            .eq_ignore_ascii_case(CITRIX_CONNECTION_TYPE)
+        {
+            convert_citrix(&server).map(|profile| report.citrix.push(profile))
         } else {
             convert(&server, &known).map(|profile| report.profiles.push(profile))
         };
@@ -1392,6 +1424,37 @@ fn convert_ftp(server: &LegacyServer) -> Result<FtpProfile, SkipReason> {
         passive: server.ftp_passive_mode.unwrap_or(true),
         tls: server.ftp_use_ssl,
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
+    })
+}
+
+/// A Citrix application as the C# profile describes it: its `StoreFront` and name, or an
+/// ICA file. Its Workspace cache launch line is never read from a file.
+fn convert_citrix(server: &LegacyServer) -> Result<CitrixProfile, SkipReason> {
+    if server.id.is_empty() {
+        return Err(SkipReason::MissingId);
+    }
+    // Blank is none, as the C# dialog saves it.
+    let trimmed = |value: Option<&String>| {
+        value
+            .map(|value| value.trim().to_owned())
+            .filter(|value| !value.is_empty())
+    };
+    let app_name = trimmed(server.citrix_app_name.as_ref());
+    Ok(CitrixProfile {
+        id: ProfileId::new(server.id.clone()),
+        name: if server.display_name.trim().is_empty() {
+            app_name
+                .clone()
+                .unwrap_or_else(|| server.remote_server.clone())
+        } else {
+            server.display_name.clone()
+        },
+        group: non_empty(server.group.as_ref()),
+        store_front_url: trimmed(server.citrix_store_front_url.as_ref()),
+        app_name,
+        ica_file: trimmed(server.citrix_ica_file_path.as_ref()),
+        seamless: server.citrix_seamless_mode.unwrap_or(true),
+        sso: server.citrix_use_sso.unwrap_or(true),
     })
 }
 
