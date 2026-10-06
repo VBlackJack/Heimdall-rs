@@ -18,25 +18,22 @@ use std::path::Path;
 
 use heimdall_i18n::GapKind;
 
-/// New text is written in English first and translated later, in batches: a key missing
-/// from another language is a translation still to do, shown in English meanwhile. A key
-/// English does not have is refused: it is dead, or a typo that would never be shown. So is
-/// a translation naming other variables than the English: it would show an error in place
-/// of a value, or leave the value out.
+/// Every text is in English, French and Spanish, as the C# Heimdall ships it: a key missing
+/// from a language would show English to someone who chose another. A key English does not
+/// have is refused too: it is dead, or a typo that would never be shown. So is a translation
+/// naming other variables than the English: it would show an error in place of a value, or
+/// leave the value out.
 #[test]
-fn no_language_holds_a_key_english_lacks_or_other_variables() {
+fn every_language_holds_every_key_with_the_english_variables() {
     let crate_root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let gaps = heimdall_i18n::find_gaps(crate_root, env!("CARGO_PKG_NAME"))
         .expect("every language file exists and parses");
-    let refused: Vec<_> = gaps
+    let missing: Vec<_> = gaps
         .iter()
-        .filter(|gap| gap.kind != GapKind::Missing)
+        .filter(|gap| gap.kind == GapKind::Missing)
         .collect();
-    assert!(refused.is_empty(), "refused: {refused:#?}");
-    let missing = gaps.len() - refused.len();
-    if missing > 0 {
-        eprintln!("translations still to do: {missing}");
-    }
+    assert!(missing.is_empty(), "translations missing: {missing:#?}");
+    assert!(gaps.is_empty(), "refused: {gaps:#?}");
 }
 
 /// French puts 0 in the `one` plural: a variant reading "1 session" would say it of none. So

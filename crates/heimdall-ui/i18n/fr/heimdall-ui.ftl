@@ -1819,3 +1819,85 @@ ui-settings-powershell-policy = Politique d'exécution PowerShell
 ui-settings-powershell-policy-hint = Appliqué au lancement des sessions PowerShell/pwsh locales
 ui-settings-powershell-policy-default = Par défaut
 ui-connect-via = via { $route }
+
+## Translations of text written in English first.
+ui-desktop-anti-idle = Anti-inactivité
+ui-desktop-anti-idle-tooltip = L'anti-inactivité garde cette session ouverte. Cliquez pour le désactiver pour cette session.
+ui-desktop-keys-f11 = F11
+ui-dialog-close-transfers-body = Un transfert de fichiers est en cours sur "{ $name }". Fermer maintenant l'annule. Fermer quand même ?
+ui-dialog-close-transfers-title = Transfert en cours
+ui-dialog-import-host-keys = Serveurs SSH de confiance repris : { $keys ->
+    [one] { $keys } clé
+   *[other] { $keys } clés
+} et { $pins ->
+    [one] { $pins } empreinte
+   *[other] { $pins } empreintes
+}.
+ui-dialog-import-host-keys-failed = Les serveurs SSH de confiance n'ont pas pu être repris : { $detail }
+ui-dialog-paste-dangerous-body = Le texte contient { $command }, une commande qui peut détruire des données ou arrêter la machine. Vérifiez-le avant qu'il n'atteigne le shell.
+ui-dialog-paste-dangerous-confirm = Coller quand même
+ui-dialog-paste-dangerous-title = Coller une commande dangereuse ?
+ui-dialog-session-logging-body = Chaque session de terminal sera écrite dans un fichier : ce que vous tapez comme ce qui s'affiche, y compris les mots de passe ou jetons renvoyés par le terminal. L'activer ?
+ui-dialog-session-logging-confirm = Activer
+ui-dialog-session-logging-title = Enregistrer les transcriptions des sessions ?
+ui-error-winrm-https-gateway = WinRM par une passerelle SSH ne prend pas en charge HTTPS. Utilisez HTTP, ou connectez-vous directement.
+ui-error-winrm-tls-failed = La connexion TLS WinRM vers '{ $host }' sur le port { $port } a échoué (certificat non approuvé ou erreur de négociation).
+ui-error-winrm-unreachable = L'hôte WinRM '{ $host }' est injoignable sur le port { $port } (connexion refusée ou délai dépassé).
+ui-error-winrm-unresolved = Impossible de résoudre l'hôte WinRM '{ $host }'.
+ui-files-back-button = Précédent
+ui-files-conflict-action = Action
+ui-files-conflict-apply = Appliquer
+ui-files-conflict-apply-all = Appliquer à tous :
+ui-files-conflict-destination = Destination
+ui-files-conflict-folder-skip = Ce dossier et tout son contenu prévu seront ignorés.
+ui-files-conflict-hint = Choisissez ce que Heimdall doit faire avant le début du transfert.
+ui-files-conflict-rename = Renommer automatiquement
+ui-files-conflict-replace = Remplacer
+ui-files-conflict-skip = Ignorer
+ui-files-conflict-summary = { $count ->
+    [one] { $count } destination en conflit
+   *[other] { $count } destinations en conflit
+}
+ui-files-conflict-title = Conflits de fichiers
+ui-files-error-destination-not-a-file = Envoi refusé : la destination existe déjà et n'est pas un fichier ordinaire.
+ui-files-error-is-link = Les permissions d'un lien symbolique ne peuvent pas être changées : le serveur changerait celles de sa cible.
+ui-files-error-replace-not-safe = Envoi refusé : la destination existe déjà et le serveur ne peut pas la remplacer sans risque, elle a donc été laissée telle quelle.
+ui-files-home-button = Accueil
+ui-profile-experience = Expérience visuelle
+ui-profile-experience-composition = Activer la composition du bureau
+ui-profile-experience-font-smoothing = Activer le lissage des polices (ClearType)
+ui-profile-experience-no-animations = Désactiver les animations de menu
+ui-profile-experience-no-cursor-shadow = Désactiver l'ombre du curseur
+ui-profile-experience-no-drag = Désactiver le glisser fenêtre complète
+ui-profile-experience-no-themes = Désactiver les thèmes
+ui-profile-experience-no-wallpaper = Désactiver le fond d'écran
+ui-profile-field-passphrase = Passphrase de clé
+ui-profile-legacy-algorithms-hint = Les échanges de clés SHA-1, les chiffrements CBC, HMAC-SHA1 et les clés d'hôte RSA SHA-1 sont proposés après les actuels. À activer uniquement pour un appareil qui ne connaît rien de plus récent.
+ui-profile-passphrase-clear-tooltip = Supprimer la passphrase enregistrée pour cette session
+ui-profile-passphrase-hint = Sert uniquement à déchiffrer la clé SSH choisie. Laissez vide si la clé n'a pas de passphrase ou si un agent SSH la déverrouille.
+ui-profile-passphrase-saved = Passphrase enregistrée
+ui-profile-skip-cert-hint = Désactive la vérification du certificat TLS. À utiliser uniquement pour des hôtes internes de confiance aux certificats auto-signés.
+ui-profile-toggle-anti-idle = Activer le maintien anti-inactivité
+ui-profile-toggle-auto-reconnect = Se reconnecter automatiquement
+ui-profile-toggle-legacy-algorithms = Autoriser les anciens algorithmes pour les vieux appareils
+ui-profile-toggle-several-servers = Plusieurs serveurs répondent à cette adresse : demander pour chaque nouveau certificat
+ui-profile-use-ssl-hint = Utilise WinRM sur HTTPS, normalement le port 5986. HTTP utilise normalement le port 5985.
+ui-profile-winrm-gateway-http = Le SSL WinRM est désactivé quand une passerelle SSH est choisie. WinRM par une passerelle utilise HTTP dans le tunnel SSH local.
+ui-profile-winrm-tls-on-http-port = TLS est activé mais le port est celui par défaut en clair, { $http } ; WinRM sur TLS écoute sur { $https }.
+ui-settings-anti-idle-interval = Intervalle anti-inactivité (0 = désactivé)
+ui-settings-anti-idle-refused = L'intervalle anti-inactivité doit être 0, ou compris entre { $min } et { $max } secondes.
+ui-settings-anti-idle-unit = s
+ui-settings-rdp-auto-reconnect = Reconnexion automatique
+ui-settings-session-logging-record = Enregistrer les transcriptions des sessions (ce que chaque terminal affiche, saisie comprise)
+ui-settings-session-logging-warning = Les transcriptions gardent ce que vous tapez comme ce qui s'affiche, y compris les mots de passe ou jetons renvoyés par le terminal. Gardez le dossier des journaux privé.
+ui-settings-ssh-keep-alive-hint = Fréquence à laquelle Heimdall envoie les maintiens de connexion SSH sur les sessions, SFTP, tunnels et passerelles, pour qu'une connexion inactive ne soit pas coupée par un pare-feu ou le serveur. S'applique aux connexions ouvertes après le changement.
+ui-settings-ssh-keep-alive-interval = Intervalle de maintien SSH
+ui-settings-ssh-keep-alive-refused = L'intervalle de maintien SSH doit être compris entre { $min } et { $max } secondes.
+ui-settings-ssh-session = Session
+ui-settings-ssh-tmout-reset-interval = Intervalle de réinitialisation TMOUT (0 = désactivé)
+ui-settings-ssh-tmout-reset-refused = L'intervalle de réinitialisation TMOUT SSH doit être compris entre { $min } et { $max } secondes.
+ui-status-link-not-a-folder = { $name } ne pointe pas vers un dossier.
+ui-status-winrm-certificate-skipped = La validation du certificat TLS WinRM a été ignorée pour cette session.
+ui-status-winrm-gateway-ntlm = WinRM par une passerelle : Kerberos n'est pas disponible, l'authentification passe par NTLM.
+ui-winrm-diagnostic-ntlm-loopback = L'authentification WinRM a échoué pour l'identité Windows actuelle. Utilisez un compte enregistré pour localhost ou les hôtes hors domaine.
+ui-winrm-diagnostic-wsman-invalid = WinRM a reçu une réponse WSMan invalide. Si cette session passe par une passerelle, vérifiez que WinRM utilise HTTP dans le tunnel.
