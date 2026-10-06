@@ -2393,6 +2393,13 @@ pub enum Dialog {
     },
     /// Forget a key trusted for a server?
     ForgetTrustedKey(TrustedKey),
+    /// Forget every certificate trusted for the server of this one?
+    ForgetTrustedServer {
+        /// A certificate of the server.
+        key: TrustedKey,
+        /// How many certificates are trusted for it.
+        count: usize,
+    },
     /// Add or edit an SSH gateway.
     EditGateway {
         /// What is typed.
@@ -4083,6 +4090,10 @@ impl App {
             }
             Some(Dialog::ForgetTrustedKey(key)) => {
                 self.forget_trusted_key(&key);
+                Vec::new()
+            }
+            Some(Dialog::ForgetTrustedServer { key, .. }) => {
+                self.forget_server_of(&key);
                 Vec::new()
             }
             Some(Dialog::ConfirmExit { .. }) => {

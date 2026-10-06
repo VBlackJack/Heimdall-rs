@@ -184,8 +184,8 @@ impl App {
 
     /// The way past a changed key, as the C# Heimdall's "Accept new key": the key recorded
     /// for the server that presented another is forgotten, and the tab connects again, which
-    /// asks about the new key with its fingerprint before trusting it. For an RDP server's
-    /// own certificate, its record is forgotten the same way.
+    /// asks about the new key with its fingerprint before trusting it. For an RDP or FTPS
+    /// server's own certificate, its record is forgotten the same way.
     pub(super) fn forget_server(&mut self, tab_id: TabId) -> Vec<Effect> {
         let Some(tab) = self.tab(tab_id) else {
             return Vec::new();

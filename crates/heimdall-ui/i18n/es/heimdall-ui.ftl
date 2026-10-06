@@ -1077,8 +1077,13 @@ ui-trusted-certificates-subject = Sujeto
 ui-trusted-certificates-issuer = Emisor
 ui-trusted-certificates-trusted = De confianza desde
 ui-trusted-certificates-forget = Olvidar
+ui-trusted-certificates-forget-server = Olvidar el servidor
 ui-trusted-certificates-empty-title = No hay certificados RDP de confianza
 ui-trusted-certificates-empty-body = Aquí se listan los certificados que aceptas al conectar a un escritorio remoto, y pueden revocarse desde aquí.
+ui-trusted-ftps-certificates-title = Certificados FTPS de confianza
+ui-trusted-ftps-certificates-hint = Certificados aceptados para un servidor FTPS, conservados entre reinicios. Olvidar uno lo quita de la lista de confianza de su servidor.
+ui-trusted-ftps-certificates-empty-title = No hay certificados FTPS de confianza
+ui-trusted-ftps-certificates-empty-body = Aquí se listan los certificados que aceptas al conectar a un servidor FTPS, y pueden revocarse desde aquí.
 ui-trusted-keys-unreadable = No se pudieron leer todas las claves de confianza: { $detail }
 ui-dialog-forget-host-key-title = Quitar clave de host de confianza
 ui-dialog-forget-host-key-body = ¿Quitar la clave de host de confianza de { $server }?
@@ -1089,9 +1094,15 @@ ui-dialog-forget-certificate-title = ¿Olvidar este certificado?
 ui-dialog-forget-certificate-body = Heimdall olvidará el certificado { $fingerprint } de { $server }. Solo afecta a ese certificado; cualquier otro certificado de confianza para el mismo servidor lo sigue siendo.
 ui-dialog-forget-certificate-keep = Mantener
 ui-dialog-forget-certificate-confirm = Olvidar
+ui-dialog-forget-server-certificates-title = ¿Olvidar los certificados de este servidor?
+ui-dialog-forget-server-certificates-body = { $count ->
+    [one] Heimdall olvidará { $count } certificado de confianza para { $server }. La próxima conexión a este servidor volverá a preguntar.
+   *[other] Heimdall olvidará los { $count } certificados de confianza para { $server }. La próxima conexión a este servidor volverá a preguntar.
+}
 ui-status-fingerprint-copied = Huella completa copiada para { $server }.
 ui-status-host-key-removed = Clave de host de confianza quitada para { $server }.
 ui-status-certificate-forgotten = Certificado olvidado para { $server }.
+ui-status-server-certificates-forgotten = Todos los certificados olvidados para { $server }.
 
 ## Tunnels opened by hand, as the C# "New tunnel" dialog and tunnels panel say them.
 ui-tunnel-new-title = Nuevo túnel
