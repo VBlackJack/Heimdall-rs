@@ -24,10 +24,11 @@ mod auth;
 mod protocol;
 mod screen;
 mod session;
+mod tight;
 mod zrle;
 
 pub use auth::PASSWORD_BYTES;
-pub use protocol::{MAX_CUT_TEXT, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
+pub use protocol::{MAX_CUT_TEXT, Quality, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
 pub use screen::{MAX_SIDE, Rect, Screen};
 pub use session::{
     AskPassword, CloseReason, DEFAULT_CONNECT_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT, Framebuffer,

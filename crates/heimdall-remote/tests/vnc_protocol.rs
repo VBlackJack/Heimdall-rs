@@ -17,7 +17,9 @@
 //! The RFB protocol against byte sequences written by hand from RFC 6143, never produced by
 //! the code under test.
 
-use heimdall_remote::vnc::{MAX_CUT_TEXT, Rect, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
+use heimdall_remote::vnc::{
+    MAX_CUT_TEXT, Quality, Rect, Rfb, RfbError, RfbEvent, SecurityPolicy, Version,
+};
 
 const VERSION_3_8: &[u8] = b"RFB 003.008\n";
 
@@ -50,13 +52,23 @@ fn opening_requests(width: u16, height: u16) -> Vec<u8> {
     let mut bytes = vec![
         // SetPixelFormat: 32 bits, depth 24, little-endian, true colour, red lowest.
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
-        // SetEncodings: 7 of them.
-        2, 0, 0, 7,
     ];
-    for encoding in [16_i32, 1, 0, -223, -224, -308, -307] {
+    // Tight first, ZRLE, CopyRect, Raw, the pseudo-encodings; then compression level 6
+    // (-256 + 6) and JPEG quality 6 (-32 + 6), noVNC's, the C# default "Performance".
+    bytes.extend(set_encodings(&[
+        7, 16, 1, 0, -223, -224, -308, -307, -250, -26,
+    ]));
+    bytes.extend_from_slice(&full_request(false, width, height));
+    bytes
+}
+
+/// `SetEncodings` of `encodings`.
+fn set_encodings(encodings: &[i32]) -> Vec<u8> {
+    let mut bytes = vec![2, 0];
+    bytes.extend_from_slice(&u16::try_from(encodings.len()).expect("few").to_be_bytes());
+    for encoding in encodings {
         bytes.extend_from_slice(&encoding.to_be_bytes());
     }
-    bytes.extend_from_slice(&full_request(false, width, height));
     bytes
 }
 
@@ -426,4 +438,85 @@ fn a_server_naming_its_desktop_anew_is_heard() {
         [RfbEvent::Renamed(name.to_owned())],
         "UTF-8, as noVNC reads it"
     );
+}
+
+#[test]
+fn a_quality_asks_its_levels_again_then_the_whole_desktop() {
+    let mut rfb = opened(4, 2);
+    // Best: compression 0 (-256) and no JPEG quality at all.
+    rfb.set_quality(Quality::Best);
+    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -256]);
+    expected.extend(full_request(false, 4, 2));
+    assert_eq!(rfb.take_output(), expected);
+    // The quality asked already: nothing.
+    rfb.set_quality(Quality::Best);
+    assert!(rfb.take_output().is_empty());
+    // Low bandwidth: compression 9 (-247), JPEG quality 3 (-29).
+    rfb.set_quality(Quality::LowBandwidth);
+    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -247, -29]);
+    expected.extend(full_request(false, 4, 2));
+    assert_eq!(rfb.take_output(), expected);
+    assert_eq!(rfb.quality(), Quality::LowBandwidth);
+}
+
+#[test]
+fn a_quality_chosen_before_the_session_opens_is_asked_first() {
+    let mut rfb = Rfb::new(NO_AUTHENTICATION);
+    rfb.set_quality(Quality::Balanced);
+    assert!(rfb.take_output().is_empty(), "nothing before the session");
+    rfb.receive(VERSION_3_8).expect("version");
+    rfb.receive(&[1, 1]).expect("types");
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    let _ = rfb.take_output();
+    rfb.receive(&server_init(4, 2, b"desk")).expect("init");
+    let output = rfb.take_output();
+    // Balanced: compression 3 (-253), JPEG quality 7 (-25), after the pixel format.
+    assert_eq!(
+        output[20..output.len() - 10],
+        set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -253, -25])
+    );
+}
+
+#[test]
+fn tight_rectangles_are_drawn_whole_even_fed_byte_by_byte() {
+    let mut rfb = opened(3, 1);
+    let mut bytes = update(2);
+    // Tight fill: control 0x80, then one green TPIXEL, red green blue.
+    bytes.extend(rect_header(0, 0, 3, 1, 7));
+    bytes.extend_from_slice(&[0x80, 0, 255, 0]);
+    // Tight basic, copy filter implied, 3 bytes: under 12, as is, a blue pixel at 2,0.
+    bytes.extend(rect_header(2, 0, 1, 1, 7));
+    bytes.extend_from_slice(&[0x00, 0, 0, 255]);
+    let mut events = Vec::new();
+    for byte in &bytes {
+        events.extend(rfb.receive(std::slice::from_ref(byte)).expect("fed"));
+    }
+    let whole = Rect {
+        x: 0,
+        y: 0,
+        width: 3,
+        height: 1,
+    };
+    let last = Rect {
+        x: 2,
+        width: 1,
+        ..whole
+    };
+    assert_eq!(events, [RfbEvent::Updated(whole), RfbEvent::Updated(last)]);
+    assert_eq!(pixel(rfb.screen(), 0, 0), [0, 255, 0, 255]);
+    assert_eq!(pixel(rfb.screen(), 1, 0), [0, 255, 0, 255]);
+    assert_eq!(pixel(rfb.screen(), 2, 0), [0, 0, 255, 255]);
+    assert_eq!(rfb.take_output(), full_request(true, 3, 1));
+
+    // TightPNG was not asked for: refused, as a rectangle outside the desktop is.
+    let mut rfb = opened(3, 1);
+    let mut bytes = update(1);
+    bytes.extend(rect_header(0, 0, 1, 1, 7));
+    bytes.extend_from_slice(&[0xa0, 1, 0]);
+    assert!(matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))));
+    let mut rfb = opened(3, 1);
+    let mut bytes = update(1);
+    bytes.extend(rect_header(1, 0, 3, 1, 7));
+    bytes.extend_from_slice(&[0x80, 0, 255, 0]);
+    assert!(matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))));
 }
