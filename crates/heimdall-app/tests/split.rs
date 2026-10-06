@@ -23,7 +23,9 @@ use std::path::Path;
 use std::sync::Arc;
 
 use heimdall_app::files::{EntryKind, RemoteEntry, Side};
-use heimdall_app::split::{Axis, DEFAULT_RATIO, MAX_PANES, MAX_RATIO, MIN_RATIO, SplitMessage};
+use heimdall_app::split::{
+    Axis, DEFAULT_RATIO, MAX_PANES, MAX_RATIO, MIN_RATIO, Placement, SplitMessage,
+};
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, FilesMessage, InputSink, Message,
     Notice, Phase, TabGroup, TabId, TabMenuMessage, TunnelMessage, UiError,
@@ -135,6 +137,7 @@ fn merged(app: &mut App) -> ((TabId, AttemptId), (TabId, AttemptId)) {
             host: a.0,
             tab: b.0,
             axis: Axis::SideBySide,
+            placement: Placement::Second,
         },
     );
     (a, b)
@@ -193,6 +196,7 @@ fn merging_clears_the_pin_and_takes_a_tab_still_connecting() {
             host: a,
             tab: b,
             axis: Axis::Stacked,
+            placement: Placement::Second,
         },
     );
     assert!(
@@ -215,6 +219,7 @@ fn a_merge_is_refused_onto_itself_from_a_split_and_beyond_the_most_panes() {
                 host,
                 tab,
                 axis: Axis::Stacked,
+                placement: Placement::Second,
             },
         );
         assert!(app.tab(c).expect("c").layout.is_none(), "{host:?} {tab:?}");
@@ -228,6 +233,7 @@ fn a_merge_is_refused_onto_itself_from_a_split_and_beyond_the_most_panes() {
             host: a,
             tab: c,
             axis: Axis::Stacked,
+            placement: Placement::Second,
         },
     );
     assert_eq!(layout(&app, a).leaves(), [a, b], "two panes at most");
@@ -405,6 +411,7 @@ fn closing_the_secondary_pane_keeps_the_host() {
             host: a,
             tab: c,
             axis: Axis::SideBySide,
+            placement: Placement::Second,
         },
     );
     split(&mut app, SplitMessage::ClosePane(c));
@@ -518,6 +525,7 @@ fn the_tunnels_panel_and_the_notice_follow_the_tab_shown_not_the_pane_focused() 
             host: a,
             tab: c,
             axis: Axis::Stacked,
+            placement: Placement::Second,
         },
     );
     let said = Some(&Notice::SplitMaxPanesReached(MAX_PANES));
@@ -714,6 +722,7 @@ async fn a_docked_pane_with_unsaved_text_asks_before_its_tab_closes() {
             host: a,
             tab: files,
             axis: Axis::SideBySide,
+            placement: Placement::Second,
         },
     );
     assert!(app.is_docked(files));
@@ -731,4 +740,196 @@ async fn a_docked_pane_with_unsaved_text_asks_before_its_tab_closes() {
     assert!(app.tab(a).is_none() && app.tab(files).is_none());
     assert!(app.tabs.is_empty());
     assert_eq!(app.active, None);
+}
+
+/// The name of the profile tab `id` opened.
+fn name(app: &App, id: TabId) -> String {
+    app.tab(id).expect("tab").profile.name().to_owned()
+}
+
+#[test]
+fn a_tab_merged_first_takes_the_left_or_top_side() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (b, _) = open(&mut app, "b");
+    app.update(Message::SelectTab(a));
+    split(
+        &mut app,
+        SplitMessage::Merge {
+            host: a,
+            tab: b,
+            axis: Axis::Stacked,
+            placement: Placement::First,
+        },
+    );
+    let first = layout(&app, a);
+    assert_eq!(first.leaves(), [b, a], "dropped on the top part: above");
+    assert_eq!(first.axis(), Some(Axis::Stacked));
+    assert_eq!(first.secondary(), Some(a));
+    assert_eq!(strip(&app), [a], "the host keeps its place on the strip");
+    assert_eq!(app.active, Some(a), "the tab shown keeps the keyboard");
+
+    split(&mut app, SplitMessage::Unsplit(a));
+    split(
+        &mut app,
+        SplitMessage::Merge {
+            host: a,
+            tab: b,
+            axis: Axis::SideBySide,
+            placement: Placement::Second,
+        },
+    );
+    assert_eq!(layout(&app, a).leaves(), [a, b], "second, as the C#");
+}
+
+#[test]
+fn open_in_split_merges_the_new_tab_into_the_tab_shown_up_to_the_most_panes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (c, _) = open(&mut app, "c");
+    app.update(Message::SelectTab(a));
+    let effects = split(
+        &mut app,
+        SplitMessage::OpenInSplit {
+            profile: ProfileId::new("b"),
+            axis: Axis::SideBySide,
+        },
+    );
+    assert!(
+        matches!(effects.as_slice(), [Effect::Connect { .. }, ..]),
+        "connecting: {effects:?}"
+    );
+    let opened = layout(&app, a);
+    assert_eq!(opened.axis(), Some(Axis::SideBySide));
+    let [host, b] = opened.leaves()[..] else {
+        panic!("two panes: {opened:?}");
+    };
+    assert_eq!(host, a, "the tab shown before, first");
+    assert_eq!(name(&app, b), "server b");
+    assert_eq!(strip(&app), [a, c], "the new tab never on the strip");
+    assert_eq!(app.active, Some(b), "the new pane has the keyboard");
+
+    // Two panes already: said, and nothing opens.
+    let before = app.tabs.len();
+    let effects = split(
+        &mut app,
+        SplitMessage::OpenInSplit {
+            profile: ProfileId::new("c"),
+            axis: Axis::Stacked,
+        },
+    );
+    assert!(effects.is_empty());
+    assert_eq!(app.tabs.len(), before, "nothing opened");
+    assert_eq!(layout(&app, a).leaves(), [a, b]);
+    assert_eq!(app.notice(), Some(&Notice::SplitMaxPanesReached(MAX_PANES)));
+}
+
+#[test]
+fn open_in_split_merges_nothing_when_the_session_limit_refuses_the_open() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    // No tab shown: nothing to split, nothing opened.
+    let effects = split(
+        &mut app,
+        SplitMessage::OpenInSplit {
+            profile: ProfileId::new("b"),
+            axis: Axis::SideBySide,
+        },
+    );
+    assert!(effects.is_empty() && app.tabs.is_empty());
+
+    app.update(Message::Settings(SettingsMessage::MaxSessions(1)));
+    let (a, _) = open(&mut app, "a");
+    let effects = split(
+        &mut app,
+        SplitMessage::OpenInSplit {
+            profile: ProfileId::new("b"),
+            axis: Axis::SideBySide,
+        },
+    );
+    assert!(effects.is_empty(), "{effects:?}");
+    assert_eq!(app.tabs.len(), 1);
+    assert!(app.tab(a).expect("a").layout.is_none(), "nothing merged");
+    assert_eq!(app.active, Some(a));
+    assert_eq!(app.notice(), Some(&Notice::SessionLimitReached(1)));
+}
+
+#[test]
+fn quick_connect_in_split_mode_merges_what_is_chosen_into_its_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (c, _) = open(&mut app, "c");
+    assert_eq!(app.active, Some(c), "another tab shown");
+    let result = app
+        .quick_results("server b")
+        .into_iter()
+        .next()
+        .expect("found");
+    split(
+        &mut app,
+        SplitMessage::QuickConnect {
+            host: a,
+            axis: Axis::Stacked,
+            result,
+        },
+    );
+    let opened = layout(&app, a);
+    assert_eq!(opened.axis(), Some(Axis::Stacked));
+    let [host, b] = opened.leaves()[..] else {
+        panic!("two panes: {opened:?}");
+    };
+    assert_eq!(host, a);
+    assert_eq!(name(&app, b), "server b");
+    assert_eq!(
+        app.shown_tab().map(|tab| tab.id),
+        Some(a),
+        "the split tab shown"
+    );
+    assert_eq!(app.active, Some(b));
+
+    // A host typed: a session saved nowhere, merged as well.
+    let typed = app
+        .quick_results("root@db.lab")
+        .into_iter()
+        .next()
+        .expect("an SSH destination");
+    split(
+        &mut app,
+        SplitMessage::QuickConnect {
+            host: c,
+            axis: Axis::SideBySide,
+            result: typed,
+        },
+    );
+    let leaves = layout(&app, c).leaves();
+    assert_eq!(leaves.len(), 2);
+    assert_eq!(name(&app, leaves[1]), "db.lab");
+    assert_eq!(strip(&app), [a, c]);
+}
+
+#[test]
+fn the_pane_shortcuts_go_round_the_split_and_leave_a_plain_tab_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let ((a, _), (b, _)) = merged(&mut app);
+    assert_eq!(app.active, Some(b), "the last pane");
+    split(&mut app, SplitMessage::FocusNext(a));
+    assert_eq!(app.active, Some(a), "round to the first");
+    assert_eq!(layout(&app, a).focus, a);
+    split(&mut app, SplitMessage::FocusNext(a));
+    assert_eq!(app.active, Some(b));
+    split(&mut app, SplitMessage::FocusPrevious(a));
+    assert_eq!(app.active, Some(a));
+    split(&mut app, SplitMessage::FocusPrevious(a));
+    assert_eq!(app.active, Some(b), "round to the last");
+
+    let (c, _) = open(&mut app, "c");
+    split(&mut app, SplitMessage::FocusNext(c));
+    split(&mut app, SplitMessage::FocusPrevious(c));
+    assert_eq!(app.active, Some(c), "not split: nothing moves");
 }

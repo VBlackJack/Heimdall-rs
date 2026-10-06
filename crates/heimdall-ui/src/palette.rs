@@ -17,7 +17,8 @@
 //! Quick Connect's window part, as the C# palette draws it: a search field over what it
 //! finds, the one chosen lit; the core decides what is found.
 
-use heimdall_app::QuickResult;
+use heimdall_app::split::Axis;
+use heimdall_app::{QuickResult, TabId};
 use iced::widget::{button, column, container, row, scrollable, text, text_input};
 use iced::{Element, Length};
 
@@ -43,6 +44,9 @@ pub struct Palette {
     pub query: String,
     /// The result chosen, by its place in the list.
     pub chosen: usize,
+    /// Opened from a tab's "Split...": the tab what is chosen is merged into, and how the
+    /// two are placed, as the C# palette's split mode.
+    pub split: Option<(TabId, Axis)>,
 }
 
 /// Widget identifier of the palette's field.
@@ -87,6 +91,11 @@ fn label(result: &QuickResult) -> (String, String) {
 
 /// The palette: its field, and `results`, the one chosen lit.
 pub fn view<'a>(palette: &Palette, results: &[QuickResult]) -> Element<'a, Message> {
+    let placeholder = if palette.split.is_some() {
+        fl!("ui-split-palette-hint")
+    } else {
+        fl!("ui-palette-placeholder")
+    };
     let list = column(results.iter().enumerate().map(|(index, result)| {
         let (title, detail) = label(result);
         button(column![text(title), text(detail).size(DETAIL_SIZE)].spacing(2.0))
@@ -101,7 +110,7 @@ pub fn view<'a>(palette: &Palette, results: &[QuickResult]) -> Element<'a, Messa
     }))
     .spacing(2.0);
     let mut content = column![
-        text_input(&fl!("ui-palette-placeholder"), &palette.query)
+        text_input(&placeholder, &palette.query)
             .id(field_id())
             .on_input(Message::PaletteQuery)
             .on_submit(Message::PaletteChoose(palette.chosen)),

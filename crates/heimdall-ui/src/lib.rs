@@ -62,7 +62,7 @@ mod shortcuts_view;
 mod sleep_guard;
 pub mod split_view;
 pub mod status_bar;
-mod tab_drag;
+pub mod tab_drag;
 pub mod terminal_view;
 mod texts;
 pub mod transcript_lines;

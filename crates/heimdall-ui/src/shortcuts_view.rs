@@ -65,6 +65,8 @@ pub enum Action {
     PreviousTab,
     CloseTab,
     ToggleSplit,
+    NextPane,
+    PreviousPane,
     FindInTerminal,
     TextSize,
     Broadcast,
@@ -117,6 +119,8 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("Ctrl+Shift+Tab, Ctrl+PgUp", Action::PreviousTab),
             ("Ctrl+W, Ctrl+Shift+W", Action::CloseTab),
             ("Ctrl+Shift+O", Action::ToggleSplit),
+            ("Ctrl+Alt+Right, Ctrl+F6", Action::NextPane),
+            ("Ctrl+Alt+Left, Ctrl+Shift+F6", Action::PreviousPane),
         ],
     ),
     (
@@ -188,6 +192,8 @@ pub fn action_text(action: Action) -> String {
         Action::PreviousTab => fl!("ui-shortcuts-previous-tab"),
         Action::CloseTab => fl!("ui-shortcuts-close-tab"),
         Action::ToggleSplit => fl!("ui-shortcuts-toggle-split"),
+        Action::NextPane => fl!("ui-shortcuts-next-pane"),
+        Action::PreviousPane => fl!("ui-shortcuts-previous-pane"),
         Action::FindInTerminal => fl!("ui-shortcuts-find"),
         Action::TextSize => fl!("ui-shortcuts-text-size"),
         Action::Broadcast => fl!("ui-shortcuts-broadcast"),
@@ -268,6 +274,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 38, "every action listed");
+        assert_eq!(actions.len(), 40, "every action listed");
     }
 }

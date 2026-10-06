@@ -72,7 +72,9 @@ use iced::widget::{
     Column, button, center, checkbox, column, container, mouse_area, opaque, operation, pick_list,
     pin, responsive, row, scrollable, stack, text, text_input, tooltip,
 };
-use iced::{Color, Element, Length, Point, Subscription, Task, Theme, event, keyboard, window};
+use iced::{
+    Color, Element, Length, Point, Rectangle, Subscription, Task, Theme, event, keyboard, window,
+};
 use zeroize::Zeroizing;
 
 use crate::desktop_view::DesktopView;
@@ -93,7 +95,7 @@ use crate::tree_view::{
     self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
 };
 use crate::trusted_keys_view::TrustedList;
-use heimdall_app::split::{Layout as SplitLayout, SplitMessage};
+use heimdall_app::split::{Axis, Layout as SplitLayout, MAX_PANES, Placement, SplitMessage};
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -157,6 +159,15 @@ const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Width of the outline round the tab a dragged tab would take the place of.
 const TAB_DROP_EDGE: f32 = 2.0;
+
+/// Width of the border of the "Drop to split" overlay, as the C# `ContentDropZone`'s.
+const SPLIT_DROP_EDGE: f32 = 2.0;
+
+/// Rounding of the "Drop to split" overlay's corners, as the C# one's.
+const SPLIT_DROP_RADIUS: f32 = 4.0;
+
+/// How much of the session under the "Drop to split" overlay it hides.
+const SPLIT_DROP_SHADE: f32 = 0.8;
 
 /// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
 const MIN_FONT_SIZE: f32 = 8.0;
@@ -472,6 +483,14 @@ pub enum Message {
     MenuChoice(AppMessage),
     /// A tab menu's Fullscreen: the menu closes, the tab is shown, full screen.
     MenuFullscreen(TabId),
+    /// A way of a tab menu's "Split...": the menu closes, Quick Connect opens to choose what
+    /// is merged into `host`, as the C# palette's split mode.
+    SplitPalette {
+        /// The tab split.
+        host: TabId,
+        /// How the two are placed.
+        axis: Axis,
+    },
     /// Copy the report of a tab's failure, as the C# card's "Copy error".
     CopyError(TabId),
     /// Copy the anonymized report of tab's failure: no server, account nor message.
@@ -521,6 +540,9 @@ pub enum Message {
     TabDragMoved(Point),
     /// That press is let go.
     TabDragEnd,
+    /// Where the content is drawn, read once a tab is dragged: let go over it, the tab
+    /// splits the tab shown.
+    TabDropArea(Option<Rectangle>),
     /// The pointer moved, a press on an entry held.
     FilesDragMoved(Point),
     /// That press is let go.
@@ -689,6 +711,9 @@ impl fmt::Debug for Message {
             Self::CloseTreeMenu => f.write_str("CloseTreeMenu"),
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
+            Self::SplitPalette { host, axis } => {
+                write!(f, "SplitPalette({}, {axis:?})", host.value())
+            }
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
             Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
@@ -709,6 +734,7 @@ impl fmt::Debug for Message {
             Self::TabHoverLeft(tab) => write!(f, "TabHoverLeft({})", tab.value()),
             Self::TabDragMoved(_) => f.write_str("TabDragMoved"),
             Self::TabDragEnd => f.write_str("TabDragEnd"),
+            Self::TabDropArea(area) => write!(f, "TabDropArea({area:?})"),
             Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
             Self::FilesDragEnd => f.write_str("FilesDragEnd"),
             Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
@@ -957,6 +983,8 @@ pub struct Shell {
     tab_hover: Option<TabId>,
     /// A press on a tab, a drag once the pointer moves.
     tab_drag: Option<crate::tab_drag::TabDrag>,
+    /// Where the content was drawn when that drag started.
+    tab_drop_area: Option<Rectangle>,
     /// The computer kept from sleeping while a session is open.
     sleep_guard: crate::sleep_guard::SleepGuard,
     /// A press in the tree, held: a drag once the pointer moves.
@@ -1208,6 +1236,7 @@ impl Shell {
             files_drag: None,
             tab_hover: None,
             tab_drag: None,
+            tab_drop_area: None,
             sleep_guard: crate::sleep_guard::SleepGuard::new(),
             tree_drag: None,
             sidebar_hidden: false,
@@ -1527,6 +1556,10 @@ impl Shell {
             | Message::ResetTreeFilters) => return self.tree_menu_message(message),
             Message::MenuChoice(message) => self.closing_menu(message),
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
+            Message::SplitPalette { host, axis } => {
+                self.open_palette(Some((host, axis)));
+                Vec::new()
+            }
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::CopyAnonymousError(tab) => {
@@ -1556,9 +1589,10 @@ impl Shell {
                 self.gateway_reassign.insert(missing, to);
                 Vec::new()
             }
+            Message::TabDragMoved(at) => return self.tab_drag_moved(at),
             message @ (Message::TabHover(_)
             | Message::TabHoverLeft(_)
-            | Message::TabDragMoved(_)
+            | Message::TabDropArea(_)
             | Message::TabDragEnd) => self.tab_drag_message(&message),
             message @ (Message::SplitDragged { .. } | Message::SplitReleased { .. }) => {
                 self.split_drag_message(&message)
@@ -2008,6 +2042,11 @@ impl Shell {
                 }
                 AppMessage::Split(SplitMessage::ToggleAxis(shown))
             }
+            // The keyboard to another pane of the split shown; a tab not split keeps it.
+            (WindowShortcut::NextPane, _) => AppMessage::Split(SplitMessage::FocusNext(shown)),
+            (WindowShortcut::PreviousPane, _) => {
+                AppMessage::Split(SplitMessage::FocusPrevious(shown))
+            }
             // Settings and the help: shown above, tab or no tab; a screenshot is taken by
             // the window.
             (WindowShortcut::Settings | WindowShortcut::Help | WindowShortcut::Screenshot, _)
@@ -2126,6 +2165,7 @@ impl Shell {
         let at = match (&menu, &self.menu) {
             (
                 TreeMenu::ConnectAs(_)
+                | TreeMenu::OpenInSplit(_)
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::FolderColor(_)
                 | TreeMenu::MoveProfile(_)
@@ -2909,6 +2949,9 @@ impl Shell {
         if let Some(overlay) = self.drop_overlay() {
             layers = layers.push(overlay);
         }
+        if let Some(overlay) = self.tab_drop_overlay().filter(|_| !locked) {
+            layers = layers.push(overlay);
+        }
         if let Some((entries, at)) = open_menu {
             // A tunnel row is at the window's foot: its menu opens above the cursor.
             let y = if matches!(self.menu, Some((TreeMenu::Tunnel(_), _))) {
@@ -3071,6 +3114,17 @@ impl Shell {
             )
         } else if let TreeMenu::GatewaySelection = menu {
             tree_view::gateway_selection_entries(self.app.gateways())
+        } else if let TreeMenu::OpenInSplit(id) = menu {
+            // Only while the session is saved and a tab is shown to split.
+            self.app.profile_summary(id)?;
+            self.app.shown_tab()?;
+            tree_view::open_in_split_entries(id)
+        } else if let TreeMenu::SplitAxis(tab) = *menu {
+            // Only while the tab is there, not split.
+            if self.app.tab(tab).is_none() || self.app.in_split(tab) {
+                return None;
+            }
+            tree_view::split_axis_entries(tab)
         } else if let TreeMenu::MergeWith(host) = *menu {
             let tabs: Vec<(TabId, String)> = self
                 .app
@@ -3102,6 +3156,8 @@ impl Shell {
                 | TreeMenu::Filter
                 | TreeMenu::Tab(_)
                 | TreeMenu::Pane(_)
+                | TreeMenu::OpenInSplit(_)
+                | TreeMenu::SplitAxis(_)
                 | TreeMenu::MergeWith(_)
                 | TreeMenu::MergeAxis { .. }
                 | TreeMenu::Folder(_)
@@ -3125,7 +3181,8 @@ impl Shell {
                 .as_ref()
                 .map(|p| self.app.connect_as_choices(&p.id))
                 .unwrap_or_default();
-            tree_view::menu_entries(menu, profile.as_ref(), &connect_as, editable)
+            let splittable = self.app.shown_tab().is_some();
+            tree_view::menu_entries(menu, profile.as_ref(), &connect_as, (editable, splittable))
         };
         Some(entries)
     }
@@ -4597,7 +4654,13 @@ impl Shell {
                     .into_iter()
                     .nth(index)
                 {
-                    self.app.update(AppMessage::QuickConnect(result))
+                    // In split mode, merged into the tab its "Split..." was chosen from.
+                    self.app.update(match palette.split {
+                        Some((host, axis)) => {
+                            AppMessage::Split(SplitMessage::QuickConnect { host, axis, result })
+                        }
+                        None => AppMessage::QuickConnect(result),
+                    })
                 } else {
                     // Nothing there: the palette stays for another search.
                     self.palette = Some(palette);
@@ -4609,6 +4672,17 @@ impl Shell {
                 Vec::new()
             }
         }
+    }
+
+    /// Opens Quick Connect, closing the menu: for a session of its own, or, with `split`,
+    /// merged into a tab, as the C# palette's split mode.
+    fn open_palette(&mut self, split: Option<(TabId, Axis)>) {
+        self.menu = None;
+        self.palette = Some(Palette {
+            split,
+            ..Palette::default()
+        });
+        self.focus_next = Some(crate::palette::field_id());
     }
 
     /// A key while Quick Connect is open: the arrows move its choice within its results,
@@ -4638,24 +4712,119 @@ impl Shell {
                     self.tab_hover = None;
                 }
             }
-            Message::TabDragMoved(at) => {
-                if let Some(drag) = self.tab_drag.as_mut() {
-                    drag.moved(at);
+            Message::TabDropArea(area) => {
+                // Only for the drag that asked.
+                if self.tab_drag.is_some_and(|drag| drag.active) {
+                    self.tab_drop_area = area;
                 }
             }
             Message::TabDragEnd => {
-                if let Some(drag) = self.tab_drag.take()
-                    && let Some(onto) = drag.onto(self.tab_hover)
-                {
+                let area = self.tab_drop_area.take();
+                let Some(drag) = self.tab_drag.take() else {
+                    return Vec::new();
+                };
+                if let Some(onto) = drag.onto(self.tab_hover) {
                     return self.app.update(AppMessage::MoveTab {
                         tab: drag.tab,
                         onto,
                     });
                 }
+                // Over the content: the tab shown split, or, full already, said.
+                if let Some((host, (axis, placement))) = self.tab_drop(drag, area) {
+                    return self.app.update(AppMessage::Split(SplitMessage::Merge {
+                        host,
+                        tab: drag.tab,
+                        axis,
+                        placement,
+                    }));
+                }
             }
             _ => {}
         }
         Vec::new()
+    }
+
+    /// The pointer moved, a press on a tab held: once it is a drag, where the content is
+    /// drawn is asked, for a drop there to split the tab shown. The content is not watched
+    /// for the pointer: a terminal or a desktop takes its moves.
+    fn tab_drag_moved(&mut self, at: Point) -> Task<Message> {
+        let Some(drag) = self.tab_drag.as_mut() else {
+            return Task::none();
+        };
+        let started = !drag.active;
+        drag.moved(at);
+        if started && drag.active {
+            return crate::screenshot::area_bounds().map(Message::TabDropArea);
+        }
+        Task::none()
+    }
+
+    /// The tab shown, and how `drag` let go over the content drawn in `area` would split it:
+    /// none over the tab bar, off the content, onto itself, for a tab split already, or
+    /// over another page than the sessions'.
+    fn tab_drop(
+        &self,
+        drag: crate::tab_drag::TabDrag,
+        area: Option<Rectangle>,
+    ) -> Option<(TabId, (Axis, Placement))> {
+        if !drag.active || self.tab_hover.is_some() || self.page != Page::Tab {
+            return None;
+        }
+        let shown = self.app.shown_tab()?;
+        let dragged = self.app.tab(drag.tab)?;
+        if shown.id == drag.tab || dragged.layout.is_some() {
+            return None;
+        }
+        Some((shown.id, crate::tab_drag::drop_zone(area?, drag.at())?))
+    }
+
+    /// "Drop to split" over the half of the content a tab dragged there would take, as the
+    /// C# `ContentDropZone`; none where a drop would not split, nor over a tab split in
+    /// [`MAX_PANES`] already, where a drop says so.
+    fn tab_drop_overlay(&self) -> Option<Element<'_, Message>> {
+        let drag = self.tab_drag?;
+        let area = self.tab_drop_area?;
+        let (host, zone) = self.tab_drop(drag, Some(area))?;
+        if self.app.panes_of(host).len() >= MAX_PANES {
+            return None;
+        }
+        let half = crate::tab_drag::drop_half(area, zone);
+        let label = text(fl!("ui-split-drop-to-split"))
+            .size(HEADING_SIZE)
+            .style(|theme: &Theme| text::Style {
+                color: Some(theme.extended_palette().primary.strong.color),
+            });
+        let zone = container(label)
+            .width(Length::Fixed(half.width))
+            .height(Length::Fixed(half.height))
+            .align_x(iced::alignment::Horizontal::Center)
+            .align_y(iced::alignment::Vertical::Center)
+            .style(|theme: &Theme| {
+                let palette = theme.extended_palette();
+                container::Style {
+                    background: Some(
+                        Color {
+                            a: SPLIT_DROP_SHADE,
+                            ..palette.background.base.color
+                        }
+                        .into(),
+                    ),
+                    border: iced::Border {
+                        color: palette.primary.strong.color,
+                        width: SPLIT_DROP_EDGE,
+                        radius: SPLIT_DROP_RADIUS.into(),
+                    },
+                    ..container::Style::default()
+                }
+            });
+        Some(
+            pin(zone)
+                .x(half.x)
+                .y(half.y)
+                .width(Length::Fill)
+                .height(Length::Fill)
+                .into(),
+        )
     }
 
     fn files_drag_message(&mut self, message: &Message) -> Vec<Effect> {
@@ -4684,6 +4853,7 @@ impl Shell {
                 }
             }
             Message::PointerPressed => {
+                self.tab_drop_area = None;
                 self.tab_drag = self
                     .tab_hover
                     .map(|tab| crate::tab_drag::TabDrag::pressed(tab, self.cursor.get()));
@@ -4903,9 +5073,7 @@ impl Shell {
                 Vec::new()
             }
             TreeShortcut::QuickConnect => {
-                self.menu = None;
-                self.palette = Some(Palette::default());
-                self.focus_next = Some(crate::palette::field_id());
+                self.open_palette(None);
                 Vec::new()
             }
             TreeShortcut::Edit => match self.app.selected_profile.clone() {

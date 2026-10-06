@@ -23,7 +23,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use heimdall_app::BulkField;
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
-use heimdall_app::split::{Axis, SplitMessage};
+use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
     Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
@@ -76,6 +76,8 @@ pub enum TreeMenu {
     Profile(ProfileId),
     /// The "Connect as..." entries of a profile.
     ConnectAs(ProfileId),
+    /// How a profile opens in a split of the tab shown, as the C# "Open in split".
+    OpenInSplit(ProfileId),
     /// The menu of the tree's empty area and of the "+" button.
     Add,
     /// The "..." button's menu.
@@ -85,6 +87,9 @@ pub enum TreeMenu {
     /// The same menu opened from a pane's header in a split: its Disconnect closes that pane
     /// alone, never the whole tab.
     Pane(TabId),
+    /// How a tab is split, as the C# "Split...": each way opens Quick Connect to choose
+    /// what goes beside it.
+    SplitAxis(TabId),
     /// The tabs a tab can be merged with, as the C# "Merge with...".
     MergeWith(TabId),
     /// How a tab is merged into another, as the C# entries under each tab of "Merge
@@ -639,17 +644,18 @@ fn separator<'a>() -> Element<'a, Message> {
     rule::horizontal(1).into()
 }
 
-/// The entries of `menu`, as the C# Heimdall orders them, limited to what this version does.
+/// The entries of `menu`, as the C# Heimdall orders them, limited to what this version does;
+/// `splittable` while a tab is shown that a profile can open in a split of.
 pub fn menu_entries<'a>(
     menu: &TreeMenu,
     profile: Option<&ProfileSummary>,
     connect_as: &[ConnectAs],
-    editable: bool,
+    (editable, splittable): (bool, bool),
 ) -> Element<'a, Message> {
     let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
     match (menu, profile) {
         (TreeMenu::Profile(_), Some(profile)) => {
-            entries = profile_entries(entries, profile, connect_as, editable);
+            entries = profile_entries(entries, profile, connect_as, (editable, splittable));
         }
         (TreeMenu::ConnectAs(_), Some(profile)) => {
             // The protocols but the profile's own, as the C# menu lists them.
@@ -817,13 +823,49 @@ fn server_entries<'a>(
     entries
 }
 
-/// A profile's menu, in the C# order this version has: Connect, Connect as, Rename, Edit,
-/// Duplicate, Move to folder, the copies, Delete.
+/// "Open in split", as the C#: how the profile opens beside the tab shown; disabled, saying
+/// why, while no tab is shown to split.
+fn open_in_split_entry<'a>(id: &ProfileId, splittable: bool) -> Element<'a, Message> {
+    let label = fl!("ui-split-open-in-split");
+    if splittable {
+        return submenu(label, TreeMenu::OpenInSplit(id.clone()));
+    }
+    tooltip(
+        button(text(label).size(MENU_TEXT_SIZE))
+            .width(Length::Fill)
+            .style(menu_style),
+        text(fl!("ui-split-open-in-split-disabled")).size(MENU_TEXT_SIZE),
+        tooltip::Position::Right,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
+/// How profile `id` opens in a split of the tab shown, in the C# order: Horizontal,
+/// stacked, then Vertical, side by side.
+#[must_use]
+pub fn open_in_split_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
+    let open = |axis| {
+        Some(AppMessage::Split(SplitMessage::OpenInSplit {
+            profile: id.clone(),
+            axis,
+        }))
+    };
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-split-horizontal"), open(Axis::Stacked)))
+        .push(entry(fl!("ui-split-vertical"), open(Axis::SideBySide)));
+    menu_card(entries).into()
+}
+
+/// A profile's menu, in the C# order this version has: Connect, Connect as, Open in split,
+/// Rename, Edit, Duplicate, Move to folder, the copies, Delete.
 fn profile_entries<'a>(
     mut entries: Column<'a, Message>,
     profile: &ProfileSummary,
     connect_as: &[ConnectAs],
-    editable: bool,
+    (editable, splittable): (bool, bool),
 ) -> Column<'a, Message> {
     let id = profile.id.clone();
     entries = entries.push(entry(
@@ -837,6 +879,7 @@ fn profile_entries<'a>(
         ));
     }
     entries = entries
+        .push(open_in_split_entry(&id, splittable))
         .push(entry(
             fl!("ui-tree-rename"),
             editable.then(|| AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id.clone()))),
@@ -1171,7 +1214,7 @@ pub struct TabMenuState {
 /// What a tab's menu offers of a split, as the C# one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SplitEntries {
-    /// Not split: "Merge with..." while another tab can be merged into it.
+    /// Not split: "Split...", and "Merge with..." while another tab can be merged into it.
     Merge(bool),
     /// A pane of the split of this tab of the strip: Unsplit, Swap Panes, Toggle Split
     /// Orientation, Close Secondary Pane.
@@ -1566,8 +1609,8 @@ fn disconnect(state: &TabMenuState) -> AppMessage {
     }
 }
 
-/// The end of a tab's menu, after a separator as the C#'s: "Merge with..." for a tab not
-/// split, else what its split offers.
+/// The end of a tab's menu, after a separator as the C#'s: "Split..." and "Merge with..."
+/// for a tab not split, else what its split offers.
 fn split_entries(
     entries: Column<'_, Message>,
     tab: TabId,
@@ -1575,11 +1618,19 @@ fn split_entries(
 ) -> Column<'_, Message> {
     let split_message = |message| Some(AppMessage::Split(message));
     match split {
-        SplitEntries::Merge(false) => entries,
-        SplitEntries::Merge(true) => entries.push(separator()).push(submenu(
-            fl!("ui-split-merge-with"),
-            TreeMenu::MergeWith(tab),
-        )),
+        SplitEntries::Merge(mergeable) => {
+            let entries = entries
+                .push(separator())
+                .push(submenu(fl!("ui-split-menu"), TreeMenu::SplitAxis(tab)));
+            if mergeable {
+                entries.push(submenu(
+                    fl!("ui-split-merge-with"),
+                    TreeMenu::MergeWith(tab),
+                ))
+            } else {
+                entries
+            }
+        }
         SplitEntries::Split(host) => entries
             .push(separator())
             .push(entry(
@@ -1601,6 +1652,25 @@ fn split_entries(
     }
 }
 
+/// "Split...": how `host` is split, in the C# order, Horizontal, stacked, then Vertical,
+/// side by side; each opens Quick Connect to choose what goes beside it.
+#[must_use]
+pub fn split_axis_entries<'a>(host: TabId) -> Element<'a, Message> {
+    let split = |label: String, axis| -> Element<'a, Message> {
+        button(text(label).size(MENU_TEXT_SIZE))
+            .width(Length::Fill)
+            .style(menu_style)
+            .on_press(Message::SplitPalette { host, axis })
+            .into()
+    };
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(split(fl!("ui-split-horizontal"), Axis::Stacked))
+        .push(split(fl!("ui-split-vertical"), Axis::SideBySide));
+    menu_card(entries).into()
+}
+
 /// "Merge with...": the tabs `host` can be merged with, each by its title, opening how.
 #[must_use]
 pub fn merge_with_entries<'a>(host: TabId, tabs: &[(TabId, String)]) -> Element<'a, Message> {
@@ -1615,7 +1685,14 @@ pub fn merge_with_entries<'a>(host: TabId, tabs: &[(TabId, String)]) -> Element<
 /// side by side.
 #[must_use]
 pub fn merge_axis_entries<'a>(host: TabId, tab: TabId) -> Element<'a, Message> {
-    let merge = |axis| Some(AppMessage::Split(SplitMessage::Merge { host, tab, axis }));
+    let merge = |axis| {
+        Some(AppMessage::Split(SplitMessage::Merge {
+            host,
+            tab,
+            axis,
+            placement: Placement::Second,
+        }))
+    };
     let entries = column![]
         .spacing(0.0)
         .width(MENU_WIDTH)

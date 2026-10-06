@@ -38,9 +38,14 @@ pub(crate) fn area_id() -> Id {
     Id::new("session-area")
 }
 
+/// Where the session's area is drawn, in logical pixels; `None` while it is not.
+pub(crate) fn area_bounds() -> Task<Option<Rectangle>> {
+    iced::advanced::widget::operate(AreaBounds::default())
+}
+
 /// Captures the session shown and copies it to the clipboard; whether it was copied.
 pub(crate) fn copy_session() -> Task<bool> {
-    iced::advanced::widget::operate(AreaBounds::default()).then(|bounds| {
+    area_bounds().then(|bounds| {
         let Some(bounds) = bounds else {
             return Task::done(false);
         };
