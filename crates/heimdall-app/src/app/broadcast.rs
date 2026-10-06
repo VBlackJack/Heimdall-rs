@@ -78,17 +78,18 @@ impl App {
     }
 
     /// The tabs what is typed into `source` goes to: itself first, then, while broadcast
-    /// input is on, every other of its scope that takes input.
+    /// input is on, every other of its scope that takes input. A tab detached to a window
+    /// of its own is out of it, either way, as the C# broadcasts to the main strip only.
     pub(super) fn input_targets(&self, source: TabId) -> Vec<TabId> {
         let mut targets = vec![source];
-        if !self.broadcast.on {
+        if !self.broadcast.on || self.is_floating(source) {
             return targets;
         }
         let scope = self.settings.broadcast_scope;
         targets.extend(
             self.tabs
                 .iter()
-                .filter(|tab| tab.id != source && takes_input(tab))
+                .filter(|tab| tab.id != source && takes_input(tab) && !self.is_floating(tab.id))
                 .filter(|tab| {
                     scope == BroadcastScope::AllTabs || self.broadcast.targets.contains(&tab.id)
                 })

@@ -55,6 +55,10 @@ impl App {
     /// Docks the file browser beside local shell `shell`, just started, when the shell has
     /// room: what lists its first folder.
     pub(super) fn dock_local_browser(&mut self, shell: TabId) -> Vec<Effect> {
+        // A shell detached to a window of its own stays one tab there.
+        if self.is_floating(shell) {
+            return Vec::new();
+        }
         let Some(local) = self
             .tab(shell)
             .filter(|tab| tab.purpose == Purpose::Shell)

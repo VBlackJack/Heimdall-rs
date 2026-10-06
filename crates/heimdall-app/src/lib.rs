@@ -71,12 +71,12 @@ pub use app::split;
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
     CitrixImportOutcome, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome,
-    FileKind, FilesMessage, FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
-    HostKeysMessage, HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary, KeyInput,
-    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
-    OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
-    PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
+    FileKind, FilesMessage, FilterMessage, FloatMessage, Floating, FolderMessage, FolderNaming,
+    GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview, ImportFile,
+    ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
+    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice,
+    OpenedVault, OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage,
+    PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
     RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice,
     RestoreDialog, RestoreRow, Retry, SelectionMessage, SessionState, SessionStatus,
@@ -99,6 +99,6 @@ pub use event::{
 };
 /// The quality a VNC desktop is asked at, from its toolbar's "Quality" menu.
 pub use heimdall_remote::vnc::Quality as VncQuality;
-pub use ids::{AttemptId, EditorId, QuestionId, TabId};
+pub use ids::{AttemptId, EditorId, FloatId, QuestionId, TabId};
 pub use sink::InputSink;
 pub use text::{MAX_SERVER_TEXT_CHARS, server_text, visible_text};

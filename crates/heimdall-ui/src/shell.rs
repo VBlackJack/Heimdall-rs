@@ -43,15 +43,15 @@ use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
-    ConnectionEvent, DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FolderMessage,
-    FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
-    MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
-    PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
-    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, SelectionMessage,
-    SessionState, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog,
-    VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
-    master_password_problem, open_vault, server_text,
+    ConnectionEvent, DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FloatId,
+    FloatMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
+    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction,
+    Phase, PinDialog, PinFailure, PinMessage, PinMode, PostConnectConfirmation,
+    PostConnectProgress, ProfileMenuMessage, Prompt, ProviderMessage, Purpose, QuestionId,
+    QuestionKind, Retry, SaveState, SelectionMessage, SessionState, SettingsMessage, SpecialKeys,
+    SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage, TabProfile, TreeRow,
+    TrustedKeysMessage, TunnelMessage, UiError, VaultDialog, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, VncQuality, connection_events, master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -80,6 +80,7 @@ use zeroize::Zeroizing;
 use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::finder::Finder;
+use crate::floating_view::{FloatEvent, FloatingWindow};
 use crate::i18n::fl;
 use crate::palette::Palette;
 use crate::report;
@@ -263,6 +264,17 @@ pub(crate) fn main_window_task(main: Option<window::Id>) -> Task<Option<window::
         Some(id) => Task::done(Some(id)),
         None => window::latest(),
     }
+}
+
+/// Gives `window` the focus, restored first when it is minimized.
+fn focus_window(window: window::Id) -> Task<Message> {
+    window::is_minimized(window).then(move |minimized| {
+        if minimized == Some(true) {
+            window::minimize(window, false).chain(window::gain_focus(window))
+        } else {
+            window::gain_focus(window)
+        }
+    })
 }
 
 /// While the sidebar's handle is dragged: where the pointer is, and its release.
@@ -689,6 +701,11 @@ pub enum Message {
     SessionFieldEdited(SessionField, String),
     /// Apply the number typed in a field of the session card.
     SessionFieldApply(SessionField),
+    /// Something a tab's own window reported of itself.
+    Float(window::Id, FloatEvent),
+    /// A message of the session drawn in a tab's own window: it reaches the core as the
+    /// main window's would, but resolves nothing through the main window's tab shown.
+    InFloating(window::Id, Box<Message>),
 }
 
 /// The tree's shortcuts that hold Ctrl, as the C# Heimdall's.
@@ -836,6 +853,8 @@ impl fmt::Debug for Message {
                 write!(f, "SessionFieldEdited({field:?}, {typed:?})")
             }
             Self::SessionFieldApply(field) => write!(f, "SessionFieldApply({field:?})"),
+            Self::Float(window, event) => write!(f, "Float({window:?}, {event:?})"),
+            Self::InFloating(window, message) => write!(f, "InFloating({window:?}, {message:?})"),
         }
     }
 }
@@ -1056,6 +1075,8 @@ pub struct Shell {
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
     /// The main window, named once it is asked to open; none in tests, which open none.
     main_window: Option<window::Id>,
+    /// The tabs' own windows, by the window's identifier.
+    floating: std::collections::BTreeMap<window::Id, FloatingWindow>,
     /// The window's size, as last resized out of full screen.
     window_size: Option<iced::Size>,
     /// The sidebar's width, as dragged.
@@ -1308,6 +1329,7 @@ impl Shell {
             sidebar_hidden: false,
             window_memory: None,
             main_window: None,
+            floating: std::collections::BTreeMap::new(),
             window_size: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
@@ -1372,10 +1394,13 @@ impl Shell {
         }
     }
 
-    /// The title of the window `window`: the main window's as [`Self::title`], the
-    /// application's name for any other.
+    /// The title of the window `window`: a tab's own window's as the C# names it, the main
+    /// window's as [`Self::title`], the application's name for any other.
     #[must_use]
     pub fn window_title(&self, window: window::Id) -> String {
+        if let Some(tab) = self.floating_tab_of(window) {
+            return fl!("ui-window-title-detached", tab = tab.display_title());
+        }
         if from_main(self.main_window, window) {
             self.title()
         } else {
@@ -1389,14 +1414,80 @@ impl Shell {
         self.main_window = Some(window);
     }
 
-    /// Draws the window `window`: the main window as [`Self::view`], nothing in any other.
+    /// Draws the window `window`: a tab's own window with its session, the main window as
+    /// [`Self::view`], nothing in any other.
     #[must_use]
     pub fn window_view(&self, window: window::Id) -> Element<'_, Message> {
-        if from_main(self.main_window, window) {
+        if let Some(floating) = self.floating.get(&window) {
+            self.floating_view(window, floating.key)
+        } else if from_main(self.main_window, window) {
             self.view()
         } else {
             iced::widget::space().into()
         }
+    }
+
+    /// The window `tab` is detached to, once it is asked to open.
+    #[must_use]
+    pub fn floating_window(&self, tab: TabId) -> Option<window::Id> {
+        self.app
+            .floating_of(tab)
+            .and_then(|key| self.window_of(key))
+    }
+
+    /// The window the application calls `key`.
+    fn window_of(&self, key: FloatId) -> Option<window::Id> {
+        self.floating
+            .iter()
+            .find(|(_, floating)| floating.key == key)
+            .map(|(window, _)| *window)
+    }
+
+    /// The tab shown in `window`, a tab's own window.
+    fn floating_tab_of(&self, window: window::Id) -> Option<&Tab> {
+        self.floating
+            .get(&window)
+            .and_then(|floating| self.app.floating_tab(floating.key))
+    }
+
+    /// The window a question about `tab` is held by: its own window when it is detached,
+    /// else the main one.
+    fn owner_of(&self, tab: TabId) -> Option<window::Id> {
+        self.floating_window(tab).or(self.main_window)
+    }
+
+    /// Physical pixels per logical one on the screen `tab` is drawn on.
+    fn density_of(&self, tab: TabId) -> f32 {
+        self.floating_window(tab)
+            .and_then(|window| self.floating.get(&window))
+            .map_or(self.density, |floating| floating.scale)
+    }
+
+    /// A tab's own window: its header above its session, drawn as its tab draws it, every
+    /// message of the session marked as the window's; behind the lock, a veil.
+    fn floating_view(&self, window: window::Id, key: FloatId) -> Element<'_, Message> {
+        let Some(tab) = self.app.floating_tab(key).filter(|_| !self.gated()) else {
+            return crate::floating_view::veil();
+        };
+        let route = self.app.tab_route(tab);
+        let heading = crate::floating_view::Header {
+            key,
+            state: SessionState::of(tab),
+            kind: self.app.tab_kind(tab).label().to_owned(),
+            title: tab.display_title().to_owned(),
+            route: (!route.is_empty()).then(|| {
+                let names = route
+                    .iter()
+                    .map(|name| server_text(name))
+                    .collect::<Vec<_>>()
+                    .join(&fl!("ui-route-test-separator"));
+                fl!("ui-connect-via", route = names)
+            }),
+        };
+        let body = self
+            .tab_page(tab, true)
+            .map(move |message| Message::InFloating(window, Box::new(message)));
+        crate::floating_view::view(heading, body)
     }
 
     /// Theme: the terminal palette is Dracula, so is the window.
@@ -1422,6 +1513,10 @@ impl Shell {
                 window::close_events().map(|id| (id, Message::MainWindowClosed)),
                 main,
             ),
+            // The tabs' own windows: their close, focus and screen, each marked as its own.
+            window_tagged!(crate::floating_view::window_event)
+                .with(main)
+                .filter_map(crate::floating_view::from_floating),
         ]);
         // A countdown shown: a tab's next attempt, or the minutes before a master password
         // or a PIN is taken again.
@@ -1501,6 +1596,7 @@ impl Shell {
     /// the C# `SleepPrevention` does when the setting is on.
     pub fn step(&mut self, message: Message) -> Task<Message> {
         let task = self.update(message);
+        let task = Task::batch([task, self.sync_floating()]);
         let awake = self.app.settings().prevent_sleep
             && self
                 .app
@@ -1515,6 +1611,129 @@ impl Shell {
     #[must_use]
     pub fn keeps_awake(&self) -> bool {
         self.sleep_guard.held()
+    }
+
+    /// The tabs' own windows as the core has them: a window whose tab went back or is gone
+    /// closes, a tab detached with no window gets one; the search bar of a tab detached
+    /// closes, the main window's keys no longer reaching it.
+    fn sync_floating(&mut self) -> Task<Message> {
+        if self
+            .finder
+            .as_ref()
+            .is_some_and(|finder| self.app.is_floating(finder.tab))
+        {
+            self.finder = None;
+        }
+        let gone: Vec<FloatId> = self
+            .floating
+            .values()
+            .map(|floating| floating.key)
+            .filter(|key| self.app.floating_tab(*key).is_none())
+            .collect();
+        let missing: Vec<FloatId> = self
+            .app
+            .floating()
+            .iter()
+            .map(|floating| floating.key)
+            .filter(|key| self.window_of(*key).is_none())
+            .collect();
+        let mut tasks: Vec<Task<Message>> = gone
+            .into_iter()
+            .map(|key| self.close_floating(key))
+            .collect();
+        tasks.extend(missing.into_iter().map(|key| self.open_floating(key)));
+        Task::batch(tasks)
+    }
+
+    /// Opens the window of the tab detached as `key`, at the C# size and centred, and gives
+    /// it the focus; one already open is focused.
+    fn open_floating(&mut self, key: FloatId) -> Task<Message> {
+        if let Some(window) = self.window_of(key) {
+            return focus_window(window);
+        }
+        let (window, opened) = window::open(crate::floating_view::settings());
+        self.floating.insert(
+            window,
+            FloatingWindow {
+                key,
+                scale: self.density,
+                question: None,
+            },
+        );
+        opened.then(|window| {
+            Task::batch([
+                window::gain_focus(window),
+                window::scale_factor(window)
+                    .map(move |scale| Message::Float(window, FloatEvent::Rescaled(scale))),
+            ])
+        })
+    }
+
+    /// Closes the window of the tab detached as `key`.
+    fn close_floating(&mut self, key: FloatId) -> Task<Message> {
+        let Some(window) = self.window_of(key) else {
+            return Task::none();
+        };
+        self.floating.remove(&window);
+        window::close(window)
+    }
+
+    /// What a tab's own window reported of itself: its close button asks the core, its
+    /// focus is its session's, its screen its desktop's.
+    fn float_event(&mut self, window: window::Id, event: FloatEvent) -> Task<Message> {
+        let Some(key) = self.floating.get(&window).map(|floating| floating.key) else {
+            return Task::none();
+        };
+        let message = match event {
+            // Behind the lock, the tab goes back to the strip without a question, which
+            // would take the lock screen's place.
+            FloatEvent::CloseRequested if self.gated() => FloatMessage::Reattach(key),
+            FloatEvent::CloseRequested => FloatMessage::CloseRequested(key),
+            FloatEvent::Focused(focused) => FloatMessage::Focused { key, focused },
+            FloatEvent::Rescaled(scale) => {
+                if let Some(floating) = self.floating.get_mut(&window) {
+                    floating.scale = scale;
+                }
+                return Task::none();
+            }
+            FloatEvent::Modifiers(modifiers) => {
+                self.modifiers = modifiers;
+                return Task::none();
+            }
+        };
+        let effects = self.app.update(AppMessage::Float(message));
+        Task::batch(effects.into_iter().map(|effect| self.run(effect)))
+    }
+
+    /// A message of the session drawn in a tab's own window. Behind the lock it is dropped;
+    /// a zoom, which names no tab, is made that tab's; anything else passes only when
+    /// [`crate::floating_view::floating_message_allowed`] lets it, naming that tab. A dialog
+    /// it opens is the main window's, as the C# dialogs are: that window is brought forward
+    /// for it.
+    fn in_floating(&mut self, window: window::Id, message: Message) -> Task<Message> {
+        let Some(tab) = self.floating_tab_of(window) else {
+            return Task::none();
+        };
+        if self.gated() {
+            return Task::none();
+        }
+        if let Message::Shortcut(WindowShortcut::Zoom(zoom)) = message {
+            let tab = tab.id;
+            self.zoom(tab, zoom);
+            return Task::none();
+        }
+        if !crate::floating_view::floating_message_allowed(&message, tab) {
+            log::debug!("dropped from a detached window: {message:?}");
+            return Task::none();
+        }
+        let asked = self.app.dialog.is_some();
+        let task = self.update(message);
+        if !asked && self.app.dialog.is_some() {
+            let main = main_window_task(self.main_window)
+                .then(|main| main.map_or_else(Task::none, focus_window));
+            return Task::batch([task, main]);
+        }
+        task
     }
 
     /// Ctrl+W, as the C#: the session shown closes when nothing that takes text has the
@@ -1546,6 +1765,12 @@ impl Shell {
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // A tab's own window's: answered apart, never through the main window's tab shown.
+        let message = match message {
+            Message::Float(window, event) => return self.float_event(window, event),
+            Message::InFloating(window, message) => return self.in_floating(window, *message),
+            message => message,
+        };
         // A click on another row of the tree ends a rename made in place, kept, as the C#
         // editor losing the focus.
         if self.inline_rename().is_some()
@@ -1619,7 +1844,7 @@ impl Shell {
             Message::Shortcut(shortcut) => self.shortcut(shortcut),
             Message::DialogKey { confirm } => self.dialog_key(confirm),
             // Answered above, before the rest.
-            Message::EscapeUntaken => Vec::new(),
+            Message::EscapeUntaken | Message::Float(..) | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
                 if self.app.dialog.is_some() {
@@ -2217,19 +2442,25 @@ impl Shell {
         Vec::new()
     }
 
+    /// Whether `tab`'s session takes the keyboard: its pane has it, no dialog is open, and,
+    /// in the main window, the tree does not have it.
+    fn takes_keys(&self, tab: &Tab, focused: bool) -> bool {
+        focused && self.app.dialog.is_none() && (!self.tree_focused || self.app.is_floating(tab.id))
+    }
+
     /// The search bar over the terminal of `tab`, when open there.
     fn finder_of(&self, tab: &Tab) -> Option<&Finder> {
-        self.finder.as_ref().filter(|finder| finder.tab == tab.id)
+        // Never in a tab's own window: the bar's messages are the main window's.
+        self.finder
+            .as_ref()
+            .filter(|finder| finder.tab == tab.id && !self.app.is_floating(tab.id))
     }
 
     /// `tab`'s terminal, with its search bar over it when open. Under the bar the terminal
     /// takes no keys: Escape and what is typed are the bar's.
     /// A shell tab's page: its terminal, and its server health panel beside it when shown.
     fn shell_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
-        let terminal = self.searchable_terminal(
-            tab,
-            focused && self.app.dialog.is_none() && !self.tree_focused,
-        );
+        let terminal = self.searchable_terminal(tab, self.takes_keys(tab, focused));
         if tab.health.shown {
             row![
                 container(terminal).width(Length::Fill),
@@ -2516,20 +2747,31 @@ impl Shell {
         });
     }
 
-    /// Gives focus to the first field of the question shown, once per question.
+    /// Gives focus to the first field of the question shown, once per question: the main
+    /// window's, and each tab's own window's.
     fn focus_question(&mut self) -> Task<Message> {
+        let mut tasks = Vec::new();
+        for floating in self.floating.values_mut() {
+            let asked = self
+                .app
+                .floating_tab(floating.key)
+                .and_then(|tab| tab.prompts.front())
+                .map(|prompt| prompt.question);
+            if asked != floating.question {
+                floating.question = asked;
+                tasks.extend(asked.map(|question| operation::focus(field_id(question, 0))));
+            }
+        }
         let shown = self
             .app
             .active_tab()
             .and_then(|tab| tab.prompts.front())
             .map(|prompt| prompt.question);
-        if shown == self.focused {
-            return Task::none();
+        if shown != self.focused {
+            self.focused = shown;
+            tasks.extend(shown.map(|question| operation::focus(field_id(question, 0))));
         }
-        self.focused = shown;
-        shown.map_or_else(Task::none, |question| {
-            operation::focus(field_id(question, 0))
-        })
+        Task::batch(tasks)
     }
 
     /// Gives focus to a dialog's field when the dialog opens, and to the field to fix when
@@ -2831,7 +3073,8 @@ impl Shell {
             Effect::PickUploads { tab } => pick_uploads(tab, main),
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
-            Effect::PickSaveFolder { tab } => pick_save_folder(tab, main),
+            // Held by the window the desktop is in, as the C# prompts are.
+            Effect::PickSaveFolder { tab } => pick_save_folder(tab, self.owner_of(tab)),
             Effect::PickSessionsFile => pick_sessions_file(main),
             Effect::SaveSettingsFile { document } => crate::settings_file::save(document, main),
             Effect::PickSettingsFile => crate::settings_file::pick(main),
@@ -2903,6 +3146,12 @@ impl Shell {
                     )))
                 },
             ),
+            Effect::OpenWindow(key) => self.open_floating(key),
+            Effect::CloseWindow(key) => self.close_floating(key),
+            Effect::FocusWindow(key) => self.window_of(key).map_or_else(Task::none, focus_window),
+            Effect::FocusMainWindow => {
+                main_window_task(main).then(|main| main.map_or_else(Task::none, focus_window))
+            }
             Effect::Exit => self.exit(),
         }
     }
@@ -4783,7 +5032,8 @@ impl Shell {
     /// session after a tab is chosen; and the page a chosen tab shows.
     fn note_focus(&mut self, message: &Message) {
         match message {
-            Message::App(AppMessage::SelectTab(_)) => {
+            // A tab detached is shown in its own window: the main window stays as it is.
+            Message::App(AppMessage::SelectTab(tab)) if !self.app.is_floating(*tab) => {
                 self.page = Page::Tab;
                 self.tree_focused = false;
             }
@@ -5670,6 +5920,7 @@ impl Shell {
             macros: self.app.macro_menu(tab).is_some(),
             pane: false,
             docked: self.app.is_docked(id),
+            detach: self.app.can_detach(tab),
             split: match self.app.host_of(id).filter(|_| self.app.in_split(id)) {
                 Some(host) => SplitEntries::Split(host),
                 None => SplitEntries::Merge(!self.app.merge_candidates(id).is_empty()),
@@ -6029,6 +6280,7 @@ impl Shell {
                 (fingerprint, tab.host_key_algorithm()),
                 tab.asks_about_certificate()
                     .then(|| (tab.profile.name(), tab.certificate_context.as_ref())),
+                self.certificate_owner(tab),
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => self.files_page(tab.id, pane, tab.is_live()),
@@ -6097,6 +6349,16 @@ impl Shell {
             Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
             Phase::Failed(error) => self.failure_card(tab, error),
         }
+    }
+
+    /// The line naming the tab an RDP certificate question belongs to, in a tab's own
+    /// window, as the C# `RdpTrustPromptOwner` says it: the window's title is built out of
+    /// the tab's name, so the tab alone is named.
+    fn certificate_owner(&self, tab: &Tab) -> Option<String> {
+        (tab.purpose == Purpose::Rdp
+            && tab.asks_about_certificate()
+            && self.app.is_floating(tab.id))
+        .then(|| fl!("ui-certificate-owner-tab", tab = tab.display_title()))
     }
 
     /// A failed session's card: the error, and its ways out.
@@ -6256,9 +6518,9 @@ impl Shell {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
             .on_release(Message::ContentRelease)
-            .interactive(focused && self.app.dialog.is_none() && !self.tree_focused)
+            .interactive(self.takes_keys(tab, focused))
             .fit(fit)
-            .density(self.density);
+            .density(self.density_of(tab.id));
         let tab_id = tab.id;
         let mode = pick_list(
             [DesktopMode::Match, DesktopMode::Fit],
@@ -6311,9 +6573,10 @@ impl Shell {
                 .style(button::text)
                 .on_press(Message::App(AppMessage::ShowShortcuts)),
             mode,
-            fullscreen,
-            disconnect,
         ]
+        // In a tab's own window, the main window's full screen is not the desktop's.
+        .push((!self.app.is_floating(tab_id)).then_some(fullscreen))
+        .push(disconnect)
         .spacing(SPACING)
         .align_y(iced::Alignment::Center);
         let bar = self.desktop_bar_end(tab, pane, bar);
@@ -6330,8 +6593,12 @@ impl Shell {
     ) -> iced::widget::Row<'a, Message> {
         let tab_id = tab.id;
         // The C# session bar's resolution button: the tab's menu, its tip naming the mode,
-        // in the accent colour while a size of its own is kept.
-        if let Some(state) = self.resolution_state(tab) {
+        // in the accent colour while a size of its own is kept. The menus are the main
+        // window's: none from a tab's own window.
+        if let Some(state) = self
+            .resolution_state(tab)
+            .filter(|_| !self.app.is_floating(tab_id))
+        {
             let style = if state.fixed.is_some() {
                 button::primary
             } else {
@@ -6521,12 +6788,13 @@ fn host_key_card<'a>(
     (host, port): (&'a str, u16),
     (fingerprint, algorithm): (&'a str, Option<String>),
     certificate: Option<(&'a str, Option<&'a CertificateContext>)>,
+    owner: Option<String>,
 ) -> Element<'a, Message> {
     let port = port.to_string();
     let (heading, body, label, [reject, once, accept]) = match certificate {
         Some((name, context)) => (
             fl!("ui-certificate-title"),
-            certificate_body(name, host, &port, context),
+            certificate_body(name, host, &port, context).push(owner.map(text)),
             fl!("ui-certificate-fingerprint", fingerprint = fingerprint),
             [
                 fl!("ui-certificate-refuse-button"),

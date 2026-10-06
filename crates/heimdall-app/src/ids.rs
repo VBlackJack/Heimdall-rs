@@ -51,6 +51,10 @@ identifier!(
     /// One file opened in a Files tab's integrated editor: kept when the tab reconnects.
     EditorId
 );
+identifier!(
+    /// A window of its own a tab was detached to: kept while the tab reconnects in it.
+    FloatId
+);
 
 static NEXT: AtomicU64 = AtomicU64::new(1);
 
@@ -71,6 +75,12 @@ impl AttemptId {
 }
 
 impl EditorId {
+    pub(crate) fn fresh() -> Self {
+        Self(next())
+    }
+}
+
+impl FloatId {
     pub(crate) fn fresh() -> Self {
         Self(next())
     }

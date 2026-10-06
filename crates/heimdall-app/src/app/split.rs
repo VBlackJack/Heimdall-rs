@@ -347,13 +347,36 @@ pub enum SplitMessage {
     CloseSecondary(TabId),
 }
 
+impl SplitMessage {
+    /// The tabs a merge or a split asked for reaches, the host and the tab merged: a tab
+    /// detached to a window of its own comes back to the strip first.
+    pub(super) fn tabs(&self) -> Vec<TabId> {
+        match self {
+            Self::Merge { host, tab, .. } => vec![*host, *tab],
+            Self::QuickConnect { host, .. } => vec![*host],
+            Self::OpenInSplit { .. }
+            | Self::FocusNext(_)
+            | Self::FocusPrevious(_)
+            | Self::Unsplit(_)
+            | Self::Swap(_)
+            | Self::ToggleAxis(_)
+            | Self::Resize { .. }
+            | Self::ResetRatio(_)
+            | Self::Focus(_)
+            | Self::ClosePane(_)
+            | Self::CloseSecondary(_) => Vec::new(),
+        }
+    }
+}
+
 impl App {
-    /// The tabs on the strip, in order: every tab but those docked in a split.
+    /// The tabs on the strip, in order: every tab but those docked in a split and those
+    /// detached to a window of their own.
     #[must_use]
     pub fn strip(&self) -> Vec<&Tab> {
         self.tabs
             .iter()
-            .filter(|tab| !self.is_docked(tab.id))
+            .filter(|tab| !self.is_docked(tab.id) && !self.is_floating(tab.id))
             .collect()
     }
 
@@ -411,12 +434,13 @@ impl App {
     }
 
     /// The tabs of the strip `host` can be merged with, as the C# "Merge with..." lists them:
-    /// the others not split themselves; none once `host` is split or docked.
+    /// the others not split themselves, nor detached; none once `host` is split, docked or
+    /// detached.
     #[must_use]
     pub fn merge_candidates(&self, host: TabId) -> Vec<&Tab> {
-        let splittable = self
-            .tab(host)
-            .is_some_and(|tab| tab.layout.is_none() && !self.is_docked(host));
+        let splittable = self.tab(host).is_some_and(|tab| {
+            tab.layout.is_none() && !self.is_docked(host) && !self.is_floating(host)
+        });
         if !splittable {
             return Vec::new();
         }
@@ -657,8 +681,12 @@ impl App {
         }
     }
 
-    /// Gives pane `tab` the keyboard, its split showing.
+    /// Gives pane `tab` the keyboard, its split showing; a tab detached to a window of its
+    /// own has its window focused instead, the keyboard's pane left as it is.
     pub(super) fn focus_pane(&mut self, tab: TabId) -> Vec<Effect> {
+        if let Some(effects) = self.focus_window_of(tab) {
+            return effects;
+        }
         let Some(host) = self.host_of(tab) else {
             return Vec::new();
         };
@@ -698,8 +726,9 @@ impl App {
     }
 
     /// Tab `old`, opened again as `new`, keeps its place in a split: its host's pane, or
-    /// as the host, its split, moved onto `new` beforehand.
+    /// as the host, its split, moved onto `new` beforehand; detached, its window.
     pub(super) fn repoint_pane(&mut self, old: TabId, new: TabId) {
+        self.repoint_floating(old, new);
         for tab in &mut self.tabs {
             if let Some(layout) = tab.layout.as_mut()
                 && layout.root.replace_leaf(old, new)
