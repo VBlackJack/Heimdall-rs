@@ -462,6 +462,8 @@ pub enum Message {
     MenuFullscreen(TabId),
     /// Copy the report of a tab's failure, as the C# card's "Copy error".
     CopyError(TabId),
+    /// Copy the anonymized report of tab's failure: no server, account nor message.
+    CopyAnonymousError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
     Tick,
     /// Shift, Ctrl, Alt or the logo key pressed or released.
@@ -581,6 +583,7 @@ pub enum TreeShortcut {
 }
 
 impl fmt::Debug for Message {
+    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // A field holds what the user types into a question: a password, a passphrase.
         match self {
@@ -637,6 +640,7 @@ impl fmt::Debug for Message {
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
+            Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1341,6 +1345,11 @@ impl Shell {
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
+            Message::CopyAnonymousError(tab) => {
+                return self
+                    .anonymous_report(tab, std::time::SystemTime::now())
+                    .map_or_else(Task::none, iced::clipboard::write);
+            }
             Message::EditPath { tab, side } => {
                 self.edit_path(tab, side);
                 Vec::new()
@@ -4547,6 +4556,27 @@ impl Shell {
         ))
     }
 
+    /// The anonymized report of tab `id`'s failure at `now`: when, which version, the kind
+    /// of failure; `None` unless its session failed.
+    #[must_use]
+    pub fn anonymous_report(&self, id: TabId, now: std::time::SystemTime) -> Option<String> {
+        let tab = self.app.tab(id)?;
+        let Phase::Failed(error) = &tab.phase else {
+            return None;
+        };
+        // The variant's name alone: its fields can name the server or the account.
+        let shown = format!("{error:?}");
+        let kind = shown
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        Some(report::anonymous_report(
+            self.app.tab_kind(tab).label(),
+            kind,
+            now,
+        ))
+    }
+
     /// What the menu of tab `id` offers; `None` once the tab is gone.
     fn tab_menu_state(&self, id: TabId) -> Option<TabMenuState> {
         let tab = self.app.tab(id)?;
@@ -4885,11 +4915,22 @@ impl Shell {
             &tab.phase,
             Phase::Failed(error) if !matches!(error, UiError::Cancelled | UiError::CertificateRefused)
         ) {
-            actions = actions.push(
-                button(action_label(fl!("ui-session-copy-error-button")))
-                    .style(button::secondary)
-                    .on_press(Message::CopyError(tab.id)),
-            );
+            actions = actions
+                .push(
+                    button(action_label(fl!("ui-session-copy-error-button")))
+                        .style(button::secondary)
+                        .on_press(Message::CopyError(tab.id)),
+                )
+                .push(
+                    tooltip(
+                        button(action_label(fl!("ui-session-copy-anonymous-button")))
+                            .style(button::secondary)
+                            .on_press(Message::CopyAnonymousError(tab.id)),
+                        text(fl!("ui-error-report-anonymous-hint")).size(SMALL_SIZE),
+                        tooltip::Position::Bottom,
+                    )
+                    .style(container::rounded_box),
+                );
         }
         if let Some(profile) = self
             .app
@@ -5312,6 +5353,15 @@ fn certificate_body<'a>(
     let Some(context) = context else {
         return body;
     };
+    if let Some(subject) = &context.subject {
+        body = body.push(
+            text(fl!(
+                "ui-certificate-subject",
+                subject = server_text(subject)
+            ))
+            .font(iced::Font::MONOSPACE),
+        );
+    }
     if context.others > 0 {
         body = body.push(text(fl!(
             "ui-certificate-already-trusted",

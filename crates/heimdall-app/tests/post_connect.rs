@@ -421,6 +421,7 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
         tab,
         attempt,
         event: ConnectionEvent::UnknownRdpCertificate {
+            subject: None,
             host: "ftp.lab".to_owned(),
             port: 21,
             fingerprint,

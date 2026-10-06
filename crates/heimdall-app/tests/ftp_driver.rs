@@ -127,6 +127,7 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
         host,
         port: asked_port,
         fingerprint,
+        ..
     } = event
     else {
         panic!("the certificate question, got {event:?}");

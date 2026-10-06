@@ -16,7 +16,8 @@
 
 //! Auto-reconnect, as the C# Heimdall's for RDP, on unless the profile (or the application's
 //! RDP options it follows) turns it off: a desktop that drops for a reason that may pass (the network, a time-out, the protocol) is
-//! opened again in its tab by itself, after 2, 5, then 15 seconds, up to 20 attempts. Cancel
+//! opened again in its tab by itself, after 2, 5, then 15 seconds, up to the attempts the
+//! settings give (20 unless changed). Cancel
 //! stops it; anything that needs the user (a question, a key to trust) stops it too.
 //!
 //! An SSH shell does the same when its connection is lost or cannot be made again, as the C#
@@ -28,9 +29,6 @@ use super::{App, Effect, Message, Phase, TabProfile};
 use crate::driver::Purpose;
 use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
-
-/// Most attempts for an RDP desktop, as the C# default.
-pub const RDP_MAX_ATTEMPTS: u32 = 20;
 
 /// Wait before the first attempt, the second, and every one after, as the C# defaults.
 const DELAYS: [Duration; 3] = [
@@ -178,7 +176,10 @@ mod tests {
         assert_eq!(delay(1), Duration::from_secs(2));
         assert_eq!(delay(2), Duration::from_secs(5));
         assert_eq!(delay(3), Duration::from_secs(15));
-        assert_eq!(delay(RDP_MAX_ATTEMPTS), Duration::from_secs(15));
+        assert_eq!(
+            delay(heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX),
+            Duration::from_secs(15)
+        );
         assert_eq!(delay(0), Duration::from_secs(2), "never before the first");
     }
 }
