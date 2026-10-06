@@ -41,6 +41,16 @@ const SSH_FINGERPRINT_SHOWN: usize = 16;
 const RDP_FINGERPRINT_SHOWN: usize = 20;
 /// Share of a host key row the copy and remove buttons take.
 const ACTIONS_PORTION: u16 = 4;
+/// Share of a certificate row its server takes.
+const SERVER_PORTION: u16 = 3;
+/// Share of a certificate row its fingerprint takes.
+const FINGERPRINT_PORTION: u16 = 3;
+/// Share of a certificate row its subject, and its issuer, take.
+const NAME_PORTION: u16 = 3;
+/// Share of a certificate row the time it was trusted takes.
+const TRUSTED_PORTION: u16 = 2;
+/// Share of a certificate row its forget button takes.
+const FORGET_PORTION: u16 = 2;
 /// What stands for the rest of a fingerprint cut short.
 const ELLIPSIS: &str = "...";
 
@@ -203,7 +213,9 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
     )
 }
 
-/// The trusted RDP certificates, `search` typed: server, fingerprint, and a forget button.
+/// The trusted RDP certificates, `search` typed, as the C# columns: server, fingerprint,
+/// subject, issuer, when trusted, and a forget button. A certificate recorded without its
+/// details leaves their cells empty.
 pub fn certificates<'a>(
     keys: &'a heimdall_app::TrustedKeys,
     search: &'a str,
@@ -216,36 +228,30 @@ pub fn certificates<'a>(
     } else {
         let mut rows = Column::new().spacing(SPACING / 2.0).push(
             row![
-                header(fl!("ui-trusted-certificates-server"), 3),
-                header(fl!("ui-trusted-certificates-fingerprint"), 4),
-                header(String::new(), 2),
+                header(fl!("ui-trusted-certificates-server"), SERVER_PORTION),
+                header(
+                    fl!("ui-trusted-certificates-fingerprint"),
+                    FINGERPRINT_PORTION
+                ),
+                header(fl!("ui-trusted-certificates-subject"), NAME_PORTION),
+                header(fl!("ui-trusted-certificates-issuer"), NAME_PORTION),
+                header(fl!("ui-trusted-certificates-trusted"), TRUSTED_PORTION),
+                header(String::new(), FORGET_PORTION),
             ]
             .spacing(SPACING),
         );
         for entry in &keys.rdp {
             let address = display_address(&entry.host, entry.port);
             let fingerprint = entry.fingerprint.to_string();
-            if !matches(&address, search) && !matches(&fingerprint, search) {
-                continue;
+            // As the C# search: the server, the key, and the names of the certificate.
+            let found = [Some(&address), Some(&fingerprint)]
+                .into_iter()
+                .chain([entry.subject.as_ref(), entry.issuer.as_ref()])
+                .flatten()
+                .any(|candidate| matches(candidate, search));
+            if found {
+                rows = rows.push(certificate_row(entry, address, &fingerprint));
             }
-            rows = rows.push(
-                row![
-                    cell(text(address).size(SMALL_SIZE).into(), 3),
-                    cell(fingerprint_cell(&fingerprint, RDP_FINGERPRINT_SHOWN), 4),
-                    cell(
-                        small_button(
-                            fl!("ui-trusted-certificates-forget"),
-                            trusted(TrustedKeysMessage::RequestForget(TrustedKey::Rdp(
-                                entry.clone()
-                            ))),
-                            button::danger,
-                        ),
-                        2,
-                    ),
-                ]
-                .spacing(SPACING)
-                .align_y(Alignment::Center),
-            );
         }
         rows.into()
     };
@@ -259,6 +265,39 @@ pub fn certificates<'a>(
         ),
         body,
     )
+}
+
+/// One trusted certificate's row; `address` and `fingerprint` as shown.
+fn certificate_row<'a>(
+    entry: &heimdall_rdp::KnownRdpHost,
+    address: String,
+    fingerprint: &str,
+) -> Element<'a, Message> {
+    let key = TrustedKey::Rdp(entry.clone());
+    let detail = |value: Option<String>| -> Element<'a, Message> {
+        text(value.unwrap_or_default()).size(SMALL_SIZE).into()
+    };
+    row![
+        cell(text(address).size(SMALL_SIZE).into(), SERVER_PORTION),
+        cell(
+            fingerprint_cell(fingerprint, RDP_FINGERPRINT_SHOWN),
+            FINGERPRINT_PORTION
+        ),
+        cell(detail(entry.subject.clone()), NAME_PORTION),
+        cell(detail(entry.issuer.clone()), NAME_PORTION),
+        cell(detail(key.trusted_since()), TRUSTED_PORTION),
+        cell(
+            small_button(
+                fl!("ui-trusted-certificates-forget"),
+                trusted(TrustedKeysMessage::RequestForget(key)),
+                button::danger,
+            ),
+            FORGET_PORTION,
+        ),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center)
+    .into()
 }
 
 /// Why the lists could not be read, when they could not.

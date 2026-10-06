@@ -125,6 +125,49 @@ fn the_page_lists_what_the_files_trust_when_shown() {
 }
 
 #[test]
+fn a_certificate_shows_its_subject_issuer_and_when_it_was_trusted_as_the_csharp_columns() {
+    let dir = tempfile::tempdir().expect("dir");
+    // `CN=dc.lab` issued by `CN=Lab Root CA,O=Heimdall Lab`, trusted on 2026-03-15 at noon
+    // UTC; then a line from before the details, which shows none.
+    std::fs::write(
+        dir.path().join("known_rdp_hosts"),
+        format!(
+            "dc.lab:3389 {PIN} trusted=1773576030 subject=Q049ZGMubGFi \
+             issuer=Q049TGFiIFJvb3QgQ0EsTz1IZWltZGFsbCBMYWI\nweb.lab:3389 {PIN}\n"
+        ),
+    )
+    .expect("write");
+    let mut shell = shell(dir.path());
+    show(&mut shell, SettingsTab::Rdp);
+    let since = TrustedKey::Rdp(shell.app().trusted_keys().rdp[0].clone())
+        .trusted_since()
+        .expect("the time");
+    assert!(since.starts_with("2026-03-1"), "{since}");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Subject",
+            "Issuer",
+            "Trusted since",
+            "CN=dc.lab",
+            "CN=Lab Root CA,O=Heimdall Lab",
+            since.as_str(),
+            "web.lab:3389",
+        ] {
+            ui.find(label).expect(label);
+        }
+    }
+    // As the C# search, the names of the certificate match too.
+    let _ = shell.update(Message::TrustedSearch(
+        TrustedList::Certificates,
+        "root ca".to_owned(),
+    ));
+    let mut ui = simulator(&shell);
+    ui.find("dc.lab:3389").expect("its issuer matches");
+    assert!(ui.find("web.lab:3389").is_err(), "no names to match");
+}
+
+#[test]
 fn a_search_keeps_the_servers_that_match() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());

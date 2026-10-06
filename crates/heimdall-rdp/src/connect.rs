@@ -238,16 +238,16 @@ pub enum RdpError {
     #[error("the server's identity cannot be authenticated")]
     ServerNotAuthenticated,
     /// The server is not known: the user decides, then connects again with
-    /// [`RdpConfig::accepted`].
+    /// [`RdpConfig::accepted`]. Boxed: the error stays small.
     #[error("unknown server certificate {}", .0.fingerprint)]
-    UnknownCertificate(ServerCertificate),
+    UnknownCertificate(Box<ServerCertificate>),
     /// The server presents another key than the recorded one. Never asked about.
     #[error("the server certificate changed from {recorded} to {}", presented.fingerprint)]
     CertificateChanged {
         /// The key recorded, or accepted, for it.
         recorded: Fingerprint,
-        /// What it presented.
-        presented: ServerCertificate,
+        /// What it presented, boxed as in [`RdpError::UnknownCertificate`].
+        presented: Box<ServerCertificate>,
     },
     /// The file of known servers cannot be read or written.
     #[error("known RDP servers: {0}")]
@@ -572,16 +572,16 @@ fn trust(
         (Verdict::Unknown, _) if config.trusted_for_run.contains(&presented) => Ok(()),
         (Verdict::Changed { recorded }, _) => Err(RdpError::CertificateChanged {
             recorded,
-            presented: certificate,
+            presented: Box::new(certificate),
         }),
         (Verdict::Unknown, Some(accepted)) if accepted == presented => config
             .known_hosts
-            .record(&config.host, config.port, &presented)
+            .record_certificate(&config.host, config.port, &certificate)
             .map_err(RdpError::KnownHosts),
         // The key changed between the question and this connection.
         (Verdict::Unknown, Some(accepted)) => Err(RdpError::CertificateChanged {
             recorded: accepted,
-            presented: certificate,
+            presented: Box::new(certificate),
         }),
         // Strict: never asked about; the system's certificate authorities decide.
         (Verdict::Unknown, None) if config.strict_server_authentication => {
@@ -591,7 +591,7 @@ fn trust(
                 Err(RdpError::ServerNotAuthenticated)
             }
         }
-        (Verdict::Unknown, None) => Err(RdpError::UnknownCertificate(certificate)),
+        (Verdict::Unknown, None) => Err(RdpError::UnknownCertificate(Box::new(certificate))),
     }
 }
 
