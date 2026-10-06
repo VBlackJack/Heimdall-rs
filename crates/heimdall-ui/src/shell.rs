@@ -2140,12 +2140,13 @@ impl Shell {
                 .update(AppMessage::Files(FilesMessage::PathCancelled { tab, side }));
         }
         if self.app.dialog.is_none() {
-            // Escape reaches here even when a terminal sent it to its session.
-            return if confirm {
-                self.files_key(FilesKey::Open)
+            // Escape reaches here even when a terminal sent it to its session; in a Files tab
+            // it gives up the listing on its way, as the C# one.
+            return self.files_key(if confirm {
+                FilesKey::Open
             } else {
-                Vec::new()
-            };
+                FilesKey::CancelLoad
+            });
         }
         let enter_confirms = self
             .app
@@ -3840,6 +3841,21 @@ impl Shell {
                         )))
                     }),
                 text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
+                row![
+                    text(fl!("ui-settings-max-sessions")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        (0..=heimdall_core::settings::MAX_SESSIONS_MAX)
+                            .map(SessionsChoice)
+                            .collect::<Vec<_>>(),
+                        Some(SessionsChoice(self.app.settings().max_sessions)),
+                        |SessionsChoice(max)| {
+                            Message::App(AppMessage::Settings(SettingsMessage::MaxSessions(max)))
+                        },
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
             ]
             .spacing(SPACING),
         )
@@ -8627,6 +8643,19 @@ impl std::fmt::Display for TimeoutChoice {
             fl!("ui-settings-rdp-connect-timeout-off")
         } else {
             fl!("ui-settings-rdp-connect-timeout-seconds", seconds = self.0)
+        })
+    }
+}
+
+/// A limit of sessions as the list names it: none at 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionsChoice(u32);
+
+impl std::fmt::Display for SessionsChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            0 => fl!("ui-settings-max-sessions-none"),
+            max => max.to_string(),
         })
     }
 }
