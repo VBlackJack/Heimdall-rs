@@ -1097,6 +1097,40 @@ pub struct FtpProfile {
     pub vault_entry: Option<String>,
 }
 
+/// A Citrix Workspace published application, as the C# Citrix connection type: launched
+/// through Citrix Workspace, outside Heimdall, from its `StoreFront` or an ICA file.
+///
+/// The pre-authenticated launch line the C# keeps from the Workspace cache is not here: it
+/// is a secret, and never crosses a file, as the C# import and export drop it too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CitrixProfile {
+    /// Stable identifier.
+    pub id: ProfileId,
+    /// Name shown to the user.
+    pub name: String,
+    /// Folder path, `/`-separated, when the profile is filed in one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub group: Option<String>,
+    /// The `StoreFront` address the application is published on, as the C#
+    /// `CitrixStoreFrontUrl`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub store_front_url: Option<String>,
+    /// The published application's name, as the C# `CitrixAppName`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub app_name: Option<String>,
+    /// An ICA file launched instead, as the C# `CitrixIcaFilePath`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ica_file: Option<String>,
+    /// Seamless windows, as the C# `CitrixSeamlessMode`: on. Kept for the C# file; no
+    /// launch reads it, as no C# launch does.
+    #[serde(default = "shared")]
+    pub seamless: bool,
+    /// Single sign-on with this Windows account's Kerberos identity, as the C#
+    /// `CitrixUseSso`: on.
+    #[serde(default = "shared")]
+    pub sso: bool,
+}
+
 /// An FTP profile's data connections are passive unless it says otherwise.
 fn passive() -> bool {
     true

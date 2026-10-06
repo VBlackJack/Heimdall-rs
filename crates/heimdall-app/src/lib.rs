@@ -22,6 +22,7 @@
 //! calling `update`.
 
 mod app;
+pub mod citrix;
 pub mod credential_provider;
 mod desktop;
 mod driver;

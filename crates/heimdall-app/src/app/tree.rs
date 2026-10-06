@@ -52,11 +52,13 @@ pub enum ProfileKind {
     Local,
     /// Remote `PowerShell`.
     WinRm,
+    /// A Citrix Workspace published application, launched outside Heimdall.
+    Citrix,
 }
 
 impl ProfileKind {
     /// Every protocol, in the order the C# filter lists them.
-    pub const ALL: [Self; 8] = [
+    pub const ALL: [Self; 9] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -64,6 +66,7 @@ impl ProfileKind {
         Self::Vnc,
         Self::Telnet,
         Self::Ftp,
+        Self::Citrix,
         Self::Local,
     ];
 
@@ -79,6 +82,7 @@ impl ProfileKind {
             Self::Ftp => "FTP",
             Self::Local => "Local",
             Self::WinRm => "WinRM",
+            Self::Citrix => "Citrix",
         }
     }
 }
@@ -246,17 +250,20 @@ impl App {
             });
         }
         for profile in self.store.local_profiles() {
-            all.push(ProfileSummary {
-                id: profile.id.clone(),
-                favorite: self.store.is_favorite(&profile.id),
-                metadata: self.metadata_of(&profile.id),
-                name: profile.name.clone(),
-                group: profile.group.clone(),
-                kind: ProfileKind::Local,
-                endpoint: None,
-                username: None,
-                gateway: None,
-            });
+            all.push(self.serverless_summary(
+                &profile.id,
+                &profile.name,
+                profile.group.as_ref(),
+                ProfileKind::Local,
+            ));
+        }
+        for profile in self.store.citrix_profiles() {
+            all.push(self.serverless_summary(
+                &profile.id,
+                &profile.name,
+                profile.group.as_ref(),
+                ProfileKind::Citrix,
+            ));
         }
         for profile in self.store.winrm_profiles() {
             all.push(ProfileSummary {
@@ -272,6 +279,28 @@ impl App {
             });
         }
         all
+    }
+
+    /// The summary of a profile with no server, account or gateway of its own: a local
+    /// shell, a Citrix application.
+    fn serverless_summary(
+        &self,
+        id: &ProfileId,
+        name: &str,
+        group: Option<&String>,
+        kind: ProfileKind,
+    ) -> ProfileSummary {
+        ProfileSummary {
+            id: id.clone(),
+            favorite: self.store.is_favorite(id),
+            metadata: self.metadata_of(id),
+            name: name.to_owned(),
+            group: group.cloned(),
+            kind,
+            endpoint: None,
+            username: None,
+            gateway: None,
+        }
     }
 
     /// Whether profile `id` is marked as a favorite.
@@ -501,6 +530,18 @@ impl App {
                         profile.id = copy.clone();
                         profile.name.clone_from(&name);
                         store.merge_winrm([profile]);
+                    }
+                }
+                ProfileKind::Citrix => {
+                    let found = store
+                        .citrix_profiles()
+                        .iter()
+                        .find(|p| p.id == *id)
+                        .cloned();
+                    if let Some(mut profile) = found {
+                        profile.id = copy.clone();
+                        profile.name.clone_from(&name);
+                        store.merge_citrix([profile]);
                     }
                 }
             }

@@ -184,7 +184,7 @@ fn a_version_1_file_still_opens_and_is_saved_as_the_current_version() {
         text.starts_with(&format!("version = {PROFILE_FILE_VERSION}\n")),
         "{text}"
     );
-    assert_eq!(PROFILE_FILE_VERSION, 11);
+    assert_eq!(PROFILE_FILE_VERSION, 12);
 }
 
 #[test]
@@ -780,6 +780,42 @@ fn ftp_profiles_read_back_and_passive_is_written_only_when_off() {
     let mut store = reopened;
     assert!(store.remove(&ProfileId::new("active")));
     assert_eq!(store.ftp_profiles().len(), 1);
+}
+
+#[test]
+fn citrix_profiles_read_back_with_their_launch_settings() {
+    use heimdall_core::profile::CitrixProfile;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let store_front = CitrixProfile {
+        id: ProfileId::new("outlook"),
+        name: "Outlook".to_owned(),
+        group: Some("Apps".to_owned()),
+        store_front_url: Some("https://store.lab/Citrix/Store".to_owned()),
+        app_name: Some("Outlook 365".to_owned()),
+        ica_file: None,
+        seamless: true,
+        sso: true,
+    };
+    let ica = CitrixProfile {
+        id: ProfileId::new("erp"),
+        name: "ERP".to_owned(),
+        group: None,
+        store_front_url: None,
+        app_name: None,
+        ica_file: Some(r"C:\apps\erp.ica".to_owned()),
+        seamless: false,
+        sso: false,
+    };
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store.merge_citrix([store_front.clone(), ica.clone()]);
+    store.save().expect("saves");
+    let reopened = ProfileStore::open(&path).expect("reopens");
+    assert_eq!(reopened.citrix_profiles(), [store_front, ica]);
+    let mut store = reopened;
+    assert!(store.remove(&ProfileId::new("erp")));
+    assert_eq!(store.citrix_profiles().len(), 1);
 }
 
 #[test]

@@ -74,6 +74,7 @@ mod appearance;
 mod auto_reconnect;
 mod broadcast;
 mod bulk_edit;
+mod citrix_launch;
 mod connect_as;
 mod detail;
 mod file_import;
@@ -255,6 +256,15 @@ pub enum Message {
     OpenLocalProfile(ProfileId),
     /// Open a `WinRM` tab for a saved `WinRM` profile.
     OpenWinRm(ProfileId),
+    /// Launch a saved Citrix profile's application, outside Heimdall: no tab.
+    OpenCitrix(ProfileId),
+    /// A Citrix application was launched, or why not.
+    CitrixLaunched {
+        /// The profile's name.
+        name: String,
+        /// Launched, or why not.
+        result: Result<(), crate::citrix::CitrixRefusal>,
+    },
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
         /// Tab.
@@ -750,6 +760,10 @@ impl fmt::Debug for Message {
             Self::OpenWinRm(id) => write!(f, "OpenWinRm({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             Self::OpenFtp(id) => write!(f, "OpenFtp({id})"),
+            Self::OpenCitrix(id) => write!(f, "OpenCitrix({id})"),
+            Self::CitrixLaunched { result, .. } => {
+                write!(f, "CitrixLaunched({})", result.is_ok())
+            }
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
                 write!(f, "DesktopResize({}, {width}x{height})", tab.value())
@@ -1077,6 +1091,14 @@ pub enum Effect {
     WriteClipboard(String),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
+    /// Launch a Citrix application outside Heimdall, off the UI thread; answered with
+    /// [`Message::CitrixLaunched`].
+    LaunchCitrix {
+        /// The profile's name.
+        name: String,
+        /// How it launches.
+        launch: crate::citrix::CitrixLaunch,
+    },
     /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
     /// copied.
     WriteClipboardImage(std::sync::Arc<[u8]>),
@@ -1442,6 +1464,7 @@ impl fmt::Debug for Effect {
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
+            Self::LaunchCitrix { .. } => f.write_str("LaunchCitrix(..)"),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
@@ -2712,6 +2735,8 @@ impl App {
             | Message::OpenLocal(_)
             | Message::OpenLocalProfile(_)
             | Message::OpenWinRm(_)
+            | Message::OpenCitrix(_)
+            | Message::CitrixLaunched { .. }
             | Message::ReconnectTab(_)
             | Message::ConnectAs { .. }
             | Message::QuickConnect(_)
@@ -2971,6 +2996,8 @@ impl App {
             Message::OpenLocal(shell) => self.open_local(shell),
             Message::OpenLocalProfile(id) => self.open_local_profile(&id),
             Message::OpenWinRm(id) => self.open_winrm(&id),
+            Message::OpenCitrix(id) => self.open_citrix(&id),
+            Message::CitrixLaunched { name, result } => self.citrix_launched(name, result),
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
             Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),
