@@ -1359,6 +1359,7 @@ ui-files-error-changed-on-server = The file changed on the server since it was o
 ui-files-error-changed-since-confirmed = It changed on the server since the deletion was confirmed: it was left as it is.
 ui-files-error-file-too-large = Files larger than 16 MiB must be downloaded instead.
 ui-files-menu-open-in-terminal = Open in terminal
+ui-files-menu-open-in-explorer = Open in Explorer
 ui-status-resolution-reconnected = Resolution change required reconnect.
 ui-resolution-mode-smart-sizing = Smart sizing
 ui-resolution-tooltip = Change resolution - { $mode }

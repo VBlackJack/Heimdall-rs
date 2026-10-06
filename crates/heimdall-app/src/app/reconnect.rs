@@ -38,6 +38,9 @@ pub(super) enum Reopen {
     Shell(LocalShell),
     /// The same session saved nowhere, as "Connect as..." opened it, for its purpose.
     Transient(Box<TabProfile>, Purpose),
+    /// Nothing: the file browser docked beside a local shell is no session, and opens
+    /// with the shell's start.
+    LocalBrowser,
 }
 
 impl Reopen {
@@ -61,7 +64,7 @@ impl Tab {
     pub(super) fn saved_profile(&self) -> Option<&ProfileId> {
         match &self.reopen {
             Reopen::Profile(id) => Some(id),
-            Reopen::Shell(_) | Reopen::Transient(..) => None,
+            Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
         }
     }
 }
@@ -163,6 +166,7 @@ impl App {
         match reopen {
             Reopen::Profile(id) => self.open_saved(&id, purpose),
             Reopen::Shell(shell) => self.open_local(shell),
+            Reopen::LocalBrowser => Vec::new(),
             Reopen::Transient(profile, purpose) => {
                 let effects = self.open_transient(TabProfile::clone(&profile), purpose);
                 self.reopened_by(Reopen::Transient(profile, purpose));

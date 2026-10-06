@@ -402,6 +402,12 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Open the local folder selected, else the folder shown, in the system's file manager,
+    /// as the C# local file browser's "Open in Explorer".
+    OpenInExplorer {
+        /// Tab.
+        tab: TabId,
+    },
     /// The copies of a paste or a duplicate ended.
     Copied {
         /// Tab.
@@ -704,6 +710,7 @@ impl std::fmt::Debug for FilesMessage {
                 write!(f, "EditsChecked({}, {})", tab.value(), results.len())
             }
             Self::OpenInTerminal { tab } => write!(f, "OpenInTerminal({})", tab.value()),
+            Self::OpenInExplorer { tab } => write!(f, "OpenInExplorer({})", tab.value()),
             Self::Copied { tab, results, .. } => {
                 write!(f, "Copied({}, {})", tab.value(), results.len())
             }
@@ -944,6 +951,9 @@ impl App {
         tab: TabId,
         result: Result<(PathBuf, Vec<crate::files::LocalEntry>), FilesError>,
     ) -> Vec<Effect> {
+        if result.is_err() && self.local_browser_start_failed(tab) {
+            return self.list(tab, Side::Local);
+        }
         if let Some(files) = self.files_mut(tab) {
             let pane = &mut files.local;
             if std::mem::take(&mut pane.discard_listing) {
@@ -967,8 +977,9 @@ impl App {
     }
 
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
+        // The local file browser keeps the keys on the one pane it has.
         if let Some((tab, side)) = message.gesture()
-            && let Some(files) = self.files_mut(tab)
+            && let Some(files) = self.files_mut(tab).filter(|files| !files.local_only)
         {
             files.focus = side;
         }
@@ -1010,6 +1021,7 @@ impl App {
             FilesMessage::Paste { tab } => self.paste_held(tab),
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
+            FilesMessage::OpenInExplorer { tab } => self.open_in_explorer(tab),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::DropEntries {
                 tab,
@@ -1508,7 +1520,9 @@ impl App {
             FilesKey::First => last.map(|_| 0),
             FilesKey::Last => last,
             // This computer's pane hidden, the server's keeps the keys.
-            FilesKey::SwitchPane | FilesKey::Focus(_) if files.local_hidden => return Vec::new(),
+            FilesKey::SwitchPane | FilesKey::Focus(_) if files.local_hidden || files.local_only => {
+                return Vec::new();
+            }
             FilesKey::SwitchPane => {
                 files.focus = side.other();
                 return Vec::new();

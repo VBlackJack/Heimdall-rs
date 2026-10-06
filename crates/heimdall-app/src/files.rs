@@ -955,6 +955,10 @@ impl From<&RemoteError> for FilesError {
 
 /// The Files tab's state.
 #[derive(Debug)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per state of its own: panes shown, a look running, the sudo mode"
+)]
 pub struct FilesPane {
     /// The session with the server, once open.
     pub client: Option<RemoteSession>,
@@ -974,6 +978,10 @@ pub struct FilesPane {
     /// This computer's pane is hidden, the server's alone shown, as the C# SFTP pane docked
     /// beside a shell shows it; shown again with its toggle.
     pub local_hidden: bool,
+    /// This computer's pane alone, with no server behind it: the local file browser docked
+    /// beside a local shell, as the C# `LocalFileBrowserView`. Its server pane is never
+    /// shown nor given the keys.
+    pub local_only: bool,
     /// The server's folders bookmarked in this tab, in the order they were, as the C#
     /// Files tab keeps them: for the session.
     pub bookmarks: Vec<RemotePath>,
@@ -1136,6 +1144,7 @@ impl FilesPane {
             queue: VecDeque::new(),
             focus: Side::Local,
             local_hidden: false,
+            local_only: false,
             bookmarks: Vec::new(),
             copying: None,
             edits: Vec::new(),
@@ -1147,9 +1156,22 @@ impl FilesPane {
         }
     }
 
+    /// The local file browser docked beside a local shell: this computer's pane alone,
+    /// starting in `local`, with the keys.
+    #[must_use]
+    pub fn local_browser(local: PathBuf) -> Self {
+        Self {
+            local_only: true,
+            ..Self::new(local)
+        }
+    }
+
     /// Shows this computer's pane beside the server's, or hides it: the keys then act on the
-    /// server's.
+    /// server's. The local file browser, having no server pane, keeps its own.
     pub fn show_local(&mut self, shown: bool) {
+        if self.local_only {
+            return;
+        }
         self.local_hidden = !shown;
         if !shown {
             self.focus = Side::Remote;

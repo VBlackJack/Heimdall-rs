@@ -1440,6 +1440,7 @@ fn sftp_tab(can_paste: bool, over_ssh: bool) -> heimdall_ui::tree_view::FilesTab
         connected: over_ssh,
         sftp: true,
         over_ssh,
+        local_only: false,
     }
 }
 
@@ -1603,6 +1604,7 @@ async fn an_ftp_tabs_entry_menu_edits_cuts_and_copies_as_the_csharp_but_never_ru
         connected: true,
         sftp: false,
         over_ssh: false,
+        local_only: false,
     };
     let menu = |facts| {
         let settings = Settings {

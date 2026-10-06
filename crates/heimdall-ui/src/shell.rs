@@ -3106,6 +3106,7 @@ impl Shell {
                     connected: self.app.files_connected(tab),
                     sftp: self.app.files_over_sftp(tab),
                     over_ssh: self.app.can_copy(tab),
+                    local_only: files.local_only,
                 },
             )
         } else if let TreeMenu::Folder(path) = menu {
