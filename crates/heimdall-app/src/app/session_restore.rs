@@ -55,9 +55,10 @@ impl App {
     /// The tabs of saved profiles open now, kept to be offered at the next start; none
     /// leaves no snapshot. A snapshot that cannot be written is logged: closing goes on.
     pub(super) fn keep_snapshot(&self) {
+        // The tabs of the strip, as the C# keeps them: a pane docked in a split is not one.
         let sessions = self
-            .tabs
-            .iter()
+            .strip()
+            .into_iter()
             .filter_map(|tab| match &tab.reopen {
                 Reopen::Profile(id) => Some(SnapshotEntry {
                     profile: id.clone(),

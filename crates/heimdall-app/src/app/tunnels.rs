@@ -123,8 +123,10 @@ impl App {
     /// shown's, and its saved profile keeps it for the next time it is opened.
     fn toggle_tunnels_panel(&mut self) {
         let open = !self.tunnels_panel();
+        // The tab of the strip shown keeps it, whichever of its panes has the keyboard.
         let Some(index) = self
-            .active
+            .shown_tab()
+            .map(|tab| tab.id)
             .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
         else {
             self.tunnels_panel = open;

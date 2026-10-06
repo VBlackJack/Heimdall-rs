@@ -126,6 +126,9 @@ pub enum Notice {
     /// The keys trusted could not be written there, for this reason: a file and what the
     /// system said, or nothing when the home folder is not known.
     KnownHostsExportFailed(String),
+    /// A tab was not split further: it shows this many panes already, the most it can, as
+    /// the C# `SplitMaxPanesReached`.
+    SplitMaxPanesReached(usize),
     /// An image of the session shown was copied to the clipboard, as the C# says it.
     ScreenshotCopied,
     /// No image of the session shown could be copied.
@@ -399,8 +402,13 @@ impl App {
         self.notice = Some((notice, self.shown()));
     }
 
-    /// The session shown, and its state.
+    /// The tab of the strip shown, and its state: a notice stays while the keyboard moves
+    /// between the panes of its split.
     fn shown(&self) -> (Option<TabId>, SessionStatus) {
-        (self.active, self.session_status())
+        let shown = self.shown_tab();
+        (
+            shown.map(|tab| tab.id),
+            shown.map_or(SessionStatus::Ready, tab_status),
+        )
     }
 }

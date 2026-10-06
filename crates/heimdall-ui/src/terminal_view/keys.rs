@@ -117,6 +117,8 @@ pub enum WindowShortcut {
     PreviousTab,
     /// Close the tab shown: Ctrl+Shift+W.
     CloseTab,
+    /// Place the panes of the split tab shown the other way: Ctrl+Shift+O, as the C# one.
+    ToggleSplit,
     /// The terminal's text larger, smaller or back to its size: Ctrl +, Ctrl -, Ctrl 0.
     Zoom(Zoom),
     /// Open or close the terminal's search bar: Ctrl+Shift+F.
@@ -235,6 +237,9 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('s') => {
             Some(WindowShortcut::Screenshot)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('o') => {
+            Some(WindowShortcut::ToggleSplit)
         }
         // The character, wherever the layout puts it: the C# reads the comma key.
         keyboard::Key::Character(c) if !shift && c.as_str() == "," => {
