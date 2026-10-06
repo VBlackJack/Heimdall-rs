@@ -333,6 +333,9 @@ pub struct Settings {
     /// The computer kept from sleeping while a session is open, as the C#
     /// `PreventSleepDuringSession`: on.
     pub prevent_sleep: bool,
+    /// Most sessions open at once, as the C# `MaxEmbeddedSessions`; 0 for no limit, the
+    /// default here: a session costs no embedded control as the C# one does.
+    pub max_sessions: u32,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
     pub diagnostics_log: bool,
     /// Whether, and how often, every server is checked for an answer in the background.
@@ -489,6 +492,18 @@ pub fn rdp_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
 
 /// `value` read from the file when `accepted`; `default` when absent or out of the range,
 /// as the C# load warns and keeps the default.
+/// Sessions open at once by default: no limit.
+pub const MAX_SESSIONS_DEFAULT: u32 = 0;
+/// Most sessions a limit may allow, as the C# setting's range.
+pub const MAX_SESSIONS_MAX: u32 = 20;
+
+/// Whether `max` is a limit of sessions the settings accept: 0 for none, or within the C#
+/// range.
+#[must_use]
+pub fn max_sessions_accepted(max: u32) -> bool {
+    max <= MAX_SESSIONS_MAX
+}
+
 fn within(value: Option<u32>, accepted: fn(u32) -> bool, default: u32) -> u32 {
     value.filter(|value| accepted(*value)).unwrap_or(default)
 }
@@ -582,6 +597,7 @@ impl Default for Settings {
             ctrl_v_paste: CtrlVPaste::default(),
             collapse_tunnels_panel: true,
             prevent_sleep: true,
+            max_sessions: MAX_SESSIONS_DEFAULT,
             diagnostics_log: true,
             reachability: Reachability::default(),
         }
@@ -761,6 +777,9 @@ struct GeneralSection {
     /// Absent is the C# default: on.
     #[serde(default)]
     prevent_sleep: Option<bool>,
+    /// Absent is no limit.
+    #[serde(default)]
+    max_sessions: Option<u32>,
     /// Absent is the C# default: written.
     #[serde(default)]
     diagnostics_log: Option<bool>,
@@ -979,6 +998,11 @@ impl Settings {
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
             prevent_sleep: file.general.prevent_sleep.unwrap_or(true),
+            max_sessions: within(
+                file.general.max_sessions,
+                max_sessions_accepted,
+                MAX_SESSIONS_DEFAULT,
+            ),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
@@ -1054,6 +1078,7 @@ impl Settings {
                 language: self.language.map(|language| language.code().to_owned()),
                 collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
                 prevent_sleep: Some(self.prevent_sleep),
+                max_sessions: Some(self.max_sessions),
                 diagnostics_log: Some(self.diagnostics_log),
             },
             vault_unlock: VaultUnlockSection {

@@ -848,6 +848,7 @@ impl App {
                     return Vec::new();
                 };
                 files.remote.loading = true;
+                files.remote.discard_listing = false;
                 vec![Effect::ListRemote {
                     tab,
                     client,
@@ -856,6 +857,7 @@ impl App {
             }
             Side::Local => {
                 files.local.loading = true;
+                files.local.discard_listing = false;
                 vec![Effect::ListLocal {
                     tab,
                     path: files.local.path.clone(),
@@ -875,6 +877,10 @@ impl App {
         let mut not_a_folder = None;
         if let Some(files) = self.files_mut(tab) {
             let pane = &mut files.remote;
+            // Given up with Escape: the folder shown stays.
+            if std::mem::take(&mut pane.discard_listing) {
+                return Vec::new();
+            }
             pane.loading = false;
             match (result, pane.entering_link.take()) {
                 (Ok((path, entries)), _) => {
@@ -908,6 +914,9 @@ impl App {
     ) -> Vec<Effect> {
         if let Some(files) = self.files_mut(tab) {
             let pane = &mut files.local;
+            if std::mem::take(&mut pane.discard_listing) {
+                return Vec::new();
+            }
             pane.loading = false;
             match result {
                 Ok((path, entries)) => {
@@ -1256,6 +1265,7 @@ impl App {
         files.focus = Side::Remote;
         files.remote.leave();
         files.remote.loading = true;
+        files.remote.discard_listing = false;
         vec![Effect::ListRemote { tab, client, path }]
     }
 
@@ -1337,6 +1347,7 @@ impl App {
                 };
                 files.remote.leave();
                 files.remote.loading = true;
+                files.remote.discard_listing = false;
                 vec![Effect::ListRemote { tab, client, path }]
             }
             Side::Local => {
@@ -1351,6 +1362,7 @@ impl App {
                 let path = files.local.path.join(typed);
                 files.local.leave();
                 files.local.loading = true;
+                files.local.discard_listing = false;
                 vec![Effect::ListLocal { tab, path }]
             }
         }
@@ -1508,6 +1520,15 @@ impl App {
             FilesKey::Upload => return self.start_transfer(tab, Direction::Upload),
             // The window gives the path bar the keyboard.
             FilesKey::FocusPath | FilesKey::Lower => return Vec::new(),
+            // Both panes: Escape gives up whatever is still on its way.
+            FilesKey::CancelLoad => {
+                let remote = files.remote.cancel_listing();
+                let local = files.local.cancel_listing();
+                if remote || local {
+                    self.tell(super::Notice::ListingCancelled);
+                }
+                return Vec::new();
+            }
         };
         match side {
             Side::Remote => files.remote.select_only(target),
