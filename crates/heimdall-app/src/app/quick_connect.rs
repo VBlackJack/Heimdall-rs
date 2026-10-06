@@ -204,6 +204,34 @@ impl App {
         results
     }
 
+    /// What Quick Connect offers for `query`, opened from tab `split`'s "Split..." when it
+    /// is: with nothing typed, the profiles last split with the one its pane shows come
+    /// first, the most recent first, as the C# palette's split mode raises them.
+    #[must_use]
+    pub fn quick_results_in(&self, query: &str, split: Option<TabId>) -> Vec<QuickResult> {
+        let results = self.quick_results(query);
+        let Some(own) = split
+            .filter(|_| query.trim().is_empty())
+            .and_then(|host| self.saved_profile(self.focus_of(host)))
+        else {
+            return results;
+        };
+        let profiles = self.profile_summaries();
+        let mut raised: Vec<QuickResult> = self
+            .split_layouts
+            .partners(&own)
+            .into_iter()
+            .filter_map(|partner| profiles.iter().find(|profile| profile.id == *partner))
+            .map(|profile| QuickResult::Profile(profile.clone()))
+            .collect();
+        let rest: Vec<QuickResult> = results
+            .into_iter()
+            .filter(|result| !raised.contains(result))
+            .collect();
+        raised.extend(rest);
+        raised
+    }
+
     /// Records that `tab_id` just connected: its host, with its protocol, first among the
     /// recent ones, once per host and protocol. A local program has no host to keep.
     pub(super) fn note_recent(&mut self, tab_id: TabId) {

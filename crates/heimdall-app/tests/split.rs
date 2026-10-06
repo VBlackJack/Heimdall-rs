@@ -77,9 +77,19 @@ fn profile(id: &str) -> SshProfile {
 }
 
 fn app(dir: &Path) -> App {
+    app_with(dir, &[])
+}
+
+/// The application with profiles `a`, `b`, `c` and `more`, kept in `dir`.
+fn app_with(dir: &Path, more: &[String]) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
-    store.merge([profile("a"), profile("b"), profile("c")]);
+    store.merge(
+        ["a", "b", "c"]
+            .into_iter()
+            .chain(more.iter().map(String::as_str))
+            .map(profile),
+    );
     store.save().expect("save");
     App::new(AppConfig {
         profiles_file,
@@ -932,4 +942,215 @@ fn the_pane_shortcuts_go_round_the_split_and_leave_a_plain_tab_alone() {
     split(&mut app, SplitMessage::FocusNext(c));
     split(&mut app, SplitMessage::FocusPrevious(c));
     assert_eq!(app.active, Some(c), "not split: nothing moves");
+}
+
+/// The splits remembered beside the profiles of `dir`, as the next start reads them.
+fn remembered(dir: &Path) -> heimdall_core::split_layouts::SplitLayouts {
+    heimdall_core::split_layouts::SplitLayouts::load(
+        &heimdall_core::split_layouts::split_layouts_path(&dir.join("profiles.toml")),
+    )
+    .expect("readable")
+}
+
+/// Tab `tab` merged into `host`, placed as said.
+fn merge(app: &mut App, host: TabId, tab: TabId, axis: Axis, placement: Placement) {
+    split(
+        app,
+        SplitMessage::Merge {
+            host,
+            tab,
+            axis,
+            placement,
+        },
+    );
+}
+
+#[test]
+fn a_resized_split_of_two_profiles_starts_there_when_merged_again_mirrored_the_other_way() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let ((a, _), (b, _)) = merged(&mut app);
+    assert_eq!(
+        layout(&app, a).ratio(),
+        Some(DEFAULT_RATIO),
+        "nothing known"
+    );
+    split(
+        &mut app,
+        SplitMessage::Resize {
+            host: a,
+            ratio: 0.25,
+        },
+    );
+    let kept = remembered(dir.path());
+    let entry = &kept.entries()[0];
+    assert_eq!((entry.first.as_str(), entry.second.as_str()), ("a", "b"));
+    assert_eq!(
+        entry.orientation,
+        heimdall_core::split_layouts::Orientation::SideBySide
+    );
+
+    // The same pair again starts at that share; the placement is the one asked, as the C#
+    // restores the ratio only.
+    split(&mut app, SplitMessage::Unsplit(a));
+    merge(&mut app, a, b, Axis::Stacked, Placement::Second);
+    assert_eq!(layout(&app, a).ratio(), Some(0.25));
+    assert_eq!(layout(&app, a).axis(), Some(Axis::Stacked));
+
+    // The other way round, the mirrored share.
+    split(&mut app, SplitMessage::Unsplit(a));
+    merge(&mut app, b, a, Axis::SideBySide, Placement::Second);
+    assert_eq!(layout(&app, b).leaves(), [b, a]);
+    assert_eq!(layout(&app, b).ratio(), Some(0.75), "1 - ratio");
+    split(&mut app, SplitMessage::Unsplit(b));
+    merge(&mut app, a, b, Axis::SideBySide, Placement::First);
+    assert_eq!(layout(&app, a).leaves(), [b, a], "dropped first");
+    assert_eq!(layout(&app, a).ratio(), Some(0.75));
+
+    // A reset is remembered too; swapping and turning are not, as the C#.
+    split(&mut app, SplitMessage::ResetRatio(a));
+    split(&mut app, SplitMessage::Swap(a));
+    split(&mut app, SplitMessage::ToggleAxis(a));
+    let kept = remembered(dir.path());
+    assert_eq!(kept.entries().len(), 1, "one pair, in either order");
+    assert_eq!(
+        kept.ratio(&ProfileId::new("a"), &ProfileId::new("b")),
+        Some(DEFAULT_RATIO)
+    );
+    assert_eq!(
+        kept.entries()[0].orientation,
+        heimdall_core::split_layouts::Orientation::SideBySide,
+        "as merged, not as turned"
+    );
+}
+
+#[test]
+fn a_pane_saved_nowhere_is_not_remembered() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let typed = app
+        .quick_results("root@db.lab")
+        .into_iter()
+        .next()
+        .expect("an SSH destination");
+    split(
+        &mut app,
+        SplitMessage::QuickConnect {
+            host: a,
+            axis: Axis::SideBySide,
+            result: typed,
+        },
+    );
+    let [_, db] = layout(&app, a).leaves()[..] else {
+        panic!("two panes");
+    };
+    split(
+        &mut app,
+        SplitMessage::Resize {
+            host: a,
+            ratio: 0.25,
+        },
+    );
+    assert!(
+        remembered(dir.path()).entries().is_empty(),
+        "no profile, no key"
+    );
+    split(&mut app, SplitMessage::Unsplit(a));
+    merge(&mut app, a, db, Axis::SideBySide, Placement::Second);
+    assert_eq!(layout(&app, a).ratio(), Some(DEFAULT_RATIO));
+}
+
+#[test]
+fn the_fifty_first_pair_drops_the_oldest() {
+    use heimdall_core::split_layouts::MAX_ENTRIES;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let others: Vec<String> = (0..=MAX_ENTRIES).map(|n| format!("p{n}")).collect();
+    let mut app = app_with(dir.path(), &others);
+    let (a, _) = open(&mut app, "a");
+    for other in &others {
+        let (tab, _) = open(&mut app, other);
+        merge(&mut app, a, tab, Axis::SideBySide, Placement::Second);
+        split(&mut app, SplitMessage::Unsplit(a));
+        app.update(Message::RequestCloseTab(tab));
+    }
+    let kept = remembered(dir.path());
+    assert_eq!(kept.entries().len(), MAX_ENTRIES);
+    assert_eq!(
+        kept.entries()[0].second.as_str(),
+        others[MAX_ENTRIES],
+        "newest first"
+    );
+    let a_id = ProfileId::new("a");
+    assert_eq!(
+        kept.ratio(&a_id, &ProfileId::new("p0")),
+        None,
+        "the oldest dropped"
+    );
+    assert_eq!(
+        kept.ratio(&a_id, &ProfileId::new("p1")),
+        Some(DEFAULT_RATIO)
+    );
+}
+
+#[test]
+fn the_splits_remembered_are_read_back_at_the_next_start() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut first_run = app(dir.path());
+    let ((a, _), _) = merged(&mut first_run);
+    split(
+        &mut first_run,
+        SplitMessage::Resize {
+            host: a,
+            ratio: 0.25,
+        },
+    );
+    drop(first_run);
+
+    let mut app = app(dir.path());
+    let (b, _) = open(&mut app, "b");
+    let (a, _) = open(&mut app, "a");
+    merge(&mut app, b, a, Axis::Stacked, Placement::Second);
+    assert_eq!(
+        layout(&app, b).ratio(),
+        Some(0.75),
+        "read at start, mirrored"
+    );
+}
+
+#[test]
+fn split_mode_quick_connect_offers_the_profiles_last_split_with_first() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (c, _) = open(&mut app, "c");
+    merge(&mut app, a, c, Axis::SideBySide, Placement::Second);
+    split(&mut app, SplitMessage::Unsplit(a));
+    let names = |results: Vec<heimdall_app::QuickResult>| -> Vec<String> {
+        results
+            .into_iter()
+            .map(|result| match result {
+                heimdall_app::QuickResult::Profile(profile) => profile.id.as_str().to_owned(),
+                other => panic!("a profile: {other:?}"),
+            })
+            .collect()
+    };
+    assert_eq!(names(app.quick_results_in("", Some(a))), ["c", "a", "b"]);
+    assert_eq!(
+        names(app.quick_results_in("", None)),
+        names(app.quick_results("")),
+        "not in split mode: as before"
+    );
+    assert_eq!(
+        names(app.quick_results_in("server b", Some(a))),
+        names(app.quick_results("server b")),
+        "something typed: as scored"
+    );
+    let (b, _) = open(&mut app, "b");
+    assert_eq!(
+        names(app.quick_results_in("", Some(b))),
+        names(app.quick_results("")),
+        "b was split with nothing"
+    );
 }

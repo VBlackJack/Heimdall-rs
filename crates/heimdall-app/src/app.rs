@@ -2592,6 +2592,9 @@ pub struct App {
     settings_file: std::path::PathBuf,
     /// What the Files tabs keep between runs: bookmarks, the last download folder.
     files_state: heimdall_core::files_state::FilesState,
+    /// The splits made between saved profiles, as the C# `SplitLayoutMemory`: the share a
+    /// new split of a pair starts at.
+    split_layouts: heimdall_core::split_layouts::SplitLayouts,
     /// The transcripts' first and last lines, as the window words them.
     transcript_lines: Option<TranscriptLines>,
     /// Broadcast input: on or off, and the tabs marked.
@@ -2671,10 +2674,17 @@ impl App {
                 .profiles_file
                 .with_file_name(heimdall_core::files_state::FILES_STATE_FILE_NAME),
         );
+        let (split_layouts, unread) = heimdall_core::split_layouts::SplitLayouts::open(
+            &heimdall_core::split_layouts::split_layouts_path(&config.profiles_file),
+        );
+        if let Some(error) = unread {
+            log::warn!("split layouts not read: {error}");
+        }
         let mut app = Self {
             settings,
             settings_file,
             files_state,
+            split_layouts,
             transcript_lines: None,
             broadcast: broadcast::Broadcast::default(),
             viewport: config.initial_grid,

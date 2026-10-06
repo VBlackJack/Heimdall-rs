@@ -32,6 +32,7 @@ pub mod post_connect;
 pub mod profile;
 pub mod session_snapshot;
 pub mod settings;
+pub mod split_layouts;
 pub mod store;
 pub mod utc;
 pub mod window_state;

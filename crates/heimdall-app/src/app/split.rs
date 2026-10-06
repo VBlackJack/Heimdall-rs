@@ -23,7 +23,9 @@
 //! the tab shown on the strip is its host.
 
 use heimdall_core::profile::ProfileId;
+use heimdall_core::split_layouts::{self, Orientation};
 
+use super::reconnect::Reopen;
 use super::{App, Dialog, Effect, Message, Notice, QuickResult, Tab};
 use crate::ids::TabId;
 
@@ -31,10 +33,10 @@ use crate::ids::TabId;
 pub const MAX_PANES: usize = 2;
 
 /// Smallest share of a split the first pane takes, as the C# `SplitRatio` clamp.
-pub const MIN_RATIO: f32 = 0.1;
+pub const MIN_RATIO: f32 = split_layouts::MIN_RATIO;
 
 /// Largest share of a split the first pane takes.
-pub const MAX_RATIO: f32 = 0.9;
+pub const MAX_RATIO: f32 = split_layouts::MAX_RATIO;
 
 /// The share a new split gives its first pane, and a reset gives back.
 pub const DEFAULT_RATIO: f32 = 0.5;
@@ -55,6 +57,14 @@ impl Axis {
         match self {
             Self::SideBySide => Self::Stacked,
             Self::Stacked => Self::SideBySide,
+        }
+    }
+
+    /// The placement as the splits remembered keep it.
+    fn orientation(self) -> Orientation {
+        match self {
+            Self::SideBySide => Orientation::SideBySide,
+            Self::Stacked => Orientation::Stacked,
         }
     }
 }
@@ -175,6 +185,19 @@ impl Node {
         axis: Axis,
         placement: Placement,
     ) -> bool {
+        self.split_leaf_with(leaf, added, axis, placement, DEFAULT_RATIO)
+    }
+
+    /// The node `leaf` stands in split with `added`, `added` on the side `placement` says,
+    /// the first side taking `ratio`, held within [`MIN_RATIO`] and [`MAX_RATIO`].
+    pub fn split_leaf_with(
+        &mut self,
+        leaf: TabId,
+        added: TabId,
+        axis: Axis,
+        placement: Placement,
+        ratio: f32,
+    ) -> bool {
         match self {
             Self::Leaf(id) if *id == leaf => {
                 let (first, second) = match placement {
@@ -183,7 +206,7 @@ impl Node {
                 };
                 *self = Self::Split {
                     axis,
-                    ratio: DEFAULT_RATIO,
+                    ratio: ratio.clamp(MIN_RATIO, MAX_RATIO),
                     first: Box::new(Self::Leaf(first)),
                     second: Box::new(Self::Leaf(second)),
                 };
@@ -191,8 +214,8 @@ impl Node {
             }
             Self::Leaf(_) => false,
             Self::Split { first, second, .. } => {
-                first.split_leaf_at(leaf, added, axis, placement)
-                    || second.split_leaf_at(leaf, added, axis, placement)
+                first.split_leaf_with(leaf, added, axis, placement, ratio)
+                    || second.split_leaf_with(leaf, added, axis, placement, ratio)
             }
         }
     }
@@ -428,12 +451,15 @@ impl App {
             SplitMessage::Swap(host) => self.edit_layout(host, Layout::swap),
             SplitMessage::ToggleAxis(host) => self.edit_layout(host, Layout::toggle_axis),
             // A share no split has is not taken.
+            // Remembered for its pair, as the C# records a drag's end and a reset.
             SplitMessage::Resize { host, ratio } if ratio.is_finite() => {
                 self.edit_layout(host, |layout| layout.set_ratio(ratio));
+                self.remember_layout(host);
             }
             SplitMessage::Resize { .. } => {}
             SplitMessage::ResetRatio(host) => {
                 self.edit_layout(host, |layout| layout.set_ratio(DEFAULT_RATIO));
+                self.remember_layout(host);
             }
             SplitMessage::Focus(tab) => return self.focus_pane(tab),
             SplitMessage::ClosePane(tab) => self.request_pane_close(tab),
@@ -459,7 +485,8 @@ impl App {
 
     /// Docks `tab` in a pane of `host`, beside the pane that had the keyboard on the side
     /// `placement` says, and shows them. A tab still connecting is merged too: it connects
-    /// in its pane.
+    /// in its pane. The split starts at the share last given to the pair of their profiles,
+    /// and is remembered, as the C# merge does.
     fn merge(&mut self, host: TabId, tab: TabId, axis: Axis, placement: Placement) -> Vec<Effect> {
         let mergeable = host != tab
             && self.tab(host).is_some()
@@ -476,6 +503,12 @@ impl App {
         // The pane shown keeps the keyboard: the merged one when it was the tab shown.
         let shown = self.active.and_then(|id| self.host_of(id));
         let focus = if shown == Some(tab) { tab } else { host };
+        let beside = self.focus_of(host);
+        let (first, second) = match placement {
+            Placement::First => (tab, beside),
+            Placement::Second => (beside, tab),
+        };
+        let ratio = self.remembered_ratio(first, second);
         let Some(found) = self.tab_mut(host) else {
             return Vec::new();
         };
@@ -483,14 +516,70 @@ impl App {
             root: Node::Leaf(host),
             focus: host,
         });
-        let beside = layout.focus;
-        layout.root.split_leaf_at(beside, tab, axis, placement);
+        layout
+            .root
+            .split_leaf_with(beside, tab, axis, placement, ratio);
         layout.focus = focus;
         // Off the strip, a tab is never pinned.
         if let Some(merged) = self.tab_mut(tab) {
             merged.pinned = false;
         }
+        self.remember_split(first, second, axis, ratio);
         self.select_tab(host)
+    }
+
+    /// The saved profile pane `tab` shows; `None` for a session saved nowhere or a local
+    /// shell: the C# remembers splits by server identifier, and these have none.
+    pub(super) fn saved_profile(&self, tab: TabId) -> Option<ProfileId> {
+        match &self.tab(tab)?.reopen {
+            Reopen::Profile(id) => Some(id.clone()),
+            Reopen::Shell(_) | Reopen::Transient(..) => None,
+        }
+    }
+
+    /// The share a new split of `first` and `second` gives `first`: the one last given to
+    /// the pair of their profiles, else [`DEFAULT_RATIO`], as the C# `RememberedRatio`.
+    fn remembered_ratio(&self, first: TabId, second: TabId) -> f32 {
+        match (self.saved_profile(first), self.saved_profile(second)) {
+            (Some(first), Some(second)) => self.split_layouts.ratio(&first, &second),
+            _ => None,
+        }
+        .unwrap_or(DEFAULT_RATIO)
+    }
+
+    /// Remembers the split of `first` and `second`, `first` left or above, when both show
+    /// saved profiles; a file that cannot be written is logged, the split goes on.
+    fn remember_split(&mut self, first: TabId, second: TabId, axis: Axis, ratio: f32) {
+        let (Some(first), Some(second)) = (self.saved_profile(first), self.saved_profile(second))
+        else {
+            return;
+        };
+        if let Err(error) = self
+            .split_layouts
+            .record(&first, &second, axis.orientation(), ratio)
+        {
+            log::warn!("the split layout was not kept: {error}");
+        }
+    }
+
+    /// Remembers the outer split of `host` as it now is, as the C# `RememberSplitRatio`:
+    /// its first pane and its secondary one.
+    fn remember_layout(&mut self, host: TabId) {
+        let Some(Layout {
+            root:
+                Node::Split {
+                    axis,
+                    ratio,
+                    first,
+                    second,
+                },
+            ..
+        }) = self.tab(host).and_then(|tab| tab.layout.as_ref())
+        else {
+            return;
+        };
+        let (first, second, axis, ratio) = (first.first_leaf(), second.first_leaf(), *axis, *ratio);
+        self.remember_split(first, second, axis, ratio);
     }
 
     /// Opens a session with `open`, then merges the tab it opened into `host`, the new pane
