@@ -336,6 +336,19 @@ impl App {
             .is_some_and(|profile| profile.kind != ProfileKind::Local)
     }
 
+    /// The names of the gateways `tab`'s connection goes through, the first hop first; none
+    /// when it goes straight, as the C# "via" of a session's header.
+    #[must_use]
+    pub fn tab_route(&self, tab: &super::Tab) -> Vec<String> {
+        let Some(gateway) = tab.profile.gateway() else {
+            return Vec::new();
+        };
+        self.store
+            .route(Some(gateway))
+            .map(|route| route.into_iter().map(|gateway| gateway.name).collect())
+            .unwrap_or_default()
+    }
+
     /// Applies a message about the tree.
     pub(super) fn tree_message(&mut self, message: Message) -> Vec<Effect> {
         match message {

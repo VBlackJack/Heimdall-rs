@@ -161,6 +161,55 @@ impl AgentPreference {
     }
 }
 
+/// The execution policy a local `PowerShell` is started with, as the C#
+/// `PowerShellExecutionPolicy`: its own unless another is chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ExecutionPolicy {
+    /// `PowerShell`'s own: nothing is passed.
+    #[default]
+    Default,
+    /// `-ExecutionPolicy Bypass`.
+    Bypass,
+    /// `-ExecutionPolicy RemoteSigned`.
+    RemoteSigned,
+    /// `-ExecutionPolicy Unrestricted`.
+    Unrestricted,
+    /// `-ExecutionPolicy AllSigned`.
+    AllSigned,
+}
+
+impl ExecutionPolicy {
+    /// Every policy, in the order of the C# list.
+    pub const ALL: [Self; 5] = [
+        Self::Default,
+        Self::Bypass,
+        Self::RemoteSigned,
+        Self::Unrestricted,
+        Self::AllSigned,
+    ];
+
+    /// The name the file holds and `PowerShell` takes: the C# one.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Bypass => "Bypass",
+            Self::RemoteSigned => "RemoteSigned",
+            Self::Unrestricted => "Unrestricted",
+            Self::AllSigned => "AllSigned",
+        }
+    }
+
+    /// The policy named `name`; the default for a name not known, as the C# load.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|policy| policy.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
+    }
+}
+
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
@@ -224,6 +273,8 @@ pub struct Settings {
     pub external_editor: String,
     /// Which SSH agent's keys are offered first, or alone; applied to the next connection.
     pub ssh_agent_preference: AgentPreference,
+    /// The execution policy a local `PowerShell` is started with.
+    pub powershell_execution_policy: ExecutionPolicy,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
@@ -456,6 +507,7 @@ impl Default for Settings {
             rdp_defaults: RdpDefaults::default(),
             external_editor: String::new(),
             ssh_agent_preference: AgentPreference::default(),
+            powershell_execution_policy: ExecutionPolicy::default(),
             collapse_tunnels_panel: true,
             diagnostics_log: true,
             reachability: Reachability::default(),
@@ -651,6 +703,9 @@ struct TerminalSection {
     broadcast_scope: Option<String>,
     #[serde(default)]
     font_size: Option<u16>,
+    /// The C# name of the local `PowerShell` execution policy.
+    #[serde(default)]
+    powershell_execution_policy: Option<String>,
 }
 
 /// The instant `seconds` after 1970, UTC.
@@ -820,6 +875,12 @@ impl Settings {
                 .as_deref()
                 .map(AgentPreference::named)
                 .unwrap_or_default(),
+            powershell_execution_policy: file
+                .terminal
+                .powershell_execution_policy
+                .as_deref()
+                .map(ExecutionPolicy::named)
+                .unwrap_or_default(),
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
@@ -885,6 +946,9 @@ impl Settings {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
                 broadcast_scope: Some(self.broadcast_scope.name().to_owned()),
                 font_size: Some(self.terminal_font_size),
+                powershell_execution_policy: Some(
+                    self.powershell_execution_policy.name().to_owned(),
+                ),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,

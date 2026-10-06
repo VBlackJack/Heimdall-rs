@@ -441,3 +441,48 @@ fn the_panel_starts_as_the_settings_say_collapsed_unless_chosen() {
         "open at the next start"
     );
 }
+
+#[test]
+fn a_gateway_s_key_trusted_once_opens_the_tunnel_and_is_never_written_and_its_fingerprint_copies() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    save_gateway(&mut app);
+    let id = open_tunnel(&mut app);
+    let key = PublicKey::from_openssh(GATEWAY_KEY.trim()).expect("key");
+    event(
+        &mut app,
+        id,
+        TunnelEvent::Route(ConnectionEvent::UnknownHostKey {
+            host: "bastion.lab".to_owned(),
+            port: 22,
+            fingerprint: "SHA256:fingerprint".to_owned(),
+            key: Arc::new(key.clone()),
+        }),
+    );
+    assert!(matches!(
+        &app.dialog,
+        Some(Dialog::TunnelHostKey { algorithm, .. }) if algorithm == "ssh-ed25519"
+    ));
+    let copied = tunnel(&mut app, TunnelMessage::CopyKeyFingerprint);
+    assert!(
+        matches!(copied.as_slice(), [Effect::WriteClipboard(text)] if text == "SHA256:fingerprint"),
+        "{copied:?}"
+    );
+    assert!(app.dialog.is_some(), "copying answers nothing");
+
+    let effects = tunnel(&mut app, TunnelMessage::TrustKeyOnce);
+    let [Effect::OpenTunnel { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(app.dialog.is_none());
+    assert_eq!(
+        request.ssh.run_trust.keys("bastion.lab", 22),
+        [key],
+        "trusted for this run"
+    );
+    let known = KnownHosts::new(dir.path().join("known_hosts"));
+    assert!(
+        known.recorded("bastion.lab", 22).expect("read").is_empty(),
+        "never written down"
+    );
+}
