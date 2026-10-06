@@ -280,6 +280,9 @@ pub struct Settings {
     pub powershell_execution_policy: ExecutionPolicy,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
+    /// The computer kept from sleeping while a session is open, as the C#
+    /// `PreventSleepDuringSession`: on.
+    pub prevent_sleep: bool,
     /// The application writes its diagnostics log, as the C# `EnableLogging`: on.
     pub diagnostics_log: bool,
     /// Whether, and how often, every server is checked for an answer in the background.
@@ -527,6 +530,7 @@ impl Default for Settings {
             ssh_agent_preference: AgentPreference::default(),
             powershell_execution_policy: ExecutionPolicy::default(),
             collapse_tunnels_panel: true,
+            prevent_sleep: true,
             diagnostics_log: true,
             reachability: Reachability::default(),
         }
@@ -703,6 +707,9 @@ struct GeneralSection {
     /// Absent is the C# default: collapsed.
     #[serde(default)]
     collapse_tunnels_panel: Option<bool>,
+    /// Absent is the C# default: on.
+    #[serde(default)]
+    prevent_sleep: Option<bool>,
     /// Absent is the C# default: written.
     #[serde(default)]
     diagnostics_log: Option<bool>,
@@ -911,6 +918,7 @@ impl Settings {
             rdp_defaults: file.rdp,
             external_editor: file.files.external_editor.trim().to_owned(),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
+            prevent_sleep: file.general.prevent_sleep.unwrap_or(true),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
@@ -984,6 +992,7 @@ impl Settings {
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),
                 collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
+                prevent_sleep: Some(self.prevent_sleep),
                 diagnostics_log: Some(self.diagnostics_log),
             },
             vault_unlock: VaultUnlockSection {
