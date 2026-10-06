@@ -117,10 +117,14 @@ impl App {
             }
             ProfileMenuMessage::Favorite { id, favorite } => self.set_favorites(&[id], favorite),
             ProfileMenuMessage::Move { id, to } => {
+                let before = self.organizations(std::slice::from_ref(&id));
                 if let Err(error) = self.store.apply(|store| store.set_group(&id, to)) {
                     self.dialog = Some(Dialog::StoreError {
                         detail: error.to_string(),
                     });
+                } else {
+                    // As the C# "Move to folder": undone from the Undo bar.
+                    self.record_organization(super::tree_drag::OrganizationChange::Move, before);
                 }
             }
         }
@@ -150,11 +154,14 @@ impl App {
     /// Names profile `id` as typed; an empty name leaves it as it was, as the C# inline
     /// rename does.
     pub(super) fn confirm_rename_profile(&mut self, id: &ProfileId, value: &str) {
+        let before = self.organizations(std::slice::from_ref(id));
         if let Err(error) = self.store.apply(|store| store.rename_profile(id, value)) {
             self.dialog = Some(Dialog::StoreError {
                 detail: error.to_string(),
             });
+            return;
         }
+        self.record_organization(super::tree_drag::OrganizationChange::Rename, before);
     }
 
     /// Where profile `id` can move, as the C# "Move to folder" lists them: "(No Folder)"

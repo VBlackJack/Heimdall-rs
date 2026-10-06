@@ -126,7 +126,7 @@ impl App {
                 count: loose.len(),
             });
             if open {
-                sort_by_name(&mut loose);
+                sort_in_order(&mut loose);
                 rows.extend(
                     loose
                         .into_iter()
@@ -199,7 +199,7 @@ fn walk(
         }
     }
     let mut profiles = node.profiles.clone();
-    sort_by_name(&mut profiles);
+    sort_in_order(&mut profiles);
     rows.extend(
         profiles
             .into_iter()
@@ -207,12 +207,20 @@ fn walk(
     );
 }
 
-/// By name, whatever the case, as the C# tree sorts.
-fn sort_by_name(profiles: &mut [ProfileSummary]) {
+/// In the order given by hand first, as the C# `SessionOrdering`: a session never placed
+/// after every placed one; then by name, whatever the case, as the C# tree sorts.
+pub(super) fn sort_in_order(profiles: &mut [ProfileSummary]) {
+    let rank = |profile: &ProfileSummary| {
+        profile
+            .metadata
+            .sort_order
+            .filter(|order| *order != 0)
+            .map_or(i64::MAX, i64::from)
+    };
     profiles.sort_by(|a, b| {
-        a.name
-            .to_lowercase()
-            .cmp(&b.name.to_lowercase())
+        rank(a)
+            .cmp(&rank(b))
+            .then_with(|| a.name.to_lowercase().cmp(&b.name.to_lowercase()))
             .then_with(|| a.name.cmp(&b.name))
     });
 }

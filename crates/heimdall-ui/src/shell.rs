@@ -151,6 +151,9 @@ const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Width of the outline round the tab a dragged tab would take the place of.
+const TAB_DROP_EDGE: f32 = 2.0;
+
 /// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 28.0;
@@ -493,8 +496,17 @@ pub enum Message {
     FilesHover(crate::files_drag::Spot),
     /// The pointer left it.
     FilesHoverLeft(crate::files_drag::Spot),
-    /// The left button went down, wherever: a press on a Files tab's entry starts a drag.
+    /// The left button went down, wherever: a press on a Files tab's entry, or on a tab,
+    /// starts a drag.
     PointerPressed,
+    /// The pointer came over a tab of the tab bar.
+    TabHover(TabId),
+    /// The pointer left it.
+    TabHoverLeft(TabId),
+    /// The pointer moved, a press on a tab held.
+    TabDragMoved(Point),
+    /// That press is let go.
+    TabDragEnd,
     /// The pointer moved, a press on an entry held.
     FilesDragMoved(Point),
     /// That press is let go.
@@ -659,6 +671,10 @@ impl fmt::Debug for Message {
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
             Self::PointerPressed => f.write_str("PointerPressed"),
+            Self::TabHover(tab) => write!(f, "TabHover({})", tab.value()),
+            Self::TabHoverLeft(tab) => write!(f, "TabHoverLeft({})", tab.value()),
+            Self::TabDragMoved(_) => f.write_str("TabDragMoved"),
+            Self::TabDragEnd => f.write_str("TabDragEnd"),
             Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
             Self::FilesDragEnd => f.write_str("FilesDragEnd"),
             Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
@@ -893,6 +909,10 @@ pub struct Shell {
     files_hover: Option<crate::files_drag::Spot>,
     /// A press on a Files tab's entry, held: a drag once the pointer moves.
     files_drag: Option<crate::files_drag::FilesDrag>,
+    /// The tab under the pointer.
+    tab_hover: Option<TabId>,
+    /// A press on a tab, a drag once the pointer moves.
+    tab_drag: Option<crate::tab_drag::TabDrag>,
     /// A press in the tree, held: a drag once the pointer moves.
     tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
@@ -1137,6 +1157,8 @@ impl Shell {
             path_editing: None,
             files_hover: None,
             files_drag: None,
+            tab_hover: None,
+            tab_drag: None,
             tree_drag: None,
             sidebar_hidden: false,
             window_memory: None,
@@ -1228,13 +1250,19 @@ impl Shell {
         if self.files_drag.is_some() {
             subscriptions.push(event::listen_with(crate::files_drag::drag_event));
         }
+        if self.tab_drag.is_some() {
+            subscriptions.push(event::listen_with(crate::tab_drag::drag_event));
+        }
         if self.tree_drag.is_some() {
             subscriptions.push(event::listen_with(crate::tree_drag::drag_event));
         }
         if self.sidebar_drag {
             subscriptions.push(event::listen_with(sidebar_drag_event));
         }
-        if locked_out || self.app.tabs.iter().any(|tab| tab.retry.is_some()) {
+        if locked_out
+            || self.app.tabs.iter().any(|tab| tab.retry.is_some())
+            || self.app.undo_offer().is_some()
+        {
             subscriptions.push(iced::time::every(COUNTDOWN_TICK).map(|_| Message::Tick));
         }
         if let Some(interval) = self.app.tmout_reset_interval() {
@@ -1272,6 +1300,16 @@ impl Shell {
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // A click on another row of the tree ends a rename made in place, kept, as the C#
+        // editor losing the focus.
+        if self.inline_rename().is_some()
+            && matches!(
+                message,
+                Message::TreeClick(_) | Message::App(AppMessage::ToggleFolder(_))
+            )
+        {
+            let _ = self.app.update(AppMessage::ConfirmDialog);
+        }
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
         if self.gated() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
@@ -1413,6 +1451,10 @@ impl Shell {
                 self.gateway_reassign.insert(missing, to);
                 Vec::new()
             }
+            message @ (Message::TabHover(_)
+            | Message::TabHoverLeft(_)
+            | Message::TabDragMoved(_)
+            | Message::TabDragEnd) => self.tab_drag_message(&message),
             message @ (Message::FilesHover(_)
             | Message::FilesHoverLeft(_)
             | Message::PointerPressed
@@ -2587,6 +2629,47 @@ impl Shell {
 
     /// Draws the window.
     #[must_use]
+    /// The open dialog over the window, veiled; none while a name is typed in the tree's
+    /// row, or with no dialog.
+    fn dialog_layer(&self, locked: bool) -> Option<Element<'_, Message>> {
+        let dialog = self
+            .app
+            .dialog
+            .as_ref()
+            .filter(|_| self.inline_rename().is_none())?;
+        // Built for the window's height: a long form scrolls above its buttons.
+        Some(opaque(
+            container(responsive(move |size| {
+                let content = dialog_view(dialog, &self.forms(size.height));
+                // The OpenSSH preview is a table: wider than a form, as the C# one.
+                let card = if matches!(
+                    dialog,
+                    Dialog::SessionsPreview(_)
+                        | Dialog::RdpPreview(_)
+                        | Dialog::HostKeysPreview(_)
+                        | Dialog::FileConflicts { .. }
+                ) {
+                    wide_card(content)
+                } else {
+                    card(content)
+                };
+                center(card).into()
+            }))
+            .style(move |theme: &Theme| container::Style {
+                background: Some(if locked {
+                    theme.palette().background.into()
+                } else {
+                    Color {
+                        a: VEIL_ALPHA,
+                        ..Color::BLACK
+                    }
+                    .into()
+                }),
+                ..container::Style::default()
+            }),
+        ))
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let locked = self.gated();
         // Locked, the window is not drawn: nothing of it shows, and no hidden field takes
@@ -2625,38 +2708,8 @@ impl Shell {
                 .align_x(iced::alignment::Horizontal::Right),
             );
         }
-        if let Some(dialog) = &self.app.dialog {
-            // Built for the window's height: a long form scrolls above its buttons.
-            layers = layers.push(opaque(
-                container(responsive(move |size| {
-                    let content = dialog_view(dialog, &self.forms(size.height));
-                    // The OpenSSH preview is a table: wider than a form, as the C# one.
-                    let card = if matches!(
-                        dialog,
-                        Dialog::SessionsPreview(_)
-                            | Dialog::RdpPreview(_)
-                            | Dialog::HostKeysPreview(_)
-                            | Dialog::FileConflicts { .. }
-                    ) {
-                        wide_card(content)
-                    } else {
-                        card(content)
-                    };
-                    center(card).into()
-                }))
-                .style(move |theme: &Theme| container::Style {
-                    background: Some(if locked {
-                        theme.palette().background.into()
-                    } else {
-                        Color {
-                            a: VEIL_ALPHA,
-                            ..Color::BLACK
-                        }
-                        .into()
-                    }),
-                    ..container::Style::default()
-                }),
-            ));
+        if let Some(layer) = self.dialog_layer(locked) {
+            layers = layers.push(layer);
         }
         let open_menu = self
             .menu
@@ -3169,7 +3222,9 @@ impl Shell {
             column![header, actions, self.search_box()]
                 .push(self.filter_feedback())
                 .push(tree)
+                .push(self.no_folder_zone())
                 .push(self.selection_bar())
+                .push(self.undo_bar())
                 .spacing(SPACING)
                 .padding(PADDING),
         )
@@ -3177,6 +3232,108 @@ impl Shell {
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// Under the tree while something is dragged, as the C# one: dropped there, a session
+    /// leaves its folder and a folder goes to the top. At the bottom, as the C#, so that
+    /// nothing moves under the pointer when it appears.
+    fn no_folder_zone(&self) -> Option<Element<'_, Message>> {
+        let drag = self.tree_drag.as_ref().filter(|drag| drag.active)?;
+        let zone = container(text(fl!("ui-tree-no-folder-zone")).size(SMALL_SIZE))
+            .width(Length::Fill)
+            .padding([4.0, 6.0])
+            .style(container::bordered_box);
+        Some(
+            tooltip(
+                crate::tree_drag::drop_zone(
+                    zone.into(),
+                    heimdall_app::DropTarget::Folder(heimdall_app::NO_FOLDER.to_owned()),
+                    Some(drag),
+                ),
+                text(fl!("ui-tree-no-folder-zone-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Top,
+            )
+            .style(container::rounded_box)
+            .into(),
+        )
+    }
+
+    /// Under the tree for 30 seconds after the tree's organization changed, as the C# bar:
+    /// what changed, and Undo.
+    fn undo_bar(&self) -> Option<Element<'_, Message>> {
+        let said = match self.app.undo_offer()? {
+            heimdall_app::OrganizationChange::Move => fl!("ui-tree-changed-move"),
+            heimdall_app::OrganizationChange::Reorder => fl!("ui-tree-changed-reorder"),
+            heimdall_app::OrganizationChange::Rename => fl!("ui-tree-changed-rename"),
+            heimdall_app::OrganizationChange::FolderMove => fl!("ui-tree-changed-folder-move"),
+        };
+        Some(
+            row![
+                text(said).size(SMALL_SIZE).style(text::secondary),
+                button(text(fl!("ui-tree-undo")).size(SMALL_SIZE))
+                    .style(button::text)
+                    .on_press(Message::App(AppMessage::UndoMove)),
+            ]
+            .spacing(SPACING / 2.0)
+            .align_y(iced::Alignment::Center)
+            .wrap()
+            .into(),
+        )
+    }
+
+    /// The row renamed in place, as the C# tree's F2: a session's or a folder's name asked
+    /// while its row is shown; elsewhere the name is asked in a dialog.
+    fn inline_rename(&self) -> Option<TreeCursor> {
+        let row = match self.app.dialog.as_ref()? {
+            Dialog::RenameProfile { id, .. } => TreeCursor::Profile(id.clone()),
+            Dialog::FolderName {
+                naming: FolderNaming::Rename(path),
+                ..
+            } => TreeCursor::Folder(path.clone()),
+            _ => return None,
+        };
+        (self.page == Page::Tab && !self.sidebar_hidden && self.tree_cursors().contains(&row))
+            .then_some(row)
+    }
+
+    /// The name of `row` typed in its place, when it is the one renamed: Enter keeps it,
+    /// Escape leaves it as it was; a folder's name refused says why under it.
+    fn inline_editor(&self, row: &TreeCursor, depth: usize) -> Option<Element<'_, Message>> {
+        if self.inline_rename().as_ref() != Some(row) {
+            return None;
+        }
+        let (value, on_input, error): (&str, fn(String) -> Message, _) =
+            match self.app.dialog.as_ref()? {
+                Dialog::RenameProfile { value, .. } => (
+                    value.as_str(),
+                    |value| {
+                        Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::NameEdited(
+                            value,
+                        )))
+                    },
+                    None,
+                ),
+                Dialog::FolderName { value, error, .. } => (
+                    value.as_str(),
+                    |value| Message::App(AppMessage::Folder(FolderMessage::NameEdited(value))),
+                    error.map(|error| match error {
+                        FolderError::Collision => fl!("ui-folder-error-collision"),
+                        _ => fl!("ui-folder-error-invalid"),
+                    }),
+                ),
+                _ => return None,
+            };
+        let editor = column![
+            text_input(&fl!("ui-dialog-name-placeholder"), value)
+                .id(name_field_id())
+                .size(SMALL_SIZE + 1.0)
+                .padding([2.0, 4.0])
+                .on_input(on_input)
+                .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .push(error.map(|error| text(error).size(SMALL_SIZE).style(text::danger)))
+        .spacing(2.0);
+        Some(tree_view::indented(editor.into(), depth))
     }
 
     /// Under the search box, as the C# tree's: a chip per search or filter applied, a click
@@ -3353,6 +3510,9 @@ impl Shell {
                 open,
                 count,
             } => {
+                if let Some(editor) = self.inline_editor(&TreeCursor::Folder(path.clone()), depth) {
+                    return editor;
+                }
                 let color = self.app.folder_color(&path);
                 let target = heimdall_app::DropTarget::Folder(path.clone());
                 let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
@@ -3363,6 +3523,11 @@ impl Shell {
                 )
             }
             TreeRow::Profile { mut profile, depth } => {
+                if let Some(editor) =
+                    self.inline_editor(&TreeCursor::Profile(profile.id.clone()), depth)
+                {
+                    return editor;
+                }
                 if !badge {
                     profile.gateway = None;
                 }
@@ -3373,14 +3538,17 @@ impl Shell {
                     .flatten();
                 let target = heimdall_app::DropTarget::Profile(profile.id.clone());
                 let reach = self.app.reachability(&profile.id).cloned();
-                crate::tree_drag::drop_zone(
-                    tree_view::indented(
-                        tree_view::owned_row(&profile, selected, (state, reach), context),
-                        depth,
-                    ),
-                    target,
-                    self.tree_drag.as_ref(),
-                )
+                let row = tree_view::indented(
+                    tree_view::owned_row(&profile, selected, (state, reach), context),
+                    depth,
+                );
+                // Sessions dragged go before or after a session; a folder, into its folder.
+                match self.tree_drag.as_ref().filter(|drag| {
+                    drag.active && matches!(drag.source, crate::tree_drag::DragSource::Profiles(_))
+                }) {
+                    Some(drag) => crate::tree_drag::positioned_zone(row, &profile.id, drag),
+                    None => crate::tree_drag::drop_zone(row, target, self.tree_drag.as_ref()),
+                }
             }
         }));
         list
@@ -4223,6 +4391,35 @@ impl Shell {
     }
 
     /// The pointer over a Files tab's panes, a press on an entry, its drag and its drop.
+    /// A tab pressed, dragged along the bar and let go over another, as the C# tab.
+    fn tab_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::TabHover(tab) => self.tab_hover = Some(tab),
+            Message::TabHoverLeft(tab) => {
+                if self.tab_hover == Some(tab) {
+                    self.tab_hover = None;
+                }
+            }
+            Message::TabDragMoved(at) => {
+                if let Some(drag) = self.tab_drag.as_mut() {
+                    drag.moved(at);
+                }
+            }
+            Message::TabDragEnd => {
+                if let Some(drag) = self.tab_drag.take()
+                    && let Some(onto) = drag.onto(self.tab_hover)
+                {
+                    return self.app.update(AppMessage::MoveTab {
+                        tab: drag.tab,
+                        onto,
+                    });
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     fn files_drag_message(&mut self, message: &Message) -> Vec<Effect> {
         match *message {
             Message::FilesHover(spot) => {
@@ -4249,6 +4446,9 @@ impl Shell {
                 }
             }
             Message::PointerPressed => {
+                self.tab_drag = self
+                    .tab_hover
+                    .map(|tab| crate::tab_drag::TabDrag::pressed(tab, self.cursor.get()));
                 self.files_drag = self
                     .files_hover
                     .filter(|spot| spot.index.is_some())
@@ -4572,6 +4772,7 @@ impl Shell {
                     .update(AppMessage::ProfileMenu(ProfileMenuMessage::Rename(id))),
                 _ => Vec::new(),
             },
+            FilesKey::Parent | FilesKey::Lower => self.nudge(cursor, key == FilesKey::Lower),
             // The row the keyboard is on: where a Shift range ended, else the one selected.
             FilesKey::ToggleMark => match (self.tree_focus.take(), cursor) {
                 (Some(id), _) | (None, Some(TreeCursor::Profile(id))) => self
@@ -4581,6 +4782,15 @@ impl Shell {
             },
             _ => Vec::new(),
         })
+    }
+
+    /// The session the keyboard is on, one place up or `down`, as the C# Alt+Up and
+    /// Alt+Down; a folder does not move.
+    fn nudge(&mut self, cursor: Option<TreeCursor>, down: bool) -> Vec<Effect> {
+        match cursor {
+            Some(TreeCursor::Profile(id)) => self.app.update(AppMessage::NudgeProfile { id, down }),
+            _ => Vec::new(),
+        }
     }
 
     /// Left (`unfold` false): a folder open closes; else up to the folder holding the row.
@@ -4884,6 +5094,48 @@ impl Shell {
         })
     }
 
+    /// A tab of the bar: a click shows it, a right click opens its menu; pressed and moved,
+    /// it is dragged, the tab it would take the place of outlined.
+    fn tab_button<'a>(
+        &self,
+        tab: TabId,
+        label: iced::widget::Row<'a, Message>,
+        active: bool,
+    ) -> Element<'a, Message> {
+        let dragging = self.tab_drag.filter(|drag| drag.active);
+        let mut area = mouse_area(
+            button(label)
+                .style(if active {
+                    button::primary
+                } else {
+                    button::secondary
+                })
+                .on_press(Message::App(AppMessage::SelectTab(tab))),
+        )
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab)))
+        .on_enter(Message::TabHover(tab))
+        .on_exit(Message::TabHoverLeft(tab));
+        if dragging.is_some() {
+            area = area.interaction(iced::mouse::Interaction::Grabbing);
+        }
+        // Where a dragged tab goes, outlined as the C# drop target.
+        let target = dragging.and_then(|drag| drag.onto(self.tab_hover)) == Some(tab);
+        container(area)
+            .style(move |theme: &Theme| container::Style {
+                border: iced::Border {
+                    color: if target {
+                        theme.extended_palette().primary.strong.color
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                    width: TAB_DROP_EDGE,
+                    radius: 4.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
     /// goes straight.
     fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
@@ -5013,18 +5265,7 @@ impl Shell {
                     .padding([0.0, 2.0])
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
             );
-            tabs = tabs.push(
-                mouse_area(
-                    button(label)
-                        .style(if active {
-                            button::primary
-                        } else {
-                            button::secondary
-                        })
-                        .on_press(Message::App(AppMessage::SelectTab(tab.id))),
-                )
-                .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab.id))),
-            );
+            tabs = tabs.push(self.tab_button(tab.id, label, active));
         }
         tabs.wrap().into()
     }

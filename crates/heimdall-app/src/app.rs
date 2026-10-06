@@ -163,7 +163,7 @@ pub use settings_transfer::SettingsTransferMessage;
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
-pub use tree_drag::DropTarget;
+pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
 pub use tunnels::TunnelMessage;
@@ -341,6 +341,14 @@ pub enum Message {
     Tunnel(TunnelMessage),
     /// Show a tab.
     SelectTab(TabId),
+    /// A tab dragged onto another: it takes that one's place, within its own group, pinned
+    /// or not, as the C# `MoveSession`.
+    MoveTab {
+        /// The tab dragged.
+        tab: TabId,
+        /// The tab it was let go over.
+        onto: TabId,
+    },
     /// Close a tab, asking first when its session is live.
     RequestCloseTab(TabId),
     /// End a tab's remote desktop from its bar, the tab kept to reconnect.
@@ -521,8 +529,16 @@ pub enum Message {
         /// Where.
         onto: DropTarget,
     },
-    /// Undo the last move a drop made, as the C# tree's Ctrl+Z.
+    /// Undo the last change of the tree's organization, as the C# tree's Undo bar and
+    /// Ctrl+Z.
     UndoMove,
+    /// A session moved one place up, or down, in its folder, as the C# Alt+Up and Alt+Down.
+    NudgeProfile {
+        /// The session.
+        id: ProfileId,
+        /// Down, rather than up.
+        down: bool,
+    },
     /// A session of the restore dialog ticked or not; every one for `None`, its
     /// "Select all".
     RestoreChoose {
@@ -766,6 +782,9 @@ impl fmt::Debug for Message {
             Self::Files(message) => write!(f, "Files({message:?})"),
             Self::Tunnel(message) => write!(f, "Tunnel({message:?})"),
             Self::SelectTab(tab) => write!(f, "SelectTab({})", tab.value()),
+            Self::MoveTab { tab, onto } => {
+                write!(f, "MoveTab({} onto {})", tab.value(), onto.value())
+            }
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
             Self::DisconnectDesktop(tab) => write!(f, "DisconnectDesktop({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
@@ -842,6 +861,7 @@ impl fmt::Debug for Message {
             Self::DropProfiles { ids, onto } => write!(f, "DropProfiles({}, {onto:?})", ids.len()),
             Self::DropFolder { onto, .. } => write!(f, "DropFolder({onto:?})"),
             Self::UndoMove => f.write_str("UndoMove"),
+            Self::NudgeProfile { id, down } => write!(f, "NudgeProfile({}, {down})", id.as_str()),
             Self::RestoreChoose { index, chosen } => {
                 write!(f, "RestoreChoose({index:?}, {chosen})")
             }
@@ -2417,7 +2437,7 @@ pub struct App {
     /// settings say at start, then as it is toggled.
     tunnels_panel: bool,
     /// The last move a drop in the tree made, to undo.
-    last_move: Option<tree_drag::UndoMove>,
+    last_move: Option<(tree_drag::UndoMove, Instant)>,
     /// The previous run's sessions, until they are offered.
     pending_restore: Option<heimdall_core::session_snapshot::SessionSnapshot>,
     /// The hosts connected to, newest first, with the protocol, as the C#
@@ -2715,6 +2735,10 @@ impl App {
             | Message::CancelAddressTest
             | Message::AddressTested { .. }) => self.address_test_message(message),
             Message::SelectTab(tab) => self.select_tab(tab),
+            Message::MoveTab { tab, onto } => {
+                self.move_tab(tab, onto);
+                Vec::new()
+            }
             Message::RequestCloseTab(tab) => self.request_close(tab),
             Message::DisconnectDesktop(tab) => {
                 self.request_disconnect_desktop(tab);
@@ -2798,6 +2822,10 @@ impl App {
             }
             Message::UndoMove => {
                 self.undo_move();
+                Vec::new()
+            }
+            Message::NudgeProfile { id, down } => {
+                self.nudge_profile(&id, down);
                 Vec::new()
             }
             Message::RestoreChoose { index, chosen } => {
