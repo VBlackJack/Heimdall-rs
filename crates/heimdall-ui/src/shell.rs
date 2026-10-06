@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::{AgentPreference, ExecutionPolicy};
+use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -1915,7 +1915,12 @@ impl Shell {
 
     fn searchable_terminal<'a>(&'a self, tab: &'a Tab, interactive: bool) -> Element<'a, Message> {
         let finder = self.finder_of(tab);
-        let shown = terminal(tab, interactive && finder.is_none(), self.font_size(tab.id));
+        let shown = terminal(
+            tab,
+            interactive && finder.is_none(),
+            self.font_size(tab.id),
+            self.app.settings().ctrl_v_paste,
+        );
         match finder {
             Some(finder) => stack![
                 shown,
@@ -3967,6 +3972,21 @@ impl Shell {
             .spacing(SPACING)
             .align_y(iced::Alignment::Center),
         );
+        card = card.push(
+            row![
+                text(fl!("ui-settings-ctrl-v")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    CtrlVPaste::ALL.map(CtrlVChoice).to_vec(),
+                    Some(CtrlVChoice(settings.ctrl_v_paste)),
+                    |CtrlVChoice(choice)| Message::App(AppMessage::Settings(
+                        SettingsMessage::CtrlVPaste(choice)
+                    )),
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        );
         // As the C# Terminal settings' choice, applied to local PowerShell sessions.
         card = card
             .push(
@@ -5395,9 +5415,15 @@ fn shows_terminal(tab: &Tab) -> bool {
         && matches!(tab.phase, Phase::Connected | Phase::Closed { .. })
 }
 
-fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message> {
+fn terminal(
+    tab: &Tab,
+    interactive: bool,
+    font_size: f32,
+    ctrl_v: CtrlVPaste,
+) -> Element<'_, Message> {
     container(
         TerminalView::new(&tab.terminal, tab.id, Message::App)
+            .ctrl_v(ctrl_v)
             .interactive(interactive)
             .font_size(font_size)
             .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom))),
@@ -8177,6 +8203,20 @@ impl std::fmt::Display for TimeoutChoice {
             fl!("ui-settings-rdp-connect-timeout-off")
         } else {
             fl!("ui-settings-rdp-connect-timeout-seconds", seconds = self.0)
+        })
+    }
+}
+
+/// What Ctrl+V does, as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CtrlVChoice(CtrlVPaste);
+
+impl std::fmt::Display for CtrlVChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            CtrlVPaste::Always => fl!("ui-settings-ctrl-v-always"),
+            CtrlVPaste::OutsideFullScreenPrograms => fl!("ui-settings-ctrl-v-outside"),
+            CtrlVPaste::Never => fl!("ui-settings-ctrl-v-never"),
         })
     }
 }

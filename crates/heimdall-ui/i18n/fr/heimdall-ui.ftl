@@ -1817,6 +1817,10 @@ ui-tunnels-manage-gateways = Gérer les passerelles dans les Paramètres...
 ui-settings-powershell-policy = Politique d'exécution PowerShell
 ui-settings-powershell-policy-hint = Appliqué au lancement des sessions PowerShell/pwsh locales
 ui-settings-powershell-policy-default = Par défaut
+ui-settings-ctrl-v = Ctrl+V dans un terminal
+ui-settings-ctrl-v-always = Colle
+ui-settings-ctrl-v-outside = Colle, sauf dans les programmes plein écran (vim, less...)
+ui-settings-ctrl-v-never = Est envoyé à la session (Ctrl+Maj+V colle)
 ui-connect-via = via { $route }
 
 ## Translations of text written in English first.
