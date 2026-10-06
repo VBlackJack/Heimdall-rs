@@ -45,6 +45,7 @@ mod post_connect;
 pub mod profile_draft;
 pub mod putty_store;
 pub mod rdp_driver;
+pub mod rdp_external;
 pub mod reachability;
 pub mod route_test;
 pub mod server_health;

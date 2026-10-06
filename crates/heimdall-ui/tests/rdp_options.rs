@@ -112,6 +112,27 @@ fn fields_asked(draft: &ProfileDraft) -> Vec<ProfileField> {
 }
 
 #[test]
+fn the_session_mode_offers_the_tab_then_remote_desktop_connection() {
+    let draft = ProfileDraft::new_for(DraftProtocol::Rdp);
+    let offered: Vec<String> = choices_in("Session mode", &|| resolution(&draft))
+        .into_iter()
+        .filter(|said| said.starts_with("ProfileChoice(External("))
+        .collect();
+    assert_eq!(
+        offered,
+        [false, true].map(|on| format!(
+            "{:?}",
+            AppMessage::ProfileChoice(ProfileChoice::External(on))
+        ))
+    );
+    let mut external = draft.clone();
+    external.choose(ProfileChoice::External(true));
+    resolution(&external)
+        .find("Launch RDP in a separate mstsc.exe window. Remote Desktop Connection asks for the password itself.")
+        .expect("explained");
+}
+
+#[test]
 fn the_resolution_modes_are_offered_in_the_csharp_order_without_multi_monitor() {
     let draft = ProfileDraft::new_for(DraftProtocol::Rdp);
     let expected: Vec<String> = Resolution::ALL
@@ -123,10 +144,12 @@ fn the_resolution_modes_are_offered_in_the_csharp_order_without_multi_monitor() 
             )
         })
         .collect();
-    assert_eq!(
-        choices_in("Resolution mode", &|| resolution(&draft)),
-        expected
-    );
+    // Only the list's own: a click below its menu may reach the boxes further down.
+    let offered: Vec<String> = choices_in("Resolution mode", &|| resolution(&draft))
+        .into_iter()
+        .filter(|said| said.starts_with("ProfileChoice(Resolution("))
+        .collect();
+    assert_eq!(offered, expected);
 }
 
 #[test]

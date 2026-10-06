@@ -364,6 +364,9 @@ pub enum ProfileChoice {
     Resolution(Resolution),
     /// The proportions the desktop is first given.
     Aspect(Aspect),
+    /// Opened in Remote Desktop Connection rather than in a tab, as the C# "Session mode"
+    /// External.
+    External(bool),
     /// A common size, written into the width and height.
     Preset(u16, u16),
     /// Whether a fixed desktop is scaled into the tab.
@@ -437,7 +440,8 @@ pub struct ProfileDraft {
     /// is a toggle, the fixed size is typed in `fixed_width` and `fixed_height`.
     pub rdp_options: RdpOptions,
     /// RDP: what the profile asks that the built-in client does not do yet, which the form
-    /// does not edit: kept as it is, so that saving the form never drops it.
+    /// does not edit but for the session mode: kept as it is, so that saving the form never
+    /// drops it.
     pub rdp_extras: RdpExtras,
     /// What the profile's metadata says that the form does not show (where it came from,
     /// its place in its folder, its tunnels panel): kept as it is.
@@ -974,6 +978,7 @@ impl ProfileDraft {
             ProfileChoice::Audio(audio) => self.rdp_options.audio = audio,
             ProfileChoice::Resolution(resolution) => self.rdp_options.resolution = resolution,
             ProfileChoice::Aspect(aspect) => self.rdp_options.aspect = aspect,
+            ProfileChoice::External(on) => self.rdp_extras.external = on,
             ProfileChoice::Preset(width, height) => {
                 self.fixed_width = width.to_string();
                 self.fixed_height = height.to_string();
@@ -2130,6 +2135,33 @@ mod tests {
         assert!(saved.extras.strict_server_authentication);
         assert!(saved.extras.unused().is_empty(), "honoured, so not listed");
         assert!(ProfileDraft::from_rdp(&saved).is_on(ProfileToggle::StrictServerAuthentication));
+    }
+
+    #[test]
+    fn the_session_mode_opens_the_profile_in_remote_desktop_connection_and_is_kept() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::Rdp);
+        form.name = "dc".to_owned();
+        form.host = "dc.lab".to_owned();
+        assert!(
+            !form.rdp_extras.external,
+            "in a tab unless chosen, as the C#"
+        );
+        form.choose(ProfileChoice::External(true));
+        let Ok(DraftProfile::Rdp(saved)) = form.to_saved(id()) else {
+            panic!("an RDP profile");
+        };
+        assert!(saved.extras.external);
+        assert!(
+            saved.extras.unused().is_empty(),
+            "shown by its list, so not listed"
+        );
+        let mut again = ProfileDraft::from_rdp(&saved);
+        assert!(again.rdp_extras.external, "read back");
+        again.choose(ProfileChoice::External(false));
+        let Ok(DraftProfile::Rdp(saved)) = again.to_saved(id()) else {
+            panic!("an RDP profile");
+        };
+        assert!(!saved.extras.external);
     }
 
     #[test]

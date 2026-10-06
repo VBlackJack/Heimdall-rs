@@ -32,7 +32,7 @@ use iced::{Settings, Size};
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
 /// Height of a window showing a whole form: RDP, or SSH with its post-connect steps.
-const TALL_HEIGHT: f32 = 1280.0;
+const TALL_HEIGHT: f32 = 1400.0;
 
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
