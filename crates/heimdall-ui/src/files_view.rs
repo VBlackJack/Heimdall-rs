@@ -465,12 +465,13 @@ fn entry_row<'a, E: Listed>(
 }
 
 /// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
-/// bookmarks, as in the C# tab. The row wraps: a narrow pane keeps every button whole.
+/// bookmarks, and over SSH the "sudo" toggle (`sudo` says whether it is on), as in the C#
+/// tab. The row wraps: a narrow pane keeps every button whole.
 fn pane_tools<'a>(
     tab: TabId,
     side: Side,
-    selected: Option<usize>,
-    chosen: usize,
+    (selected, chosen): (Option<usize>, usize),
+    sudo: Option<bool>,
 ) -> Element<'a, Message> {
     let mut tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
@@ -499,7 +500,57 @@ fn pane_tools<'a>(
                     .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
             );
     }
+    if let Some(on) = sudo {
+        tools = tools.push(sudo_toggle(tab, on));
+    }
     tools.wrap().vertical_spacing(SPACING).into()
+}
+
+/// The C# "sudo" toggle of the server pane, lit in the warning colour while its folders are
+/// listed as root.
+fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
+    tooltip(
+        button(text(fl!("ui-files-sudo-toggle")).size(SMALL_SIZE))
+            .style(if on {
+                button::warning
+            } else {
+                button::secondary
+            })
+            .on_press(files(FilesMessage::ToggleSudo { tab })),
+        text(fl!("ui-files-sudo-tooltip")).size(SMALL_SIZE),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
+/// The question asked before deleting the server's entries as root, the sudo mode being on:
+/// in the danger colour, naming them, the first ones then how many more.
+pub fn sudo_delete_question<'a>(names: &[String], more: usize) -> Element<'a, Message> {
+    let mut listed = Column::new().spacing(2.0);
+    for name in names {
+        listed = listed.push(text(name.clone()).size(SMALL_SIZE));
+    }
+    if more > 0 {
+        listed =
+            listed.push(text(fl!("ui-dialog-sudo-delete-more", count = more)).size(SMALL_SIZE));
+    }
+    column![
+        text(fl!("ui-dialog-sudo-delete-title")).size(TITLE_SIZE),
+        text(fl!("ui-dialog-sudo-delete-body")),
+        scrollable(listed).height(Length::Shrink),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-sudo-delete-confirm")))
+                .style(button::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
 }
 
 /// The C# filter and hidden-files toggle of a pane, lit while hidden names show.
@@ -605,6 +656,9 @@ struct PaneParts<'p, E> {
     batch: Option<&'p heimdall_app::files::Batch>,
     /// Where a drag would drop in this pane.
     drop: Option<DropHere>,
+    /// The "sudo" toggle, on or off; none where it is not offered: this computer's pane,
+    /// and the server's without SSH.
+    sudo: Option<bool>,
 }
 
 /// Where a pane can go besides up, as the C# Files tab's Back and Home.
@@ -760,9 +814,10 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         moves,
         batch,
         drop,
+        sudo,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
-    let tools = pane_tools(tab, side, selected, chosen);
+    let tools = pane_tools(tab, side, (selected, chosen), sudo);
     let header = row![
         // As the C# Files tab: Back, Up, Home.
         button(text(fl!("ui-files-back-button")).size(SMALL_SIZE))
@@ -829,19 +884,41 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         total,
         (chosen, chosen_size(entries, selected, marked)),
     );
-    let mut content = column![heading, header, tools, narrowing].spacing(SPACING);
+    let content = column![heading, header, tools, narrowing].spacing(SPACING);
+    pane_frame(
+        pane_notes(content, tab, (sudo, error, batch)).push(listing),
+        (tab, side),
+        focused,
+        drop == Some(DropHere::Pane),
+    )
+}
+
+/// What a pane says above its entries: listed as root, as the C# status says it while the
+/// sudo mode is on; why the last listing failed; where its delete or change of permissions
+/// is.
+fn pane_notes<'a>(
+    mut content: Column<'a, Message>,
+    tab: TabId,
+    (sudo, error, batch): (
+        Option<bool>,
+        Option<&FilesError>,
+        Option<&heimdall_app::files::Batch>,
+    ),
+) -> Column<'a, Message> {
+    if sudo == Some(true) {
+        content = content.push(
+            text(fl!("ui-files-sudo-on"))
+                .size(SMALL_SIZE)
+                .style(text::warning),
+        );
+    }
     if let Some(error) = error {
         content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
     }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
     }
-    pane_frame(
-        content.push(listing),
-        (tab, side),
-        focused,
-        drop == Some(DropHere::Pane),
-    )
+    content
 }
 
 /// The size of the files among the entries chosen, as the C# selection line adds them;
@@ -1146,6 +1223,7 @@ pub fn view(
             .as_ref()
             .filter(|batch| batch.side == Side::Local),
         drop: drop_in(Side::Local),
+        sudo: None,
     });
     let remote = pane(PaneParts {
         tab,
@@ -1175,25 +1253,10 @@ pub fn view(
             .as_ref()
             .filter(|batch| batch.side == Side::Remote),
         drop: drop_in(Side::Remote),
+        // Over SSH only: an FTP tab has no shell to run sudo on.
+        sudo: files_pane.shell.as_ref().map(|_| files_pane.sudo_mode),
     });
-    let can_upload = files_pane.local.selected.is_some();
-    let can_download = files_pane.remote.selected.is_some();
-    let actions = column![
-        button(text(fl!("ui-files-upload-button"))).on_press_maybe(can_upload.then(|| files(
-            FilesMessage::Transfer {
-                tab,
-                direction: Direction::Upload,
-            }
-        ))),
-        button(text(fl!("ui-files-download-button"))).on_press_maybe(can_download.then(|| files(
-            FilesMessage::Transfer {
-                tab,
-                direction: Direction::Download,
-            }
-        ))),
-    ]
-    .spacing(SPACING)
-    .align_x(Alignment::Center);
+    let actions = send_buttons(tab, files_pane);
     let panes = row![local, container(actions).center_y(Length::Fill), remote]
         .spacing(SPACING)
         .height(Length::Fill);
@@ -1213,6 +1276,28 @@ pub fn view(
         content = content.push(transfers(tab, files_pane, live));
     }
     content.into()
+}
+
+/// Upload and Download, between the panes: each sends the selection of its side.
+fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
+    let can_upload = files_pane.local.selected.is_some();
+    let can_download = files_pane.remote.selected.is_some();
+    column![
+        button(text(fl!("ui-files-upload-button"))).on_press_maybe(can_upload.then(|| files(
+            FilesMessage::Transfer {
+                tab,
+                direction: Direction::Upload,
+            }
+        ))),
+        button(text(fl!("ui-files-download-button"))).on_press_maybe(can_download.then(|| files(
+            FilesMessage::Transfer {
+                tab,
+                direction: Direction::Download,
+            }
+        ))),
+    ]
+    .spacing(SPACING)
+    .align_x(Alignment::Center)
 }
 
 /// The transfers, newest first, under their title and "Clear finished" once one has ended.

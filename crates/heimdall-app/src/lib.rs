@@ -51,6 +51,7 @@ pub mod server_health;
 mod sink;
 pub mod steps_draft;
 pub mod sudo_edit;
+pub mod sudo_mode;
 pub mod telnet_driver;
 mod text;
 pub mod text_codec;

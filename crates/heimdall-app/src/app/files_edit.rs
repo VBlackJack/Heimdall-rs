@@ -416,7 +416,13 @@ impl App {
 
     /// sudo did not do `action`: a password it wants is asked, one it refused forgotten
     /// and asked again; anything else said on the pane.
-    fn sudo_refused(&mut self, tab_id: TabId, name: String, action: SudoAction, error: FilesError) {
+    pub(super) fn sudo_refused(
+        &mut self,
+        tab_id: TabId,
+        name: String,
+        action: SudoAction,
+        error: FilesError,
+    ) {
         let Some(files) = self.files_mut(tab_id) else {
             return;
         };
@@ -451,6 +457,7 @@ impl App {
         match action {
             SudoAction::Save(local) => self.save_with_sudo(tab_id, &local),
             SudoAction::Open(remote) => self.reopen_with_sudo(tab_id, remote),
+            SudoAction::List(path) => self.list_as_root(tab_id, path),
         }
     }
 
@@ -488,10 +495,12 @@ pub enum SudoAction {
     Open(heimdall_files::RemotePath),
     /// Saving the edit with this local copy.
     Save(PathBuf),
+    /// Listing this folder of the server as root, the sudo mode being turned on.
+    List(heimdall_files::RemotePath),
 }
 
 /// Whether sudo's refusal is about the password: one is wanted, or the one given refused.
-fn is_password_error(error: &FilesError) -> bool {
+pub(super) fn is_password_error(error: &FilesError) -> bool {
     matches!(
         error,
         FilesError::SudoPasswordNeeded | FilesError::SudoPasswordRejected
