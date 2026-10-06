@@ -56,6 +56,8 @@ pub enum SettingsMessage {
     RdpAutoReconnectAttempts(u32),
     /// Which SSH agent's keys are offered first, or alone.
     SshAgentPreference(heimdall_core::settings::AgentPreference),
+    /// The execution policy a local `PowerShell` is started with.
+    PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
     AntiIdleInterval(u32),
     /// Seconds between two SSH keep-alives; refused out of the C# range.
@@ -157,6 +159,29 @@ impl App {
         self.apply_settings(&SettingsMessage::SessionLogging(true))
     }
 
+    /// Sets the reachability number `message` changes, when within its range; whether it
+    /// was.
+    fn set_reachability(&mut self, message: &SettingsMessage) -> bool {
+        let reachability = &mut self.settings.reachability;
+        match message {
+            SettingsMessage::ReachabilityInterval(seconds)
+                if reachability_interval_accepted(*seconds) =>
+            {
+                reachability.interval = *seconds;
+            }
+            SettingsMessage::ReachabilityTimeout(millis)
+                if reachability_timeout_accepted(*millis) =>
+            {
+                reachability.timeout = *millis;
+            }
+            SettingsMessage::ReachabilityProbes(count) if reachability_probes_accepted(*count) => {
+                reachability.probes = *count;
+            }
+            _ => return false,
+        }
+        true
+    }
+
     /// Applies `message` and saves the settings; one that cannot be saved is said and not
     /// applied. A colour scheme colours the terminals open too.
     fn apply_settings(&mut self, message: &SettingsMessage) -> Vec<Effect> {
@@ -180,6 +205,9 @@ impl App {
             }
             SettingsMessage::Language(language) => self.settings.language = Some(*language),
             SettingsMessage::SshAutoReconnect(on) => self.settings.ssh_auto_reconnect = *on,
+            SettingsMessage::PowerShellExecutionPolicy(policy) => {
+                self.settings.powershell_execution_policy = *policy;
+            }
             SettingsMessage::SshAgentPreference(preference) => {
                 self.settings.ssh_agent_preference = *preference;
                 // The agent chip says what the next connection reaches.
@@ -221,23 +249,12 @@ impl App {
             }
             SettingsMessage::DiagnosticsLog(on) => self.settings.diagnostics_log = *on,
             SettingsMessage::Reachability(on) => self.settings.reachability.enabled = *on,
-            SettingsMessage::ReachabilityInterval(seconds) => {
-                if !reachability_interval_accepted(*seconds) {
+            SettingsMessage::ReachabilityInterval(_)
+            | SettingsMessage::ReachabilityTimeout(_)
+            | SettingsMessage::ReachabilityProbes(_) => {
+                if !self.set_reachability(message) {
                     return Vec::new();
                 }
-                self.settings.reachability.interval = *seconds;
-            }
-            SettingsMessage::ReachabilityTimeout(millis) => {
-                if !reachability_timeout_accepted(*millis) {
-                    return Vec::new();
-                }
-                self.settings.reachability.timeout = *millis;
-            }
-            SettingsMessage::ReachabilityProbes(count) => {
-                if !reachability_probes_accepted(*count) {
-                    return Vec::new();
-                }
-                self.settings.reachability.probes = *count;
             }
             SettingsMessage::RdpResolutionPresets(presets) => {
                 if !Settings::resolution_presets_accepted(presets) {

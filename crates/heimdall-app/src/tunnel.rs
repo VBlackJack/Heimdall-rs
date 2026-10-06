@@ -196,6 +196,19 @@ pub struct Tunnel {
     pub interrupted: bool,
 }
 
+impl Tunnel {
+    /// When it opened, in this computer's time, as the C# "Started" column: `HH:MM:SS`.
+    #[must_use]
+    pub fn started_clock(&self) -> String {
+        chrono::DateTime::<chrono::Local>::from(self.started)
+            .format(STARTED_FORMAT)
+            .to_string()
+    }
+}
+
+/// The C# "Started" column's format.
+const STARTED_FORMAT: &str = "%H:%M:%S";
+
 /// What a tunnel's attempt, then the tunnel, report.
 #[derive(Debug, Clone)]
 pub enum TunnelEvent {

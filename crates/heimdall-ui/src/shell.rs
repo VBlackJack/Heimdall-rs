@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::AgentPreference;
+use heimdall_core::settings::{AgentPreference, ExecutionPolicy};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -547,6 +547,8 @@ pub enum Message {
     },
     /// Show a page of the window's navigation.
     Navigate(Destination),
+    /// Show the Settings page's Gateways tab, as the C# Tunnels page's link.
+    ManageGateways,
     /// The external editor typed in the Settings page.
     EditorEdited(String),
     /// Apply the external editor typed.
@@ -581,6 +583,7 @@ pub enum TreeShortcut {
 }
 
 impl fmt::Debug for Message {
+    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // A field holds what the user types into a question: a password, a passphrase.
         match self {
@@ -602,6 +605,7 @@ impl fmt::Debug for Message {
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
             Self::Navigate(destination) => write!(f, "Navigate({destination:?})"),
+            Self::ManageGateways => f.write_str("ManageGateways"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
@@ -1310,6 +1314,7 @@ impl Shell {
             | Message::Rescaled(_)
             | Message::ShowSettings
             | Message::Navigate(_)
+            | Message::ManageGateways
             | Message::TrustedSearch(..)
             | Message::LanguageChosen(_)
             | Message::Modifiers(_)
@@ -1529,6 +1534,10 @@ impl Shell {
             Message::Modifiers(modifiers) => {
                 self.modifiers = *modifiers;
                 Task::none()
+            }
+            Message::ManageGateways => {
+                self.settings_tab = SettingsTab::Gateways;
+                self.view_message(&Message::ShowSettings)
             }
             Message::Navigate(destination) => {
                 self.menu = None;
@@ -2948,6 +2957,40 @@ impl Shell {
             .into()
     }
 
+    /// A tab still connecting: to what, through which gateways, and a way to stop.
+    fn connecting_card<'a>(&self, tab: &'a Tab) -> Element<'a, Message> {
+        center(card(
+            column![
+                text(match (tab.retry, tab.profile.endpoint()) {
+                    (Some(retry), _) => reconnecting(retry),
+                    (None, Some((host, port))) => fl!(
+                        "ui-connect-progress",
+                        target = target(host, port, tab.profile.username())
+                    ),
+                    (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
+                }),
+                // Through which gateways, as the C# loading overlay says it.
+                Some(self.app.tab_route(tab))
+                    .filter(|route| !route.is_empty())
+                    .map(|route| text(fl!(
+                        "ui-connect-via",
+                        route = route
+                            .iter()
+                            .map(|name| server_text(name))
+                            .collect::<Vec<_>>()
+                            .join(&fl!("ui-route-test-separator"))
+                    ))
+                    .size(SMALL_SIZE)
+                    .style(text::secondary)),
+                button(text(fl!("ui-connect-cancel-button")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+            ]
+            .spacing(SPACING),
+        ))
+        .into()
+    }
+
     /// The status bar: the session shown, or what was just done; the sessions counted.
     fn status_bar(&self) -> Element<'_, Message> {
         let summaries = self.app.profile_summaries();
@@ -3856,6 +3899,24 @@ impl Shell {
             .spacing(SPACING)
             .align_y(iced::Alignment::Center),
         );
+        // As the C# Terminal settings' choice, applied to local PowerShell sessions.
+        card = card
+            .push(
+                row![
+                    text(fl!("ui-settings-powershell-policy")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        ExecutionPolicy::ALL.map(PolicyChoice).to_vec(),
+                        Some(PolicyChoice(settings.powershell_execution_policy)),
+                        |PolicyChoice(policy)| Message::App(AppMessage::Settings(
+                            SettingsMessage::PowerShellExecutionPolicy(policy)
+                        )),
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+            )
+            .push(text(fl!("ui-settings-powershell-policy-hint")).size(SMALL_SIZE));
         container(card)
             .padding(PADDING)
             .max_width(SETTINGS_WIDTH)
@@ -4737,32 +4798,15 @@ impl Shell {
             return center(card(self.question(tab, prompt))).into();
         }
         match &tab.phase {
-            Phase::Connecting => center(card(
-                column![
-                    text(match (tab.retry, tab.profile.endpoint()) {
-                        (Some(retry), _) => reconnecting(retry),
-                        (None, Some((host, port))) => fl!(
-                            "ui-connect-progress",
-                            target = target(host, port, tab.profile.username())
-                        ),
-                        (None, None) => fl!("ui-local-starting", name = tab.profile.name()),
-                    }),
-                    button(text(fl!("ui-connect-cancel-button")))
-                        .style(button::secondary)
-                        .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-                ]
-                .spacing(SPACING),
-            ))
-            .into(),
+            Phase::Connecting => self.connecting_card(tab),
             Phase::HostKey {
                 host,
                 port,
                 fingerprint,
             } => host_key_card(
                 tab.id,
-                host,
-                *port,
-                fingerprint,
+                (host, *port),
+                (fingerprint, tab.host_key_algorithm()),
                 tab.asks_about_certificate()
                     .then(|| (tab.profile.name(), tab.certificate_context.as_ref())),
             ),
@@ -5224,9 +5268,8 @@ fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message
 /// trusted for this run only, never recorded, and its fingerprint copied.
 fn host_key_card<'a>(
     tab: TabId,
-    host: &'a str,
-    port: u16,
-    fingerprint: &'a str,
+    (host, port): (&'a str, u16),
+    (fingerprint, algorithm): (&'a str, Option<String>),
     certificate: Option<(&'a str, Option<&'a CertificateContext>)>,
 ) -> Element<'a, Message> {
     let port = port.to_string();
@@ -5247,7 +5290,11 @@ fn host_key_card<'a>(
                 "ui-hostkey-body",
                 host = host,
                 port = port.as_str()
-            ))],
+            ))]
+            // The key's algorithm, as the C# prompt's row.
+            .push(algorithm.map(|algorithm| {
+                text(fl!("ui-hostkey-algorithm", algorithm = algorithm)).font(iced::Font::MONOSPACE)
+            })),
             fl!("ui-hostkey-fingerprint", fingerprint = fingerprint),
             [
                 fl!("ui-hostkey-reject-button"),
@@ -7952,6 +7999,20 @@ fn session_logging_choice(draft: &ProfileDraft) -> Element<'_, Message> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AgentChoice(AgentPreference);
 
+/// An execution policy as the list names it, as the C# does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PolicyChoice(ExecutionPolicy);
+
+impl std::fmt::Display for PolicyChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            ExecutionPolicy::Default => fl!("ui-settings-powershell-policy-default"),
+            // `PowerShell`'s own words: not translated, as in the C#.
+            other => other.name().to_owned(),
+        })
+    }
+}
+
 impl fmt::Display for AgentChoice {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&match self.0 {
@@ -8391,7 +8452,8 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             host,
             port,
             fingerprint,
-        } => crate::tunnels_view::host_key(host, *port, fingerprint),
+            algorithm,
+        } => crate::tunnels_view::host_key(host, *port, fingerprint, algorithm),
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
