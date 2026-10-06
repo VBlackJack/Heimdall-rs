@@ -19,7 +19,8 @@
 //! sessions, and what the status bar says of them.
 
 use heimdall_app::tunnel::{
-    LOCAL_PORT_MIN, PORT_MAX, REMOTE_PORT_MIN, Tunnel, TunnelField, TunnelForm, TunnelProblem,
+    LOCAL_PORT_MIN, PORT_MAX, REMOTE_PORT_MIN, SessionRoute, Tunnel, TunnelField, TunnelForm,
+    TunnelProblem,
 };
 use heimdall_app::{Message as AppMessage, Notice, TunnelMessage, server_text};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
@@ -249,13 +250,15 @@ fn danger_text(theme: &Theme, status: button::Status) -> button::Style {
 /// The tunnels panel under the sessions, as the C# one: its header with Close All, "+ New"
 /// and the chevron that collapses it, then a row per open tunnel, or that there is none.
 #[must_use]
-pub fn panel(tunnels: &[Tunnel]) -> Element<'_, Message> {
+pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, Message> {
     let header = row![
         text(fl!("ui-tunnels-header", count = tunnels.len())).size(PANEL_TEXT_SIZE),
         space::horizontal(),
-        button(text(fl!("ui-tunnels-close-all")).size(PANEL_TEXT_SIZE))
-            .style(danger_text)
-            .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll))),
+        close_all(
+            button(text(fl!("ui-tunnels-close-all")).size(PANEL_TEXT_SIZE))
+                .style(danger_text)
+                .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll)))
+        ),
         button(text(fl!("ui-tunnels-new")).size(PANEL_TEXT_SIZE))
             .style(button::text)
             .on_press(tunnel(TunnelMessage::New)),
@@ -270,17 +273,7 @@ pub fn panel(tunnels: &[Tunnel]) -> Element<'_, Message> {
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
-    let body: Element<'_, Message> = if tunnels.is_empty() {
-        text(fl!("ui-tunnels-empty"))
-            .size(PANEL_TEXT_SIZE)
-            .style(text::secondary)
-            .into()
-    } else {
-        let rows = tunnels.iter().map(|open| tunnel_row(open, false));
-        scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
-            .height(Length::Fill)
-            .into()
-    };
+    let body = rows(tunnels, routes, false);
     container(
         column![header, columns(false), rule::horizontal(1), body]
             .spacing(SPACING / 2.0)
@@ -295,25 +288,20 @@ pub fn panel(tunnels: &[Tunnel]) -> Element<'_, Message> {
 
 /// The Tunnels page of the window's navigation, as the C# one: its title, New and Close
 /// All, then every tunnel, the whole height.
-pub fn page(tunnels: &[Tunnel]) -> Element<'_, Message> {
+pub fn page<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, Message> {
     let header = row![
         text(fl!("ui-tunnels-page-title")).size(HEADING_SIZE),
         space::horizontal(),
         button(text(fl!("ui-tunnels-new"))).on_press(tunnel(TunnelMessage::New)),
-        button(text(fl!("ui-tunnels-close-all")))
-            .style(button::danger)
-            .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll))),
+        close_all(
+            button(text(fl!("ui-tunnels-close-all")))
+                .style(button::danger)
+                .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll)))
+        ),
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
-    let body: Element<'_, Message> = if tunnels.is_empty() {
-        text(fl!("ui-tunnels-empty")).style(text::secondary).into()
-    } else {
-        let rows = tunnels.iter().map(|open| tunnel_row(open, true));
-        scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
-            .height(Length::Fill)
-            .into()
-    };
+    let body = rows(tunnels, routes, true);
     // As the C# page's link under the grid.
     let manage = button(text(fl!("ui-tunnels-manage-gateways")))
         .style(button::text)
@@ -335,6 +323,74 @@ const STARTED_WIDTH: f32 = 80.0;
 
 /// Room around the Tunnels page.
 const PAGE_PADDING: f32 = 16.0;
+
+/// Close All, saying what it leaves: unlike the C# one, it never ends a session, whose
+/// route is carried inside Heimdall and goes with its tab.
+fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> {
+    tooltip(
+        button,
+        text(fl!("ui-tunnels-close-all-tooltip")).size(PANEL_TEXT_SIZE),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
+/// The tunnels opened by hand, then the sessions' routes under their own title: what Close
+/// All closes kept apart from what it leaves.
+fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> Element<'a, Message> {
+    let size = if started { None } else { Some(PANEL_TEXT_SIZE) };
+    let note = |label: String| {
+        let line = text(label).style(text::secondary);
+        match size {
+            Some(size) => line.size(size),
+            None => line,
+        }
+    };
+    let mut list = Column::new().spacing(SPACING / 2.0);
+    if tunnels.is_empty() {
+        list = list.push(note(fl!("ui-tunnels-empty")));
+    }
+    list = list.extend(tunnels.iter().map(|open| tunnel_row(open, started)));
+    if !routes.is_empty() {
+        list = list.push(note(fl!("ui-tunnels-session-routes", count = routes.len())));
+        list = list.extend(routes.iter().map(|route| route_row(route, started)));
+    }
+    scrollable(list).height(Length::Fill).into()
+}
+
+/// A session's route: its health, its gateways, its tab, no local port, the server it
+/// reaches; nothing to close but its tab, which a click shows.
+fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
+    let cell = |value: String| text(value).size(PANEL_TEXT_SIZE);
+    let gateways = route
+        .route
+        .iter()
+        .map(|name| server_text(name))
+        .collect::<Vec<_>>()
+        .join(&fl!("ui-route-test-separator"));
+    let line = row![
+        status_dot(route.interrupted),
+        cell(gateways).width(Length::Fill),
+        cell(server_text(&route.title)).width(LABEL_WIDTH),
+        tooltip(
+            cell(fl!("ui-tunnels-session-route-local")).width(LOCAL_WIDTH),
+            text(fl!("ui-tunnels-session-route-local-tooltip")).size(PANEL_TEXT_SIZE),
+            tooltip::Position::Top,
+        )
+        .style(container::rounded_box),
+        cell(server_text(&route.remote.0)).width(Length::Fill),
+        cell(route.remote.1.to_string()).width(PORT_WIDTH),
+    ]
+    .push(started.then(|| cell(route.started_clock()).width(STARTED_WIDTH)))
+    .push(space().width(CLOSE_WIDTH))
+    .spacing(SPACING)
+    .align_y(Alignment::Center);
+    mouse_area(line)
+        .on_press(Message::App(AppMessage::SelectTab(route.tab)))
+        .interaction(iced::mouse::Interaction::Pointer)
+        .into()
+}
 
 /// The column titles, as the C# grid's; `started` on the page, which has the room.
 fn columns<'a>(started: bool) -> Element<'a, Message> {

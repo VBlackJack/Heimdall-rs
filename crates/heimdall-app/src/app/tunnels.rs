@@ -94,6 +94,59 @@ pub(super) struct PendingTunnelKey {
 }
 
 impl App {
+    /// The open sessions that go through gateways, in the tabs' order: the rows the C#
+    /// tunnels panel shows for the forwards it opens for them.
+    #[must_use]
+    pub fn session_routes(&self) -> Vec<crate::tunnel::SessionRoute> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| {
+                let route = self.tab_route(tab);
+                let (host, port) = tab.profile.endpoint()?;
+                (!route.is_empty()).then(|| crate::tunnel::SessionRoute {
+                    tab: tab.id,
+                    title: tab.display_title().to_owned(),
+                    route,
+                    remote: (host.to_owned(), port),
+                    interrupted: tab.retry.is_some()
+                        || matches!(
+                            tab.phase,
+                            super::Phase::Failed(_) | super::Phase::Closed { .. }
+                        ),
+                    started: tab.opened,
+                })
+            })
+            .collect()
+    }
+
+    /// Opens or closes the tunnels panel, as the C# `TogglePanel`: the choice is the tab
+    /// shown's, and its saved profile keeps it for the next time it is opened.
+    fn toggle_tunnels_panel(&mut self) {
+        let open = !self.tunnels_panel();
+        let Some(index) = self
+            .active
+            .and_then(|id| self.tabs.iter().position(|tab| tab.id == id))
+        else {
+            self.tunnels_panel = open;
+            return;
+        };
+        self.tabs[index].tunnels_panel = Some(open);
+        let Some(id) = self.tabs[index].saved_profile().cloned() else {
+            return;
+        };
+        let saved = self.store.apply(|store| {
+            let metadata = heimdall_core::metadata::ProfileMetadata {
+                tunnels_expanded: Some(open),
+                ..store.metadata(&id).cloned().unwrap_or_default()
+            };
+            store.set_metadata(&id, metadata)
+        });
+        // As the C#: the tab keeps the choice, the next opening falls back to the default.
+        if let Err(error) = saved {
+            log::warn!("the tunnels panel's state was not kept: {error}");
+        }
+    }
+
     /// Applies a tunnel message.
     pub(super) fn tunnel_message(&mut self, message: TunnelMessage) -> Vec<Effect> {
         match message {
@@ -151,7 +204,7 @@ impl App {
                 Vec::new()
             }
             TunnelMessage::TogglePanel => {
-                self.tunnels_panel = !self.tunnels_panel;
+                self.toggle_tunnels_panel();
                 Vec::new()
             }
             TunnelMessage::TrustKeyOnce => {

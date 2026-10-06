@@ -200,10 +200,42 @@ impl Tunnel {
     /// When it opened, in this computer's time, as the C# "Started" column: `HH:MM:SS`.
     #[must_use]
     pub fn started_clock(&self) -> String {
-        chrono::DateTime::<chrono::Local>::from(self.started)
-            .format(STARTED_FORMAT)
-            .to_string()
+        clock(self.started)
     }
+}
+
+/// A session going through gateways, listed beside the tunnels as the C# lists the forward
+/// it opens for one. Here the gateway carries it inside Heimdall: it has no local port, and
+/// it ends with its tab, never on its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionRoute {
+    /// The tab it serves.
+    pub tab: crate::ids::TabId,
+    /// The tab's title.
+    pub title: String,
+    /// The gateways it goes through, the first hop first.
+    pub route: Vec<String>,
+    /// The server it reaches.
+    pub remote: (String, u16),
+    /// Its session failed, ended or waits to open again.
+    pub interrupted: bool,
+    /// When its tab opened.
+    pub started: SystemTime,
+}
+
+impl SessionRoute {
+    /// When its tab opened, as a tunnel's "Started" column says it.
+    #[must_use]
+    pub fn started_clock(&self) -> String {
+        clock(self.started)
+    }
+}
+
+/// `time` in this computer's time, as the C# "Started" column: `HH:MM:SS`.
+fn clock(time: SystemTime) -> String {
+    chrono::DateTime::<chrono::Local>::from(time)
+        .format(STARTED_FORMAT)
+        .to_string()
 }
 
 /// The C# "Started" column's format.

@@ -430,14 +430,14 @@ fn a_row_is_closed_by_the_user_or_by_its_gateway_and_its_port_copied() {
 fn the_panel_starts_as_the_settings_say_collapsed_unless_chosen() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
-    assert!(!app.tunnels_panel, "collapsed, as the C# default");
+    assert!(!app.tunnels_panel(), "collapsed, as the C# default");
     assert!(app.settings().collapse_tunnels_panel);
     app.update(Message::Settings(
         heimdall_app::SettingsMessage::CollapseTunnelsPanel(false),
     ));
-    assert!(!app.tunnels_panel, "the panel shown now is left as it is");
+    assert!(!app.tunnels_panel(), "the panel shown now is left as it is");
     assert!(
-        self::app(dir.path()).tunnels_panel,
+        self::app(dir.path()).tunnels_panel(),
         "open at the next start"
     );
 }
@@ -485,4 +485,150 @@ fn a_gateway_s_key_trusted_once_opens_the_tunnel_and_is_never_written_and_its_fi
         known.recorded("bastion.lab", 22).expect("read").is_empty(),
         "never written down"
     );
+}
+
+/// An SSH profile `id`, saved nowhere yet.
+fn ssh_profile(id: &str) -> heimdall_core::profile::SshProfile {
+    heimdall_core::profile::SshProfile {
+        id: heimdall_core::profile::ProfileId::new(id),
+        name: format!("server {id}"),
+        group: None,
+        host: format!("{id}.lab"),
+        port: 22,
+        username: Some("admin".to_owned()),
+        key_path: None,
+        gateway: None,
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+        session_logging: None,
+    }
+}
+
+/// The tab profile `id` opens.
+fn connect(app: &mut App, id: &str) -> heimdall_app::TabId {
+    app.update(Message::ConnectProfile(
+        heimdall_core::profile::ProfileId::new(id),
+    ));
+    app.active.expect("a tab shown")
+}
+
+#[test]
+fn the_panel_is_the_tab_s_then_its_profile_s_choice_as_the_csharp_resolves_it() {
+    use heimdall_core::profile::ProfileId;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([ssh_profile("a"), ssh_profile("b")]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    assert!(!app.tunnels_panel(), "collapsed, as the settings say");
+
+    let a = connect(&mut app, "a");
+    tunnel(&mut app, TunnelMessage::TogglePanel);
+    assert!(app.tunnels_panel(), "opened while a is shown");
+    let b = connect(&mut app, "b");
+    assert!(!app.tunnels_panel(), "b has chosen nothing: the default");
+    app.update(Message::SelectTab(a));
+    assert!(app.tunnels_panel(), "a's choice again");
+    app.update(Message::SelectTab(b));
+    assert!(!app.tunnels_panel());
+
+    // The profile keeps it: a opened again in a new run finds the panel open.
+    let store = ProfileStore::open(&profiles_file).expect("store");
+    assert_eq!(
+        store
+            .metadata(&ProfileId::new("a"))
+            .and_then(|metadata| metadata.tunnels_expanded),
+        Some(true)
+    );
+    assert_eq!(
+        store
+            .metadata(&ProfileId::new("b"))
+            .and_then(|metadata| metadata.tunnels_expanded),
+        None,
+        "b untouched"
+    );
+    let mut again = self::app(dir.path());
+    assert!(!again.tunnels_panel(), "no session shown: the default");
+    connect(&mut again, "a");
+    assert!(again.tunnels_panel(), "as profile a keeps it");
+    // Closed there, a's profile keeps that too, the tab's choice winning at once.
+    tunnel(&mut again, TunnelMessage::TogglePanel);
+    assert!(!again.tunnels_panel());
+    assert_eq!(
+        ProfileStore::open(&profiles_file)
+            .expect("store")
+            .metadata(&ProfileId::new("a"))
+            .and_then(|metadata| metadata.tunnels_expanded),
+        Some(false)
+    );
+}
+
+#[test]
+fn a_session_through_a_gateway_is_listed_as_its_route_and_close_all_leaves_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let gateway = {
+        let mut app = app(dir.path());
+        save_gateway(&mut app);
+        app.gateways()[0].id.clone()
+    };
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([
+        heimdall_core::profile::SshProfile {
+            gateway: Some(gateway),
+            ..ssh_profile("inner")
+        },
+        ssh_profile("direct"),
+    ]);
+    store.save().expect("save");
+    let mut app = self::app(dir.path());
+    assert!(app.session_routes().is_empty(), "no session open");
+
+    let effects = app.update(Message::ConnectProfile(
+        heimdall_core::profile::ProfileId::new("inner"),
+    ));
+    let [
+        Effect::Connect {
+            tab: inner,
+            attempt,
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("one connection: {effects:?}");
+    };
+    let (inner, attempt) = (*inner, *attempt);
+    connect(&mut app, "direct");
+    let routes = app.session_routes();
+    assert_eq!(
+        routes.len(),
+        1,
+        "the direct session goes through nothing: {routes:?}"
+    );
+    let route = &routes[0];
+    assert_eq!(route.tab, inner);
+    assert_eq!(route.route, ["bastion"]);
+    assert_eq!(route.remote, ("inner.lab".to_owned(), 22));
+    assert_eq!(route.title, "server inner");
+    assert!(!route.interrupted, "connecting");
+
+    // Close All is the hand-opened tunnels': the session stays.
+    tunnel(&mut app, TunnelMessage::CloseAll);
+    assert!(app.tab(inner).is_some());
+    assert_eq!(app.session_routes().len(), 1);
+
+    // Its session failed: its route is said interrupted.
+    app.update(Message::Connection {
+        tab: inner,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::ConnectionLost),
+    });
+    assert!(app.session_routes()[0].interrupted);
 }
