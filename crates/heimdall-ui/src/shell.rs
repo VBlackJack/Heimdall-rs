@@ -2491,6 +2491,18 @@ impl Shell {
                 }
             })
             .discard(),
+            Effect::LaunchCitrix { name, launch } => Task::future(async move {
+                // Starting a process waits on the system: off the UI thread, as a browser.
+                let result =
+                    tokio::task::spawn_blocking(move || heimdall_app::citrix::launch(&launch))
+                        .await
+                        .unwrap_or_else(|error| {
+                            Err(heimdall_app::citrix::CitrixRefusal::NotStarted(
+                                error.to_string(),
+                            ))
+                        });
+                Message::App(AppMessage::CitrixLaunched { name, result })
+            }),
             Effect::WriteClipboardImage(image) => Task::future(async move {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
             })
@@ -6589,6 +6601,7 @@ fn protocol_name(protocol: DraftProtocol) -> String {
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-name"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-name"),
         DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-name"),
+        DraftProtocol::Citrix => fl!("ui-profile-protocol-citrix-name"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-name"),
     }
 }
@@ -6602,6 +6615,7 @@ fn protocol_description(protocol: DraftProtocol) -> String {
         DraftProtocol::Vnc => fl!("ui-profile-protocol-vnc-desc"),
         DraftProtocol::Telnet => fl!("ui-profile-protocol-telnet-desc"),
         DraftProtocol::Ftp => fl!("ui-profile-protocol-ftp-desc"),
+        DraftProtocol::Citrix => fl!("ui-profile-protocol-citrix-desc"),
         DraftProtocol::Local => fl!("ui-profile-protocol-local-desc"),
     }
 }
@@ -6662,12 +6676,17 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
                 DraftProtocol::Ssh | DraftProtocol::Sftp => fl!("ui-profile-port-ssh"),
                 DraftProtocol::WinRm => fl!("ui-profile-port-winrm"),
                 DraftProtocol::Vnc => fl!("ui-profile-port-vnc"),
-                // Not shown: a local shell has no port.
                 DraftProtocol::Ftp => fl!("ui-profile-port-ftp"),
-                DraftProtocol::Telnet | DraftProtocol::Local => fl!("ui-profile-port-telnet"),
+                // Not shown: a local shell and a Citrix application have no port.
+                DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix => {
+                    fl!("ui-profile-port-telnet")
+                }
             },
             draft.default_port().to_string(),
         ),
+        ProfileField::StoreFrontUrl => (fl!("ui-profile-field-storefront-url"), String::new()),
+        ProfileField::AppName => (fl!("ui-profile-field-app-name"), String::new()),
+        ProfileField::IcaFile => (fl!("ui-profile-field-ica-file"), String::new()),
         ProfileField::Username => (
             fl!("ui-profile-field-username"),
             if draft.protocol == DraftProtocol::Rdp {
@@ -6798,6 +6817,7 @@ fn toggle_hint(toggle: ProfileToggle) -> Option<String> {
     match toggle {
         ProfileToggle::UseSsl => Some(fl!("ui-profile-use-ssl-hint")),
         ProfileToggle::SkipCertificateCheck => Some(fl!("ui-profile-skip-cert-hint")),
+        ProfileToggle::Sso => Some(fl!("ui-profile-toggle-sso-hint")),
         _ => None,
     }
 }
@@ -6824,6 +6844,8 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::LegacyAlgorithms => fl!("ui-profile-toggle-legacy-algorithms"),
         ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
+        ProfileToggle::Seamless => fl!("ui-profile-toggle-seamless"),
+        ProfileToggle::Sso => fl!("ui-profile-toggle-sso"),
         ProfileToggle::Favorite => fl!("ui-profile-toggle-favorite"),
     }
 }
@@ -7334,7 +7356,7 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
             fl!("ui-profile-credentials-ftp"),
             Some(fl!("ui-profile-credentials-ftp-desc")),
         )),
-        DraftProtocol::Telnet | DraftProtocol::Local => None,
+        DraftProtocol::Telnet | DraftProtocol::Local | DraftProtocol::Citrix => None,
     };
     if let Some((title, description)) = credentials {
         form = form.push(section(title, description));
@@ -7411,7 +7433,8 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         DraftProtocol::Telnet => Some(fl!("ui-profile-options-telnet")),
         DraftProtocol::Ftp => Some(fl!("ui-profile-options-ftp")),
         DraftProtocol::Ssh | DraftProtocol::Sftp => Some(fl!("ui-profile-options-ssh")),
-        DraftProtocol::WinRm | DraftProtocol::Local => None,
+        // Their own cards' titles.
+        DraftProtocol::WinRm | DraftProtocol::Local | DraftProtocol::Citrix => None,
     };
     if let Some(options) = options {
         form = form.push(section(options, None));
@@ -7432,6 +7455,11 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         form = form.push(crate::rdp_options::view(draft.rdp_options)).push(
             crate::rdp_options::resolution(draft, |field| form_field(draft, field)),
         );
+    }
+    if draft.protocol == DraftProtocol::Citrix {
+        form = form.push(crate::citrix_form::advanced(|field| {
+            form_field(draft, field)
+        }));
     }
     for toggle in ProfileToggle::of(draft.protocol) {
         if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
@@ -7528,7 +7556,7 @@ fn profile_form<'a>(
         .align_y(iced::Alignment::Center),
         section(
             fl!("ui-profile-section-basics"),
-            Some(if draft.protocol == DraftProtocol::Local {
+            Some(if draft.protocol.is_serverless() {
                 fl!("ui-profile-section-basics-local-desc")
             } else {
                 fl!("ui-profile-section-basics-desc")
@@ -7548,6 +7576,9 @@ fn profile_form<'a>(
                 .spacing(SPACING),
             )
             .push(crate::address_test_view::view(draft, forms.gateways));
+    }
+    if draft.protocol == DraftProtocol::Citrix {
+        form = form.push(crate::citrix_form::basics(|field| form_field(draft, field)));
     }
 
     form = form

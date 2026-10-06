@@ -27,8 +27,9 @@ use serde::Serialize;
 use crate::metadata::ProfileOrigin;
 use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
-    Aspect, AudioPlayback, Forwards, FtpProfile, LocalArguments, LocalProfile, RdpDefaults,
-    RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    Aspect, AudioPlayback, CitrixProfile, Forwards, FtpProfile, LocalArguments, LocalProfile,
+    RdpDefaults, RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile,
+    WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -48,6 +49,7 @@ mod connection_type {
     pub const FTP: &str = "FTP";
     pub const LOCAL: &str = "Local";
     pub const WINRM: &str = "WINRM";
+    pub const CITRIX: &str = "Citrix";
 }
 
 /// The C# `RdpAudioMode` values.
@@ -143,6 +145,16 @@ struct Entry {
     ftp_passive_mode: Option<bool>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ftp_use_ssl: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citrix_store_front_url: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citrix_app_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citrix_ica_file_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citrix_seamless_mode: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    citrix_use_sso: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_shell_executable: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -266,6 +278,7 @@ pub fn csharp(
         .chain(store.telnet_profiles().iter().map(telnet))
         .chain(store.vnc_profiles().iter().map(vnc))
         .chain(store.ftp_profiles().iter().map(ftp))
+        .chain(store.citrix_profiles().iter().map(citrix))
         .chain(
             store
                 .local_profiles()
@@ -291,6 +304,7 @@ pub fn session_count(store: &ProfileStore) -> usize {
         + store.telnet_profiles().len()
         + store.vnc_profiles().len()
         + store.ftp_profiles().len()
+        + store.citrix_profiles().len()
         + store.local_profiles().len()
         + store.winrm_profiles().len()
 }
@@ -492,6 +506,25 @@ fn ftp(profile: &FtpProfile) -> Entry {
             profile.group.as_ref(),
             &profile.host,
             connection_type::FTP,
+        )
+    }
+}
+
+/// A Citrix application: never its Workspace cache launch line, a secret the C# export
+/// leaves out too.
+fn citrix(profile: &CitrixProfile) -> Entry {
+    Entry {
+        citrix_store_front_url: profile.store_front_url.clone(),
+        citrix_app_name: profile.app_name.clone(),
+        citrix_ica_file_path: profile.ica_file.clone(),
+        citrix_seamless_mode: Some(profile.seamless),
+        citrix_use_sso: Some(profile.sso),
+        ..server(
+            &profile.id,
+            &profile.name,
+            profile.group.as_ref(),
+            "",
+            connection_type::CITRIX,
         )
     }
 }

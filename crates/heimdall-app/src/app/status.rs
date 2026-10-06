@@ -276,6 +276,12 @@ pub enum Notice {
     WinRmGatewayNtlm,
     /// A `WinRM` session started with its TLS certificate checks skipped, as the C# warns.
     WinRmCertificateSkipped,
+    /// A Citrix application is being launched, as the C# "Launching Citrix session...".
+    CitrixLaunching,
+    /// The Citrix application of this profile name was launched, outside Heimdall.
+    CitrixLaunched(String),
+    /// A Citrix application was not launched, for this reason.
+    CitrixRefused(crate::citrix::CitrixRefusal),
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's

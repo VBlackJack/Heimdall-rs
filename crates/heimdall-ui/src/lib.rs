@@ -19,6 +19,7 @@
 mod about_view;
 pub mod address_test_view;
 pub mod agent_chip_view;
+pub mod citrix_form;
 mod conflicts_view;
 mod desktop_texture;
 pub mod desktop_view;

@@ -130,6 +130,7 @@ impl PendingImport {
             + report.local.len()
             + report.winrm.len()
             + report.ftp.len()
+            + report.citrix.len()
     }
 }
 
@@ -237,6 +238,7 @@ impl App {
             let local = store.merge_local(report.local);
             let winrm = store.merge_winrm(report.winrm);
             let ftp = store.merge_ftp(report.ftp);
+            let citrix = store.merge_citrix(report.citrix);
             let gateways = store.merge_gateways(report.gateways);
             for id in &report.favorites {
                 store.set_favorite(id, true);
@@ -248,7 +250,7 @@ impl App {
             for (path, color) in &report.folder_colors {
                 let _ = store.set_folder_color(path, Some(*color));
             }
-            [ssh, rdp, telnet, vnc, local, winrm, ftp, gateways]
+            [ssh, rdp, telnet, vnc, local, winrm, ftp, citrix, gateways]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {
                     added: total.added + one.added,

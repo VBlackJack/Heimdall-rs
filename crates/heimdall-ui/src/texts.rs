@@ -19,6 +19,7 @@
 //! Every user-facing sentence comes from a Fluent key; the `Display` text of an error is
 //! never shown on its own, only as the technical detail inside a localised sentence.
 
+use heimdall_app::citrix::CitrixRefusal;
 use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
@@ -305,6 +306,23 @@ pub fn dropped_setting(dropped: Dropped) -> String {
         Dropped::RdpUsb => fl!("ui-import-dropped-rdp-usb"),
         Dropped::RdpMicrophone => fl!("ui-import-dropped-rdp-microphone"),
         Dropped::RdpMultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
+        Dropped::CitrixCacheLaunch => fl!("ui-import-dropped-citrix-cache-launch"),
+    }
+}
+
+/// Why a Citrix application was not launched, as the C# error says it.
+#[must_use]
+pub fn citrix_refusal(refusal: &CitrixRefusal) -> String {
+    match refusal {
+        CitrixRefusal::InvalidStoreFront => fl!("ui-status-citrix-invalid-storefront"),
+        CitrixRefusal::StoreFrontCredentials => fl!("ui-status-citrix-storefront-credentials"),
+        CitrixRefusal::InvalidIcaFile => fl!("ui-status-citrix-invalid-ica-file"),
+        CitrixRefusal::NotConfigured => fl!("ui-status-citrix-not-configured"),
+        CitrixRefusal::WorkspaceNotFound => fl!("ui-status-citrix-workspace-not-found"),
+        CitrixRefusal::Failed => fl!("ui-status-citrix-launch-failed"),
+        CitrixRefusal::NotStarted(reason) => {
+            fl!("ui-status-citrix-not-started", reason = server_text(reason))
+        }
     }
 }
 

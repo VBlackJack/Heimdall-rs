@@ -37,11 +37,12 @@ pub enum BulkField {
 
 impl BulkField {
     /// Whether a profile of `kind` has this field, as the C# bulk edit takes them: a port
-    /// for all but a local shell, an account for SSH, SFTP, RDP, FTP and `WinRM`.
+    /// for all but a local shell and a Citrix application, an account for SSH, SFTP, RDP,
+    /// FTP and `WinRM`.
     #[must_use]
     pub fn applies_to(self, kind: ProfileKind) -> bool {
         match self {
-            Self::Port => kind != ProfileKind::Local,
+            Self::Port => !matches!(kind, ProfileKind::Local | ProfileKind::Citrix),
             Self::Username => matches!(
                 kind,
                 ProfileKind::Ssh

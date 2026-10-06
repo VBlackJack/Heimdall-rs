@@ -141,6 +141,7 @@ impl App {
             ProfileKind::Ftp => Message::OpenFtp(profile.id),
             ProfileKind::Local => Message::OpenLocalProfile(profile.id),
             ProfileKind::WinRm => Message::OpenWinRm(profile.id),
+            ProfileKind::Citrix => Message::OpenCitrix(profile.id),
         };
         self.update(message)
     }

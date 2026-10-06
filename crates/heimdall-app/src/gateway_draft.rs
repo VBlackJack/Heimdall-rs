@@ -154,6 +154,9 @@ impl GatewayDraft {
             ProfileField::Username => &self.username,
             ProfileField::KeyPath => &self.key_path,
             ProfileField::Group
+            | ProfileField::StoreFrontUrl
+            | ProfileField::AppName
+            | ProfileField::IcaFile
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
@@ -180,6 +183,9 @@ impl GatewayDraft {
             ProfileField::Username => self.username = value,
             ProfileField::KeyPath => self.key_path = value,
             ProfileField::Group
+            | ProfileField::StoreFrontUrl
+            | ProfileField::AppName
+            | ProfileField::IcaFile
             | ProfileField::Domain
             | ProfileField::FixedWidth
             | ProfileField::FixedHeight
