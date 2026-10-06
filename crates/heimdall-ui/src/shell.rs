@@ -2537,6 +2537,7 @@ impl Shell {
             | Effect::CheckEdits { .. }
             | Effect::SudoOpen { .. }
             | Effect::SudoSave { .. }
+            | Effect::SudoListRemote { .. }
             | Effect::SendEditAnyway { .. }
             | Effect::OpenFolder { .. }) => files_task(effect),
             effect @ (Effect::OpenEditor { .. } | Effect::SaveEditor { .. }) => {
@@ -8316,9 +8317,38 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
     .into()
 }
 
-/// The work of a file edited with sudo: opening it, saving it.
+/// The work of sudo in a Files tab: a file edited with it opened and saved, a folder
+/// listed as root.
 fn sudo_task(effect: Effect) -> Task<Message> {
     match effect {
+        Effect::SudoListRemote {
+            tab,
+            shell,
+            path,
+            password,
+        } => Task::perform(
+            {
+                let path = path.clone();
+                async move {
+                    heimdall_app::sudo_mode::sudo_list(
+                        &shell,
+                        &path,
+                        password
+                            .as_ref()
+                            .map(heimdall_app::sudo_edit::SudoPassword::bytes),
+                        heimdall_files::privileged::Sudo::System,
+                    )
+                    .await
+                }
+            },
+            move |result| {
+                Message::App(AppMessage::Files(FilesMessage::SudoListed {
+                    tab,
+                    path: path.clone(),
+                    result,
+                }))
+            },
+        ),
         Effect::SudoOpen {
             tab,
             shell,
@@ -8371,7 +8401,9 @@ fn sudo_task(effect: Effect) -> Task<Message> {
 /// again, looking at its saves.
 fn edit_task(effect: Effect) -> Task<Message> {
     match effect {
-        effect @ (Effect::SudoOpen { .. } | Effect::SudoSave { .. }) => sudo_task(effect),
+        effect @ (Effect::SudoOpen { .. }
+        | Effect::SudoSave { .. }
+        | Effect::SudoListRemote { .. }) => sudo_task(effect),
         Effect::SendEditAnyway { tab, client, edit } => Task::perform(
             async move {
                 let check = heimdall_app::external_edit::send_anyway(&client, &edit).await;
@@ -8532,6 +8564,7 @@ fn files_task(effect: Effect) -> Task<Message> {
         | Effect::CheckEdits { .. }
         | Effect::SudoOpen { .. }
         | Effect::SudoSave { .. }
+        | Effect::SudoListRemote { .. }
         | Effect::SendEditAnyway { .. }
         | Effect::OpenFolder { .. }) => edit_task(effect),
         Effect::CopyAcross {
@@ -9171,6 +9204,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
     };
     match dialog {
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
+        Dialog::ConfirmSudoDelete { names, more, .. } => {
+            files_view::sudo_delete_question(names, *more)
+        }
         Dialog::ConfirmCloseTab(_)
         | Dialog::ConfirmDisconnectDesktop { .. }
         | Dialog::ConfirmCloseTransfers { .. }

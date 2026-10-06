@@ -33,6 +33,7 @@ mod ftp;
 pub mod ftps_trust;
 mod plan;
 pub mod privileged;
+pub mod privileged_mode;
 pub mod server_copy;
 
 use std::path::Path;

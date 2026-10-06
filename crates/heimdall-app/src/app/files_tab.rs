@@ -31,6 +31,10 @@ use crate::files::{
     TransferRequest, TransferState, Waiting, download_name, octal_mode, typed_name,
 };
 use crate::ids::TabId;
+use crate::sudo_mode::SudoAccess;
+
+/// The entries a delete as root names in its question; past them, how many more go.
+pub const SUDO_DELETE_NAMED: usize = 10;
 
 /// Something that happened in a Files tab.
 #[derive(Clone)]
@@ -346,6 +350,20 @@ pub enum FilesMessage {
         tab: TabId,
         /// The password.
         password: crate::sudo_edit::SudoPassword,
+    },
+    /// Turn the server pane's sudo mode on or off, as the C# "sudo" toggle; over SSH only.
+    ToggleSudo {
+        /// Tab.
+        tab: TabId,
+    },
+    /// A remote folder listed as root arrived.
+    SudoListed {
+        /// Tab.
+        tab: TabId,
+        /// The folder asked for.
+        path: RemotePath,
+        /// The folder, absolute, and its entries; or why not.
+        result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
     },
     /// Show the folder of an edit's local copy.
     EditOpenFolder {
@@ -669,6 +687,13 @@ impl std::fmt::Debug for FilesMessage {
             Self::SudoPasswordGiven { tab, .. } => {
                 write!(f, "SudoPasswordGiven({}, ..)", tab.value())
             }
+            Self::ToggleSudo { tab } => write!(f, "ToggleSudo({})", tab.value()),
+            Self::SudoListed { tab, result, .. } => write!(
+                f,
+                "SudoListed({}, {})",
+                tab.value(),
+                result.as_ref().map_or(0, |(_, entries)| entries.len())
+            ),
             Self::EditStop { tab, .. } => write!(f, "EditStop({})", tab.value()),
             Self::EditsChecked { tab, results } => {
                 write!(f, "EditsChecked({}, {})", tab.value(), results.len())
@@ -776,6 +801,10 @@ enum PendingKind {
     /// The entries of the server at these paths to give new permission bits, each with its
     /// name.
     Permissions { remotes: Vec<(String, RemotePath)> },
+    /// The entries of the server to delete as root, each with its name.
+    SudoDelete {
+        targets: Vec<(String, FileOperation)>,
+    },
 }
 
 /// A planned transfer waiting for the user's answers to the destinations in its way.
@@ -849,11 +878,8 @@ impl App {
                 };
                 files.remote.loading = true;
                 files.remote.discard_listing = false;
-                vec![Effect::ListRemote {
-                    tab,
-                    client,
-                    path: files.remote.path.clone(),
-                }]
+                let path = files.remote.path.clone();
+                vec![super::files_sudo::remote_listing(files, tab, client, path)]
             }
             Side::Local => {
                 files.local.loading = true;
@@ -869,7 +895,7 @@ impl App {
     /// A remote listing arrived. A link being entered that cannot be listed points at no
     /// folder: the pane goes back where it was opened from, as the C# Files tab stays, and
     /// says so.
-    fn remote_listed(
+    pub(super) fn remote_listed(
         &mut self,
         tab: TabId,
         result: Result<(RemotePath, Vec<crate::files::RemoteEntry>), FilesError>,
@@ -942,6 +968,7 @@ impl App {
         }
         match message {
             FilesMessage::RemoteListed { tab, result } => self.remote_listed(tab, result),
+            FilesMessage::SudoListed { tab, path, result } => self.sudo_listed(tab, path, result),
             FilesMessage::LocalListed { tab, result } => self.local_listed(tab, result),
             FilesMessage::Select { tab, side, index } => self.select(tab, side, index),
             FilesMessage::AskNewFolder { tab, side } => self.ask(tab, side, NameAction::NewFolder),
@@ -1003,6 +1030,7 @@ impl App {
             | FilesMessage::RemoveBookmark { .. }
             | FilesMessage::Filter { .. }
             | FilesMessage::ToggleHidden { .. }
+            | FilesMessage::ToggleSudo { .. }
             | FilesMessage::Dropped { .. }
             | FilesMessage::UploadPicked { .. }
             | FilesMessage::ExplorerFilesRead { .. }) => self.pane_message(message),
@@ -1104,6 +1132,7 @@ impl App {
             FilesMessage::AskPermissions { tab, side } => {
                 self.ask(tab, side, NameAction::Permissions)
             }
+            FilesMessage::ToggleSudo { tab } => self.toggle_sudo(tab),
             FilesMessage::ShowProperties { tab, side } => {
                 self.show_properties(tab, side);
                 Vec::new()
@@ -1266,7 +1295,7 @@ impl App {
         files.remote.leave();
         files.remote.loading = true;
         files.remote.discard_listing = false;
-        vec![Effect::ListRemote { tab, client, path }]
+        vec![super::files_sudo::remote_listing(files, tab, client, path)]
     }
 
     /// Copies the full path of `side`'s selected entry, and says so.
@@ -1348,7 +1377,7 @@ impl App {
                 files.remote.leave();
                 files.remote.loading = true;
                 files.remote.discard_listing = false;
-                vec![Effect::ListRemote { tab, client, path }]
+                vec![super::files_sudo::remote_listing(files, tab, client, path)]
             }
             Side::Local => {
                 let Some(typed) = files.local.typed.take() else {
@@ -2119,6 +2148,9 @@ impl App {
         {
             return Vec::new();
         }
+        if side == Side::Remote && self.files_mut(tab).is_some_and(|files| files.sudo_mode) {
+            return self.ask_sudo_delete(tab);
+        }
         let chosen = self.chosen(tab, side);
         let Some((name, ..)) = chosen.first().cloned() else {
             return Vec::new();
@@ -2144,6 +2176,63 @@ impl App {
         Vec::new()
     }
 
+    /// Asks to delete the server's chosen entries as root, the sudo mode being on: a danger
+    /// question naming them. When one of them is never deleted as root, the pane says so
+    /// and nothing is asked.
+    fn ask_sudo_delete(&mut self, tab: TabId) -> Vec<Effect> {
+        use heimdall_files::privileged_mode::deletable_as_root;
+
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        let Some(shell) = files.shell.clone() else {
+            return Vec::new();
+        };
+        let access = SudoAccess {
+            shell,
+            password: files.sudo_password.clone(),
+        };
+        let pane = &files.remote;
+        let home = pane.home.clone();
+        let targets: Option<Vec<(String, FileOperation)>> = pane
+            .chosen()
+            .into_iter()
+            .filter_map(|index| pane.entries.get(index))
+            .map(|entry| {
+                let path = pane.path.join(&entry.name);
+                deletable_as_root(path.as_bytes(), home.as_ref().map(RemotePath::as_bytes)).ok()?;
+                let removal = FileOperation::RemoteSudoRemove {
+                    access: access.clone(),
+                    path,
+                    kind: entry.kind,
+                    inode: entry.inode,
+                    home: home.clone(),
+                };
+                Some((entry.label.clone(), removal))
+            })
+            .collect();
+        let Some(targets) = targets else {
+            files.remote.error = Some(FilesError::SudoProtected);
+            return Vec::new();
+        };
+        if targets.is_empty() {
+            return Vec::new();
+        }
+        let names = targets
+            .iter()
+            .take(SUDO_DELETE_NAMED)
+            .map(|(name, _)| name.clone())
+            .collect();
+        let more = targets.len().saturating_sub(SUDO_DELETE_NAMED);
+        self.pending_operation = Some(PendingOperation {
+            tab,
+            side: Side::Remote,
+            kind: PendingKind::SudoDelete { targets },
+        });
+        self.dialog = Some(Dialog::ConfirmSudoDelete { tab, names, more });
+        Vec::new()
+    }
+
     /// The user confirmed a name or a delete.
     pub(super) fn confirm_operation(&mut self, typed: Option<&str>) -> Vec<Effect> {
         let Some(pending) = self.pending_operation.take() else {
@@ -2158,6 +2247,9 @@ impl App {
                 return self.confirm_permissions(tab, remotes, typed);
             }
             PendingKind::Delete { targets } => return self.confirm_delete(tab, side, targets),
+            PendingKind::SudoDelete { targets } => {
+                return self.start_batch(tab, Side::Remote, BatchKind::Delete, targets);
+            }
             kind => kind,
         };
         let Some(files) = self.files_mut(tab) else {
@@ -2240,6 +2332,15 @@ impl App {
         let Some(client) = files.client.clone() else {
             return Vec::new();
         };
+        // The sudo mode on: given as root where the server refuses them to the account.
+        let sudo = files
+            .shell
+            .clone()
+            .filter(|_| files.sudo_mode)
+            .map(|shell| SudoAccess {
+                shell,
+                password: files.sudo_password.clone(),
+            });
         let entries = remotes
             .into_iter()
             .map(|(name, path)| {
@@ -2247,6 +2348,7 @@ impl App {
                     client: client.clone(),
                     path,
                     mode,
+                    sudo: sudo.clone(),
                 };
                 (name, change)
             })

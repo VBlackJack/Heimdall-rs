@@ -58,7 +58,7 @@ impl std::fmt::Debug for SudoPassword {
 }
 
 /// What a sudo script is given to: a POSIX shell reading it on its input.
-const SHELL: &str = "sh -s";
+pub(crate) const SHELL: &str = "sh -s";
 
 /// The time a sudo script has, as the C# allows: ten minutes, and one more second for every
 /// 32 KiB it carries.
@@ -146,7 +146,7 @@ pub async fn sudo_replace(
 
 /// What a sudo script's end says, by its status, and for an authentication by what sudo
 /// wrote on its error stream.
-fn sudo_error(ended: &CommandEnd) -> FilesError {
+pub(crate) fn sudo_error(ended: &CommandEnd) -> FilesError {
     let said = String::from_utf8_lossy(&ended.stderr).to_lowercase();
     log::warn!(
         "sudo script ended with {:?}: {}",
@@ -176,7 +176,7 @@ fn sudo_error(ended: &CommandEnd) -> FilesError {
 }
 
 /// A failure of the connection itself.
-fn connection_error(error: &ConnectError) -> FilesError {
+pub(crate) fn connection_error(error: &ConnectError) -> FilesError {
     match error {
         ConnectError::CommandRefused | ConnectError::Timeout => FilesError::SudoFailed,
         _ => FilesError::SessionClosed,

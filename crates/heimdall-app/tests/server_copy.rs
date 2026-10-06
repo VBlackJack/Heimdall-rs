@@ -103,6 +103,7 @@ fn entry(name: &str, kind: EntryKind) -> RemoteEntry {
         permissions: None,
         owner: None,
         group: None,
+        inode: None,
     }
 }
 
