@@ -1903,3 +1903,12 @@ ui-session-copy-anonymous-button = Copiar informe anonimizado
 ui-error-report-anonymous-header = Informe de diagnóstico { $protocol } (anonimizado)
 ui-error-report-kind = Fallo:
 ui-error-report-anonymous-hint = Incluye la hora, la versión de la aplicación y el tipo de fallo. Excluye direcciones de servidor, nombres de cuenta y texto de mensajes de error.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Quitar filtro: { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } sesión
+   *[other] { $total } sesiones
+}
+ui-tree-selection-count = { $count } sesiones seleccionadas
+ui-tree-selection-move = Mover
+ui-tree-selection-more = Más acciones

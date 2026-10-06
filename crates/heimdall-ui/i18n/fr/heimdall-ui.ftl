@@ -1906,3 +1906,12 @@ ui-session-copy-anonymous-button = Copier le rapport anonymisé
 ui-error-report-anonymous-header = Rapport de diagnostic { $protocol } (anonymisé)
 ui-error-report-kind = Échec :
 ui-error-report-anonymous-hint = Contient la date, la version et le type d'échec. Exclut les adresses, les comptes et le texte des erreurs.
+ui-tree-filter-chip-remove = ✕
+ui-tree-filter-chip-tooltip = Retirer le filtre : { $filter }
+ui-tree-filter-result-count = { $shown } / { $total ->
+    [one] { $total } session
+   *[other] { $total } sessions
+}
+ui-tree-selection-count = { $count } sessions sélectionnées
+ui-tree-selection-move = Déplacer
+ui-tree-selection-more = Autres actions
