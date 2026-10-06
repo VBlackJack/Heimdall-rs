@@ -285,8 +285,7 @@ impl RemoteSession {
     ///
     /// # Errors
     ///
-    /// [`RemoteError`] from the server; [`Refusal::Unsupported`] over FTP, which says too
-    /// little of a file to tell.
+    /// [`RemoteError`] from the server.
     pub async fn fingerprint(&self, path: &RemotePath) -> Result<Fingerprint, RemoteError> {
         match self {
             Self::Sftp(client) => client
@@ -294,7 +293,7 @@ impl RemoteSession {
                 .await
                 .map(|attributes| Fingerprint::of(&attributes))
                 .map_err(|e| sftp_error(&e)),
-            Self::Ftp(_) => Err(unsupported()),
+            Self::Ftp(client) => client.fingerprint(path).await,
         }
     }
 
@@ -304,7 +303,7 @@ impl RemoteSession {
     /// # Errors
     ///
     /// [`RemoteError::FileTooLarge`], [`RemoteError::Changed`], [`RemoteError::NotAFile`],
-    /// [`RemoteError::Cancelled`], or the server's; [`Refusal::Unsupported`] over FTP.
+    /// [`RemoteError::Cancelled`], or the server's.
     pub async fn read_whole(
         &self,
         path: &RemotePath,
@@ -315,19 +314,21 @@ impl RemoteSession {
             Self::Sftp(client) => transfer::read_whole(client, path, cap, cancel)
                 .await
                 .map_err(|e| transfer_error(&e)),
-            Self::Ftp(_) => Err(unsupported()),
+            Self::Ftp(client) => client.read_whole(path, cap, cancel).await,
         }
     }
 
     /// Replaces the regular file `path` with `data`, only while it still has the
-    /// fingerprint `expected`; returns its fingerprint once replaced.
+    /// fingerprint `expected`; returns its fingerprint once replaced. Over SFTP the new file
+    /// takes the old one's place in one rename, keeping its permissions; over FTP, which has
+    /// no rename that replaces everywhere, the old file is moved aside until the new one is
+    /// in place, as the C# FTP commit.
     ///
     /// # Errors
     ///
     /// [`RemoteError::Changed`] with the file left as it is,
     /// [`RemoteError::DestinationNotAFile`], [`RemoteError::ReplaceNotSafe`],
-    /// [`RemoteError::Cancelled`], or the server's; [`Refusal::Unsupported`] over FTP, which
-    /// cannot replace a file only while it is unchanged.
+    /// [`RemoteError::Cancelled`], or the server's.
     pub async fn replace_if(
         &self,
         path: &RemotePath,
@@ -346,7 +347,7 @@ impl RemoteSession {
             )
             .await
             .map_err(|e| transfer_error(&e)),
-            Self::Ftp(_) => Err(unsupported()),
+            Self::Ftp(client) => client.replace_if(path, data, expected, cancel).await,
         }
     }
 
@@ -517,14 +518,6 @@ fn transfer_error(error: &TransferError) -> RemoteError {
         TransferError::LocalExists => RemoteError::LocalExists,
         TransferError::Changed => RemoteError::Changed,
         TransferError::TooLarge => RemoteError::FileTooLarge,
-    }
-}
-
-/// What a protocol without an operation says of it.
-fn unsupported() -> RemoteError {
-    RemoteError::Refused {
-        refusal: Refusal::Unsupported,
-        message: Vec::new(),
     }
 }
 

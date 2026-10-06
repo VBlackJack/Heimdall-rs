@@ -978,8 +978,8 @@ fn pane_frame(
 }
 
 /// A file edited with the external editor: its state, its folder, a refused save sent
-/// anyway, and stopping.
-fn edit_row(tab: TabId, edit: &EditSession) -> Element<'_, Message> {
+/// anyway, and stopping; sent with sudo only over the tab's SSH connection, `over_ssh`.
+fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Message> {
     let local = || edit.local.clone();
     let state = match &edit.refused {
         Some(error) => text(texts::files_error(error))
@@ -993,17 +993,19 @@ fn edit_row(tab: TabId, edit: &EditSession) -> Element<'_, Message> {
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center);
-    // Refused by the server's permissions, or by sudo for its password: sudo is offered.
-    let sudo_helps = matches!(
-        edit.refused,
-        Some(
-            FilesError::Server {
-                refusal: Refusal::PermissionDenied,
-                ..
-            } | FilesError::SudoPasswordNeeded
-                | FilesError::SudoPasswordRejected
-        )
-    );
+    // Refused by the server's permissions, or by sudo for its password: sudo is offered,
+    // where there is an SSH connection to run it: never over FTP.
+    let sudo_helps = over_ssh
+        && matches!(
+            edit.refused,
+            Some(
+                FilesError::Server {
+                    refusal: Refusal::PermissionDenied,
+                    ..
+                } | FilesError::SudoPasswordNeeded
+                    | FilesError::SudoPasswordRejected
+            )
+        );
     if sudo_helps {
         line = line.push(
             button(text(fl!("ui-files-edit-save-sudo")).size(SMALL_SIZE)).on_press(files(
@@ -1264,7 +1266,7 @@ pub fn view(
             .edits
             .iter()
             .fold(Column::new().spacing(4.0), |list, edit| {
-                list.push(edit_row(tab, edit))
+                list.push(edit_row(tab, edit, files_pane.shell.is_some()))
             });
         content = content
             .push(text(fl!("ui-files-edits-title")).size(TITLE_SIZE))

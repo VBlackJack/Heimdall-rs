@@ -25,7 +25,9 @@
 //! - Copied entries are copied on the server itself, under their own name or their first
 //!   free copy name, and stay on the clipboard to be pasted again. Duplicate copies the
 //!   chosen entries into their own folder, the clipboard left as it is. Only an SFTP tab,
-//!   which can run the copy on its SSH connection, copies; one copy runs at a time.
+//!   which can run the copy on its SSH connection, copies on its server; one copy runs at a
+//!   time. An FTP tab's entries are copied too, as the C# copies whatever the protocol, to
+//!   be pasted on another server: FTP has no copy on the server, which the C# refuses too.
 
 use heimdall_core::profile::ProfileId;
 use heimdall_files::RemotePath;
@@ -108,7 +110,7 @@ impl App {
 
     /// "Cut" or "Copy": the remote entries chosen in `tab_id`, held to be pasted.
     pub(super) fn hold_entries(&mut self, tab_id: TabId, mode: ClipMode) -> Vec<Effect> {
-        if mode == ClipMode::Copy && !self.can_copy(tab_id) {
+        if mode == ClipMode::Copy && !self.can_hold_copy(tab_id) {
             return Vec::new();
         }
         let Some(endpoint) = self.files_endpoint(tab_id) else {
@@ -138,6 +140,34 @@ impl App {
         self.tab(tab_id)
             .and_then(|tab| tab.files.as_deref())
             .is_some_and(|files| files.shell.is_some())
+    }
+
+    /// Whether "Copy" holds `tab_id`'s entries: a tab copying on its server, or a connected
+    /// FTP tab, whose copies are pasted on another server.
+    #[must_use]
+    pub fn can_hold_copy(&self, tab_id: TabId) -> bool {
+        self.can_copy(tab_id)
+            || (self.files_over_ftp(tab_id) && self.files_client(tab_id).is_some())
+    }
+
+    /// Whether `tab_id` is a Files tab over FTP.
+    fn files_over_ftp(&self, tab_id: TabId) -> bool {
+        self.tab(tab_id)
+            .is_some_and(|tab| tab.files.is_some() && matches!(tab.profile, TabProfile::Ftp(_)))
+    }
+
+    /// Whether `tab_id` is a Files tab over SFTP: permissions are changed there, and a link
+    /// is never renamed, as the C# menu.
+    #[must_use]
+    pub fn files_over_sftp(&self, tab_id: TabId) -> bool {
+        self.tab(tab_id)
+            .is_some_and(|tab| tab.files.is_some() && matches!(tab.profile, TabProfile::Ssh(_)))
+    }
+
+    /// Whether `tab_id`'s Files tab is connected: its files can be edited.
+    #[must_use]
+    pub fn files_connected(&self, tab_id: TabId) -> bool {
+        self.files_client(tab_id).is_some()
     }
 
     /// Whether `tab_id` can paste what is held: something is, on its own server; or, copied

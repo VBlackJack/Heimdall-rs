@@ -109,14 +109,13 @@ impl App {
     }
 
     /// Whether Open on the server's entry `index` opens it in the integrated editor, as the
-    /// C# does: a file over SFTP the editor takes. Over FTP, or larger, it is downloaded.
+    /// C# does: a file the editor takes, over SFTP or FTP alike. Larger, it is downloaded.
     pub(super) fn opens_in_editor(&self, tab: TabId, index: usize) -> bool {
         let Some(files) = self.tab(tab).and_then(|found| found.files.as_ref()) else {
             return false;
         };
-        let over_sftp = matches!(files.client, Some(heimdall_files::RemoteSession::Sftp(_)));
         files.editor.is_none()
-            && over_sftp
+            && files.client.is_some()
             && files.remote.entries.get(index).is_some_and(|entry| {
                 entry.kind == EntryKind::File
                     && entry.size.is_none_or(|size| size <= INTEGRATED_EDIT_LIMIT)

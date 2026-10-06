@@ -286,11 +286,12 @@ impl App {
 
     /// "Edit with sudo": the selected file of the server opened with sudo, with the password
     /// kept for the tab, if any; one already being edited is opened in the editor again.
+    /// Only over SFTP, whose SSH connection runs sudo: an FTP tab has none, and never asks.
     fn edit_with_sudo(&mut self, tab_id: TabId) -> Vec<Effect> {
         let setting = self.settings.external_editor.clone();
         let base = self.edit_dir.clone();
         let keep = self.edit_folders();
-        let Some(files) = self.files_mut(tab_id) else {
+        let Some(files) = self.files_mut(tab_id).filter(|files| files.shell.is_some()) else {
             return Vec::new();
         };
         let Some(entry) = files

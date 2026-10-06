@@ -690,7 +690,11 @@ async fn this_computers_menu_uploads_what_the_servers_downloads() {
     let mut ui = common::simulator(
         settings,
         WINDOW,
-        heimdall_ui::tree_view::files_entry_menu((tab, Side::Local), Some(a_file(0)), false, false),
+        heimdall_ui::tree_view::files_entry_menu(
+            (tab, Side::Local),
+            Some(a_file(0)),
+            sftp_tab(false, false),
+        ),
     );
     assert!(ui.find("Download").is_err());
     ui.click("Upload").expect("Upload");
@@ -811,8 +815,7 @@ async fn the_servers_entry_menu_asks_for_what_the_csharp_one_does() {
             heimdall_ui::tree_view::files_entry_menu(
                 (tab, Side::Remote),
                 Some(a_file(1)),
-                true,
-                true,
+                sftp_tab(true, true),
             ),
         );
         ui.click(label).expect(label);
@@ -839,7 +842,11 @@ async fn the_servers_menu_offers_permissions_and_properties_and_their_dialogs_sh
         common::simulator(
             settings(),
             WINDOW,
-            heimdall_ui::tree_view::files_entry_menu((tab, side), Some(a_file(0)), false, false),
+            heimdall_ui::tree_view::files_entry_menu(
+                (tab, side),
+                Some(a_file(0)),
+                sftp_tab(false, false),
+            ),
         )
     };
     let mut remote = menu(Side::Remote);
@@ -1091,8 +1098,7 @@ async fn the_files_menus_are_drawn_on_a_card_that_hides_what_is_under_them() {
         heimdall_ui::tree_view::files_entry_menu(
             (tab, Side::Remote),
             Some(a_file(0)),
-            false,
-            false,
+            sftp_tab(false, false),
         ),
         2,
         20,
@@ -1425,6 +1431,18 @@ async fn an_entry_dragged_onto_the_other_panes_folder_is_sent_into_it() {
     assert_eq!(files.transfers.len(), 1);
 }
 
+/// The facts of an SFTP tab: `can_paste` as said, its SSH connection with `over_ssh`, which
+/// it copies and edits on.
+fn sftp_tab(can_paste: bool, over_ssh: bool) -> heimdall_ui::tree_view::FilesTabFacts {
+    heimdall_ui::tree_view::FilesTabFacts {
+        can_paste,
+        can_copy: over_ssh,
+        connected: over_ssh,
+        sftp: true,
+        over_ssh,
+    }
+}
+
 /// The facts of a menu opened on a regular file chosen alone, listed at `index`.
 fn a_file(index: usize) -> heimdall_ui::tree_view::FilesEntryFacts {
     heimdall_ui::tree_view::FilesEntryFacts {
@@ -1531,7 +1549,7 @@ async fn the_menu_beside_the_entries_is_the_folders_and_an_entrys_offers_what_it
     let mut ui = common::simulator(
         settings(),
         WINDOW,
-        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), None, true, true),
+        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), None, sftp_tab(true, true)),
     );
     for label in ["New Folder", "Upload here...", "Paste", "Refresh"] {
         ui.find(label).expect(label);
@@ -1549,7 +1567,11 @@ async fn the_menu_beside_the_entries_is_the_folders_and_an_entrys_offers_what_it
     let mut ui = common::simulator(
         settings(),
         WINDOW,
-        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), Some(folder), false, true),
+        heimdall_ui::tree_view::files_entry_menu(
+            (tab, Side::Remote),
+            Some(folder),
+            sftp_tab(false, true),
+        ),
     );
     ui.find("Rename").expect("renamed");
     assert!(ui.find("Edit").is_err(), "a folder is not edited");
@@ -1561,10 +1583,83 @@ async fn the_menu_beside_the_entries_is_the_folders_and_an_entrys_offers_what_it
     let mut ui = common::simulator(
         settings(),
         WINDOW,
-        heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), Some(link), false, true),
+        heimdall_ui::tree_view::files_entry_menu(
+            (tab, Side::Remote),
+            Some(link),
+            sftp_tab(false, true),
+        ),
     );
     assert!(ui.find("Rename").is_err());
     ui.find("Delete").expect("deleted");
+}
+
+#[tokio::test]
+async fn an_ftp_tabs_entry_menu_edits_cuts_and_copies_as_the_csharp_but_never_runs_on_the_server() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, tab) = files_tab(dir.path()).await;
+    let ftp = heimdall_ui::tree_view::FilesTabFacts {
+        can_paste: false,
+        can_copy: true,
+        connected: true,
+        sftp: false,
+        over_ssh: false,
+    };
+    let menu = |facts| {
+        let settings = Settings {
+            fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+            ..Settings::default()
+        };
+        common::simulator(
+            settings,
+            WINDOW,
+            heimdall_ui::tree_view::files_entry_menu((tab, Side::Remote), Some(facts), ftp),
+        )
+    };
+    let mut ui = menu(a_file(0));
+    for label in ["Edit", "Edit with external editor", "Rename", "Cut", "Copy"] {
+        ui.find(label).expect(label);
+    }
+    // Permissions over SFTP only; sudo, Duplicate and a terminal over SSH only.
+    for label in [
+        "Change permissions...",
+        "Edit with sudo",
+        "Duplicate",
+        "Open in terminal",
+    ] {
+        assert!(ui.find(label).is_err(), "{label}");
+    }
+    for (label, expected) in [
+        (
+            "Edit",
+            format!("{:?}", FilesMessage::EditIntegrated { tab }),
+        ),
+        (
+            "Edit with external editor",
+            format!("{:?}", FilesMessage::EditExternal { tab }),
+        ),
+        ("Copy", format!("{:?}", FilesMessage::Copy { tab })),
+    ] {
+        let mut ui = menu(a_file(0));
+        ui.click(label).expect(label);
+        let chosen: Vec<String> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::MenuChoice(AppMessage::Files(files)) => Some(format!("{files:?}")),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(chosen, [expected], "{label}");
+    }
+    // A link over FTP is renamed by its name, as the C#; never edited.
+    let link = heimdall_ui::tree_view::FilesEntryFacts {
+        one_file: false,
+        link: true,
+        ..a_file(0)
+    };
+    let mut ui = menu(link);
+    ui.find("Rename").expect("renamed");
+    ui.find("Copy").expect("copied");
+    assert!(ui.find("Edit").is_err(), "a link is not edited");
 }
 
 #[tokio::test]

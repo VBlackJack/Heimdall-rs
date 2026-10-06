@@ -1129,6 +1129,11 @@ impl App {
                 }
                 Vec::new()
             }
+            // Only SFTP changes a server's permissions, as the C#: never asked over FTP.
+            FilesMessage::AskPermissions {
+                tab,
+                side: Side::Remote,
+            } if !self.files_over_sftp(tab) => Vec::new(),
             FilesMessage::AskPermissions { tab, side } => {
                 self.ask(tab, side, NameAction::Permissions)
             }
