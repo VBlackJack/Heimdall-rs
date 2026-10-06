@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::{AgentPreference, ExecutionPolicy};
+use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -324,6 +324,11 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if menu_key {
                 return Some(Message::MenuKey);
             }
+            // Ctrl+W no terminal and no desktop took: the session shown closes, once no
+            // field has the keyboard either, which is asked first.
+            if crate::terminal_view::keys::is_ctrl_w(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::CloseKey);
+            }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
@@ -499,6 +504,11 @@ pub enum Message {
     /// The left button went down, wherever: a press on a Files tab's entry, or on a tab,
     /// starts a drag.
     PointerPressed,
+    /// Ctrl+W left by every widget: the session shown closes unless a field has the
+    /// keyboard.
+    CloseKey,
+    /// Whether a field had the keyboard when Ctrl+W was pressed.
+    CloseKeyFocus(bool),
     /// The pointer came over a tab of the tab bar.
     TabHover(TabId),
     /// The pointer left it.
@@ -671,6 +681,8 @@ impl fmt::Debug for Message {
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
             Self::PointerPressed => f.write_str("PointerPressed"),
+            Self::CloseKey => f.write_str("CloseKey"),
+            Self::CloseKeyFocus(focused) => write!(f, "CloseKeyFocus({focused})"),
             Self::TabHover(tab) => write!(f, "TabHover({})", tab.value()),
             Self::TabHoverLeft(tab) => write!(f, "TabHoverLeft({})", tab.value()),
             Self::TabDragMoved(_) => f.write_str("TabDragMoved"),
@@ -913,6 +925,8 @@ pub struct Shell {
     tab_hover: Option<TabId>,
     /// A press on a tab, a drag once the pointer moves.
     tab_drag: Option<crate::tab_drag::TabDrag>,
+    /// The computer kept from sleeping while a session is open.
+    sleep_guard: crate::sleep_guard::SleepGuard,
     /// A press in the tree, held: a drag once the pointer moves.
     tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
@@ -1159,6 +1173,7 @@ impl Shell {
             files_drag: None,
             tab_hover: None,
             tab_drag: None,
+            sleep_guard: crate::sleep_guard::SleepGuard::new(),
             tree_drag: None,
             sidebar_hidden: false,
             window_memory: None,
@@ -1297,6 +1312,52 @@ impl Shell {
         Subscription::batch(subscriptions)
     }
 
+    /// Applies a message, then keeps the computer awake while a session is connected, as
+    /// the C# `SleepPrevention` does when the setting is on.
+    pub fn step(&mut self, message: Message) -> Task<Message> {
+        let task = self.update(message);
+        let awake = self.app.settings().prevent_sleep
+            && self
+                .app
+                .tabs
+                .iter()
+                .any(|tab| tab.phase == Phase::Connected);
+        self.sleep_guard.hold(awake);
+        task
+    }
+
+    /// Whether the computer is kept from sleeping now.
+    #[must_use]
+    pub fn keeps_awake(&self) -> bool {
+        self.sleep_guard.held()
+    }
+
+    /// Ctrl+W, as the C#: the session shown closes when nothing that takes text has the
+    /// keyboard, which is asked first; with a dialog, a menu, Quick Connect, the search bar
+    /// or a path bar open, the key is theirs.
+    fn close_key(&mut self, message: &Message) -> Task<Message> {
+        match *message {
+            Message::CloseKey => {
+                let open = self.app.dialog.is_some()
+                    || self.palette.is_some()
+                    || self.finder.is_some()
+                    || self.menu.is_some()
+                    || self.path_editing.is_some()
+                    || self.app.active.is_none();
+                if open {
+                    Task::none()
+                } else {
+                    iced::advanced::widget::operate(crate::search_keys::AnyFocused::default())
+                        .map(Message::CloseKeyFocus)
+                }
+            }
+            Message::CloseKeyFocus(false) => {
+                self.update(Message::Shortcut(WindowShortcut::CloseTab))
+            }
+            _ => Task::none(),
+        }
+    }
+
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -1397,6 +1458,9 @@ impl Shell {
             | Message::LanguageChosen(_)
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
+            message @ (Message::CloseKey | Message::CloseKeyFocus(_)) => {
+                return self.close_key(&message);
+            }
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
@@ -1957,7 +2021,12 @@ impl Shell {
 
     fn searchable_terminal<'a>(&'a self, tab: &'a Tab, interactive: bool) -> Element<'a, Message> {
         let finder = self.finder_of(tab);
-        let shown = terminal(tab, interactive && finder.is_none(), self.font_size(tab.id));
+        let shown = terminal(
+            tab,
+            interactive && finder.is_none(),
+            self.font_size(tab.id),
+            self.app.settings().ctrl_v_paste,
+        );
         match finder {
             Some(finder) => stack![
                 shown,
@@ -2094,12 +2163,13 @@ impl Shell {
                 .update(AppMessage::Files(FilesMessage::PathCancelled { tab, side }));
         }
         if self.app.dialog.is_none() {
-            // Escape reaches here even when a terminal sent it to its session.
-            return if confirm {
-                self.files_key(FilesKey::Open)
+            // Escape reaches here even when a terminal sent it to its session; in a Files tab
+            // it gives up the listing on its way, as the C# one.
+            return self.files_key(if confirm {
+                FilesKey::Open
             } else {
-                Vec::new()
-            };
+                FilesKey::CancelLoad
+            });
         }
         let enter_confirms = self
             .app
@@ -3294,6 +3364,9 @@ impl Shell {
             heimdall_app::OrganizationChange::Reorder => fl!("ui-tree-changed-reorder"),
             heimdall_app::OrganizationChange::Rename => fl!("ui-tree-changed-rename"),
             heimdall_app::OrganizationChange::FolderMove => fl!("ui-tree-changed-folder-move"),
+            heimdall_app::OrganizationChange::FolderRename => {
+                fl!("ui-tree-changed-folder-rename")
+            }
         };
         Some(
             row![
@@ -3823,6 +3896,27 @@ impl Shell {
                         )))
                     }),
                 text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
+                checkbox(self.app.settings().prevent_sleep)
+                    .label(fl!("ui-settings-prevent-sleep"))
+                    .on_toggle(|on| {
+                        Message::App(AppMessage::Settings(SettingsMessage::PreventSleep(on)))
+                    }),
+                text(fl!("ui-settings-prevent-sleep-hint")).size(SMALL_SIZE),
+                row![
+                    text(fl!("ui-settings-max-sessions")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        (0..=heimdall_core::settings::MAX_SESSIONS_MAX)
+                            .map(SessionsChoice)
+                            .collect::<Vec<_>>(),
+                        Some(SessionsChoice(self.app.settings().max_sessions)),
+                        |SessionsChoice(max)| {
+                            Message::App(AppMessage::Settings(SettingsMessage::MaxSessions(max)))
+                        },
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
             ]
             .spacing(SPACING),
         )
@@ -4295,6 +4389,21 @@ impl Shell {
                     Some(SchemeChoice(settings.color_scheme)),
                     |SchemeChoice(scheme)| Message::App(AppMessage::Settings(
                         SettingsMessage::ColorScheme(scheme)
+                    )),
+                ),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        );
+        card = card.push(
+            row![
+                text(fl!("ui-settings-ctrl-v")),
+                iced::widget::space::horizontal(),
+                pick_list(
+                    CtrlVPaste::ALL.map(CtrlVChoice).to_vec(),
+                    Some(CtrlVChoice(settings.ctrl_v_paste)),
+                    |CtrlVChoice(choice)| Message::App(AppMessage::Settings(
+                        SettingsMessage::CtrlVPaste(choice)
                     )),
                 ),
             ]
@@ -5802,9 +5911,15 @@ fn shows_terminal(tab: &Tab) -> bool {
         && matches!(tab.phase, Phase::Connected | Phase::Closed { .. })
 }
 
-fn terminal(tab: &Tab, interactive: bool, font_size: f32) -> Element<'_, Message> {
+fn terminal(
+    tab: &Tab,
+    interactive: bool,
+    font_size: f32,
+    ctrl_v: CtrlVPaste,
+) -> Element<'_, Message> {
     container(
         TerminalView::new(&tab.terminal, tab.id, Message::App)
+            .ctrl_v(ctrl_v)
             .interactive(interactive)
             .font_size(font_size)
             .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom))),
@@ -7942,6 +8057,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-discard-editor-body"),
             fl!("ui-editor-close"),
         ),
+        Dialog::ConfirmOpenLink { url } => (
+            fl!("ui-dialog-open-link-title"),
+            fl!("ui-dialog-open-link-body", url = server_text(url)),
+            fl!("ui-dialog-open-link-confirm"),
+        ),
         Dialog::ConfirmDownloadBinary { name, .. } => (
             fl!("ui-dialog-binary-title"),
             fl!("ui-dialog-binary-body", name = name.as_str()),
@@ -8612,6 +8732,33 @@ impl std::fmt::Display for TimeoutChoice {
     }
 }
 
+/// A limit of sessions as the list names it: none at 0.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SessionsChoice(u32);
+
+impl std::fmt::Display for SessionsChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            0 => fl!("ui-settings-max-sessions-none"),
+            max => max.to_string(),
+        })
+    }
+}
+
+/// What Ctrl+V does, as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CtrlVChoice(CtrlVPaste);
+
+impl std::fmt::Display for CtrlVChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            CtrlVPaste::Always => fl!("ui-settings-ctrl-v-always"),
+            CtrlVPaste::OutsideFullScreenPrograms => fl!("ui-settings-ctrl-v-outside"),
+            CtrlVPaste::Never => fl!("ui-settings-ctrl-v-never"),
+        })
+    }
+}
+
 /// An execution policy as the list names it, as the C# does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PolicyChoice(ExecutionPolicy);
@@ -9031,6 +9178,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseEditor { .. }
         | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmDownloadBinary { .. }
+        | Dialog::ConfirmOpenLink { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::SaveMacro { .. }

@@ -139,6 +139,8 @@ pub enum FilesKey {
     Upload,
     /// Type in the pane's path bar, as the C# Alt+D and F4: the window's to do.
     FocusPath,
+    /// Escape: the listing on its way given up, as the C# `CancelLoad`.
+    CancelLoad,
 }
 
 /// What an entry is.
@@ -411,6 +413,8 @@ pub struct Pane<P, E> {
     cursor: Option<usize>,
     /// A listing is on its way.
     pub loading: bool,
+    /// A listing given up with Escape is still on its way: it is not shown when it comes.
+    pub(crate) discard_listing: bool,
     /// Why the last listing failed.
     pub error: Option<FilesError>,
     /// A folder typed in its path bar, not gone to yet.
@@ -438,8 +442,9 @@ pub const HISTORY_MAX: usize = 100;
 enum Navigation<P> {
     /// To another folder, leaving this one: kept in the history once the other is shown.
     Away(P),
-    /// Back to the last folder of the history: taken out of it once shown.
-    Back,
+    /// Back to the last folder of the history, leaving this one: taken out of it once
+    /// shown.
+    Back(P),
 }
 
 impl<P: Clone + PartialEq, E> Pane<P, E> {
@@ -455,8 +460,8 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
         let Some(previous) = self.history.last().cloned() else {
             return false;
         };
-        self.path = previous;
-        self.navigation = Some(Navigation::Back);
+        let left = std::mem::replace(&mut self.path, previous);
+        self.navigation = Some(Navigation::Back(left));
         true
     }
 
@@ -480,7 +485,7 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
                     self.history.remove(0);
                 }
             }
-            Some(Navigation::Back) => {
+            Some(Navigation::Back(_)) => {
                 self.history.pop();
             }
             _ => {}
@@ -493,6 +498,25 @@ impl<P: Clone + PartialEq, E> Pane<P, E> {
     /// The listing on its way failed: the history stays as it was.
     pub(crate) fn not_arrived(&mut self) {
         self.navigation = None;
+    }
+
+    /// Stops waiting for the listing on its way, as the C# Escape: the folder shown stays
+    /// shown and named, and the listing, when it comes, is not shown. Whether one was on
+    /// its way.
+    pub(crate) fn cancel_listing(&mut self) -> bool {
+        if !self.loading {
+            return false;
+        }
+        self.loading = false;
+        self.discard_listing = true;
+        match self.navigation.take() {
+            Some(Navigation::Away(left) | Navigation::Back(left)) => self.path = left,
+            None => {}
+        }
+        if let Some((from, _)) = self.entering_link.take() {
+            self.path = from;
+        }
+        true
     }
 }
 
@@ -508,6 +532,7 @@ impl<P, E> Pane<P, E> {
             marked: BTreeSet::new(),
             cursor: None,
             loading: true,
+            discard_listing: false,
             error: None,
             typed: None,
             sort: Sort::default(),

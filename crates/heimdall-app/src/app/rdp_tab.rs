@@ -156,6 +156,9 @@ impl App {
 
     /// Opens an RDP tab for `profile`.
     pub(super) fn open_rdp_profile(&mut self, profile: RdpProfile) -> Vec<Effect> {
+        if self.session_limit_reached() {
+            return Vec::new();
+        }
         // With the application's options when the profile follows them, as they are now.
         let profile = profile.effective(&self.settings.rdp_defaults);
         let tab_id = TabId::fresh();

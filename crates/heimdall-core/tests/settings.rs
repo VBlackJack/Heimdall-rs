@@ -813,3 +813,49 @@ fn the_rdp_connection_timeout_is_kept_within_the_csharp_range_and_reset_with_rdp
         "reset with RDP"
     );
 }
+
+#[test]
+fn the_sessions_limit_is_none_by_default_and_kept_within_the_csharp_range() {
+    use heimdall_core::settings::{MAX_SESSIONS_MAX, max_sessions_accepted};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.max_sessions, 0, "no limit");
+    assert!(max_sessions_accepted(0) && max_sessions_accepted(MAX_SESSIONS_MAX));
+    assert!(!max_sessions_accepted(MAX_SESSIONS_MAX + 1));
+    settings.max_sessions = 5;
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load").max_sessions, 5);
+    std::fs::write(&path, "version = 1\n[general]\nmax_sessions = 99\n").expect("write");
+    assert_eq!(
+        Settings::load(&path).expect("load").max_sessions,
+        0,
+        "out of range"
+    );
+}
+
+#[test]
+fn ctrl_v_pastes_outside_full_screen_programs_by_default_and_is_kept() {
+    use heimdall_core::settings::CtrlVPaste;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.ctrl_v_paste, CtrlVPaste::OutsideFullScreenPrograms);
+    assert!(settings.ctrl_v_paste.pastes(false));
+    assert!(!settings.ctrl_v_paste.pastes(true), "vim's ^V");
+    assert!(CtrlVPaste::Always.pastes(true));
+    assert!(!CtrlVPaste::Never.pastes(false));
+
+    settings.ctrl_v_paste = CtrlVPaste::Never;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path).expect("load").ctrl_v_paste,
+        CtrlVPaste::Never
+    );
+    assert_eq!(
+        CtrlVPaste::named("bogus"),
+        CtrlVPaste::OutsideFullScreenPrograms
+    );
+}

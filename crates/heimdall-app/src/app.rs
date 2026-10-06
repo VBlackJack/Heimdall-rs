@@ -2085,6 +2085,12 @@ pub enum Dialog {
         /// The file, as the question names it.
         name: String,
     },
+    /// Open the address an application tied to a terminal's text with OSC 8: what the
+    /// text says may not be where it leads, so the address itself is shown first.
+    ConfirmOpenLink {
+        /// The address, http or https only.
+        url: String,
+    },
     /// Download a server's file Open found not to be text, as the C# "Binary file"
     /// question offers.
     ConfirmDownloadBinary {
@@ -2417,6 +2423,9 @@ impl Dialog {
                 | Self::Vault(_)
                 | Self::Pin(_)
                 | Self::EditGateway { .. }
+                // A link is opened by a click on its button, never by an Enter meant for the
+                // terminal.
+                | Self::ConfirmOpenLink { .. }
         )
     }
 }
@@ -2476,6 +2485,8 @@ pub struct App {
     next_address_test: u64,
     /// Tunnels the user opened by hand, open: the rows of the tunnels panel.
     pub tunnels: Vec<crate::tunnel::Tunnel>,
+    /// A session opens in a tab's place, as Reconnect opens it: it takes no more room.
+    replacing: bool,
     /// Whether the tunnels panel is shown under the sessions while no session is: as the
     /// settings say at start, then as it is toggled.
     tunnels_panel: bool,
@@ -2613,6 +2624,7 @@ impl App {
             // As the settings say it starts, the C# `CollapseTunnelsPanelByDefault`.
             tunnels_panel,
             last_move: None,
+            replacing: false,
             pending_restore,
             recent_hosts: Vec::new(),
             detail: detail::DetailCache::default(),
@@ -3072,8 +3084,31 @@ impl App {
         self.open_ssh(profile, purpose)
     }
 
+    /// Whether one more session may not open, as the C# `MaxEmbeddedSessions`, which is
+    /// said: no limit at 0; this computer's own shells are not counted, nor a session
+    /// opening in a tab's place.
+    pub(super) fn session_limit_reached(&mut self) -> bool {
+        let max = self.settings.max_sessions;
+        if max == 0 || self.replacing {
+            return false;
+        }
+        let open = self
+            .tabs
+            .iter()
+            .filter(|tab| !matches!(tab.profile, TabProfile::Local(_)))
+            .count();
+        let reached = open >= usize::try_from(max).unwrap_or(usize::MAX);
+        if reached {
+            self.tell(Notice::SessionLimitReached(max));
+        }
+        reached
+    }
+
     /// Opens a tab for `profile`, a shell or its files, without asking about its steps.
     pub(super) fn open_ssh_now(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
+        if self.session_limit_reached() {
+            return Vec::new();
+        }
         let grid = self.viewport;
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
@@ -3455,6 +3490,17 @@ impl App {
             }
             return Vec::new();
         }
+        // Ctrl+click on an OSC 8 link: its address is asked about first, as the text may
+        // hide it; an address neither http nor https is not opened, as the C# policy.
+        if matches!(input.action, MouseAction::Press(MouseButton::Left))
+            && input.modifiers.ctrl
+            && let Some(link) = tab.terminal.hyperlink_at(input.at)
+        {
+            if let Some(url) = crate::external_url::launchable_url(&link) {
+                self.dialog = Some(Dialog::ConfirmOpenLink { url });
+            }
+            return Vec::new();
+        }
         // Ctrl+click on a web address opens it, as the C# terminal does, rather than select.
         if matches!(input.action, MouseAction::Press(MouseButton::Left))
             && input.modifiers.ctrl
@@ -3830,6 +3876,7 @@ impl App {
             Some(Dialog::ConfirmDownloadBinary { tab, remote, .. }) => {
                 self.download_remote(tab, &remote)
             }
+            Some(Dialog::ConfirmOpenLink { url }) => vec![Effect::OpenUrl(url)],
             Some(Dialog::ConfirmDiscardEditor { tab, .. }) => {
                 if let Some(files) = self.files_mut(tab) {
                     files.editor = None;

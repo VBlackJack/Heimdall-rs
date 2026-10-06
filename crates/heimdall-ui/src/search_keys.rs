@@ -35,7 +35,7 @@ use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector};
 pub struct SearchKeys<'a, Message> {
     content: Element<'a, Message>,
     escape: Option<Message>,
-    down: Message,
+    down: Option<Message>,
 }
 
 impl<'a, Message> SearchKeys<'a, Message> {
@@ -48,7 +48,17 @@ impl<'a, Message> SearchKeys<'a, Message> {
         Self {
             content: content.into(),
             escape,
-            down,
+            down: Some(down),
+        }
+    }
+
+    /// `content` answering Escape only, with `escape`: a Files pane's filter, as the C#
+    /// one, emptied by a first Escape; empty, Escape hands the keyboard back to the list.
+    pub fn escape_only(content: impl Into<Element<'a, Message>>, escape: Option<Message>) -> Self {
+        Self {
+            content: content.into(),
+            escape,
+            down: None,
         }
     }
 }
@@ -56,6 +66,25 @@ impl<'a, Message> SearchKeys<'a, Message> {
 /// Whether a focusable widget under the one operated on has the keyboard.
 #[derive(Default)]
 struct HasFocus(bool);
+
+/// Whether a field of the window has the keyboard: asked before a key the window acts on
+/// that a field lets through, as Ctrl+W, which a text field does not take.
+#[derive(Default)]
+pub struct AnyFocused(bool);
+
+impl Operation<bool> for AnyFocused {
+    fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation<bool>)) {
+        operate(self);
+    }
+
+    fn focusable(&mut self, _id: Option<&Id>, _bounds: Rectangle, state: &mut dyn Focusable) {
+        self.0 |= state.is_focused();
+    }
+
+    fn finish(&self) -> iced::advanced::widget::operation::Outcome<bool> {
+        iced::advanced::widget::operation::Outcome::Some(self.0)
+    }
+}
 
 impl Operation for HasFocus {
     fn traverse(&mut self, operate: &mut dyn FnMut(&mut dyn Operation)) {
@@ -123,7 +152,7 @@ impl<Message: Clone> Widget<Message, Theme, iced::Renderer> for SearchKeys<'_, M
         {
             let answer = match named {
                 Named::Escape => self.escape.clone(),
-                Named::ArrowDown => Some(self.down.clone()),
+                Named::ArrowDown => self.down.clone(),
                 _ => None,
             };
             if let Some(message) = answer {

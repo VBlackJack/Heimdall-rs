@@ -55,6 +55,9 @@ impl App {
 
     /// Opens an FTP tab for `profile`.
     pub(super) fn open_ftp_profile(&mut self, profile: FtpProfile) -> Vec<Effect> {
+        if self.session_limit_reached() {
+            return Vec::new();
+        }
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
