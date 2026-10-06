@@ -106,6 +106,7 @@ async fn run(request: VncRequest, registry: AnswerRegistry, events: mpsc::Sender
             VncEvent::Updated(_) | VncEvent::Resized { .. } => ConnectionEvent::DesktopFrame,
             // What the server copied goes to this side's clipboard, as RDP's does.
             VncEvent::CutText(text) => ConnectionEvent::RemoteClipboard(Zeroizing::new(text)),
+            VncEvent::Renamed(name) => ConnectionEvent::DesktopRenamed(name),
             // The bell is not used yet.
             VncEvent::Bell => continue,
             VncEvent::Closed(CloseReason::Failed(detail)) => {

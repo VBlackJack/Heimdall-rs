@@ -23,6 +23,8 @@ log.workspace = true
 ring.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+# The system's certificates, for strict server authentication.
+rustls-native-certs.workspace = true
 tokio-rustls.workspace = true
 tokio-util.workspace = true
 x509-cert.workspace = true

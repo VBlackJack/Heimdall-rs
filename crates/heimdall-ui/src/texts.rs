@@ -119,6 +119,7 @@ pub fn error(error: &UiError) -> String {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::InvalidUsername => fl!("ui-error-invalid-username"),
         UiError::WinRmHttpsThroughGateway => fl!("ui-error-winrm-https-gateway"),
+        UiError::RdpServerNotAuthenticated => fl!("ui-error-rdp-server-not-authenticated"),
         UiError::NeedsRdGateway(gateway) => {
             fl!("ui-error-rd-gateway", gateway = server_text(gateway))
         }
@@ -320,9 +321,6 @@ pub fn rdp_extra(extra: RdpExtra) -> String {
         RdpExtra::Usb => fl!("ui-import-dropped-rdp-usb"),
         RdpExtra::Microphone => fl!("ui-import-dropped-rdp-microphone"),
         RdpExtra::MultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
-        RdpExtra::StrictServerAuthentication => {
-            fl!("ui-rdp-extra-strict-server-authentication")
-        }
         RdpExtra::FullScreen => fl!("ui-rdp-extra-full-screen"),
     }
 }

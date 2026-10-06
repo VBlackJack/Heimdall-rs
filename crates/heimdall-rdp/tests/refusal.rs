@@ -145,6 +145,7 @@ fn config(known_hosts: &std::path::Path) -> RdpConfig {
         trusted_for_run: Vec::new(),
         options: heimdall_core::profile::RdpOptions::default(),
         several_servers: false,
+        strict_server_authentication: false,
         kerberos: false,
         time_zone: None,
         desktop_scale: 100,

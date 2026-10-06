@@ -111,6 +111,8 @@ pub enum ConnectionEvent {
         port: u16,
         /// SHA-256 of the certificate's public key.
         fingerprint: Fingerprint,
+        /// The certificate's subject, made safe, when it was read.
+        subject: Option<String>,
     },
     /// The RDP session is open.
     RdpReady {
@@ -155,6 +157,8 @@ pub enum ConnectionEvent {
     },
     /// The RDP desktop changed: redraw it.
     DesktopFrame,
+    /// The VNC desktop's name changed, as its server says: untrusted text.
+    DesktopRenamed(String),
     /// The server cannot change the desktop's size while connected: only a new
     /// connection at that size brings it.
     DesktopResizeRefused {
@@ -250,6 +254,7 @@ impl fmt::Debug for ConnectionEvent {
                 host,
                 port,
                 fingerprint,
+                ..
             } => f
                 .debug_struct("UnknownRdpCertificate")
                 .field("host", host)
@@ -269,6 +274,7 @@ impl fmt::Debug for ConnectionEvent {
             Self::RdpSaveEnded(end) => write!(f, "RdpSaveEnded({end:?})"),
             Self::VncReady { .. } => f.write_str("VncReady"),
             Self::DesktopFrame => f.write_str("DesktopFrame"),
+            Self::DesktopRenamed(_) => f.write_str("DesktopRenamed(..)"),
             Self::DesktopResizeRefused { width, height } => {
                 write!(f, "DesktopResizeRefused({width}x{height})")
             }

@@ -213,6 +213,7 @@ async fn sent_in(options: RdpOptions, time_zone: Option<TimeZone>) -> Sent {
         trusted_for_run: Vec::new(),
         options,
         several_servers: false,
+        strict_server_authentication: false,
         kerberos: false,
         time_zone,
         desktop_scale: 150,

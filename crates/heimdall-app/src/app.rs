@@ -126,7 +126,7 @@ mod winrm_tab;
 use crate::transcript::{Transcript, TranscriptLines};
 pub use agent_chip::AgentChip;
 pub use appearance::SettingsMessage;
-pub use auto_reconnect::{RDP_MAX_ATTEMPTS, Retry};
+pub use auto_reconnect::Retry;
 pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
 pub use connect_as::ConnectAs;
@@ -1838,6 +1838,8 @@ pub struct CertificateContext {
     pub others: usize,
     /// The gateways the tab reaches the server through, nearest to this machine first.
     pub route: Vec<String>,
+    /// The certificate's subject, as the C# prompt shows it, when it was read.
+    pub subject: Option<String>,
 }
 
 /// The profile a tab connects to.
@@ -3121,7 +3123,7 @@ impl App {
             | ConnectionEvent::RdpRemoteFiles(_)
             | ConnectionEvent::RdpSaveProgress { .. }
             | ConnectionEvent::RdpSaveEnded(_)) => self.clipboard_files_event(tab_id, event),
-            event @ ConnectionEvent::VncReady { .. } => {
+            event @ (ConnectionEvent::VncReady { .. } | ConnectionEvent::DesktopRenamed(_)) => {
                 vnc_tab::apply(tab, event);
                 Vec::new()
             }
