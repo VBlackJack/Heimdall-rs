@@ -7715,6 +7715,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
             fl!("ui-dialog-discard-editor-body"),
             fl!("ui-editor-close"),
         ),
+        Dialog::ConfirmOpenLink { url } => (
+            fl!("ui-dialog-open-link-title"),
+            fl!("ui-dialog-open-link-body", url = server_text(url)),
+            fl!("ui-dialog-open-link-confirm"),
+        ),
         Dialog::ConfirmDownloadBinary { name, .. } => (
             fl!("ui-dialog-binary-title"),
             fl!("ui-dialog-binary-body", name = name.as_str()),
@@ -8817,6 +8822,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmCloseEditor { .. }
         | Dialog::ConfirmDiscardEditor { .. }
         | Dialog::ConfirmDownloadBinary { .. }
+        | Dialog::ConfirmOpenLink { .. }
         | Dialog::ConfirmCloseTabs { .. }
         | Dialog::RenameTab { .. }
         | Dialog::SaveMacro { .. }

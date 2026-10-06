@@ -1290,6 +1290,10 @@ ui-files-error-too-large-for-editor = Trop volumineux pour l'éditeur intégré 
 ui-dialog-binary-title = Fichier binaire
 ui-dialog-binary-body = "{ $name }" semble être un fichier binaire (une archive, une image ou un programme) et ne peut pas être affiché comme texte. Le télécharger plutôt ?
 ui-dialog-binary-confirm = Télécharger
+ui-dialog-open-link-title = Ouvrir le lien
+ui-dialog-open-link-body = Le texte cliqué mène à cette adresse, qui s'ouvrira dans votre navigateur :
+    { $url }
+ui-dialog-open-link-confirm = Ouvrir
 ui-tab-menu-show-health = Afficher la santé du serveur
 ui-tab-menu-hide-health = Masquer la santé du serveur
 ui-health-cpu = CPU

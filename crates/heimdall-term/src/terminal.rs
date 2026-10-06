@@ -690,6 +690,16 @@ impl Terminal {
         self.term.selection_to_string()
     }
 
+    /// Where the text at `at`, in view, leads when an application tied an address to it
+    /// with OSC 8, as a terminal's hyperlink: the text may say something else.
+    #[must_use]
+    pub fn hyperlink_at(&self, at: CellPoint) -> Option<String> {
+        let (point, _) = self.grid_point(at);
+        self.term.grid()[point]
+            .hyperlink()
+            .map(|link| link.uri().to_owned())
+    }
+
     /// The web address shown at `at`, in view, for Ctrl+click: see [`Screen::url_at`].
     #[must_use]
     pub fn url_at(&self, at: CellPoint) -> Option<String> {
@@ -838,6 +848,10 @@ impl Terminal {
             Underline::Dashed
         } else if flags.contains(Flags::UNDERLINE) {
             Underline::Single
+        } else if cell.hyperlink().is_some() {
+            // Text an OSC 8 address is tied to: told apart from text the application
+            // underlined itself.
+            Underline::Dashed
         } else {
             Underline::None
         };
