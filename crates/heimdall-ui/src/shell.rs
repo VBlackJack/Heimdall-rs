@@ -2958,7 +2958,9 @@ impl Shell {
             .filter(|_| !locked)
             .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
         if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
-            let results = self.app.quick_results(&palette.query);
+            let results = self
+                .app
+                .quick_results_in(&palette.query, palette.split.map(|(host, _)| host));
             // At the top, as the C# palette; a click beside it closes it.
             layers = layers.push(opaque(
                 mouse_area(
@@ -4674,7 +4676,7 @@ impl Shell {
                 };
                 if let Some(result) = self
                     .app
-                    .quick_results(&palette.query)
+                    .quick_results_in(&palette.query, palette.split.map(|(host, _)| host))
                     .into_iter()
                     .nth(index)
                 {
@@ -4713,7 +4715,10 @@ impl Shell {
     /// Enter opens the one chosen, the others are nobody's; `None` while it is closed.
     fn palette_key(&mut self, key: FilesKey) -> Option<Vec<Effect>> {
         let palette = self.palette.as_mut()?;
-        let count = self.app.quick_results(&palette.query).len();
+        let count = self
+            .app
+            .quick_results_in(&palette.query, palette.split.map(|(host, _)| host))
+            .len();
         match key {
             FilesKey::Previous => palette.chosen = palette.chosen.saturating_sub(1),
             FilesKey::Next if palette.chosen + 1 < count => palette.chosen += 1,
