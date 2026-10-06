@@ -508,12 +508,23 @@ fn pane_narrowing<'a>(
     filter: &str,
     show_hidden: bool,
 ) -> iced::widget::Row<'a, Message> {
+    // Escape empties it first, as the C# one; empty, the field gives the keyboard back.
+    let emptied = (!filter.is_empty()).then(|| {
+        files(FilesMessage::Filter {
+            tab,
+            side,
+            text: String::new(),
+        })
+    });
     row![
-        text_input(&fl!("ui-files-filter-placeholder"), filter)
-            .id(field_id(side, PaneField::Filter))
-            .size(SMALL_SIZE)
-            .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
-            .width(Length::Fill),
+        crate::search_keys::SearchKeys::escape_only(
+            text_input(&fl!("ui-files-filter-placeholder"), filter)
+                .id(field_id(side, PaneField::Filter))
+                .size(SMALL_SIZE)
+                .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
+                .width(Length::Fill),
+            emptied,
+        ),
         tooltip(
             button(text(fl!("ui-files-hidden-toggle")).size(SMALL_SIZE))
                 .style(if show_hidden {

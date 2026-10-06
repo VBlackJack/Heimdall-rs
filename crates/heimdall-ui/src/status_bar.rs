@@ -127,6 +127,7 @@ fn files_notice(notice: &Notice) -> String {
         }
         Notice::DropRefused => fl!("ui-status-drop-refused"),
         Notice::MoveUndone => fl!("ui-status-move-undone"),
+        Notice::ListingCancelled => fl!("ui-status-listing-cancelled"),
         Notice::NothingToUndo => fl!("ui-status-nothing-to-undo"),
         Notice::WakeOnLan(Ok(())) => fl!("ui-status-wake-on-lan-sent"),
         Notice::WakeOnLan(Err(reason)) => {
@@ -223,6 +224,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::DroppedFolder(_)
             | Notice::DropRefused
             | Notice::MoveUndone
+            | Notice::ListingCancelled
             | Notice::NothingToUndo
             | Notice::WakeOnLan(_)
             | Notice::FilesBatch(_)

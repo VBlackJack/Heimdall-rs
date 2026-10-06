@@ -35,7 +35,7 @@ use iced::{Element, Event, Length, Rectangle, Size, Theme, Vector};
 pub struct SearchKeys<'a, Message> {
     content: Element<'a, Message>,
     escape: Option<Message>,
-    down: Message,
+    down: Option<Message>,
 }
 
 impl<'a, Message> SearchKeys<'a, Message> {
@@ -48,7 +48,17 @@ impl<'a, Message> SearchKeys<'a, Message> {
         Self {
             content: content.into(),
             escape,
-            down,
+            down: Some(down),
+        }
+    }
+
+    /// `content` answering Escape only, with `escape`: a Files pane's filter, as the C#
+    /// one, emptied by a first Escape; empty, Escape hands the keyboard back to the list.
+    pub fn escape_only(content: impl Into<Element<'a, Message>>, escape: Option<Message>) -> Self {
+        Self {
+            content: content.into(),
+            escape,
+            down: None,
         }
     }
 }
@@ -123,7 +133,7 @@ impl<Message: Clone> Widget<Message, Theme, iced::Renderer> for SearchKeys<'_, M
         {
             let answer = match named {
                 Named::Escape => self.escape.clone(),
-                Named::ArrowDown => Some(self.down.clone()),
+                Named::ArrowDown => self.down.clone(),
                 _ => None,
             };
             if let Some(message) = answer {

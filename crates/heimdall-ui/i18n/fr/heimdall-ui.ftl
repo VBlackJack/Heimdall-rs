@@ -1717,6 +1717,7 @@ ui-status-dropped-profiles-none = { $count ->
 ui-status-dropped-folder = Dossier { $name } déplacé. Ctrl+Z l'annule.
 ui-status-drop-refused = Un dossier de ce nom s'y trouve déjà : rien n'a été déplacé.
 ui-status-move-undone = Déplacement annulé.
+ui-status-listing-cancelled = Chargement annulé.
 ui-status-nothing-to-undo = Rien à annuler.
 ui-shortcuts-undo-move = Annuler le dernier déplacement fait en glissant dans l'arborescence
 ui-tab-menu-vnc-remote-resize = Redimensionner le bureau distant à l'onglet

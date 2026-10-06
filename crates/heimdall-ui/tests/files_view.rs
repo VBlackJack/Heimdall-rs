@@ -1549,3 +1549,42 @@ async fn a_pipe_a_socket_and_a_device_are_marked_in_the_list() {
     ui.find("fifo (Named pipe (FIFO))").expect("the pipe");
     ui.find("sock (Socket)").expect("the socket");
 }
+
+#[tokio::test]
+async fn escape_in_a_filter_empties_it_first_then_leaves_it() {
+    use iced::keyboard::key::Named;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Files(FilesMessage::Filter {
+        tab,
+        side: Side::Remote,
+        text: "LOG".to_owned(),
+    })));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("LOG").expect("the remote filter, holding a text");
+        let _ = ui.tap_key(Named::Escape);
+        assert!(
+            files_messages(ui).iter().any(|message| matches!(
+                message,
+                FilesMessage::Filter { side: Side::Remote, text, .. } if text.is_empty()
+            )),
+            "emptied, as the C# first Escape"
+        );
+    }
+    {
+        // Empty, Escape is the field's: it gives the keyboard back, nothing filtered.
+        let mut ui = simulator(&shell);
+        ui.click("Filter files...")
+            .expect("the local filter, empty");
+        let _ = ui.tap_key(Named::Escape);
+        assert!(
+            !files_messages(ui)
+                .iter()
+                .any(|message| matches!(message, FilesMessage::Filter { .. })),
+            "nothing to empty"
+        );
+    }
+}
