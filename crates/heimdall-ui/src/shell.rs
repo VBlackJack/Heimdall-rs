@@ -1238,6 +1238,16 @@ impl Shell {
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Task<Message> {
+        // A click on another row of the tree ends a rename made in place, kept, as the C#
+        // editor losing the focus.
+        if self.inline_rename().is_some()
+            && matches!(
+                message,
+                Message::TreeClick(_) | Message::App(AppMessage::ToggleFolder(_))
+            )
+        {
+            let _ = self.app.update(AppMessage::ConfirmDialog);
+        }
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
         if self.gated() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
@@ -2551,6 +2561,47 @@ impl Shell {
 
     /// Draws the window.
     #[must_use]
+    /// The open dialog over the window, veiled; none while a name is typed in the tree's
+    /// row, or with no dialog.
+    fn dialog_layer(&self, locked: bool) -> Option<Element<'_, Message>> {
+        let dialog = self
+            .app
+            .dialog
+            .as_ref()
+            .filter(|_| self.inline_rename().is_none())?;
+        // Built for the window's height: a long form scrolls above its buttons.
+        Some(opaque(
+            container(responsive(move |size| {
+                let content = dialog_view(dialog, &self.forms(size.height));
+                // The OpenSSH preview is a table: wider than a form, as the C# one.
+                let card = if matches!(
+                    dialog,
+                    Dialog::SessionsPreview(_)
+                        | Dialog::RdpPreview(_)
+                        | Dialog::HostKeysPreview(_)
+                        | Dialog::FileConflicts { .. }
+                ) {
+                    wide_card(content)
+                } else {
+                    card(content)
+                };
+                center(card).into()
+            }))
+            .style(move |theme: &Theme| container::Style {
+                background: Some(if locked {
+                    theme.palette().background.into()
+                } else {
+                    Color {
+                        a: VEIL_ALPHA,
+                        ..Color::BLACK
+                    }
+                    .into()
+                }),
+                ..container::Style::default()
+            }),
+        ))
+    }
+
     pub fn view(&self) -> Element<'_, Message> {
         let locked = self.gated();
         // Locked, the window is not drawn: nothing of it shows, and no hidden field takes
@@ -2589,38 +2640,8 @@ impl Shell {
                 .align_x(iced::alignment::Horizontal::Right),
             );
         }
-        if let Some(dialog) = &self.app.dialog {
-            // Built for the window's height: a long form scrolls above its buttons.
-            layers = layers.push(opaque(
-                container(responsive(move |size| {
-                    let content = dialog_view(dialog, &self.forms(size.height));
-                    // The OpenSSH preview is a table: wider than a form, as the C# one.
-                    let card = if matches!(
-                        dialog,
-                        Dialog::SessionsPreview(_)
-                            | Dialog::RdpPreview(_)
-                            | Dialog::HostKeysPreview(_)
-                            | Dialog::FileConflicts { .. }
-                    ) {
-                        wide_card(content)
-                    } else {
-                        card(content)
-                    };
-                    center(card).into()
-                }))
-                .style(move |theme: &Theme| container::Style {
-                    background: Some(if locked {
-                        theme.palette().background.into()
-                    } else {
-                        Color {
-                            a: VEIL_ALPHA,
-                            ..Color::BLACK
-                        }
-                        .into()
-                    }),
-                    ..container::Style::default()
-                }),
-            ));
+        if let Some(layer) = self.dialog_layer(locked) {
+            layers = layers.push(layer);
         }
         let open_menu = self
             .menu
@@ -3189,6 +3210,61 @@ impl Shell {
         )
     }
 
+    /// The row renamed in place, as the C# tree's F2: a session's or a folder's name asked
+    /// while its row is shown; elsewhere the name is asked in a dialog.
+    fn inline_rename(&self) -> Option<TreeCursor> {
+        let row = match self.app.dialog.as_ref()? {
+            Dialog::RenameProfile { id, .. } => TreeCursor::Profile(id.clone()),
+            Dialog::FolderName {
+                naming: FolderNaming::Rename(path),
+                ..
+            } => TreeCursor::Folder(path.clone()),
+            _ => return None,
+        };
+        (self.page == Page::Tab && !self.sidebar_hidden && self.tree_cursors().contains(&row))
+            .then_some(row)
+    }
+
+    /// The name of `row` typed in its place, when it is the one renamed: Enter keeps it,
+    /// Escape leaves it as it was; a folder's name refused says why under it.
+    fn inline_editor(&self, row: &TreeCursor, depth: usize) -> Option<Element<'_, Message>> {
+        if self.inline_rename().as_ref() != Some(row) {
+            return None;
+        }
+        let (value, on_input, error): (&str, fn(String) -> Message, _) =
+            match self.app.dialog.as_ref()? {
+                Dialog::RenameProfile { value, .. } => (
+                    value.as_str(),
+                    |value| {
+                        Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::NameEdited(
+                            value,
+                        )))
+                    },
+                    None,
+                ),
+                Dialog::FolderName { value, error, .. } => (
+                    value.as_str(),
+                    |value| Message::App(AppMessage::Folder(FolderMessage::NameEdited(value))),
+                    error.map(|error| match error {
+                        FolderError::Collision => fl!("ui-folder-error-collision"),
+                        _ => fl!("ui-folder-error-invalid"),
+                    }),
+                ),
+                _ => return None,
+            };
+        let editor = column![
+            text_input(&fl!("ui-dialog-name-placeholder"), value)
+                .id(name_field_id())
+                .size(SMALL_SIZE + 1.0)
+                .padding([2.0, 4.0])
+                .on_input(on_input)
+                .on_submit(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .push(error.map(|error| text(error).size(SMALL_SIZE).style(text::danger)))
+        .spacing(2.0);
+        Some(tree_view::indented(editor.into(), depth))
+    }
+
     /// The tree's rows, searched and filtered, and what it says when none passes.
     fn tree_list(&self) -> Column<'_, Message> {
         let mut list = Column::new().spacing(2.0);
@@ -3229,6 +3305,9 @@ impl Shell {
                 open,
                 count,
             } => {
+                if let Some(editor) = self.inline_editor(&TreeCursor::Folder(path.clone()), depth) {
+                    return editor;
+                }
                 let color = self.app.folder_color(&path);
                 let target = heimdall_app::DropTarget::Folder(path.clone());
                 let selected = self.app.selected_folder.as_deref() == Some(path.as_str());
@@ -3239,6 +3318,11 @@ impl Shell {
                 )
             }
             TreeRow::Profile { mut profile, depth } => {
+                if let Some(editor) =
+                    self.inline_editor(&TreeCursor::Profile(profile.id.clone()), depth)
+                {
+                    return editor;
+                }
                 if !badge {
                     profile.gateway = None;
                 }

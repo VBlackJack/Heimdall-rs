@@ -3612,3 +3612,90 @@ fn a_drag_shows_the_no_folder_zone_which_takes_a_session_out_of_its_folder() {
     let mut ui = simulator(&shell);
     assert!(ui.find(zone).is_err(), "gone with the drag");
 }
+
+#[test]
+fn f2_renames_a_session_in_its_row_and_a_click_elsewhere_keeps_the_name() {
+    use heimdall_app::ProfileMenuMessage;
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::shell::TreeShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let name = |shell: &Shell, id: &str| {
+        shell
+            .app()
+            .profile_summary(&ProfileId::new(id))
+            .expect("profile")
+            .name
+    };
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    {
+        let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Rename Session").is_err(),
+            "typed in its row, no dialog over the window"
+        );
+        ui.find("server b")
+            .expect("the rest of the tree still shown");
+    }
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        ProfileMenuMessage::NameEdited("Alpha".to_owned()),
+    )));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert_eq!(name(&shell, "a"), "Alpha", "Enter keeps it");
+    assert!(shell.app().dialog.is_none());
+
+    // Another row clicked while typing: the name is kept, as the C# editor losing focus.
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        ProfileMenuMessage::NameEdited("Beta".to_owned()),
+    )));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("b")));
+    assert_eq!(name(&shell, "a"), "Beta");
+    assert!(shell.app().dialog.is_none());
+
+    // The tree hidden, the name is asked in the dialog.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        ProfileMenuMessage::Rename(ProfileId::new("b")),
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Rename Session").expect("the dialog");
+}
+
+#[test]
+fn a_folder_renamed_in_its_row_says_why_a_name_is_refused_under_it() {
+    use heimdall_app::FolderMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::Rename(
+        "Production".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::NameEdited(
+        "a/b".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    {
+        let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Rename Folder").is_err(),
+            "no dialog over the window"
+        );
+        ui.find("A folder name cannot be empty or contain \"/\".")
+            .expect("why, under the name");
+    }
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::NameEdited(
+        "Live".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert_eq!(
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("a"))
+            .and_then(|profile| profile.group)
+            .as_deref(),
+        Some("Live")
+    );
+}
