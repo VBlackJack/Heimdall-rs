@@ -432,3 +432,29 @@ fn reveal_in_tree_selects_the_profile_its_folders_opened() {
         "shown, its folder opened"
     );
 }
+
+#[test]
+fn a_tab_dragged_onto_another_takes_its_place_within_its_own_group() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let first = failed(&mut app);
+    let second = failed(&mut app);
+    let third = failed(&mut app);
+    let moved = |app: &mut App, tab, onto| {
+        app.update(Message::MoveTab { tab, onto });
+    };
+    moved(&mut app, third, first);
+    assert_eq!(ids(&app), [third, first, second], "to the left");
+    moved(&mut app, third, second);
+    assert_eq!(ids(&app), [first, second, third], "to the right");
+    moved(&mut app, second, second);
+    assert_eq!(ids(&app), [first, second, third], "onto itself");
+
+    // Pinned first, always: an unpinned tab dragged onto a pinned one stays after it, a
+    // pinned one dragged onto an unpinned one stays before.
+    menu(&mut app, TabMenuMessage::Pin(first));
+    moved(&mut app, third, first);
+    assert_eq!(ids(&app), [first, third, second]);
+    moved(&mut app, first, second);
+    assert_eq!(ids(&app), [first, third, second]);
+}

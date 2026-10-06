@@ -26,7 +26,7 @@ use crate::shell::Message;
 
 /// How far the pointer moves, held down, before a press becomes a drag, in logical pixels,
 /// as the system's drag threshold.
-const DRAG_THRESHOLD: f32 = 5.0;
+pub(crate) const DRAG_THRESHOLD: f32 = 5.0;
 
 /// Width of the drop target's outline.
 const TARGET_BORDER: f32 = 1.5;

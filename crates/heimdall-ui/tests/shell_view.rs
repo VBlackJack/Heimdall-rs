@@ -3544,3 +3544,40 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
             .any(|message| matches!(message, Message::TreeShortcut(TreeShortcut::ToggleSidebar)))
     );
 }
+
+#[test]
+fn a_tab_pressed_and_dragged_onto_another_takes_its_place() {
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (a, _) = open(&mut core, "a");
+    let (b, _) = open(&mut core, "b");
+    let mut shell = Shell::with_app(core);
+    let order = |shell: &Shell| {
+        shell
+            .app()
+            .tabs
+            .iter()
+            .map(|tab| tab.id)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(order(&shell), [a, b]);
+
+    // A click is no drag.
+    let _ = shell.update(Message::TabHover(b));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::TabHoverLeft(b));
+    let _ = shell.update(Message::TabHover(a));
+    let _ = shell.update(Message::TabDragEnd);
+    assert_eq!(order(&shell), [a, b]);
+
+    // Pressed on b, moved, let go over a: b first.
+    let _ = shell.update(Message::TabHover(b));
+    let _ = shell.update(Message::PointerPressed);
+    let _ = shell.update(Message::TabDragMoved(Point::new(300.0, 300.0)));
+    let _ = shell.update(Message::TabHoverLeft(b));
+    let _ = shell.update(Message::TabHover(a));
+    let _ = shell.update(Message::TabDragEnd);
+    assert_eq!(order(&shell), [b, a]);
+}

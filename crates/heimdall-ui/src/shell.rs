@@ -151,6 +151,9 @@ const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
 
+/// Width of the outline round the tab a dragged tab would take the place of.
+const TAB_DROP_EDGE: f32 = 2.0;
+
 /// Smallest and largest terminal text a zoom reaches, as the C# terminal's.
 const MIN_FONT_SIZE: f32 = 8.0;
 const MAX_FONT_SIZE: f32 = 28.0;
@@ -493,8 +496,17 @@ pub enum Message {
     FilesHover(crate::files_drag::Spot),
     /// The pointer left it.
     FilesHoverLeft(crate::files_drag::Spot),
-    /// The left button went down, wherever: a press on a Files tab's entry starts a drag.
+    /// The left button went down, wherever: a press on a Files tab's entry, or on a tab,
+    /// starts a drag.
     PointerPressed,
+    /// The pointer came over a tab of the tab bar.
+    TabHover(TabId),
+    /// The pointer left it.
+    TabHoverLeft(TabId),
+    /// The pointer moved, a press on a tab held.
+    TabDragMoved(Point),
+    /// That press is let go.
+    TabDragEnd,
     /// The pointer moved, a press on an entry held.
     FilesDragMoved(Point),
     /// That press is let go.
@@ -659,6 +671,10 @@ impl fmt::Debug for Message {
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
             Self::PointerPressed => f.write_str("PointerPressed"),
+            Self::TabHover(tab) => write!(f, "TabHover({})", tab.value()),
+            Self::TabHoverLeft(tab) => write!(f, "TabHoverLeft({})", tab.value()),
+            Self::TabDragMoved(_) => f.write_str("TabDragMoved"),
+            Self::TabDragEnd => f.write_str("TabDragEnd"),
             Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
             Self::FilesDragEnd => f.write_str("FilesDragEnd"),
             Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
@@ -893,6 +909,10 @@ pub struct Shell {
     files_hover: Option<crate::files_drag::Spot>,
     /// A press on a Files tab's entry, held: a drag once the pointer moves.
     files_drag: Option<crate::files_drag::FilesDrag>,
+    /// The tab under the pointer.
+    tab_hover: Option<TabId>,
+    /// A press on a tab, a drag once the pointer moves.
+    tab_drag: Option<crate::tab_drag::TabDrag>,
     /// A press in the tree, held: a drag once the pointer moves.
     tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
@@ -1137,6 +1157,8 @@ impl Shell {
             path_editing: None,
             files_hover: None,
             files_drag: None,
+            tab_hover: None,
+            tab_drag: None,
             tree_drag: None,
             sidebar_hidden: false,
             window_memory: None,
@@ -1227,6 +1249,9 @@ impl Shell {
         let mut subscriptions = vec![events];
         if self.files_drag.is_some() {
             subscriptions.push(event::listen_with(crate::files_drag::drag_event));
+        }
+        if self.tab_drag.is_some() {
+            subscriptions.push(event::listen_with(crate::tab_drag::drag_event));
         }
         if self.tree_drag.is_some() {
             subscriptions.push(event::listen_with(crate::tree_drag::drag_event));
@@ -1413,6 +1438,10 @@ impl Shell {
                 self.gateway_reassign.insert(missing, to);
                 Vec::new()
             }
+            message @ (Message::TabHover(_)
+            | Message::TabHoverLeft(_)
+            | Message::TabDragMoved(_)
+            | Message::TabDragEnd) => self.tab_drag_message(&message),
             message @ (Message::FilesHover(_)
             | Message::FilesHoverLeft(_)
             | Message::PointerPressed
@@ -4070,6 +4099,35 @@ impl Shell {
     }
 
     /// The pointer over a Files tab's panes, a press on an entry, its drag and its drop.
+    /// A tab pressed, dragged along the bar and let go over another, as the C# tab.
+    fn tab_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::TabHover(tab) => self.tab_hover = Some(tab),
+            Message::TabHoverLeft(tab) => {
+                if self.tab_hover == Some(tab) {
+                    self.tab_hover = None;
+                }
+            }
+            Message::TabDragMoved(at) => {
+                if let Some(drag) = self.tab_drag.as_mut() {
+                    drag.moved(at);
+                }
+            }
+            Message::TabDragEnd => {
+                if let Some(drag) = self.tab_drag.take()
+                    && let Some(onto) = drag.onto(self.tab_hover)
+                {
+                    return self.app.update(AppMessage::MoveTab {
+                        tab: drag.tab,
+                        onto,
+                    });
+                }
+            }
+            _ => {}
+        }
+        Vec::new()
+    }
+
     fn files_drag_message(&mut self, message: &Message) -> Vec<Effect> {
         match *message {
             Message::FilesHover(spot) => {
@@ -4096,6 +4154,9 @@ impl Shell {
                 }
             }
             Message::PointerPressed => {
+                self.tab_drag = self
+                    .tab_hover
+                    .map(|tab| crate::tab_drag::TabDrag::pressed(tab, self.cursor.get()));
                 self.files_drag = self
                     .files_hover
                     .filter(|spot| spot.index.is_some())
@@ -4731,6 +4792,48 @@ impl Shell {
         })
     }
 
+    /// A tab of the bar: a click shows it, a right click opens its menu; pressed and moved,
+    /// it is dragged, the tab it would take the place of outlined.
+    fn tab_button<'a>(
+        &self,
+        tab: TabId,
+        label: iced::widget::Row<'a, Message>,
+        active: bool,
+    ) -> Element<'a, Message> {
+        let dragging = self.tab_drag.filter(|drag| drag.active);
+        let mut area = mouse_area(
+            button(label)
+                .style(if active {
+                    button::primary
+                } else {
+                    button::secondary
+                })
+                .on_press(Message::App(AppMessage::SelectTab(tab))),
+        )
+        .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab)))
+        .on_enter(Message::TabHover(tab))
+        .on_exit(Message::TabHoverLeft(tab));
+        if dragging.is_some() {
+            area = area.interaction(iced::mouse::Interaction::Grabbing);
+        }
+        // Where a dragged tab goes, outlined as the C# drop target.
+        let target = dragging.and_then(|drag| drag.onto(self.tab_hover)) == Some(tab);
+        container(area)
+            .style(move |theme: &Theme| container::Style {
+                border: iced::Border {
+                    color: if target {
+                        theme.extended_palette().primary.strong.color
+                    } else {
+                        Color::TRANSPARENT
+                    },
+                    width: TAB_DROP_EDGE,
+                    radius: 4.0.into(),
+                },
+                ..container::Style::default()
+            })
+            .into()
+    }
+
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
@@ -4826,18 +4929,7 @@ impl Shell {
                     .padding([0.0, 2.0])
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
             );
-            tabs = tabs.push(
-                mouse_area(
-                    button(label)
-                        .style(if active {
-                            button::primary
-                        } else {
-                            button::secondary
-                        })
-                        .on_press(Message::App(AppMessage::SelectTab(tab.id))),
-                )
-                .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab.id))),
-            );
+            tabs = tabs.push(self.tab_button(tab.id, label, active));
         }
         tabs.wrap().into()
     }
