@@ -1365,6 +1365,10 @@ ui-files-error-too-large-for-editor = Too large for the integrated editor (over 
 ui-dialog-binary-title = Binary file
 ui-dialog-binary-body = "{ $name }" looks like a binary file (an archive, an image or a program) and cannot be shown as text. Download it instead?
 ui-dialog-binary-confirm = Download
+ui-dialog-open-link-title = Open link
+ui-dialog-open-link-body = The text clicked leads to this address, which will open in your browser:
+    { $url }
+ui-dialog-open-link-confirm = Open
 ui-tab-menu-show-health = Show server health
 ui-tab-menu-hide-health = Hide server health
 ui-health-cpu = CPU
