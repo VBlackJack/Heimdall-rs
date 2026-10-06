@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
-use super::protocol::{Rfb, RfbError, RfbEvent, SecurityPolicy};
+use super::protocol::{Quality, Rfb, RfbError, RfbEvent, SecurityPolicy};
 use super::screen::{Rect, Screen};
 
 /// Bound on reaching the server, unless the caller sets another.
@@ -260,6 +260,7 @@ enum Command {
     Pointer { buttons: u8, x: u16, y: u16 },
     CutText(String),
     Resize { width: u16, height: u16 },
+    Quality(Quality),
     Close,
 }
 
@@ -320,6 +321,17 @@ impl VncInput {
     /// [`SessionEnded`].
     pub fn resize(&self, width: u16, height: u16) -> Result<(), SessionEnded> {
         self.send(Command::Resize { width, height })
+    }
+
+    /// Asks the server for pictures at `quality`, as the C# toolbar's "Quality" menu: the
+    /// encodings and their levels again, then the whole desktop anew; nothing when it is the
+    /// quality asked already.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionEnded`].
+    pub fn set_quality(&self, quality: Quality) -> Result<(), SessionEnded> {
+        self.send(Command::Quality(quality))
     }
 
     /// Whether the server takes a size asked of it: it said its screens, as a server that
@@ -460,6 +472,7 @@ async fn run(
                     }
                     rfb.request_size(width, height);
                 }
+                Command::Quality(quality) => rfb.set_quality(quality),
                 Command::Close => break CloseReason::Local,
             }
         }

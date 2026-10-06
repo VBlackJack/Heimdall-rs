@@ -22,8 +22,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use heimdall_remote::vnc::{
-    AskPassword, CloseReason, Rect, SecurityPolicy, VncConfig, VncError, VncEvent, VncSession,
-    connect, given_password, start,
+    AskPassword, CloseReason, Quality, Rect, SecurityPolicy, VncConfig, VncError, VncEvent,
+    VncSession, connect, given_password, start,
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
@@ -42,8 +42,8 @@ const RESPONSE: [u8; 16] = [
 ];
 
 /// What the client sends between `ServerInit` and the first update: `SetPixelFormat` (20),
-/// `SetEncodings` of 7 (4 + 28) and a `FramebufferUpdateRequest` (10).
-const OPENING_REQUESTS: usize = 20 + 32 + 10;
+/// `SetEncodings` of 10 (4 + 40) and a `FramebufferUpdateRequest` (10).
+const OPENING_REQUESTS: usize = 20 + 44 + 10;
 /// An incremental `FramebufferUpdateRequest`.
 const UPDATE_REQUEST: usize = 10;
 
@@ -66,8 +66,22 @@ async fn read_exactly(stream: &mut TcpStream, count: usize) -> Vec<u8> {
     bytes
 }
 
-/// Plays a TigerVNC-like server up to the opened session on a 4 by 2 desktop.
-async fn serve_handshake(stream: &mut TcpStream) {
+/// `SetEncodings` of `encodings`.
+fn set_encodings(encodings: &[i32]) -> Vec<u8> {
+    let mut bytes = vec![2, 0];
+    bytes.extend_from_slice(&u16::try_from(encodings.len()).expect("few").to_be_bytes());
+    for encoding in encodings {
+        bytes.extend_from_slice(&encoding.to_be_bytes());
+    }
+    bytes
+}
+
+/// A non-incremental `FramebufferUpdateRequest` for the whole 4 by 2 desktop.
+const FULL_UPDATE_REQUEST: [u8; 10] = [3, 0, 0, 0, 0, 0, 0, 4, 0, 2];
+
+/// Plays a TigerVNC-like server up to the opened session on a 4 by 2 desktop; what the
+/// client sent once it opened.
+async fn serve_handshake(stream: &mut TcpStream) -> Vec<u8> {
     stream.write_all(b"RFB 003.008\n").await.expect("version");
     assert_eq!(read_exactly(stream, 12).await, b"RFB 003.008\n");
     stream.write_all(&[2, 19, 2]).await.expect("types");
@@ -81,7 +95,7 @@ async fn serve_handshake(stream: &mut TcpStream) {
     init.extend_from_slice(&[0, 0, 0, 4]);
     init.extend_from_slice(b"desk");
     stream.write_all(&init).await.expect("init");
-    let _ = read_exactly(stream, OPENING_REQUESTS).await;
+    read_exactly(stream, OPENING_REQUESTS).await
 }
 
 async fn listener() -> (TcpListener, u16) {
@@ -142,6 +156,50 @@ async fn a_session_opens_draws_an_update_and_carries_a_key() {
         "incremental, whole desktop"
     );
     assert_eq!(key, [4, 1, 0, 0, 0, 0, 0, 0x61]);
+}
+
+#[tokio::test]
+async fn tight_is_asked_first_and_a_new_quality_asks_its_levels_then_the_whole_desktop() {
+    let (listener, port) = listener().await;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        let opening = serve_handshake(&mut stream).await;
+        // Best: 9 encodings, then the request; Balanced: 10, then the request.
+        let best = read_exactly(&mut stream, 4 + 36 + 10).await;
+        let balanced = read_exactly(&mut stream, 4 + 40 + 10).await;
+        (opening, best, balanced)
+    });
+    let cancel = CancellationToken::new();
+    let connection = connect(
+        &config(port, SecurityPolicy::default()),
+        given_password(Zeroizing::new("Secret12".to_owned())),
+        &cancel,
+    )
+    .await
+    .expect("connected");
+    let session = start(connection, cancel);
+    session.input.set_quality(Quality::Best).expect("best");
+    // The quality asked already sends nothing: the next bytes are Balanced's.
+    session.input.set_quality(Quality::Best).expect("again");
+    session
+        .input
+        .set_quality(Quality::Balanced)
+        .expect("balanced");
+    let (opening, best, balanced) = server.await.expect("server");
+    // Tight, ZRLE, CopyRect, Raw, the pseudo-encodings, compression 6 and JPEG quality 6:
+    // the C# default "Performance".
+    assert_eq!(
+        opening[20..64],
+        set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -250, -26])
+    );
+    // Best: compression 0 and no JPEG quality level, so a Tight server sends no JPEG.
+    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -256]);
+    expected.extend_from_slice(&FULL_UPDATE_REQUEST);
+    assert_eq!(best, expected);
+    // Balanced: compression 3, JPEG quality 7.
+    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -253, -25]);
+    expected.extend_from_slice(&FULL_UPDATE_REQUEST);
+    assert_eq!(balanced, expected);
 }
 
 #[tokio::test]

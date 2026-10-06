@@ -294,6 +294,13 @@ pub enum Message {
         /// What happened, in order.
         inputs: Vec<DesktopInput>,
     },
+    /// The quality a tab's VNC desktop is asked at, from its toolbar's "Quality" menu.
+    VncQuality {
+        /// Tab.
+        tab: TabId,
+        /// Which.
+        quality: heimdall_remote::vnc::Quality,
+    },
     /// A key combination from the session's menu, for the remote desktop of a tab.
     SendKeys {
         /// Tab.
@@ -782,6 +789,9 @@ impl fmt::Debug for Message {
                 write!(f, "DesktopInput({}, {} inputs)", tab.value(), inputs.len())
             }
             Self::SendKeys { tab, keys } => write!(f, "SendKeys({}, {keys:?})", tab.value()),
+            Self::VncQuality { tab, quality } => {
+                write!(f, "VncQuality({}, {quality:?})", tab.value())
+            }
             Self::AntiIdleTick => f.write_str("AntiIdleTick"),
             Self::DisplayScale(scale) => write!(f, "DisplayScale({scale})"),
             Self::TmoutResetTick => f.write_str("TmoutResetTick"),
@@ -2793,6 +2803,7 @@ impl App {
             | Message::DesktopShown { .. }
             | Message::DesktopInput { .. }
             | Message::SendKeys { .. }
+            | Message::VncQuality { .. }
             | Message::AntiIdleTick
             | Message::DisplayScale(_)
             | Message::TmoutResetTick
@@ -3021,6 +3032,14 @@ impl App {
             }
             Message::DesktopInput { tab, inputs } => self.desktop_input(tab, &inputs),
             Message::SendKeys { tab, keys } => self.desktop_input(tab, &keys.inputs()),
+            Message::VncQuality { tab, quality } => {
+                if let Some(pane) = self
+                    .tab_mut(tab)
+                    .and_then(|found| found.desktop.as_deref_mut())
+                {
+                    pane.set_vnc_quality(quality);
+                }
+            }
             Message::AntiIdleTick => self.anti_idle_tick(),
             // A scale no screen has is not taken.
             Message::DisplayScale(scale) if scale.is_finite() && scale > 0.0 => {

@@ -50,8 +50,8 @@ use heimdall_app::{
     ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, SelectionMessage,
     SessionState, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
     TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog,
-    VaultJob, VaultMode, VaultProblem, VaultStatus, connection_events, master_password_problem,
-    open_vault, server_text,
+    VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
+    master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -5746,7 +5746,7 @@ impl Shell {
     }
 
     /// The end of a desktop's session bar: the resolution menu, the anti-idle badge, saving
-    /// the server's files, VNC's clipboard, the desktop's name and VNC's warning.
+    /// the server's files, VNC's clipboard and quality, the desktop's name and VNC's warning.
     fn desktop_bar_end<'a>(
         &self,
         tab: &Tab,
@@ -5802,6 +5802,9 @@ impl Shell {
                 )
                 .style(container::rounded_box),
             );
+        }
+        if let Some(control) = vnc_quality_control(pane, tab_id) {
+            bar = bar.push(control);
         }
         if let TabProfile::Rdp(profile) = &tab.profile {
             bar = bar.extend(redirection_badges(profile));
@@ -6230,6 +6233,32 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
         ]
         .spacing(SPACING / 2.0)
         .align_y(iced::Alignment::Center)
+        .into(),
+    )
+}
+
+/// A VNC desktop's "Quality" menu, beside its clipboard as in the C# toolbar: how its
+/// server trades the picture for bandwidth, for this tab only.
+fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, Message>> {
+    let quality = pane.vnc_quality()?;
+    let choices = pick_list(
+        VncQuality::ALL.map(QualityChoice).to_vec(),
+        Some(QualityChoice(quality)),
+        move |QualityChoice(quality)| {
+            Message::App(AppMessage::VncQuality {
+                tab: tab_id,
+                quality,
+            })
+        },
+    )
+    .text_size(SMALL_SIZE);
+    Some(
+        tooltip(
+            choices,
+            text(fl!("ui-session-vnc-quality")).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
         .into(),
     )
 }
@@ -8670,6 +8699,21 @@ impl fmt::Display for DesktopMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct KeysChoice(SpecialKeys);
 
+/// A quality in a VNC desktop's menu, by the C# toolbar's name for it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct QualityChoice(VncQuality);
+
+impl fmt::Display for QualityChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            VncQuality::Best => fl!("ui-session-vnc-quality-best"),
+            VncQuality::Balanced => fl!("ui-session-vnc-quality-balanced"),
+            VncQuality::Performance => fl!("ui-session-vnc-quality-performance"),
+            VncQuality::LowBandwidth => fl!("ui-session-vnc-quality-low-bandwidth"),
+        })
+    }
+}
+
 /// An environment in the form's list, as the C# names it; "(None)" for none.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct EnvironmentChoice(Option<heimdall_core::metadata::Environment>);
@@ -9376,6 +9420,14 @@ mod tests {
         assert_eq!(
             ColorScheme::ALL.map(|scheme| SchemeChoice(scheme).to_string()),
             ["Default", "Dracula", "Solarized Dark", "Monokai", "Nord"]
+        );
+    }
+
+    #[test]
+    fn the_vnc_qualities_are_listed_by_the_csharp_toolbar_names_in_its_order() {
+        assert_eq!(
+            VncQuality::ALL.map(|quality| QualityChoice(quality).to_string()),
+            ["Best Quality", "Balanced", "Performance", "Low Bandwidth"]
         );
     }
 
