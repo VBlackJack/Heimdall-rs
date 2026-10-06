@@ -160,10 +160,12 @@ impl App {
         }
     }
 
-    /// The tabs `group` of `tab_id` holds, in tab order.
+    /// The tabs `group` of `tab_id` holds, in the strip's order: a pane docked in a split is
+    /// none, and holds none.
     #[must_use]
     pub fn tab_group(&self, tab_id: TabId, group: TabGroup) -> Vec<TabId> {
-        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
+        let strip = self.strip();
+        let Some(index) = strip.iter().position(|tab| tab.id == tab_id) else {
             return Vec::new();
         };
         // From the tab itself for the right, which the filter drops as it drops it from the
@@ -173,7 +175,7 @@ impl App {
             TabGroup::Right => index,
         };
         // A pinned tab is left, as the C# leaves it.
-        self.tabs[from..]
+        strip[from..]
             .iter()
             .filter(|tab| tab.id != tab_id && !tab.pinned)
             .map(|tab| tab.id)
@@ -183,6 +185,10 @@ impl App {
     /// Tab `tab_id` put where `onto` is, as the C# `MoveSession`: the place asked for, then
     /// the pinned tabs first again, so that a drag never mixes the two groups.
     pub(super) fn move_tab(&mut self, tab_id: TabId, onto: TabId) {
+        // A pane docked in a split has no place on the strip.
+        if self.is_docked(tab_id) || self.is_docked(onto) {
+            return;
+        }
         let at = |id: TabId| self.tabs.iter().position(|tab| tab.id == id);
         let (Some(from), Some(to)) = (at(tab_id), at(onto)) else {
             return;
@@ -199,6 +205,10 @@ impl App {
     /// Pins `tab_id`, or no longer: the pinned tabs come first, each group in its order, as
     /// the C# `SetPinned` keeps them; the tab shown stays shown.
     fn toggle_pin(&mut self, tab_id: TabId) {
+        // Off the strip, a docked pane is never pinned.
+        if self.is_docked(tab_id) {
+            return;
+        }
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
@@ -262,12 +272,15 @@ impl App {
     /// Closes the tabs of `group`, once asked when some are live, as the C# Heimdall asks
     /// once for them all.
     fn close_group(&mut self, tab_id: TabId, group: TabGroup) {
+        self.closing_pane = None;
         let tabs = self.tab_group(tab_id, group);
-        let live = tabs
+        // Every pane of a split tab closes with it, and counts.
+        let panes: Vec<TabId> = tabs.iter().flat_map(|id| self.panes_of(*id)).collect();
+        let live = panes
             .iter()
             .filter(|id| self.tab(**id).is_some_and(Tab::is_live))
             .count();
-        let unsaved = self.unsaved_tabs(&tabs);
+        let unsaved = self.unsaved_tabs(&panes);
         if live > 0 || unsaved > 0 {
             self.dialog = Some(Dialog::ConfirmCloseTabs {
                 tabs,

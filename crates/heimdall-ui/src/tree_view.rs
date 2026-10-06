@@ -23,6 +23,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use heimdall_app::BulkField;
 use heimdall_app::files::{Direction, Side};
 use heimdall_app::reachability::{DownReason, Unchecked, Verdict};
+use heimdall_app::split::{Axis, SplitMessage};
 use heimdall_app::{
     ConnectAs, FilesMessage, FilterMessage, FolderMessage, GatewayBadge, HostKeysMessage,
     Message as AppMessage, NO_FOLDER, ProfileCopy, ProfileKind, ProfileMenuMessage, ProfileSummary,
@@ -81,6 +82,19 @@ pub enum TreeMenu {
     More,
     /// A tab's menu, drawn as the tree's are.
     Tab(TabId),
+    /// The same menu opened from a pane's header in a split: its Disconnect closes that pane
+    /// alone, never the whole tab.
+    Pane(TabId),
+    /// The tabs a tab can be merged with, as the C# "Merge with...".
+    MergeWith(TabId),
+    /// How a tab is merged into another, as the C# entries under each tab of "Merge
+    /// with...".
+    MergeAxis {
+        /// The tab split.
+        host: TabId,
+        /// The tab merged into it.
+        tab: TabId,
+    },
     /// A folder's menu, [`NO_FOLDER`] included.
     Folder(String),
     /// Where a folder can move to.
@@ -1146,6 +1160,22 @@ pub struct TabMenuState {
     pub saveable: bool,
     /// It takes terminal macros.
     pub macros: bool,
+    /// Opened from a pane's header: Disconnect closes that pane alone.
+    pub pane: bool,
+    /// It is a pane docked in another tab's split: off the strip, it is never pinned.
+    pub docked: bool,
+    /// What it offers of a split.
+    pub split: SplitEntries,
+}
+
+/// What a tab's menu offers of a split, as the C# one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SplitEntries {
+    /// Not split: "Merge with..." while another tab can be merged into it.
+    Merge(bool),
+    /// A pane of the split of this tab of the strip: Unsplit, Swap Panes, Toggle Split
+    /// Orientation, Close Secondary Pane.
+    Split(TabId),
 }
 
 /// A terminal tab's Macros menu: recording started or stopped, the macro typed stopped,
@@ -1422,7 +1452,7 @@ fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
 }
 
 /// The entries of a tab's menu, in the C# Heimdall's order, limited to what this version
-/// does: no split or detach.
+/// does: no detach.
 pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     let tab = state.tab;
     let menu = |message| Some(AppMessage::TabMenu(message));
@@ -1431,7 +1461,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
         .width(MENU_WIDTH)
         .push(entry(
             fl!("ui-tab-menu-disconnect"),
-            Some(AppMessage::RequestCloseTab(tab)),
+            Some(disconnect(state)),
         ))
         .push(entry(
             fl!("ui-tab-menu-rename"),
@@ -1443,14 +1473,16 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             menu(TabMenuMessage::ResetTitle(tab)),
         ));
     }
-    entries = entries.push(entry(
-        if state.pinned {
-            fl!("ui-tab-menu-unpin")
-        } else {
-            fl!("ui-tab-menu-pin")
-        },
-        menu(TabMenuMessage::Pin(tab)),
-    ));
+    if !state.docked {
+        entries = entries.push(entry(
+            if state.pinned {
+                fl!("ui-tab-menu-unpin")
+            } else {
+                fl!("ui-tab-menu-pin")
+            },
+            menu(TabMenuMessage::Pin(tab)),
+        ));
+    }
     if let Some(on) = state.vnc_resize {
         entries = entries.push(separator()).push(checked_entry(
             fl!("ui-tab-menu-vnc-remote-resize"),
@@ -1521,6 +1553,74 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
             fl!("ui-tab-menu-close-right"),
             close(TabGroup::Right).filter(|_| state.right),
         ));
+    menu_card(split_entries(entries, tab, state.split)).into()
+}
+
+/// What a tab menu's Disconnect closes: from a pane's header the pane alone, asked as its
+/// close button asks; from the strip the whole tab, as the C# `CloseAllPanes`.
+fn disconnect(state: &TabMenuState) -> AppMessage {
+    if state.pane {
+        AppMessage::Split(SplitMessage::ClosePane(state.tab))
+    } else {
+        AppMessage::RequestCloseTab(state.tab)
+    }
+}
+
+/// The end of a tab's menu, after a separator as the C#'s: "Merge with..." for a tab not
+/// split, else what its split offers.
+fn split_entries(
+    entries: Column<'_, Message>,
+    tab: TabId,
+    split: SplitEntries,
+) -> Column<'_, Message> {
+    let split_message = |message| Some(AppMessage::Split(message));
+    match split {
+        SplitEntries::Merge(false) => entries,
+        SplitEntries::Merge(true) => entries.push(separator()).push(submenu(
+            fl!("ui-split-merge-with"),
+            TreeMenu::MergeWith(tab),
+        )),
+        SplitEntries::Split(host) => entries
+            .push(separator())
+            .push(entry(
+                fl!("ui-split-unsplit"),
+                split_message(SplitMessage::Unsplit(host)),
+            ))
+            .push(entry(
+                fl!("ui-split-swap-panes"),
+                split_message(SplitMessage::Swap(host)),
+            ))
+            .push(entry(
+                fl!("ui-split-toggle-orientation"),
+                split_message(SplitMessage::ToggleAxis(host)),
+            ))
+            .push(entry(
+                fl!("ui-split-close-secondary"),
+                split_message(SplitMessage::CloseSecondary(host)),
+            )),
+    }
+}
+
+/// "Merge with...": the tabs `host` can be merged with, each by its title, opening how.
+#[must_use]
+pub fn merge_with_entries<'a>(host: TabId, tabs: &[(TabId, String)]) -> Element<'a, Message> {
+    let entries = column![].spacing(0.0).width(MENU_WIDTH).extend(
+        tabs.iter()
+            .map(|(tab, title)| submenu(title.clone(), TreeMenu::MergeAxis { host, tab: *tab })),
+    );
+    menu_card(entries).into()
+}
+
+/// How `tab` is merged into `host`, in the C# order: Horizontal, stacked, then Vertical,
+/// side by side.
+#[must_use]
+pub fn merge_axis_entries<'a>(host: TabId, tab: TabId) -> Element<'a, Message> {
+    let merge = |axis| Some(AppMessage::Split(SplitMessage::Merge { host, tab, axis }));
+    let entries = column![]
+        .spacing(0.0)
+        .width(MENU_WIDTH)
+        .push(entry(fl!("ui-split-horizontal"), merge(Axis::Stacked)))
+        .push(entry(fl!("ui-split-vertical"), merge(Axis::SideBySide)));
     menu_card(entries).into()
 }
 

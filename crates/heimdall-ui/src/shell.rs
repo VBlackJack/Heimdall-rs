@@ -83,13 +83,17 @@ use crate::palette::Palette;
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
+use crate::split_view::{self, Shape, SplitView};
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
 use crate::texts;
-use crate::tree_view::{self, CursorSpot, CursorTracker, TabMenuState, TranscriptEntry, TreeMenu};
+use crate::tree_view::{
+    self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
+};
 use crate::trusted_keys_view::TrustedList;
+use heimdall_app::split::{Layout as SplitLayout, SplitMessage};
 
 /// Grid of a tab before its first layout.
 const INITIAL_GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -542,6 +546,24 @@ pub enum Message {
     SidebarDragged(f32),
     /// The handle is let go.
     SidebarDragEnd,
+    /// A divider of a split tab is dragged to this share: drawn there, not kept yet.
+    SplitDragged {
+        /// The split tab.
+        host: TabId,
+        /// The divider, by its number in the split.
+        divider: usize,
+        /// The share its first side takes.
+        ratio: f32,
+    },
+    /// That divider is let go at this share, or moved by an arrow key: kept.
+    SplitReleased {
+        /// The split tab.
+        host: TabId,
+        /// The divider, by its number in the split.
+        divider: usize,
+        /// The share its first side takes.
+        ratio: f32,
+    },
     /// Quick Connect's search changed.
     PaletteQuery(String),
     /// Open Quick Connect's result at this place.
@@ -699,6 +721,16 @@ impl fmt::Debug for Message {
             Self::WindowResized(size) => write!(f, "WindowResized({size:?})"),
             Self::SidebarDragged(x) => write!(f, "SidebarDragged({x})"),
             Self::SidebarDragEnd => f.write_str("SidebarDragEnd"),
+            Self::SplitDragged {
+                host,
+                divider,
+                ratio,
+            } => write!(f, "SplitDragged({}, {divider}, {ratio})", host.value()),
+            Self::SplitReleased {
+                host,
+                divider,
+                ratio,
+            } => write!(f, "SplitReleased({}, {divider}, {ratio})", host.value()),
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
@@ -939,6 +971,9 @@ pub struct Shell {
     sidebar_width: f32,
     /// The handle between the sidebar and the sessions is held.
     sidebar_drag: bool,
+    /// A divider of a split tab being dragged: the tab, the divider's number, the share it
+    /// is drawn at until let go.
+    split_drag: Option<(TabId, usize, f32)>,
     /// The letters typed in the tree so far, and when the last one was.
     type_ahead: (String, Option<std::time::Instant>),
     /// Quick Connect, while open.
@@ -1180,6 +1215,7 @@ impl Shell {
             window_size: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
+            split_drag: None,
             type_ahead: (String::new(), None),
             palette: None,
             finder: None,
@@ -1203,8 +1239,13 @@ impl Shell {
     pub fn settings_shown(&self) -> bool {
         self.page
             == Page::Settings {
-                over: self.app.active,
+                over: self.shown_tab_id(),
             }
+    }
+
+    /// The tab of the strip shown, whichever pane of its split has the keyboard.
+    fn shown_tab_id(&self) -> Option<TabId> {
+        self.app.shown_tab().map(|tab| tab.id)
     }
 
     /// The application core.
@@ -1519,6 +1560,9 @@ impl Shell {
             | Message::TabHoverLeft(_)
             | Message::TabDragMoved(_)
             | Message::TabDragEnd) => self.tab_drag_message(&message),
+            message @ (Message::SplitDragged { .. } | Message::SplitReleased { .. }) => {
+                self.split_drag_message(&message)
+            }
             message @ (Message::FilesHover(_)
             | Message::FilesHoverLeft(_)
             | Message::PointerPressed
@@ -1704,7 +1748,7 @@ impl Shell {
             Message::ShowSettings => {
                 self.menu = None;
                 self.page = Page::Settings {
-                    over: self.app.active,
+                    over: self.shown_tab_id(),
                 };
                 // The trusted keys as they are now: another program may have changed them.
                 let _ = self
@@ -1935,8 +1979,11 @@ impl Shell {
         let Some(active) = self.app.active else {
             return Vec::new();
         };
-        let count = self.app.tabs.len();
-        let index = self.app.tabs.iter().position(|tab| tab.id == active);
+        // The strip's tabs: a pane docked in a split is shown with its tab.
+        let shown = self.shown_tab_id().unwrap_or(active);
+        let strip: Vec<TabId> = self.app.strip().iter().map(|tab| tab.id).collect();
+        let count = strip.len();
+        let index = strip.iter().position(|id| *id == shown);
         let message = match (shortcut, index) {
             (WindowShortcut::Zoom(zoom), _) => {
                 self.zoom(active, zoom);
@@ -1947,12 +1994,19 @@ impl Shell {
                 self.toggle_finder(active);
                 return Vec::new();
             }
-            (WindowShortcut::CloseTab, _) => AppMessage::RequestCloseTab(active),
+            // The whole tab, every pane of its split, as the C# Ctrl+W.
+            (WindowShortcut::CloseTab, _) => AppMessage::RequestCloseTab(shown),
             (WindowShortcut::NextTab, Some(index)) => {
-                AppMessage::SelectTab(self.app.tabs[(index + 1) % count].id)
+                AppMessage::SelectTab(strip[(index + 1) % count])
             }
             (WindowShortcut::PreviousTab, Some(index)) => {
-                AppMessage::SelectTab(self.app.tabs[(index + count - 1) % count].id)
+                AppMessage::SelectTab(strip[(index + count - 1) % count])
+            }
+            (WindowShortcut::ToggleSplit, _) => {
+                if self.app.shown_tab().is_none_or(|tab| tab.layout.is_none()) {
+                    return Vec::new();
+                }
+                AppMessage::Split(SplitMessage::ToggleAxis(shown))
             }
             // Settings and the help: shown above, tab or no tab; a screenshot is taken by
             // the window.
@@ -2005,9 +2059,11 @@ impl Shell {
     /// `tab`'s terminal, with its search bar over it when open. Under the bar the terminal
     /// takes no keys: Escape and what is typed are the bar's.
     /// A shell tab's page: its terminal, and its server health panel beside it when shown.
-    fn shell_page<'a>(&'a self, tab: &'a Tab) -> Element<'a, Message> {
-        let terminal =
-            self.searchable_terminal(tab, self.app.dialog.is_none() && !self.tree_focused);
+    fn shell_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
+        let terminal = self.searchable_terminal(
+            tab,
+            focused && self.app.dialog.is_none() && !self.tree_focused,
+        );
         if tab.health.shown {
             row![
                 container(terminal).width(Length::Fill),
@@ -2911,8 +2967,10 @@ impl Shell {
     /// The entries of `menu`, the open one; `None` once what it is for is gone.
     #[expect(clippy::too_many_lines, reason = "one arm per menu")]
     fn open_menu_entries(&self, menu: &TreeMenu) -> Option<Element<'_, Message>> {
-        let entries = if let TreeMenu::Tab(tab) = menu {
-            tree_view::tab_menu_entries(&self.tab_menu_state(*tab)?)
+        let entries = if let TreeMenu::Tab(tab) | TreeMenu::Pane(tab) = *menu {
+            let mut state = self.tab_menu_state(tab)?;
+            state.pane = matches!(menu, TreeMenu::Pane(_));
+            tree_view::tab_menu_entries(&state)
         } else if let TreeMenu::FilesBookmarks(tab) | TreeMenu::FilesBookmarksRemove(tab) = *menu {
             let files = self.app.tab(tab)?.files.as_deref()?;
             let shown: Vec<String> = files
@@ -3013,6 +3071,29 @@ impl Shell {
             )
         } else if let TreeMenu::GatewaySelection = menu {
             tree_view::gateway_selection_entries(self.app.gateways())
+        } else if let TreeMenu::MergeWith(host) = *menu {
+            let tabs: Vec<(TabId, String)> = self
+                .app
+                .merge_candidates(host)
+                .iter()
+                .map(|tab| (tab.id, tab.display_title().to_owned()))
+                .collect();
+            // Only while one can be merged.
+            if tabs.is_empty() {
+                return None;
+            }
+            tree_view::merge_with_entries(host, &tabs)
+        } else if let TreeMenu::MergeAxis { host, tab } = *menu {
+            // Only while it can still be merged.
+            if !self
+                .app
+                .merge_candidates(host)
+                .iter()
+                .any(|found| found.id == tab)
+            {
+                return None;
+            }
+            tree_view::merge_axis_entries(host, tab)
         } else {
             let profile = match menu {
                 TreeMenu::Profile(id) | TreeMenu::ConnectAs(id) => self.app.profile_summary(id),
@@ -3020,6 +3101,9 @@ impl Shell {
                 | TreeMenu::More
                 | TreeMenu::Filter
                 | TreeMenu::Tab(_)
+                | TreeMenu::Pane(_)
+                | TreeMenu::MergeWith(_)
+                | TreeMenu::MergeAxis { .. }
                 | TreeMenu::Folder(_)
                 | TreeMenu::MoveFolder(_)
                 | TreeMenu::FolderColor(_)
@@ -4475,6 +4559,7 @@ impl Shell {
             // where it was.
             Message::OpenTreeMenu(
                 TreeMenu::Tab(_)
+                | TreeMenu::Pane(_)
                 | TreeMenu::FilesEntry { .. }
                 | TreeMenu::FilesBookmarks(_)
                 | TreeMenu::FilesBookmarksRemove(_),
@@ -4484,7 +4569,10 @@ impl Shell {
             | Message::TreeClick(_)
             // The desktop takes no more keys: the tree has them, as after a click in it.
             | Message::ContentRelease => self.tree_focused = true,
-            Message::ContentFocus => self.tree_focused = false,
+            // A press in a pane of the split shown gives the keyboard back from the tree too.
+            Message::ContentFocus | Message::App(AppMessage::Split(SplitMessage::Focus(_))) => {
+                self.tree_focused = false;
+            }
             _ => {}
         }
     }
@@ -5234,6 +5322,12 @@ impl Shell {
                 .and_then(|pane| pane.vnc_remote_resize()),
             saveable: self.app.can_save_as_profile(tab),
             macros: self.app.macro_menu(tab).is_some(),
+            pane: false,
+            docked: self.app.is_docked(id),
+            split: match self.app.host_of(id).filter(|_| self.app.in_split(id)) {
+                Some(host) => SplitEntries::Split(host),
+                None => SplitEntries::Merge(!self.app.merge_candidates(id).is_empty()),
+            },
             transcript: if tab.transcript.is_some() {
                 TranscriptEntry::Stop
             } else if shows_terminal(tab) {
@@ -5350,6 +5444,60 @@ impl Shell {
         label
     }
 
+    /// What goes before a tab, on the strip or in a pane's header: its broadcast marker
+    /// while broadcasting to the tabs chosen, as the C# tab's, and its post-connect steps.
+    fn tab_marks<'a>(&'a self, tab: &'a Tab) -> Vec<Element<'a, Message>> {
+        let mut marks = Vec::new();
+        let marked = self.app.broadcasting()
+            && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
+            && shows_terminal(tab);
+        if marked {
+            // A target of broadcast input, or not, as the C# tab's marker.
+            let target = self.app.is_broadcast_target(tab.id);
+            marks.push(
+                tooltip(
+                    button(
+                        text(if target {
+                            fl!("ui-broadcast-target-on")
+                        } else {
+                            fl!("ui-broadcast-target-off")
+                        })
+                        .size(SMALL_SIZE),
+                    )
+                    .style(button::text)
+                    .on_press(Message::App(AppMessage::Broadcast(
+                        BroadcastMessage::Target(tab.id),
+                    ))),
+                    text(fl!("ui-broadcast-target-tooltip")).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box)
+                .into(),
+            );
+        }
+        if let Some(progress) = &tab.post_connect {
+            marks.push(post_connect_badge(tab.id, progress));
+        }
+        marks
+    }
+
+    /// What a tab says of itself, on the strip or in a pane's header: its title and marks,
+    /// the transcript it keeps among them.
+    fn tab_heading(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
+        let mut label = self.tab_title(tab, active);
+        if tab.transcript.is_some() {
+            label = label.push(
+                tooltip(
+                    text(fl!("ui-tab-recording")).size(SMALL_SIZE),
+                    text(fl!("ui-tab-recording-tooltip")).size(SMALL_SIZE),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
+        label
+    }
+
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
@@ -5365,51 +5513,15 @@ impl Shell {
                 .style(container::rounded_box),
             );
         }
-        for tab in &self.app.tabs {
-            let active = self.app.active == Some(tab.id);
-            let mut label = self.tab_title(tab, active);
-            let marked = self.app.broadcasting()
-                && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
-                && shows_terminal(tab);
-            if marked {
-                // A target of broadcast input, or not, as the C# tab's marker.
-                let target = self.app.is_broadcast_target(tab.id);
-                tabs = tabs.push(
-                    tooltip(
-                        button(
-                            text(if target {
-                                fl!("ui-broadcast-target-on")
-                            } else {
-                                fl!("ui-broadcast-target-off")
-                            })
-                            .size(SMALL_SIZE),
-                        )
-                        .style(button::text)
-                        .on_press(Message::App(AppMessage::Broadcast(
-                            BroadcastMessage::Target(tab.id),
-                        ))),
-                        text(fl!("ui-broadcast-target-tooltip")).size(SMALL_SIZE),
-                        tooltip::Position::Bottom,
-                    )
-                    .style(container::rounded_box),
-                );
-            }
-            if let Some(progress) = &tab.post_connect {
-                tabs = tabs.push(post_connect_badge(tab.id, progress));
-            }
-            if tab.transcript.is_some() {
-                label = label.push(
-                    tooltip(
-                        text(fl!("ui-tab-recording")).size(SMALL_SIZE),
-                        text(fl!("ui-tab-recording-tooltip")).size(SMALL_SIZE),
-                        tooltip::Position::Bottom,
-                    )
-                    .style(container::rounded_box),
-                );
+        let shown = self.shown_tab_id();
+        for tab in self.app.strip() {
+            let active = shown == Some(tab.id);
+            for mark in self.tab_marks(tab) {
+                tabs = tabs.push(mark);
             }
             // The close button inside the tab, at its right, as the C# tab's: it takes the
             // press, which selecting the tab then does not see.
-            label = label.push(
+            let label = self.tab_heading(tab, active).push(
                 button(text(fl!("ui-tab-close-button")).size(SMALL_SIZE))
                     .style(button::text)
                     .padding([0.0, 2.0])
@@ -5460,9 +5572,101 @@ impl Shell {
         if self.settings_shown() {
             return self.settings_page();
         }
-        let Some(tab) = self.app.active_tab() else {
+        let Some(tab) = self.app.shown_tab() else {
             return self.home();
         };
+        if let Some(layout) = &tab.layout
+            && let Some(split) = self.split_page(tab.id, layout)
+        {
+            return split;
+        }
+        self.tab_page(tab, true)
+    }
+
+    /// The panes of split tab `host`, each with its header; `None` when one of them is gone.
+    fn split_page<'a>(
+        &'a self,
+        host: TabId,
+        layout: &'a SplitLayout,
+    ) -> Option<Element<'a, Message>> {
+        let leaves = layout.leaves();
+        let tabs = leaves
+            .iter()
+            .map(|id| self.app.tab(*id))
+            .collect::<Option<Vec<&Tab>>>()?;
+        let active = self.app.active;
+        let panes = tabs
+            .into_iter()
+            .map(|tab| {
+                let focused = active == Some(tab.id);
+                split_view::pane(
+                    tab.id,
+                    self.tab_marks(tab),
+                    self.tab_heading(tab, focused),
+                    self.tab_page(tab, focused),
+                    focused,
+                )
+            })
+            .collect();
+        let live = self
+            .split_drag
+            .filter(|(dragged, ..)| *dragged == host)
+            .map(|(_, divider, ratio)| (divider, ratio));
+        let focused = leaves.iter().position(|id| active == Some(*id));
+        Some(
+            SplitView::new(Shape::of(&layout.root, live), panes)
+                .id(split_view::area_id())
+                .focused(focused)
+                .on_focus(move |pane| {
+                    Message::App(AppMessage::Split(SplitMessage::Focus(leaves[pane])))
+                })
+                .on_drag(move |divider, ratio| Message::SplitDragged {
+                    host,
+                    divider,
+                    ratio,
+                })
+                .on_release(move |divider, ratio| Message::SplitReleased {
+                    host,
+                    divider,
+                    ratio,
+                })
+                .on_reset(move |_| Message::App(AppMessage::Split(SplitMessage::ResetRatio(host))))
+                .into(),
+        )
+    }
+
+    /// A divider dragged: drawn where it is held, then kept once let go. The application
+    /// keeps the share of a tab's outer split, the one divider of two panes.
+    fn split_drag_message(&mut self, message: &Message) -> Vec<Effect> {
+        match *message {
+            Message::SplitDragged {
+                host,
+                divider,
+                ratio,
+            } => {
+                self.split_drag = Some((host, divider, ratio));
+                Vec::new()
+            }
+            Message::SplitReleased {
+                host,
+                divider,
+                ratio,
+            } => {
+                self.split_drag = None;
+                if divider == split_view::OUTER_DIVIDER {
+                    self.app
+                        .update(AppMessage::Split(SplitMessage::Resize { host, ratio }))
+                } else {
+                    Vec::new()
+                }
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// What `tab` shows: its question, its session, or what became of it. Only the pane with
+    /// the keyboard, `focused`, takes typing.
+    fn tab_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();
         }
@@ -5481,8 +5685,8 @@ impl Shell {
             ),
             Phase::Connected => match (tab.files.as_deref(), tab.desktop.as_deref()) {
                 (Some(pane), _) => self.files_page(tab.id, pane, tab.is_live()),
-                (_, Some(pane)) => self.desktop(tab, pane),
-                _ => self.shell_page(tab),
+                (_, Some(pane)) => self.desktop(tab, pane, focused),
+                _ => self.shell_page(tab, focused),
             },
             // An editor's text outlives its session: kept in sight, saved once connected
             // again.
@@ -5516,7 +5720,7 @@ impl Shell {
                     |status| fl!("ui-session-closed-status", status = status.to_string()),
                 );
                 let mut ended = column![
-                    self.searchable_terminal(tab, self.app.dialog.is_none()),
+                    self.searchable_terminal(tab, self.app.dialog.is_none() && focused),
                     row![text(status), self.session_actions(tab)]
                         .spacing(SPACING)
                         .padding(PADDING)
@@ -5699,11 +5903,11 @@ impl Shell {
 
     /// A remote desktop under its bar, as the C# session's: the keys this computer keeps for
     /// itself, sent from a menu, how the desktop is shown, and full screen.
-    fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
+    fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane, focused: bool) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
             .on_release(Message::ContentRelease)
-            .interactive(self.app.dialog.is_none() && !self.tree_focused)
+            .interactive(focused && self.app.dialog.is_none() && !self.tree_focused)
             .fit(fit)
             .density(self.density);
         let tab_id = tab.id;

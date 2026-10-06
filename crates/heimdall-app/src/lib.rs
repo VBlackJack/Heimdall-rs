@@ -67,6 +67,7 @@ pub mod winrm_preflight;
 
 pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;
+pub use app::split;
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
     CitrixImportOutcome, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome,

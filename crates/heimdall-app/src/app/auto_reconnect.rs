@@ -155,6 +155,7 @@ impl App {
         }
         if shown != Some(tab_id) {
             self.active = shown;
+            self.sync_focus();
         }
         effects
     }

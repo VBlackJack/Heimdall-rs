@@ -405,6 +405,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                     detail = detail.as_str()
                 )
             }
+            Notice::SplitMaxPanesReached(max) => fl!("ui-split-max-panes-reached", max = (*max)),
             Notice::ScreenshotCopied => fl!("ui-status-screenshot-copied"),
             Notice::ScreenshotFailed => fl!("ui-status-screenshot-failed"),
             Notice::FingerprintCopied(server) => {

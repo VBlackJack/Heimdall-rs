@@ -103,7 +103,13 @@ impl App {
             && let Some(reopened) = self.tabs.pop()
         {
             let mut old = std::mem::replace(&mut self.tabs[index], reopened);
+            let reopened = self.tabs[index].id;
             self.tabs[index].custom_title = old.custom_title.take();
+            // Its place on the strip, pinned, and in a split: the host's split goes with it,
+            // a docked pane stays docked, as the C# `ReconnectPaneAsync`.
+            self.tabs[index].pinned = old.pinned;
+            self.tabs[index].layout = old.layout.take();
+            self.repoint_pane(tab_id, reopened);
             // A health panel shown stays shown, asked again once connected.
             self.tabs[index].health.shown = old.health.shown;
             self.tabs[index].tunnels_panel = old.tunnels_panel;
@@ -121,7 +127,8 @@ impl App {
                 files.editor = before.editor.take();
             }
             old.stop();
-            self.active = Some(self.tabs[index].id);
+            self.active = Some(reopened);
+            self.sync_focus();
         }
         effects
     }

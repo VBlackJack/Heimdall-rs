@@ -114,6 +114,7 @@ mod selection;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
+pub mod split;
 mod status;
 mod tab_menu;
 mod telnet_tab;
@@ -378,6 +379,8 @@ pub enum Message {
     DisconnectDesktop(TabId),
     /// Something from a tab's menu.
     TabMenu(TabMenuMessage),
+    /// Something done to a split tab or to one of its panes.
+    Split(split::SplitMessage),
     /// The wait before a tab's session opens again by itself is over.
     AutoReconnect {
         /// Tab.
@@ -822,6 +825,7 @@ impl fmt::Debug for Message {
             Self::RequestCloseTab(tab) => write!(f, "RequestCloseTab({})", tab.value()),
             Self::DisconnectDesktop(tab) => write!(f, "DisconnectDesktop({})", tab.value()),
             Self::TabMenu(message) => write!(f, "TabMenu({message:?})"),
+            Self::Split(message) => write!(f, "Split({message:?})"),
             Self::AutoReconnect { tab, attempt } => {
                 write!(f, "AutoReconnect({}, {})", tab.value(), attempt.value())
             }
@@ -1767,6 +1771,9 @@ pub struct Tab {
     pub macro_recording: Option<MacroRecording>,
     /// The macro being typed into it.
     pub macro_playing: Option<MacroPlaying>,
+    /// How the tab is split, while it shows other tabs' sessions beside its own; only a tab
+    /// of the strip is.
+    pub layout: Option<split::Layout>,
 }
 
 impl fmt::Debug for Tab {
@@ -1878,6 +1885,7 @@ impl Tab {
             post_connect: None,
             macro_recording: None,
             macro_playing: None,
+            layout: None,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -2516,8 +2524,10 @@ pub struct App {
     store: ProfileStore,
     /// Open tabs, in display order.
     pub tabs: Vec<Tab>,
-    /// Tab shown.
+    /// The pane with the keyboard: the tab shown, or one of the panes of the split shown.
     pub active: Option<TabId>,
+    /// The pane the open close question is about alone, not its whole split.
+    closing_pane: Option<TabId>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
     /// The route test running in the gateway dialog, and what stops it.
@@ -2663,6 +2673,7 @@ impl App {
             store,
             tabs: Vec::new(),
             active: None,
+            closing_pane: None,
             dialog,
             route_test: None,
             next_route_test: 0,
@@ -2755,7 +2766,7 @@ impl App {
     /// window's.
     #[must_use]
     pub fn tunnels_panel(&self) -> bool {
-        let Some(tab) = self.active_tab() else {
+        let Some(tab) = self.shown_tab() else {
             return self.tunnels_panel;
         };
         tab.tunnels_panel
@@ -2767,7 +2778,7 @@ impl App {
             .unwrap_or(self.tunnels_panel)
     }
 
-    /// The tab shown.
+    /// The pane with the keyboard: the tab shown, or a pane of its split.
     #[must_use]
     pub fn active_tab(&self) -> Option<&Tab> {
         self.active.and_then(|id| self.tab(id))
@@ -2783,14 +2794,14 @@ impl App {
         self.tabs.iter_mut().find(|tab| tab.id == id)
     }
 
-    /// Shows `tab`: its bell is heard, and a desktop's server gets what was copied meanwhile.
+    /// Shows `tab`, the pane of its split last given the keyboard when it is split: its bell
+    /// is heard, and a desktop's server gets what was copied meanwhile.
     fn select_tab(&mut self, tab: TabId) -> Vec<Effect> {
-        let Some(found) = self.tab_mut(tab) else {
+        if self.tab(tab).is_none() {
             return Vec::new();
-        };
-        found.bell = false;
-        self.active = Some(tab);
-        self.tab(tab).map(clipboard_offer).unwrap_or_default()
+        }
+        let pane = self.focus_of(tab);
+        self.focus_pane(pane)
     }
 
     /// Applies a message.
@@ -2853,6 +2864,7 @@ impl App {
                 Vec::new()
             }
             Message::TabMenu(message) => self.tab_menu(message),
+            Message::Split(message) => self.split_message(message),
             message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
                 self.retry_message(&message)
             }
@@ -3108,6 +3120,7 @@ impl App {
         }
         self.pending_paste = None;
         self.pending_operation = None;
+        self.closing_pane = None;
         self.ask_next_conflicts();
         effects
     }
@@ -3615,7 +3628,10 @@ impl App {
     }
 
     fn resize(&mut self, tab_id: TabId, grid: GridSize, cell: CellPixels) -> Vec<Effect> {
-        self.viewport = grid.clamped();
+        // A pane is a share of the window: the next tab opens at the whole tab's size.
+        if !self.in_split(tab_id) {
+            self.viewport = grid.clamped();
+        }
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -3830,59 +3846,28 @@ impl App {
         tab.phase = Phase::Closed { exit_status: None };
     }
 
+    /// Closes `tab_id`, every pane of its split with it, once asked when one of them would
+    /// lose something: the guards of all its panes, as one.
     fn request_close(&mut self, tab_id: TabId) -> Vec<Effect> {
-        match self.tab(tab_id) {
-            // Its editor's text would be lost: said first, as the C# close guard.
-            Some(tab) if tab.holds_unsaved_text() => {
-                let name = tab
-                    .files
-                    .as_ref()
-                    .and_then(|files| files.editor.as_ref())
-                    .map(|edit| edit.name.clone())
-                    .unwrap_or_default();
-                self.dialog = Some(Dialog::ConfirmCloseEditor { tab: tab_id, name });
-            }
-            // Its transfers would be cancelled: said, as the C# Files tab says it.
-            Some(tab) if tab.files.as_ref().is_some_and(|files| files.running() > 0) => {
-                self.dialog = Some(Dialog::ConfirmCloseTransfers {
-                    tab: tab_id,
-                    name: tab.display_title().to_owned(),
-                });
-            }
-            // Its edits' next saves would no longer be sent: said, as the C# close guard.
-            Some(tab)
-                if tab
-                    .files
-                    .as_ref()
-                    .is_some_and(|files| !files.edits.is_empty()) =>
-            {
-                self.dialog = Some(Dialog::ConfirmCloseEdits {
-                    tab: tab_id,
-                    name: tab.display_title().to_owned(),
-                });
-            }
-            Some(tab) if tab.is_live() => {
-                self.dialog = Some(Dialog::ConfirmCloseTab(tab_id));
-            }
-            Some(_) => self.close_tab(tab_id),
-            None => {}
+        self.closing_pane = None;
+        if self.tab(tab_id).is_none() {
+            return Vec::new();
+        }
+        let panes = self.panes_of(tab_id);
+        if !self.ask_before_closing(tab_id, &panes) {
+            self.close_tab(tab_id);
         }
         Vec::new()
     }
 
+    /// Closes `tab_id` and, for a split tab, every pane of it, as the C# `CloseAllPanes`.
     fn close_tab(&mut self, tab_id: TabId) {
-        let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
-            return;
-        };
-        // Cancelling the attempt drops its pending questions from the registry.
-        let mut tab = self.tabs.remove(index);
-        tab.stop();
-        if self.active == Some(tab_id) {
-            self.active = self
-                .tabs
-                .get(index.min(self.tabs.len().saturating_sub(1)))
-                .map(|tab| tab.id);
+        for pane in self.panes_of(tab_id) {
+            if pane != tab_id {
+                self.close_pane(pane);
+            }
         }
+        self.close_pane(tab_id);
     }
 
     fn close_window(&mut self) -> Vec<Effect> {
@@ -3933,7 +3918,12 @@ impl App {
                 | Dialog::ConfirmCloseEditor { tab, .. }
                 | Dialog::ConfirmCloseEdits { tab, .. },
             ) => {
-                self.close_tab(tab);
+                // Asked about one pane alone: its split stays.
+                if self.closing_pane.take() == Some(tab) {
+                    self.close_pane(tab);
+                } else {
+                    self.close_tab(tab);
+                }
                 Vec::new()
             }
             Some(Dialog::ConfirmDownloadBinary { tab, remote, .. }) => {
