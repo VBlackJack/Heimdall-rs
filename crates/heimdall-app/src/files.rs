@@ -910,6 +910,15 @@ pub enum FilesError {
         /// What the system said.
         detail: String,
     },
+    /// A script was not run from the local file browser: its path holds a character its
+    /// interpreter's command line would read as more than part of the path.
+    ScriptPathCharacter {
+        /// The character, every invisible one written out.
+        character: String,
+    },
+    /// A script was not run from the local file browser: its path is not Unicode text,
+    /// which its interpreter could not be handed as it is.
+    ScriptPathNotText,
     /// sudo asks for a password and none was given.
     SudoPasswordNeeded,
     /// sudo refused the password.

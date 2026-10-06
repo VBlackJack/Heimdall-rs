@@ -113,6 +113,7 @@ mod reachability_monitor;
 mod reconnect;
 mod resolution;
 mod route_test;
+mod run_in_shell;
 mod selection;
 mod session_restore;
 mod sessions_import;
@@ -165,6 +166,7 @@ pub use quick_connect::QuickResult;
 pub use rdp_import::{RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow};
 use rdp_tab::ResizeFallback;
 pub use resolution::ResolutionChoice;
+pub use run_in_shell::ScriptConfirmation;
 pub use selection::SelectionMessage;
 pub use session_restore::{RestoreDialog, RestoreRow};
 pub use sessions_import::{
@@ -2346,6 +2348,9 @@ pub enum Dialog {
     },
     /// Run a local profile's command, shown whole, which the user has not approved yet.
     ConfirmLocalCommand(Box<LocalConfirmation>),
+    /// Run a script from the local file browser by its interpreter, the command shown
+    /// whole: asked each time, nothing recorded.
+    ConfirmRunScript(Box<ScriptConfirmation>),
     /// Type post-connect steps, shown whole, which the user has not approved yet.
     ConfirmPostConnect(Box<PostConnectConfirmation>),
     /// Result of an import.
@@ -2548,6 +2553,7 @@ impl Dialog {
         !matches!(
             self,
             Self::ConfirmLocalCommand(_)
+                | Self::ConfirmRunScript(_)
                 | Self::ConfirmPostConnect(_)
                 | Self::Vault(_)
                 | Self::Pin(_)
@@ -4210,6 +4216,7 @@ impl App {
                 Vec::new()
             }
             Some(Dialog::ConfirmLocalCommand(confirmation)) => self.confirm_local(*confirmation),
+            Some(Dialog::ConfirmRunScript(confirmation)) => self.confirm_script(*confirmation),
             Some(Dialog::ConfirmPostConnect(confirmation)) => self.run_post_connect(*confirmation),
             // sudo's question is answered with the password the window holds, never by a
             // bare confirm.

@@ -71,7 +71,12 @@ impl App {
                     profile: id.clone(),
                     files: tab.purpose == Purpose::Files,
                 }),
-                Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
+                // A script run from the local file browser among them: it runs again only
+                // once asked, never by itself at the next start.
+                Reopen::Shell(_)
+                | Reopen::Script(_)
+                | Reopen::Transient(..)
+                | Reopen::LocalBrowser => None,
             })
             .collect();
         let path = session_snapshot::snapshot_path(&self.config.profiles_file);

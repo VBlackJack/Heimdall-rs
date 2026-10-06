@@ -414,6 +414,14 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
+    /// Run a script of the local file browser by its interpreter in a new tab, once agreed,
+    /// as the C# "Run in Shell".
+    RunInShell {
+        /// Tab.
+        tab: TabId,
+        /// The script's entry.
+        index: usize,
+    },
     /// The copies of a paste or a duplicate ended.
     Copied {
         /// Tab.
@@ -718,6 +726,9 @@ impl std::fmt::Debug for FilesMessage {
             }
             Self::OpenInTerminal { tab } => write!(f, "OpenInTerminal({})", tab.value()),
             Self::OpenInExplorer { tab } => write!(f, "OpenInExplorer({})", tab.value()),
+            Self::RunInShell { tab, index } => {
+                write!(f, "RunInShell({}, {index})", tab.value())
+            }
             Self::Copied { tab, results, .. } => {
                 write!(f, "Copied({}, {})", tab.value(), results.len())
             }
@@ -1036,6 +1047,7 @@ impl App {
             FilesMessage::Duplicate { tab } => self.duplicate(tab),
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::OpenInExplorer { tab } => self.open_in_explorer(tab),
+            FilesMessage::RunInShell { tab, index } => self.run_in_shell(tab, index),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::DropEntries {
                 tab,

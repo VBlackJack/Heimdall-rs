@@ -17,11 +17,13 @@
 //! The file browser docked beside a local shell, drawn headless: this computer's files
 //! alone, with no server pane, no toggle and nothing to send; its entries' menu offers the
 //! C# "Open in Explorer" and "Open in terminal", a new shell, and nothing that would reach
-//! a server or the shell beside it; a file that would run is asked about first; and the
-//! Settings page docks it or not.
+//! a server or the shell beside it; a file that would run is asked about first; "Run in
+//! Shell" is offered for a script this platform runs alone, and asks first with the command
+//! whole; and the Settings page docks it or not.
 
 mod common;
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -37,7 +39,7 @@ use heimdall_term::GridSize;
 use heimdall_term::local::LocalArguments;
 use heimdall_ui::shell::{Message, SettingsTab, Shell};
 use heimdall_ui::terminal_view::FONTS;
-use heimdall_ui::tree_view::{FilesEntryFacts, FilesTabFacts};
+use heimdall_ui::tree_view::{FilesEntryFacts, FilesTabFacts, TreeMenu};
 use iced::{Settings, Size};
 
 /// Size of the simulated window, in logical pixels: wide enough for two panes.
@@ -155,6 +157,7 @@ fn the_browsers_entry_menu_opens_in_explorer_and_sends_nothing() {
         single: true,
         one_file: true,
         link: false,
+        runs_in_shell: false,
     };
     let menu = || {
         common::simulator(
@@ -203,6 +206,7 @@ fn the_browsers_entry_menu_opens_in_explorer_and_sends_nothing() {
         heimdall_ui::tree_view::files_entry_menu((pane, Side::Local), None, facts),
     );
     ui.find("Open in terminal").expect("the folder shown");
+    assert!(ui.find("Run in Shell").is_err(), "no script");
 }
 
 #[test]
@@ -318,4 +322,203 @@ fn the_settings_card_docks_the_local_browser_or_not_whatever_the_sftp_browser() 
             ..sftp_off
         }]
     );
+}
+
+/// A script this platform runs, as "Run in Shell" offers it.
+#[cfg(windows)]
+const SCRIPT: &str = "deploy.ps1";
+#[cfg(unix)]
+const SCRIPT: &str = "run.sh";
+
+/// The browser of [`docked`] listing `names` in `dir`, as files.
+fn listing(core: &mut App, pane: TabId, dir: &Path, names: &[OsString]) {
+    let entries = names
+        .iter()
+        .map(|name| LocalEntry {
+            name: name.clone(),
+            label: name.to_string_lossy().into_owned(),
+            kind: EntryKind::File,
+            size: Some(1),
+            modified: None,
+        })
+        .collect();
+    core.update(AppMessage::Files(FilesMessage::LocalListed {
+        tab: pane,
+        result: Ok((PathBuf::from(dir), entries)),
+    }));
+}
+
+/// The messages a click on `label` sends from `menu`.
+fn chosen_from(mut ui: common::Drawn<'_>, label: &str) -> Vec<String> {
+    ui.click(label).expect(label);
+    ui.into_messages()
+        .filter_map(|message| match message {
+            Message::MenuChoice(AppMessage::Files(files)) => Some(format!("{files:?}")),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn run_in_shell_is_in_the_menu_of_a_script_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, pane) = docked(dir.path());
+    let local = FilesTabFacts {
+        can_paste: false,
+        can_copy: false,
+        connected: false,
+        sftp: false,
+        over_ssh: false,
+        local_only: true,
+    };
+    let script = FilesEntryFacts {
+        index: 2,
+        single: true,
+        one_file: true,
+        link: false,
+        runs_in_shell: true,
+    };
+    let menu = |facts, tab_facts| {
+        common::simulator(
+            settings(),
+            WINDOW,
+            heimdall_ui::tree_view::files_entry_menu((pane, Side::Local), facts, tab_facts),
+        )
+    };
+    assert_eq!(
+        chosen_from(menu(Some(script), local), "Run in Shell"),
+        [format!(
+            "{:?}",
+            FilesMessage::RunInShell {
+                tab: pane,
+                index: 2
+            }
+        )],
+        "the C# entry"
+    );
+    let other = FilesEntryFacts {
+        runs_in_shell: false,
+        ..script
+    };
+    assert!(menu(Some(other), local).find("Run in Shell").is_err());
+    assert!(menu(None, local).find("Run in Shell").is_err(), "no entry");
+    let server = FilesTabFacts {
+        local_only: false,
+        ..local
+    };
+    assert!(
+        menu(Some(script), server).find("Run in Shell").is_err(),
+        "the local file browser's alone"
+    );
+}
+
+#[test]
+fn a_right_click_offers_run_in_shell_on_a_script_this_platform_runs_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = docked(dir.path());
+    let names: Vec<OsString> = [SCRIPT, "notes.md", "other.sh", "other.bat"]
+        .iter()
+        .map(Into::into)
+        .collect();
+    listing(&mut core, pane, dir.path(), &names);
+    let mut shell = Shell::with_app(core);
+    // The listing is sorted: each entry is looked for by its name.
+    let offered = |shell: &mut Shell, name: &str| {
+        let index = shell
+            .app()
+            .tab(pane)
+            .and_then(|tab| tab.files.as_deref())
+            .and_then(|files| {
+                files
+                    .local
+                    .entries
+                    .iter()
+                    .position(|entry| entry.name == name)
+            })
+            .expect("listed");
+        let _ = shell.update(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab: pane,
+            side: Side::Local,
+            index: Some(index),
+        }));
+        let mut ui = common::simulator(settings(), WINDOW, shell.view());
+        ui.find("Copy path").expect("the entry's menu");
+        ui.find("Run in Shell").is_ok()
+    };
+    assert!(offered(&mut shell, SCRIPT), "{SCRIPT}");
+    assert!(!offered(&mut shell, "notes.md"), "a text file");
+    // The other platform's script.
+    #[cfg(windows)]
+    assert!(!offered(&mut shell, "other.sh"), "no sh on Windows");
+    #[cfg(unix)]
+    assert!(!offered(&mut shell, "other.bat"), "no cmd.exe on Unix");
+}
+
+#[test]
+fn run_in_shell_asks_with_the_command_and_runs_it_by_a_click() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = docked(dir.path());
+    listing(&mut core, pane, dir.path(), &[SCRIPT.into()]);
+    let effects = core.update(AppMessage::Files(FilesMessage::RunInShell {
+        tab: pane,
+        index: 0,
+    }));
+    assert!(effects.is_empty(), "nothing run before agreeing");
+    let Some(heimdall_app::Dialog::ConfirmRunScript(question)) = &core.dialog else {
+        panic!("{:?}", core.dialog);
+    };
+    let command = question.command.clone();
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("Run this script?").expect("the question");
+    ui.find(
+        format!(
+            "{SCRIPT} runs in a new tab with the command below, with your rights. Heimdall asks each time it runs."
+        )
+        .as_str(),
+    )
+    .expect("what it does");
+    ui.find(command.as_str()).expect("the command whole");
+    ui.click("Run").expect("its button");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog))),
+        "agreed by a click"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn a_script_path_cmd_would_read_is_said_on_the_pane() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = docked(dir.path());
+    listing(&mut core, pane, dir.path(), &["100%.bat".into()]);
+    core.update(AppMessage::Files(FilesMessage::RunInShell {
+        tab: pane,
+        index: 0,
+    }));
+    assert!(core.dialog.is_none());
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("This script was not run: its path holds %, which its interpreter would read as more than part of the path. Rename the file or its folder to run it.")
+        .expect("the notice");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_script_path_that_is_not_text_is_said_on_the_pane() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = docked(dir.path());
+    let name = OsString::from_vec(b"r\xffn.sh".to_vec());
+    listing(&mut core, pane, dir.path(), &[name]);
+    core.update(AppMessage::Files(FilesMessage::RunInShell {
+        tab: pane,
+        index: 0,
+    }));
+    assert!(core.dialog.is_none());
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("This script was not run: its path is not valid text, which its interpreter could not be handed as it is.")
+        .expect("the notice");
 }

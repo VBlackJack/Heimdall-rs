@@ -36,6 +36,9 @@ pub(super) enum Reopen {
     Profile(ProfileId),
     /// The same local shell again: one started from the sidebar, with no profile.
     Shell(LocalShell),
+    /// A script run from the local file browser, by its interpreter as first agreed: asked
+    /// again before each run, never run again as it is.
+    Script(Box<LocalShell>),
     /// The same session saved nowhere, as "Connect as..." opened it, for its purpose.
     Transient(Box<TabProfile>, Purpose),
     /// Nothing: the file browser docked beside a local shell is no session, and opens
@@ -64,9 +67,20 @@ impl Tab {
     pub(super) fn saved_profile(&self) -> Option<&ProfileId> {
         match &self.reopen {
             Reopen::Profile(id) => Some(id),
-            Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
+            Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) | Reopen::LocalBrowser => {
+                None
+            }
         }
     }
+}
+
+/// Where the keyboard goes once a tab is opened again in its place.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum KeyboardAfter {
+    /// To the reopened tab.
+    Reopened,
+    /// It stays with this pane, or with none: the tab is detached to a window of its own.
+    Kept(Option<TabId>),
 }
 
 impl App {
@@ -89,7 +103,8 @@ impl App {
 
     /// Opens the session of `tab_id` again, in its place, under the name the user gave it;
     /// the old session is stopped. When nothing opens (a local command waiting for
-    /// approval), the tab stays as it was.
+    /// approval), the tab stays as it was; a script is asked about again, and takes the
+    /// tab's place once agreed.
     pub(super) fn reconnect_tab(&mut self, tab_id: TabId) -> Vec<Effect> {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
             return Vec::new();
@@ -98,15 +113,40 @@ impl App {
             return Vec::new();
         }
         let (reopen, purpose) = (self.tabs[index].reopen.clone(), self.tabs[index].purpose);
-        // A tab detached to a window of its own stays there: the keyboard's pane stays.
-        let kept = self.is_floating(tab_id).then_some(self.active);
+        if let Reopen::Script(shell) = reopen {
+            self.ask_script(*shell, Some(tab_id));
+            return Vec::new();
+        }
+        let keyboard = self.keyboard_kept(tab_id);
         let before = self.tabs.len();
         self.replacing = true;
         let effects = self.open_again(reopen, purpose);
         self.replacing = false;
-        if self.tabs.len() > before
+        self.take_place(index, before, keyboard);
+        effects
+    }
+
+    /// Where the keyboard goes when tab `tab_id` is opened again: it stays with the pane
+    /// that has it now, read before the new tab takes it, when the tab is detached to a
+    /// window of its own, which it stays in; else to the reopened tab.
+    pub(super) fn keyboard_kept(&self, tab_id: TabId) -> KeyboardAfter {
+        if self.is_floating(tab_id) {
+            KeyboardAfter::Kept(self.active)
+        } else {
+            KeyboardAfter::Reopened
+        }
+    }
+
+    /// Puts the tab opened last, when one opened since there were `count` tabs, in the
+    /// place of tab `index`, which is stopped: its title, its pin, its split and what it
+    /// showed go with it. The keyboard goes where `keyboard` says, as
+    /// [`App::keyboard_kept`] reads it.
+    pub(super) fn take_place(&mut self, index: usize, count: usize, keyboard: KeyboardAfter) {
+        if self.tabs.len() > count
+            && index < count
             && let Some(reopened) = self.tabs.pop()
         {
+            let tab_id = self.tabs[index].id;
             let mut old = std::mem::replace(&mut self.tabs[index], reopened);
             let reopened = self.tabs[index].id;
             self.tabs[index].custom_title = old.custom_title.take();
@@ -136,10 +176,12 @@ impl App {
                 files.editor = before.editor.take();
             }
             old.stop();
-            self.active = kept.unwrap_or(Some(reopened));
+            self.active = match keyboard {
+                KeyboardAfter::Reopened => Some(reopened),
+                KeyboardAfter::Kept(pane) => pane,
+            };
             self.sync_focus();
         }
-        effects
     }
 
     /// Opens saved profile `id` with its own protocol; an SSH profile for `purpose`, a shell
@@ -170,6 +212,10 @@ impl App {
         match reopen {
             Reopen::Profile(id) => self.open_saved(&id, purpose),
             Reopen::Shell(shell) => self.open_local(shell),
+            Reopen::Script(shell) => {
+                self.ask_script(*shell, None);
+                Vec::new()
+            }
             Reopen::LocalBrowser => Vec::new(),
             Reopen::Transient(profile, purpose) => {
                 let effects = self.open_transient(TabProfile::clone(&profile), purpose);
