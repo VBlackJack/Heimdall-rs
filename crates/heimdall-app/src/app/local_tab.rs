@@ -57,7 +57,13 @@ pub struct LocalConfirmation {
 impl App {
     /// Opens a tab running `shell`.
     pub(super) fn open_local(&mut self, shell: LocalShell) -> Vec<Effect> {
-        let mut shell = powershell_options(shell, self.settings.powershell_execution_policy);
+        let shell = powershell_options(shell, self.settings.powershell_execution_policy);
+        self.open_local_built(shell)
+    }
+
+    /// Opens a tab running `shell` with the arguments it has, `PowerShell`'s options added
+    /// already: what a question showed whole, run as shown.
+    pub(super) fn open_local_built(&mut self, mut shell: LocalShell) -> Vec<Effect> {
         // Where a terminal opens: the home folder, not wherever Heimdall was started from.
         shell
             .working_directory
@@ -187,7 +193,7 @@ impl App {
 /// `shell` as the C# starts a local `PowerShell`: `-ExecutionPolicy` when one is chosen,
 /// and `-NoLogo` unless its arguments already ask it. Any other program is left as it is; on
 /// Windows, no program at all is `PowerShell`.
-fn powershell_options(mut shell: LocalShell, policy: ExecutionPolicy) -> LocalShell {
+pub(super) fn powershell_options(mut shell: LocalShell, policy: ExecutionPolicy) -> LocalShell {
     let is_powershell = match shell.program.as_deref() {
         // Its last part, whichever separator a Windows or Unix path uses, without ".exe".
         Some(program) => {

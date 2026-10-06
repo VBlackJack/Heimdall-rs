@@ -82,7 +82,10 @@ impl App {
                     .iter()
                     .find(|profile| profile.id == *id)
                     .and_then(|profile| profile.session_logging),
-                Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
+                Reopen::Shell(_)
+                | Reopen::Script(_)
+                | Reopen::Transient(..)
+                | Reopen::LocalBrowser => None,
             },
             _ => None,
         };
