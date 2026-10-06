@@ -62,28 +62,23 @@ pub fn opens_hidden(left: &WindowState) -> bool {
     left.bounds().is_some()
 }
 
-/// Puts the window, opened hidden, where it was `left` on the screens there are, then shows
-/// it, maximized if it was. Nothing when its place was not kept: it opened shown.
-pub fn restore<Message: Send + 'static>(left: &WindowState) -> Task<Message> {
+/// Puts the window `id`, opened hidden, where it was `left` on the screens there are, then
+/// shows it, maximized if it was. Nothing when its place was not kept: it opened shown.
+pub fn restore<Message: Send + 'static>(id: window::Id, left: &WindowState) -> Task<Message> {
     let Some(saved) = left.bounds() else {
         return Task::none();
     };
     let maximized = left.maximized;
-    window::latest().then(move |id| {
-        let Some(id) = id else {
-            return Task::none();
-        };
-        window::scale_factor(id).then(move |scale| {
-            let moved = place(saved, &work_areas()).map_or_else(Task::none, |(x, y)| {
-                window::move_to(id, logical(x, y, scale))
-            });
-            let shown = moved.chain(window::set_mode(id, window::Mode::Windowed));
-            if maximized {
-                shown.chain(window::maximize(id, true))
-            } else {
-                shown
-            }
-        })
+    window::scale_factor(id).then(move |scale| {
+        let moved = place(saved, &work_areas()).map_or_else(Task::none, |(x, y)| {
+            window::move_to(id, logical(x, y, scale))
+        });
+        let shown = moved.chain(window::set_mode(id, window::Mode::Windowed));
+        if maximized {
+            shown.chain(window::maximize(id, true))
+        } else {
+            shown
+        }
     })
 }
 

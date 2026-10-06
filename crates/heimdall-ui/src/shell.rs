@@ -223,6 +223,48 @@ fn type_ahead(text: Option<&str>, modifiers: keyboard::Modifiers) -> Option<Mess
         .then(|| Message::TypeAhead(text.to_owned()))
 }
 
+/// `event::listen_with` over the listener `$listener`, each message paired with the window
+/// its event came from, for [`in_main_window`] to keep the main window's. `listen_with`
+/// takes a function pointer, which carries no state: the pairing is a closure capturing
+/// nothing, written out for each listener.
+macro_rules! window_tagged {
+    ($listener:path) => {
+        event::listen_with(|event, status, window| {
+            $listener(event, status, window).map(|message| (window, message))
+        })
+    };
+}
+
+/// Whether an event of `window` is the main window's: the window `main` names, or any
+/// while none is named, as in tests, which open none.
+fn from_main(main: Option<window::Id>, window: window::Id) -> bool {
+    main.is_none_or(|main| main == window)
+}
+
+/// The message of an event from the main window, none from another; what
+/// [`in_main_window`] keeps of a subscription given the main window's identifier.
+fn main_only<T>((main, (window, message)): (Option<window::Id>, (window::Id, T))) -> Option<T> {
+    from_main(main, window).then_some(message)
+}
+
+/// `events`, each paired with the window it came from, kept to the main window's: a
+/// subscription's map takes no closure capturing `main`, so `main` rides with the events.
+fn in_main_window(
+    events: Subscription<(window::Id, Message)>,
+    main: Option<window::Id>,
+) -> Subscription<Message> {
+    events.with(main).filter_map(main_only)
+}
+
+/// The main window, or, while none is named, as in tests, the window opened last: the
+/// window the dialogs are held by, the screenshot taken of, and the place kept of.
+pub(crate) fn main_window_task(main: Option<window::Id>) -> Task<Option<window::Id>> {
+    match main {
+        Some(id) => Task::done(Some(id)),
+        None => window::latest(),
+    }
+}
+
 /// While the sidebar's handle is dragged: where the pointer is, and its release.
 #[expect(
     clippy::needless_pass_by_value,
@@ -413,6 +455,8 @@ pub enum Message {
     ToggleFullscreen,
     /// The window opened: its screen's density is asked for.
     WindowOpened(window::Id),
+    /// The main window closed: the application ends, as it did with its only window.
+    MainWindowClosed,
     /// The window's screen draws this many physical pixels per logical one.
     Rescaled(f32),
     /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
@@ -691,6 +735,7 @@ impl fmt::Debug for Message {
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
+            Self::MainWindowClosed => f.write_str("MainWindowClosed"),
             Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
@@ -1009,6 +1054,8 @@ pub struct Shell {
     sidebar_hidden: bool,
     /// Where the window's state is kept, and how it was left; none in tests.
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
+    /// The main window, named once it is asked to open; none in tests, which open none.
+    main_window: Option<window::Id>,
     /// The window's size, as last resized out of full screen.
     window_size: Option<iced::Size>,
     /// The sidebar's width, as dragged.
@@ -1260,6 +1307,7 @@ impl Shell {
             tree_drag: None,
             sidebar_hidden: false,
             window_memory: None,
+            main_window: None,
             window_size: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
@@ -1324,6 +1372,33 @@ impl Shell {
         }
     }
 
+    /// The title of the window `window`: the main window's as [`Self::title`], the
+    /// application's name for any other.
+    #[must_use]
+    pub fn window_title(&self, window: window::Id) -> String {
+        if from_main(self.main_window, window) {
+            self.title()
+        } else {
+            fl!("ui-window-title")
+        }
+    }
+
+    /// Names the main window, asked to open: its events are the only ones taken, and the
+    /// dialogs, the screenshot and the place kept at exit are its own.
+    pub fn set_main_window(&mut self, window: window::Id) {
+        self.main_window = Some(window);
+    }
+
+    /// Draws the window `window`: the main window as [`Self::view`], nothing in any other.
+    #[must_use]
+    pub fn window_view(&self, window: window::Id) -> Element<'_, Message> {
+        if from_main(self.main_window, window) {
+            self.view()
+        } else {
+            iced::widget::space().into()
+        }
+    }
+
     /// Theme: the terminal palette is Dracula, so is the window.
     #[must_use]
     pub fn theme(&self) -> Theme {
@@ -1332,10 +1407,21 @@ impl Shell {
 
     /// Window events and shortcuts.
     pub fn subscription(&self) -> Subscription<Message> {
+        // The main window's events only: another window's keys, moves and closing are not
+        // the main window's.
+        let main = self.main_window;
         let events = Subscription::batch([
-            event::listen_with(window_event),
+            in_main_window(window_tagged!(window_event), main),
             // The screen's density is known once the window is open.
-            window::open_events().map(Message::WindowOpened),
+            in_main_window(
+                window::open_events().map(|id| (id, Message::WindowOpened(id))),
+                main,
+            ),
+            // A daemon outlives its windows: the main window closed, the application ends.
+            in_main_window(
+                window::close_events().map(|id| (id, Message::MainWindowClosed)),
+                main,
+            ),
         ]);
         // A countdown shown: a tab's next attempt, or the minutes before a master password
         // or a PIN is taken again.
@@ -1353,16 +1439,25 @@ impl Shell {
         );
         let mut subscriptions = vec![events];
         if self.files_drag.is_some() {
-            subscriptions.push(event::listen_with(crate::files_drag::drag_event));
+            subscriptions.push(in_main_window(
+                window_tagged!(crate::files_drag::drag_event),
+                main,
+            ));
         }
         if self.tab_drag.is_some() {
-            subscriptions.push(event::listen_with(crate::tab_drag::drag_event));
+            subscriptions.push(in_main_window(
+                window_tagged!(crate::tab_drag::drag_event),
+                main,
+            ));
         }
         if self.tree_drag.is_some() {
-            subscriptions.push(event::listen_with(crate::tree_drag::drag_event));
+            subscriptions.push(in_main_window(
+                window_tagged!(crate::tree_drag::drag_event),
+                main,
+            ));
         }
         if self.sidebar_drag {
-            subscriptions.push(event::listen_with(sidebar_drag_event));
+            subscriptions.push(in_main_window(window_tagged!(sidebar_drag_event), main));
         }
         if locked_out
             || self.app.tabs.iter().any(|tab| tab.retry.is_some())
@@ -1537,6 +1632,7 @@ impl Shell {
                 self.files_key(FilesKey::SwitchPane)
             }
             Message::LockKey => self.closing_menu(AppMessage::LockVault),
+            Message::MainWindowClosed => return iced::exit(),
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
             | Message::WindowOpened(_)
@@ -1580,7 +1676,7 @@ impl Shell {
                 self.open_palette(Some((host, axis)));
                 Vec::new()
             }
-            Message::BrowseKeyFile => return pick_key_file(),
+            Message::BrowseKeyFile => return pick_key_file(self.main_window),
             Message::CopyError(tab) => return self.copy_error(tab),
             Message::CopyAnonymousError(tab) => {
                 return self
@@ -1787,7 +1883,7 @@ impl Shell {
                 } else {
                     window::Mode::Windowed
                 };
-                window::latest().and_then(move |id| window::set_mode(id, mode))
+                main_window_task(self.main_window).and_then(move |id| window::set_mode(id, mode))
             }
             Message::Modifiers(modifiers) => {
                 self.modifiers = *modifiers;
@@ -2025,7 +2121,7 @@ impl Shell {
         if self.app.active.is_none() || self.app.dialog.is_some() || self.settings_shown() {
             return Task::none();
         }
-        crate::screenshot::copy_session()
+        crate::screenshot::copy_session(self.main_window)
             .map(|copied| Message::App(AppMessage::ScreenshotTaken { copied }))
     }
 
@@ -2596,6 +2692,8 @@ impl Shell {
     /// Turns an effect into a task.
     #[expect(clippy::too_many_lines, reason = "one arm per effect")]
     fn run(&mut self, effect: Effect) -> Task<Message> {
+        // The window the system's dialogs are held by.
+        let main = self.main_window;
         match effect {
             effect @ (Effect::Connect { .. }
             | Effect::ConnectRdp { .. }
@@ -2728,17 +2826,17 @@ impl Shell {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
             })
             .discard(),
-            Effect::SaveExport { document, count } => save_export(document, count),
-            Effect::PickOpenSshConfig => pick_openssh(),
-            Effect::PickRdpFiles => pick_rdp(),
-            Effect::PickUploads { tab } => pick_uploads(tab),
+            Effect::SaveExport { document, count } => save_export(document, count, main),
+            Effect::PickOpenSshConfig => pick_openssh(main),
+            Effect::PickRdpFiles => pick_rdp(main),
+            Effect::PickUploads { tab } => pick_uploads(tab, main),
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
-            Effect::PickSaveFolder { tab } => pick_save_folder(tab),
-            Effect::PickSessionsFile => pick_sessions_file(),
-            Effect::SaveSettingsFile { document } => crate::settings_file::save(document),
-            Effect::PickSettingsFile => crate::settings_file::pick(),
-            Effect::PickKnownHosts => pick_known_hosts(),
+            Effect::PickSaveFolder { tab } => pick_save_folder(tab, main),
+            Effect::PickSessionsFile => pick_sessions_file(main),
+            Effect::SaveSettingsFile { document } => crate::settings_file::save(document, main),
+            Effect::PickSettingsFile => crate::settings_file::pick(main),
+            Effect::PickKnownHosts => pick_known_hosts(main),
             // The registry or the files, read off the window's thread.
             Effect::ReadPuttySessions => Task::perform(
                 async {
@@ -2844,7 +2942,7 @@ impl Shell {
             }
             iced::exit()
         };
-        window::latest().then(move |id| {
+        main_window_task(self.main_window).then(move |id| {
             let Some(id) = id else {
                 return keep(false, None);
             };
@@ -6629,8 +6727,8 @@ fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
 
 /// The open dialog of "Import Sessions", held by the window, then the file read; a `.rdp`
 /// file goes to the `.rdp` import, as the C# sends it. Nothing when no file is picked.
-fn pick_sessions_file() -> Task<Message> {
-    window::latest().then(|id| {
+fn pick_sessions_file(main: Option<window::Id>) -> Task<Message> {
+    main_window_task(main).then(|id| {
         let pick = match id {
             Some(id) => window::run(id, |window| crate::file_import_view::pick(Some(window))),
             None => Task::done(crate::file_import_view::pick(None)),
@@ -6656,9 +6754,9 @@ fn pick_sessions_file() -> Task<Message> {
 
 /// The open dialog of the `.rdp` import, held by the window, then the files read; nothing
 /// when none is picked.
-fn pick_rdp() -> Task<Message> {
+fn pick_rdp(main: Option<window::Id>) -> Task<Message> {
     let (title, filter) = (fl!("ui-rdp-title"), fl!("ui-rdp-filter"));
-    window::latest().then(move |id| {
+    main_window_task(main).then(move |id| {
         let (title, filter) = (title.clone(), filter.clone());
         let pick = match id {
             Some(id) => window::run(id, move |window| {
@@ -6752,11 +6850,11 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
 
 /// The folder dialog of "Save copied files...", held by the window: the folder picked
 /// goes to the session of `tab`.
-fn pick_save_folder(tab: TabId) -> Task<Message> {
+fn pick_save_folder(tab: TabId, main: Option<window::Id>) -> Task<Message> {
     type PickFolder =
         std::pin::Pin<Box<dyn std::future::Future<Output = Option<rfd::FileHandle>> + Send>>;
     let title = fl!("ui-desktop-save-files");
-    window::latest().then(move |id| {
+    main_window_task(main).then(move |id| {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
@@ -6889,9 +6987,9 @@ fn explorer_files() -> Vec<std::path::PathBuf> {
 
 /// The open dialog of "Upload here...", held by the window: the files picked go to the
 /// tab; nothing when none is.
-fn pick_uploads(tab: TabId) -> Task<Message> {
+fn pick_uploads(tab: TabId, main: Option<window::Id>) -> Task<Message> {
     let title = fl!("ui-files-menu-upload-here");
-    window::latest().then(move |id| {
+    main_window_task(main).then(move |id| {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
@@ -6923,8 +7021,8 @@ fn pick_uploads(tab: TabId) -> Task<Message> {
 
 /// The open dialog of the `known_hosts` import, held by the window, then the file read;
 /// nothing when no file is picked.
-fn pick_known_hosts() -> Task<Message> {
-    window::latest().then(|id| {
+fn pick_known_hosts(main: Option<window::Id>) -> Task<Message> {
+    main_window_task(main).then(|id| {
         let pick = match id {
             Some(id) => window::run(id, |window| crate::hostkeys_view::pick(Some(window))),
             None => Task::done(crate::hostkeys_view::pick(None)),
@@ -6942,9 +7040,9 @@ fn pick_known_hosts() -> Task<Message> {
 
 /// The open dialog of the OpenSSH import, held by the window, then the file read; nothing
 /// when no file is picked.
-fn pick_openssh() -> Task<Message> {
+fn pick_openssh(main: Option<window::Id>) -> Task<Message> {
     let title = fl!("ui-openssh-title");
-    window::latest().then(move |id| {
+    main_window_task(main).then(move |id| {
         let title = title.clone();
         let pick = match id {
             Some(id) => window::run(id, move |window| {
@@ -6964,9 +7062,9 @@ fn pick_openssh() -> Task<Message> {
 }
 
 /// The save dialog of an export, held by the window, then the file written.
-fn save_export(document: String, count: usize) -> Task<Message> {
+fn save_export(document: String, count: usize, main: Option<window::Id>) -> Task<Message> {
     let (title, filter) = (fl!("ui-dialog-export-title"), fl!("ui-export-filter-json"));
-    window::latest().then(move |id| {
+    main_window_task(main).then(move |id| {
         let (title, filter) = (title.clone(), filter.clone());
         let pick = match id {
             Some(id) => window::run(id, move |window| {
@@ -7423,7 +7521,7 @@ fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
 /// The open dialog of the profile form's SSH key, held by the window, in `~/.ssh`: every
 /// file first, since an OpenSSH key has no extension, then the C# `.ppk` and `.pem`. The
 /// path picked fills the field; nothing when none is picked.
-fn pick_key_file() -> Task<Message> {
+fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
     let dialog = || {
         let mut dialog = rfd::AsyncFileDialog::new()
             .set_title(fl!("ui-profile-browse-key-title"))
@@ -7438,7 +7536,7 @@ fn pick_key_file() -> Task<Message> {
         }
         dialog
     };
-    window::latest().then(move |id| {
+    main_window_task(main).then(move |id| {
         let pick = match id {
             Some(id) => window::run(id, move |window| {
                 let pick: crate::sessions_view::Pick =
@@ -10325,5 +10423,31 @@ mod tests {
             shell.dialog_focus,
             Some(DialogFocus::Form(DialogForm::Gateway))
         );
+    }
+
+    #[test]
+    fn an_event_of_another_window_than_the_main_one_is_dropped() {
+        let (main, other) = (window::Id::unique(), window::Id::unique());
+        assert!(matches!(
+            main_only((Some(main), (main, Message::ToggleFullscreen))),
+            Some(Message::ToggleFullscreen)
+        ));
+        assert!(
+            main_only((Some(main), (other, Message::ToggleFullscreen))).is_none(),
+            "another window's key is not the main window's"
+        );
+        assert!(
+            main_only((Some(main), (other, Message::MainWindowClosed))).is_none(),
+            "another window closing ends nothing"
+        );
+        assert!(
+            main_only((Some(main), (other, Message::WindowOpened(other)))).is_none(),
+            "another window's density is not the main window's"
+        );
+        // No main window named, as in tests: every event is taken, as before.
+        assert!(matches!(
+            main_only((None, (other, Message::ToggleFullscreen))),
+            Some(Message::ToggleFullscreen)
+        ));
     }
 }

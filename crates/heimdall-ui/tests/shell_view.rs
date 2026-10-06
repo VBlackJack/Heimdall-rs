@@ -3961,3 +3961,32 @@ fn ctrl_w_closes_the_session_shown_unless_a_field_has_the_keyboard() {
         Some(Dialog::ConfirmCloseTab(_))
     ));
 }
+
+#[test]
+fn only_the_main_window_draws_the_shell_and_is_titled_as_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let _ = open(&mut core, "a");
+    let mut shell = Shell::with_app(core);
+    let (main, other) = (iced::window::Id::unique(), iced::window::Id::unique());
+    shell.set_main_window(main);
+    assert_eq!(shell.window_title(main), shell.title());
+    assert!(shell.title().contains("server a"), "{}", shell.title());
+    assert!(
+        !shell.window_title(other).contains("server a"),
+        "another window is not titled after the tab shown"
+    );
+    let settings = || Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = common::simulator(settings(), WINDOW, shell.window_view(main));
+    ui.find("Sessions")
+        .expect("the main window draws the shell");
+    drop(ui);
+    let mut ui = common::simulator(settings(), WINDOW, shell.window_view(other));
+    assert!(
+        ui.find("Sessions").is_err(),
+        "another window does not draw the shell"
+    );
+}

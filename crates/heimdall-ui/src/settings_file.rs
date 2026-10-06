@@ -56,18 +56,21 @@ fn dialog(title: String, parent: Option<&dyn window::Window>) -> rfd::AsyncFileD
     dialog
 }
 
-/// `pick`, opened over the window when there is one.
-fn over_window(pick: fn(Option<&dyn window::Window>) -> Pick) -> Task<Pick> {
-    window::latest().then(move |id| match id {
+/// `pick`, opened over the main window, `main`, when there is one.
+fn over_window(
+    main: Option<window::Id>,
+    pick: fn(Option<&dyn window::Window>) -> Pick,
+) -> Task<Pick> {
+    crate::shell::main_window_task(main).then(move |id| match id {
         Some(id) => window::run(id, move |window| pick(Some(window))),
         None => Task::done(pick(None)),
     })
 }
 
-/// Asks where to save the settings file, then writes `document` there; nothing when no
-/// file is picked.
-pub fn save(document: String) -> Task<Message> {
-    over_window(|parent| {
+/// Asks where to save the settings file, over the main window `main`, then writes
+/// `document` there; nothing when no file is picked.
+pub fn save(document: String, main: Option<window::Id>) -> Task<Message> {
+    over_window(main, |parent| {
         Box::pin(
             dialog(fl!("ui-dialog-settings-export-title"), parent)
                 .set_file_name(SETTINGS_EXPORT_FILE_NAME)
@@ -96,9 +99,10 @@ pub fn save(document: String) -> Task<Message> {
     })
 }
 
-/// Asks which settings file to import, then reads it; nothing when none is picked.
-pub fn pick() -> Task<Message> {
-    over_window(|parent| {
+/// Asks which settings file to import, over the main window `main`, then reads it;
+/// nothing when none is picked.
+pub fn pick(main: Option<window::Id>) -> Task<Message> {
+    over_window(main, |parent| {
         Box::pin(dialog(fl!("ui-dialog-settings-import-title"), parent).pick_file())
     })
     .then(|pick| {
