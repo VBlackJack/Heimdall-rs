@@ -60,6 +60,8 @@ pub enum SettingsMessage {
     RdpConnectTimeout(u32),
     /// The execution policy a local `PowerShell` is started with.
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
+    /// What Ctrl+V does in a terminal.
+    CtrlVPaste(heimdall_core::settings::CtrlVPaste),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
     AntiIdleInterval(u32),
     /// Seconds between two SSH keep-alives; refused out of the C# range.
@@ -212,6 +214,7 @@ impl App {
             SettingsMessage::PowerShellExecutionPolicy(policy) => {
                 self.settings.powershell_execution_policy = *policy;
             }
+            SettingsMessage::CtrlVPaste(choice) => self.settings.ctrl_v_paste = *choice,
             SettingsMessage::SshAgentPreference(preference) => {
                 self.settings.ssh_agent_preference = *preference;
                 // The agent chip says what the next connection reaches.

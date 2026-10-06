@@ -3866,3 +3866,90 @@ fn the_computer_is_kept_awake_while_a_session_is_connected_unless_turned_off() {
     }));
     assert!(!shell.keeps_awake(), "no session left");
 }
+
+#[test]
+fn ctrl_v_pastes_except_in_a_full_screen_program_as_chosen() {
+    use heimdall_core::settings::CtrlVPaste;
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let ctrl_v = iced::Event::Keyboard(Event::KeyPressed {
+        key: Key::Character("v".into()),
+        modified_key: Key::Character("\u{16}".into()),
+        physical_key: Physical::Code(Code::KeyV),
+        location: Location::Standard,
+        modifiers: Modifiers::CTRL,
+        text: None,
+        repeat: false,
+    });
+    // What Ctrl+V gave: a paste, or a key for the session.
+    let pressed = |shell: &Shell| -> (bool, bool) {
+        let mut ui = simulator(shell);
+        let _ = ui.simulate([ctrl_v.clone()]);
+        let messages: Vec<Message> = ui.into_messages().collect();
+        (
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::App(AppMessage::ClipboardText { .. }))),
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+        )
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = connected_shell(dir.path());
+    assert_eq!(
+        shell.app().settings().ctrl_v_paste,
+        CtrlVPaste::OutsideFullScreenPrograms
+    );
+    assert_eq!(pressed(&shell), (true, false), "at the prompt: pasted");
+
+    // vim, less: the alternate screen. ^V is theirs.
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"\x1b[?1049h".to_vec()),
+    }));
+    assert_eq!(
+        pressed(&shell),
+        (false, true),
+        "in a full-screen program: ^V"
+    );
+
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::CtrlVPaste(CtrlVPaste::Always),
+    )));
+    assert_eq!(pressed(&shell), (true, false), "always");
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::CtrlVPaste(CtrlVPaste::Never),
+    )));
+    let _ = shell.update(Message::App(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Output(b"\x1b[?1049l".to_vec()),
+    }));
+    assert_eq!(pressed(&shell), (false, true), "never, even at the prompt");
+}
+
+#[test]
+fn ctrl_w_closes_the_session_shown_unless_a_field_has_the_keyboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    // A field had the keyboard: Ctrl+W was its, nothing closes.
+    let _ = shell.update(Message::CloseKeyFocus(true));
+    assert!(shell.app().dialog.is_none());
+    assert!(shell.app().tab(tab).is_some());
+    // None had it: the session shown closes, asked first as a live one is.
+    let _ = shell.update(Message::CloseKeyFocus(false));
+    assert!(
+        matches!(shell.app().dialog, Some(Dialog::ConfirmCloseTab(asked)) if asked == tab),
+        "{:?}",
+        shell.app().dialog
+    );
+    // A dialog open, Ctrl+W is not asked about: it is the dialog's.
+    let _ = shell.update(Message::CloseKey);
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::ConfirmCloseTab(_))
+    ));
+}

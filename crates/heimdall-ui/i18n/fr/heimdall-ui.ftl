@@ -1290,6 +1290,10 @@ ui-files-error-too-large-for-editor = Trop volumineux pour l'éditeur intégré 
 ui-dialog-binary-title = Fichier binaire
 ui-dialog-binary-body = "{ $name }" semble être un fichier binaire (une archive, une image ou un programme) et ne peut pas être affiché comme texte. Le télécharger plutôt ?
 ui-dialog-binary-confirm = Télécharger
+ui-dialog-open-link-title = Ouvrir le lien
+ui-dialog-open-link-body = Le texte cliqué mène à cette adresse, qui s'ouvrira dans votre navigateur :
+    { $url }
+ui-dialog-open-link-confirm = Ouvrir
 ui-tab-menu-show-health = Afficher la santé du serveur
 ui-tab-menu-hide-health = Masquer la santé du serveur
 ui-health-cpu = CPU
@@ -1819,6 +1823,10 @@ ui-tunnels-manage-gateways = Gérer les passerelles dans les Paramètres...
 ui-settings-powershell-policy = Politique d'exécution PowerShell
 ui-settings-powershell-policy-hint = Appliqué au lancement des sessions PowerShell/pwsh locales
 ui-settings-powershell-policy-default = Par défaut
+ui-settings-ctrl-v = Ctrl+V dans un terminal
+ui-settings-ctrl-v-always = Colle
+ui-settings-ctrl-v-outside = Colle, sauf dans les programmes plein écran (vim, less...)
+ui-settings-ctrl-v-never = Est envoyé à la session (Ctrl+Maj+V colle)
 ui-connect-via = via { $route }
 
 ## Translations of text written in English first.

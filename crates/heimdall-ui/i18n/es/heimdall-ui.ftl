@@ -1287,6 +1287,10 @@ ui-files-error-too-large-for-editor = Demasiado grande para el editor integrado 
 ui-dialog-binary-title = Archivo binario
 ui-dialog-binary-body = "{ $name }" parece un archivo binario (un archivo comprimido, una imagen o un programa) y no se puede mostrar como texto. ¿Descargarlo en su lugar?
 ui-dialog-binary-confirm = Descargar
+ui-dialog-open-link-title = Abrir enlace
+ui-dialog-open-link-body = El texto pulsado lleva a esta dirección, que se abrirá en su navegador:
+    { $url }
+ui-dialog-open-link-confirm = Abrir
 ui-tab-menu-show-health = Mostrar el estado del servidor
 ui-tab-menu-hide-health = Ocultar el estado del servidor
 ui-health-cpu = CPU
@@ -1816,6 +1820,10 @@ ui-tunnels-manage-gateways = Gestionar pasarelas en Ajustes...
 ui-settings-powershell-policy = Política de ejecución de PowerShell
 ui-settings-powershell-policy-hint = Se aplica al iniciar sesiones locales de PowerShell/pwsh
 ui-settings-powershell-policy-default = Predeterminada
+ui-settings-ctrl-v = Ctrl+V en un terminal
+ui-settings-ctrl-v-always = Pega
+ui-settings-ctrl-v-outside = Pega, salvo en programas a pantalla completa (vim, less...)
+ui-settings-ctrl-v-never = Se envía a la sesión (Ctrl+Mayús+V pega)
 ui-connect-via = vía { $route }
 
 ## Translations of text written in English first.
