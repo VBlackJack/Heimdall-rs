@@ -43,13 +43,14 @@ pub(crate) fn area_bounds() -> Task<Option<Rectangle>> {
     iced::advanced::widget::operate(AreaBounds::default())
 }
 
-/// Captures the session shown and copies it to the clipboard; whether it was copied.
-pub(crate) fn copy_session() -> Task<bool> {
-    area_bounds().then(|bounds| {
+/// Captures the session shown in the main window, `main`, and copies it to the clipboard;
+/// whether it was copied.
+pub(crate) fn copy_session(main: Option<window::Id>) -> Task<bool> {
+    area_bounds().then(move |bounds| {
         let Some(bounds) = bounds else {
             return Task::done(false);
         };
-        window::latest().then(move |window| match window {
+        crate::shell::main_window_task(main).then(move |window| match window {
             Some(window) => window::screenshot(window).then(move |shot| {
                 Task::perform(async move { copy(&shot, bounds) }, |copied| copied)
             }),

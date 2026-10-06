@@ -90,7 +90,11 @@ const MIN_WINDOW_SIZE: Size = Size::new(640.0, 400.0);
 /// Largest side a window kept is opened at, in logical pixels: no screen is larger.
 const MAX_WINDOW_SIDE: f32 = 16_384.0;
 
-/// Runs the application until its window closes.
+/// Runs the application until it exits: its main window opened first, put back where it
+/// was left.
+///
+/// A daemon rather than an application, so that windows beside the main one can open; it
+/// ends through `iced::exit`, as every quit already did, and when the main window closes.
 ///
 /// # Errors
 ///
@@ -116,16 +120,7 @@ pub fn run() -> iced::Result {
         .map_or(WINDOW_SIZE, |(width, height)| Size::new(width, height));
     let hidden = screens::opens_hidden(&left);
     let maximized = left.maximized && !hidden;
-    let application = iced::application(
-        move || (Shell::new(), screens::restore(&left)),
-        Shell::step,
-        Shell::view,
-    )
-    .title(Shell::title)
-    .theme(Shell::theme)
-    .subscription(Shell::subscription)
-    .default_font(Font::with_name(UI_FONT_FAMILY))
-    .window(window::Settings {
+    let settings = window::Settings {
         size,
         maximized,
         visible: !hidden,
@@ -133,9 +128,23 @@ pub fn run() -> iced::Result {
         // Quitting with live sessions asks first; their sessions are then cancelled.
         exit_on_close_request: false,
         ..window::Settings::default()
-    });
+    };
+    // The main window asked to open, named to the shell, then put back where it was left
+    // once open, as an application's boot task runs once its window is.
+    let boot = move || {
+        let (main, opened) = window::open(settings.clone());
+        let mut shell = Shell::new();
+        shell.set_main_window(main);
+        let left = left.clone();
+        (shell, opened.then(move |id| screens::restore(id, &left)))
+    };
+    let daemon = iced::daemon(boot, Shell::step, Shell::window_view)
+        .title(Shell::window_title)
+        .theme(|shell: &Shell, _window| shell.theme())
+        .subscription(Shell::subscription)
+        .default_font(Font::with_name(UI_FONT_FAMILY));
     FONTS
         .iter()
-        .fold(application, |application, face| application.font(*face))
+        .fold(daemon, |daemon, face| daemon.font(*face))
         .run()
 }
