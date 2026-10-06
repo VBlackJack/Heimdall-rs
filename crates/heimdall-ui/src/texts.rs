@@ -119,6 +119,7 @@ pub fn error(error: &UiError) -> String {
         UiError::InvalidHost => fl!("ui-error-invalid-host"),
         UiError::InvalidUsername => fl!("ui-error-invalid-username"),
         UiError::WinRmHttpsThroughGateway => fl!("ui-error-winrm-https-gateway"),
+        UiError::RdpServerNotAuthenticated => fl!("ui-error-rdp-server-not-authenticated"),
         UiError::NeedsRdGateway(gateway) => {
             fl!("ui-error-rd-gateway", gateway = server_text(gateway))
         }
@@ -320,9 +321,6 @@ pub fn rdp_extra(extra: RdpExtra) -> String {
         RdpExtra::Usb => fl!("ui-import-dropped-rdp-usb"),
         RdpExtra::Microphone => fl!("ui-import-dropped-rdp-microphone"),
         RdpExtra::MultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
-        RdpExtra::StrictServerAuthentication => {
-            fl!("ui-rdp-extra-strict-server-authentication")
-        }
         RdpExtra::FullScreen => fl!("ui-rdp-extra-full-screen"),
     }
 }
@@ -357,6 +355,20 @@ pub fn environment_name(environment: Option<heimdall_core::metadata::Environment
         Some(Environment::Staging) => fl!("ui-profile-environment-staging"),
         Some(Environment::Lab) => fl!("ui-profile-environment-lab"),
         Some(Environment::Personal) => fl!("ui-profile-environment-personal"),
+    }
+}
+
+/// Where an imported profile came from, as the C# `ProfileOriginDisplay.GetDisplayName`.
+#[must_use]
+pub fn origin_name(origin: heimdall_core::metadata::ProfileOrigin) -> String {
+    use heimdall_core::metadata::ProfileOrigin;
+    match origin {
+        ProfileOrigin::RdpFile => fl!("ui-origin-rdp-file"),
+        ProfileOrigin::OpenSsh => fl!("ui-origin-openssh"),
+        ProfileOrigin::Putty => fl!("ui-origin-putty"),
+        ProfileOrigin::MRemoteNg => fl!("ui-origin-mremoteng"),
+        ProfileOrigin::MobaXterm => fl!("ui-origin-mobaxterm"),
+        ProfileOrigin::RdcMan => fl!("ui-origin-rdcman"),
     }
 }
 

@@ -136,6 +136,10 @@ impl App {
                 DesktopSizing::FollowsTab | DesktopSizing::TabSizeOnce => DEFAULT_DESKTOP,
             },
             desktop_scale: heimdall_rdp::desktop_scale_factor(self.display_scale),
+            logon_timeout: match self.settings.rdp_connect_timeout {
+                0 => None,
+                seconds => Some(std::time::Duration::from_secs(u64::from(seconds))),
+            },
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,

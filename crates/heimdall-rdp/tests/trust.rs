@@ -171,6 +171,7 @@ fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpCo
         trusted_for_run: Vec::new(),
         options: heimdall_core::profile::RdpOptions::default(),
         several_servers: false,
+        strict_server_authentication: false,
         // Negotiate: with no KDC to be found, NTLM still sends the first message.
         kerberos: true,
         time_zone: None,
@@ -363,6 +364,7 @@ async fn at_an_address_several_servers_answer_a_new_key_is_asked_about_and_trust
     std::fs::write(&known, format!("{HOST}:{PORT} {other}\n")).expect("known");
     let pool = |accepted| RdpConfig {
         several_servers: true,
+        strict_server_authentication: false,
         ..config(&known, accepted, PORT)
     };
 
@@ -592,4 +594,40 @@ async fn an_unknown_server_over_tcp_is_asked_about_and_asks_nothing() {
         asked, None,
         "no credentials for a server whose identity is open"
     );
+}
+
+#[tokio::test]
+async fn under_strict_authentication_a_server_no_authority_vouches_for_is_refused_unasked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    let strict = RdpConfig {
+        strict_server_authentication: true,
+        ..config(&known, None, PORT)
+    };
+    // A self-signed certificate: no certificate authority of this computer validates it.
+    let (outcome, seen) = attempt(&strict, KEY).await;
+    assert!(
+        matches!(outcome, Err(RdpError::ServerNotAuthenticated)),
+        "{outcome:?}"
+    );
+    assert!(!seen.asked, "no password for a server not authenticated");
+    assert_eq!(seen.after_handshake, 0, "nothing sent past the handshake");
+    assert!(lines(&known).is_empty(), "never recorded");
+
+    // Trusted before: pinned, it goes through, as the C# keeps a profile's trust.
+    let accepted = config(&known, Some(expected_pin()), PORT);
+    let _ = attempt(&accepted, KEY).await;
+    let strict = RdpConfig {
+        strict_server_authentication: true,
+        ..config(&known, None, PORT)
+    };
+    let (outcome, seen) = attempt(&strict, KEY).await;
+    assert!(
+        !matches!(
+            outcome,
+            Err(RdpError::ServerNotAuthenticated | RdpError::UnknownCertificate(_))
+        ),
+        "{outcome:?}"
+    );
+    assert!(seen.asked, "the credentials come once the pin matches");
 }

@@ -779,3 +779,37 @@ fn the_powershell_execution_policy_is_kept_by_its_csharp_name_and_powershell_s_o
     settings.save(&path).expect("save");
     assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
 }
+
+#[test]
+fn the_rdp_connection_timeout_is_kept_within_the_csharp_range_and_reset_with_rdp() {
+    use heimdall_core::settings::{RDP_CONNECT_TIMEOUT_DEFAULT, rdp_connect_timeout_accepted};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.rdp_connect_timeout, 45, "the C# 45 000 ms");
+    assert_eq!(RDP_CONNECT_TIMEOUT_DEFAULT, 45);
+    for (seconds, accepted) in [(0, true), (4, false), (5, true), (600, true), (601, false)] {
+        assert_eq!(rdp_connect_timeout_accepted(seconds), accepted, "{seconds}");
+    }
+
+    settings.rdp_connect_timeout = 0;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path).expect("load").rdp_connect_timeout,
+        0,
+        "off, kept"
+    );
+
+    // Edited by hand out of the range: the default.
+    std::fs::write(&path, "version = 1\n[rdp_session]\nconnect_timeout = 3\n").expect("write");
+    let mut read = Settings::load(&path).expect("load");
+    assert_eq!(read.rdp_connect_timeout, RDP_CONNECT_TIMEOUT_DEFAULT);
+
+    read.rdp_connect_timeout = 120;
+    read.reset_rdp();
+    assert_eq!(
+        read.rdp_connect_timeout, RDP_CONNECT_TIMEOUT_DEFAULT,
+        "reset with RDP"
+    );
+}

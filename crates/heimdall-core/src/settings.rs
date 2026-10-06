@@ -251,6 +251,9 @@ pub struct Settings {
     /// Attempts of an RDP desktop's auto-reconnect, as the C# `RdpAutoReconnectMaxAttempts`:
     /// within [`RDP_AUTO_RECONNECT_ATTEMPTS_MIN`] and [`RDP_AUTO_RECONNECT_ATTEMPTS_MAX`].
     pub rdp_auto_reconnect_attempts: u32,
+    /// Seconds an RDP connection may take to log on before it is given up, 0 for no limit,
+    /// as the C# `RdpConnectWatchdogTimeoutMs`.
+    pub rdp_connect_timeout: u32,
     /// The sizes RDP tabs' Resolution menus offer, as the C# `RdpResolutionPresets`; empty
     /// offers [`RESOLUTION_PRESETS`]. See [`Settings::resolution_presets`].
     pub rdp_resolution_presets: Vec<(u16, u16)>,
@@ -411,6 +414,20 @@ pub const RDP_AUTO_RECONNECT_ATTEMPTS_MAX: u32 = 20;
 /// Fewest attempts of an RDP auto-reconnect accepted, as the C# setting's range.
 pub const RDP_AUTO_RECONNECT_ATTEMPTS_MIN: u32 = 1;
 
+/// Seconds an RDP connection may take by default, as the C# watchdog's 45 000 ms.
+pub const RDP_CONNECT_TIMEOUT_DEFAULT: u32 = 45;
+/// Fewest seconds accepted besides 0, as the C# range's 5 000 ms.
+pub const RDP_CONNECT_TIMEOUT_MIN: u32 = 5;
+/// Most seconds accepted, as the C# range's 600 000 ms.
+pub const RDP_CONNECT_TIMEOUT_MAX: u32 = 600;
+
+/// Whether `seconds` is an RDP connection timeout the settings accept: 0 for none, or within
+/// the C# range.
+#[must_use]
+pub fn rdp_connect_timeout_accepted(seconds: u32) -> bool {
+    seconds == 0 || (RDP_CONNECT_TIMEOUT_MIN..=RDP_CONNECT_TIMEOUT_MAX).contains(&seconds)
+}
+
 /// Whether `attempts` is a number of RDP auto-reconnect attempts the settings accept.
 #[must_use]
 pub fn rdp_auto_reconnect_attempts_accepted(attempts: u32) -> bool {
@@ -500,6 +517,7 @@ impl Default for Settings {
             ssh_auto_reconnect: false,
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+            rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
@@ -561,6 +579,9 @@ struct ReachabilitySection {
 struct RdpSessionSection {
     #[serde(default)]
     auto_reconnect_attempts: Option<u32>,
+    /// Seconds, 0 for no limit.
+    #[serde(default)]
+    connect_timeout: Option<u32>,
     /// One `WIDTHxHEIGHT` per preset.
     #[serde(default)]
     resolution_presets: Option<Vec<String>>,
@@ -751,6 +772,7 @@ impl Settings {
         let defaults = Self::default();
         self.rdp_defaults = defaults.rdp_defaults;
         self.rdp_auto_reconnect_attempts = defaults.rdp_auto_reconnect_attempts;
+        self.rdp_connect_timeout = defaults.rdp_connect_timeout;
         self.rdp_resolution_presets = defaults.rdp_resolution_presets;
     }
 
@@ -838,6 +860,11 @@ impl Settings {
                 file.rdp_session.auto_reconnect_attempts,
                 rdp_auto_reconnect_attempts_accepted,
                 RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
+            ),
+            rdp_connect_timeout: within(
+                file.rdp_session.connect_timeout,
+                rdp_connect_timeout_accepted,
+                RDP_CONNECT_TIMEOUT_DEFAULT,
             ),
             // A line that is not a preset is left out, as the C# menu leaves it out.
             rdp_resolution_presets: file.rdp_session.resolution_presets.map_or_else(
@@ -981,6 +1008,7 @@ impl Settings {
             rdp: self.rdp_defaults,
             rdp_session: RdpSessionSection {
                 auto_reconnect_attempts: Some(self.rdp_auto_reconnect_attempts),
+                connect_timeout: Some(self.rdp_connect_timeout),
                 resolution_presets: Some(
                     self.rdp_resolution_presets
                         .iter()

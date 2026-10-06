@@ -56,7 +56,7 @@ use heimdall_app::{
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, SshGateway, display_address};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{
     BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
@@ -549,6 +549,8 @@ pub enum Message {
     },
     /// Show a page of the window's navigation.
     Navigate(Destination),
+    /// Ctrl+Alt+Home on a remote desktop: the keyboard back to the window.
+    ContentRelease,
     /// Show the Settings page's Gateways tab, as the C# Tunnels page's link.
     ManageGateways,
     /// The external editor typed in the Settings page.
@@ -607,6 +609,7 @@ impl fmt::Debug for Message {
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
             Self::Navigate(destination) => write!(f, "Navigate({destination:?})"),
+            Self::ContentRelease => f.write_str("ContentRelease"),
             Self::ManageGateways => f.write_str("ManageGateways"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
@@ -987,6 +990,40 @@ const HIDE_SIDEBAR_GLYPH: &str = "\u{2190}";
 /// The button showing the sidebar again: an arrow toward where it comes from.
 const SHOW_SIDEBAR_GLYPH: &str = "\u{2192}";
 
+/// What an RDP session shares, as the C# session bar's indicators: the clipboard, the
+/// drives, the sound played here; each says what it is when pointed at.
+fn redirection_badges<'a>(profile: &RdpProfile) -> Vec<Element<'a, Message>> {
+    [
+        (
+            profile.redirect_clipboard,
+            fl!("ui-desktop-shares-clipboard"),
+            fl!("ui-desktop-shares-clipboard-tooltip"),
+        ),
+        (
+            profile.redirect_drives,
+            fl!("ui-desktop-shares-drives"),
+            fl!("ui-desktop-shares-drives-tooltip"),
+        ),
+        (
+            profile.options.audio == heimdall_core::profile::AudioPlayback::Local,
+            fl!("ui-desktop-shares-audio"),
+            fl!("ui-desktop-shares-audio-tooltip"),
+        ),
+    ]
+    .into_iter()
+    .filter(|(on, _, _)| *on)
+    .map(|(_, label, tip)| {
+        tooltip(
+            text(label).size(SMALL_SIZE).style(text::secondary),
+            text(tip).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+        .into()
+    })
+    .collect()
+}
+
 /// The application's name, at the head of the navigation: a name, not translated.
 const APP_NAME: &str = "Heimdall";
 
@@ -1360,6 +1397,7 @@ impl Shell {
             }
             message @ (Message::TreeClick(_)
             | Message::ContentFocus
+            | Message::ContentRelease
             | Message::TreeShortcut(_)
             | Message::TreeHover(_)
             | Message::TreeHoverLeft(_)
@@ -3712,22 +3750,44 @@ impl Shell {
         let attempts: Vec<u32> = (heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MIN
             ..=heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX)
             .collect();
+        // As the C# watchdog: off, or a choice of the seconds its range allows.
+        let timeouts: Vec<TimeoutChoice> =
+            CONNECT_TIMEOUTS.into_iter().map(TimeoutChoice).collect();
+        let timeout = row![
+            text(fl!("ui-settings-rdp-connect-timeout")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                timeouts,
+                Some(TimeoutChoice(self.app.settings().rdp_connect_timeout)),
+                |TimeoutChoice(seconds)| {
+                    Message::App(AppMessage::Settings(SettingsMessage::RdpConnectTimeout(
+                        seconds,
+                    )))
+                },
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center);
         container(
-            row![
-                text(fl!("ui-settings-rdp-auto-reconnect-attempts")),
-                iced::widget::space::horizontal(),
-                pick_list(
-                    attempts,
-                    Some(self.app.settings().rdp_auto_reconnect_attempts),
-                    |attempts| {
-                        Message::App(AppMessage::Settings(
-                            SettingsMessage::RdpAutoReconnectAttempts(attempts),
-                        ))
-                    },
-                ),
+            column![
+                row![
+                    text(fl!("ui-settings-rdp-auto-reconnect-attempts")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        attempts,
+                        Some(self.app.settings().rdp_auto_reconnect_attempts),
+                        |attempts| {
+                            Message::App(AppMessage::Settings(
+                                SettingsMessage::RdpAutoReconnectAttempts(attempts),
+                            ))
+                        },
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+                timeout,
             ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
+            .spacing(SPACING),
         )
         .padding(PADDING)
         .max_width(SETTINGS_WIDTH)
@@ -4087,7 +4147,9 @@ impl Shell {
             ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
-            | Message::TreeClick(_) => self.tree_focused = true,
+            | Message::TreeClick(_)
+            // The desktop takes no more keys: the tree has them, as after a click in it.
+            | Message::ContentRelease => self.tree_focused = true,
             Message::ContentFocus => self.tree_focused = false,
             _ => {}
         }
@@ -5199,6 +5261,7 @@ impl Shell {
     fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
+            .on_release(Message::ContentRelease)
             .interactive(self.app.dialog.is_none() && !self.tree_focused)
             .fit(fit)
             .density(self.density);
@@ -5249,6 +5312,10 @@ impl Shell {
                 tooltip::Position::Right,
             )
             .style(container::rounded_box),
+            // The C# Send keys menu's "Keyboard shortcuts...".
+            button(text(fl!("ui-desktop-shortcuts")).size(SMALL_SIZE))
+                .style(button::text)
+                .on_press(Message::App(AppMessage::ShowShortcuts)),
             mode,
             fullscreen,
             disconnect,
@@ -5316,6 +5383,9 @@ impl Shell {
                 )
                 .style(container::rounded_box),
             );
+        }
+        if let TabProfile::Rdp(profile) = &tab.profile {
+            bar = bar.extend(redirection_badges(profile));
         }
         if let Some(name) = &pane.desktop_name {
             bar = bar.push(text(name.as_str()).size(SMALL_SIZE).style(text::secondary));
@@ -6462,6 +6532,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
+        ProfileToggle::StrictServerAuthentication => fl!("ui-profile-toggle-strict-server-auth"),
         ProfileToggle::AntiIdle => fl!("ui-profile-toggle-anti-idle"),
         ProfileToggle::AutoReconnect => fl!("ui-profile-toggle-auto-reconnect"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
@@ -7228,6 +7299,18 @@ fn profile_form<'a>(
     // The fields scroll; the error and the buttons stay in view under them, as the C#
     // dialog's footer does.
     let mut footer = Column::new().spacing(SPACING);
+    // Above the error, as the C# dialog's footer: where an imported profile came from.
+    if let Some(origin) = draft.metadata_kept.origin {
+        footer = footer.push(
+            text(texts::origin_name(origin))
+                .size(SMALL_SIZE)
+                .style(text::secondary)
+                .font(iced::Font {
+                    style: iced::font::Style::Italic,
+                    ..iced::Font::DEFAULT
+                }),
+        );
+    }
     if let Some(error) = error {
         footer = footer.push(text(texts::draft_error(error)).style(text::danger));
     }
@@ -8183,6 +8266,23 @@ fn session_logging_choice(draft: &ProfileDraft) -> Element<'_, Message> {
 /// An SSH agent preference in the Settings page's list, named as the C# Heimdall names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AgentChoice(AgentPreference);
+
+/// The RDP connection timeouts offered, in seconds, 0 for none: within the C# range.
+const CONNECT_TIMEOUTS: [u32; 9] = [0, 15, 30, 45, 60, 90, 120, 300, 600];
+
+/// An RDP connection timeout as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TimeoutChoice(u32);
+
+impl std::fmt::Display for TimeoutChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&if self.0 == 0 {
+            fl!("ui-settings-rdp-connect-timeout-off")
+        } else {
+            fl!("ui-settings-rdp-connect-timeout-seconds", seconds = self.0)
+        })
+    }
+}
 
 /// An execution policy as the list names it, as the C# does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
