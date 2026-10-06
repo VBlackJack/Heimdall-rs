@@ -24,6 +24,7 @@ use std::path::Path;
 use heimdall_core::profile::{
     LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId,
 };
+use heimdall_core::settings::ExecutionPolicy;
 use heimdall_term::local::{self, LocalArguments as TermArguments};
 use tokio_util::sync::CancellationToken;
 
@@ -55,7 +56,8 @@ pub struct LocalConfirmation {
 
 impl App {
     /// Opens a tab running `shell`.
-    pub(super) fn open_local(&mut self, mut shell: LocalShell) -> Vec<Effect> {
+    pub(super) fn open_local(&mut self, shell: LocalShell) -> Vec<Effect> {
+        let mut shell = powershell_options(shell, self.settings.powershell_execution_policy);
         // Where a terminal opens: the home folder, not wherever Heimdall was started from.
         shell
             .working_directory
@@ -95,12 +97,16 @@ impl App {
         };
         let Ok(program_path) = local::program_path(profile.command.program.as_deref()) else {
             // Nothing can run: the tab says why, as starting it would.
-            let effects = self.open_local(shell(&profile, &profile.command, None));
+            let effects = self.open_local(self.profile_shell(&profile, &profile.command, None));
             self.reopened_by(Reopen::Profile(profile.id));
             return effects;
         };
         if profile.may_run(&program_path) {
-            let effects = self.open_local(shell(&profile, &profile.command, Some(&program_path)));
+            let effects = self.open_local(self.profile_shell(
+                &profile,
+                &profile.command,
+                Some(&program_path),
+            ));
             self.reopened_by(Reopen::Profile(profile.id));
             return effects;
         }
@@ -135,7 +141,7 @@ impl App {
                 else {
                     return Vec::new();
                 };
-                let effects = self.open_local(shell(
+                let effects = self.open_local(self.profile_shell(
                     &profile,
                     &approval.command,
                     Some(&approval.program_path),
@@ -154,6 +160,94 @@ impl App {
         }
     }
 }
+
+impl App {
+    /// What a tab runs for `profile`'s `command`, with its environment's name among the
+    /// variables it is given, as the C# `HEIMDALL_ENV`.
+    fn profile_shell(
+        &self,
+        profile: &LocalProfile,
+        command: &LocalCommand,
+        program_path: Option<&Path>,
+    ) -> LocalShell {
+        let mut shell = shell(profile, command, program_path);
+        if let Some(environment) = self
+            .store
+            .metadata(&profile.id)
+            .and_then(|metadata| metadata.environment)
+        {
+            shell
+                .environment
+                .push((CONTEXT_ENV.to_owned(), environment.name().to_owned()));
+        }
+        shell
+    }
+}
+
+/// `shell` as the C# starts a local `PowerShell`: `-ExecutionPolicy` when one is chosen,
+/// and `-NoLogo` unless its arguments already ask it. Any other program is left as it is; on
+/// Windows, no program at all is `PowerShell`.
+fn powershell_options(mut shell: LocalShell, policy: ExecutionPolicy) -> LocalShell {
+    let is_powershell = match shell.program.as_deref() {
+        // Its last part, whichever separator a Windows or Unix path uses, without ".exe".
+        Some(program) => {
+            let name = program.rsplit(['/', '\\']).next().unwrap_or(program);
+            let stem = name
+                .len()
+                .checked_sub(EXE_SUFFIX.len())
+                .filter(|at| name.is_char_boundary(*at))
+                .filter(|at| name[*at..].eq_ignore_ascii_case(EXE_SUFFIX))
+                .map_or(name, |at| &name[..at]);
+            POWERSHELL_PROGRAMS
+                .iter()
+                .any(|known| stem.eq_ignore_ascii_case(known))
+        }
+        None => cfg!(windows),
+    };
+    if !is_powershell {
+        return shell;
+    }
+    let mut prefix: Vec<String> = Vec::new();
+    if policy != ExecutionPolicy::Default {
+        prefix.extend([EXECUTION_POLICY_FLAG.to_owned(), policy.name().to_owned()]);
+    }
+    let has_no_logo = match &shell.arguments {
+        TermArguments::List(arguments) => arguments
+            .iter()
+            .any(|argument| argument.eq_ignore_ascii_case(NO_LOGO_FLAG)),
+        TermArguments::WindowsLine(line) => line
+            .to_ascii_lowercase()
+            .contains(&NO_LOGO_FLAG.to_ascii_lowercase()),
+    };
+    if !has_no_logo {
+        prefix.push(NO_LOGO_FLAG.to_owned());
+    }
+    if prefix.is_empty() {
+        return shell;
+    }
+    shell.arguments = match shell.arguments {
+        TermArguments::List(arguments) => {
+            TermArguments::List(prefix.into_iter().chain(arguments).collect())
+        }
+        TermArguments::WindowsLine(line) if line.trim().is_empty() => {
+            TermArguments::WindowsLine(prefix.join(" "))
+        }
+        TermArguments::WindowsLine(line) => {
+            TermArguments::WindowsLine(format!("{} {line}", prefix.join(" ")))
+        }
+    };
+    shell
+}
+
+/// The programs taken for `PowerShell`, by their name without extension, as the C#
+/// `IsPowerShellExecutable`.
+const POWERSHELL_PROGRAMS: [&str; 2] = ["powershell", "pwsh"];
+/// The extension of a Windows program, left out of its name.
+const EXE_SUFFIX: &str = ".exe";
+/// `PowerShell`'s flag naming the execution policy.
+const EXECUTION_POLICY_FLAG: &str = "-ExecutionPolicy";
+/// `PowerShell`'s flag leaving its banner out.
+const NO_LOGO_FLAG: &str = "-NoLogo";
 
 /// What a tab runs for `profile`'s `command`: the program at `program_path` when it was
 /// found, so that the file run is the one approved, not whatever the name finds by then.
@@ -196,6 +290,8 @@ const CONTEXT_NAME: &str = "HEIMDALL_NAME";
 const CONTEXT_TYPE: &str = "HEIMDALL_TYPE";
 /// Its folder, as the C# `HEIMDALL_GROUP`.
 const CONTEXT_GROUP: &str = "HEIMDALL_GROUP";
+/// Its environment, as the C# `HEIMDALL_ENV`.
+const CONTEXT_ENV: &str = "HEIMDALL_ENV";
 /// The type a local profile is said to be, the C# connection type's.
 const CONTEXT_TYPE_LOCAL: &str = "Local";
 
@@ -203,5 +299,79 @@ pub(super) fn term_arguments(arguments: &LocalArguments) -> TermArguments {
     match arguments {
         LocalArguments::List(args) => TermArguments::List(args.clone()),
         LocalArguments::WindowsLine(line) => TermArguments::WindowsLine(line.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn local(program: Option<&str>, arguments: TermArguments) -> LocalShell {
+        LocalShell {
+            name: "shell".to_owned(),
+            program: program.map(str::to_owned),
+            arguments,
+            working_directory: None,
+            environment: Vec::new(),
+        }
+    }
+
+    fn list(arguments: &[&str]) -> TermArguments {
+        TermArguments::List(
+            arguments
+                .iter()
+                .map(|argument| (*argument).to_owned())
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn a_powershell_starts_without_its_banner_and_with_the_policy_chosen_as_the_csharp() {
+        let started = |program, arguments, policy| {
+            powershell_options(local(program, arguments), policy).arguments
+        };
+        assert_eq!(
+            started(
+                Some(r"C:\Tools\pwsh.exe"),
+                list(&["-NoExit"]),
+                ExecutionPolicy::Default
+            ),
+            list(&["-NoLogo", "-NoExit"])
+        );
+        assert_eq!(
+            started(Some("powershell"), list(&[]), ExecutionPolicy::Bypass),
+            list(&["-ExecutionPolicy", "Bypass", "-NoLogo"])
+        );
+        assert_eq!(
+            started(
+                Some("PWSH.EXE"),
+                list(&["-nologo"]),
+                ExecutionPolicy::Default
+            ),
+            list(&["-nologo"]),
+            "asked already: not twice"
+        );
+        assert_eq!(
+            started(
+                Some("powershell.exe"),
+                TermArguments::WindowsLine("-Command Get-Date".to_owned()),
+                ExecutionPolicy::RemoteSigned
+            ),
+            TermArguments::WindowsLine(
+                "-ExecutionPolicy RemoteSigned -NoLogo -Command Get-Date".to_owned()
+            )
+        );
+        assert_eq!(
+            started(Some("cmd.exe"), list(&["/k"]), ExecutionPolicy::Bypass),
+            list(&["/k"]),
+            "another program is left as it is"
+        );
+        // No program: PowerShell on Windows, the user's shell elsewhere.
+        let default = started(None, list(&[]), ExecutionPolicy::Default);
+        if cfg!(windows) {
+            assert_eq!(default, list(&["-NoLogo"]));
+        } else {
+            assert_eq!(default, list(&[]));
+        }
     }
 }

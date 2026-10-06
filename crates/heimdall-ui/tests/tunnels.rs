@@ -227,3 +227,28 @@ fn an_open_tunnel_is_a_row_with_the_csharp_columns_its_menu_and_its_close_button
     ui.find("Tunnel on port 9443 closed.")
         .expect("the C# status line");
 }
+
+#[test]
+fn the_tunnels_page_says_when_each_started_and_leads_to_the_gateways() {
+    use heimdall_ui::shell::Destination;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path(), vec![bastion()]);
+    opened_tunnel(&mut shell);
+    let _ = shell.update(Message::Navigate(Destination::Tunnels));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Started").expect("the C# page's column");
+        ui.click("Manage gateways in Settings...")
+            .expect("the C# page's link");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ManageGateways))
+        );
+    }
+    let _ = shell.update(Message::ManageGateways);
+    let mut ui = simulator(&shell);
+    ui.find("Bastion")
+        .expect("the Gateways tab of the settings");
+    assert!(ui.find("Manage gateways in Settings...").is_err());
+}

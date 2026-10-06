@@ -748,3 +748,34 @@ fn the_reachability_check_is_on_with_the_csharp_numbers_and_kept_within_their_ra
     );
     assert_eq!(read.reachability, Reachability::default());
 }
+
+#[test]
+fn the_powershell_execution_policy_is_kept_by_its_csharp_name_and_powershell_s_own_by_default() {
+    use heimdall_core::settings::ExecutionPolicy;
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(
+        Settings::default().powershell_execution_policy,
+        ExecutionPolicy::Default
+    );
+    for (name, read) in [
+        ("bypass", ExecutionPolicy::Bypass),
+        ("AllSigned", ExecutionPolicy::AllSigned),
+        // A name not known, as the C# load: the default.
+        ("Restricted", ExecutionPolicy::Default),
+    ] {
+        let text = format!("version = 1\n[terminal]\npowershell_execution_policy = \"{name}\"\n");
+        assert_eq!(
+            written(dir.path(), &text).powershell_execution_policy,
+            read,
+            "{name}"
+        );
+    }
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings {
+        powershell_execution_policy: ExecutionPolicy::RemoteSigned,
+        ..Settings::default()
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+}

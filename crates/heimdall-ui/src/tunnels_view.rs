@@ -194,18 +194,37 @@ pub fn new_tunnel<'a>(
     content.push(row![cancel, open].spacing(SPACING)).into()
 }
 
-/// The question about a gateway's unknown key on a tunnel's way, in the words a tab asks it.
+/// The question about a gateway's unknown key on a tunnel's way, in the words and with the
+/// choices a tab asks it: its algorithm, its fingerprint to copy, and trusting it once.
 #[must_use]
-pub fn host_key<'a>(host: &'a str, port: u16, fingerprint: &'a str) -> Element<'a, Message> {
+pub fn host_key<'a>(
+    host: &'a str,
+    port: u16,
+    fingerprint: &'a str,
+    algorithm: &'a str,
+) -> Element<'a, Message> {
     let port = port.to_string();
     column![
         text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
         text(fl!("ui-hostkey-body", host = host, port = port.as_str())),
-        text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint)).font(Font::MONOSPACE),
+        text(fl!("ui-hostkey-algorithm", algorithm = algorithm)).font(Font::MONOSPACE),
+        row![
+            text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint))
+                .font(Font::MONOSPACE)
+                .width(Length::Fill),
+            button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(PANEL_TEXT_SIZE))
+                .style(button::secondary)
+                .on_press(tunnel(TunnelMessage::CopyKeyFingerprint)),
+        ]
+        .spacing(SPACING)
+        .align_y(Alignment::Center),
         row![
             button(text(fl!("ui-hostkey-reject-button")))
                 .style(button::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-hostkey-trust-once-button")))
+                .style(button::secondary)
+                .on_press(tunnel(TunnelMessage::TrustKeyOnce)),
             button(text(fl!("ui-hostkey-accept-button")))
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
@@ -257,13 +276,13 @@ pub fn panel(tunnels: &[Tunnel]) -> Element<'_, Message> {
             .style(text::secondary)
             .into()
     } else {
-        let rows = tunnels.iter().map(tunnel_row);
+        let rows = tunnels.iter().map(|open| tunnel_row(open, false));
         scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
             .height(Length::Fill)
             .into()
     };
     container(
-        column![header, columns(), rule::horizontal(1), body]
+        column![header, columns(false), rule::horizontal(1), body]
             .spacing(SPACING / 2.0)
             .width(Length::Fill),
     )
@@ -290,13 +309,17 @@ pub fn page(tunnels: &[Tunnel]) -> Element<'_, Message> {
     let body: Element<'_, Message> = if tunnels.is_empty() {
         text(fl!("ui-tunnels-empty")).style(text::secondary).into()
     } else {
-        let rows = tunnels.iter().map(tunnel_row);
+        let rows = tunnels.iter().map(|open| tunnel_row(open, true));
         scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
             .height(Length::Fill)
             .into()
     };
+    // As the C# page's link under the grid.
+    let manage = button(text(fl!("ui-tunnels-manage-gateways")))
+        .style(button::text)
+        .on_press(Message::ManageGateways);
     container(
-        column![header, columns(), rule::horizontal(1), body]
+        column![header, columns(true), rule::horizontal(1), body, manage]
             .spacing(SPACING)
             .width(Length::Fill)
             .height(Length::Fill),
@@ -307,11 +330,14 @@ pub fn page(tunnels: &[Tunnel]) -> Element<'_, Message> {
     .into()
 }
 
+/// Width of the "Started" column, as the C# grid's.
+const STARTED_WIDTH: f32 = 80.0;
+
 /// Room around the Tunnels page.
 const PAGE_PADDING: f32 = 16.0;
 
-/// The panel's column titles, as the C# grid's.
-fn columns<'a>() -> Element<'a, Message> {
+/// The column titles, as the C# grid's; `started` on the page, which has the room.
+fn columns<'a>(started: bool) -> Element<'a, Message> {
     let title = |label: String| text(label).size(PANEL_TEXT_SIZE).style(text::secondary);
     row![
         space().width(DOT_SIDE),
@@ -320,15 +346,16 @@ fn columns<'a>() -> Element<'a, Message> {
         title(fl!("ui-tunnels-column-local")).width(LOCAL_WIDTH),
         title(fl!("ui-tunnels-column-remote")).width(Length::Fill),
         title(fl!("ui-tunnels-column-port")).width(PORT_WIDTH),
-        space().width(CLOSE_WIDTH),
     ]
+    .push(started.then(|| title(fl!("ui-tunnels-column-started")).width(STARTED_WIDTH)))
+    .push(space().width(CLOSE_WIDTH))
     .spacing(SPACING)
     .into()
 }
 
 /// A tunnel's row: its health dot, gateway, label, local port, remote host and port, and the
 /// button closing it; a right click opens its menu.
-fn tunnel_row(open: &Tunnel) -> Element<'_, Message> {
+fn tunnel_row(open: &Tunnel, started: bool) -> Element<'_, Message> {
     let cell = |value: String| text(value).size(PANEL_TEXT_SIZE);
     let interrupted = open.interrupted;
     let line = row![
@@ -345,6 +372,9 @@ fn tunnel_row(open: &Tunnel) -> Element<'_, Message> {
         cell(open.local.port().to_string()).width(LOCAL_WIDTH),
         cell(server_text(&open.spec.remote_host)).width(Length::Fill),
         cell(open.spec.remote_port.to_string()).width(PORT_WIDTH),
+    ]
+    .push(started.then(|| cell(open.started_clock()).width(STARTED_WIDTH)))
+    .push(
         tooltip(
             button(text(fl!("ui-tab-close-button")).size(PANEL_TEXT_SIZE))
                 .style(button::text)
@@ -354,7 +384,7 @@ fn tunnel_row(open: &Tunnel) -> Element<'_, Message> {
             tooltip::Position::Left,
         )
         .style(container::rounded_box),
-    ]
+    )
     .spacing(SPACING)
     .align_y(Alignment::Center);
     mouse_area(line)

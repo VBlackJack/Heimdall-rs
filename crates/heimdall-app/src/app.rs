@@ -1707,6 +1707,14 @@ impl Tab {
         })
     }
 
+    /// The algorithm of the key the tab asks about, as the C# prompt's "Algorithm" row.
+    #[must_use]
+    pub fn host_key_algorithm(&self) -> Option<String> {
+        self.pending_host_key
+            .as_ref()
+            .map(|key| key.algorithm().to_string())
+    }
+
     /// Whether a live session would be lost by closing the tab. An attempt still
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
@@ -1853,6 +1861,17 @@ pub enum TabProfile {
 }
 
 impl TabProfile {
+    /// The SSH gateway its connection goes through, when it goes through one.
+    #[must_use]
+    pub fn gateway(&self) -> Option<&ProfileId> {
+        match self {
+            Self::Ssh(profile) => profile.gateway.as_ref(),
+            Self::Rdp(profile) => profile.gateway.as_ref(),
+            Self::WinRm(profile) => profile.gateway.as_ref(),
+            Self::Telnet(_) | Self::Vnc(_) | Self::Ftp(_) | Self::Local(_) => None,
+        }
+    }
+
     /// The protocol it connects with; a local shell's, `WinRM` included, is local.
     #[must_use]
     pub fn kind(&self) -> ProfileKind {
@@ -1970,6 +1989,8 @@ pub enum Dialog {
         port: u16,
         /// The key's SHA-256 fingerprint.
         fingerprint: String,
+        /// The key's algorithm, as the C# prompt's "Algorithm" row.
+        algorithm: String,
     },
     /// Close a tab whose session is live.
     ConfirmCloseTab(TabId),
