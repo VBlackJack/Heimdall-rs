@@ -94,6 +94,31 @@ pub(super) struct PendingTunnelKey {
 }
 
 impl App {
+    /// The open sessions that go through gateways, in the tabs' order: the rows the C#
+    /// tunnels panel shows for the forwards it opens for them.
+    #[must_use]
+    pub fn session_routes(&self) -> Vec<crate::tunnel::SessionRoute> {
+        self.tabs
+            .iter()
+            .filter_map(|tab| {
+                let route = self.tab_route(tab);
+                let (host, port) = tab.profile.endpoint()?;
+                (!route.is_empty()).then(|| crate::tunnel::SessionRoute {
+                    tab: tab.id,
+                    title: tab.display_title().to_owned(),
+                    route,
+                    remote: (host.to_owned(), port),
+                    interrupted: tab.retry.is_some()
+                        || matches!(
+                            tab.phase,
+                            super::Phase::Failed(_) | super::Phase::Closed { .. }
+                        ),
+                    started: tab.opened,
+                })
+            })
+            .collect()
+    }
+
     /// Opens or closes the tunnels panel, as the C# `TogglePanel`: the choice is the tab
     /// shown's, and its saved profile keeps it for the next time it is opened.
     fn toggle_tunnels_panel(&mut self) {

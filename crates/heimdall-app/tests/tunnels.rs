@@ -569,3 +569,66 @@ fn the_panel_is_the_tab_s_then_its_profile_s_choice_as_the_csharp_resolves_it() 
         Some(false)
     );
 }
+
+#[test]
+fn a_session_through_a_gateway_is_listed_as_its_route_and_close_all_leaves_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let gateway = {
+        let mut app = app(dir.path());
+        save_gateway(&mut app);
+        app.gateways()[0].id.clone()
+    };
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([
+        heimdall_core::profile::SshProfile {
+            gateway: Some(gateway),
+            ..ssh_profile("inner")
+        },
+        ssh_profile("direct"),
+    ]);
+    store.save().expect("save");
+    let mut app = self::app(dir.path());
+    assert!(app.session_routes().is_empty(), "no session open");
+
+    let effects = app.update(Message::ConnectProfile(
+        heimdall_core::profile::ProfileId::new("inner"),
+    ));
+    let [
+        Effect::Connect {
+            tab: inner,
+            attempt,
+            ..
+        },
+    ] = effects.as_slice()
+    else {
+        panic!("one connection: {effects:?}");
+    };
+    let (inner, attempt) = (*inner, *attempt);
+    connect(&mut app, "direct");
+    let routes = app.session_routes();
+    assert_eq!(
+        routes.len(),
+        1,
+        "the direct session goes through nothing: {routes:?}"
+    );
+    let route = &routes[0];
+    assert_eq!(route.tab, inner);
+    assert_eq!(route.route, ["bastion"]);
+    assert_eq!(route.remote, ("inner.lab".to_owned(), 22));
+    assert_eq!(route.title, "server inner");
+    assert!(!route.interrupted, "connecting");
+
+    // Close All is the hand-opened tunnels': the session stays.
+    tunnel(&mut app, TunnelMessage::CloseAll);
+    assert!(app.tab(inner).is_some());
+    assert_eq!(app.session_routes().len(), 1);
+
+    // Its session failed: its route is said interrupted.
+    app.update(Message::Connection {
+        tab: inner,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::ConnectionLost),
+    });
+    assert!(app.session_routes()[0].interrupted);
+}

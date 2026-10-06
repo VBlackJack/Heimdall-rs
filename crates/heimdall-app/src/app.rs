@@ -1659,6 +1659,8 @@ pub struct Tab {
     /// Whether the tunnels panel was opened or closed while this tab was shown, as the C#
     /// `TunnelsPanelManualOverride`: it wins over its profile's choice.
     pub(crate) tunnels_panel: Option<bool>,
+    /// When it opened: a session through a gateway lists it as its route's start.
+    pub(crate) opened: std::time::SystemTime,
     /// Pinned, as the C# tab: before every tab not pinned, and left by "Close others" and
     /// "Close to the right".
     pub pinned: bool,
@@ -1774,6 +1776,7 @@ impl Tab {
             health: crate::server_health::HealthPane::default(),
             pinned: false,
             tunnels_panel: None,
+            opened: std::time::SystemTime::now(),
             reopen: reconnect::Reopen::of(&profile),
             post_connect: None,
             macro_recording: None,

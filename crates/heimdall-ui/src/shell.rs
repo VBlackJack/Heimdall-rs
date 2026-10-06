@@ -2873,17 +2873,17 @@ impl Shell {
                 (!self.sidebar_hidden).then(|| self.sidebar()),
                 (!self.sidebar_hidden).then(splitter),
                 column![self.tab_bar(), self.focusable_content()]
-                    .push(
-                        self.app
-                            .tunnels_panel()
-                            .then(|| crate::tunnels_view::panel(&self.app.tunnels)),
-                    )
+                    .push(self.app.tunnels_panel().then(|| {
+                        crate::tunnels_view::panel(&self.app.tunnels, &self.app.session_routes())
+                    }),)
                     .width(Length::Fill)
                     .height(Length::Fill)
             ]
             .height(Length::Fill)
             .into(),
-            Page::Tunnels => crate::tunnels_view::page(&self.app.tunnels),
+            Page::Tunnels => {
+                crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
+            }
             Page::About => scrollable(
                 container(crate::about_view::view(&self.app))
                     .padding(PADDING)
@@ -4640,6 +4640,70 @@ impl Shell {
         })
     }
 
+    /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
+    /// goes straight.
+    fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
+        let route = self.app.tab_route(tab);
+        if route.is_empty() {
+            return None;
+        }
+        let names = route
+            .iter()
+            .map(|name| server_text(name))
+            .collect::<Vec<_>>()
+            .join(&fl!("ui-route-test-separator"));
+        Some(
+            tooltip(
+                text(fl!("ui-tab-route-badge")).size(SMALL_SIZE),
+                text(fl!("ui-connect-via", route = names)).size(SMALL_SIZE),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+            .into(),
+        )
+    }
+
+    /// What a tab says of itself: its state, protocol and title, then its marks.
+    fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
+        let title = if tab.files.is_some() && tab.custom_title.is_none() {
+            fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
+        } else {
+            tab_label(tab.display_title())
+        };
+        // The session's state and protocol before the name, as the C# tab's dot and icon;
+        // the protocol in the button's own colour, which a secondary one would lose on
+        // both the active and the other tabs.
+        let mut label = row![
+            tree_view::state_dot(Some(SessionState::of(tab))),
+            text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
+            text(title),
+        ]
+        .spacing(SPACING / 2.0)
+        .align_y(iced::Alignment::Center);
+        if tab.pinned {
+            label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+        }
+        // Through gateways, said on the tab while the tunnels panel that lists it is
+        // closed, as the C# tab's tunnel badge; its health is the tab's own dot.
+        if !self.app.tunnels_panel() {
+            label = label.push(self.route_badge(tab));
+        }
+        // A macro recorded from it, or typed into it.
+        if tab.macro_recording.is_some() {
+            label = label.push(
+                text(fl!("ui-tab-recording-badge"))
+                    .size(SMALL_SIZE)
+                    .style(text::danger),
+            );
+        } else if tab.macro_playing.is_some() {
+            label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
+        }
+        if tab.bell && !active {
+            label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+        }
+        label
+    }
+
     fn tab_bar(&self) -> Element<'_, Message> {
         let mut tabs = row![].spacing(SPACING).padding(PADDING);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
@@ -4657,37 +4721,7 @@ impl Shell {
         }
         for tab in &self.app.tabs {
             let active = self.app.active == Some(tab.id);
-            let title = if tab.files.is_some() && tab.custom_title.is_none() {
-                fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
-            } else {
-                tab_label(tab.display_title())
-            };
-            // The session's state and protocol before the name, as the C# tab's dot and icon;
-            // the protocol in the button's own colour, which a secondary one would lose on
-            // both the active and the other tabs.
-            let mut label = row![
-                tree_view::state_dot(Some(SessionState::of(tab))),
-                text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
-                text(title),
-            ]
-            .spacing(SPACING / 2.0)
-            .align_y(iced::Alignment::Center);
-            if tab.pinned {
-                label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
-            }
-            // A macro recorded from it, or typed into it.
-            if tab.macro_recording.is_some() {
-                label = label.push(
-                    text(fl!("ui-tab-recording-badge"))
-                        .size(SMALL_SIZE)
-                        .style(text::danger),
-                );
-            } else if tab.macro_playing.is_some() {
-                label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
-            }
-            if tab.bell && !active {
-                label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
-            }
+            let mut label = self.tab_title(tab, active);
             let marked = self.app.broadcasting()
                 && self.app.settings().broadcast_scope == BroadcastScope::SelectedTabs
                 && shows_terminal(tab);
