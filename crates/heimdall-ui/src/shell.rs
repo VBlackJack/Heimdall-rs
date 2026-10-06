@@ -4177,8 +4177,8 @@ impl Shell {
     }
 
     /// The C# "SFTP browser" card: the browser on or off, and under it the pane opened beside
-    /// an SSH shell, as the C# checkbox it enables. Following the shell's folder is not
-    /// offered while it is not applied.
+    /// an SSH shell and that pane following the shell's working folder, as the C# checkboxes
+    /// it enables.
     fn sftp_settings(&self) -> Element<'_, Message> {
         let sftp = self.app.settings().sftp_browser;
         let set = |sftp| Message::App(AppMessage::Settings(SettingsMessage::SftpBrowser(sftp)));
@@ -4192,6 +4192,14 @@ impl Shell {
                     .on_toggle_maybe(sftp.enabled.then_some(move |auto_open_on_ssh| {
                         set(SftpBrowser {
                             auto_open_on_ssh,
+                            ..sftp
+                        })
+                    })),
+                checkbox(sftp.follow_ssh_directory)
+                    .label(fl!("ui-settings-sftp-follow"))
+                    .on_toggle_maybe(sftp.enabled.then_some(move |follow_ssh_directory| {
+                        set(SftpBrowser {
+                            follow_ssh_directory,
                             ..sftp
                         })
                     })),

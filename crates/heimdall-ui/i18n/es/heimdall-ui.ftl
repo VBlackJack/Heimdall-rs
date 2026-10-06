@@ -1049,6 +1049,8 @@ ui-files-local-toggle = Archivos locales
 ui-files-local-toggle-tooltip = Mostrar los archivos de este equipo junto a los del servidor
 ui-files-sudo-toggle = sudo
 ui-files-sudo-tooltip = Explorar como root (sudo)
+ui-files-follow-toggle = dir. act.
+ui-files-follow-tooltip = Seguir el directorio de la terminal SSH
 ui-files-sudo-on = Modo sudo activado: explorando como root
 ui-files-sudo-off = Modo sudo desactivado
 ui-files-item-count = { $count } elementos
@@ -1982,6 +1984,7 @@ ui-settings-ssh-session = Sesión
 ui-settings-sftp = Navegador SFTP
 ui-settings-sftp-browser-enabled = Activar el explorador SFTP integrado
 ui-settings-sftp-auto-open = Abrir automáticamente el panel SFTP al conectar por SSH
+ui-settings-sftp-follow = SFTP sigue el directorio de trabajo de SSH
 ui-settings-ssh-tmout-reset-interval = Intervalo de reinicio de TMOUT (0 = desactivado)
 ui-settings-ssh-tmout-reset-refused = El intervalo de reinicio de TMOUT de SSH debe estar entre { $min } y { $max } segundos.
 ui-status-link-not-a-folder = { $name } no apunta a una carpeta.

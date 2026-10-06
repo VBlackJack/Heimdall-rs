@@ -624,13 +624,13 @@ fn entry_row<'a, E: Listed>(
 }
 
 /// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
-/// bookmarks, and over SSH the "sudo" toggle (`sudo` says whether it is on), as in the C#
-/// tab. The row wraps: a narrow pane keeps every button whole.
+/// bookmarks, and its `toggles`: over SSH the "sudo" toggle, over SFTP the "cwd" one, as in
+/// the C# tab. The row wraps: a narrow pane keeps every button whole.
 fn pane_tools<'a>(
     tab: TabId,
     side: Side,
     (selected, chosen): (Option<usize>, usize),
-    sudo: Option<bool>,
+    toggles: ServerToggles,
 ) -> Element<'a, Message> {
     let mut tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
@@ -659,10 +659,32 @@ fn pane_tools<'a>(
                     .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
             );
     }
-    if let Some(on) = sudo {
+    if let Some(on) = toggles.sudo {
         tools = tools.push(sudo_toggle(tab, on));
     }
+    if let Some(on) = toggles.follow {
+        tools = tools.push(follow_toggle(tab, on));
+    }
     tools.wrap().vertical_spacing(SPACING).into()
+}
+
+/// The C# "cwd" toggle of an SFTP server pane, lit while the pane follows the working
+/// folder of the SSH shell beside it (`on`). Only drawn while the pane is connected, as the
+/// C# toolbar only lets it be pressed then.
+fn follow_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
+    tooltip(
+        button(text(fl!("ui-files-follow-toggle")).size(SMALL_SIZE))
+            .style(if on {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(files(FilesMessage::ToggleFollow { tab })),
+        text(fl!("ui-files-follow-tooltip")).size(SMALL_SIZE),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
 }
 
 /// The C# "sudo" toggle of the server pane, lit in the warning colour while its folders are
@@ -817,9 +839,31 @@ struct PaneParts<'p, E> {
     batch: Option<&'p heimdall_app::files::Batch>,
     /// Where a drag would drop in this pane.
     drop: Option<DropHere>,
+    /// The server pane's own toggles; none on this computer's pane.
+    toggles: ServerToggles,
+}
+
+/// The toggles of the server's pane, as the C# SFTP toolbar's.
+#[derive(Debug, Clone, Copy, Default)]
+struct ServerToggles {
     /// The "sudo" toggle, on or off; none where it is not offered: this computer's pane,
     /// and the server's without SSH.
     sudo: Option<bool>,
+    /// The "cwd" toggle, on or off; none where it is not offered: this computer's pane,
+    /// and the server's over FTP.
+    follow: Option<bool>,
+}
+
+impl ServerToggles {
+    /// The toggles of `files_pane`'s server pane.
+    fn of(files_pane: &FilesPane) -> Self {
+        Self {
+            // Over SSH only: an FTP tab has no shell to run sudo on.
+            sudo: files_pane.shell.as_ref().map(|_| files_pane.sudo_mode),
+            // Over SFTP only, as the C#: an FTP tab never follows a shell.
+            follow: files_pane.follow.as_ref().map(|follow| follow.on),
+        }
+    }
 }
 
 /// Where a pane can go besides up, as the C# Files tab's Back and Home.
@@ -976,10 +1020,10 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         moves,
         batch,
         drop,
-        sudo,
+        toggles,
     } = parts;
     let chosen = marked.len() + usize::from(selected.is_some());
-    let tools = pane_tools(tab, side, (selected, chosen), sudo);
+    let tools = pane_tools(tab, side, (selected, chosen), toggles);
     let header = row![
         // As the C# Files tab: Back, Up, Home.
         button(text(fl!("ui-files-back-button")).size(SMALL_SIZE))
@@ -1048,7 +1092,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     );
     let content = column![heading, header, tools, narrowing].spacing(SPACING);
     pane_frame(
-        pane_notes(content, tab, (sudo, error, batch)).push(listing),
+        pane_notes(content, tab, (toggles.sudo, error, batch)).push(listing),
         (tab, side),
         focused,
         drop == Some(DropHere::Pane),
@@ -1387,7 +1431,7 @@ pub fn view(
             .as_ref()
             .filter(|batch| batch.side == Side::Local),
         drop: drop_in(Side::Local),
-        sudo: None,
+        toggles: ServerToggles::default(),
     });
     let remote = pane(PaneParts {
         tab,
@@ -1418,8 +1462,7 @@ pub fn view(
             .as_ref()
             .filter(|batch| batch.side == Side::Remote),
         drop: drop_in(Side::Remote),
-        // Over SSH only: an FTP tab has no shell to run sudo on.
-        sudo: files_pane.shell.as_ref().map(|_| files_pane.sudo_mode),
+        toggles: ServerToggles::of(files_pane),
     });
     let mut content = column![panes(tab, files_pane, local, remote)]
         .spacing(SPACING)

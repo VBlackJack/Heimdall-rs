@@ -34,6 +34,7 @@ use alacritty_terminal::vte::ansi::{Color, CursorShape, NamedColor, Processor, S
 
 use crate::mode::InputMode;
 use crate::palette::{Palette, Rgb, dim};
+use crate::working_directory::WorkingDirectoryScanner;
 
 /// Lines of history kept above the screen.
 pub const DEFAULT_SCROLLBACK_LINES: usize = 10_000;
@@ -172,6 +173,10 @@ pub struct FeedOutput {
     pub clipboard: Option<String>,
     /// Whether the screen may have changed.
     pub redraw: bool,
+    /// The last working folder the server reported (OSC 7), an absolute path decoded, the
+    /// host left aside: untrusted. Read as the output arrives, so only [`Terminal::feed`]
+    /// gives one, a synchronized update or not.
+    pub working_directory: Option<String>,
 }
 
 /// How a cell's text is underlined.
@@ -446,6 +451,8 @@ pub struct Terminal {
     events: Listener,
     palette: Palette,
     cell_pixels: Option<CellPixels>,
+    /// The working folder reports, which the emulator ignores, read beside it.
+    directory: WorkingDirectoryScanner,
 }
 
 impl std::fmt::Debug for Terminal {
@@ -474,6 +481,7 @@ impl Terminal {
             events,
             palette: config.palette,
             cell_pixels: None,
+            directory: WorkingDirectoryScanner::new(),
         }
     }
 
@@ -481,6 +489,7 @@ impl Terminal {
     pub fn feed(&mut self, bytes: &[u8]) -> FeedOutput {
         self.parser.advance(&mut self.term, bytes);
         let mut output = self.drain_events();
+        output.working_directory = self.directory.feed(bytes);
         // While a synchronized update is open, bytes are only buffered.
         output.redraw = self.sync_deadline().is_none();
         output
