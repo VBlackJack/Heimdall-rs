@@ -389,8 +389,6 @@ pub enum RdpExtra {
     Microphone,
     /// Several monitors spanned.
     MultiMonitor,
-    /// Strict server authentication.
-    StrictServerAuthentication,
     /// Opened in full screen.
     FullScreen,
 }
@@ -414,10 +412,6 @@ impl RdpExtras {
             (self.redirect_usb, RdpExtra::Usb),
             (self.microphone, RdpExtra::Microphone),
             (self.multi_monitor, RdpExtra::MultiMonitor),
-            (
-                self.strict_server_authentication,
-                RdpExtra::StrictServerAuthentication,
-            ),
             (self.full_screen, RdpExtra::FullScreen),
         ]
         .into_iter()

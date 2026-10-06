@@ -1783,7 +1783,6 @@ ui-profile-aspect-ratio = Rapport d'aspect
 ui-profile-aspect-stretch = Étirer (remplir)
 ui-profile-aspect-ratio-choice = { $wide }:{ $high }
 ui-profile-rdp-extras = Gardé du profil importé, pas encore utilisé par le client intégré : { $extras }
-ui-rdp-extra-strict-server-authentication = authentification stricte du serveur
 ui-rdp-extra-full-screen = ouvert en plein écran
 ui-dialog-import-dropped = Importé avec des réglages que le client intégré n'utilise pas encore :
 ui-dialog-import-dropped-item = { $name } : { $settings }
@@ -1912,6 +1911,8 @@ ui-settings-rdp-connect-timeout = Délai du watchdog de connexion RDP (0 = désa
 ui-settings-rdp-connect-timeout-off = Désactivé
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant
+ui-profile-toggle-strict-server-auth = Exiger la validation de l'identité serveur
+ui-error-rdp-server-not-authenticated = L'identité du serveur n'a pas pu être validée : son certificat n'est pas encore approuvé et les autorités de certification de cet ordinateur ne le garantissent pas. L'authentification stricte du serveur le refuse.
 ui-certificate-subject = Sujet : { $subject }
 ui-session-copy-anonymous-button = Copier le rapport anonymisé
 ui-error-report-anonymous-header = Rapport de diagnostic { $protocol } (anonymisé)

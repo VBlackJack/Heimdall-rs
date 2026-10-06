@@ -137,6 +137,10 @@ pub fn given(username: String, password: Zeroizing<String>) -> AskCredentials {
 
 /// Where to connect.
 #[derive(Debug, Clone)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one switch per choice of the connection, each set on its own"
+)]
 pub struct RdpConfig {
     /// Server.
     pub host: String,
@@ -153,6 +157,10 @@ pub struct RdpConfig {
     /// Several machines answer at the address: a certificate not trusted yet is asked
     /// about rather than refused as changed.
     pub several_servers: bool,
+    /// Never ask about a certificate not trusted yet: one this computer's certificate
+    /// authorities validate for the server's name goes through, any other is refused, as
+    /// the C# `RdpStrictServerAuthentication`.
+    pub strict_server_authentication: bool,
     /// Pins of the servers trusted so far.
     pub known_hosts: KnownRdpHosts,
     /// A key the user accepted for this server after an [`RdpError::UnknownCertificate`]:
@@ -225,6 +233,10 @@ pub enum RdpError {
     /// The server's certificate cannot be read.
     #[error("the server certificate cannot be read")]
     Certificate,
+    /// Strict server authentication: the certificate is neither trusted yet nor validated
+    /// by this computer's certificate authorities.
+    #[error("the server's identity cannot be authenticated")]
+    ServerNotAuthenticated,
     /// The server is not known: the user decides, then connects again with
     /// [`RdpConfig::accepted`].
     #[error("unknown server certificate {}", .0.fingerprint)]
@@ -470,10 +482,13 @@ pub async fn connect_over(
 
     let server_name = ServerName::try_from(config.host.clone())
         .map_err(|_| RdpError::Protocol("the server name is not valid".to_owned()))?;
+    let system = config
+        .strict_server_authentication
+        .then(tls::SystemTrust::default);
     let tls = phase(
         config.timeouts.handshake,
         cancel,
-        tls::connector().connect(server_name, stream),
+        tls::connector(system.as_ref()).connect(server_name, stream),
     )
     .await?
     .map_err(RdpError::Tls)?;
@@ -485,7 +500,11 @@ pub async fn connect_over(
         .ok_or(RdpError::Certificate)?;
     // The pin and the key CredSSP binds to come from this one certificate.
     let certificate = ServerCertificate::from_der(der).map_err(|_| RdpError::Certificate)?;
-    trust(config, certificate.clone())?;
+    trust(
+        config,
+        certificate.clone(),
+        system.as_ref().is_some_and(tls::SystemTrust::validated),
+    )?;
 
     // The server is trusted: now, and only now, the credentials. No timeout: a person is
     // typing; the server may give up meanwhile, which then reads as a network failure.
@@ -530,8 +549,13 @@ pub async fn connect_over(
     })
 }
 
-/// Decides about the server's key; `Ok` lets the credentials go.
-fn trust(config: &RdpConfig, certificate: ServerCertificate) -> Result<(), RdpError> {
+/// Decides about the server's key; `Ok` lets the credentials go. `validated`: this
+/// computer's certificate authorities validate its chain for the server's name.
+fn trust(
+    config: &RdpConfig,
+    certificate: ServerCertificate,
+    validated: bool,
+) -> Result<(), RdpError> {
     let presented = certificate.fingerprint;
     let verdict = match config
         .known_hosts
@@ -559,6 +583,14 @@ fn trust(config: &RdpConfig, certificate: ServerCertificate) -> Result<(), RdpEr
             recorded: accepted,
             presented: certificate,
         }),
+        // Strict: never asked about; the system's certificate authorities decide.
+        (Verdict::Unknown, None) if config.strict_server_authentication => {
+            if validated {
+                Ok(())
+            } else {
+                Err(RdpError::ServerNotAuthenticated)
+            }
+        }
         (Verdict::Unknown, None) => Err(RdpError::UnknownCertificate(certificate)),
     }
 }
