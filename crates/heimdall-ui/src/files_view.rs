@@ -1486,13 +1486,17 @@ pub fn view(
 
 /// The two panes, Upload and Download between them with the toggle hiding this computer's;
 /// once hidden, the server's alone under that toggle, as the C# SFTP pane docked beside a
-/// shell shows it.
+/// shell shows it. The local file browser docked beside a local shell has no server: this
+/// computer's pane alone, as the C# browser.
 fn panes<'a>(
     tab: TabId,
     files_pane: &'a FilesPane,
     local: Element<'a, Message>,
     remote: Element<'a, Message>,
 ) -> Element<'a, Message> {
+    if files_pane.local_only {
+        return local;
+    }
     if files_pane.local_hidden {
         return column![row![local_toggle(tab, false)], remote]
             .spacing(SPACING)

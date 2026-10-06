@@ -1243,6 +1243,7 @@ ui-files-error-changed-on-server = El archivo cambió en el servidor desde que s
 ui-files-error-changed-since-confirmed = Cambió en el servidor desde que se confirmó la eliminación: se dejó como estaba.
 ui-files-error-file-too-large = Los archivos de más de 16 MiB deben descargarse.
 ui-files-menu-open-in-terminal = Abrir en terminal
+ui-files-menu-open-in-explorer = Abrir en el Explorador
 ui-status-resolution-reconnected = El cambio de resolución requirió reconexión.
 ui-resolution-mode-smart-sizing = Ajuste de tamaño inteligente
 ui-resolution-tooltip = Cambiar resolución - { $mode }

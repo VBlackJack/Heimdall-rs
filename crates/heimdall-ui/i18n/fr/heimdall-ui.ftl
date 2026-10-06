@@ -1246,6 +1246,7 @@ ui-files-error-changed-on-server = Le fichier a changé sur le serveur depuis so
 ui-files-error-changed-since-confirmed = L'élément a changé sur le serveur depuis la confirmation de la suppression : il a été laissé tel quel.
 ui-files-error-file-too-large = Les fichiers de plus de 16 Mio doivent être téléchargés.
 ui-files-menu-open-in-terminal = Ouvrir dans le terminal
+ui-files-menu-open-in-explorer = Ouvrir dans l'Explorateur
 ui-status-resolution-reconnected = Le changement de résolution a nécessité une reconnexion.
 ui-resolution-mode-smart-sizing = Mise à l'échelle intelligente
 ui-resolution-tooltip = Changer la résolution - { $mode }

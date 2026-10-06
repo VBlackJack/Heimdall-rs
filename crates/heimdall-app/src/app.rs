@@ -94,6 +94,7 @@ mod gateways;
 mod health_tab;
 mod hostkeys_import;
 mod keep_alive;
+mod local_browser;
 mod local_tab;
 mod macro_editor;
 mod macros;
@@ -1845,7 +1846,8 @@ impl Tab {
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
     pub fn is_live(&self) -> bool {
-        self.phase == Phase::Connected
+        // The local file browser is no session: nothing is lost when it closes.
+        self.phase == Phase::Connected && !self.is_local_browser()
     }
 
     fn write(&self, bytes: Vec<u8>) {
@@ -3355,6 +3357,7 @@ impl App {
         }
         if shell_up {
             effects.extend(self.dock_sftp(tab_id));
+            effects.extend(self.dock_local_browser(tab_id));
         }
         if let Some((error, was_live)) = failure
             && !self.docked_sftp_failed(tab_id, error.clone())

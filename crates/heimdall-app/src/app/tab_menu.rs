@@ -308,6 +308,7 @@ impl App {
         match &tab.reopen {
             Reopen::Profile(id) => self.profile_summary(id).is_some(),
             Reopen::Shell(_) | Reopen::Transient(..) => true,
+            Reopen::LocalBrowser => false,
         }
     }
 
@@ -333,7 +334,7 @@ impl App {
     pub fn tab_profile(&self, tab: &Tab) -> Option<ProfileSummary> {
         match &tab.reopen {
             Reopen::Profile(id) => self.profile_summary(id),
-            Reopen::Shell(_) | Reopen::Transient(..) => None,
+            Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
         }
     }
 }

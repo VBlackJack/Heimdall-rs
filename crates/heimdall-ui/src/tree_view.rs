@@ -1008,6 +1008,9 @@ pub struct FilesTabFacts {
     pub sftp: bool,
     /// Its SSH connection: sudo, Duplicate and Open in terminal.
     pub over_ssh: bool,
+    /// It is the local file browser docked beside a local shell: no server to send to,
+    /// and "Open in Explorer", as the C# browser.
+    pub local_only: bool,
 }
 
 /// The menu of an entry of a Files tab's pane, in the C# order, limited to what this
@@ -1056,7 +1059,8 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-edit-sudo"),
             files(FilesMessage::EditWithSudo { tab })
         )),
-        on_entry.then(|| entry(send, files(FilesMessage::Transfer { tab, direction }))),
+        (on_entry && !tab_facts.local_only)
+            .then(|| entry(send, files(FilesMessage::Transfer { tab, direction }))),
         on_entry.then(separator),
         renames.then(|| entry(
             fl!("ui-files-menu-rename"),
@@ -1118,14 +1122,30 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-refresh"),
             files(FilesMessage::Refresh { tab, side })
         ),
-        copies.then(|| entry(
-            fl!("ui-files-menu-open-in-terminal"),
-            files(FilesMessage::OpenInTerminal { tab })
-        )),
+        outside_entries(tab, copies, tab_facts.local_only),
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
     menu_card(entries).into()
+}
+
+/// The last entries of a Files entry's menu, opening the folder outside the tab: "Open in
+/// terminal" in the server's pane over its SSH connection (`over_ssh`), "Open in Explorer" in the
+/// local file browser (`local_only`), as the C# menus.
+fn outside_entries<'a>(tab: TabId, over_ssh: bool, local_only: bool) -> Column<'a, Message> {
+    let files = |message| Some(AppMessage::Files(message));
+    column![
+        over_ssh.then(|| entry(
+            fl!("ui-files-menu-open-in-terminal"),
+            files(FilesMessage::OpenInTerminal { tab })
+        )),
+        local_only.then(|| entry(
+            fl!("ui-files-menu-open-in-explorer"),
+            files(FilesMessage::OpenInExplorer { tab })
+        )),
+    ]
+    .spacing(0.0)
+    .width(Length::Fill)
 }
 
 /// The server's folders bookmarked in a Files tab, `bookmarks` as shown, each going

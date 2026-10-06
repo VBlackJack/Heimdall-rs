@@ -64,7 +64,7 @@ impl App {
                     profile: id.clone(),
                     files: tab.purpose == Purpose::Files,
                 }),
-                Reopen::Shell(_) | Reopen::Transient(..) => None,
+                Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
             })
             .collect();
         let path = session_snapshot::snapshot_path(&self.config.profiles_file);
