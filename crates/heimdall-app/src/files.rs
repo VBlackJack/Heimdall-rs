@@ -971,6 +971,9 @@ pub struct FilesPane {
     pub(crate) queue: VecDeque<Waiting>,
     /// The pane keys act on: the last one clicked or chosen.
     pub focus: Side,
+    /// This computer's pane is hidden, the server's alone shown, as the C# SFTP pane docked
+    /// beside a shell shows it; shown again with its toggle.
+    pub local_hidden: bool,
     /// The server's folders bookmarked in this tab, in the order they were, as the C#
     /// Files tab keeps them: for the session.
     pub bookmarks: Vec<RemotePath>,
@@ -1132,6 +1135,7 @@ impl FilesPane {
             transfers: Vec::new(),
             queue: VecDeque::new(),
             focus: Side::Local,
+            local_hidden: false,
             bookmarks: Vec::new(),
             copying: None,
             edits: Vec::new(),
@@ -1140,6 +1144,15 @@ impl FilesPane {
             sudo_mode: false,
             editor: None,
             batch: None,
+        }
+    }
+
+    /// Shows this computer's pane beside the server's, or hides it: the keys then act on the
+    /// server's.
+    pub fn show_local(&mut self, shown: bool) {
+        self.local_hidden = !shown;
+        if !shown {
+            self.focus = Side::Remote;
         }
     }
 

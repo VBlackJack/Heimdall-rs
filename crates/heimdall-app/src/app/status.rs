@@ -189,6 +189,12 @@ pub enum Notice {
     /// A session was not opened: this many are open already, the most the settings allow,
     /// as the C# "Embedded session limit reached".
     SessionLimitReached(u32),
+    /// The SFTP pane opened beside an SSH shell could not connect, for this reason, and
+    /// was closed, as the C# `StatusSftpAutoOpenFailed`.
+    SftpAutoOpenFailed(UiError),
+    /// An SFTP Files tab was not opened: the SFTP browser is off in the settings, as the C#
+    /// `ErrorSftpBrowserDisabled`.
+    SftpBrowserDisabled,
     /// Sessions were put before or after another, in this folder, none for no folder, as
     /// the C# "Moved ... within ..."; the session's name when it is one.
     Reordered {

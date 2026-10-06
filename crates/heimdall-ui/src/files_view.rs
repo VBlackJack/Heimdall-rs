@@ -1421,11 +1421,9 @@ pub fn view(
         // Over SSH only: an FTP tab has no shell to run sudo on.
         sudo: files_pane.shell.as_ref().map(|_| files_pane.sudo_mode),
     });
-    let actions = send_buttons(tab, files_pane);
-    let panes = row![local, container(actions).center_y(Length::Fill), remote]
+    let mut content = column![panes(tab, files_pane, local, remote)]
         .spacing(SPACING)
-        .height(Length::Fill);
-    let mut content = column![panes].spacing(SPACING).padding(PADDING);
+        .padding(PADDING);
     if !files_pane.edits.is_empty() {
         let list = files_pane
             .edits
@@ -1441,6 +1439,45 @@ pub fn view(
         content = content.push(transfers(tab, files_pane, live));
     }
     content.into()
+}
+
+/// The two panes, Upload and Download between them with the toggle hiding this computer's;
+/// once hidden, the server's alone under that toggle, as the C# SFTP pane docked beside a
+/// shell shows it.
+fn panes<'a>(
+    tab: TabId,
+    files_pane: &'a FilesPane,
+    local: Element<'a, Message>,
+    remote: Element<'a, Message>,
+) -> Element<'a, Message> {
+    if files_pane.local_hidden {
+        return column![row![local_toggle(tab, false)], remote]
+            .spacing(SPACING)
+            .height(Length::Fill)
+            .into();
+    }
+    let actions = send_buttons(tab, files_pane).push(local_toggle(tab, true));
+    row![local, container(actions).center_y(Length::Fill), remote]
+        .spacing(SPACING)
+        .height(Length::Fill)
+        .into()
+}
+
+/// The toggle showing this computer's pane beside the server's, lit while it shows.
+fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
+    tooltip(
+        button(text(fl!("ui-files-local-toggle")).size(SMALL_SIZE))
+            .style(if shown {
+                button::primary
+            } else {
+                button::secondary
+            })
+            .on_press(files(FilesMessage::ToggleLocal { tab })),
+        text(fl!("ui-files-local-toggle-tooltip")).size(SMALL_SIZE),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
 }
 
 /// Upload and Download, between the panes: each sends the selection of its side.

@@ -18,9 +18,9 @@
 //! in the folder chosen.
 //!
 //! The C# types `cd` into the SSH pane beside the Files pane in its split tab. Heimdall-rs
-//! has no split tab: it opens a shell tab of the same profile, whose `cd` is one more step
-//! after the profile's approved ones, rather than typing into another tab's shell, which may
-//! be running something. Steps the user has not approved are never typed.
+//! never types into a shell already running, docked beside the Files pane or not: it may be
+//! running something. It opens a shell tab of the same profile, whose `cd` is one more step
+//! after the profile's approved ones. Steps the user has not approved are never typed.
 
 use heimdall_core::post_connect::{PostConnect, PostConnectStep};
 

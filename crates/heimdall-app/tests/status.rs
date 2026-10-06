@@ -271,6 +271,13 @@ impl heimdall_app::InputSink for NullSink {
 fn a_profile_row_shows_the_most_alive_of_its_sessions() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
+    // The shells' own states: no SFTP pane docked beside them, a session of its own.
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::SftpBrowser(heimdall_core::settings::SftpBrowser {
+            auto_open_on_ssh: false,
+            ..heimdall_core::settings::SftpBrowser::default()
+        }),
+    ));
     let web = ProfileId::new("web");
     assert_eq!(app.profile_state(&web), None, "no session open");
 

@@ -42,6 +42,8 @@ pub enum SettingsMessage {
     SessionLogDirectory(String),
     /// The program a server's file is edited with; empty takes the system's own.
     ExternalEditor(String),
+    /// The SFTP browser's settings: on or off, and opened beside an SSH shell or not.
+    SftpBrowser(heimdall_core::settings::SftpBrowser),
     /// The lists of keys trusted for servers.
     TrustedKeys(TrustedKeysMessage),
     /// The size a new terminal's text starts at; one out of the accepted range is ignored.
@@ -222,6 +224,7 @@ impl App {
             SettingsMessage::ExternalEditor(editor) => {
                 editor.trim().clone_into(&mut self.settings.external_editor);
             }
+            SettingsMessage::SftpBrowser(sftp) => self.settings.sftp_browser = *sftp,
             SettingsMessage::TerminalFontSize(size) => {
                 if !terminal_font_size_accepted(*size) {
                     return Vec::new();

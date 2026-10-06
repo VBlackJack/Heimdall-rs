@@ -148,6 +148,11 @@ fn files_notice(notice: &Notice) -> String {
         Notice::MoveUndone => fl!("ui-status-move-undone"),
         Notice::ListingCancelled => fl!("ui-status-listing-cancelled"),
         Notice::SessionLimitReached(max) => fl!("ui-status-session-limit", max = (*max)),
+        Notice::SftpAutoOpenFailed(error) => fl!(
+            "ui-status-sftp-auto-open-failed",
+            reason = crate::texts::error(error)
+        ),
+        Notice::SftpBrowserDisabled => fl!("ui-status-sftp-browser-disabled"),
         Notice::UndoConflict => fl!("ui-status-undo-conflict"),
         Notice::NothingToUndo => fl!("ui-status-nothing-to-undo"),
         Notice::WakeOnLan(Ok(())) => fl!("ui-status-wake-on-lan-sent"),
@@ -294,6 +299,8 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             | Notice::MoveUndone
             | Notice::ListingCancelled
             | Notice::SessionLimitReached(_)
+            | Notice::SftpAutoOpenFailed(_)
+            | Notice::SftpBrowserDisabled
             | Notice::UndoConflict
             | Notice::NothingToUndo
             | Notice::WakeOnLan(_)

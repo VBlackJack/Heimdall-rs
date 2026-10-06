@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy};
+use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy, SftpBrowser};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -4010,6 +4010,8 @@ impl Shell {
                 self.ssh_reconnect_settings(),
                 text(fl!("ui-settings-ssh-session")).size(BODY_SIZE),
                 self.ssh_session_settings(),
+                text(fl!("ui-settings-sftp")).size(BODY_SIZE),
+                self.sftp_settings(),
                 text(fl!("ui-settings-external-editor")).size(BODY_SIZE),
                 self.editor_settings(),
                 self.trusted_keys_settings(TrustedList::HostKeys),
@@ -4163,6 +4165,34 @@ impl Shell {
                 .spacing(SPACING)
                 .align_y(iced::Alignment::Center),
                 text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+            ]
+            .spacing(SPACING),
+        )
+        .padding(PADDING)
+        .max_width(SETTINGS_WIDTH)
+        .style(container::bordered_box)
+        .into()
+    }
+
+    /// The C# "SFTP browser" card: the browser on or off, and under it the pane opened beside
+    /// an SSH shell, as the C# checkbox it enables. Following the shell's folder is not
+    /// offered while it is not applied.
+    fn sftp_settings(&self) -> Element<'_, Message> {
+        let sftp = self.app.settings().sftp_browser;
+        let set = |sftp| Message::App(AppMessage::Settings(SettingsMessage::SftpBrowser(sftp)));
+        container(
+            column![
+                checkbox(sftp.enabled)
+                    .label(fl!("ui-settings-sftp-browser-enabled"))
+                    .on_toggle(move |enabled| set(SftpBrowser { enabled, ..sftp })),
+                checkbox(sftp.auto_open_on_ssh)
+                    .label(fl!("ui-settings-sftp-auto-open"))
+                    .on_toggle_maybe(sftp.enabled.then_some(move |auto_open_on_ssh| {
+                        set(SftpBrowser {
+                            auto_open_on_ssh,
+                            ..sftp
+                        })
+                    })),
             ]
             .spacing(SPACING),
         )

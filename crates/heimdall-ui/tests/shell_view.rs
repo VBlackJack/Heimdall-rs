@@ -95,7 +95,7 @@ fn app(dir: &Path) -> App {
         profile("c", None),
     ]);
     store.save().expect("save");
-    App::new(AppConfig {
+    let mut app = App::new(AppConfig {
         profiles_file,
         known_hosts: dir.join("known_hosts"),
         legacy_dir: None,
@@ -103,7 +103,15 @@ fn app(dir: &Path) -> App {
         initial_grid: GRID,
         files_start: dir.to_owned(),
         system_credentials: heimdall_app::SystemCredentials::memory(),
-    })
+    });
+    // The shell drawn alone: no SFTP pane docked beside a shell connected.
+    app.update(AppMessage::Settings(
+        heimdall_app::SettingsMessage::SftpBrowser(heimdall_core::settings::SftpBrowser {
+            auto_open_on_ssh: false,
+            ..heimdall_core::settings::SftpBrowser::default()
+        }),
+    ));
+    app
 }
 
 fn open(app: &mut App, id: &str) -> (TabId, AttemptId) {

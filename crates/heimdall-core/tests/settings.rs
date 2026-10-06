@@ -859,3 +859,58 @@ fn ctrl_v_pastes_outside_full_screen_programs_by_default_and_is_kept() {
         CtrlVPaste::OutsideFullScreenPrograms
     );
 }
+
+#[test]
+fn the_sftp_browser_opens_beside_ssh_by_default_and_an_older_file_keeps_the_csharp_defaults() {
+    use heimdall_core::settings::SftpBrowser;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let defaults = SftpBrowser::default();
+    assert!(defaults.enabled, "as the C# SftpBrowserEnabled");
+    assert!(defaults.auto_open_on_ssh, "as the C# SftpAutoOpenOnSsh");
+    assert!(
+        !defaults.follow_ssh_directory,
+        "as the C# SftpFollowSshDirectory"
+    );
+    assert!(defaults.auto_opens());
+    // Written before these settings were: its files section holds the editor alone.
+    let older = written(
+        dir.path(),
+        "version = 1\n[files]\nexternal_editor = \"notepad.exe\"\n",
+    );
+    assert_eq!(older.sftp_browser, defaults);
+    assert_eq!(older.external_editor, "notepad.exe");
+    let none = written(dir.path(), "version = 1\n");
+    assert_eq!(none.sftp_browser, defaults, "no files section at all");
+}
+
+#[test]
+fn the_sftp_browser_settings_are_kept_and_the_auto_open_needs_the_browser() {
+    use heimdall_core::settings::SftpBrowser;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let chosen = SftpBrowser {
+        enabled: false,
+        auto_open_on_ssh: true,
+        follow_ssh_directory: true,
+    };
+    assert!(
+        !chosen.auto_opens(),
+        "under the browser, as the C# checkbox"
+    );
+    Settings {
+        sftp_browser: chosen,
+        ..Settings::default()
+    }
+    .save(&path)
+    .expect("saved");
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(text.contains("browser_enabled = false"), "{text}");
+    assert_eq!(Settings::load(&path).expect("read").sftp_browser, chosen);
+    let off = written(
+        dir.path(),
+        "version = 1\n[files]\nauto_open_on_ssh = false\n",
+    );
+    assert!(off.sftp_browser.enabled && !off.sftp_browser.auto_opens());
+}
