@@ -1933,6 +1933,7 @@ ui-tree-changed-move = Sessions déplacées.
 ui-tree-changed-reorder = Sessions réordonnées.
 ui-tree-changed-rename = Session renommée.
 ui-tree-changed-folder-move = Dossier déplacé.
+ui-tree-changed-folder-rename = Dossier renommé.
 ui-tree-undo = Annuler
 ui-status-reordered-one = { $name } déplacé dans { $folder }
 ui-status-reordered = { $count } sessions déplacées dans { $folder }

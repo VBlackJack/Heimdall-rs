@@ -704,18 +704,43 @@ fn a_move_from_the_menu_or_a_rename_is_undone_but_not_once_changed_since() {
         "db"
     );
 
-    // Moved, then its folder renamed, which keeps no undo: the move is not undone over it.
+    // Moved, then its folder deleted, which keeps no undo: the move is not undone over it.
     app.update(Message::DropProfiles {
         ids: vec![ProfileId::new("loose")],
         onto: DropTarget::Folder("dev".to_owned()),
     });
-    folder(&mut app, FolderMessage::Rename("dev".to_owned()));
-    named(&mut app, "Dev2");
+    folder(&mut app, FolderMessage::RequestDelete("dev".to_owned()));
+    app.update(Message::ConfirmDialog);
     app.update(Message::UndoMove);
     assert_eq!(app.notice(), Some(&Notice::UndoConflict));
-    assert_eq!(
-        group_of(&app, "loose").as_deref(),
-        Some("Dev2"),
-        "left as it is"
+    assert_eq!(group_of(&app, "loose"), None, "left as it is");
+}
+
+#[test]
+fn a_renamed_folder_is_named_back_unless_its_old_name_was_taken_since() {
+    use heimdall_app::{Notice, OrganizationChange};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    folder(&mut app, FolderMessage::Rename("Prod".to_owned()));
+    named(&mut app, "Live");
+    assert_eq!(app.undo_offer(), Some(OrganizationChange::FolderRename));
+    app.update(Message::UndoMove);
+    assert_eq!(app.notice(), Some(&Notice::MoveUndone));
+    assert_eq!(group_of(&app, "db").as_deref(), Some("Prod"));
+    assert_eq!(group_of(&app, "api").as_deref(), Some("Prod/Web"));
+
+    // Its old name taken by a new folder since: left as it is.
+    folder(&mut app, FolderMessage::Rename("dev".to_owned()));
+    named(&mut app, "Dev2");
+    folder(
+        &mut app,
+        FolderMessage::New {
+            parent: String::new(),
+        },
     );
+    named(&mut app, "dev");
+    app.update(Message::UndoMove);
+    assert_eq!(app.notice(), Some(&Notice::UndoConflict));
+    assert_eq!(group_of(&app, "dev").as_deref(), Some("Dev2"));
 }

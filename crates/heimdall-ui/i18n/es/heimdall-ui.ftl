@@ -1930,6 +1930,7 @@ ui-tree-changed-move = Sesiones movidas.
 ui-tree-changed-reorder = Sesiones reordenadas.
 ui-tree-changed-rename = Sesión renombrada.
 ui-tree-changed-folder-move = Carpeta movida.
+ui-tree-changed-folder-rename = Carpeta renombrada.
 ui-tree-undo = Deshacer
 ui-status-reordered-one = Se movió { $name } dentro de { $folder }
 ui-status-reordered = Se movieron { $count } sesiones dentro de { $folder }
