@@ -179,6 +179,11 @@ pub enum Notice {
     DroppedFolder(String),
     /// A folder was dropped where one of its name is already.
     DropRefused,
+    /// A Files tab's listing on its way was given up with Escape.
+    ListingCancelled,
+    /// A session was not opened: this many are open already, the most the settings allow,
+    /// as the C# "Embedded session limit reached".
+    SessionLimitReached(u32),
     /// Sessions were put before or after another, in this folder, none for no folder, as
     /// the C# "Moved ... within ..."; the session's name when it is one.
     Reordered {

@@ -113,6 +113,7 @@ pub struct TerminalView<'a, M> {
     wrap: fn(AppMessage) -> M,
     interactive: bool,
     on_zoom: Option<fn(Zoom) -> M>,
+    ctrl_v: heimdall_core::settings::CtrlVPaste,
 }
 
 impl<'a, M> TerminalView<'a, M> {
@@ -126,7 +127,15 @@ impl<'a, M> TerminalView<'a, M> {
             wrap,
             interactive: true,
             on_zoom: None,
+            ctrl_v: heimdall_core::settings::CtrlVPaste::default(),
         }
+    }
+
+    /// What Ctrl+V does: paste, or ^V for the session.
+    #[must_use]
+    pub fn ctrl_v(mut self, choice: heimdall_core::settings::CtrlVPaste) -> Self {
+        self.ctrl_v = choice;
+        self
     }
 
     /// The terminal's text at `font_size`.
@@ -349,7 +358,14 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                     // The input method is composing: the key is its, not the shell's.
                     return;
                 }
-                if let Some(action) = shortcut(key, *physical_key, *modifiers) {
+                // Ctrl+V pastes as chosen; otherwise it is ^V, the session's.
+                let pastes = keys::is_ctrl_v(key, *physical_key, *modifiers)
+                    && self
+                        .ctrl_v
+                        .pastes(self.terminal.input_mode().alternate_screen);
+                if let Some(action) =
+                    shortcut(key, *physical_key, *modifiers).or(pastes.then_some(Shortcut::Paste))
+                {
                     let page = i32::try_from(grid.rows).unwrap_or(i32::MAX);
                     let message = match action {
                         Shortcut::Copy | Shortcut::Paste if *repeat => None,

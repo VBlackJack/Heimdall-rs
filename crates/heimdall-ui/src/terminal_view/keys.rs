@@ -86,6 +86,28 @@ pub fn shortcut(
     }
 }
 
+/// Whether `key` is Ctrl+V alone, whatever the keyboard's layout: the paste `choice` may
+/// take it from the session.
+#[must_use]
+pub fn is_ctrl_v(key: &keyboard::Key, physical: Physical, modifiers: keyboard::Modifiers) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && letter(key, physical) == Some('v')
+}
+
+/// Whether `key` is Ctrl+W alone, whatever the keyboard's layout: in a terminal it is
+/// readline's word erase; left by every widget, it closes the session shown, as the C#.
+#[must_use]
+pub fn is_ctrl_w(key: &keyboard::Key, physical: Physical, modifiers: keyboard::Modifiers) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && letter(key, physical) == Some('w')
+}
+
 /// A shortcut of the window, left uncaptured by the terminal so the window sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowShortcut {
@@ -350,9 +372,25 @@ mod tests {
     const ANY_PLACE: Physical = Physical::Code(Code::F24);
 
     use super::{
-        Shortcut, WindowShortcut, Zoom, is_lock_key, is_search_key, key_input, shortcut,
+        Shortcut, WindowShortcut, Zoom, is_ctrl_w, is_lock_key, is_search_key, key_input, shortcut,
         window_shortcut,
     };
+
+    #[test]
+    fn ctrl_w_alone_is_known_by_its_key_whatever_the_layout() {
+        let w = Physical::Code(Code::KeyW);
+        assert!(is_ctrl_w(&character("w"), w, Modifiers::CTRL));
+        assert!(
+            is_ctrl_w(&character("\u{0446}"), w, Modifiers::CTRL),
+            "the W key of a Cyrillic keyboard"
+        );
+        assert!(!is_ctrl_w(
+            &character("w"),
+            w,
+            Modifiers::CTRL | Modifiers::SHIFT
+        ));
+        assert!(!is_ctrl_w(&character("w"), w, Modifiers::empty()));
+    }
 
     #[test]
     fn ctrl_comma_shows_the_settings() {

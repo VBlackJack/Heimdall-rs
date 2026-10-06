@@ -1434,3 +1434,78 @@ async fn retry_is_refused_to_what_cannot_run_again() {
         assert!(retried.is_empty(), "{retried:?}");
     }
 }
+
+#[tokio::test]
+async fn escape_gives_up_a_listing_on_its_way_the_folder_shown_staying() {
+    use heimdall_app::Notice;
+    use heimdall_app::files::FilesKey;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, _) = opened(&mut app).await;
+    listed_remote(
+        &mut app,
+        tab,
+        "/home/admin",
+        vec![remote_entry(b"logs", EntryKind::Directory, 0)],
+    );
+    let remote = |app: &App| {
+        let pane = &app
+            .tab(tab)
+            .expect("tab")
+            .files
+            .as_ref()
+            .expect("files")
+            .remote;
+        (pane.path.display(), pane.loading, pane.entries.len())
+    };
+    files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    assert_eq!(remote(&app), ("/home/admin/logs".to_owned(), true, 1));
+
+    files(
+        &mut app,
+        FilesMessage::Key {
+            tab,
+            key: FilesKey::CancelLoad,
+        },
+    );
+    assert_eq!(
+        remote(&app),
+        ("/home/admin".to_owned(), false, 1),
+        "where it was"
+    );
+    assert_eq!(app.notice(), Some(&Notice::ListingCancelled));
+
+    // The listing given up comes after all: not shown.
+    listed_remote(&mut app, tab, "/home/admin/logs", Vec::new());
+    assert_eq!(remote(&app), ("/home/admin".to_owned(), false, 1));
+    // Nothing on its way: Escape does nothing more.
+    let before = app.notice().cloned();
+    files(
+        &mut app,
+        FilesMessage::Key {
+            tab,
+            key: FilesKey::CancelLoad,
+        },
+    );
+    assert_eq!(app.notice().cloned(), before);
+
+    // Asked again, the next listing is shown.
+    files(
+        &mut app,
+        FilesMessage::Open {
+            tab,
+            side: Side::Remote,
+            index: 0,
+        },
+    );
+    listed_remote(&mut app, tab, "/home/admin/logs", Vec::new());
+    assert_eq!(remote(&app), ("/home/admin/logs".to_owned(), false, 0));
+}

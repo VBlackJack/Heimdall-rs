@@ -21,7 +21,7 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, anti_idle_interval_accepted,
+    ColorScheme, Language, Settings, anti_idle_interval_accepted, max_sessions_accepted,
     rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
     reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
     settings_path, ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
@@ -56,10 +56,14 @@ pub enum SettingsMessage {
     RdpAutoReconnectAttempts(u32),
     /// Which SSH agent's keys are offered first, or alone.
     SshAgentPreference(heimdall_core::settings::AgentPreference),
+    /// Most sessions open at once, 0 for no limit.
+    MaxSessions(u32),
     /// Seconds an RDP connection may take to log on, 0 for no limit.
     RdpConnectTimeout(u32),
     /// The execution policy a local `PowerShell` is started with.
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
+    /// What Ctrl+V does in a terminal.
+    CtrlVPaste(heimdall_core::settings::CtrlVPaste),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
     AntiIdleInterval(u32),
     /// Seconds between two SSH keep-alives; refused out of the C# range.
@@ -163,6 +167,23 @@ impl App {
 
     /// Sets the reachability number `message` changes, when within its range; whether it
     /// was.
+    /// A limit of the settings, refused out of the C# range, which leaves it as it was;
+    /// whether it was taken.
+    fn set_limit(&mut self, message: &SettingsMessage) -> bool {
+        match *message {
+            SettingsMessage::RdpConnectTimeout(seconds)
+                if rdp_connect_timeout_accepted(seconds) =>
+            {
+                self.settings.rdp_connect_timeout = seconds;
+            }
+            SettingsMessage::MaxSessions(max) if max_sessions_accepted(max) => {
+                self.settings.max_sessions = max;
+            }
+            _ => return false,
+        }
+        true
+    }
+
     fn set_reachability(&mut self, message: &SettingsMessage) -> bool {
         let reachability = &mut self.settings.reachability;
         match message {
@@ -210,6 +231,7 @@ impl App {
             SettingsMessage::PowerShellExecutionPolicy(policy) => {
                 self.settings.powershell_execution_policy = *policy;
             }
+            SettingsMessage::CtrlVPaste(choice) => self.settings.ctrl_v_paste = *choice,
             SettingsMessage::SshAgentPreference(preference) => {
                 self.settings.ssh_agent_preference = *preference;
                 // The agent chip says what the next connection reaches.
@@ -246,12 +268,11 @@ impl App {
                 self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
-            SettingsMessage::RdpConnectTimeout(seconds)
-                if rdp_connect_timeout_accepted(*seconds) =>
-            {
-                self.settings.rdp_connect_timeout = *seconds;
+            message @ (SettingsMessage::RdpConnectTimeout(_) | SettingsMessage::MaxSessions(_)) => {
+                if !self.set_limit(message) {
+                    return Vec::new();
+                }
             }
-            SettingsMessage::RdpConnectTimeout(_) => return Vec::new(),
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }

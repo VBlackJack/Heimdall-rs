@@ -1142,3 +1142,43 @@ fn the_shortcuts_help_opens_over_nothing_else_and_any_answer_closes_it() {
     app.update(Message::ShowShortcuts);
     assert_eq!(format!("{:?}", app.dialog), asked, "a dialog open is kept");
 }
+
+#[test]
+fn a_ctrl_click_on_a_hyperlink_shows_where_it_leads_before_opening_it() {
+    use heimdall_app::Dialog;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, attempt, _) = connected(&mut app, "a");
+    output(
+        &mut app,
+        tab,
+        attempt,
+        b"\x1b]8;;https://evil.lab/\x1b\\https://bank.lab\x1b]8;;\x1b\\ \x1b]8;;file:///etc/passwd\x1b\\notes\x1b]8;;\x1b\\\r\n",
+    );
+    let mut click = pointer(MouseAction::Press(MouseButton::Left), 0, 3);
+    click.modifiers.ctrl = true;
+    assert!(
+        app.update(Message::Pointer { tab, input: click })
+            .is_empty(),
+        "nothing opened yet"
+    );
+    assert!(
+        matches!(&app.dialog, Some(Dialog::ConfirmOpenLink { url }) if url == "https://evil.lab/"),
+        "the address it leads to, not the text: {:?}",
+        app.dialog
+    );
+    let opened = app.update(Message::ConfirmDialog);
+    assert!(
+        matches!(opened.as_slice(), [Effect::OpenUrl(url)] if url == "https://evil.lab/"),
+        "{opened:?}"
+    );
+    // Neither http nor https: not opened, not asked about.
+    let mut other = pointer(MouseAction::Press(MouseButton::Left), 0, 18);
+    other.modifiers.ctrl = true;
+    assert!(
+        app.update(Message::Pointer { tab, input: other })
+            .is_empty()
+    );
+    assert!(app.dialog.is_none());
+}
