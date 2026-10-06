@@ -394,11 +394,11 @@ pub enum RdpExtra {
 }
 
 impl RdpExtras {
-    /// The choices turned on that the built-in client does not honour yet, in a fixed order.
+    /// The choices turned on that the built-in client does not honour yet, in a fixed order;
+    /// the external client is not one, the form's session mode showing it.
     #[must_use]
     pub fn unused(&self) -> Vec<RdpExtra> {
         [
-            (self.external, RdpExtra::External),
             (
                 self.rd_gateway
                     .as_deref()

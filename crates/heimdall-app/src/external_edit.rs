@@ -272,7 +272,7 @@ pub fn edit_folder(base: &Path) -> io::Result<PathBuf> {
 }
 
 #[cfg(unix)]
-fn private_base(base: &Path) -> io::Result<()> {
+pub(crate) fn private_base(base: &Path) -> io::Result<()> {
     use std::os::unix::fs::PermissionsExt as _;
     let found = std::fs::symlink_metadata(base)?;
     if !found.file_type().is_dir() {
@@ -290,7 +290,7 @@ fn private_base(base: &Path) -> io::Result<()> {
 }
 
 #[cfg(windows)]
-fn private_base(base: &Path) -> io::Result<()> {
+pub(crate) fn private_base(base: &Path) -> io::Result<()> {
     use std::os::windows::fs::MetadataExt as _;
     /// `FILE_ATTRIBUTE_REPARSE_POINT`: a link or a junction.
     const REPARSE_POINT: u32 = 0x400;
@@ -405,7 +405,7 @@ pub(crate) async fn open_copy(
 }
 
 /// Writes `data` to a file that must not exist yet, readable by the user only.
-fn write_new(path: &Path, data: &[u8]) -> io::Result<()> {
+pub(crate) fn write_new(path: &Path, data: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);

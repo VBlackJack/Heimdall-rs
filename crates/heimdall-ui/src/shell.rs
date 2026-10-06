@@ -2573,6 +2573,28 @@ impl Shell {
                         });
                 Message::App(AppMessage::CitrixLaunched { name, result })
             }),
+            Effect::LaunchRdpExternal {
+                name,
+                gateway,
+                content,
+            } => Task::future(async move {
+                // Writing the file and starting a process wait on the system: off the UI
+                // thread, as a Citrix launch.
+                let result = tokio::task::spawn_blocking(move || {
+                    heimdall_app::rdp_external::launch(&content)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    Err(heimdall_app::rdp_external::ExternalRefusal::NotStarted(
+                        error.to_string(),
+                    ))
+                });
+                Message::App(AppMessage::RdpExternalLaunched {
+                    name,
+                    gateway,
+                    result,
+                })
+            }),
             Effect::WriteClipboardImage(image) => Task::future(async move {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
             })

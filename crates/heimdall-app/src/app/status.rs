@@ -287,6 +287,16 @@ pub enum Notice {
     CitrixLaunched(String),
     /// A Citrix application was not launched, for this reason.
     CitrixRefused(crate::citrix::CitrixRefusal),
+    /// The RDP profile of this name opened in Remote Desktop Connection; through this RD
+    /// Gateway, which sent it there, when it did not ask for it.
+    RdpExternalLaunched {
+        /// The profile's name.
+        name: String,
+        /// The RD Gateway the built-in client does not go through.
+        gateway: Option<String>,
+    },
+    /// An RDP profile did not open in Remote Desktop Connection, for this reason.
+    RdpExternalRefused(crate::rdp_external::ExternalRefusal),
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's

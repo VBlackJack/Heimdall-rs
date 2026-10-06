@@ -95,6 +95,7 @@ mod keep_alive;
 mod local_tab;
 mod macro_editor;
 mod macros;
+mod mstsc_launch;
 mod pin;
 mod post_connect;
 mod profile_menu;
@@ -266,6 +267,15 @@ pub enum Message {
         name: String,
         /// Launched, or why not.
         result: Result<(), crate::citrix::CitrixRefusal>,
+    },
+    /// An RDP profile was opened in Remote Desktop Connection, or why not.
+    RdpExternalLaunched {
+        /// The profile's name.
+        name: String,
+        /// The RD Gateway that sent it there, when the profile did not ask for it.
+        gateway: Option<String>,
+        /// Started, or why not.
+        result: Result<(), crate::rdp_external::ExternalRefusal>,
     },
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
@@ -770,6 +780,9 @@ impl fmt::Debug for Message {
             Self::CitrixLaunched { result, .. } => {
                 write!(f, "CitrixLaunched({})", result.is_ok())
             }
+            Self::RdpExternalLaunched { result, .. } => {
+                write!(f, "RdpExternalLaunched({})", result.is_ok())
+            }
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
                 write!(f, "DesktopResize({}, {width}x{height})", tab.value())
@@ -1107,6 +1120,17 @@ pub enum Effect {
         name: String,
         /// How it launches.
         launch: crate::citrix::CitrixLaunch,
+    },
+    /// Open an RDP profile in Remote Desktop Connection, off the UI thread: its connection
+    /// file written and `mstsc.exe` started on it; answered with
+    /// [`Message::RdpExternalLaunched`].
+    LaunchRdpExternal {
+        /// The profile's name.
+        name: String,
+        /// The RD Gateway that sent it there, when the profile did not ask for it.
+        gateway: Option<String>,
+        /// The `.rdp` file, as [`crate::rdp_external::rdp_file`] writes it.
+        content: String,
     },
     /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
     /// copied.
@@ -1477,6 +1501,7 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::LaunchCitrix { .. } => f.write_str("LaunchCitrix(..)"),
+            Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
@@ -2759,6 +2784,7 @@ impl App {
             | Message::OpenWinRm(_)
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
+            | Message::RdpExternalLaunched { .. }
             | Message::ReconnectTab(_)
             | Message::ConnectAs { .. }
             | Message::QuickConnect(_)
@@ -3022,6 +3048,11 @@ impl App {
             Message::OpenWinRm(id) => self.open_winrm(&id),
             Message::OpenCitrix(id) => self.open_citrix(&id),
             Message::CitrixLaunched { name, result } => self.citrix_launched(name, result),
+            Message::RdpExternalLaunched {
+                name,
+                gateway,
+                result,
+            } => self.rdp_external_launched(name, gateway, result),
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
             Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),
