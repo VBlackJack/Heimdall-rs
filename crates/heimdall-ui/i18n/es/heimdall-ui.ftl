@@ -1898,3 +1898,14 @@ ui-status-winrm-certificate-skipped = Se omitió la validación del certificado 
 ui-status-winrm-gateway-ntlm = WinRM a través de una puerta de enlace: Kerberos no está disponible, la autenticación pasa a NTLM.
 ui-winrm-diagnostic-ntlm-loopback = La autenticación WinRM falló para la identidad de Windows actual. Use una cuenta guardada para localhost o para hosts fuera del dominio.
 ui-winrm-diagnostic-wsman-invalid = WinRM recibió una respuesta WSMan no válida. Si esta sesión pasa por una puerta de enlace, compruebe que WinRM usa HTTP dentro del túnel.
+ui-desktop-shortcuts = Atajos de teclado...
+ui-desktop-shares-clipboard = Portapapeles
+ui-desktop-shares-clipboard-tooltip = Redirección del portapapeles
+ui-desktop-shares-drives = Unidades
+ui-desktop-shares-drives-tooltip = Redirección de unidades
+ui-desktop-shares-audio = Sonido
+ui-desktop-shares-audio-tooltip = Redirección de audio
+ui-settings-rdp-connect-timeout = Tiempo de espera del vigilante de conexión RDP (0 = desactivado)
+ui-settings-rdp-connect-timeout-off = Desactivado
+ui-settings-rdp-connect-timeout-seconds = { $seconds } s
+ui-shortcuts-release-desktop = Devolver el teclado desde un escritorio remoto

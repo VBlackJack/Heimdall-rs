@@ -980,3 +980,151 @@ fn the_session_bar_opens_the_resolution_menu_which_names_the_profile_s_mode() {
     ui.find("Active mode: Smart sizing")
         .expect("the profile's own mode");
 }
+
+/// A key going down with `modifiers` held, as a keyboard sends it.
+fn modified_press(
+    key: iced::keyboard::Key,
+    code: iced::keyboard::key::Code,
+    modifiers: iced::keyboard::Modifiers,
+) -> iced::Event {
+    use iced::keyboard::{Event, Location};
+    iced::Event::Keyboard(Event::KeyPressed {
+        key: key.clone(),
+        modified_key: key,
+        physical_key: iced::keyboard::key::Physical::Code(code),
+        location: Location::Left,
+        modifiers,
+        text: None,
+        repeat: false,
+    })
+}
+
+/// The keys a window's events sent the desktop: pressed or released, by scancode.
+fn keys_sent(messages: &[Message]) -> Vec<(bool, Option<heimdall_rdp::Scancode>)> {
+    messages
+        .iter()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs.clone()),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|input| match input {
+            DesktopInput::Key {
+                scancode, pressed, ..
+            } => Some((pressed, scancode)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn ctrl_alt_home_lets_go_of_the_keys_held_and_gives_the_keyboard_back() {
+    use heimdall_rdp::Scancode;
+    use iced::keyboard::key::{Code, Named};
+    use iced::keyboard::{Key, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _received) = connected(dir.path());
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        let _ = ui.simulate([
+            modified_press(
+                Key::Named(Named::Control),
+                Code::ControlLeft,
+                Modifiers::CTRL,
+            ),
+            modified_press(
+                Key::Named(Named::Alt),
+                Code::AltLeft,
+                Modifiers::CTRL | Modifiers::ALT,
+            ),
+            modified_press(
+                Key::Named(Named::Home),
+                Code::Home,
+                Modifiers::CTRL | Modifiers::ALT,
+            ),
+        ]);
+        ui.into_messages().collect()
+    };
+    let (ctrl, alt) = (
+        Some(Scancode::from_u8(false, 0x1D)),
+        Some(Scancode::from_u8(false, 0x38)),
+    );
+    // Home itself never reaches the server: it is the window's.
+    assert_eq!(
+        keys_sent(&messages),
+        [(true, ctrl), (true, alt), (false, ctrl), (false, alt)],
+        "pressed, then let go"
+    );
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::ContentRelease)),
+        "{messages:?}"
+    );
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    // The keyboard is the window's: a key typed now stays here.
+    let mut ui = simulator(&shell);
+    let _ = ui.simulate([key_event("a", Code::KeyA, true)]);
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(keys_sent(&messages).is_empty(), "{messages:?}");
+}
+
+#[test]
+fn the_desktop_bar_shows_what_the_session_shares_and_offers_the_shortcuts() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let mut ui = simulator(&shell);
+    // The profile shares its clipboard only: no drives, no sound.
+    ui.find("Clipboard").expect("the clipboard shared");
+    assert!(ui.find("Drives").is_err(), "no drive shared");
+    assert!(ui.find("Sound").is_err(), "no sound played here");
+    ui.click("Keyboard shortcuts...").expect("the help");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::ShowShortcuts))),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn a_session_sharing_its_drives_and_sound_shows_both() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app_of(
+        dir.path(),
+        RdpProfile {
+            redirect_clipboard: false,
+            redirect_drives: true,
+            ..profile(heimdall_core::profile::RdpOptions {
+                audio: heimdall_core::profile::AudioPlayback::Local,
+                ..heimdall_core::profile::RdpOptions::default()
+            })
+        },
+    );
+    let effects = core.update(AppMessage::OpenRdp(ProfileId::new("dc")));
+    let [Effect::ConnectRdp { tab, attempt, .. }] = effects.as_slice() else {
+        panic!("one connection");
+    };
+    let (tab, attempt) = (*tab, *attempt);
+    let mut shell = Shell::with_app(core);
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Drives").expect("the drives shared");
+    ui.find("Sound").expect("the sound played here");
+    assert!(ui.find("Clipboard").is_err(), "no clipboard shared");
+}

@@ -67,6 +67,7 @@ pub struct DesktopView<'a, M> {
     pane: &'a DesktopPane,
     tab: TabId,
     wrap: fn(AppMessage) -> M,
+    release: Option<M>,
     interactive: bool,
     fit: bool,
     density: f32,
@@ -80,6 +81,7 @@ impl<'a, M> DesktopView<'a, M> {
             pane,
             tab,
             wrap,
+            release: None,
             interactive: true,
             fit: false,
             density: 1.0,
@@ -102,6 +104,14 @@ impl<'a, M> DesktopView<'a, M> {
     #[must_use]
     pub fn fit(mut self, fit: bool) -> Self {
         self.fit = fit;
+        self
+    }
+
+    /// What Ctrl+Alt+Home publishes once every key held is let go on the server: the
+    /// keyboard given back to the window, as the C# `RdpDefaultShortcuts.ReleaseFocus`.
+    #[must_use]
+    pub fn on_release(mut self, message: M) -> Self {
+        self.release = Some(message);
         self
     }
 
@@ -340,7 +350,40 @@ fn mouse_button(button: mouse::Button) -> Option<PointerButton> {
     })
 }
 
-impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
+impl<M: Clone> DesktopView<'_, M> {
+    /// Ctrl+Alt+Home: every key the server holds down is let go, or Ctrl and Alt would stay,
+    /// then the keyboard goes back to the window. Whether it was that.
+    fn gives_back(
+        &self,
+        held: &mut Vec<(Physical, u32)>,
+        shell: &mut Shell<'_, M>,
+        modifiers: keyboard::Modifiers,
+        physical_key: Physical,
+    ) -> bool {
+        let Some(release) = &self.release else {
+            return false;
+        };
+        if !(modifiers.control() && modifiers.alt() && physical_key == Physical::Code(Code::Home)) {
+            return false;
+        }
+        let releases: Vec<DesktopInput> = held
+            .drain(..)
+            .map(|(physical, keysym)| DesktopInput::Key {
+                scancode: scancode(physical),
+                keysym: Some(keysym),
+                pressed: false,
+            })
+            .collect();
+        if !releases.is_empty() {
+            self.send(shell, releases);
+        }
+        shell.publish(release.clone());
+        shell.capture_event();
+        true
+    }
+}
+
+impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
     fn size(&self) -> Size<Length> {
         Size::new(Length::Fill, Length::Fill)
     }
@@ -445,8 +488,12 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                 modified_key,
                 physical_key,
                 location,
+                modifiers,
                 ..
             }) => {
+                if self.gives_back(&mut state.held, shell, *modifiers, *physical_key) {
+                    return;
+                }
                 self.key(
                     &mut state.held,
                     shell,
@@ -546,7 +593,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
     }
 }
 
-impl<'a, M: 'a> From<DesktopView<'a, M>> for Element<'a, M, Theme, iced::Renderer> {
+impl<'a, M: Clone + 'a> From<DesktopView<'a, M>> for Element<'a, M, Theme, iced::Renderer> {
     fn from(view: DesktopView<'a, M>) -> Self {
         Element::new(view)
     }

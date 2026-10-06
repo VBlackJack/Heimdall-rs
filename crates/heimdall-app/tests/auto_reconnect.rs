@@ -595,6 +595,34 @@ fn the_settings_choose_how_many_times_a_desktop_is_tried_again() {
 }
 
 #[test]
+fn the_settings_choose_how_long_a_desktop_may_take_to_log_on() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let logon = |app: &mut App| {
+        let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+        let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+            panic!("one connection: {effects:?}");
+        };
+        request.logon_timeout
+    };
+    assert_eq!(
+        logon(&mut app),
+        Some(std::time::Duration::from_secs(45)),
+        "the C# default"
+    );
+    app.update(Message::Settings(SettingsMessage::RdpConnectTimeout(3)));
+    assert_eq!(
+        app.settings().rdp_connect_timeout,
+        45,
+        "out of the range: kept"
+    );
+    app.update(Message::Settings(SettingsMessage::RdpConnectTimeout(0)));
+    assert_eq!(logon(&mut app), None, "off");
+}
+
+#[test]
 fn the_session_bars_disconnect_asks_then_ends_the_desktop_and_keeps_the_tab() {
     use heimdall_app::Dialog;
 
