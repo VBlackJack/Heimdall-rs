@@ -426,6 +426,9 @@ pub fn owned_row(
     if let Some(badge) = &profile.gateway {
         label = label.push(gateway_badge(badge));
     }
+    if let Some(origin) = profile.metadata.origin {
+        label = label.push(origin_badge(origin));
+    }
     let body = container(label)
         .width(Length::Fill)
         .padding([4.0, 8.0])
@@ -481,6 +484,27 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
     .into()
 }
 
+/// The code of the program an imported profile came from, as the C# tree's origin badge;
+/// the row's tooltip names it in full.
+fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'static, Message> {
+    container(
+        text(origin.badge())
+            .size(PROTOCOL_SIZE)
+            .style(text::secondary)
+            .wrapping(text::Wrapping::None),
+    )
+    .padding([0.0, 4.0])
+    .style(|theme: &Theme| container::Style {
+        border: iced::Border {
+            color: theme.extended_palette().background.strong.color,
+            width: 1.0,
+            radius: 6.0.into(),
+        },
+        ..container::Style::default()
+    })
+    .into()
+}
+
 fn row_style(theme: &Theme, selected: bool) -> container::Style {
     let palette = theme.extended_palette();
     if selected {
@@ -525,6 +549,9 @@ fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {
     }
     if profile.favorite {
         lines.push(fl!("ui-tree-favorite"));
+    }
+    if let Some(origin) = profile.metadata.origin {
+        lines.push(crate::texts::origin_name(origin));
     }
     // What the background check found, as the C# dot's tooltip.
     if let Some(reach) = reach {

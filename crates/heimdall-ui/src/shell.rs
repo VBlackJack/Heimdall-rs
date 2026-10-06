@@ -7196,6 +7196,18 @@ fn profile_form<'a>(
     // The fields scroll; the error and the buttons stay in view under them, as the C#
     // dialog's footer does.
     let mut footer = Column::new().spacing(SPACING);
+    // Above the error, as the C# dialog's footer: where an imported profile came from.
+    if let Some(origin) = draft.metadata_kept.origin {
+        footer = footer.push(
+            text(texts::origin_name(origin))
+                .size(SMALL_SIZE)
+                .style(text::secondary)
+                .font(iced::Font {
+                    style: iced::font::Style::Italic,
+                    ..iced::Font::DEFAULT
+                }),
+        );
+    }
     if let Some(error) = error {
         footer = footer.push(text(texts::draft_error(error)).style(text::danger));
     }

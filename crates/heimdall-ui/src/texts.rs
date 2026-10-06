@@ -358,6 +358,20 @@ pub fn environment_name(environment: Option<heimdall_core::metadata::Environment
     }
 }
 
+/// Where an imported profile came from, as the C# `ProfileOriginDisplay.GetDisplayName`.
+#[must_use]
+pub fn origin_name(origin: heimdall_core::metadata::ProfileOrigin) -> String {
+    use heimdall_core::metadata::ProfileOrigin;
+    match origin {
+        ProfileOrigin::RdpFile => fl!("ui-origin-rdp-file"),
+        ProfileOrigin::OpenSsh => fl!("ui-origin-openssh"),
+        ProfileOrigin::Putty => fl!("ui-origin-putty"),
+        ProfileOrigin::MRemoteNg => fl!("ui-origin-mremoteng"),
+        ProfileOrigin::MobaXterm => fl!("ui-origin-mobaxterm"),
+        ProfileOrigin::RdcMan => fl!("ui-origin-rdcman"),
+    }
+}
+
 /// The sentence explaining why the profile form does not save.
 #[must_use]
 pub fn draft_error(error: DraftError) -> String {
