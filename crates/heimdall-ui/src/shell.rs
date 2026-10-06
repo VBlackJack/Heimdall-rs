@@ -2933,8 +2933,13 @@ impl Shell {
             tree_view::files_entry_menu(
                 (tab, side),
                 facts,
-                self.app.can_paste(tab),
-                self.app.can_copy(tab),
+                tree_view::FilesTabFacts {
+                    can_paste: self.app.can_paste(tab),
+                    can_copy: self.app.can_hold_copy(tab),
+                    connected: self.app.files_connected(tab),
+                    sftp: self.app.files_over_sftp(tab),
+                    over_ssh: self.app.can_copy(tab),
+                },
             )
         } else if let TreeMenu::Folder(path) = menu {
             tree_view::folder_menu_entries(path, self.app.folder_connectable(path))

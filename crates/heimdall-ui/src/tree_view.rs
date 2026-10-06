@@ -930,26 +930,48 @@ pub enum TranscriptEntry {
     Stop,
 }
 
+/// What the menu of a Files entry needs to know of its tab.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per entry offered or not, each decided on its own"
+)]
+pub struct FilesTabFacts {
+    /// What was cut or copied can be pasted in this tab.
+    pub can_paste: bool,
+    /// Copy holds its entries: to paste on its server, or on another.
+    pub can_copy: bool,
+    /// It is connected: its files can be edited.
+    pub connected: bool,
+    /// It is over SFTP: permissions are changed, and a link never renamed.
+    pub sftp: bool,
+    /// Its SSH connection: sudo, Duplicate and Open in terminal.
+    pub over_ssh: bool,
+}
+
 /// The menu of an entry of a Files tab's pane, in the C# order, limited to what this
-/// version does: open it, send it to the other pane, rename, delete, cut, copy its path;
-/// then what applies to the folder shown. Paste is offered while what was cut or copied
-/// can be pasted in this tab, `can_paste`; Copy, Duplicate and Open in terminal on a tab of
-/// SFTP over its SSH connection, `over_ssh`.
+/// version does: open it, edit it, send it to the other pane, rename, delete, cut, copy,
+/// copy its path; then what applies to the folder shown. As the C#: Edit and Edit with
+/// external editor for one regular file whatever the protocol, Change permissions over
+/// SFTP only, and what runs on the server (sudo, Duplicate, Open in terminal) over its SSH
+/// connection; Paste while what was cut or copied can be pasted in this tab.
 pub fn files_entry_menu<'a>(
     (tab, side): (TabId, Side),
     entry_facts: Option<FilesEntryFacts>,
-    can_paste: bool,
-    over_ssh: bool,
+    tab_facts: FilesTabFacts,
 ) -> Element<'a, Message> {
-    let copies = side == Side::Remote && over_ssh;
+    let copies = side == Side::Remote && tab_facts.over_ssh;
     // An entry's own actions only on an entry, as the C# list hides them beside it.
     let on_entry = entry_facts.is_some();
     let index = entry_facts.map(|facts| facts.index);
     // Editing is of one regular file: a link, a pipe, a device or a folder is not written
     // back, as in the C#.
-    let edits = copies && entry_facts.is_some_and(|facts| facts.one_file);
-    // SFTP renames follow a link to its target: no rename of a link there, as the C#.
-    let renames = entry_facts.is_some_and(|facts| facts.single && !(over_ssh && facts.link));
+    let edits = side == Side::Remote
+        && tab_facts.connected
+        && entry_facts.is_some_and(|facts| facts.one_file);
+    // SFTP renames follow a link to its target: no rename of a link there, as the C#; an
+    // FTP rename is by name, a link renamed itself.
+    let renames = entry_facts.is_some_and(|facts| facts.single && !(tab_facts.sftp && facts.link));
     let files = |message| Some(AppMessage::Files(message));
     let server = |entry: Element<'a, Message>| (side == Side::Remote).then_some(entry);
     let (send, direction) = match side {
@@ -969,7 +991,7 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-edit-external"),
             files(FilesMessage::EditExternal { tab })
         )),
-        edits.then(|| entry(
+        (edits && tab_facts.over_ssh).then(|| entry(
             fl!("ui-files-menu-edit-sudo"),
             files(FilesMessage::EditWithSudo { tab })
         )),
@@ -983,8 +1005,8 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-delete"),
             files(FilesMessage::AskDelete { tab, side })
         )),
-        // The server's entries only, as in the C# Files tab.
-        on_entry
+        // The server's entries only, over SFTP only, as in the C# Files tab.
+        (on_entry && tab_facts.sftp)
             .then(|| server(entry(
                 fl!("ui-files-menu-permissions"),
                 files(FilesMessage::AskPermissions { tab, side })
@@ -1006,9 +1028,9 @@ pub fn files_entry_menu<'a>(
                 files(FilesMessage::Cut { tab })
             )))
             .flatten(),
-        (copies && on_entry)
+        (side == Side::Remote && tab_facts.can_copy && on_entry)
             .then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
-        (side == Side::Remote && can_paste).then(|| entry(
+        (side == Side::Remote && tab_facts.can_paste).then(|| entry(
             fl!("ui-files-menu-paste"),
             files(FilesMessage::Paste { tab })
         )),
