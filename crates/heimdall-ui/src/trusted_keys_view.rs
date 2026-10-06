@@ -15,10 +15,12 @@
  */
 
 //! The keys trusted for servers on the Settings page, as the C# Host keys and Certificates
-//! pages list them: searched, copied, forgotten after a question.
+//! pages list them: searched, copied, forgotten after a question. The FTPS certificates, which
+//! the C# lists nowhere, are listed as the RDP ones.
 
 use heimdall_app::{Message as AppMessage, SettingsMessage, TrustedKey, TrustedKeysMessage};
 use heimdall_core::profile::display_address;
+use heimdall_rdp::KnownRdpHost;
 use iced::widget::{Column, button, column, container, row, text, text_input, tooltip};
 use iced::{Alignment, Element, Length};
 
@@ -61,6 +63,34 @@ pub enum TrustedList {
     HostKeys,
     /// RDP certificates.
     Certificates,
+    /// FTPS certificates.
+    FtpsCertificates,
+}
+
+/// What a list of certificates says of itself: its title, its hint, and what stands in it
+/// while empty.
+struct CertificateTexts {
+    /// The card's title.
+    title: String,
+    /// What the list holds.
+    hint: String,
+    /// The title of the empty list.
+    empty_title: String,
+    /// What to do while the list is empty.
+    empty_body: String,
+}
+
+/// A list of certificates trusted: the protocol's, as read, with its search.
+#[derive(Clone, Copy)]
+struct CertificateList<'a> {
+    /// Which list it is, for its search box.
+    list: TrustedList,
+    /// The certificates, in the order of their file.
+    entries: &'a [KnownRdpHost],
+    /// The key a certificate of the list is.
+    key: fn(KnownRdpHost) -> TrustedKey,
+    /// What is typed in its search box.
+    search: &'a str,
 }
 
 fn trusted(message: TrustedKeysMessage) -> Message {
@@ -220,11 +250,56 @@ pub fn certificates<'a>(
     keys: &'a heimdall_app::TrustedKeys,
     search: &'a str,
 ) -> Element<'a, Message> {
-    let body: Element<'a, Message> = if keys.rdp.is_empty() {
-        empty(
-            fl!("ui-trusted-certificates-empty-title"),
-            fl!("ui-trusted-certificates-empty-body"),
-        )
+    certificate_card(
+        CertificateList {
+            list: TrustedList::Certificates,
+            entries: &keys.rdp,
+            key: TrustedKey::Rdp,
+            search,
+        },
+        CertificateTexts {
+            title: fl!("ui-trusted-certificates-title"),
+            hint: fl!("ui-trusted-certificates-hint"),
+            empty_title: fl!("ui-trusted-certificates-empty-title"),
+            empty_body: fl!("ui-trusted-certificates-empty-body"),
+        },
+    )
+}
+
+/// The trusted FTPS certificates, `search` typed, in the columns of the RDP ones.
+pub fn ftps_certificates<'a>(
+    keys: &'a heimdall_app::TrustedKeys,
+    search: &'a str,
+) -> Element<'a, Message> {
+    certificate_card(
+        CertificateList {
+            list: TrustedList::FtpsCertificates,
+            entries: &keys.ftps,
+            key: TrustedKey::Ftps,
+            search,
+        },
+        CertificateTexts {
+            title: fl!("ui-trusted-ftps-certificates-title"),
+            hint: fl!("ui-trusted-ftps-certificates-hint"),
+            empty_title: fl!("ui-trusted-ftps-certificates-empty-title"),
+            empty_body: fl!("ui-trusted-ftps-certificates-empty-body"),
+        },
+    )
+}
+
+/// The card of the certificates of `certificates`, which says itself in `texts`.
+fn certificate_card<'a>(
+    certificates: CertificateList<'a>,
+    texts: CertificateTexts,
+) -> Element<'a, Message> {
+    let CertificateList {
+        list,
+        entries,
+        key,
+        search,
+    } = certificates;
+    let body: Element<'a, Message> = if entries.is_empty() {
+        empty(texts.empty_title, texts.empty_body)
     } else {
         let mut rows = Column::new().spacing(SPACING / 2.0).push(
             row![
@@ -240,7 +315,7 @@ pub fn certificates<'a>(
             ]
             .spacing(SPACING),
         );
-        for entry in &keys.rdp {
+        for entry in entries {
             let address = display_address(&entry.host, entry.port);
             let fingerprint = entry.fingerprint.to_string();
             // As the C# search: the server, the key, and the names of the certificate.
@@ -250,33 +325,56 @@ pub fn certificates<'a>(
                 .flatten()
                 .any(|candidate| matches(candidate, search));
             if found {
-                rows = rows.push(certificate_row(entry, address, &fingerprint));
+                // A server trusted with more than one certificate can be forgotten whole.
+                let shared = entries
+                    .iter()
+                    .filter(|other| other.host == entry.host && other.port == entry.port)
+                    .nth(1)
+                    .is_some();
+                rows = rows.push(certificate_row(
+                    key(entry.clone()),
+                    entry,
+                    (address, &fingerprint),
+                    shared,
+                ));
             }
         }
         rows.into()
     };
     card(
-        fl!("ui-trusted-certificates-title"),
-        fl!("ui-trusted-certificates-hint"),
-        (
-            TrustedList::Certificates,
-            search,
-            fl!("ui-trusted-certificates-search"),
-        ),
+        texts.title,
+        texts.hint,
+        (list, search, fl!("ui-trusted-certificates-search")),
         body,
     )
 }
 
-/// One trusted certificate's row; `address` and `fingerprint` as shown.
+/// One trusted certificate's row, `key` being `entry`, its address and fingerprint as
+/// `shown`. A certificate whose server is `shared` with another can forget the server too.
 fn certificate_row<'a>(
-    entry: &heimdall_rdp::KnownRdpHost,
-    address: String,
-    fingerprint: &str,
+    key: TrustedKey,
+    entry: &KnownRdpHost,
+    shown: (String, &str),
+    shared: bool,
 ) -> Element<'a, Message> {
-    let key = TrustedKey::Rdp(entry.clone());
+    let (address, fingerprint) = shown;
     let detail = |value: Option<String>| -> Element<'a, Message> {
         text(value.unwrap_or_default()).size(SMALL_SIZE).into()
     };
+    let since = key.trusted_since();
+    let mut forget = Column::new().spacing(SPACING / 2.0);
+    if shared {
+        forget = forget.push(small_button(
+            fl!("ui-trusted-certificates-forget-server"),
+            trusted(TrustedKeysMessage::RequestForgetServer(key.clone())),
+            button::danger,
+        ));
+    }
+    forget = forget.push(small_button(
+        fl!("ui-trusted-certificates-forget"),
+        trusted(TrustedKeysMessage::RequestForget(key)),
+        button::danger,
+    ));
     row![
         cell(text(address).size(SMALL_SIZE).into(), SERVER_PORTION),
         cell(
@@ -285,15 +383,8 @@ fn certificate_row<'a>(
         ),
         cell(detail(entry.subject.clone()), NAME_PORTION),
         cell(detail(entry.issuer.clone()), NAME_PORTION),
-        cell(detail(key.trusted_since()), TRUSTED_PORTION),
-        cell(
-            small_button(
-                fl!("ui-trusted-certificates-forget"),
-                trusted(TrustedKeysMessage::RequestForget(key)),
-                button::danger,
-            ),
-            FORGET_PORTION,
-        ),
+        cell(detail(since), TRUSTED_PORTION),
+        cell(forget.into(), FORGET_PORTION),
     ]
     .spacing(SPACING)
     .align_y(Alignment::Center)
@@ -356,7 +447,7 @@ pub fn forget_question(key: &TrustedKey) -> Element<'_, Message> {
             fl!("ui-dialog-cancel-button"),
             fl!("ui-dialog-forget-host-key-confirm"),
         ),
-        TrustedKey::Rdp(_) => (
+        TrustedKey::Rdp(_) | TrustedKey::Ftps(_) => (
             fl!("ui-dialog-forget-certificate-title"),
             fl!(
                 "ui-dialog-forget-certificate-body",
@@ -367,6 +458,27 @@ pub fn forget_question(key: &TrustedKey) -> Element<'_, Message> {
             fl!("ui-dialog-forget-certificate-confirm"),
         ),
     };
+    question(title, body, keep, forget)
+}
+
+/// The question before forgetting the `count` certificates trusted for the server of `key`.
+pub fn forget_server_question<'a>(key: &TrustedKey, count: usize) -> Element<'a, Message> {
+    let server = key.address();
+    question(
+        fl!("ui-dialog-forget-server-certificates-title"),
+        fl!(
+            "ui-dialog-forget-server-certificates-body",
+            server = server.as_str(),
+            count = count
+        ),
+        fl!("ui-dialog-forget-certificate-keep"),
+        fl!("ui-dialog-forget-certificate-confirm"),
+    )
+}
+
+/// A question before forgetting: its `title` and `body`, then the answers `keep` and
+/// `forget`.
+fn question<'a>(title: String, body: String, keep: String, forget: String) -> Element<'a, Message> {
     column![
         text(title).size(HEADING_SIZE),
         text(body),

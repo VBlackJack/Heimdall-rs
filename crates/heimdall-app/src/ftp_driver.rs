@@ -259,7 +259,8 @@ async fn certificate_refused(
                     host: profile.host.clone(),
                     port: profile.port,
                     fingerprint: presented,
-                    subject: None,
+                    // Shown in the question, as the C# FTPS one shows it.
+                    subject: Some(certificate.subject.clone()),
                 })
                 .await;
             Ok(())

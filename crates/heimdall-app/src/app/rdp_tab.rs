@@ -288,26 +288,36 @@ impl App {
         }
     }
 
-    /// Forgets the key recorded for the server of an RDP tab whose key changed, then
-    /// connects again: the certificate question comes back.
+    /// Forgets the keys recorded for the server of an RDP or FTPS tab whose key changed,
+    /// then connects again: the certificate question comes back.
     pub(super) fn forget_rdp_certificate(&mut self, tab_id: TabId) -> Vec<Effect> {
-        let path = self.known_rdp_hosts();
+        let (rdp_file, ftps_file) = (self.known_rdp_hosts(), self.known_ftps_hosts());
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
-        // The RDP server's own key only: a gateway's changed SSH key is not this server's.
-        let (Phase::Failed(UiError::HostKeyChanged { target: None, .. }), TabProfile::Rdp(profile)) =
-            (&tab.phase, &tab.profile)
-        else {
+        // The server's own key only: a gateway's changed SSH key is not this server's.
+        if !matches!(
+            tab.phase,
+            Phase::Failed(UiError::HostKeyChanged { target: None, .. })
+        ) {
             return Vec::new();
+        }
+        let (path, host, port, ftp) = match &tab.profile {
+            TabProfile::Rdp(profile) => (rdp_file, &profile.host, profile.port, false),
+            TabProfile::Ftp(profile) => (ftps_file, &profile.host, profile.port, true),
+            _ => return Vec::new(),
         };
-        if let Err(error) = KnownRdpHosts::new(path).forget(&profile.host, profile.port) {
+        if let Err(error) = KnownRdpHosts::new(path).forget(host, port) {
             tab.phase = Phase::Failed(UiError::KnownHosts {
                 detail: error.to_string(),
             });
             return Vec::new();
         }
-        self.reconnect_rdp(tab_id, None)
+        if ftp {
+            self.reconnect_ftp(tab_id, None)
+        } else {
+            self.reconnect_rdp(tab_id, None)
+        }
     }
 
     /// Keyboard or mouse input for the remote desktop of a tab.
