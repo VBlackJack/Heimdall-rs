@@ -323,6 +323,8 @@ pub fn citrix_refusal(refusal: &CitrixRefusal) -> String {
         CitrixRefusal::NotStarted(reason) => {
             fl!("ui-status-citrix-not-started", reason = server_text(reason))
         }
+        CitrixRefusal::CommandRejected => fl!("ui-status-citrix-command-rejected"),
+        CitrixRefusal::VaultLocked => fl!("ui-status-citrix-vault-locked"),
     }
 }
 

@@ -1343,3 +1343,27 @@ fn a_gateways_key_passphrase_unlocks_the_gateways_key_on_the_way() {
         "the profile's own key has none saved"
     );
 }
+
+#[tokio::test]
+async fn enabling_a_master_password_moves_a_saved_key_passphrase_too() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = saved(dir.path(), &system);
+    // A key passphrase saved before any master password, beside the server's password.
+    let SystemCredentials::Memory(entries) = &system else {
+        unreachable!()
+    };
+    entries.lock().expect("entries").insert(
+        heimdall_core::credentials::passphrase_entry(&ProfileId::new("a")),
+        zeroize::Zeroizing::new(b"key passphrase".to_vec()),
+    );
+    assert_eq!(system_entries(&system), 2);
+
+    unlock(&mut app, MASTER).await;
+    assert_eq!(app.vault_status(), VaultStatus::Open);
+    assert_eq!(
+        system_entries(&system),
+        0,
+        "the passphrase moved with the password: none left behind, unreadable"
+    );
+}

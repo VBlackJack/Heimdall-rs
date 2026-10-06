@@ -74,6 +74,7 @@ mod appearance;
 mod auto_reconnect;
 mod broadcast;
 mod bulk_edit;
+mod citrix_import;
 mod citrix_launch;
 mod connect_as;
 mod detail;
@@ -130,6 +131,7 @@ pub use appearance::SettingsMessage;
 pub use auto_reconnect::Retry;
 pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
+pub use citrix_import::CitrixImportOutcome;
 pub use connect_as::ConnectAs;
 pub use detail::SavedCredentials;
 pub use file_import::{FileKind, ImportFile, PendingImport};
@@ -496,6 +498,10 @@ pub enum Message {
     WindowCloseRequested,
     /// Import the profiles of the C# Heimdall.
     ImportLegacy,
+    /// "Import Citrix Apps": scan Citrix Workspace's local cache.
+    ImportCitrix,
+    /// Citrix Workspace's local cache scanned.
+    CitrixScanned(heimdall_core::import::citrix_cache::CacheScan),
     /// Export every profile and gateway in the C# Heimdall's session file.
     ExportSessions,
     /// The import of an OpenSSH configuration.
@@ -853,6 +859,9 @@ impl fmt::Debug for Message {
             Self::WindowFocus(focused) => write!(f, "WindowFocus({focused})"),
             Self::WindowCloseRequested => f.write_str("WindowCloseRequested"),
             Self::ImportLegacy => f.write_str("ImportLegacy"),
+            Self::ImportCitrix => f.write_str("ImportCitrix"),
+            // Each application carries its launch line: only counted.
+            Self::CitrixScanned(scan) => write!(f, "CitrixScanned({} apps)", scan.apps.len()),
             Self::ExportSessions => f.write_str("ExportSessions"),
             // The file's text is the user's configuration: never shown.
             Self::Sessions(SessionsMessage::Read(_)) => f.write_str("Sessions(Read(..))"),
@@ -1108,6 +1117,9 @@ pub enum Effect {
     /// Read `PuTTY`'s saved sessions: the registry on Windows, `~/.putty/sessions`
     /// elsewhere; answered with [`SessionsMessage::PuttyRead`].
     ReadPuttySessions,
+    /// Scan Citrix Workspace's local cache, off the window's thread; answered with
+    /// [`Message::CitrixScanned`].
+    ScanCitrixCache,
     /// Ask which `.rdp` files to import, then read them; answered with
     /// [`RdpMessage::Read`], or nothing when none is picked.
     PickRdpFiles,
@@ -1469,6 +1481,7 @@ impl fmt::Debug for Effect {
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
             Self::ReadPuttySessions => f.write_str("ReadPuttySessions"),
+            Self::ScanCitrixCache => f.write_str("ScanCitrixCache"),
             Self::PickRdpFiles => f.write_str("PickRdpFiles"),
             Self::PickSessionsFile => f.write_str("PickSessionsFile"),
             Self::SaveSettingsFile { .. } => f.write_str("SaveSettingsFile"),
@@ -2249,6 +2262,15 @@ pub enum Dialog {
     RdpDone(RdpOutcome),
     /// How many sessions a picked file gives, asked before they are imported.
     ConfirmImportFile(Box<PendingImport>),
+    /// How many applications Citrix Workspace's cache gives, asked before they are imported.
+    ConfirmCitrixImport(Box<heimdall_core::import::citrix_cache::CacheScan>),
+    /// Citrix Workspace's cache gives no application: what the scan said.
+    CitrixImportNothing {
+        /// What the scan said.
+        warnings: Vec<heimdall_core::import::citrix_cache::CacheWarning>,
+    },
+    /// What the Citrix import did.
+    CitrixImportDone(CitrixImportOutcome),
     /// A picked file gives no session: those left out, and what it said.
     ImportNothing {
         /// Sessions left out: display name and reason.
@@ -2802,6 +2824,8 @@ impl App {
             message @ (Message::WindowFocus(_)
             | Message::WindowCloseRequested
             | Message::ImportLegacy
+            | Message::ImportCitrix
+            | Message::CitrixScanned(_)
             | Message::ExportSessions
             | Message::ExportFinished(_)
             | Message::Sessions(_)
@@ -3786,6 +3810,10 @@ impl App {
                 self.confirm_import(dialog);
                 Vec::new()
             }
+            Some(Dialog::ConfirmCitrixImport(scan)) => {
+                self.import_citrix(*scan);
+                Vec::new()
+            }
             Some(Dialog::CustomResolution { tab, value }) => {
                 self.confirm_custom_resolution(tab, &value);
                 Vec::new()
@@ -3928,6 +3956,8 @@ impl App {
                 | Dialog::RdpNothing { .. }
                 | Dialog::RdpDone(_)
                 | Dialog::ImportNothing { .. }
+                | Dialog::CitrixImportNothing { .. }
+                | Dialog::CitrixImportDone(_)
                 | Dialog::HostKeysUnreadable { .. }
                 | Dialog::HostKeysEmpty
                 | Dialog::HostKeysDone { .. }
@@ -3954,6 +3984,11 @@ impl App {
                 Vec::new()
             }
             Message::ExportSessions => vec![self.export_sessions()],
+            Message::ImportCitrix => Self::scan_citrix(),
+            Message::CitrixScanned(scan) => {
+                self.citrix_scanned(scan.clone());
+                Vec::new()
+            }
             Message::Sessions(message) => self.sessions_message(message.clone()),
             Message::Rdp(message) => self.rdp_message(message.clone()),
             Message::ExportFinished(outcome) => {
