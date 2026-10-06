@@ -41,6 +41,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
             host,
             port,
             fingerprint,
+            ..
         } => {
             tab.retry = None;
             tab.prompts.clear();
@@ -457,9 +458,17 @@ impl App {
 
     pub(super) fn rdp_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
         let context = match &event {
-            ConnectionEvent::UnknownRdpCertificate { host, port, .. } => {
-                self.certificate_context(tab_id, host, *port)
-            }
+            ConnectionEvent::UnknownRdpCertificate {
+                host,
+                port,
+                subject,
+                ..
+            } => self
+                .certificate_context(tab_id, host, *port)
+                .map(|context| CertificateContext {
+                    subject: subject.clone(),
+                    ..context
+                }),
             _ => None,
         };
         let Some(tab) = self.tab_mut(tab_id) else {
@@ -512,7 +521,11 @@ impl App {
             .route(gateway)
             .map(|route| route.into_iter().map(|gateway| gateway.name).collect())
             .unwrap_or_default();
-        Some(CertificateContext { others, route })
+        Some(CertificateContext {
+            others,
+            route,
+            subject: None,
+        })
     }
 
     /// The server of `tab_id` could not take `size` live: the session connects again at
