@@ -321,6 +321,11 @@ fn window_event(event: iced::Event, status: event::Status, _window: window::Id) 
             if menu_key {
                 return Some(Message::MenuKey);
             }
+            // Ctrl+W no terminal and no desktop took: the session shown closes, once no
+            // field has the keyboard either, which is asked first.
+            if crate::terminal_view::keys::is_ctrl_w(&key, physical_key, modifiers) {
+                return (!repeat).then_some(Message::CloseKey);
+            }
             match window_shortcut(&key, physical_key, modifiers) {
                 Some(WindowShortcut::CloseTab) if repeat => None,
                 Some(shortcut) => Some(Message::Shortcut(shortcut)),
@@ -495,6 +500,11 @@ pub enum Message {
     FilesHoverLeft(crate::files_drag::Spot),
     /// The left button went down, wherever: a press on a Files tab's entry starts a drag.
     PointerPressed,
+    /// Ctrl+W left by every widget: the session shown closes unless a field has the
+    /// keyboard.
+    CloseKey,
+    /// Whether a field had the keyboard when Ctrl+W was pressed.
+    CloseKeyFocus(bool),
     /// The pointer moved, a press on an entry held.
     FilesDragMoved(Point),
     /// That press is let go.
@@ -659,6 +669,8 @@ impl fmt::Debug for Message {
             Self::FilesHover(spot) => write!(f, "FilesHover({spot:?})"),
             Self::FilesHoverLeft(spot) => write!(f, "FilesHoverLeft({spot:?})"),
             Self::PointerPressed => f.write_str("PointerPressed"),
+            Self::CloseKey => f.write_str("CloseKey"),
+            Self::CloseKeyFocus(focused) => write!(f, "CloseKeyFocus({focused})"),
             Self::FilesDragMoved(_) => f.write_str("FilesDragMoved"),
             Self::FilesDragEnd => f.write_str("FilesDragEnd"),
             Self::TreeHover(target) => write!(f, "TreeHover({target:?})"),
@@ -1269,6 +1281,32 @@ impl Shell {
         Subscription::batch(subscriptions)
     }
 
+    /// Ctrl+W, as the C#: the session shown closes when nothing that takes text has the
+    /// keyboard, which is asked first; with a dialog, a menu, Quick Connect, the search bar
+    /// or a path bar open, the key is theirs.
+    fn close_key(&mut self, message: &Message) -> Task<Message> {
+        match *message {
+            Message::CloseKey => {
+                let open = self.app.dialog.is_some()
+                    || self.palette.is_some()
+                    || self.finder.is_some()
+                    || self.menu.is_some()
+                    || self.path_editing.is_some()
+                    || self.app.active.is_none();
+                if open {
+                    Task::none()
+                } else {
+                    iced::advanced::widget::operate(crate::search_keys::AnyFocused::default())
+                        .map(Message::CloseKeyFocus)
+                }
+            }
+            Message::CloseKeyFocus(false) => {
+                self.update(Message::Shortcut(WindowShortcut::CloseTab))
+            }
+            _ => Task::none(),
+        }
+    }
+
     /// Applies a message.
     #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
     pub fn update(&mut self, message: Message) -> Task<Message> {
@@ -1359,6 +1397,9 @@ impl Shell {
             | Message::LanguageChosen(_)
             | Message::Modifiers(_)
             | Message::Tick) => return self.view_message(&message),
+            message @ (Message::CloseKey | Message::CloseKeyFocus(_)) => {
+                return self.close_key(&message);
+            }
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
