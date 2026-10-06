@@ -1352,6 +1352,15 @@ pub enum Effect {
         /// The folder.
         folder: PathBuf,
     },
+    /// Open a file of this computer with the system's default program, as
+    /// [`crate::external_edit::open_with_default`] does; a failure sends
+    /// [`FilesMessage::EditorLaunched`] with [`crate::files::FilesError::OpenFailed`].
+    OpenLocalFile {
+        /// The local file browser's tab.
+        tab: TabId,
+        /// The file, an absolute path.
+        file: PathBuf,
+    },
     /// Look at the files being edited, send their saves, then send
     /// [`FilesMessage::EditsChecked`].
     CheckEdits {
@@ -1585,6 +1594,7 @@ impl fmt::Debug for Effect {
             Self::LaunchEditor { tab, .. } => write!(f, "LaunchEditor({})", tab.value()),
             Self::SendEditAnyway { tab, .. } => write!(f, "SendEditAnyway({})", tab.value()),
             Self::OpenFolder { tab, .. } => write!(f, "OpenFolder({})", tab.value()),
+            Self::OpenLocalFile { tab, .. } => write!(f, "OpenLocalFile({})", tab.value()),
             Self::CheckEdits { tab, edits, .. } => {
                 write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
             }
@@ -1792,6 +1802,10 @@ pub struct Tab {
     /// panes that follow the shell; none until the shell reports one, and none after a
     /// reconnect, which opens a tab of its own.
     pub working_directory: Option<String>,
+    /// The user closed the file browser docked beside this local shell, or took it out of
+    /// the split: none is docked again when the shell starts again. Carried across a
+    /// reconnect; a shell opened anew docks one as usual.
+    pub local_browser_closed: bool,
 }
 
 impl fmt::Debug for Tab {
@@ -1906,6 +1920,7 @@ impl Tab {
             macro_playing: None,
             layout: None,
             working_directory: None,
+            local_browser_closed: false,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -2159,6 +2174,17 @@ pub enum Dialog {
     ConfirmOpenLink {
         /// The address, http or https only.
         url: String,
+    },
+    /// Open a file of this computer that would run, a program, an installer, a shortcut or
+    /// a script, from the local file browser: its full path shown first, opened with the
+    /// system's default program only once agreed.
+    ConfirmOpenRunnable {
+        /// The local file browser's tab.
+        tab: TabId,
+        /// The file, as opened.
+        file: PathBuf,
+        /// Its full path, every invisible character written out.
+        shown: String,
     },
     /// Download a server's file Open found not to be text, as the C# "Binary file"
     /// question offers.
@@ -2505,6 +2531,9 @@ impl Dialog {
                 // A link is opened by a click on its button, never by an Enter meant for the
                 // terminal.
                 | Self::ConfirmOpenLink { .. }
+                // A file that runs is opened by a click too, never by an Enter meant for
+                // the browser's list.
+                | Self::ConfirmOpenRunnable { .. }
         )
     }
 }
@@ -4010,6 +4039,9 @@ impl App {
                 self.download_remote(tab, &remote)
             }
             Some(Dialog::ConfirmOpenLink { url }) => vec![Effect::OpenUrl(url)],
+            Some(Dialog::ConfirmOpenRunnable { tab, file, .. }) => {
+                vec![Effect::OpenLocalFile { tab, file }]
+            }
             Some(Dialog::ConfirmDiscardEditor { tab, .. }) => {
                 if let Some(files) = self.files_mut(tab) {
                     files.editor = None;

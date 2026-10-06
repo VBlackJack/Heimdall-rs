@@ -31,10 +31,15 @@ use crate::ids::TabId;
 
 impl App {
     /// Opens a shell on `tab_id`'s server in its selected folder, else in the folder shown.
+    /// In the local file browser, a new local shell there, as
+    /// [`App::open_local_terminal`] opens it.
     pub(super) fn open_in_terminal(&mut self, tab_id: TabId) -> Vec<Effect> {
         let Some(tab) = self.tab(tab_id) else {
             return Vec::new();
         };
+        if tab.files.as_deref().is_some_and(|files| files.local_only) {
+            return self.open_local_terminal(tab_id);
+        }
         let (TabProfile::Ssh(profile), Some(files)) = (&tab.profile, tab.files.as_deref()) else {
             return Vec::new();
         };

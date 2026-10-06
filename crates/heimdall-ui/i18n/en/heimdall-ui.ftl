@@ -1074,6 +1074,7 @@ ui-settings-sftp = SFTP browser
 ui-settings-sftp-browser-enabled = Enable integrated SFTP browser
 ui-settings-sftp-auto-open = Auto-open SFTP panel on SSH connection
 ui-settings-sftp-follow = SFTP follows SSH working directory
+ui-settings-dock-local-browser = Dock a file browser beside local shells
 ui-settings-ssh-keep-alive-interval = SSH keep-alive interval
 ui-settings-ssh-keep-alive-hint = How often Heimdall sends SSH protocol keep-alives on sessions, SFTP, tunnels and gateways, so an idle connection is not dropped by a firewall or the server. Applies to connections opened after the change.
 ui-settings-ssh-keep-alive-refused = SSH keep-alive interval must be between { $min } and { $max } seconds.
@@ -1376,6 +1377,7 @@ ui-status-files-auto-upload-refused = Auto-upload of { $name } was refused and w
 ui-files-error-working-folder-unprotected = The file was not opened: its local working folder could not be restricted to your account, so its content could have been readable by other users of this computer.
 ui-files-error-editor-failed = The external editor could not be started: { $detail }. Check the editor path in Settings.
 ui-files-error-editor-runs-files = Launching shell interpreters or script hosts as editors is blocked for security reasons.
+ui-files-error-open-failed = Could not open it on this computer: { $detail }
 ui-settings-external-editor = External editor
 ui-settings-external-editor-path = External editor path
 ui-settings-external-editor-hint = Path to text editor for SFTP remote editing (leave empty for system default)
@@ -1460,6 +1462,10 @@ ui-dialog-open-link-title = Open link
 ui-dialog-open-link-body = The text clicked leads to this address, which will open in your browser:
     { $url }
 ui-dialog-open-link-confirm = Open
+ui-dialog-open-runnable-title = Open a program
+ui-dialog-open-runnable-body = This file runs as a program on this computer, with your rights. Open it only if you trust it:
+    { $path }
+ui-dialog-open-runnable-confirm = Open
 ui-tab-menu-show-health = Show server health
 ui-tab-menu-hide-health = Hide server health
 ui-health-cpu = CPU

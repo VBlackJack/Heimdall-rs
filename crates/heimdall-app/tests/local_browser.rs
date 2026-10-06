@@ -16,20 +16,28 @@
 
 //! The file browser a local shell gets beside it, as the C# `LocalFileBrowserView`: docked
 //! side by side as the second pane once the shell started, the keyboard left on the shell;
-//! in the shell's folder, else the home folder; not when the tab is split already; never
-//! twice after a reconnect; closed alone, the shell left; and nothing it does ever typed
-//! into the shell.
+//! in the shell's folder, else the home folder; not when the tab is split already, nor when
+//! the settings leave it out; never twice after a reconnect, nor again once the user closed
+//! it; closed alone, the shell left; and nothing it does ever typed into the shell. Its
+//! "Open in terminal" opens a new default shell in the folder; its files open in the
+//! editor, with the system's default program, or once agreed when they would run.
 
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use heimdall_app::files::{Direction, EntryKind, FilesKey, LocalEntry, Side};
 use heimdall_app::local_driver::LocalShell;
+use heimdall_app::local_open::{self, LocalOpening};
 use heimdall_app::split::{Axis, DEFAULT_RATIO, Placement, SplitMessage};
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Effect, FilesMessage, InputSink, Message, Phase,
-    Purpose, TabId,
+    App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, FilesMessage, InputSink, Message,
+    Phase, Purpose, SettingsMessage, TabId,
 };
+use heimdall_core::profile::{
+    LocalApproval, LocalArguments as ProfileArguments, LocalCommand, LocalProfile, ProfileId,
+};
+use heimdall_core::settings::SftpBrowser;
+use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
 use heimdall_term::local::LocalArguments;
@@ -313,15 +321,70 @@ fn a_reconnect_keeps_the_browser_and_docks_no_second_one() {
     assert!(app.update(Message::ReconnectTab(pane)).is_empty());
     assert_eq!(app.tabs.len(), 2);
 
-    // Closed by the user, it comes back with the next start, as the C# docks it with
-    // every local shell.
+    // Closed by the user, it stays closed when the shell starts again, a reconnect after
+    // another.
     app.update(Message::Split(SplitMessage::ClosePane(pane)));
-    let third = match app.update(Message::ReconnectTab(again.0)).as_slice() {
+    let mut shell = again;
+    for _ in 0..2 {
+        shell = match app.update(Message::ReconnectTab(shell.0)).as_slice() {
+            [Effect::ConnectLocal { tab, attempt, .. }] => (*tab, *attempt),
+            other => panic!("{other:?}"),
+        };
+        assert!(
+            start(&mut app, shell, &sink).is_empty(),
+            "closed by the user: not docked again"
+        );
+        assert!(leaves(&app, shell.0).is_empty());
+    }
+    assert_eq!(app.tabs.len(), 1);
+
+    // A shell opened anew docks its own, as usual.
+    let new = open(&mut app, None);
+    let (browser, _) = docked(&start(&mut app, new, &sink));
+    assert_eq!(leaves(&app, new.0), [new.0, browser]);
+}
+
+#[test]
+fn a_browser_taken_out_of_the_split_is_not_docked_again_either() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let shell = open(&mut app, None);
+    let (pane, _) = docked(&start(&mut app, shell, &sink));
+    app.update(Message::Split(SplitMessage::Unsplit(shell.0)));
+    assert!(app.tab(pane).is_some(), "a tab of its own now");
+    let again = match app.update(Message::ReconnectTab(shell.0)).as_slice() {
         [Effect::ConnectLocal { tab, attempt, .. }] => (*tab, *attempt),
         other => panic!("{other:?}"),
     };
-    let (back, _) = docked(&start(&mut app, third, &sink));
-    assert_eq!(leaves(&app, third.0), [third.0, back]);
+    assert!(
+        start(&mut app, again, &sink).is_empty(),
+        "no second browser"
+    );
+}
+
+#[test]
+fn the_setting_off_docks_no_browser_beside_a_local_shell() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let off = SftpBrowser {
+        dock_local_browser: false,
+        ..SftpBrowser::default()
+    };
+    app.update(Message::Settings(SettingsMessage::SftpBrowser(off)));
+    assert_eq!(app.settings().sftp_browser, off);
+    let shell = open(&mut app, None);
+    assert!(start(&mut app, shell, &sink).is_empty());
+    assert!(leaves(&app, shell.0).is_empty());
+    assert_eq!(app.tabs.len(), 1);
+    // On again: the next shell docks one.
+    app.update(Message::Settings(SettingsMessage::SftpBrowser(
+        SftpBrowser::default(),
+    )));
+    let next = open(&mut app, None);
+    let (pane, _) = docked(&start(&mut app, next, &sink));
+    assert_eq!(leaves(&app, next.0), [next.0, pane]);
 }
 
 #[test]
@@ -381,7 +444,10 @@ fn nothing_the_browser_does_is_typed_into_the_shell() {
         assert!(
             effects.iter().all(|effect| matches!(
                 effect,
-                Effect::ListLocal { .. } | Effect::WriteClipboard(_) | Effect::OpenFolder { .. }
+                Effect::ListLocal { .. }
+                    | Effect::WriteClipboard(_)
+                    | Effect::OpenFolder { .. }
+                    | Effect::LaunchEditor { .. }
             )),
             "{label}: {effects:?}"
         );
@@ -423,4 +489,392 @@ fn open_in_explorer_opens_the_folder_selected_else_the_one_shown() {
     assert_eq!(explorer(&mut app, None), folder, "nothing selected");
     assert_eq!(explorer(&mut app, Some(0)), folder.join("sub"));
     assert_eq!(explorer(&mut app, Some(1)), folder, "a file: its folder");
+}
+
+/// A tab started, and the shell it runs.
+type Started = ((TabId, AttemptId), LocalShell);
+
+/// The shell a new tab was started with, and its tab; none when nothing started.
+fn started(effects: &[Effect]) -> Option<Started> {
+    match effects {
+        [
+            Effect::ConnectLocal {
+                tab,
+                attempt,
+                request,
+            },
+        ] => Some(((*tab, *attempt), request.shell.clone())),
+        _ => None,
+    }
+}
+
+/// "Open in terminal" in browser `pane`, `index` selected first when given: the new tab and
+/// the shell it runs.
+fn open_in_terminal(app: &mut App, pane: TabId, index: Option<usize>) -> Started {
+    if let Some(index) = index {
+        app.update(Message::Files(FilesMessage::Select {
+            tab: pane,
+            side: Side::Local,
+            index,
+        }));
+    }
+    let effects = app.update(Message::Files(FilesMessage::OpenInTerminal { tab: pane }));
+    started(&effects).unwrap_or_else(|| panic!("a new shell: {effects:?}"))
+}
+
+#[test]
+fn open_in_terminal_opens_a_new_default_shell_in_the_folder_selected_else_the_one_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let shell = open(&mut app, None);
+    let (pane, folder) = docked(&start(&mut app, shell, &sink));
+    listed(&mut app, pane, &folder);
+    let folder_name = folder
+        .file_name()
+        .expect("a named folder")
+        .to_string_lossy()
+        .into_owned();
+    for (index, expected, name) in [
+        (None, folder.clone(), folder_name.clone()),
+        (Some(0), folder.join("sub"), "sub".to_owned()),
+        (Some(1), folder.clone(), folder_name.clone()),
+    ] {
+        let tabs = app.tabs.len();
+        let (attempt, started) = open_in_terminal(&mut app, pane, index);
+        let tab = attempt.0;
+        assert_eq!(app.tabs.len(), tabs + 1, "a new tab");
+        assert!(tab != shell.0 && tab != pane);
+        assert_eq!(started.program, None, "the user's default shell");
+        assert_eq!(started.working_directory.as_ref(), Some(&expected));
+        assert!(started.environment.is_empty(), "no HEIMDALL_* variables");
+        assert_eq!(started.name, name, "named after the folder");
+        let opened = app.tab(tab).expect("tab");
+        assert_eq!(opened.title, name);
+        assert_eq!(opened.purpose, Purpose::Shell);
+        assert!(!app.can_save_as_profile(opened), "the sidebar's own shell");
+        assert!(
+            sink.take().is_empty(),
+            "nothing typed into the shell beside"
+        );
+        // Once started, it docks a browser of its own, and opens again as itself, in the
+        // same folder.
+        let (own, _) = docked(&start(&mut app, attempt, &sink));
+        assert_eq!(leaves(&app, tab), [tab, own]);
+        let (_, again) = started_again(&mut app, tab);
+        assert_eq!(again, started);
+    }
+    // The shell beside the browser is left as it was.
+    assert_eq!(app.tab(shell.0).expect("shell").phase, Phase::Connected);
+    assert_eq!(leaves(&app, shell.0), [shell.0, pane]);
+}
+
+/// Reconnect of `tab`: the shell it runs again.
+fn started_again(app: &mut App, tab: TabId) -> Started {
+    let effects = app.update(Message::ReconnectTab(tab));
+    started(&effects).unwrap_or_else(|| panic!("opened again: {effects:?}"))
+}
+
+/// A program found on every machine the tests run on, by its full path.
+#[cfg(unix)]
+const PROGRAM: &str = "/bin/sh";
+#[cfg(windows)]
+const PROGRAM: &str = r"C:\Windows\System32\cmd.exe";
+
+#[test]
+fn a_profile_running_another_program_still_opens_the_default_shell_and_stays_as_saved() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles = dir.path().join("profiles.toml");
+    let command = LocalCommand {
+        program: Some(PROGRAM.to_owned()),
+        arguments: ProfileArguments::List(Vec::new()),
+        working_directory: None,
+    };
+    let mut store = ProfileStore::open(&profiles).expect("store");
+    store.merge_local([LocalProfile {
+        id: ProfileId::new("tool"),
+        name: "Tool".to_owned(),
+        group: Some("Ops".to_owned()),
+        command: command.clone(),
+        approved: None,
+        session_logging: None,
+    }]);
+    store.approve_local(
+        &ProfileId::new("tool"),
+        LocalApproval {
+            command,
+            program_path: PathBuf::from(PROGRAM),
+        },
+    );
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let effects = app.update(Message::OpenLocalProfile(ProfileId::new("tool")));
+    let Some((host, running)) = started(&effects) else {
+        panic!("approved: started at once, {effects:?}");
+    };
+    assert_eq!(running.program.as_deref(), Some(PROGRAM));
+    assert!(
+        !running.environment.is_empty(),
+        "the profile's HEIMDALL_* variables"
+    );
+    let (pane, folder) = docked(&start(&mut app, host, &sink));
+    listed(&mut app, pane, &folder);
+    let saved = std::fs::read(&profiles).expect("saved");
+    let (_, opened) = open_in_terminal(&mut app, pane, None);
+    assert_eq!(opened.program, None, "never the profile's program");
+    assert!(opened.environment.is_empty(), "nor its variables");
+    assert!(app.dialog.is_none(), "nothing asked: no profile runs");
+    assert_eq!(
+        std::fs::read(&profiles).expect("still saved"),
+        saved,
+        "no profile changed"
+    );
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn a_file_opens_by_its_kind_text_first() {
+    // Text first, as the C# list: a script is shown, not run.
+    for text in [
+        "notes.MD",
+        "run.sh",
+        "deploy.ps1",
+        "build.CMD",
+        "app.js",
+        ".gitignore",
+        ".env",
+    ] {
+        assert!(local_open::is_text(text), "{text}");
+        assert_eq!(
+            local_open::opening(text, true),
+            LocalOpening::Edit,
+            "{text}"
+        );
+    }
+    assert_eq!(local_open::extension(".gitignore"), Some(".gitignore"));
+    assert_eq!(local_open::extension("archive.tar.gz"), Some(".gz"));
+    assert_eq!(local_open::extension("README"), None);
+    assert_eq!(local_open::extension("trailing."), None);
+    assert_eq!(
+        local_open::opening("photo.png", true),
+        LocalOpening::Confirm
+    );
+    assert_eq!(local_open::opening("photo.png", false), LocalOpening::Open);
+    assert_eq!(local_open::TEXT_EXTENSIONS.len(), 38, "the C# list, whole");
+}
+
+#[test]
+fn a_file_runs_by_windows_rule_and_by_unix_rule() {
+    // Windows: PATHEXT, else its default, and what the shell runs besides.
+    for runs in [
+        "setup.EXE",
+        "tool.com",
+        "update.msi",
+        "patch.msp",
+        "Desktop.lnk",
+        "site.url",
+        "page.hta",
+        "saver.scr",
+        "old.pif",
+        "panel.cpl",
+        "console.msc",
+        "keys.reg",
+        "app.jar",
+        "macro.vbs",
+        "macro.vbe",
+        "script.jse",
+        "job.wsf",
+        "job.wsh",
+        "setup.exe.",
+        "setup.exe ",
+        // High risk to Windows' Attachment Manager though PATHEXT leaves them out.
+        "manual.CHM",
+        "tool.appref-ms",
+        "panel.settingcontent-ms",
+        "trouble.diagcab",
+        "disk.vhdx",
+        "find.search-ms",
+        "script.py",
+    ] {
+        assert!(local_open::windows_runnable(runs, None), "{runs}");
+    }
+    let mut listed = local_open::WINDOWS_RUNNABLE_EXTENSIONS.to_vec();
+    listed.sort_unstable();
+    listed.dedup();
+    assert_eq!(
+        listed.len(),
+        local_open::WINDOWS_RUNNABLE_EXTENSIONS.len(),
+        "each type once"
+    );
+    // Text first: a script listed as both is shown in the editor, never run.
+    for script in ["deploy.ps1", "build.bat", "tool.py"] {
+        assert!(local_open::windows_runnable(script, None), "{script}");
+        assert_eq!(
+            local_open::opening(script, true),
+            LocalOpening::Edit,
+            "{script}"
+        );
+    }
+    for stays in ["photo.png", "report.pdf", "README", "setup.exe.txt"] {
+        assert!(!local_open::windows_runnable(stays, None), "{stays}");
+    }
+    assert!(
+        local_open::windows_runnable("tool.rexx", Some(".COM;.EXE;.REXX")),
+        "PATHEXT as set"
+    );
+    assert!(
+        !local_open::windows_runnable("tool.rexx", None),
+        "unknown to the default PATHEXT and to the list"
+    );
+    assert!(
+        local_open::windows_runnable("installer.msi", Some("")),
+        "always, whatever PATHEXT says"
+    );
+
+    // Unix: an execute bit, any of the three; a mode unknown is asked about.
+    for mode in [0o100_755, 0o100_700, 0o100_010, 0o100_001] {
+        assert!(local_open::unix_runnable("tool", Some(mode)), "{mode:o}");
+    }
+    for mode in [0o100_644, 0o100_600, 0o100_000] {
+        assert!(
+            !local_open::unix_runnable("photo.png", Some(mode)),
+            "{mode:o}"
+        );
+    }
+    assert!(local_open::unix_runnable("photo.png", None));
+    // A desktop entry, whose command the opener starts, whatever its mode.
+    for entry in ["app.desktop", "App.DESKTOP"] {
+        assert!(local_open::unix_runnable(entry, Some(0o100_644)), "{entry}");
+        assert_eq!(
+            local_open::opening(entry, local_open::unix_runnable(entry, Some(0o100_644))),
+            LocalOpening::Confirm
+        );
+    }
+}
+
+/// `folder` listed in browser `pane` with `names`, files written there: runnable ones
+/// (by name on Windows, by their execute bit on Unix) when `runs` says so.
+fn listed_files(app: &mut App, pane: TabId, folder: &Path, names: &[(&str, bool)]) {
+    let mut entries = Vec::new();
+    for (name, runs) in names {
+        let path = folder.join(name);
+        std::fs::write(&path, b"x").expect("file");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            let mode = if *runs { 0o755 } else { 0o644 };
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).expect("mode");
+        }
+        #[cfg(not(unix))]
+        let _ = runs;
+        entries.push(LocalEntry {
+            name: (*name).into(),
+            label: (*name).to_owned(),
+            kind: EntryKind::File,
+            size: Some(1),
+            modified: None,
+        });
+    }
+    app.update(Message::Files(FilesMessage::LocalListed {
+        tab: pane,
+        result: Ok((folder.to_owned(), entries)),
+    }));
+}
+
+fn opened(app: &mut App, pane: TabId, index: usize) -> Vec<Effect> {
+    app.update(Message::Files(FilesMessage::Open {
+        tab: pane,
+        side: Side::Local,
+        index,
+    }))
+}
+
+#[test]
+fn a_text_file_opens_in_the_editor_another_with_its_program_and_one_that_runs_once_agreed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let shell = open(&mut app, None);
+    let (pane, folder) = docked(&start(&mut app, shell, &sink));
+    listed_files(
+        &mut app,
+        pane,
+        &folder,
+        &[
+            ("notes.md", false),
+            ("photo.png", false),
+            ("setup.exe", true),
+        ],
+    );
+
+    // Text: the editor set, on the file itself, nothing watched or sent.
+    let effects = opened(&mut app, pane, 0);
+    let [Effect::LaunchEditor { tab, editor, file }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!((*tab, file), (pane, &folder.join("notes.md")));
+    assert_eq!(
+        *editor,
+        heimdall_app::external_edit::editor("").expect("the system's editor")
+    );
+    let files = app
+        .tab(pane)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert!(files.edits.is_empty() && files.transfers.is_empty());
+
+    // Anything else: the system's default program, at once.
+    let effects = opened(&mut app, pane, 1);
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenLocalFile { tab, file }] if *tab == pane && *file == folder.join("photo.png")),
+        "{effects:?}"
+    );
+    assert!(app.dialog.is_none());
+
+    // A file that runs: asked first with its full path, nothing opened before.
+    let runnable = folder.join("setup.exe");
+    assert!(
+        opened(&mut app, pane, 2).is_empty(),
+        "nothing before agreeing"
+    );
+    let Some(dialog @ Dialog::ConfirmOpenRunnable { tab, file, shown }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!((*tab, file), (pane, &runnable));
+    assert_eq!(*shown, runnable.to_string_lossy());
+    assert!(!dialog.confirms_on_enter(), "a click, never an Enter");
+    // Dismissed: nothing.
+    assert!(app.update(Message::DismissDialog).is_empty());
+    assert!(app.dialog.is_none());
+    // Agreed: opened with its default program.
+    assert!(opened(&mut app, pane, 2).is_empty());
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenLocalFile { tab, file }] if *tab == pane && *file == runnable),
+        "{effects:?}"
+    );
+    assert!(sink.take().is_empty(), "nothing typed into the shell");
+}
+
+#[test]
+fn a_program_that_does_not_start_is_said_on_this_computers_pane() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let shell = open(&mut app, None);
+    let (pane, folder) = docked(&start(&mut app, shell, &sink));
+    listed(&mut app, pane, &folder);
+    app.update(Message::Files(FilesMessage::EditorLaunched {
+        tab: pane,
+        result: Err(heimdall_app::files::FilesError::OpenFailed {
+            detail: "no handler".to_owned(),
+        }),
+    }));
+    let files = app
+        .tab(pane)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert!(files.local.error.is_some(), "its one pane");
+    assert!(files.remote.error.is_none());
 }

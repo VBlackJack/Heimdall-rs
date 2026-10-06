@@ -1009,7 +1009,7 @@ pub struct FilesTabFacts {
     /// Its SSH connection: sudo, Duplicate and Open in terminal.
     pub over_ssh: bool,
     /// It is the local file browser docked beside a local shell: no server to send to,
-    /// and "Open in Explorer", as the C# browser.
+    /// and "Open in Explorer" and "Open in terminal", as the C# browser.
     pub local_only: bool,
 }
 
@@ -1130,8 +1130,9 @@ pub fn files_entry_menu<'a>(
 }
 
 /// The last entries of a Files entry's menu, opening the folder outside the tab: "Open in
-/// terminal" in the server's pane over its SSH connection (`over_ssh`), "Open in Explorer" in the
-/// local file browser (`local_only`), as the C# menus.
+/// terminal" in the server's pane over its SSH connection (`over_ssh`); "Open in Explorer"
+/// then "Open in terminal", a new local shell there, in the local file browser
+/// (`local_only`), as the C# menus.
 fn outside_entries<'a>(tab: TabId, over_ssh: bool, local_only: bool) -> Column<'a, Message> {
     let files = |message| Some(AppMessage::Files(message));
     column![
@@ -1142,6 +1143,10 @@ fn outside_entries<'a>(tab: TabId, over_ssh: bool, local_only: bool) -> Column<'
         local_only.then(|| entry(
             fl!("ui-files-menu-open-in-explorer"),
             files(FilesMessage::OpenInExplorer { tab })
+        )),
+        local_only.then(|| entry(
+            fl!("ui-files-menu-open-in-terminal"),
+            files(FilesMessage::OpenInTerminal { tab })
         )),
     ]
     .spacing(0.0)

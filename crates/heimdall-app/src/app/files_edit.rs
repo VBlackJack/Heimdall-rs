@@ -119,12 +119,7 @@ impl App {
         let editor = match editor(&setting) {
             Ok(editor) => editor,
             Err(refused) => {
-                files.remote.error = Some(match refused {
-                    EditorRefused::Runs(_) => FilesError::EditorRunsFiles,
-                    EditorRefused::NotFound(path) | EditorRefused::NotAProgram(path) => {
-                        FilesError::EditorFailed { detail: path }
-                    }
-                });
+                files.remote.error = Some(editor_error(refused));
                 return Vec::new();
             }
         };
@@ -180,10 +175,16 @@ impl App {
         Vec::new()
     }
 
-    /// The editor did not start again on a file being edited.
+    /// The editor did not start again on a file being edited, or a program on a file of
+    /// this computer: said on the server's pane, or on this computer's in the local file
+    /// browser, which has no other.
     fn editor_failed(&mut self, tab_id: TabId, error: FilesError) {
         if let Some(files) = self.files_mut(tab_id) {
-            files.remote.error = Some(error);
+            if files.local_only {
+                files.local.error = Some(error);
+            } else {
+                files.remote.error = Some(error);
+            }
         }
     }
 
@@ -508,7 +509,7 @@ pub(super) fn is_password_error(error: &FilesError) -> bool {
 }
 
 /// What the pane says of an editor that is not run.
-fn editor_error(refused: EditorRefused) -> FilesError {
+pub(super) fn editor_error(refused: EditorRefused) -> FilesError {
     match refused {
         EditorRefused::Runs(_) => FilesError::EditorRunsFiles,
         EditorRefused::NotFound(path) | EditorRefused::NotAProgram(path) => {
