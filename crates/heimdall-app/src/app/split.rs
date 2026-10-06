@@ -533,7 +533,9 @@ impl App {
     pub(super) fn saved_profile(&self, tab: TabId) -> Option<ProfileId> {
         match &self.tab(tab)?.reopen {
             Reopen::Profile(id) => Some(id.clone()),
-            Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
+            Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) | Reopen::LocalBrowser => {
+                None
+            }
         }
     }
 

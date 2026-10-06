@@ -1451,6 +1451,7 @@ fn a_file(index: usize) -> heimdall_ui::tree_view::FilesEntryFacts {
         single: true,
         one_file: true,
         link: false,
+        runs_in_shell: false,
     }
 }
 
@@ -1564,6 +1565,7 @@ async fn the_menu_beside_the_entries_is_the_folders_and_an_entrys_offers_what_it
         single: true,
         one_file: false,
         link: false,
+        runs_in_shell: false,
     };
     let mut ui = common::simulator(
         settings(),

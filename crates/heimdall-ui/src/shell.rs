@@ -47,10 +47,10 @@ use heimdall_app::{
     FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction, Phase, PinDialog, PinFailure,
     PinMessage, PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
-    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, SelectionMessage,
-    SessionState, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId,
-    TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog,
-    VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
+    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, ScriptConfirmation,
+    SelectionMessage, SessionState, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup,
+    TabId, TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
     master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
@@ -3199,6 +3199,8 @@ impl Shell {
                         single: chosen <= 1,
                         one_file: chosen <= 1 && kind == EntryKind::File,
                         link: kind == EntryKind::Link,
+                        runs_in_shell: side == Side::Local
+                            && self.app.offers_run_in_shell(tab, index),
                     })
                 }
                 None => None,
@@ -8841,15 +8843,46 @@ fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
 /// The command a local profile would run, shown whole before it does: nothing cut, every
 /// invisible character written out, and a warning when the program reads its line again.
 fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message> {
-    let mut body = column![
-        text(fl!("ui-dialog-local-title")).size(HEADING_SIZE),
-        text(fl!(
-            "ui-dialog-local-body",
+    command_question(
+        fl!("ui-dialog-local-title"),
+        fl!("ui-dialog-local-body", name = confirmation.name.as_str()),
+        &confirmation.command,
+        confirmation.folder.as_deref(),
+        confirmation.rereads,
+    )
+}
+
+/// The command a script of the local file browser would run, its interpreter's, shown whole
+/// as a local profile's is before it runs; asked each time.
+fn run_script_dialog(confirmation: &ScriptConfirmation) -> Element<'_, Message> {
+    command_question(
+        fl!("ui-dialog-run-script-title"),
+        fl!(
+            "ui-dialog-run-script-body",
             name = confirmation.name.as_str()
-        )),
+        ),
+        &confirmation.command,
+        confirmation.folder.as_deref(),
+        confirmation.rereads,
+    )
+}
+
+/// A question about running `command` on this computer, under `title` and `intro`: the
+/// command whole in its own box, the `folder` it starts in, and a warning when the program
+/// `rereads` its line.
+fn command_question<'a>(
+    title: String,
+    intro: String,
+    command: &'a str,
+    folder: Option<&str>,
+    rereads: bool,
+) -> Element<'a, Message> {
+    let mut body = column![
+        text(title).size(HEADING_SIZE),
+        text(intro),
         container(
             scrollable(
-                text(confirmation.command.as_str())
+                text(command)
                     .font(iced::Font::MONOSPACE)
                     .wrapping(text::Wrapping::Glyph)
             )
@@ -8860,13 +8893,10 @@ fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message
         .style(container::rounded_box),
     ]
     .spacing(SPACING);
-    if let Some(folder) = &confirmation.folder {
-        body = body.push(text(fl!(
-            "ui-dialog-local-folder",
-            folder = folder.as_str()
-        )));
+    if let Some(folder) = folder {
+        body = body.push(text(fl!("ui-dialog-local-folder", folder = folder)));
     }
-    if confirmation.rereads {
+    if rereads {
         body = body.push(text(fl!("ui-dialog-local-rereads")).style(text::danger));
     }
     body.push(
@@ -9894,6 +9924,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::AskName { action, value, .. } => name_dialog(*action, value),
         Dialog::EditProfile { draft, error } => profile_form(draft, *error, forms),
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
+        Dialog::ConfirmRunScript(confirmation) => run_script_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
         Dialog::ForgetTrustedServer { key, count } => {

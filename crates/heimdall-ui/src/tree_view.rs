@@ -969,6 +969,10 @@ fn add_entries(entries: Column<'_, Message>) -> Column<'_, Message> {
 
 /// What the menu of a Files entry needs to know of the entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "one flag per entry offered or not, each decided on its own"
+)]
 pub struct FilesEntryFacts {
     /// Where it is listed.
     pub index: usize,
@@ -978,6 +982,9 @@ pub struct FilesEntryFacts {
     pub one_file: bool,
     /// It is a symbolic link.
     pub link: bool,
+    /// It is a script of the local file browser, chosen alone, that this platform runs:
+    /// "Run in Shell" is offered.
+    pub runs_in_shell: bool,
 }
 
 /// The transcript entry of a tab's menu.
@@ -1122,7 +1129,7 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-refresh"),
             files(FilesMessage::Refresh { tab, side })
         ),
-        outside_entries(tab, copies, tab_facts.local_only),
+        outside_entries(tab, copies, tab_facts.local_only, entry_facts),
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
@@ -1132,9 +1139,18 @@ pub fn files_entry_menu<'a>(
 /// The last entries of a Files entry's menu, opening the folder outside the tab: "Open in
 /// terminal" in the server's pane over its SSH connection (`over_ssh`); "Open in Explorer"
 /// then "Open in terminal", a new local shell there, in the local file browser
-/// (`local_only`), as the C# menus.
-fn outside_entries<'a>(tab: TabId, over_ssh: bool, local_only: bool) -> Column<'a, Message> {
+/// (`local_only`), as the C# menus; then "Run in Shell", in a new tab too, when the entry
+/// (`entry_facts`) is a script this platform runs.
+fn outside_entries<'a>(
+    tab: TabId,
+    over_ssh: bool,
+    local_only: bool,
+    entry_facts: Option<FilesEntryFacts>,
+) -> Column<'a, Message> {
     let files = |message| Some(AppMessage::Files(message));
+    let script = entry_facts
+        .filter(|facts| local_only && facts.runs_in_shell)
+        .map(|facts| facts.index);
     column![
         over_ssh.then(|| entry(
             fl!("ui-files-menu-open-in-terminal"),
@@ -1147,6 +1163,10 @@ fn outside_entries<'a>(tab: TabId, over_ssh: bool, local_only: bool) -> Column<'
         local_only.then(|| entry(
             fl!("ui-files-menu-open-in-terminal"),
             files(FilesMessage::OpenInTerminal { tab })
+        )),
+        script.map(|index| entry(
+            fl!("ui-files-menu-run-in-shell"),
+            files(FilesMessage::RunInShell { tab, index })
         )),
     ]
     .spacing(0.0)

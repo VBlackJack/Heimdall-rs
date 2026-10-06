@@ -27,8 +27,9 @@
 //! a shell already running, as `files_terminal` says: the shell may be running something,
 //! which would take the line as its own input. "Open in terminal" opens a new tab instead,
 //! the user's default shell started in the folder, as the sidebar's "Local shell" button
-//! opens it: never the program or the profile of the shell beside it. Nothing the browser
-//! does reaches the shell.
+//! opens it: never the program or the profile of the shell beside it. "Run in shell" runs
+//! the script in a new tab of its own too, by its interpreter, once agreed, as the module
+//! `run_in_shell` says. Nothing the browser does reaches the shell.
 //!
 //! Opening a file is as [`crate::local_open`] says: a text file in the external editor, a
 //! file that would run only once agreed, anything else with the system's default program.

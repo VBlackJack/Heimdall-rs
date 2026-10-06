@@ -20,22 +20,27 @@
 //! the settings leave it out; never twice after a reconnect, nor again once the user closed
 //! it; closed alone, the shell left; and nothing it does ever typed into the shell. Its
 //! "Open in terminal" opens a new default shell in the folder; its files open in the
-//! editor, with the system's default program, or once agreed when they would run.
+//! editor, with the system's default program, or once agreed when they would run. Its
+//! "Run in Shell" runs a script this platform runs by its interpreter in a new tab, each
+//! time once agreed to the command shown whole, Reconnect included.
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
-use heimdall_app::files::{Direction, EntryKind, FilesKey, LocalEntry, Side};
+use heimdall_app::files::{Direction, EntryKind, FilesError, FilesKey, LocalEntry, Side};
 use heimdall_app::local_driver::LocalShell;
 use heimdall_app::local_open::{self, LocalOpening};
+use heimdall_app::script_shell::{self, ScriptKind, ScriptRefusal};
 use heimdall_app::split::{Axis, DEFAULT_RATIO, Placement, SplitMessage};
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, FilesMessage, InputSink, Message,
-    Phase, Purpose, SettingsMessage, TabId,
+    Phase, Purpose, ScriptConfirmation, SettingsMessage, TabId,
 };
 use heimdall_core::profile::{
     LocalApproval, LocalArguments as ProfileArguments, LocalCommand, LocalProfile, ProfileId,
 };
+use heimdall_core::session_snapshot;
 use heimdall_core::settings::SftpBrowser;
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
@@ -877,4 +882,452 @@ fn a_program_that_does_not_start_is_said_on_this_computers_pane() {
         .expect("files");
     assert!(files.local.error.is_some(), "its one pane");
     assert!(files.remote.error.is_none());
+}
+
+/// `folder` listed in browser `pane`: folder `sub`, then files `names`.
+fn scripts_listed(app: &mut App, pane: TabId, folder: &Path, names: &[OsString]) {
+    let entry = |name: OsString, kind| LocalEntry {
+        label: name.to_string_lossy().into_owned(),
+        name,
+        kind,
+        size: None,
+        modified: None,
+    };
+    let mut entries = vec![entry("sub".into(), EntryKind::Directory)];
+    entries.extend(
+        names
+            .iter()
+            .map(|name| entry(name.clone(), EntryKind::File)),
+    );
+    app.update(Message::Files(FilesMessage::LocalListed {
+        tab: pane,
+        result: Ok((folder.to_owned(), entries)),
+    }));
+}
+
+/// What [`browser_of_scripts`] gives: the app, the shell, its browser and the folder listed.
+type ScriptsBrowser = (App, (TabId, AttemptId), TabId, PathBuf);
+
+/// A local shell started in folder "my scripts", made in `dir`, its browser listing
+/// `names` there.
+fn browser_of_scripts(dir: &Path, names: &[&str], sink: &Arc<RecordingSink>) -> ScriptsBrowser {
+    let folder = dir.join("my scripts");
+    std::fs::create_dir_all(&folder).expect("folder");
+    let mut app = app(dir);
+    let shell = open(&mut app, Some(folder.clone()));
+    let (pane, _) = docked(&start(&mut app, shell, sink));
+    let names: Vec<OsString> = names.iter().map(Into::into).collect();
+    scripts_listed(&mut app, pane, &folder, &names);
+    (app, shell, pane, folder)
+}
+
+/// "Run in Shell" on entry `index` of browser `pane`.
+fn run_in_shell(app: &mut App, pane: TabId, index: usize) -> Vec<Effect> {
+    app.update(Message::Files(FilesMessage::RunInShell {
+        tab: pane,
+        index,
+    }))
+}
+
+/// The question asked, taken as it is.
+fn script_question(app: &App) -> ScriptConfirmation {
+    match &app.dialog {
+        Some(dialog @ Dialog::ConfirmRunScript(confirmation)) => {
+            assert!(!dialog.confirms_on_enter(), "a click, never an Enter");
+            (**confirmation).clone()
+        }
+        other => panic!("the script's question: {other:?}"),
+    }
+}
+
+/// What `name` in `folder` is expected to run, its command as shown, and whether its
+/// interpreter reads its line again: on Windows a `PowerShell` script by the default
+/// shell's `PowerShell` and a batch script by `cmd.exe`, each by its full system path; on
+/// Unix a shell script by `/bin/sh`.
+fn expected_run(name: &str, folder: &Path) -> (LocalShell, String, bool) {
+    let path = folder.join(name).to_string_lossy().into_owned();
+    let (program, arguments, command, rereads) = match ScriptKind::of(name) {
+        #[cfg(windows)]
+        Some(ScriptKind::PowerShell) => {
+            let root = std::env::var("SystemRoot").expect("SystemRoot");
+            let program = format!(r"{root}\System32\WindowsPowerShell\v1.0\powershell.exe");
+            let command = format!("\"{program}\" -NoLogo -NoExit -File \"{path}\"");
+            let arguments = ["-NoLogo", "-NoExit", "-File", path.as_str()]
+                .map(str::to_owned)
+                .to_vec();
+            (program, LocalArguments::List(arguments), command, false)
+        }
+        #[cfg(windows)]
+        Some(ScriptKind::Batch) => {
+            let root = std::env::var("SystemRoot").expect("SystemRoot");
+            let program = format!(r"{root}\System32\cmd.exe");
+            let line = format!("/s /k \"\"{path}\"\"");
+            let command = format!("\"{program}\" {line}");
+            (program, LocalArguments::WindowsLine(line), command, true)
+        }
+        #[cfg(unix)]
+        Some(ScriptKind::Posix) => {
+            let command = format!("/bin/sh '{path}'");
+            (
+                "/bin/sh".to_owned(),
+                LocalArguments::List(vec![path]),
+                command,
+                false,
+            )
+        }
+        other => panic!("{name} does not run here: {other:?}"),
+    };
+    let shell = LocalShell {
+        name: name.to_owned(),
+        program: Some(program),
+        arguments,
+        working_directory: Some(folder.to_owned()),
+        environment: Vec::new(),
+    };
+    (shell, command, rereads)
+}
+
+/// The scripts this platform runs, as the tests list them.
+#[cfg(windows)]
+const RUN_HERE: [&str; 3] = ["deploy.ps1", "build.BAT", "tool.cmd"];
+#[cfg(unix)]
+const RUN_HERE: [&str; 1] = ["run.sh"];
+
+#[test]
+fn a_script_is_known_by_its_csharp_extension_and_offered_only_where_it_runs() {
+    for (name, kind) in [
+        ("deploy.ps1", ScriptKind::PowerShell),
+        ("Deploy.PS1", ScriptKind::PowerShell),
+        ("build.bat", ScriptKind::Batch),
+        ("tool.CMD", ScriptKind::Batch),
+        ("run.sh", ScriptKind::Posix),
+    ] {
+        assert_eq!(ScriptKind::of(name), Some(kind), "{name}");
+        assert_eq!(
+            script_shell::runnable_here(name),
+            kind.runs_here().then_some(kind),
+            "{name}"
+        );
+    }
+    for other in ["notes.txt", "setup.exe", "run.sh.txt", "ps1", "tool.py"] {
+        assert_eq!(ScriptKind::of(other), None, "{other}");
+    }
+    #[cfg(windows)]
+    {
+        assert!(ScriptKind::PowerShell.runs_here() && ScriptKind::Batch.runs_here());
+        assert!(!ScriptKind::Posix.runs_here(), "no sh on Windows");
+    }
+    #[cfg(unix)]
+    {
+        assert!(ScriptKind::Posix.runs_here());
+        assert!(!ScriptKind::PowerShell.runs_here() && !ScriptKind::Batch.runs_here());
+    }
+}
+
+#[test]
+fn a_scripts_command_line_carries_its_path_as_text_or_is_refused() {
+    let batch = |path: &str| script_shell::arguments(ScriptKind::Batch, Path::new(path));
+    // Inside the inner quotes, cmd.exe reads & ^ | < > and parentheses as text; /s takes
+    // off the outer pair only.
+    assert_eq!(
+        batch(r"C:\a&b^c|(d)<e>\x y.bat"),
+        Ok(LocalArguments::WindowsLine(
+            r#"/s /k ""C:\a&b^c|(d)<e>\x y.bat"""#.to_owned()
+        ))
+    );
+    for (path, refused) in [
+        (r"C:\100%\x.bat", '%'),
+        (r"C:\go!\x.cmd", '!'),
+        ("C:\\a\"b\\x.bat", '"'),
+        ("C:\\a\nb\\x.bat", '\n'),
+    ] {
+        assert_eq!(
+            batch(path),
+            Err(ScriptRefusal::Character(refused)),
+            "{path}"
+        );
+    }
+    // PowerShell's -File takes a path as a path: only what the command line cannot carry.
+    let powershell = |path: &str| script_shell::arguments(ScriptKind::PowerShell, Path::new(path));
+    assert_eq!(
+        powershell(r"C:\100% & 'x'\$go!.ps1"),
+        Ok(LocalArguments::List(
+            ["-NoExit", "-File", r"C:\100% & 'x'\$go!.ps1"]
+                .map(str::to_owned)
+                .to_vec()
+        ))
+    );
+    assert_eq!(
+        powershell("C:\\a\"b.ps1"),
+        Err(ScriptRefusal::Character('"'))
+    );
+    assert_eq!(
+        powershell("C:\\a\tb.ps1"),
+        Err(ScriptRefusal::Character('\t'))
+    );
+    // sh gets the path as an argument of its own: nothing in it is read by a shell.
+    assert_eq!(
+        script_shell::arguments(ScriptKind::Posix, Path::new("/tmp/a 'b'$(c)%!.sh")),
+        Ok(LocalArguments::List(vec!["/tmp/a 'b'$(c)%!.sh".to_owned()]))
+    );
+}
+
+#[test]
+fn run_in_shell_is_offered_for_one_script_alone_never_a_folder_or_another_file() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let names = [
+        "deploy.ps1",
+        "build.bat",
+        "tool.cmd",
+        "run.sh",
+        "notes.txt",
+        "setup.exe",
+    ];
+    let (mut app, shell, pane, _) = browser_of_scripts(dir.path(), &names, &sink);
+    let offered: Vec<usize> = (0..=names.len())
+        .filter(|index| app.offers_run_in_shell(pane, *index))
+        .collect();
+    // Entry 0 is the folder; the files follow it.
+    #[cfg(windows)]
+    assert_eq!(offered, [1, 2, 3], "PowerShell and batch scripts");
+    #[cfg(unix)]
+    assert_eq!(offered, [4], "a shell script alone");
+    assert!(
+        !app.offers_run_in_shell(shell.0, 1),
+        "not in the shell's own tab"
+    );
+    // Several chosen: none, and choosing it anyway asks nothing.
+    let script = offered[0];
+    for message in [
+        FilesMessage::Select {
+            tab: pane,
+            side: Side::Local,
+            index: script,
+        },
+        FilesMessage::Toggle {
+            tab: pane,
+            side: Side::Local,
+            index: 5,
+        },
+    ] {
+        app.update(Message::Files(message));
+    }
+    assert!(!app.offers_run_in_shell(pane, script));
+    assert!(run_in_shell(&mut app, pane, script).is_empty());
+    assert!(app.dialog.is_none());
+    // Nor a folder or another file.
+    app.update(Message::Files(FilesMessage::Select {
+        tab: pane,
+        side: Side::Local,
+        index: 0,
+    }));
+    for index in [0, 5, 6] {
+        assert!(run_in_shell(&mut app, pane, index).is_empty());
+        assert!(app.dialog.is_none(), "{index}");
+    }
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn run_in_shell_asks_with_the_exact_command_then_opens_a_new_tab_in_the_scripts_folder() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, shell, pane, folder) = browser_of_scripts(dir.path(), &RUN_HERE, &sink);
+    for (at, name) in RUN_HERE.iter().enumerate() {
+        let index = at + 1;
+        let (expected, command, rereads) = expected_run(name, &folder);
+        let tabs = app.tabs.len();
+        // Asked first, nothing run.
+        assert!(run_in_shell(&mut app, pane, index).is_empty(), "{name}");
+        let question = script_question(&app);
+        assert_eq!(question.command, command, "{name}: the command whole");
+        assert_eq!(
+            question.folder.as_deref(),
+            Some(folder.to_string_lossy().as_ref())
+        );
+        assert_eq!(question.rereads, rereads, "{name}");
+        assert_eq!(question.name, *name);
+        assert_eq!(question.replaces, None);
+        // Dismissed: nothing.
+        assert!(app.update(Message::DismissDialog).is_empty());
+        assert!(app.dialog.is_none());
+        assert_eq!(app.tabs.len(), tabs);
+        // Agreed: a new tab running exactly what was shown, as any local shell.
+        assert!(run_in_shell(&mut app, pane, index).is_empty());
+        let effects = app.update(Message::ConfirmDialog);
+        let (attempt, running) =
+            started(&effects).unwrap_or_else(|| panic!("{name}: started, {effects:?}"));
+        assert_eq!(running, expected, "{name}");
+        assert!(running.environment.is_empty(), "no HEIMDALL_* variables");
+        assert_eq!(app.tabs.len(), tabs + 1, "a new tab");
+        let tab = app.tab(attempt.0).expect("tab");
+        assert_eq!(tab.title, *name, "named after the script");
+        assert_eq!(tab.purpose, Purpose::Shell);
+        assert!(!app.can_save_as_profile(tab));
+        // Once started, its own browser, in the script's folder.
+        let (own, listed) = docked(&start(&mut app, attempt, &sink));
+        assert_eq!(listed, folder);
+        assert_eq!(leaves(&app, attempt.0), [attempt.0, own]);
+    }
+    // The shell beside the browser is left as it was, nothing typed into it.
+    assert_eq!(leaves(&app, shell.0), [shell.0, pane]);
+    assert!(sink.take().is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_scripts_powershell_gets_the_execution_policy_set_once_reconnect_included() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &["deploy.ps1"], &sink);
+    app.update(Message::Settings(
+        SettingsMessage::PowerShellExecutionPolicy(
+            heimdall_core::settings::ExecutionPolicy::RemoteSigned,
+        ),
+    ));
+    run_in_shell(&mut app, pane, 1);
+    let path = folder.join("deploy.ps1").to_string_lossy().into_owned();
+    let flags = [
+        "-ExecutionPolicy",
+        "RemoteSigned",
+        "-NoLogo",
+        "-NoExit",
+        "-File",
+        path.as_str(),
+    ]
+    .map(str::to_owned)
+    .to_vec();
+    assert!(script_question(&app).command.ends_with(&format!(
+        "-ExecutionPolicy RemoteSigned -NoLogo -NoExit -File \"{path}\""
+    )));
+    let (attempt, running) = started(&app.update(Message::ConfirmDialog)).expect("started");
+    assert_eq!(running.arguments, LocalArguments::List(flags.clone()));
+    start(&mut app, attempt, &sink);
+    app.update(Message::ReconnectTab(attempt.0));
+    let (_, again) = started(&app.update(Message::ConfirmDialog)).expect("again");
+    assert_eq!(again.arguments, LocalArguments::List(flags), "not twice");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_batch_path_cmd_would_read_is_refused_with_a_notice_and_nothing_runs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let names = ["100%.bat", "go!.cmd", "100%.ps1", "a&b^(c).bat"];
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &names, &sink);
+    for (index, refused) in [(1, "%"), (2, "!")] {
+        let tabs = app.tabs.len();
+        assert!(run_in_shell(&mut app, pane, index).is_empty());
+        assert!(app.dialog.is_none(), "nothing asked");
+        assert_eq!(app.tabs.len(), tabs, "nothing run");
+        let files = app
+            .tab(pane)
+            .and_then(|tab| tab.files.as_deref())
+            .expect("files");
+        assert_eq!(
+            files.local.error,
+            Some(FilesError::ScriptPathCharacter {
+                character: refused.to_owned()
+            })
+        );
+    }
+    // PowerShell takes % as text; cmd.exe & ^ and parentheses inside the quotes.
+    for index in [3, 4] {
+        run_in_shell(&mut app, pane, index);
+        let (_, command, _) = expected_run(names[index - 1], &folder);
+        assert_eq!(script_question(&app).command, command);
+        app.update(Message::DismissDialog);
+    }
+    assert!(sink.take().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_script_path_that_is_not_text_is_refused_with_a_notice_and_nothing_runs() {
+    use std::os::unix::ffi::OsStringExt as _;
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &[], &sink);
+    let name = OsString::from_vec(b"r\xffn.sh".to_vec());
+    scripts_listed(&mut app, pane, &folder, &[name]);
+    let tabs = app.tabs.len();
+    assert!(app.offers_run_in_shell(pane, 1), "a shell script still");
+    assert!(run_in_shell(&mut app, pane, 1).is_empty());
+    assert!(app.dialog.is_none(), "nothing asked");
+    assert_eq!(app.tabs.len(), tabs, "nothing run");
+    let files = app
+        .tab(pane)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert_eq!(files.local.error, Some(FilesError::ScriptPathNotText));
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn reconnecting_a_scripts_tab_asks_again_then_runs_it_in_its_place() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &RUN_HERE[..1], &sink);
+    let (expected, command, _) = expected_run(RUN_HERE[0], &folder);
+    run_in_shell(&mut app, pane, 1);
+    let (attempt, _) = started(&app.update(Message::ConfirmDialog)).expect("started");
+    let tab = attempt.0;
+    let (own, _) = docked(&start(&mut app, attempt, &sink));
+    app.update(Message::Connection {
+        tab,
+        attempt: attempt.1,
+        event: ConnectionEvent::Closed {
+            exit_status: Some(0),
+        },
+    });
+    assert!(app.can_reconnect(app.tab(tab).expect("tab")));
+    let place = app.tabs.iter().position(|found| found.id == tab);
+    let tabs = app.tabs.len();
+    // Asked again, the same command, nothing run.
+    assert!(app.update(Message::ReconnectTab(tab)).is_empty());
+    let question = script_question(&app);
+    assert_eq!(question.command, command);
+    assert_eq!(question.replaces, Some(tab));
+    // Dismissed: the tab stays as it was.
+    assert!(app.update(Message::DismissDialog).is_empty());
+    assert!(matches!(
+        app.tab(tab).expect("still there").phase,
+        Phase::Closed { .. }
+    ));
+    // Agreed: the same run, in its place, its browser beside it.
+    app.update(Message::ReconnectTab(tab));
+    let ((again, attempt_again), running) =
+        started(&app.update(Message::ConfirmDialog)).expect("run again");
+    assert_eq!(running, expected);
+    assert!(app.tab(tab).is_none(), "replaced");
+    assert_eq!(app.tabs.len(), tabs);
+    assert_eq!(app.tabs.iter().position(|found| found.id == again), place);
+    assert_eq!(leaves(&app, again), [again, own]);
+    // And asked again the next time too, once it runs.
+    start(&mut app, (again, attempt_again), &sink);
+    assert!(app.update(Message::ReconnectTab(again)).is_empty());
+    assert_eq!(script_question(&app).replaces, Some(again));
+    app.update(Message::DismissDialog);
+    assert!(sink.take().is_empty(), "nothing typed into any shell");
+}
+
+#[test]
+fn a_scripts_tab_is_not_offered_again_at_the_next_start() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane, _) = browser_of_scripts(dir.path(), &RUN_HERE[..1], &sink);
+    run_in_shell(&mut app, pane, 1);
+    let (attempt, _) = started(&app.update(Message::ConfirmDialog)).expect("started");
+    start(&mut app, attempt, &sink);
+    let mut effects = app.update(Message::WindowCloseRequested);
+    if matches!(app.dialog, Some(Dialog::ConfirmExit { .. })) {
+        effects = app.update(Message::ConfirmDialog);
+    }
+    assert!(matches!(effects.as_slice(), [Effect::Exit]), "{effects:?}");
+    let snapshot = session_snapshot::snapshot_path(&dir.path().join("profiles.toml"));
+    assert!(
+        session_snapshot::load(&snapshot).is_none(),
+        "no session to reopen: the script runs again only once asked"
+    );
 }

@@ -36,6 +36,9 @@ pub(super) enum Reopen {
     Profile(ProfileId),
     /// The same local shell again: one started from the sidebar, with no profile.
     Shell(LocalShell),
+    /// A script run from the local file browser, by its interpreter as first agreed: asked
+    /// again before each run, never run again as it is.
+    Script(Box<LocalShell>),
     /// The same session saved nowhere, as "Connect as..." opened it, for its purpose.
     Transient(Box<TabProfile>, Purpose),
     /// Nothing: the file browser docked beside a local shell is no session, and opens
@@ -64,7 +67,9 @@ impl Tab {
     pub(super) fn saved_profile(&self) -> Option<&ProfileId> {
         match &self.reopen {
             Reopen::Profile(id) => Some(id),
-            Reopen::Shell(_) | Reopen::Transient(..) | Reopen::LocalBrowser => None,
+            Reopen::Shell(_) | Reopen::Script(_) | Reopen::Transient(..) | Reopen::LocalBrowser => {
+                None
+            }
         }
     }
 }
@@ -89,7 +94,8 @@ impl App {
 
     /// Opens the session of `tab_id` again, in its place, under the name the user gave it;
     /// the old session is stopped. When nothing opens (a local command waiting for
-    /// approval), the tab stays as it was.
+    /// approval), the tab stays as it was; a script is asked about again, and takes the
+    /// tab's place once agreed.
     pub(super) fn reconnect_tab(&mut self, tab_id: TabId) -> Vec<Effect> {
         let Some(index) = self.tabs.iter().position(|tab| tab.id == tab_id) else {
             return Vec::new();
@@ -98,13 +104,27 @@ impl App {
             return Vec::new();
         }
         let (reopen, purpose) = (self.tabs[index].reopen.clone(), self.tabs[index].purpose);
+        if let Reopen::Script(shell) = reopen {
+            self.ask_script(*shell, Some(tab_id));
+            return Vec::new();
+        }
         let before = self.tabs.len();
         self.replacing = true;
         let effects = self.open_again(reopen, purpose);
         self.replacing = false;
-        if self.tabs.len() > before
+        self.take_place(index, before);
+        effects
+    }
+
+    /// Puts the tab opened last, when one opened since there were `count` tabs, in the
+    /// place of tab `index`, which is stopped: its title, its pin, its split and what it
+    /// showed go with it.
+    pub(super) fn take_place(&mut self, index: usize, count: usize) {
+        if self.tabs.len() > count
+            && index < count
             && let Some(reopened) = self.tabs.pop()
         {
+            let tab_id = self.tabs[index].id;
             let mut old = std::mem::replace(&mut self.tabs[index], reopened);
             let reopened = self.tabs[index].id;
             self.tabs[index].custom_title = old.custom_title.take();
@@ -137,7 +157,6 @@ impl App {
             self.active = Some(reopened);
             self.sync_focus();
         }
-        effects
     }
 
     /// Opens saved profile `id` with its own protocol; an SSH profile for `purpose`, a shell
@@ -168,6 +187,10 @@ impl App {
         match reopen {
             Reopen::Profile(id) => self.open_saved(&id, purpose),
             Reopen::Shell(shell) => self.open_local(shell),
+            Reopen::Script(shell) => {
+                self.ask_script(*shell, None);
+                Vec::new()
+            }
             Reopen::LocalBrowser => Vec::new(),
             Reopen::Transient(profile, purpose) => {
                 let effects = self.open_transient(TabProfile::clone(&profile), purpose);

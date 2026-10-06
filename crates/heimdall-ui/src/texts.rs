@@ -481,6 +481,11 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::OpenFailed { detail } => {
             fl!("ui-files-error-open-failed", detail = detail.as_str())
         }
+        FilesError::ScriptPathCharacter { character } => fl!(
+            "ui-files-error-script-character",
+            character = character.as_str()
+        ),
+        FilesError::ScriptPathNotText => fl!("ui-files-error-script-not-text"),
         FilesError::SudoPasswordNeeded => fl!("ui-files-error-sudo-password-needed"),
         FilesError::SudoPasswordRejected => fl!("ui-files-error-sudo-password-rejected"),
         FilesError::SudoNeedsTerminal => fl!("ui-files-error-sudo-needs-terminal"),

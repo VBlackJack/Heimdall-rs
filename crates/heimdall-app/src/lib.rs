@@ -49,6 +49,7 @@ pub mod rdp_driver;
 pub mod rdp_external;
 pub mod reachability;
 pub mod route_test;
+pub mod script_shell;
 pub mod server_health;
 mod sink;
 pub mod steps_draft;
@@ -80,12 +81,12 @@ pub use app::{
     PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
     RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice,
-    RestoreDialog, RestoreRow, Retry, SelectionMessage, SessionState, SessionStatus,
-    SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource, SettingsMessage,
-    SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile, TreeFilter, TreeRow,
-    TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage, UNLOCK_SECRET_ENTRY,
-    VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, WHEEL_LINES,
-    master_password_problem, open_vault,
+    RestoreDialog, RestoreRow, Retry, ScriptConfirmation, SelectionMessage, SessionState,
+    SessionStatus, SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
+    SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
+    TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
+    UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
+    VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};
