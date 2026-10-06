@@ -3131,6 +3131,7 @@ impl Shell {
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
         container(
             column![header, actions, self.search_box(), tree]
+                .push(self.no_folder_zone())
                 .push(self.undo_bar())
                 .spacing(SPACING)
                 .padding(PADDING),
@@ -3139,6 +3140,30 @@ impl Shell {
         .height(Length::Fill)
         .style(container::rounded_box)
         .into()
+    }
+
+    /// Under the tree while something is dragged, as the C# one: dropped there, a session
+    /// leaves its folder and a folder goes to the top. At the bottom, as the C#, so that
+    /// nothing moves under the pointer when it appears.
+    fn no_folder_zone(&self) -> Option<Element<'_, Message>> {
+        let drag = self.tree_drag.as_ref().filter(|drag| drag.active)?;
+        let zone = container(text(fl!("ui-tree-no-folder-zone")).size(SMALL_SIZE))
+            .width(Length::Fill)
+            .padding([4.0, 6.0])
+            .style(container::bordered_box);
+        Some(
+            tooltip(
+                crate::tree_drag::drop_zone(
+                    zone.into(),
+                    heimdall_app::DropTarget::Folder(heimdall_app::NO_FOLDER.to_owned()),
+                    Some(drag),
+                ),
+                text(fl!("ui-tree-no-folder-zone-tooltip")).size(SMALL_SIZE),
+                tooltip::Position::Top,
+            )
+            .style(container::rounded_box)
+            .into(),
+        )
     }
 
     /// Under the tree for 30 seconds after the tree's organization changed, as the C# bar:

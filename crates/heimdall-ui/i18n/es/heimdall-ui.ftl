@@ -1912,3 +1912,5 @@ ui-tree-undo = Deshacer
 ui-status-reordered-one = Se movió { $name } dentro de { $folder }
 ui-status-reordered = Se movieron { $count } sesiones dentro de { $folder }
 ui-status-undo-conflict = No se puede deshacer: las sesiones o carpetas afectadas han cambiado desde esta acción.
+ui-tree-no-folder-zone = Suelta aquí para sacarlo de su carpeta
+ui-tree-no-folder-zone-tooltip = Suelta una sesión o una carpeta aquí para sacarla de su carpeta.

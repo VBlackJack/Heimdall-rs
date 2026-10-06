@@ -1896,3 +1896,5 @@ ui-tree-undo = Undo
 ui-status-reordered-one = Moved { $name } within { $folder }
 ui-status-reordered = Moved { $count } sessions within { $folder }
 ui-status-undo-conflict = Cannot undo: the affected sessions or folders have changed since this action.
+ui-tree-no-folder-zone = Drop here to take it out of its folder
+ui-tree-no-folder-zone-tooltip = Drop a session or a folder here to take it out of its folder.

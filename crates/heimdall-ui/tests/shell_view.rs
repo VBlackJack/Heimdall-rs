@@ -3579,3 +3579,36 @@ fn alt_down_moves_the_session_and_the_undo_bar_puts_it_back() {
     }
     assert_eq!(order(&shell), ["a", "b", "c"]);
 }
+
+#[test]
+fn a_drag_shows_the_no_folder_zone_which_takes_a_session_out_of_its_folder() {
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let zone = "Drop here to take it out of its folder";
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find(zone).is_err(), "no drag: no zone");
+    }
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(zone).expect("the C# zone, while dragging");
+    }
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        heimdall_app::NO_FOLDER.to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("a"))
+            .and_then(|profile| profile.group),
+        None,
+        "out of Production"
+    );
+    let mut ui = simulator(&shell);
+    assert!(ui.find(zone).is_err(), "gone with the drag");
+}
