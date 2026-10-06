@@ -149,6 +149,7 @@ fn file(name: &str, size: u64) -> RemoteEntry {
         permissions: None,
         owner: None,
         group: None,
+        inode: None,
     }
 }
 
