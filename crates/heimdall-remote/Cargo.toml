@@ -19,6 +19,7 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
 zeroize.workspace = true
+zune-jpeg.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

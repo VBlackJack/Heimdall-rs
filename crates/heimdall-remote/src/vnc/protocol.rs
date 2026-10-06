@@ -17,15 +17,17 @@
 //! The RFB protocol (RFC 6143) without input or output: the server's bytes in, events and
 //! bytes to send out.
 //!
-//! Versions 3.3, 3.7 and 3.8; security None and VNC Authentication; encodings Raw,
-//! `CopyRect` and ZRLE, with the `DesktopSize` and `LastRect` pseudo-encodings. A message is read once it
-//! is whole; whatever the server announces (a name, a clipboard, a rectangle) is bounded
-//! before anything is allocated for it.
+//! Versions 3.3, 3.7 and 3.8; security None and VNC Authentication; encodings Tight, ZRLE,
+//! `CopyRect` and Raw, with the `DesktopSize` and `LastRect` pseudo-encodings and the Tight
+//! compression and JPEG quality levels. A message is read once it is whole; whatever the
+//! server announces (a name, a clipboard, a rectangle) is bounded before anything is
+//! allocated for it.
 
 use zeroize::Zeroizing;
 
 use super::auth::{self, CHALLENGE_LENGTH};
 use super::screen::{MAX_SIDE, PIXEL_BYTES, Rect, Screen};
+use super::tight::Tight;
 use super::zrle::Zrle;
 
 /// Length of the version message.
@@ -38,6 +40,7 @@ const SECURITY_VNC_AUTH: u8 = 2;
 /// Encodings.
 const ENCODING_RAW: i32 = 0;
 const ENCODING_COPY_RECT: i32 = 1;
+const ENCODING_TIGHT: i32 = 7;
 const ENCODING_ZRLE: i32 = 16;
 const PSEUDO_DESKTOP_SIZE: i32 = -223;
 const PSEUDO_LAST_RECT: i32 = -224;
@@ -47,8 +50,15 @@ const PSEUDO_EXTENDED_DESKTOP_SIZE: i32 = -308;
 /// one given at the start.
 const PSEUDO_DESKTOP_NAME: i32 = -307;
 
-/// Encodings asked for, preferred first.
-const ENCODINGS: [i32; 7] = [
+/// Tight compression level N is asked as this plus N, 0 to 9.
+const PSEUDO_COMPRESS_LEVEL_0: i32 = -256;
+/// Tight JPEG quality level N is asked as this plus N, 0 to 9; without one, a Tight server
+/// sends no JPEG.
+const PSEUDO_QUALITY_LEVEL_0: i32 = -32;
+
+/// Encodings asked for, preferred first; the levels of the quality chosen follow them.
+const ENCODINGS: [i32; 8] = [
+    ENCODING_TIGHT,
     ENCODING_ZRLE,
     ENCODING_COPY_RECT,
     ENCODING_RAW,
@@ -88,6 +98,76 @@ const MAX_COMPRESSED_RECT: usize = 64 << 20;
 /// The pixel format asked for: 32 bits, depth 24, true colour, little-endian, red in the
 /// lowest byte. In memory a pixel is then red, green, blue and one unused byte.
 const PIXEL_FORMAT: [u8; 16] = [32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0];
+
+/// The levels of each quality: compression, then JPEG quality.
+const BEST_COMPRESSION: u8 = 0;
+const BALANCED_COMPRESSION: u8 = 3;
+const BALANCED_JPEG: u8 = 7;
+const PERFORMANCE_COMPRESSION: u8 = 6;
+const PERFORMANCE_JPEG: u8 = 6;
+const LOW_BANDWIDTH_COMPRESSION: u8 = 9;
+const LOW_BANDWIDTH_JPEG: u8 = 3;
+
+/// How the server is asked to trade the picture for bandwidth, as the C# Heimdall's
+/// "Quality" menu. Each choice sets both Tight levels, where the C# set compression only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Quality {
+    /// Compression 0 and no JPEG quality level: a Tight server then never sends JPEG, and
+    /// the picture is lossless.
+    Best,
+    /// Compression 3, JPEG quality 7.
+    Balanced,
+    /// Compression 6, JPEG quality 6: noVNC's levels, and the C# default.
+    #[default]
+    Performance,
+    /// Compression 9, JPEG quality 3.
+    LowBandwidth,
+}
+
+impl Quality {
+    /// Every choice, in the C# menu's order.
+    pub const ALL: [Self; 4] = [
+        Self::Best,
+        Self::Balanced,
+        Self::Performance,
+        Self::LowBandwidth,
+    ];
+
+    /// The Tight compression level asked, 0 to 9.
+    #[must_use]
+    pub fn compression_level(self) -> u8 {
+        match self {
+            Self::Best => BEST_COMPRESSION,
+            Self::Balanced => BALANCED_COMPRESSION,
+            Self::Performance => PERFORMANCE_COMPRESSION,
+            Self::LowBandwidth => LOW_BANDWIDTH_COMPRESSION,
+        }
+    }
+
+    /// The JPEG quality level asked, 0 to 9; `None` asks for no JPEG at all.
+    #[must_use]
+    pub fn jpeg_quality(self) -> Option<u8> {
+        match self {
+            Self::Best => None,
+            Self::Balanced => Some(BALANCED_JPEG),
+            Self::Performance => Some(PERFORMANCE_JPEG),
+            Self::LowBandwidth => Some(LOW_BANDWIDTH_JPEG),
+        }
+    }
+
+    /// The encodings asked at this quality, preferred first, then its levels.
+    fn encodings(self) -> Vec<i32> {
+        let compression = PSEUDO_COMPRESS_LEVEL_0 + i32::from(self.compression_level());
+        let jpeg = self
+            .jpeg_quality()
+            .map(|level| PSEUDO_QUALITY_LEVEL_0 + i32::from(level));
+        ENCODINGS
+            .into_iter()
+            .chain(std::iter::once(compression))
+            .chain(jpeg)
+            .collect()
+    }
+}
 
 /// A version the server and the client agreed on.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -191,6 +271,9 @@ pub struct Rfb {
     challenge: [u8; CHALLENGE_LENGTH],
     screen: Screen,
     zrle: Zrle,
+    tight: Tight,
+    /// The quality asked of the server.
+    quality: Quality,
     /// The first screen the server said, by its identifier and flags, once it says its
     /// screens: a size can then be asked of it.
     layout: Option<(u32, u32)>,
@@ -303,6 +386,8 @@ impl Rfb {
             challenge: [0; CHALLENGE_LENGTH],
             screen: Screen::new(0, 0),
             zrle: Zrle::new(),
+            tight: Tight::new(),
+            quality: Quality::default(),
             layout: None,
         }
     }
@@ -336,6 +421,29 @@ impl Rfb {
         self.output.extend_from_slice(&width.to_be_bytes());
         self.output.extend_from_slice(&height.to_be_bytes());
         self.output.extend_from_slice(&flags.to_be_bytes());
+    }
+
+    /// Asks the server for pictures at `quality`, as noVNC does when its levels change: the
+    /// encodings again, then the whole desktop anew so the picture changes at once. Before
+    /// the session opens, the quality is only kept, to be asked first.
+    pub fn set_quality(&mut self, quality: Quality) {
+        if quality == self.quality {
+            return;
+        }
+        self.quality = quality;
+        if matches!(
+            self.state,
+            State::Messages | State::Rectangles(_) | State::DroppingCutText(_)
+        ) {
+            self.send_encodings();
+            self.request_update(false);
+        }
+    }
+
+    /// The quality asked of the server.
+    #[must_use]
+    pub fn quality(&self) -> Quality {
+        self.quality
     }
 
     /// The desktop.
@@ -582,12 +690,7 @@ impl Rfb {
         self.output.push(SET_PIXEL_FORMAT);
         self.output.extend_from_slice(&[0, 0, 0]);
         self.output.extend_from_slice(&PIXEL_FORMAT);
-        self.output.extend_from_slice(&[SET_ENCODINGS, 0]);
-        self.output
-            .extend_from_slice(&u16::try_from(ENCODINGS.len()).unwrap_or(0).to_be_bytes());
-        for encoding in ENCODINGS {
-            self.output.extend_from_slice(&encoding.to_be_bytes());
-        }
+        self.send_encodings();
         self.request_update(false);
         self.state = State::Messages;
         events.push(RfbEvent::Connected {
@@ -693,6 +796,12 @@ impl Rfb {
                 self.screen.copy((from_x, from_y), rect);
                 events.push(RfbEvent::Updated(rect));
             }
+            ENCODING_TIGHT => {
+                if !self.tight_rect(reader, rect)? {
+                    return Ok(Step::More);
+                }
+                events.push(RfbEvent::Updated(rect));
+            }
             ENCODING_ZRLE => {
                 self.check_inside(rect)?;
                 let Some(size) = reader.u32() else {
@@ -771,6 +880,31 @@ impl Rfb {
             });
         }
         Ok(true)
+    }
+
+    /// A Tight rectangle, drawn once all of it is there; `false` until then.
+    fn tight_rect(&mut self, reader: &mut Reader<'_>, rect: Rect) -> Result<bool, RfbError> {
+        self.check_inside(rect)?;
+        let unread = &reader.data[reader.at..];
+        let Some(taken) = self
+            .tight
+            .decode(unread, rect, &mut self.screen)
+            .map_err(RfbError::Protocol)?
+        else {
+            return Ok(false);
+        };
+        Ok(reader.take(taken).is_some())
+    }
+
+    /// `SetEncodings`: those asked at the quality chosen.
+    fn send_encodings(&mut self) {
+        let encodings = self.quality.encodings();
+        self.output.extend_from_slice(&[SET_ENCODINGS, 0]);
+        self.output
+            .extend_from_slice(&u16::try_from(encodings.len()).unwrap_or(0).to_be_bytes());
+        for encoding in encodings {
+            self.output.extend_from_slice(&encoding.to_be_bytes());
+        }
     }
 
     fn end_update(&mut self) {

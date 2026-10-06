@@ -24,7 +24,7 @@ use heimdall_core::profile::DesktopSizing;
 use heimdall_rdp::{
     LocalClipboard, MouseButton, MousePosition, Operation, Scancode, WheelRotations,
 };
-use heimdall_remote::vnc::VncInput;
+use heimdall_remote::vnc::{Quality, VncInput};
 use tokio::sync::{mpsc, watch};
 use zeroize::Zeroizing;
 
@@ -237,6 +237,9 @@ struct VncSink {
     remote_resize: bool,
     /// The tab's last size, asked when remote resizing is turned on.
     tab: std::sync::Mutex<Option<(u16, u16)>>,
+    /// The quality asked of the server, as the C# toolbar's "Quality" menu: this tab's
+    /// only, never kept in its profile.
+    quality: Quality,
 }
 
 /// The desktop of a tab, once its session is open.
@@ -375,6 +378,26 @@ impl DesktopPane {
         if on && let Some((width, height)) = last {
             let _ = sink.input.resize(width, height);
         }
+    }
+
+    /// The quality a VNC desktop is asked at, as the C# toolbar's "Quality" menu; `None` for
+    /// an RDP desktop.
+    #[must_use]
+    pub fn vnc_quality(&self) -> Option<Quality> {
+        match &self.sink {
+            DesktopSink::Vnc(sink) => Some(sink.quality),
+            DesktopSink::Rdp { .. } => None,
+        }
+    }
+
+    /// Asks a VNC desktop's server for pictures at `quality`: its levels, then the whole
+    /// desktop anew. A desktop watched only is asked too: it still receives pictures.
+    pub(crate) fn set_vnc_quality(&mut self, quality: Quality) {
+        let DesktopSink::Vnc(sink) = &mut self.sink else {
+            return;
+        };
+        sink.quality = quality;
+        let _ = sink.input.set_quality(quality);
     }
 
     /// The size the user chose from the tab's menu, as the C# "Resolution" one: a size of
@@ -628,6 +651,7 @@ impl DesktopPane {
                 view_only,
                 remote_resize: false,
                 tab: std::sync::Mutex::new(None),
+                quality: Quality::default(),
             }),
             anti_idle: false,
             desktop_name: None,
