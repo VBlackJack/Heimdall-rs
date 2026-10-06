@@ -114,7 +114,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
         &[
             ("Ctrl+Tab, Ctrl+PgDn", Action::NextTab),
             ("Ctrl+Shift+Tab, Ctrl+PgUp", Action::PreviousTab),
-            ("Ctrl+Shift+W", Action::CloseTab),
+            ("Ctrl+W, Ctrl+Shift+W", Action::CloseTab),
         ],
     ),
     (

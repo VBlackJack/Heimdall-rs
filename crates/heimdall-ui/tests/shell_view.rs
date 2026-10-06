@@ -3568,3 +3568,26 @@ fn an_imported_profile_carries_its_origin_in_the_tree_and_in_its_form() {
     ui.find("Imported from PuTTY registry")
         .expect("the C# sentence under the form");
 }
+
+#[test]
+fn ctrl_w_closes_the_session_shown_unless_a_field_has_the_keyboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    // A field had the keyboard: Ctrl+W was its, nothing closes.
+    let _ = shell.update(Message::CloseKeyFocus(true));
+    assert!(shell.app().dialog.is_none());
+    assert!(shell.app().tab(tab).is_some());
+    // None had it: the session shown closes, asked first as a live one is.
+    let _ = shell.update(Message::CloseKeyFocus(false));
+    assert!(
+        matches!(shell.app().dialog, Some(Dialog::ConfirmCloseTab(asked)) if asked == tab),
+        "{:?}",
+        shell.app().dialog
+    );
+    // A dialog open, Ctrl+W is not asked about: it is the dialog's.
+    let _ = shell.update(Message::CloseKey);
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::ConfirmCloseTab(_))
+    ));
+}
