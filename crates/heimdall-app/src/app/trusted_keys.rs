@@ -15,7 +15,10 @@
  */
 
 //! The keys trusted for servers, as the C# Settings lists them: SSH host keys and RDP
-//! certificates, each copied or forgotten from the Settings page.
+//! certificates, each copied or forgotten from the Settings page; and the FTPS certificates,
+//! which the C# keeps out of sight in its settings file, listed and forgotten the same way.
+
+use std::path::{Path, PathBuf};
 
 use heimdall_core::profile::display_address;
 use heimdall_rdp::{KnownRdpHost, KnownRdpHosts};
@@ -40,6 +43,8 @@ pub enum TrustedKey {
     Ssh(KnownHostEntry),
     /// The key of an RDP server's certificate.
     Rdp(KnownRdpHost),
+    /// The key of an FTPS server's certificate, pinned as an RDP one, in a file of its own.
+    Ftps(KnownRdpHost),
 }
 
 impl TrustedKey {
@@ -48,7 +53,7 @@ impl TrustedKey {
     pub fn address(&self) -> String {
         match self {
             Self::Ssh(entry) => display_address(&entry.host, entry.port),
-            Self::Rdp(entry) => display_address(&entry.host, entry.port),
+            Self::Rdp(entry) | Self::Ftps(entry) => display_address(&entry.host, entry.port),
         }
     }
 
@@ -57,17 +62,18 @@ impl TrustedKey {
     pub fn fingerprint(&self) -> String {
         match self {
             Self::Ssh(entry) => entry.fingerprint.clone(),
-            Self::Rdp(entry) => entry.fingerprint.to_string(),
+            Self::Rdp(entry) | Self::Ftps(entry) => entry.fingerprint.to_string(),
         }
     }
 
-    /// When an RDP certificate was trusted, in this computer's time, as the C# "Trusted
-    /// since" column; `None` for an SSH key or a certificate recorded without the time.
+    /// When an RDP or FTPS certificate was trusted, in this computer's time, as the C#
+    /// "Trusted since" column; `None` for an SSH key or a certificate recorded without the
+    /// time.
     #[must_use]
     pub fn trusted_since(&self) -> Option<String> {
         match self {
             Self::Ssh(_) => None,
-            Self::Rdp(entry) => entry.trusted.map(|time| {
+            Self::Rdp(entry) | Self::Ftps(entry) => entry.trusted.map(|time| {
                 chrono::DateTime::<chrono::Local>::from(time)
                     .format(TRUSTED_SINCE_FORMAT)
                     .to_string()
@@ -83,8 +89,31 @@ pub struct TrustedKeys {
     pub ssh: Vec<KnownHostEntry>,
     /// RDP certificates, in the order of their file.
     pub rdp: Vec<KnownRdpHost>,
+    /// FTPS certificates, in the order of their file.
+    pub ftps: Vec<KnownRdpHost>,
     /// Why a file could not be read, when one could not: its list is then empty.
     pub unreadable: Option<String>,
+}
+
+impl TrustedKeys {
+    /// How many keys are trusted for the server of `key`, `key` among them, in its list.
+    #[must_use]
+    pub fn keys_of_server(&self, key: &TrustedKey) -> usize {
+        let (list, host, port) = match key {
+            TrustedKey::Ssh(entry) => {
+                return self
+                    .ssh
+                    .iter()
+                    .filter(|other| other.host == entry.host && other.port == entry.port)
+                    .count();
+            }
+            TrustedKey::Rdp(entry) => (&self.rdp, &entry.host, entry.port),
+            TrustedKey::Ftps(entry) => (&self.ftps, &entry.host, entry.port),
+        };
+        list.iter()
+            .filter(|other| &other.host == host && other.port == port)
+            .count()
+    }
 }
 
 /// A change from the lists of trusted keys.
@@ -96,6 +125,10 @@ pub enum TrustedKeysMessage {
     CopyFingerprint(TrustedKey),
     /// Ask whether to forget a key.
     RequestForget(TrustedKey),
+    /// Ask whether to forget every certificate trusted for the server of a certificate: an
+    /// RDP or FTPS server trusted with more than one. An SSH key is forgotten with its
+    /// server's already.
+    RequestForgetServer(TrustedKey),
     /// Import the keys of another `known_hosts` file, as the C# "Trusted SSH hosts...".
     Import(super::HostKeysMessage),
     /// Write the keys trusted into the user's OpenSSH `known_hosts`, as the C# "Export
@@ -123,6 +156,16 @@ impl App {
             }
             TrustedKeysMessage::RequestForget(key) => {
                 self.dialog = Some(Dialog::ForgetTrustedKey(key.clone()));
+                Vec::new()
+            }
+            TrustedKeysMessage::RequestForgetServer(key) => {
+                self.dialog = Some(match key {
+                    TrustedKey::Ssh(_) => Dialog::ForgetTrustedKey(key.clone()),
+                    TrustedKey::Rdp(_) | TrustedKey::Ftps(_) => Dialog::ForgetTrustedServer {
+                        key: key.clone(),
+                        count: self.trusted_keys.keys_of_server(key),
+                    },
+                });
                 Vec::new()
             }
             TrustedKeysMessage::Import(message) => self.hostkeys_message(message.clone()),
@@ -159,7 +202,7 @@ impl App {
         self.tell(notice);
     }
 
-    /// Reads both files of trusted keys.
+    /// Reads the three files of trusted keys.
     pub(super) fn read_trusted_keys(&mut self) {
         let mut unreadable = Vec::new();
         let ssh = KnownHosts::new(&self.config.known_hosts)
@@ -168,38 +211,81 @@ impl App {
                 unreadable.push(error.to_string());
                 Vec::new()
             });
-        let rdp_file = self.known_rdp_hosts();
-        let rdp = KnownRdpHosts::new(&rdp_file)
-            .entries()
-            .unwrap_or_else(|error| {
-                unreadable.push(format!("{}: {error}", rdp_file.display()));
-                Vec::new()
-            });
+        let rdp = read_certificates(&self.known_rdp_hosts(), &mut unreadable);
+        let ftps = read_certificates(&self.known_ftps_hosts(), &mut unreadable);
         self.trusted_keys = TrustedKeys {
             ssh,
             rdp,
+            ftps,
             unreadable: (!unreadable.is_empty()).then(|| unreadable.join("\n")),
         };
     }
 
-    /// Forgets `key`, as confirmed: an SSH server's keys, or that one RDP certificate. The
-    /// next connection to it asks again.
+    /// The file the certificate `key` was read from; `None` for an SSH key.
+    fn certificates_file(&self, key: &TrustedKey) -> Option<PathBuf> {
+        match key {
+            TrustedKey::Ssh(_) => None,
+            TrustedKey::Rdp(_) => Some(self.known_rdp_hosts()),
+            TrustedKey::Ftps(_) => Some(self.known_ftps_hosts()),
+        }
+    }
+
+    /// Forgets `key`, as confirmed: an SSH server's keys, or that one RDP or FTPS
+    /// certificate. The next connection to it asks again, unless it presents another
+    /// certificate still trusted for it.
     pub(super) fn forget_trusted_key(&mut self, key: &TrustedKey) {
-        let forgotten = match key {
-            TrustedKey::Ssh(entry) => KnownHosts::new(&self.config.known_hosts)
+        let (TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry), Some(file)) =
+            (key, self.certificates_file(key))
+        else {
+            // An SSH key goes with its server's, as the C# removes it.
+            self.forget_server_of(key);
+            return;
+        };
+        let forgotten =
+            KnownRdpHosts::new(file).forget_key(&entry.host, entry.port, &entry.fingerprint);
+        self.read_trusted_keys();
+        match forgotten {
+            Ok(_) => self.tell(Notice::CertificateForgotten(key.address())),
+            Err(error) => {
+                self.dialog = Some(Dialog::StoreError {
+                    detail: error.to_string(),
+                });
+            }
+        }
+    }
+
+    /// Forgets every key trusted for the server of `key`, in the file it was read from, as
+    /// confirmed: the next connection to it asks again.
+    pub(super) fn forget_server_of(&mut self, key: &TrustedKey) {
+        let forgotten = match (key, self.certificates_file(key)) {
+            (TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry), Some(file)) => {
+                KnownRdpHosts::new(file)
+                    .forget(&entry.host, entry.port)
+                    .map_err(|error| error.to_string())
+            }
+            (TrustedKey::Ssh(entry), _) => KnownHosts::new(&self.config.known_hosts)
                 .forget(&entry.host, entry.port)
                 .map_err(|error| error.to_string()),
-            TrustedKey::Rdp(entry) => KnownRdpHosts::new(self.known_rdp_hosts())
-                .forget_key(&entry.host, entry.port, &entry.fingerprint)
-                .map_err(|error| error.to_string()),
+            (_, None) => return,
         };
         self.read_trusted_keys();
         match forgotten {
             Ok(_) => self.tell(match key {
                 TrustedKey::Ssh(_) => Notice::HostKeyRemoved(key.address()),
-                TrustedKey::Rdp(_) => Notice::CertificateForgotten(key.address()),
+                TrustedKey::Rdp(_) | TrustedKey::Ftps(_) => {
+                    Notice::ServerCertificatesForgotten(key.address())
+                }
             }),
             Err(detail) => self.dialog = Some(Dialog::StoreError { detail }),
         }
     }
+}
+
+/// The certificates trusted in `file`; none when it cannot be read, and then why is pushed
+/// onto `unreadable`.
+fn read_certificates(file: &Path, unreadable: &mut Vec<String>) -> Vec<KnownRdpHost> {
+    KnownRdpHosts::new(file).entries().unwrap_or_else(|error| {
+        unreadable.push(format!("{}: {error}", file.display()));
+        Vec::new()
+    })
 }

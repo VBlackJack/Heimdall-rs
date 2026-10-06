@@ -424,6 +424,12 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::CertificateForgotten(server) => {
                 fl!("ui-status-certificate-forgotten", server = server.as_str())
             }
+            Notice::ServerCertificatesForgotten(server) => {
+                fl!(
+                    "ui-status-server-certificates-forgotten",
+                    server = server.as_str()
+                )
+            }
             Notice::ProviderNoPassword(name) => {
                 fl!("ui-status-provider-no-password", name = name.as_str())
             }

@@ -1196,8 +1196,13 @@ ui-trusted-certificates-subject = Subject
 ui-trusted-certificates-issuer = Issuer
 ui-trusted-certificates-trusted = Trusted since
 ui-trusted-certificates-forget = Forget
+ui-trusted-certificates-forget-server = Forget server
 ui-trusted-certificates-empty-title = No trusted RDP certificates
 ui-trusted-certificates-empty-body = Certificates you accept when connecting to a remote desktop are listed here, and can be revoked from here.
+ui-trusted-ftps-certificates-title = Trusted FTPS certificates
+ui-trusted-ftps-certificates-hint = Certificates you accepted for an FTPS server, kept across restarts. Forgetting one removes that certificate from the trust list of its server.
+ui-trusted-ftps-certificates-empty-title = No trusted FTPS certificates
+ui-trusted-ftps-certificates-empty-body = Certificates you accept when connecting to an FTPS server are listed here, and can be revoked from here.
 ui-trusted-keys-unreadable = The trusted keys could not all be read: { $detail }
 ui-dialog-forget-host-key-title = Remove trusted host key
 ui-dialog-forget-host-key-body = Remove the trusted host key for { $server }?
@@ -1208,9 +1213,15 @@ ui-dialog-forget-certificate-title = Forget this certificate?
 ui-dialog-forget-certificate-body = Heimdall will forget the certificate { $fingerprint } for { $server }. Only that certificate is affected; any other certificate trusted for the same server stays trusted.
 ui-dialog-forget-certificate-keep = Keep
 ui-dialog-forget-certificate-confirm = Forget
+ui-dialog-forget-server-certificates-title = Forget this server's certificates?
+ui-dialog-forget-server-certificates-body = { $count ->
+    [one] Heimdall will forget the { $count } certificate trusted for { $server }. The next connection to it asks again.
+   *[other] Heimdall will forget the { $count } certificates trusted for { $server }. The next connection to it asks again.
+}
 ui-status-fingerprint-copied = Copied full fingerprint for { $server }.
 ui-status-host-key-removed = Removed trusted host key for { $server }.
 ui-status-certificate-forgotten = Certificate forgotten for { $server }.
+ui-status-server-certificates-forgotten = Every certificate forgotten for { $server }.
 
 ## Tunnels opened by hand, as the C# "New tunnel" dialog and tunnels panel say them.
 ui-tunnel-new-title = New tunnel

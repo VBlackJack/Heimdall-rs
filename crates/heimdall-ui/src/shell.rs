@@ -896,7 +896,8 @@ pub enum SettingsTab {
     General,
     /// The terminals' text and colours, and session logging.
     Terminal,
-    /// SSH auto-reconnect and the trusted host keys.
+    /// SSH auto-reconnect, the file transfers, the trusted host keys and the trusted FTPS
+    /// certificates.
     Ssh,
     /// The trusted RDP certificates.
     Rdp,
@@ -1040,6 +1041,8 @@ pub struct Shell {
     settings_tab: SettingsTab,
     /// The search typed over the trusted RDP certificates.
     certificate_search: String,
+    /// The search typed over the trusted FTPS certificates.
+    ftps_certificate_search: String,
     /// Files are dragged over the window.
     files_hovered: bool,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
@@ -1273,6 +1276,7 @@ impl Shell {
             host_key_search: String::new(),
             settings_tab: SettingsTab::default(),
             certificate_search: String::new(),
+            ftps_certificate_search: String::new(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
@@ -1827,6 +1831,9 @@ impl Shell {
                 match list {
                     TrustedList::HostKeys => typed.clone_into(&mut self.host_key_search),
                     TrustedList::Certificates => typed.clone_into(&mut self.certificate_search),
+                    TrustedList::FtpsCertificates => {
+                        typed.clone_into(&mut self.ftps_certificate_search);
+                    }
                 }
                 Task::none()
             }
@@ -4017,7 +4024,8 @@ impl Shell {
                 self.sftp_settings(),
                 text(fl!("ui-settings-external-editor")).size(BODY_SIZE),
                 self.editor_settings(),
-                self.trusted_keys_settings(TrustedList::HostKeys),
+                // The FTPS certificates beside the other file transfers' settings.
+                self.trusted_keys_settings(&[TrustedList::HostKeys, TrustedList::FtpsCertificates]),
             ],
             SettingsTab::Rdp => self.rdp_settings(),
             SettingsTab::Gateways => self.gateways_settings(),
@@ -4124,17 +4132,21 @@ impl Shell {
         .into()
     }
 
-    /// The keys trusted for servers of `list`, as the C# Host keys and Certificates pages
-    /// list them, with what could not be read.
-    fn trusted_keys_settings(&self, list: TrustedList) -> Element<'_, Message> {
+    /// The keys trusted for servers of `shown`, as the C# Host keys and Certificates pages
+    /// list them, with what could not be read, said once.
+    fn trusted_keys_settings(&self, shown: &[TrustedList]) -> Element<'_, Message> {
         let keys = self.app.trusted_keys();
-        let mut lists = column![match list {
-            TrustedList::HostKeys =>
-                crate::trusted_keys_view::host_keys(keys, &self.host_key_search),
+        let mut lists = Column::with_children(shown.iter().map(|list| match list {
+            TrustedList::HostKeys => {
+                crate::trusted_keys_view::host_keys(keys, &self.host_key_search)
+            }
             TrustedList::Certificates => {
                 crate::trusted_keys_view::certificates(keys, &self.certificate_search)
             }
-        }]
+            TrustedList::FtpsCertificates => {
+                crate::trusted_keys_view::ftps_certificates(keys, &self.ftps_certificate_search)
+            }
+        }))
         .spacing(SPACING)
         .max_width(SETTINGS_WIDTH);
         if let Some(unreadable) = crate::trusted_keys_view::unreadable(keys) {
@@ -4265,7 +4277,7 @@ impl Shell {
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
-            self.trusted_keys_settings(TrustedList::Certificates),
+            self.trusted_keys_settings(&[TrustedList::Certificates]),
         ]
     }
 
@@ -5997,7 +6009,9 @@ impl Shell {
         // certificate is routine to change (Windows renews its own every six months); an SSH
         // key, as the C# Heimdall warns, may be an interception.
         let forget = match error {
-            UiError::HostKeyChanged { target: None, .. } if tab.purpose == Purpose::Rdp => {
+            UiError::HostKeyChanged { target: None, .. }
+                if tab.purpose == Purpose::Rdp || matches!(tab.profile, TabProfile::Ftp(_)) =>
+            {
                 Some(fl!("ui-session-forget-server-button"))
             }
             UiError::HostKeyChanged {
@@ -9766,6 +9780,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ConfirmLocalCommand(confirmation) => local_command_dialog(confirmation),
         Dialog::ConfirmPostConnect(confirmation) => post_connect_dialog(confirmation),
         Dialog::ForgetTrustedKey(key) => crate::trusted_keys_view::forget_question(key),
+        Dialog::ForgetTrustedServer { key, count } => {
+            crate::trusted_keys_view::forget_server_question(key, *count)
+        }
         Dialog::ImportDone(summary) => import_report(summary, ok()),
         Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok()),

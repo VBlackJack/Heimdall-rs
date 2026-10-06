@@ -276,8 +276,10 @@ pub enum Notice {
     FingerprintCopied(String),
     /// This server's SSH host key was forgotten.
     HostKeyRemoved(String),
-    /// This server's RDP certificate was forgotten.
+    /// This server's RDP or FTPS certificate was forgotten.
     CertificateForgotten(String),
+    /// Every certificate trusted for this RDP or FTPS server was forgotten.
+    ServerCertificatesForgotten(String),
     /// The external credential provider gave no password for this session: the user is
     /// asked.
     ProviderNoPassword(String),
