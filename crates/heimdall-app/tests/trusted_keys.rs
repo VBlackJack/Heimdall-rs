@@ -17,6 +17,7 @@
 //! The keys trusted for servers, read, copied and forgotten from the Settings page.
 
 use std::path::Path;
+use std::time::{Duration, UNIX_EPOCH};
 
 use heimdall_app::{
     App, AppConfig, Dialog, Effect, Message, Notice, SettingsMessage, SystemCredentials,
@@ -96,6 +97,36 @@ fn the_keys_are_read_when_asked_and_not_before() {
     assert_eq!(app.trusted_keys().ssh.len(), 2, "not read yet");
     trusted(&mut app, TrustedKeysMessage::Refresh);
     assert_eq!(app.trusted_keys().ssh.len(), 3);
+}
+
+#[test]
+fn a_certificate_says_when_it_was_trusted_in_local_time_and_an_old_line_says_nothing() {
+    let dir = tempfile::tempdir().expect("dir");
+    // 2026-03-15 12:00:30 UTC, recorded with its names; then a line from before them.
+    std::fs::write(
+        dir.path().join("known_rdp_hosts"),
+        format!("dc.lab:3389 {PIN} trusted=1773576030 subject=Q049ZGMubGFi\nweb.lab:3389 {PIN}\n"),
+    )
+    .expect("write");
+    KnownHosts::new(dir.path().join("known_hosts"))
+        .learn("web.lab", 22, &key(ED25519))
+        .expect("learn");
+    let mut app = app(dir.path());
+    trusted(&mut app, TrustedKeysMessage::Refresh);
+    let rdp = &app.trusted_keys().rdp;
+    assert_eq!(rdp[0].subject.as_deref(), Some("CN=dc.lab"));
+    let local =
+        chrono::DateTime::<chrono::Local>::from(UNIX_EPOCH + Duration::from_secs(1_773_576_030));
+    assert_eq!(
+        TrustedKey::Rdp(rdp[0].clone()).trusted_since(),
+        Some(local.format("%Y-%m-%d %H:%M").to_string())
+    );
+    assert_eq!(TrustedKey::Rdp(rdp[1].clone()).trusted_since(), None);
+    assert_eq!(
+        TrustedKey::Ssh(app.trusted_keys().ssh[0].clone()).trusted_since(),
+        None,
+        "an SSH key has no such time"
+    );
 }
 
 #[test]

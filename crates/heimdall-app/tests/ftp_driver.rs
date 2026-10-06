@@ -148,6 +148,15 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
             .expect("read"),
         Verdict::Known
     );
+    // With the names of its certificate, self-signed, and the time.
+    let [entry] = KnownRdpHosts::new(&known)
+        .entries()
+        .expect("read")
+        .try_into()
+        .expect("one entry");
+    assert!(entry.subject.is_some(), "{entry:?}");
+    assert_eq!(entry.issuer, entry.subject, "self-signed");
+    assert!(entry.trusted.is_some(), "{entry:?}");
     // Known now: no question.
     let event = first(request(port, true, &known)).await;
     assert!(

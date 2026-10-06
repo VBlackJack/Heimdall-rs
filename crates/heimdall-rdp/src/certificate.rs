@@ -15,7 +15,7 @@
  */
 
 //! What is read from a server's TLS certificate: the key it is pinned by, the key `CredSSP`
-//! binds to, and a subject fit to show.
+//! binds to, and a subject and an issuer fit to show.
 
 use std::fmt;
 use std::str::FromStr;
@@ -28,7 +28,7 @@ use x509_cert::der::{Decode as _, Encode as _};
 /// Prefix of a fingerprint's text form, as OpenSSH writes key fingerprints.
 const FINGERPRINT_PREFIX: &str = "SHA256:";
 
-/// Longest subject shown, in characters: the server chooses it.
+/// Longest subject or issuer shown, in characters: the server chooses them.
 const MAX_SUBJECT_CHARS: usize = 200;
 
 /// SHA-256 of a certificate's `SubjectPublicKeyInfo`: what a server is pinned by. A renewed
@@ -78,6 +78,8 @@ pub struct ServerCertificate {
     pub public_key: Vec<u8>,
     /// The subject, made safe to show and bounded.
     pub subject: String,
+    /// The issuer, made safe to show and bounded.
+    pub issuer: String,
 }
 
 impl ServerCertificate {
@@ -101,13 +103,14 @@ impl ServerCertificate {
             fingerprint,
             public_key,
             subject: shown(&certificate.tbs_certificate().subject().to_string()),
+            issuer: shown(&certificate.tbs_certificate().issuer().to_string()),
         })
     }
 }
 
 /// Text chosen by the server, fit to show: no control or direction-changing characters,
 /// bounded.
-fn shown(text: &str) -> String {
+pub(crate) fn shown(text: &str) -> String {
     text.chars()
         .filter(|c| !c.is_control() && !is_bidi_control(*c))
         .take(MAX_SUBJECT_CHARS)

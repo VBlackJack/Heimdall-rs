@@ -23,7 +23,7 @@
 //! trusts goes through without a pin, as in the C#.
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use heimdall_core::profile::{FtpProfile, display_address};
@@ -47,6 +47,10 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Passwords asked for at most, the first included, before the attempt gives up.
 const PASSWORD_TRIES: u32 = 3;
+
+/// Where the certificate the user accepted is kept once the server presents it, so that
+/// its subject and issuer are recorded with its key.
+type AcceptedSlot = Arc<Mutex<Option<ServerCertificate>>>;
 
 /// What an FTP attempt needs.
 #[derive(Debug, Clone)]
@@ -133,9 +137,10 @@ async fn connect(
             }
         };
         let presented = PresentedSlot::default();
+        let accepted = AcceptedSlot::default();
         let security = if profile.tls {
             FtpSecurity::Explicit {
-                connector: connector(user_trust(request), presented.clone()),
+                connector: connector(user_trust(request, accepted.clone()), presented.clone()),
                 domain: profile.host.clone(),
             }
         } else {
@@ -152,7 +157,7 @@ async fn connect(
         };
         match FtpClient::connect(&target).await {
             Ok(client) => {
-                record_accepted(request)?;
+                record_accepted(request, &accepted)?;
                 return Ok(Some(client));
             }
             Err(FtpConnectError::LoginRefused) if profile.username.is_some() => {}
@@ -180,8 +185,8 @@ fn refused() -> UiError {
 }
 
 /// Whether the user trusts a certificate for the profile's server: pinned by its public
-/// key, trusted for this run, or just accepted.
-fn user_trust(request: &FtpRequest) -> UserTrust {
+/// key, trusted for this run, or just accepted, and then kept in `slot`.
+fn user_trust(request: &FtpRequest, slot: AcceptedSlot) -> UserTrust {
     let known = KnownRdpHosts::new(&request.known_hosts);
     let (host, port) = (request.profile.host.clone(), request.profile.port);
     let run = request.trusted_for_run.clone();
@@ -193,22 +198,34 @@ fn user_trust(request: &FtpRequest) -> UserTrust {
         let presented = certificate.fingerprint;
         match known.verdict(&host, port, &presented) {
             Ok(Verdict::Known) => true,
-            Ok(Verdict::Unknown) => run.contains(&presented) || accepted == Some(presented),
+            Ok(Verdict::Unknown) if accepted == Some(presented) => {
+                if let Ok(mut slot) = slot.lock() {
+                    *slot = Some(certificate);
+                }
+                true
+            }
+            Ok(Verdict::Unknown) => run.contains(&presented),
             Ok(Verdict::Changed { .. }) | Err(_) => false,
         }
     })
 }
 
-/// Records the key the user accepted, once the server presented exactly it.
-fn record_accepted(request: &FtpRequest) -> Result<(), UiError> {
+/// Records the key the user accepted, once the server presented exactly it: with the
+/// subject and issuer of its certificate when `slot` holds it.
+fn record_accepted(request: &FtpRequest, slot: &AcceptedSlot) -> Result<(), UiError> {
     let Some(accepted) = request.accepted else {
         return Ok(());
     };
-    KnownRdpHosts::new(&request.known_hosts)
-        .record(&request.profile.host, request.profile.port, &accepted)
-        .map_err(|error| UiError::KnownHosts {
-            detail: error.to_string(),
-        })
+    let known = KnownRdpHosts::new(&request.known_hosts);
+    let (host, port) = (&request.profile.host, request.profile.port);
+    let certificate = slot.lock().ok().and_then(|mut slot| slot.take());
+    match certificate.filter(|certificate| certificate.fingerprint == accepted) {
+        Some(certificate) => known.record_certificate(host, port, &certificate),
+        None => known.record(host, port, &accepted),
+    }
+    .map_err(|error| UiError::KnownHosts {
+        detail: error.to_string(),
+    })
 }
 
 /// The handshake stopped: the certificate question for a certificate nobody trusts yet, a
