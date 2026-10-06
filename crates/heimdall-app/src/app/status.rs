@@ -179,8 +179,20 @@ pub enum Notice {
     DroppedFolder(String),
     /// A folder was dropped where one of its name is already.
     DropRefused,
-    /// The last move a drop made was undone.
+    /// Sessions were put before or after another, in this folder, none for no folder, as
+    /// the C# "Moved ... within ..."; the session's name when it is one.
+    Reordered {
+        /// How many.
+        count: usize,
+        /// Its name, when one moved.
+        name: Option<String>,
+        /// The folder.
+        folder: Option<String>,
+    },
+    /// The last change of the tree's organization was undone.
     MoveUndone,
+    /// The last change could not be undone: what it changed has changed since.
+    UndoConflict,
     /// No move made by a drop is there to undo.
     NothingToUndo,
     /// The Wake-on-LAN magic packet was sent, or why not, as the C# status says it.

@@ -3546,6 +3546,161 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
 }
 
 #[test]
+fn alt_down_moves_the_session_and_the_undo_bar_puts_it_back() {
+    use heimdall_app::files::FilesKey;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let order = |shell: &Shell| -> Vec<String> {
+        shell
+            .app()
+            .tree_rows("")
+            .into_iter()
+            .filter_map(|row| match row {
+                heimdall_app::TreeRow::Profile { profile, .. } => Some(profile.id.to_string()),
+                heimdall_app::TreeRow::Folder { .. } => None,
+            })
+            .collect()
+    };
+    assert_eq!(order(&shell), ["a", "b", "c"]);
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Undo").is_err(), "nothing to undo");
+    }
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::FilesKey(FilesKey::Lower));
+    assert_eq!(order(&shell), ["b", "a", "c"], "within its folder");
+    let mut ui = simulator(&shell);
+    ui.find("Sessions reordered.").expect("the C# bar");
+    ui.click("Undo").expect("Undo");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    assert_eq!(order(&shell), ["a", "b", "c"]);
+}
+
+#[test]
+fn a_drag_shows_the_no_folder_zone_which_takes_a_session_out_of_its_folder() {
+    use iced::Point;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let zone = "Drop here to take it out of its folder";
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find(zone).is_err(), "no drag: no zone");
+    }
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::TreeDragMoved(Point::new(40.0, 60.0)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find(zone).expect("the C# zone, while dragging");
+    }
+    let _ = shell.update(Message::TreeHover(heimdall_app::DropTarget::Folder(
+        heimdall_app::NO_FOLDER.to_owned(),
+    )));
+    let _ = shell.update(Message::TreeDragEnd);
+    assert_eq!(
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("a"))
+            .and_then(|profile| profile.group),
+        None,
+        "out of Production"
+    );
+    let mut ui = simulator(&shell);
+    assert!(ui.find(zone).is_err(), "gone with the drag");
+}
+
+#[test]
+fn f2_renames_a_session_in_its_row_and_a_click_elsewhere_keeps_the_name() {
+    use heimdall_app::ProfileMenuMessage;
+    use heimdall_app::files::FilesKey;
+    use heimdall_ui::shell::TreeShortcut;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let name = |shell: &Shell, id: &str| {
+        shell
+            .app()
+            .profile_summary(&ProfileId::new(id))
+            .expect("profile")
+            .name
+    };
+    let _ = shell.update(Message::TreeClick(ProfileId::new("a")));
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    {
+        let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Rename Session").is_err(),
+            "typed in its row, no dialog over the window"
+        );
+        ui.find("server b")
+            .expect("the rest of the tree still shown");
+    }
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        ProfileMenuMessage::NameEdited("Alpha".to_owned()),
+    )));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert_eq!(name(&shell, "a"), "Alpha", "Enter keeps it");
+    assert!(shell.app().dialog.is_none());
+
+    // Another row clicked while typing: the name is kept, as the C# editor losing focus.
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        ProfileMenuMessage::NameEdited("Beta".to_owned()),
+    )));
+    let _ = shell.update(Message::TreeClick(ProfileId::new("b")));
+    assert_eq!(name(&shell, "a"), "Beta");
+    assert!(shell.app().dialog.is_none());
+
+    // The tree hidden, the name is asked in the dialog.
+    let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
+    let _ = shell.update(Message::App(AppMessage::ProfileMenu(
+        ProfileMenuMessage::Rename(ProfileId::new("b")),
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("Rename Session").expect("the dialog");
+}
+
+#[test]
+fn a_folder_renamed_in_its_row_says_why_a_name_is_refused_under_it() {
+    use heimdall_app::FolderMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::Rename(
+        "Production".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::NameEdited(
+        "a/b".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    {
+        let mut ui = simulator(&shell);
+        assert!(
+            ui.find("Rename Folder").is_err(),
+            "no dialog over the window"
+        );
+        ui.find("A folder name cannot be empty or contain \"/\".")
+            .expect("why, under the name");
+    }
+    let _ = shell.update(Message::App(AppMessage::Folder(FolderMessage::NameEdited(
+        "Live".to_owned(),
+    ))));
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert_eq!(
+        shell
+            .app()
+            .profile_summary(&ProfileId::new("a"))
+            .and_then(|profile| profile.group)
+            .as_deref(),
+        Some("Live")
+    );
+}
+
+#[test]
 fn a_search_or_a_filter_shows_as_a_chip_with_the_count_it_leaves() {
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = Shell::with_app(app(dir.path()));

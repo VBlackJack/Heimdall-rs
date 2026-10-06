@@ -1507,7 +1507,7 @@ impl App {
             FilesKey::Download => return self.start_transfer(tab, Direction::Download),
             FilesKey::Upload => return self.start_transfer(tab, Direction::Upload),
             // The window gives the path bar the keyboard.
-            FilesKey::FocusPath => return Vec::new(),
+            FilesKey::FocusPath | FilesKey::Lower => return Vec::new(),
         };
         match side {
             Side::Remote => files.remote.select_only(target),
