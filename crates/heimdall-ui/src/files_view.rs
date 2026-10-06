@@ -171,6 +171,7 @@ pub fn files_key(
             _ if shift => None,
             keyboard::Key::Named(Named::ArrowLeft) => Some(FilesKey::Back),
             keyboard::Key::Named(Named::ArrowUp) => Some(FilesKey::Parent),
+            keyboard::Key::Named(Named::ArrowDown) => Some(FilesKey::Lower),
             _ if letter == Some('d') => Some(FilesKey::FocusPath),
             _ => None,
         };
@@ -1318,6 +1319,11 @@ mod tests {
         assert_eq!(
             key(&named(Named::ArrowUp), Modifiers::ALT),
             Some(FilesKey::Parent)
+        );
+        assert_eq!(
+            key(&named(Named::ArrowDown), Modifiers::ALT),
+            Some(FilesKey::Lower),
+            "the session tree's Alt+Down"
         );
         assert_eq!(key(&letter("d"), Modifiers::ALT), Some(FilesKey::FocusPath));
         assert_eq!(

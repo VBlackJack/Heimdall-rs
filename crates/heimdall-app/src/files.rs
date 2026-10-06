@@ -101,8 +101,11 @@ pub enum FilesKey {
     Last,
     /// Open the selected folder, or send the selected file to the other side.
     Open,
-    /// Show the parent folder.
+    /// Show the parent folder; Alt+Up, which in the session tree moves the session one
+    /// place up.
     Parent,
+    /// Alt+Down: nothing in a Files pane; in the session tree, the session one place down.
+    Lower,
     /// Show the folder shown before, as the C# Files tab's Backspace.
     Back,
     /// Give the focus to the other pane.
