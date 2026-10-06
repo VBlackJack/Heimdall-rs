@@ -929,6 +929,21 @@ fn run_in_shell(app: &mut App, pane: TabId, index: usize) -> Vec<Effect> {
     }))
 }
 
+/// Where `name` is listed in browser `pane`: the listing is sorted, the order the names
+/// were given in is not kept.
+fn index_of(app: &App, pane: TabId, name: &str) -> usize {
+    app.tab(pane)
+        .and_then(|tab| tab.files.as_deref())
+        .and_then(|files| {
+            files
+                .local
+                .entries
+                .iter()
+                .position(|entry| entry.name == name)
+        })
+        .unwrap_or_else(|| panic!("{name} listed"))
+}
+
 /// The question asked, taken as it is.
 fn script_question(app: &App) -> ScriptConfirmation {
     match &app.dialog {
@@ -1088,11 +1103,20 @@ fn run_in_shell_is_offered_for_one_script_alone_never_a_folder_or_another_file()
     let offered: Vec<usize> = (0..=names.len())
         .filter(|index| app.offers_run_in_shell(pane, *index))
         .collect();
-    // Entry 0 is the folder; the files follow it.
+    // The scripts this platform runs, wherever the sorted listing puts them.
+    let mut scripts: Vec<usize> = names
+        .iter()
+        .filter(|name| script_shell::runnable_here(name).is_some())
+        .map(|name| index_of(&app, pane, name))
+        .collect();
+    scripts.sort_unstable();
+    assert_eq!(offered, scripts);
     #[cfg(windows)]
-    assert_eq!(offered, [1, 2, 3], "PowerShell and batch scripts");
+    assert_eq!(offered.len(), 3, "PowerShell and batch scripts");
     #[cfg(unix)]
-    assert_eq!(offered, [4], "a shell script alone");
+    assert_eq!(offered.len(), 1, "a shell script alone");
+    let notes = index_of(&app, pane, "notes.txt");
+    let setup = index_of(&app, pane, "setup.exe");
     assert!(
         !app.offers_run_in_shell(shell.0, 1),
         "not in the shell's own tab"
@@ -1108,7 +1132,7 @@ fn run_in_shell_is_offered_for_one_script_alone_never_a_folder_or_another_file()
         FilesMessage::Toggle {
             tab: pane,
             side: Side::Local,
-            index: 5,
+            index: notes,
         },
     ] {
         app.update(Message::Files(message));
@@ -1122,7 +1146,7 @@ fn run_in_shell_is_offered_for_one_script_alone_never_a_folder_or_another_file()
         side: Side::Local,
         index: 0,
     }));
-    for index in [0, 5, 6] {
+    for index in [0, notes, setup] {
         assert!(run_in_shell(&mut app, pane, index).is_empty());
         assert!(app.dialog.is_none(), "{index}");
     }
@@ -1134,8 +1158,8 @@ fn run_in_shell_asks_with_the_exact_command_then_opens_a_new_tab_in_the_scripts_
     let dir = tempfile::tempdir().expect("dir");
     let sink = Arc::new(RecordingSink::default());
     let (mut app, shell, pane, folder) = browser_of_scripts(dir.path(), &RUN_HERE, &sink);
-    for (at, name) in RUN_HERE.iter().enumerate() {
-        let index = at + 1;
+    for name in RUN_HERE {
+        let index = index_of(&app, pane, name);
         let (expected, command, rereads) = expected_run(name, &folder);
         let tabs = app.tabs.len();
         // Asked first, nothing run.
@@ -1147,7 +1171,7 @@ fn run_in_shell_asks_with_the_exact_command_then_opens_a_new_tab_in_the_scripts_
             Some(folder.to_string_lossy().as_ref())
         );
         assert_eq!(question.rereads, rereads, "{name}");
-        assert_eq!(question.name, *name);
+        assert_eq!(question.name, name);
         assert_eq!(question.replaces, None);
         // Dismissed: nothing.
         assert!(app.update(Message::DismissDialog).is_empty());
@@ -1162,7 +1186,7 @@ fn run_in_shell_asks_with_the_exact_command_then_opens_a_new_tab_in_the_scripts_
         assert!(running.environment.is_empty(), "no HEIMDALL_* variables");
         assert_eq!(app.tabs.len(), tabs + 1, "a new tab");
         let tab = app.tab(attempt.0).expect("tab");
-        assert_eq!(tab.title, *name, "named after the script");
+        assert_eq!(tab.title, name, "named after the script");
         assert_eq!(tab.purpose, Purpose::Shell);
         assert!(!app.can_save_as_profile(tab));
         // Once started, its own browser, in the script's folder.
@@ -1216,7 +1240,8 @@ fn a_batch_path_cmd_would_read_is_refused_with_a_notice_and_nothing_runs() {
     let sink = Arc::new(RecordingSink::default());
     let names = ["100%.bat", "go!.cmd", "100%.ps1", "a&b^(c).bat"];
     let (mut app, _, pane, folder) = browser_of_scripts(dir.path(), &names, &sink);
-    for (index, refused) in [(1, "%"), (2, "!")] {
+    for (name, refused) in [("100%.bat", "%"), ("go!.cmd", "!")] {
+        let index = index_of(&app, pane, name);
         let tabs = app.tabs.len();
         assert!(run_in_shell(&mut app, pane, index).is_empty());
         assert!(app.dialog.is_none(), "nothing asked");
@@ -1233,9 +1258,10 @@ fn a_batch_path_cmd_would_read_is_refused_with_a_notice_and_nothing_runs() {
         );
     }
     // PowerShell takes % as text; cmd.exe & ^ and parentheses inside the quotes.
-    for index in [3, 4] {
+    for name in ["100%.ps1", "a&b^(c).bat"] {
+        let index = index_of(&app, pane, name);
         run_in_shell(&mut app, pane, index);
-        let (_, command, _) = expected_run(names[index - 1], &folder);
+        let (_, command, _) = expected_run(name, &folder);
         assert_eq!(script_question(&app).command, command);
         app.update(Message::DismissDialog);
     }
