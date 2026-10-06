@@ -86,6 +86,7 @@ mod files_editor;
 mod files_sudo;
 mod files_tab;
 mod files_terminal;
+mod floating;
 mod folder_menu;
 mod folders;
 mod ftp_tab;
@@ -145,6 +146,7 @@ pub use files_clipboard::{ClipMode, FilesClipboard};
 pub use files_edit::SudoAction;
 pub use files_tab::FilesMessage;
 use files_tab::{PendingOperation, PendingPlan};
+pub use floating::{FloatMessage, Floating};
 pub use folder_menu::{FolderMessage, FolderNaming};
 pub use folders::{NO_FOLDER, TreeRow};
 pub use gateway_overview::{
@@ -757,6 +759,8 @@ pub enum Message {
     Gateways(GatewaysMessage),
     /// A change of broadcast input.
     Broadcast(BroadcastMessage),
+    /// Something about a tab's own window.
+    Float(FloatMessage),
 }
 
 /// What a step edit does, without the text it carries.
@@ -990,6 +994,7 @@ impl fmt::Debug for Message {
             },
             Self::Gateways(message) => write!(f, "Gateways({message:?})"),
             Self::Broadcast(message) => write!(f, "Broadcast({message:?})"),
+            Self::Float(message) => write!(f, "Float({message:?})"),
         }
     }
 }
@@ -1485,7 +1490,14 @@ pub enum Effect {
     /// Ask the external credential provider for a tab's password; then send
     /// [`Message::CredentialProvided`].
     AskCredentialProvider(Box<ProviderRequest>),
-    /// Quit the application.
+    /// Open a window of its own for the tab detached to `0`, and give it the focus.
+    OpenWindow(crate::ids::FloatId),
+    /// Close the window `0`: its tab went back on the strip, or is gone.
+    CloseWindow(crate::ids::FloatId),
+    /// Give the window `0` the focus, restored when minimized: its tab was asked for.
+    FocusWindow(crate::ids::FloatId),
+    /// Give the main window the focus, restored when minimized: a tab came back to it.
+    FocusMainWindow,
     /// Wake the core at `deadline` with [`Message::AutoReconnect`].
     RetryAt {
         /// Tab.
@@ -1495,6 +1507,7 @@ pub enum Effect {
         /// When.
         deadline: Instant,
     },
+    /// Quit the application.
     Exit,
 }
 
@@ -1636,6 +1649,10 @@ impl fmt::Debug for Effect {
             Self::RetryAt { tab, attempt, .. } => {
                 write!(f, "RetryAt({}, {})", tab.value(), attempt.value())
             }
+            Self::OpenWindow(key) => write!(f, "OpenWindow({})", key.value()),
+            Self::CloseWindow(key) => write!(f, "CloseWindow({})", key.value()),
+            Self::FocusWindow(key) => write!(f, "FocusWindow({})", key.value()),
+            Self::FocusMainWindow => f.write_str("FocusMainWindow"),
             Self::Exit => f.write_str("Exit"),
         }
     }
@@ -2584,6 +2601,8 @@ pub struct App {
     pub active: Option<TabId>,
     /// The pane the open close question is about alone, not its whole split.
     closing_pane: Option<TabId>,
+    /// The tabs detached to windows of their own, off the strip.
+    floating: Vec<Floating>,
     /// Window-level dialog, if any.
     pub dialog: Option<Dialog>,
     /// The route test running in the gateway dialog, and what stops it.
@@ -2743,6 +2762,7 @@ impl App {
             tabs: Vec::new(),
             active: None,
             closing_pane: None,
+            floating: Vec::new(),
             dialog,
             route_test: None,
             next_route_test: 0,
@@ -2874,9 +2894,20 @@ impl App {
         self.focus_pane(pane)
     }
 
-    /// Applies a message.
-    #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
+    /// Applies a message; the windows of the tabs it closed close with them.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
+        let mut effects = self.apply(message);
+        effects.extend(self.prune_floating());
+        debug_assert!(
+            self.floating_invariant_holds(),
+            "the keyboard's pane is a detached tab"
+        );
+        effects
+    }
+
+    /// Applies a message, the windows of the tabs it closed left open.
+    #[expect(clippy::too_many_lines, reason = "one arm per family of messages")]
+    fn apply(&mut self, message: Message) -> Vec<Effect> {
         self.forget_stale_notice();
         self.stop_orphan_route_test();
         match message {
@@ -2935,7 +2966,14 @@ impl App {
                 Vec::new()
             }
             Message::TabMenu(message) => self.tab_menu(message),
-            Message::Split(message) => self.split_message(message),
+            Message::Split(message) => {
+                // The user's split of a detached tab brings it back first; the docking the
+                // application does by itself never reaches a detached tab.
+                let mut effects = self.reattach_for_split(&message.tabs());
+                effects.extend(self.split_message(message));
+                effects
+            }
+            Message::Float(message) => self.float_message(message),
             message @ (Message::AutoReconnect { .. } | Message::CancelAutoReconnect(_)) => {
                 self.retry_message(&message)
             }
@@ -3405,7 +3443,7 @@ impl App {
 
     #[expect(clippy::too_many_lines, reason = "one arm per connection event")]
     fn apply_connection_event(&mut self, tab_id: TabId, event: ConnectionEvent) -> Vec<Effect> {
-        let active = self.active == Some(tab_id);
+        let active = self.in_sight(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -3744,8 +3782,9 @@ impl App {
     }
 
     fn resize(&mut self, tab_id: TabId, grid: GridSize, cell: CellPixels) -> Vec<Effect> {
-        // A pane is a share of the window: the next tab opens at the whole tab's size.
-        if !self.in_split(tab_id) {
+        // A pane is a share of the window, a tab's own window another window: the next tab
+        // opens at the size of a whole tab of the main window.
+        if !self.in_split(tab_id) && !self.is_floating(tab_id) {
             self.viewport = grid.clamped();
         }
         let Some(tab) = self.tab_mut(tab_id) else {
@@ -3767,7 +3806,15 @@ impl App {
     /// The window gained or lost the focus: the terminal shown is told when it asked to be,
     /// and a desktop shown gets what was copied elsewhere meanwhile.
     fn window_focus(&self, focused: bool) -> Vec<Effect> {
-        let Some(found) = self.active.and_then(|id| self.tab(id)) else {
+        self.active
+            .map(|tab| self.focus_report(tab, focused))
+            .unwrap_or_default()
+    }
+
+    /// The window showing `tab` gained or lost the focus: its terminal is told when it
+    /// asked to be, and its desktop gets what was copied elsewhere meanwhile.
+    fn focus_report(&self, tab: TabId, focused: bool) -> Vec<Effect> {
+        let Some(found) = self.tab(tab) else {
             return Vec::new();
         };
         if let Some(bytes) = encode_focus(focused, &found.terminal.input_mode()) {
@@ -3893,7 +3940,7 @@ impl App {
     }
 
     fn sync_deadline(&mut self, tab_id: TabId, generation: u64) -> Vec<Effect> {
-        let active = self.active == Some(tab_id);
+        let active = self.in_sight(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -3915,6 +3962,12 @@ impl App {
             }
             None => Vec::new(),
         }
+    }
+
+    /// Whether `tab` is in sight for its bell: the pane with the keyboard, or a tab in a
+    /// window of its own.
+    fn in_sight(&self, tab: TabId) -> bool {
+        self.active == Some(tab) || self.is_floating(tab)
     }
 
     fn live_tabs(&self) -> usize {

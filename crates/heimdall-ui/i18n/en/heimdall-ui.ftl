@@ -3,6 +3,7 @@
 
 ui-window-title = Heimdall
 ui-window-title-tab = { $tab } - Heimdall
+ui-window-title-detached = { $tab } - Detached
 
 ui-sidebar-title = Sessions
 ui-sidebar-empty = No saved profile yet.
@@ -904,6 +905,8 @@ ui-tab-menu-reset-title = Reset title
 ui-tab-menu-fullscreen = Fullscreen (F11)
 ui-tab-menu-reconnect = Reconnect Session
 ui-tab-menu-duplicate = Duplicate Session
+ui-tab-menu-detach = Detach to Window
+ui-detach-reattach = Reattach to Main Window
 ui-tab-menu-close-others = Close others
 ui-tab-menu-close-right = Close to the right
 ui-split-merge-with = Merge with...
@@ -914,6 +917,8 @@ ui-split-swap-panes = Swap Panes
 ui-split-toggle-orientation = Toggle Split Orientation
 ui-split-close-secondary = Close Secondary Pane
 ui-split-max-panes-reached = Maximum number of panes reached ({ $max }).
+ui-status-detach-split-refused = A split tab cannot be moved to its own window. Unsplit it first.
+ui-status-detach-files-refused = A Files tab cannot be moved to its own window yet.
 ui-split-menu = Split...
 ui-split-palette-hint = Search server to split with...
 ui-split-drop-to-split = Drop to split
@@ -1007,6 +1012,7 @@ ui-palette-nothing = No session matches, and this is no host to connect to.
 ## The status bar, as the C# one.
 ui-status-ready = Ready. Select a session to get started.
 ui-status-connected = Connected to: { $name }
+ui-status-connected-short = Connected
 ui-status-state = { $name }: { $state }
 ui-status-connecting = Connecting...
 ui-status-reconnecting = Reconnecting...
@@ -1601,6 +1607,7 @@ ui-certificate-already-trusted = { $count ->
    *[other] This profile already trusts { $count } other certificates for this name, which usually means several machines answer to it.
 }
 ui-certificate-route = Reached through: { $route }
+ui-certificate-owner-tab = This question belongs to the tab "{ $tab }".
 ui-settings-rdp-resolution-presets = Resolution presets
 ui-settings-rdp-resolution-presets-hint = One preset per line, format WIDTHxHEIGHT (e.g. 1920x1080). Leave the box empty to use the built-in list.
 ui-settings-rdp-resolution-presets-reset = Reset to defaults

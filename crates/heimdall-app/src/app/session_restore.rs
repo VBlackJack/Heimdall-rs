@@ -56,9 +56,16 @@ impl App {
     /// leaves no snapshot. A snapshot that cannot be written is logged: closing goes on.
     pub(super) fn keep_snapshot(&self) {
         // The tabs of the strip, as the C# keeps them: a pane docked in a split is not one.
+        // Then the tabs detached, which the C# hands back to the strip as it closes: they
+        // open in the main window at the next start.
+        let floating = self
+            .floating
+            .iter()
+            .filter_map(|floating| self.tab(floating.tab));
         let sessions = self
             .strip()
             .into_iter()
+            .chain(floating)
             .filter_map(|tab| match &tab.reopen {
                 Reopen::Profile(id) => Some(SnapshotEntry {
                     profile: id.clone(),

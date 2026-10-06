@@ -98,6 +98,8 @@ impl App {
             return Vec::new();
         }
         let (reopen, purpose) = (self.tabs[index].reopen.clone(), self.tabs[index].purpose);
+        // A tab detached to a window of its own stays there: the keyboard's pane stays.
+        let kept = self.is_floating(tab_id).then_some(self.active);
         let before = self.tabs.len();
         self.replacing = true;
         let effects = self.open_again(reopen, purpose);
@@ -134,7 +136,7 @@ impl App {
                 files.editor = before.editor.take();
             }
             old.stop();
-            self.active = Some(reopened);
+            self.active = kept.unwrap_or(Some(reopened));
             self.sync_focus();
         }
         effects

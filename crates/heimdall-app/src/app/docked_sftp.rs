@@ -44,7 +44,8 @@ impl App {
         // Panes closed or opened again before they connected are no longer waited for.
         let tabs: Vec<TabId> = self.tabs.iter().map(|tab| tab.id).collect();
         self.docking_sftp.retain(|docking| tabs.contains(docking));
-        if !self.settings.sftp_browser.auto_opens() {
+        // A shell detached to a window of its own stays one tab there.
+        if !self.settings.sftp_browser.auto_opens() || self.is_floating(shell) {
             return Vec::new();
         }
         let Some(profile) = self.sftp_companion(shell) else {
