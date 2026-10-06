@@ -225,6 +225,8 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                     host: profile.host.clone(),
                     port: profile.port,
                     fingerprint: certificate.fingerprint,
+                    subject: Some(certificate.subject.clone())
+                        .filter(|subject| !subject.trim().is_empty()),
                 })
                 .await;
             return;

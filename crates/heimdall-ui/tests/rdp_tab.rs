@@ -703,6 +703,7 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
         tab,
         attempt,
         ConnectionEvent::UnknownRdpCertificate {
+            subject: Some("CN=dc.lab".to_owned()),
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -716,6 +717,8 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
         "\"Domain controller\" answered at dc.lab:3389, presenting a certificate this profile has never approved.",
     )
     .expect("body");
+    ui.find("Subject: CN=dc.lab")
+        .expect("the subject, as the C# prompt");
     ui.click("Just this once").expect("once");
     assert!(ui.into_messages().any(|message| matches!(
         message,

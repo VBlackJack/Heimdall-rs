@@ -1092,6 +1092,18 @@ fn a_failed_session_offers_its_error_and_its_profile_as_the_csharp_card() {
             .is_some(),
         "a report exists, the card just offers none"
     );
+    // The anonymized one, as the C# RDP overlay's: no server, account nor message.
+    let anonymous = shell
+        .anonymous_report(tab, std::time::UNIX_EPOCH)
+        .expect("a report");
+    let lines: Vec<&str> = anonymous.lines().collect();
+    assert_eq!(lines[0], "SSH diagnostic report (anonymized)");
+    assert_eq!(lines[1], "Time: 1970-01-01 00:00:00Z");
+    assert!(lines[3].starts_with("Failure: "), "{anonymous}");
+    assert_eq!(lines[3], "Failure: Timeout");
+    for named in ["a.lab", "Server:", "did not answer"] {
+        assert!(!anonymous.contains(named), "{named} in {anonymous}");
+    }
 
     let mut core = shell.into_app();
     core.update(AppMessage::SelectTab(cancelled));

@@ -50,10 +50,10 @@ fn opening_requests(width: u16, height: u16) -> Vec<u8> {
     let mut bytes = vec![
         // SetPixelFormat: 32 bits, depth 24, little-endian, true colour, red lowest.
         0, 0, 0, 0, 32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 0, 8, 16, 0, 0, 0,
-        // SetEncodings: 6 of them.
-        2, 0, 0, 6,
+        // SetEncodings: 7 of them.
+        2, 0, 0, 7,
     ];
-    for encoding in [16_i32, 1, 0, -223, -224, -308] {
+    for encoding in [16_i32, 1, 0, -223, -224, -308, -307] {
         bytes.extend_from_slice(&encoding.to_be_bytes());
     }
     bytes.extend_from_slice(&full_request(false, width, height));
@@ -410,5 +410,20 @@ fn keys_pointer_and_clipboard_are_encoded_as_the_rfc_says() {
             5, 0b101, 1, 44, 0, 2, // buttons 1 and 3 at 300,2
             6, 0, 0, 0, 0, 0, 0, 2, 0xe9, b'?', // Latin-1, the rest as '?'
         ]
+    );
+}
+
+#[test]
+fn a_server_naming_its_desktop_anew_is_heard() {
+    let mut rfb = opened(4, 4);
+    let mut bytes = update(1);
+    bytes.extend(rect_header(0, 0, 0, 0, -307));
+    let name = "build box \u{e9}";
+    bytes.extend_from_slice(&u32::try_from(name.len()).expect("short").to_be_bytes());
+    bytes.extend_from_slice(name.as_bytes());
+    assert_eq!(
+        rfb.receive(&bytes).expect("update"),
+        [RfbEvent::Renamed(name.to_owned())],
+        "UTF-8, as noVNC reads it"
     );
 }

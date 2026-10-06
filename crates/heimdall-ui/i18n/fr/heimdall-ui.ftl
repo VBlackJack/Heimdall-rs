@@ -1912,3 +1912,8 @@ ui-settings-rdp-connect-timeout = Délai du watchdog de connexion RDP (0 = désa
 ui-settings-rdp-connect-timeout-off = Désactivé
 ui-settings-rdp-connect-timeout-seconds = { $seconds } s
 ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant
+ui-certificate-subject = Sujet : { $subject }
+ui-session-copy-anonymous-button = Copier le rapport anonymisé
+ui-error-report-anonymous-header = Rapport de diagnostic { $protocol } (anonymisé)
+ui-error-report-kind = Échec :
+ui-error-report-anonymous-hint = Contient la date, la version et le type d'échec. Exclut les adresses, les comptes et le texte des erreurs.
