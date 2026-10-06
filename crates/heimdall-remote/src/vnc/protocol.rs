@@ -43,15 +43,19 @@ const PSEUDO_DESKTOP_SIZE: i32 = -223;
 const PSEUDO_LAST_RECT: i32 = -224;
 /// The server says its screens, and takes a size asked of it: noVNC's "remote resizing".
 const PSEUDO_EXTENDED_DESKTOP_SIZE: i32 = -308;
+/// The server says its desktop's new name, as noVNC asks it: the name live, not only the
+/// one given at the start.
+const PSEUDO_DESKTOP_NAME: i32 = -307;
 
 /// Encodings asked for, preferred first.
-const ENCODINGS: [i32; 6] = [
+const ENCODINGS: [i32; 7] = [
     ENCODING_ZRLE,
     ENCODING_COPY_RECT,
     ENCODING_RAW,
     PSEUDO_DESKTOP_SIZE,
     PSEUDO_LAST_RECT,
     PSEUDO_EXTENDED_DESKTOP_SIZE,
+    PSEUDO_DESKTOP_NAME,
 ];
 
 /// Bytes of one screen of an extended desktop size: identifier, place, size and flags.
@@ -132,6 +136,8 @@ pub enum RfbEvent {
     Bell,
     /// The server's clipboard, as Latin-1 decoded text.
     ServerCutText(String),
+    /// The desktop's new name, as the server gives it: untrusted.
+    Renamed(String),
 }
 
 /// Why the session cannot go on.
@@ -257,6 +263,22 @@ fn length(value: u32, limit: usize, what: &str) -> Result<usize, RfbError> {
         .ok()
         .filter(|length| *length <= limit)
         .ok_or_else(|| RfbError::Protocol(format!("{what} of {value} bytes")))
+}
+
+/// A desktop's new name: a length, then the name in UTF-8. `false` until all of it is
+/// there.
+fn desktop_name(reader: &mut Reader<'_>, events: &mut Vec<RfbEvent>) -> Result<bool, RfbError> {
+    let Some(size) = reader.u32() else {
+        return Ok(false);
+    };
+    let size = length(size, MAX_TEXT, "a desktop name")?;
+    let Some(name) = reader.take(size) else {
+        return Ok(false);
+    };
+    events.push(RfbEvent::Renamed(
+        String::from_utf8_lossy(name).into_owned(),
+    ));
+    Ok(true)
 }
 
 /// Server text, Latin-1 as the protocol has it, cut to [`MAX_TEXT`] characters.
@@ -694,30 +716,14 @@ impl Rfb {
                 });
             }
             PSEUDO_LAST_RECT => last = true,
-            // The x is why it came, the y whether a size asked was taken (0), the size the
-            // desktop's; then its screens.
-            PSEUDO_EXTENDED_DESKTOP_SIZE => {
-                let (Some(count), Some(_padding)) = (reader.u8(), reader.take(3)) else {
+            PSEUDO_DESKTOP_NAME => {
+                if !desktop_name(reader, events)? {
                     return Ok(Step::More);
-                };
-                let Some(screens) = reader.take(usize::from(count) * SCREEN_BYTES) else {
-                    return Ok(Step::More);
-                };
-                if let Some(first) = screens.get(..SCREEN_BYTES) {
-                    let word = |at: usize| {
-                        u32::from_be_bytes([first[at], first[at + 1], first[at + 2], first[at + 3]])
-                    };
-                    self.layout = Some((word(0), word(12)));
                 }
-                let taken = rect.y == 0;
-                if taken && (rect.width, rect.height) != (self.screen.width(), self.screen.height())
-                {
-                    check_size(rect.width, rect.height)?;
-                    self.screen = Screen::new(rect.width, rect.height);
-                    events.push(RfbEvent::Resized {
-                        width: rect.width,
-                        height: rect.height,
-                    });
+            }
+            PSEUDO_EXTENDED_DESKTOP_SIZE => {
+                if !self.extended_desktop_size(reader, rect, events)? {
+                    return Ok(Step::More);
                 }
             }
             other => {
@@ -733,6 +739,38 @@ impl Rfb {
             self.state = State::Rectangles(left);
         }
         Ok(Step::Done(reader.at))
+    }
+
+    /// An extended desktop size: the x is why it came, the y whether a size asked was taken
+    /// (0), the size the desktop's; then its screens. `false` until all of it is there.
+    fn extended_desktop_size(
+        &mut self,
+        reader: &mut Reader<'_>,
+        rect: Rect,
+        events: &mut Vec<RfbEvent>,
+    ) -> Result<bool, RfbError> {
+        let (Some(count), Some(_padding)) = (reader.u8(), reader.take(3)) else {
+            return Ok(false);
+        };
+        let Some(screens) = reader.take(usize::from(count) * SCREEN_BYTES) else {
+            return Ok(false);
+        };
+        if let Some(first) = screens.get(..SCREEN_BYTES) {
+            let word = |at: usize| {
+                u32::from_be_bytes([first[at], first[at + 1], first[at + 2], first[at + 3]])
+            };
+            self.layout = Some((word(0), word(12)));
+        }
+        let taken = rect.y == 0;
+        if taken && (rect.width, rect.height) != (self.screen.width(), self.screen.height()) {
+            check_size(rect.width, rect.height)?;
+            self.screen = Screen::new(rect.width, rect.height);
+            events.push(RfbEvent::Resized {
+                width: rect.width,
+                height: rect.height,
+            });
+        }
+        Ok(true)
     }
 
     fn end_update(&mut self) {

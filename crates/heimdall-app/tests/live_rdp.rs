@@ -71,6 +71,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
             trusted_for_run: Vec::new(),
             desktop: DEFAULT_DESKTOP,
             desktop_scale: 100,
+            logon_timeout: None,
             route: Vec::new(),
             ssh: heimdall_ssh::ConnectOptions::new(dir.path().join("known_hosts")),
             cancel: CancellationToken::new(),

@@ -56,7 +56,7 @@ use heimdall_app::{
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, SshGateway, display_address};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{
     BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
@@ -462,6 +462,8 @@ pub enum Message {
     MenuFullscreen(TabId),
     /// Copy the report of a tab's failure, as the C# card's "Copy error".
     CopyError(TabId),
+    /// Copy the anonymized report of tab's failure: no server, account nor message.
+    CopyAnonymousError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
     Tick,
     /// Shift, Ctrl, Alt or the logo key pressed or released.
@@ -547,6 +549,8 @@ pub enum Message {
     },
     /// Show a page of the window's navigation.
     Navigate(Destination),
+    /// Ctrl+Alt+Home on a remote desktop: the keyboard back to the window.
+    ContentRelease,
     /// Show the Settings page's Gateways tab, as the C# Tunnels page's link.
     ManageGateways,
     /// The external editor typed in the Settings page.
@@ -605,6 +609,7 @@ impl fmt::Debug for Message {
             Self::LockKey => f.write_str("LockKey"),
             Self::ShowSettings => f.write_str("ShowSettings"),
             Self::Navigate(destination) => write!(f, "Navigate({destination:?})"),
+            Self::ContentRelease => f.write_str("ContentRelease"),
             Self::ManageGateways => f.write_str("ManageGateways"),
             Self::TrustedSearch(list, _) => write!(f, "TrustedSearch({list:?}, ..)"),
             Self::LanguageChosen(language) => write!(f, "LanguageChosen({language:?})"),
@@ -641,6 +646,7 @@ impl fmt::Debug for Message {
             Self::MenuChoice(message) => write!(f, "MenuChoice({message:?})"),
             Self::MenuFullscreen(tab) => write!(f, "MenuFullscreen({})", tab.value()),
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
+            Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -983,6 +989,40 @@ const HIDE_SIDEBAR_GLYPH: &str = "\u{2190}";
 
 /// The button showing the sidebar again: an arrow toward where it comes from.
 const SHOW_SIDEBAR_GLYPH: &str = "\u{2192}";
+
+/// What an RDP session shares, as the C# session bar's indicators: the clipboard, the
+/// drives, the sound played here; each says what it is when pointed at.
+fn redirection_badges<'a>(profile: &RdpProfile) -> Vec<Element<'a, Message>> {
+    [
+        (
+            profile.redirect_clipboard,
+            fl!("ui-desktop-shares-clipboard"),
+            fl!("ui-desktop-shares-clipboard-tooltip"),
+        ),
+        (
+            profile.redirect_drives,
+            fl!("ui-desktop-shares-drives"),
+            fl!("ui-desktop-shares-drives-tooltip"),
+        ),
+        (
+            profile.options.audio == heimdall_core::profile::AudioPlayback::Local,
+            fl!("ui-desktop-shares-audio"),
+            fl!("ui-desktop-shares-audio-tooltip"),
+        ),
+    ]
+    .into_iter()
+    .filter(|(on, _, _)| *on)
+    .map(|(_, label, tip)| {
+        tooltip(
+            text(label).size(SMALL_SIZE).style(text::secondary),
+            text(tip).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+        .into()
+    })
+    .collect()
+}
 
 /// The application's name, at the head of the navigation: a name, not translated.
 const APP_NAME: &str = "Heimdall";
@@ -1346,12 +1386,18 @@ impl Shell {
             Message::MenuFullscreen(tab) => return self.menu_fullscreen(tab),
             Message::BrowseKeyFile => return pick_key_file(),
             Message::CopyError(tab) => return self.copy_error(tab),
+            Message::CopyAnonymousError(tab) => {
+                return self
+                    .anonymous_report(tab, std::time::SystemTime::now())
+                    .map_or_else(Task::none, iced::clipboard::write);
+            }
             Message::EditPath { tab, side } => {
                 self.edit_path(tab, side);
                 Vec::new()
             }
             message @ (Message::TreeClick(_)
             | Message::ContentFocus
+            | Message::ContentRelease
             | Message::TreeShortcut(_)
             | Message::TreeHover(_)
             | Message::TreeHoverLeft(_)
@@ -3567,22 +3613,44 @@ impl Shell {
         let attempts: Vec<u32> = (heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MIN
             ..=heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX)
             .collect();
+        // As the C# watchdog: off, or a choice of the seconds its range allows.
+        let timeouts: Vec<TimeoutChoice> =
+            CONNECT_TIMEOUTS.into_iter().map(TimeoutChoice).collect();
+        let timeout = row![
+            text(fl!("ui-settings-rdp-connect-timeout")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                timeouts,
+                Some(TimeoutChoice(self.app.settings().rdp_connect_timeout)),
+                |TimeoutChoice(seconds)| {
+                    Message::App(AppMessage::Settings(SettingsMessage::RdpConnectTimeout(
+                        seconds,
+                    )))
+                },
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center);
         container(
-            row![
-                text(fl!("ui-settings-rdp-auto-reconnect-attempts")),
-                iced::widget::space::horizontal(),
-                pick_list(
-                    attempts,
-                    Some(self.app.settings().rdp_auto_reconnect_attempts),
-                    |attempts| {
-                        Message::App(AppMessage::Settings(
-                            SettingsMessage::RdpAutoReconnectAttempts(attempts),
-                        ))
-                    },
-                ),
+            column![
+                row![
+                    text(fl!("ui-settings-rdp-auto-reconnect-attempts")),
+                    iced::widget::space::horizontal(),
+                    pick_list(
+                        attempts,
+                        Some(self.app.settings().rdp_auto_reconnect_attempts),
+                        |attempts| {
+                            Message::App(AppMessage::Settings(
+                                SettingsMessage::RdpAutoReconnectAttempts(attempts),
+                            ))
+                        },
+                    ),
+                ]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center),
+                timeout,
             ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
+            .spacing(SPACING),
         )
         .padding(PADDING)
         .max_width(SETTINGS_WIDTH)
@@ -3942,7 +4010,9 @@ impl Shell {
             ) => {}
             Message::App(AppMessage::ToggleFolder(_))
             | Message::OpenTreeMenu(_)
-            | Message::TreeClick(_) => self.tree_focused = true,
+            | Message::TreeClick(_)
+            // The desktop takes no more keys: the tree has them, as after a click in it.
+            | Message::ContentRelease => self.tree_focused = true,
             Message::ContentFocus => self.tree_focused = false,
             _ => {}
         }
@@ -4608,6 +4678,27 @@ impl Shell {
         ))
     }
 
+    /// The anonymized report of tab `id`'s failure at `now`: when, which version, the kind
+    /// of failure; `None` unless its session failed.
+    #[must_use]
+    pub fn anonymous_report(&self, id: TabId, now: std::time::SystemTime) -> Option<String> {
+        let tab = self.app.tab(id)?;
+        let Phase::Failed(error) = &tab.phase else {
+            return None;
+        };
+        // The variant's name alone: its fields can name the server or the account.
+        let shown = format!("{error:?}");
+        let kind = shown
+            .split(|c: char| !c.is_ascii_alphanumeric())
+            .next()
+            .unwrap_or_default();
+        Some(report::anonymous_report(
+            self.app.tab_kind(tab).label(),
+            kind,
+            now,
+        ))
+    }
+
     /// What the menu of tab `id` offers; `None` once the tab is gone.
     fn tab_menu_state(&self, id: TabId) -> Option<TabMenuState> {
         let tab = self.app.tab(id)?;
@@ -4963,11 +5054,22 @@ impl Shell {
             &tab.phase,
             Phase::Failed(error) if !matches!(error, UiError::Cancelled | UiError::CertificateRefused)
         ) {
-            actions = actions.push(
-                button(action_label(fl!("ui-session-copy-error-button")))
-                    .style(button::secondary)
-                    .on_press(Message::CopyError(tab.id)),
-            );
+            actions = actions
+                .push(
+                    button(action_label(fl!("ui-session-copy-error-button")))
+                        .style(button::secondary)
+                        .on_press(Message::CopyError(tab.id)),
+                )
+                .push(
+                    tooltip(
+                        button(action_label(fl!("ui-session-copy-anonymous-button")))
+                            .style(button::secondary)
+                            .on_press(Message::CopyAnonymousError(tab.id)),
+                        text(fl!("ui-error-report-anonymous-hint")).size(SMALL_SIZE),
+                        tooltip::Position::Bottom,
+                    )
+                    .style(container::rounded_box),
+                );
         }
         if let Some(profile) = self
             .app
@@ -5056,6 +5158,7 @@ impl Shell {
     fn desktop<'a>(&self, tab: &Tab, pane: &'a DesktopPane) -> Element<'a, Message> {
         let fit = self.fits(tab);
         let view = DesktopView::new(pane, tab.id, Message::App)
+            .on_release(Message::ContentRelease)
             .interactive(self.app.dialog.is_none() && !self.tree_focused)
             .fit(fit)
             .density(self.density);
@@ -5106,6 +5209,10 @@ impl Shell {
                 tooltip::Position::Right,
             )
             .style(container::rounded_box),
+            // The C# Send keys menu's "Keyboard shortcuts...".
+            button(text(fl!("ui-desktop-shortcuts")).size(SMALL_SIZE))
+                .style(button::text)
+                .on_press(Message::App(AppMessage::ShowShortcuts)),
             mode,
             fullscreen,
             disconnect,
@@ -5173,6 +5280,9 @@ impl Shell {
                 )
                 .style(container::rounded_box),
             );
+        }
+        if let TabProfile::Rdp(profile) = &tab.profile {
+            bar = bar.extend(redirection_badges(profile));
         }
         if let Some(name) = &pane.desktop_name {
             bar = bar.push(text(name.as_str()).size(SMALL_SIZE).style(text::secondary));
@@ -5393,6 +5503,15 @@ fn certificate_body<'a>(
     let Some(context) = context else {
         return body;
     };
+    if let Some(subject) = &context.subject {
+        body = body.push(
+            text(fl!(
+                "ui-certificate-subject",
+                subject = server_text(subject)
+            ))
+            .font(iced::Font::MONOSPACE),
+        );
+    }
     if context.others > 0 {
         body = body.push(text(fl!(
             "ui-certificate-already-trusted",
@@ -6310,6 +6429,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::RedirectClipboard => fl!("ui-profile-toggle-clipboard"),
         ProfileToggle::FollowDefaults => fl!("ui-profile-rdp-follow-defaults"),
         ProfileToggle::SeveralServers => fl!("ui-profile-toggle-several-servers"),
+        ProfileToggle::StrictServerAuthentication => fl!("ui-profile-toggle-strict-server-auth"),
         ProfileToggle::AntiIdle => fl!("ui-profile-toggle-anti-idle"),
         ProfileToggle::AutoReconnect => fl!("ui-profile-toggle-auto-reconnect"),
         ProfileToggle::RedirectDrives => fl!("ui-profile-toggle-drives"),
@@ -8031,6 +8151,23 @@ fn session_logging_choice(draft: &ProfileDraft) -> Element<'_, Message> {
 /// An SSH agent preference in the Settings page's list, named as the C# Heimdall names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct AgentChoice(AgentPreference);
+
+/// The RDP connection timeouts offered, in seconds, 0 for none: within the C# range.
+const CONNECT_TIMEOUTS: [u32; 9] = [0, 15, 30, 45, 60, 90, 120, 300, 600];
+
+/// An RDP connection timeout as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct TimeoutChoice(u32);
+
+impl std::fmt::Display for TimeoutChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&if self.0 == 0 {
+            fl!("ui-settings-rdp-connect-timeout-off")
+        } else {
+            fl!("ui-settings-rdp-connect-timeout-seconds", seconds = self.0)
+        })
+    }
+}
 
 /// An execution policy as the list names it, as the C# does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

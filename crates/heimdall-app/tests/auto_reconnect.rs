@@ -22,10 +22,11 @@ use std::path::Path;
 use std::time::{Duration, Instant};
 
 use heimdall_app::{
-    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, NetworkFailure, Phase,
-    RDP_MAX_ATTEMPTS, TabId, UiError,
+    App, AppConfig, AttemptId, ConnectionEvent, Effect, Message, NetworkFailure, Phase, TabId,
+    UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
+use heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX;
 use heimdall_core::store::ProfileStore;
 use heimdall_rdp::Framebuffer;
 use heimdall_ssh::AgentSource;
@@ -177,7 +178,10 @@ fn a_dropped_desktop_opens_again_by_itself_after_2_then_5_seconds() {
     let effects = event(&mut app, tab, attempt, dropped());
     wake(&effects, tab, attempt, Duration::from_secs(2));
     let retry = app.tab(tab).expect("tab").retry.expect("waiting");
-    assert_eq!((retry.attempt, retry.max), (1, RDP_MAX_ATTEMPTS));
+    assert_eq!(
+        (retry.attempt, retry.max),
+        (1, RDP_AUTO_RECONNECT_ATTEMPTS_MAX)
+    );
     assert!(matches!(app.tab(tab).expect("tab").phase, Phase::Failed(_)));
 
     let (again, second) = connect_rdp(&app.update(Message::AutoReconnect { tab, attempt }));
@@ -222,7 +226,7 @@ fn the_attempts_stop_at_the_twentieth() {
     let mut app = app(dir.path());
     let (tab, mut attempt) = live(&mut app);
     let mut effects = event(&mut app, tab, attempt, dropped());
-    for expected in 1..=RDP_MAX_ATTEMPTS {
+    for expected in 1..=RDP_AUTO_RECONNECT_ATTEMPTS_MAX {
         assert_eq!(
             app.tab(tab).expect("tab").retry.expect("waiting").attempt,
             expected
@@ -338,6 +342,7 @@ fn a_question_on_the_way_back_stops_the_attempts() {
         tab,
         again,
         ConnectionEvent::UnknownRdpCertificate {
+            subject: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -582,7 +587,7 @@ fn the_settings_choose_how_many_times_a_desktop_is_tried_again() {
     ));
     assert_eq!(
         app.settings().rdp_auto_reconnect_attempts,
-        RDP_MAX_ATTEMPTS,
+        RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
         "out of the range: kept"
     );
     app.update(Message::Settings(
@@ -592,6 +597,34 @@ fn the_settings_choose_how_many_times_a_desktop_is_tried_again() {
     event(&mut app, tab, attempt, dropped());
     let retry = app.tab(tab).expect("tab").retry.expect("waiting");
     assert_eq!((retry.attempt, retry.max), (1, 3));
+}
+
+#[test]
+fn the_settings_choose_how_long_a_desktop_may_take_to_log_on() {
+    use heimdall_app::SettingsMessage;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let logon = |app: &mut App| {
+        let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+        let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+            panic!("one connection: {effects:?}");
+        };
+        request.logon_timeout
+    };
+    assert_eq!(
+        logon(&mut app),
+        Some(std::time::Duration::from_secs(45)),
+        "the C# default"
+    );
+    app.update(Message::Settings(SettingsMessage::RdpConnectTimeout(3)));
+    assert_eq!(
+        app.settings().rdp_connect_timeout,
+        45,
+        "out of the range: kept"
+    );
+    app.update(Message::Settings(SettingsMessage::RdpConnectTimeout(0)));
+    assert_eq!(logon(&mut app), None, "off");
 }
 
 #[test]

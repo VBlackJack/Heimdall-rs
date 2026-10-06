@@ -66,6 +66,8 @@ pub struct RdpRequest {
     /// The desktop scale factor asked for, in percent; see
     /// [`heimdall_rdp::desktop_scale_factor`].
     pub desktop_scale: u32,
+    /// How long logging on may take; `None` for no limit.
+    pub logon_timeout: Option<std::time::Duration>,
     /// The SSH gateways the server is reached through, nearest first, each as the hop it
     /// is; empty for a direct connection.
     pub route: Vec<SshProfile>,
@@ -223,6 +225,8 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                     host: profile.host.clone(),
                     port: profile.port,
                     fingerprint: certificate.fingerprint,
+                    subject: Some(certificate.subject.clone())
+                        .filter(|subject| !subject.trim().is_empty()),
                 })
                 .await;
             return;
@@ -286,7 +290,11 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         },
         known_hosts: KnownRdpHosts::new(&request.known_hosts),
         accepted: request.accepted,
-        timeouts: Timeouts::default(),
+        timeouts: Timeouts {
+            // A day stands for no limit: a longer one would overflow the clock.
+            logon: request.logon_timeout.unwrap_or(UNBOUNDED_LOGON),
+            ..Timeouts::default()
+        },
         clipboard: profile.redirect_clipboard,
         drives: if profile.redirect_drives {
             local_drives()
@@ -296,6 +304,7 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         trusted_for_run: request.trusted_for_run.clone(),
         options: profile.options,
         several_servers: profile.several_servers,
+        strict_server_authentication: profile.extras.strict_server_authentication,
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),
         desktop_scale: request.desktop_scale,
@@ -379,6 +388,9 @@ fn safe(ending: Ending) -> Ending {
     }
 }
 
+/// The logon's limit when the settings give none.
+const UNBOUNDED_LOGON: std::time::Duration = std::time::Duration::from_hours(24);
+
 /// How an RDP failure is shown.
 fn ui_error(error: RdpError) -> UiError {
     match error {
@@ -399,6 +411,7 @@ fn ui_error(error: RdpError) -> UiError {
             detail: error.to_string(),
         },
         RdpError::Authentication(refusal) => UiError::RdpRefused { refusal },
+        RdpError::ServerNotAuthenticated => UiError::RdpServerNotAuthenticated,
         RdpError::Ended(ending) => UiError::RdpEnded {
             ending: safe(ending),
         },
@@ -424,6 +437,7 @@ mod tests {
             trusted_for_run: Vec::new(),
             desktop: (1024, 768),
             desktop_scale: 100,
+            logon_timeout: None,
             route: Vec::new(),
             ssh: ConnectOptions::new(PathBuf::from("known_hosts")),
             cancel: CancellationToken::new(),

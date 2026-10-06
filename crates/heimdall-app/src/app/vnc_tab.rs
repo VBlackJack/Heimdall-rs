@@ -64,8 +64,15 @@ impl App {
     }
 }
 
-/// Applies the event that opens a VNC desktop.
+/// Applies the event that opens a VNC desktop, or names it anew.
 pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
+    if let ConnectionEvent::DesktopRenamed(name) = &event {
+        if let Some(pane) = tab.desktop.as_deref_mut() {
+            let name = crate::text::server_text(name.trim());
+            pane.desktop_name = (!name.is_empty()).then_some(name);
+        }
+        return;
+    }
     if let ConnectionEvent::VncReady {
         name,
         framebuffer,
