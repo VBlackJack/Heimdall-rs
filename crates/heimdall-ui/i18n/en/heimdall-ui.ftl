@@ -1892,6 +1892,7 @@ ui-tree-changed-move = Sessions moved.
 ui-tree-changed-reorder = Sessions reordered.
 ui-tree-changed-rename = Session renamed.
 ui-tree-changed-folder-move = Folder moved.
+ui-tree-changed-folder-rename = Folder renamed.
 ui-tree-undo = Undo
 ui-status-reordered-one = Moved { $name } within { $folder }
 ui-status-reordered = Moved { $count } sessions within { $folder }

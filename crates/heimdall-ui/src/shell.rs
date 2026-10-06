@@ -3265,6 +3265,9 @@ impl Shell {
             heimdall_app::OrganizationChange::Reorder => fl!("ui-tree-changed-reorder"),
             heimdall_app::OrganizationChange::Rename => fl!("ui-tree-changed-rename"),
             heimdall_app::OrganizationChange::FolderMove => fl!("ui-tree-changed-folder-move"),
+            heimdall_app::OrganizationChange::FolderRename => {
+                fl!("ui-tree-changed-folder-rename")
+            }
         };
         Some(
             row![
