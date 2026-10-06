@@ -46,5 +46,16 @@ publiée : [`vendor/ironrdp-session`](vendor/ironrdp-session).
 - La modification et sa raison sont décrites dans [`vendor/PATCHES.md`](vendor/PATCHES.md)
   (en anglais).
 
+## iced_widget 0.14.2, éditeur de texte, modifié
+
+Le widget de texte de l'éditeur intégré,
+[`crates/heimdall-ui/src/code_editor.rs`](crates/heimdall-ui/src/code_editor.rs), est
+dérivé de l'éditeur de texte d'iced (`src/text_editor.rs` d'iced_widget 0.14.2), avec une
+marge de numéros de ligne et un défilement horizontal ajoutés.
+
+- Copyright 2019 Héctor Ramón, Iced contributors.
+- Sous licence MIT ; son texte complet ouvre ce fichier et décrit les modifications (en
+  anglais).
+
 Les crates Rust liées aux exécutables sont listées avec leurs licences par
 `cargo deny list` ; `deny.toml` contient les licences acceptées par le projet.
