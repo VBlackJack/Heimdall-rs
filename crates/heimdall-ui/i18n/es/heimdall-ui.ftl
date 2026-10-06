@@ -479,6 +479,7 @@ ui-openssh-done-gateways = { $count ->
 ui-openssh-unreadable = No se puede leer el archivo seleccionado: { $detail }
 ui-openssh-empty = El archivo seleccionado no contiene entradas importables.
 ui-tree-import-putty = Importar sesiones de PuTTY...
+ui-tree-import-citrix = Importar aplicaciones de Citrix
 ui-putty-title = Importar sesiones de PuTTY
 ui-sessions-summary-invalid = { $total ->
     [one] { $total } candidato
@@ -1820,6 +1821,24 @@ ui-import-dropped-rdp-usb = dispositivos USB
 ui-import-dropped-rdp-microphone = micrófono
 ui-import-dropped-rdp-multi-monitor = varios monitores
 ui-import-dropped-citrix-cache-launch = inicio desde la caché de Citrix Workspace, no importado
+ui-citrix-import-title = Aplicaciones de Citrix
+ui-citrix-import-none = No se encontraron aplicaciones de Citrix en la caché local. Abre Citrix Workspace y conecta primero a una tienda.
+ui-citrix-import-confirm = { $count ->
+    [one] ¿Importar { $count } aplicación de Citrix desde la caché local de Workspace?
+   *[other] ¿Importar { $count } aplicaciones de Citrix desde la caché local de Workspace?
+}
+ui-citrix-import-done = { $count ->
+    [one] Se importó { $count } aplicación de Citrix correctamente.
+   *[other] Se importaron { $count } aplicaciones de Citrix correctamente.
+}
+ui-citrix-import-refreshed = { $count ->
+    [one] { $count } aplicación ya guardada: se actualizó su línea de inicio.
+   *[other] { $count } aplicaciones ya guardadas: se actualizaron sus líneas de inicio.
+}
+ui-citrix-import-no-launch-lines = El almacén está bloqueado o no disponible: no se guardaron las líneas de inicio de la caché de Workspace. Estas aplicaciones se inician a través de su StoreFront.
+ui-citrix-cache-folder-missing = No se encontró la carpeta de caché de Citrix SelfService.
+ui-citrix-cache-no-files = No se encontraron archivos de caché de Citrix. Abre Citrix Workspace y conecta primero a una tienda.
+ui-citrix-cache-unreadable = { $file }: { $detail }
 ui-fullscreen-exit = Salir de pantalla completa
 ui-fullscreen-exit-tooltip = F11, o Escape fuera de un terminal o de un escritorio remoto
 ui-files-selected-with-size = { $selection } ({ $size })
@@ -1934,6 +1953,8 @@ ui-status-citrix-invalid-ica-file = El archivo ICA debe ser un archivo .ica de e
 ui-status-citrix-not-configured = No hay ninguna URL de StoreFront ni archivo ICA de Citrix configurado.
 ui-status-citrix-launch-failed = No se pudo iniciar la sesión de Citrix.
 ui-status-citrix-not-started = No se pudo iniciar la sesión de Citrix: { $reason }
+ui-status-citrix-command-rejected = El comando de inicio de Citrix contiene caracteres prohibidos (|, &, ;, `, $, saltos de línea).
+ui-status-citrix-vault-locked = Desbloquea el almacén antes de iniciar esta sesión de Citrix.
 ui-status-winrm-gateway-ntlm = WinRM a través de una puerta de enlace: Kerberos no está disponible, la autenticación pasa a NTLM.
 ui-winrm-diagnostic-ntlm-loopback = La autenticación WinRM falló para la identidad de Windows actual. Use una cuenta guardada para localhost o para hosts fuera del dominio.
 ui-winrm-diagnostic-wsman-invalid = WinRM recibió una respuesta WSMan no válida. Si esta sesión pasa por una puerta de enlace, compruebe que WinRM usa HTTP dentro del túnel.

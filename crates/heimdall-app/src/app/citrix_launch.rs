@@ -23,8 +23,9 @@ use super::{App, Effect, Notice};
 use crate::citrix::{self, CitrixRefusal};
 
 impl App {
-    /// Launches saved Citrix profile `id`'s application: checked here, started off the UI
-    /// thread; refused, the status bar says why, as the C# error does.
+    /// Launches saved Citrix profile `id`'s application, with its cache launch line when the
+    /// vault holds one: checked here, started off the UI thread; refused, the status bar says
+    /// why, as the C# error does.
     pub(super) fn open_citrix(&mut self, id: &ProfileId) -> Vec<Effect> {
         let Some(profile) = self
             .store
@@ -35,7 +36,18 @@ impl App {
         else {
             return Vec::new();
         };
-        match citrix::plan(&profile) {
+        // A locked vault may hold a cache line it cannot give: the application is launched
+        // another way when the profile has one, rather than refused as the C# refuses it;
+        // with none, the vault is to be unlocked.
+        let planned = match self.citrix_launch_line(id) {
+            Ok(line) => citrix::plan(&profile, line.as_deref().map(String::as_str)),
+            Err(CitrixRefusal::VaultLocked) => match citrix::plan(&profile, None) {
+                Err(CitrixRefusal::NotConfigured) => Err(CitrixRefusal::VaultLocked),
+                planned => planned,
+            },
+            Err(refusal) => Err(refusal),
+        };
+        match planned {
             Ok(launch) => {
                 self.tell(Notice::CitrixLaunching);
                 vec![Effect::LaunchCitrix {

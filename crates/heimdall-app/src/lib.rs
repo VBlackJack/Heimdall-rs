@@ -67,9 +67,9 @@ pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
-    ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome, FileKind, FilesMessage,
-    FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage,
-    HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary, KeyInput,
+    CitrixImportOutcome, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome,
+    FileKind, FilesMessage, FilterMessage, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
+    HostKeysMessage, HostKeysOutcome, HostKeysPreview, ImportFile, ImportSummary, KeyInput,
     LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
     OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,

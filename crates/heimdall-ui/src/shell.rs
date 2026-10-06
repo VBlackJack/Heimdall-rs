@@ -2601,6 +2601,23 @@ impl Shell {
                     ))
                 },
             ),
+            // The cache files, read off the window's thread.
+            Effect::ScanCitrixCache => Task::perform(
+                async {
+                    tokio::task::spawn_blocking(heimdall_core::import::citrix_cache::scan)
+                        .await
+                        .unwrap_or_else(|error| heimdall_core::import::citrix_cache::CacheScan {
+                            apps: Vec::new(),
+                            warnings: vec![
+                                heimdall_core::import::citrix_cache::CacheWarning::Unreadable {
+                                    file: String::new(),
+                                    detail: error.to_string(),
+                                },
+                            ],
+                        })
+                },
+                |scan| Message::App(AppMessage::CitrixScanned(scan)),
+            ),
             Effect::ReadRdpFiles(paths) => {
                 Task::perform(crate::rdp_view::read_all(paths), rdp_read)
             }
@@ -6494,6 +6511,7 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
                 .map(|lines| (fl!("ui-rdp-title"), lines))
                 .or_else(|| crate::sessions_view::report_lines(other))
                 .or_else(|| crate::hostkeys_view::report_lines(other))
+                .or_else(|| crate::citrix_import_view::report_lines(other))
                 .unwrap_or_default();
             (title, lines.into_iter().map(text).collect())
         }
@@ -6511,8 +6529,12 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
         Dialog::SessionsPreview(preview) => crate::sessions_view::preview(preview),
         Dialog::RdpPreview(preview) => crate::rdp_view::preview(preview),
         Dialog::HostKeysPreview(preview) => crate::hostkeys_view::preview(preview),
-        Dialog::ConfirmImportFile(pending) => {
-            let (title, body, action) = crate::file_import_view::question(pending);
+        Dialog::ConfirmImportFile(_) | Dialog::ConfirmCitrixImport(_) => {
+            let (title, body, action) = match dialog {
+                Dialog::ConfirmImportFile(pending) => crate::file_import_view::question(pending),
+                Dialog::ConfirmCitrixImport(scan) => crate::citrix_import_view::question(scan),
+                _ => return column![].into(),
+            };
             column![
                 text(title).size(HEADING_SIZE),
                 text(body),
@@ -9123,28 +9145,29 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
     }
 }
 
+/// A plain question drawn: its title, its text, Cancel and its action, in the danger colour.
+fn plain_question_view<'a>(dialog: &Dialog) -> Element<'a, Message> {
+    let (title, body, action) = plain_question(dialog);
+    column![
+        text(title).size(HEADING_SIZE),
+        text(body),
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(action))
+                .style(button::danger)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
+        ]
+        .spacing(SPACING),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
-    let confirm = |label: String| {
-        button(text(label))
-            .style(button::danger)
-            .on_press(Message::App(AppMessage::ConfirmDialog))
-    };
-    let dismiss = |label: String| {
-        button(text(label))
-            .style(button::secondary)
-            .on_press(Message::App(AppMessage::DismissDialog))
-    };
     let ok = || {
         button(text(fl!("ui-dialog-ok-button"))).on_press(Message::App(AppMessage::DismissDialog))
-    };
-    let heading = |label: String| text(label).size(HEADING_SIZE);
-    let question = |title: String, body: String, action: String| {
-        column![
-            heading(title),
-            text(body),
-            row![dismiss(fl!("ui-dialog-cancel-button")), confirm(action)].spacing(SPACING),
-        ]
-        .spacing(SPACING)
     };
     match dialog {
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
@@ -9174,10 +9197,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteGateway { .. }
         | Dialog::ConfirmDeleteProfile { .. }
-        | Dialog::ConfirmDelete { .. } => {
-            let (title, body, action) = plain_question(dialog);
-            question(title, body, action).into()
-        }
+        | Dialog::ConfirmDelete { .. } => plain_question_view(dialog),
         Dialog::ConfirmSettingsExportPaths { count } => {
             crate::settings_file::export_question(*count)
         }
@@ -9214,12 +9234,15 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::HostKeysEmpty
         | Dialog::HostKeysDone { .. }
         | Dialog::ImportNothing { .. }
+        | Dialog::CitrixImportNothing { .. }
+        | Dialog::CitrixImportDone(_)
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreError { .. } => report(dialog, ok()),
         Dialog::SessionsPreview(_)
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)
-        | Dialog::ConfirmImportFile(_) => import_preview(dialog),
+        | Dialog::ConfirmImportFile(_)
+        | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
         Dialog::Pin(pin) => pin_dialog(pin, forms.vault),
         Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),

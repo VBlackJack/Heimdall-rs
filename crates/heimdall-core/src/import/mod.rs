@@ -16,6 +16,7 @@
 
 //! Importers from other tools.
 
+pub mod citrix_cache;
 pub mod csharp;
 pub mod foreign;
 pub mod mobaxterm;

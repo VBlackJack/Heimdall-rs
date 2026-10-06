@@ -227,6 +227,37 @@ pub fn decode_passphrase(bytes: &[u8]) -> Option<SavedPassphrase> {
     })
 }
 
+/// Prefix of the vault entries holding a Citrix profile's launch line.
+const CITRIX_LAUNCH_ENTRY_PREFIX: &str = "citrix-launch/";
+
+/// Name of the vault entry holding the line Citrix Workspace's `SelfService.exe` launches
+/// `profile`'s application with, read from its cache: pre-authenticated, it is kept as a
+/// password is, as the C# vault-encrypts its `CitrixLaunchCommandLine`.
+#[must_use]
+pub fn citrix_launch_entry(profile: &ProfileId) -> String {
+    format!("{CITRIX_LAUNCH_ENTRY_PREFIX}{}", profile.as_str())
+}
+
+/// `line` as vault entry bytes: a version, then the line with its length.
+#[must_use]
+pub fn encode_citrix_launch(line: &str) -> Zeroizing<Vec<u8>> {
+    let mut bytes = Zeroizing::new(Vec::new());
+    bytes.push(ENCODING_VERSION);
+    push_text(&mut bytes, line);
+    bytes
+}
+
+/// The launch line in vault entry `bytes`; `None` for anything this version did not write.
+#[must_use]
+pub fn decode_citrix_launch(bytes: &[u8]) -> Option<Zeroizing<String>> {
+    let mut reader = Reader(bytes);
+    if reader.byte()? != ENCODING_VERSION {
+        return None;
+    }
+    let line = Zeroizing::new(reader.text()?);
+    reader.0.is_empty().then_some(line)
+}
+
 fn push_text(bytes: &mut Vec<u8>, text: &str) {
     // A text longer than 4 GiB cannot be typed into a password field.
     let length = u32::try_from(text.len()).unwrap_or(u32::MAX);
@@ -388,5 +419,20 @@ mod tests {
             !format!("{saved:?}").contains("correct horse"),
             "never in a log"
         );
+    }
+
+    #[test]
+    fn a_citrix_launch_line_reads_back_and_nothing_else_does() {
+        let line = "-qlaunch \"Excel 2024\" -s store";
+        let bytes = encode_citrix_launch(line);
+        assert_eq!(
+            decode_citrix_launch(&bytes).as_deref().map(String::as_str),
+            Some(line)
+        );
+        assert_eq!(citrix_launch_entry(&ProfileId::new("c")), "citrix-launch/c");
+        assert_eq!(decode_citrix_launch(&bytes[..bytes.len() - 1]), None);
+        let mut longer = bytes.to_vec();
+        longer.push(0);
+        assert_eq!(decode_citrix_launch(&longer), None);
     }
 }

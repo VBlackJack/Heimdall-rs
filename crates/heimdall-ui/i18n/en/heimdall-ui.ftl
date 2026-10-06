@@ -95,6 +95,8 @@ ui-status-citrix-invalid-ica-file = The ICA file must be an .ica file on this co
 ui-status-citrix-not-configured = No Citrix StoreFront URL or ICA file configured.
 ui-status-citrix-launch-failed = Failed to launch the Citrix session.
 ui-status-citrix-not-started = Failed to launch Citrix session: { $reason }
+ui-status-citrix-command-rejected = The Citrix launch command contains forbidden characters (|, &, ;, `, $, newlines).
+ui-status-citrix-vault-locked = Unlock the vault before launching this Citrix session.
 ui-settings-provider-enabled = Use external credential provider
 ui-settings-provider-disabled-hint = Enable 'Use external credential provider' to configure these options
 ui-settings-provider-preset = Quick setup preset
@@ -316,6 +318,24 @@ ui-import-dropped-rdp-usb = USB devices
 ui-import-dropped-rdp-microphone = microphone
 ui-import-dropped-rdp-multi-monitor = several monitors
 ui-import-dropped-citrix-cache-launch = launch from the Citrix Workspace cache, not imported
+ui-citrix-import-title = Citrix Applications
+ui-citrix-import-none = No Citrix applications found in the local cache. Open Citrix Workspace and connect to a store first.
+ui-citrix-import-confirm = { $count ->
+    [one] Import { $count } Citrix application from local Workspace cache?
+   *[other] Import { $count } Citrix applications from local Workspace cache?
+}
+ui-citrix-import-done = { $count ->
+    [one] { $count } Citrix application imported successfully.
+   *[other] { $count } Citrix applications imported successfully.
+}
+ui-citrix-import-refreshed = { $count ->
+    [one] { $count } application already saved: its launch line was refreshed.
+   *[other] { $count } applications already saved: their launch lines were refreshed.
+}
+ui-citrix-import-no-launch-lines = The vault is locked or unavailable: the launch lines from the Workspace cache were not saved. These applications launch through their StoreFront.
+ui-citrix-cache-folder-missing = Citrix SelfService cache directory not found.
+ui-citrix-cache-no-files = No Citrix cache files found. Open Citrix Workspace and connect to a store first.
+ui-citrix-cache-unreadable = { $file }: { $detail }
 ui-dialog-import-failed-title = The import could not run
 ui-import-file-title = Import Sessions
 ui-import-file-filter-all = All supported
@@ -541,6 +561,7 @@ ui-openssh-done-gateways = { $count ->
 ui-openssh-unreadable = Unable to read the selected file: { $detail }
 ui-openssh-empty = The selected file contains no importable entries.
 ui-tree-import-putty = Import PuTTY sessions...
+ui-tree-import-citrix = Import Citrix Apps
 ui-putty-title = Import PuTTY sessions
 ui-sessions-summary-invalid = { $total ->
     [one] { $total } candidate
