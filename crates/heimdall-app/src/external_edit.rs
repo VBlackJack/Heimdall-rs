@@ -149,11 +149,8 @@ pub fn editor(setting: &str) -> Result<Editor, EditorRefused> {
 /// `open -t` names; elsewhere what `xdg-open` picks for the file.
 fn system_editor() -> Editor {
     if cfg!(windows) {
-        let windows = std::env::var_os("WINDIR")
-            .or_else(|| std::env::var_os("SystemRoot"))
-            .map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
         Editor {
-            program: windows.join("system32").join("notepad.exe"),
+            program: system_program(NOTEPAD_PROGRAM),
             arguments: Vec::new(),
         }
     } else if cfg!(target_os = "macos") {
@@ -575,6 +572,66 @@ pub fn open_folder(folder: &Path) -> io::Result<()> {
         .stderr(std::process::Stdio::null())
         .spawn()
         .map(drop)
+}
+
+/// Opens local file `file` with the system's default program for it, as a double click
+/// in the system's file manager would: on Windows the shell's handler through
+/// `rundll32.exe url.dll,FileProtocolHandler`, as web addresses are opened; on macOS
+/// `open`; elsewhere `xdg-open`. The path goes as one argument of its own, no shell reading
+/// it; the file manager itself opens folders only.
+///
+/// # Errors
+///
+/// [`io::ErrorKind::InvalidInput`] for a path that is not absolute, which a handler could
+/// take for a switch; what the system said when the handler could not start.
+pub fn open_with_default(file: &Path) -> io::Result<()> {
+    if !file.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not an absolute path",
+        ));
+    }
+    let mut command = if cfg!(windows) {
+        let mut command = std::process::Command::new(system_program(RUNDLL_PROGRAM));
+        command.arg(FILE_HANDLER_ENTRY);
+        command
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new(MAC_OPEN_PROGRAM)
+    } else {
+        std::process::Command::new(XDG_OPEN_PROGRAM)
+    };
+    command
+        .arg(file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(drop)
+}
+
+/// The system's own text editor on Windows, as the C# default.
+const NOTEPAD_PROGRAM: &str = "notepad.exe";
+/// The Windows program that calls a library's entry point.
+const RUNDLL_PROGRAM: &str = "rundll32.exe";
+/// The shell's entry point opening a file or an address with its default program.
+const FILE_HANDLER_ENTRY: &str = "url.dll,FileProtocolHandler";
+/// What opens a file with its default program on macOS.
+const MAC_OPEN_PROGRAM: &str = "/usr/bin/open";
+/// What opens a file with its default program on other Unix desktops.
+const XDG_OPEN_PROGRAM: &str = "xdg-open";
+/// Windows' folder of its own programs, under its own folder.
+const SYSTEM_FOLDER: &str = "system32";
+/// Windows' own folder, when the environment does not say.
+const DEFAULT_WINDOWS_FOLDER: &str = r"C:\Windows";
+
+/// Windows program `name` in Windows' own folder of programs: never one of the same name
+/// found first somewhere else.
+fn system_program(name: &str) -> PathBuf {
+    std::env::var_os("WINDIR")
+        .or_else(|| std::env::var_os("SystemRoot"))
+        .map_or_else(|| PathBuf::from(DEFAULT_WINDOWS_FOLDER), PathBuf::from)
+        .join(SYSTEM_FOLDER)
+        .join(name)
 }
 
 impl EditSession {

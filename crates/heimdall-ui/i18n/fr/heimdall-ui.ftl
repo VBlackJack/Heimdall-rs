@@ -1271,6 +1271,7 @@ ui-status-files-auto-upload-refused = L'envoi automatique de { $name } a été r
 ui-files-error-working-folder-unprotected = Le fichier n'a pas été ouvert : son dossier de travail local n'a pas pu être réservé à votre compte, son contenu aurait donc pu être lisible par les autres utilisateurs de cet ordinateur.
 ui-files-error-editor-failed = L'éditeur externe n'a pas pu être lancé : { $detail }. Vérifiez le chemin de l'éditeur dans les paramètres.
 ui-files-error-editor-runs-files = Le lancement d'interpréteurs de commandes ou d'hôtes de scripts comme éditeurs est bloqué pour des raisons de sécurité.
+ui-files-error-open-failed = Impossible de l'ouvrir sur cet ordinateur : { $detail }
 ui-settings-external-editor = Éditeur externe
 ui-settings-external-editor-path = Chemin de l'éditeur externe
 ui-settings-external-editor-hint = Chemin vers l'éditeur de texte pour l'édition SFTP distante (laisser vide pour le programme par défaut)
@@ -1355,6 +1356,10 @@ ui-dialog-open-link-title = Ouvrir le lien
 ui-dialog-open-link-body = Le texte cliqué mène à cette adresse, qui s'ouvrira dans votre navigateur :
     { $url }
 ui-dialog-open-link-confirm = Ouvrir
+ui-dialog-open-runnable-title = Ouvrir un programme
+ui-dialog-open-runnable-body = Ce fichier s'exécute comme un programme sur cet ordinateur, avec vos droits. Ne l'ouvrez que si vous lui faites confiance :
+    { $path }
+ui-dialog-open-runnable-confirm = Ouvrir
 ui-tab-menu-show-health = Afficher la santé du serveur
 ui-tab-menu-hide-health = Masquer la santé du serveur
 ui-health-cpu = CPU
@@ -2000,6 +2005,7 @@ ui-settings-sftp = Navigateur SFTP
 ui-settings-sftp-browser-enabled = Activer le navigateur SFTP intégré
 ui-settings-sftp-auto-open = Ouvrir le panneau SFTP automatiquement lors d'une connexion SSH
 ui-settings-sftp-follow = Le SFTP suit le répertoire courant SSH
+ui-settings-dock-local-browser = Ancrer un explorateur de fichiers à côté des shells locaux
 ui-settings-ssh-tmout-reset-interval = Intervalle de réinitialisation TMOUT (0 = désactivé)
 ui-settings-ssh-tmout-reset-refused = L'intervalle de réinitialisation TMOUT SSH doit être compris entre { $min } et { $max } secondes.
 ui-status-link-not-a-folder = { $name } ne pointe pas vers un dossier.
