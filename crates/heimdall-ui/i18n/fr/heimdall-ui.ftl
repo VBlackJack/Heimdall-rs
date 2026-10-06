@@ -1906,6 +1906,17 @@ ui-origin-putty = Importé depuis le registre PuTTY
 ui-origin-mremoteng = Importé depuis mRemoteNG
 ui-origin-mobaxterm = Importé depuis MobaXterm
 ui-origin-rdcman = Importé depuis RDCMan
+ui-desktop-shortcuts = Raccourcis clavier...
+ui-desktop-shares-clipboard = Presse-papiers
+ui-desktop-shares-clipboard-tooltip = Redirection du presse-papiers
+ui-desktop-shares-drives = Disques
+ui-desktop-shares-drives-tooltip = Redirection des disques
+ui-desktop-shares-audio = Son
+ui-desktop-shares-audio-tooltip = Redirection audio
+ui-settings-rdp-connect-timeout = Délai du watchdog de connexion RDP (0 = désactivé)
+ui-settings-rdp-connect-timeout-off = Désactivé
+ui-settings-rdp-connect-timeout-seconds = { $seconds } s
+ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant
 ui-profile-toggle-strict-server-auth = Exiger la validation de l'identité serveur
 ui-error-rdp-server-not-authenticated = L'identité du serveur n'a pas pu être validée : son certificat n'est pas encore approuvé et les autorités de certification de cet ordinateur ne le garantissent pas. L'authentification stricte du serveur le refuse.
 ui-certificate-subject = Sujet : { $subject }

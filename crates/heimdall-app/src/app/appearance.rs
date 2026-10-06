@@ -22,9 +22,9 @@ use std::path::PathBuf;
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
     ColorScheme, Language, Settings, anti_idle_interval_accepted,
-    rdp_auto_reconnect_attempts_accepted, reachability_interval_accepted,
-    reachability_probes_accepted, reachability_timeout_accepted, settings_path,
-    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
+    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
+    settings_path, ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
@@ -56,6 +56,8 @@ pub enum SettingsMessage {
     RdpAutoReconnectAttempts(u32),
     /// Which SSH agent's keys are offered first, or alone.
     SshAgentPreference(heimdall_core::settings::AgentPreference),
+    /// Seconds an RDP connection may take to log on, 0 for no limit.
+    RdpConnectTimeout(u32),
     /// The execution policy a local `PowerShell` is started with.
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
@@ -244,6 +246,12 @@ impl App {
                 self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
+            SettingsMessage::RdpConnectTimeout(seconds)
+                if rdp_connect_timeout_accepted(*seconds) =>
+            {
+                self.settings.rdp_connect_timeout = *seconds;
+            }
+            SettingsMessage::RdpConnectTimeout(_) => return Vec::new(),
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }
