@@ -61,6 +61,8 @@ fn ssh(name: &str, host: &str, port: u16, username: Option<&str>) -> SshProfile 
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }
 }
 

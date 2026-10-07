@@ -56,6 +56,8 @@ fn web(gateway: Option<&str>) -> SshProfile {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }
 }
 

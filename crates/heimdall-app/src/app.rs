@@ -37,8 +37,8 @@ use heimdall_core::settings::Settings;
 use heimdall_core::store::{MergeReport, ProfileStore, StoreError};
 use heimdall_core::winrm_diagnostic::{Diagnostic, EarlyOutput};
 use heimdall_ssh::{
-    AgentSource, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust, Secret, TerminalSize,
-    Verdict, fingerprint, verdict,
+    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
+    Secret, TerminalSize, Verdict, fingerprint, verdict,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
@@ -109,6 +109,7 @@ mod profile_menu;
 mod profiles;
 mod provider;
 mod provider_connect;
+mod putty_launch;
 mod quick_connect;
 mod rdp_import;
 mod rdp_tab;
@@ -291,6 +292,20 @@ pub enum Message {
         gateway: Option<String>,
         /// Started, or why not.
         result: Result<(), crate::rdp_external::ExternalRefusal>,
+    },
+    /// The host key of an SSH profile to open in `PuTTY` was probed.
+    PuttyHostKey {
+        /// The profile, as it was to open.
+        profile: Box<SshProfile>,
+        /// What the probe found.
+        probe: crate::putty::HostKeyProbe,
+    },
+    /// `PuTTY` was started for an SSH profile, or why not.
+    PuttyLaunched {
+        /// The profile's name.
+        name: String,
+        /// Started, or why not.
+        result: Result<crate::putty::PuttyStarted, crate::putty::PuttyRefusal>,
     },
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
@@ -820,6 +835,10 @@ impl fmt::Debug for Message {
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
             }
+            Self::PuttyHostKey { profile, .. } => write!(f, "PuttyHostKey({})", profile.id),
+            Self::PuttyLaunched { result, .. } => {
+                write!(f, "PuttyLaunched({})", result.is_ok())
+            }
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
                 write!(f, "DesktopResize({}, {width}x{height})", tab.value())
@@ -1179,6 +1198,21 @@ pub enum Effect {
         gateway: Option<String>,
         /// The `.rdp` file, as [`crate::rdp_external::rdp_file`] writes it.
         content: String,
+    },
+    /// Probe an SSH profile's host key before it opens in `PuTTY`, off the UI thread;
+    /// answered with [`Message::PuttyHostKey`].
+    ProbePuttyHostKey {
+        /// The profile.
+        profile: Box<SshProfile>,
+        /// What every SSH connection shares, `known_hosts` among it.
+        options: Box<ConnectOptions>,
+    },
+    /// Start `PuTTY`, off the UI thread; answered with [`Message::PuttyLaunched`].
+    LaunchPutty {
+        /// The profile's name.
+        name: String,
+        /// How it starts.
+        launch: Box<crate::putty::PuttyLaunch>,
     },
     /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
     /// copied.
@@ -1589,6 +1623,10 @@ impl fmt::Debug for Effect {
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::LaunchCitrix { .. } => f.write_str("LaunchCitrix(..)"),
             Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
+            Self::ProbePuttyHostKey { profile, .. } => {
+                write!(f, "ProbePuttyHostKey({})", profile.id)
+            }
+            Self::LaunchPutty { .. } => f.write_str("LaunchPutty(..)"),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
@@ -2234,8 +2272,8 @@ pub enum Dialog {
     },
     /// The C# "New tunnel" dialog, as filled.
     NewTunnel(crate::tunnel::TunnelForm),
-    /// A gateway on a tunnel's way presented a key never seen: trusted, or the tunnel
-    /// not opened.
+    /// A gateway on a tunnel's way, or a server `PuTTY` is to open, presented a key never
+    /// seen: trusted, or neither opened.
     TunnelHostKey {
         /// The gateway's host.
         host: String,
@@ -3075,6 +3113,8 @@ impl App {
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
             | Message::RdpExternalLaunched { .. }
+            | Message::PuttyHostKey { .. }
+            | Message::PuttyLaunched { .. }
             | Message::ReconnectTab(_)
             | Message::ConnectAs { .. }
             | Message::QuickConnect(_)
@@ -3365,6 +3405,8 @@ impl App {
                 gateway,
                 result,
             } => self.rdp_external_launched(name, gateway, result),
+            Message::PuttyHostKey { profile, probe } => self.putty_host_key(*profile, probe),
+            Message::PuttyLaunched { name, result } => self.putty_launched(name, result),
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
             Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),

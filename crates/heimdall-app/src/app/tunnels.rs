@@ -20,12 +20,13 @@
 //! As in the C#, the dialog closes on "Open tunnel" and nothing is asked on the way: a
 //! gateway's question is answered only from what is saved for that gateway, under the rules
 //! a tab follows (the endpoint it was saved for, once an attempt), and anything else is
-//! declined. Only a gateway's unknown host key is put to the user, in its own dialog.
+//! declined. Only a gateway's unknown host key is put to the user, in its own dialog; the
+//! same dialog asks about the key of a server `PuTTY` is to open.
 
 use std::sync::Arc;
 use std::time::SystemTime;
 
-use heimdall_core::profile::ProfileId;
+use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_ssh::{KnownHosts, PublicKey, Verdict, verdict};
 use tokio_util::sync::CancellationToken;
 
@@ -84,13 +85,39 @@ pub(super) struct TunnelRun {
     answered: Vec<ProfileId>,
 }
 
-/// A gateway's key the user was asked about, kept to learn it on Accept.
+/// A key the user was asked about, kept to learn it on Accept.
 #[derive(Debug, Clone)]
 pub(super) struct PendingTunnelKey {
-    spec: TunnelSpec,
+    then: KeyFor,
     host: String,
     port: u16,
     key: Arc<PublicKey>,
+}
+
+/// What a key asked about lets go on once trusted.
+#[derive(Debug, Clone)]
+enum KeyFor {
+    /// A tunnel, through the gateway that presented it.
+    Tunnel(TunnelSpec),
+    /// An SSH profile, opened in `PuTTY`.
+    Putty(Box<SshProfile>),
+}
+
+impl PendingTunnelKey {
+    /// The key `host:port` presented when `profile` was to open in `PuTTY`.
+    pub(super) fn for_putty(
+        profile: SshProfile,
+        host: String,
+        port: u16,
+        key: Arc<PublicKey>,
+    ) -> Self {
+        Self {
+            then: KeyFor::Putty(Box::new(profile)),
+            host,
+            port,
+            key,
+        }
+    }
 }
 
 impl App {
@@ -366,7 +393,7 @@ impl App {
                     algorithm: key.algorithm().to_string(),
                 });
                 self.pending_tunnel_key = Some(PendingTunnelKey {
-                    spec: run.spec,
+                    then: KeyFor::Tunnel(run.spec),
                     host,
                     port,
                     key,
@@ -458,8 +485,8 @@ impl App {
         Some(answer)
     }
 
-    /// The user's answer about a gateway's unknown key: learnt, or trusted for this run
-    /// only, and the tunnel tried again; or refused, and the tunnel not opened.
+    /// The user's answer about an unknown key: learnt, or trusted for this run only, and the
+    /// tunnel or `PuTTY` tried again; or refused, and neither opened.
     pub(super) fn tunnel_host_key_decision(&mut self, trust: super::KeyTrust) -> Vec<Effect> {
         let Some(pending) = self.pending_tunnel_key.take() else {
             return Vec::new();
@@ -469,7 +496,7 @@ impl App {
         match trust {
             super::KeyTrust::Refused => {
                 log::info!("the host key of {target} was refused by the user");
-                self.tell(Notice::TunnelFailed(UiError::Cancelled));
+                self.key_not_trusted(&pending.then, UiError::Cancelled);
                 return Vec::new();
             }
             // Held in memory for this run: the file is not written, as a tab's.
@@ -479,7 +506,7 @@ impl App {
                 );
                 self.run_trust
                     .trust(&pending.host, pending.port, PublicKey::clone(&pending.key));
-                return self.open_tunnel(pending.spec);
+                return self.key_trusted(pending.then);
             }
             super::KeyTrust::Always => {}
         }
@@ -502,12 +529,28 @@ impl App {
             Err(error) => Err(UiError::from(&error)),
         };
         match learned {
-            Ok(()) => self.open_tunnel(pending.spec),
+            Ok(()) => self.key_trusted(pending.then),
             Err(error) => {
-                self.tell(Notice::TunnelFailed(error));
+                self.key_not_trusted(&pending.then, error);
                 Vec::new()
             }
         }
+    }
+
+    /// Goes on with what waited on a key now trusted.
+    fn key_trusted(&mut self, then: KeyFor) -> Vec<Effect> {
+        match then {
+            KeyFor::Tunnel(spec) => self.open_tunnel(spec),
+            KeyFor::Putty(profile) => self.probe_for_putty(*profile),
+        }
+    }
+
+    /// Says why what waited on a key does not go on.
+    fn key_not_trusted(&mut self, then: &KeyFor, error: UiError) {
+        self.tell(match then {
+            KeyFor::Tunnel(_) => Notice::TunnelFailed(error),
+            KeyFor::Putty(_) => Notice::PuttyRefused(crate::putty::PuttyRefusal::HostKey(error)),
+        });
     }
 
     /// Stops tunnel `id`, open, being opened or interrupted, its row gone; its local port

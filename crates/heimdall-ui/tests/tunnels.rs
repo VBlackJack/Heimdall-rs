@@ -275,6 +275,8 @@ fn a_session_through_a_gateway_says_so_on_its_tab_and_is_a_row_of_its_own_in_the
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path(), vec![bastion()]);

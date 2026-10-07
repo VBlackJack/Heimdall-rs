@@ -45,6 +45,12 @@ pub enum SettingsMessage {
     SessionLogRetentionDays(u32),
     /// The program a server's file is edited with; empty takes the system's own.
     ExternalEditor(String),
+    /// `PuTTY`, which SSH profiles in the external mode open in; empty looks on `PATH`.
+    PuttyPath(String),
+    /// The X server started for X11 forwarding; empty tries the known places, then `PATH`.
+    X11ServerPath(String),
+    /// An X server is started when X11 forwarding needs one, or not.
+    X11AutoStart(bool),
     /// The SFTP browser's settings: on or off, and opened beside an SSH shell or not.
     SftpBrowser(heimdall_core::settings::SftpBrowser),
     /// The lists of keys trusted for servers.
@@ -233,6 +239,19 @@ impl App {
         true
     }
 
+    /// Sets what `message` changes of `PuTTY` and the X server.
+    fn set_external_ssh(&mut self, message: &SettingsMessage) {
+        let settings = &mut self.settings;
+        match message {
+            SettingsMessage::PuttyPath(path) => path.trim().clone_into(&mut settings.putty_path),
+            SettingsMessage::X11ServerPath(path) => {
+                path.trim().clone_into(&mut settings.x11_server_path);
+            }
+            SettingsMessage::X11AutoStart(on) => settings.x11_auto_start = *on,
+            _ => {}
+        }
+    }
+
     /// Sets the reachability number `message` changes, when within its range; whether it
     /// was.
     fn set_reachability(&mut self, message: &SettingsMessage) -> bool {
@@ -271,6 +290,9 @@ impl App {
             SettingsMessage::ExternalEditor(editor) => {
                 editor.trim().clone_into(&mut self.settings.external_editor);
             }
+            SettingsMessage::PuttyPath(_)
+            | SettingsMessage::X11ServerPath(_)
+            | SettingsMessage::X11AutoStart(_) => self.set_external_ssh(message),
             SettingsMessage::SftpBrowser(sftp) => self.settings.sftp_browser = *sftp,
             SettingsMessage::TerminalFontSize(size) => {
                 if !terminal_font_size_accepted(*size) {

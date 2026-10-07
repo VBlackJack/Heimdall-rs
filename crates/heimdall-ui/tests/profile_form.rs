@@ -117,6 +117,8 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());
@@ -1077,4 +1079,49 @@ fn the_gateway_dialog_tests_its_route_and_says_while_it_runs() {
     ui.find("Testing the route. Results appear after each step.")
         .expect("said while it runs");
     ui.find("Stop test").expect("Stop while it runs");
+}
+
+#[test]
+fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_core::profile::SshMode;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    let warning = "X11 forwarding lets the remote host see";
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in ["SSH mode", "Enable X11 forwarding (External mode only)"] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("Opens PuTTY in a separate window").is_err());
+        assert!(ui.find(warning).is_err(), "no warning while off");
+    }
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::SshMode(
+        SshMode::External,
+    ))));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::X11Forwarding,
+        on: true,
+    }));
+    assert!(matches!(
+        &shell.app().dialog,
+        Some(heimdall_app::Dialog::EditProfile { draft, .. }) if draft.ssh_mode == SshMode::External
+    ));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("Opens PuTTY in a separate window. PuTTY asks for the password itself.")
+            .expect("explained");
+        ui.find("X11 forwarding lets the remote host see this computer's display and the keys typed in its windows. Turn it on only for a server you trust.")
+            .expect("warned");
+    }
+    // Neither in an SFTP form, which opens its files in a tab.
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Sftp)));
+    let mut ui = tall_simulator(&shell);
+    for absent in ["SSH mode", "Enable X11 forwarding (External mode only)"] {
+        assert!(ui.find(absent).is_err(), "{absent}");
+    }
 }

@@ -45,6 +45,8 @@ fn app(dir: &Path) -> App {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     // Arguments listed, as a profile made on Linux keeps them.
     store.merge_local([LocalProfile {

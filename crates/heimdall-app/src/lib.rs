@@ -47,6 +47,7 @@ pub mod notes;
 mod paste_guard;
 mod post_connect;
 pub mod profile_draft;
+pub mod putty;
 pub mod putty_store;
 pub mod rdp_driver;
 pub mod rdp_external;
@@ -70,6 +71,7 @@ pub mod vnc_driver;
 pub mod wake_on_lan;
 pub mod winrm_driver;
 pub mod winrm_preflight;
+pub mod x11_server;
 
 pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;

@@ -48,8 +48,12 @@ pub enum SettingsCard {
     SshReconnect,
     /// The SSH keep-alive, `TMOUT` reset and anti-idle numbers.
     SshSession,
+    /// `PuTTY`, which SSH profiles in the external mode open in.
+    Putty,
     /// The SFTP browser and the local file browser.
     Sftp,
+    /// The X server X11 forwarding draws on.
+    X11,
     /// The program a server's file is edited with.
     ExternalEditor,
     /// The trusted SSH host keys and FTPS certificates.
@@ -76,7 +80,7 @@ pub enum SettingsCard {
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::Appearance,
         Self::Behavior,
         Self::Reachability,
@@ -85,7 +89,9 @@ impl SettingsCard {
         Self::Macros,
         Self::SshReconnect,
         Self::SshSession,
+        Self::Putty,
         Self::Sftp,
+        Self::X11,
         Self::ExternalEditor,
         Self::SshTrusted,
         Self::RdpDefaults,
@@ -107,7 +113,9 @@ impl SettingsCard {
             Self::Terminal | Self::SessionLogging | Self::Macros => SettingsTab::Terminal,
             Self::SshReconnect
             | Self::SshSession
+            | Self::Putty
             | Self::Sftp
+            | Self::X11
             | Self::ExternalEditor
             | Self::SshTrusted => SettingsTab::Ssh,
             Self::RdpDefaults
@@ -184,6 +192,8 @@ pub enum SettingRow {
     TmoutReset,
     /// Seconds between two anti-idle keys of an RDP session.
     AntiIdle,
+    /// `PuTTY`, which SSH profiles in the external mode open in.
+    PuttyPath,
     /// The SFTP browser is on.
     SftpBrowser,
     /// An SSH shell connected opens its files beside it.
@@ -194,6 +204,10 @@ pub enum SettingRow {
     DockLocalBrowser,
     /// That browser follows the shell's working folder.
     LocalFollow,
+    /// The X server started for X11 forwarding.
+    X11ServerPath,
+    /// An X server is started when X11 forwarding needs one.
+    X11AutoStart,
     /// The program a server's file is edited with.
     ExternalEditor,
     /// The trusted SSH host keys.
@@ -230,7 +244,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 46] = [
+    pub const ALL: [Self; 49] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -256,11 +270,14 @@ impl SettingRow {
         Self::KeepAlive,
         Self::TmoutReset,
         Self::AntiIdle,
+        Self::PuttyPath,
         Self::SftpBrowser,
         Self::SftpAutoOpen,
         Self::SftpFollow,
         Self::DockLocalBrowser,
         Self::LocalFollow,
+        Self::X11ServerPath,
+        Self::X11AutoStart,
         Self::ExternalEditor,
         Self::HostKeys,
         Self::FtpsCertificates,
@@ -304,11 +321,13 @@ impl SettingRow {
                 SettingsCard::SshReconnect
             }
             Self::KeepAlive | Self::TmoutReset | Self::AntiIdle => SettingsCard::SshSession,
+            Self::PuttyPath => SettingsCard::Putty,
             Self::SftpBrowser
             | Self::SftpAutoOpen
             | Self::SftpFollow
             | Self::DockLocalBrowser
             | Self::LocalFollow => SettingsCard::Sftp,
+            Self::X11ServerPath | Self::X11AutoStart => SettingsCard::X11,
             Self::ExternalEditor => SettingsCard::ExternalEditor,
             Self::HostKeys | Self::FtpsCertificates | Self::VncCertificates => {
                 SettingsCard::SshTrusted
@@ -346,6 +365,16 @@ impl SettingRow {
             Self::AutoLock => SessionField::AutoLock,
             _ => return None,
         })
+    }
+
+    /// The program's path it is, when it is one typed and applied with Enter.
+    #[must_use]
+    pub fn tool_path(self) -> Option<ToolPath> {
+        match self {
+            Self::PuttyPath => Some(ToolPath::Putty),
+            Self::X11ServerPath => Some(ToolPath::X11Server),
+            _ => None,
+        }
     }
 
     /// Whether it means something only with a master password set: the workspace lock's
@@ -388,6 +417,9 @@ impl SettingRow {
         }
         if let Some(on) = self.flag(settings) {
             return Some(on) != self.flag(&defaults);
+        }
+        if let Some(path) = self.tool_path() {
+            return path.value(settings).trim() != path.value(&defaults);
         }
         match self {
             Self::Theme => settings.theme != defaults.theme,
@@ -433,6 +465,9 @@ impl SettingRow {
         }
         if let Some(on) = self.flag(&defaults) {
             return self.toggled(settings, on);
+        }
+        if let Some(path) = self.tool_path() {
+            return Some(path.applied(path.value(&defaults).to_owned()));
         }
         Some(match self {
             Self::Theme => SettingsMessage::Theme(defaults.theme),
@@ -485,6 +520,7 @@ impl SettingRow {
             Self::SftpFollow => sftp.follow_ssh_directory,
             Self::DockLocalBrowser => sftp.dock_local_browser,
             Self::LocalFollow => sftp.follow_local_directory,
+            Self::X11AutoStart => settings.x11_auto_start,
             _ => return None,
         })
     }
@@ -515,6 +551,7 @@ impl SettingRow {
             Self::SessionLogging => SettingsMessage::SessionLogging(on),
             Self::SshAutoReconnect => SettingsMessage::SshAutoReconnect(on),
             Self::DisconnectOnLock => SettingsMessage::DisconnectOnLock(on),
+            Self::X11AutoStart => SettingsMessage::X11AutoStart(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
                 ..sftp
@@ -537,6 +574,47 @@ impl SettingRow {
             }),
             _ => return None,
         })
+    }
+}
+
+/// A program's path typed in the Settings page and applied with Enter.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ToolPath {
+    /// `PuTTY`.
+    Putty,
+    /// The X server.
+    X11Server,
+}
+
+impl ToolPath {
+    /// How many there are.
+    pub const COUNT: usize = 2;
+
+    /// Its place among them, for what is typed in each.
+    #[must_use]
+    pub fn index(self) -> usize {
+        match self {
+            Self::Putty => 0,
+            Self::X11Server => 1,
+        }
+    }
+
+    /// Its value in `settings`.
+    #[must_use]
+    pub fn value(self, settings: &Settings) -> &str {
+        match self {
+            Self::Putty => &settings.putty_path,
+            Self::X11Server => &settings.x11_server_path,
+        }
+    }
+
+    /// The change that sets it to `typed`.
+    #[must_use]
+    pub fn applied(self, typed: String) -> SettingsMessage {
+        match self {
+            Self::Putty => SettingsMessage::PuttyPath(typed),
+            Self::X11Server => SettingsMessage::X11ServerPath(typed),
+        }
     }
 }
 
@@ -746,6 +824,60 @@ mod tests {
                 ..SftpBrowser::default()
             }))
         );
+    }
+
+    #[test]
+    fn putty_and_the_x_server_are_on_the_ssh_tab_marked_and_reset() {
+        assert_eq!(SettingsCard::Putty.rows(), [SettingRow::PuttyPath]);
+        assert_eq!(
+            SettingsCard::X11.rows(),
+            [SettingRow::X11ServerPath, SettingRow::X11AutoStart]
+        );
+        for row in [
+            SettingRow::PuttyPath,
+            SettingRow::X11ServerPath,
+            SettingRow::X11AutoStart,
+        ] {
+            assert_eq!(row.tab(), SettingsTab::Ssh, "{row:?}");
+            assert!(row.is_marked(), "{row:?}");
+        }
+        let changed = Settings {
+            putty_path: r"C:\Tools\putty.exe".to_owned(),
+            x11_server_path: "/opt/x/vcxsrv".to_owned(),
+            x11_auto_start: false,
+            ..Settings::default()
+        };
+        for row in [
+            SettingRow::PuttyPath,
+            SettingRow::X11ServerPath,
+            SettingRow::X11AutoStart,
+        ] {
+            assert!(row.is_modified(&changed), "{row:?}");
+        }
+        assert_eq!(
+            SettingRow::PuttyPath.reset(&changed),
+            Some(SettingsMessage::PuttyPath(String::new()))
+        );
+        assert_eq!(
+            SettingRow::X11ServerPath.reset(&changed),
+            Some(SettingsMessage::X11ServerPath(String::new()))
+        );
+        assert_eq!(
+            SettingRow::X11AutoStart.reset(&changed),
+            Some(SettingsMessage::X11AutoStart(true))
+        );
+        assert_eq!(SettingRow::X11AutoStart.flag(&changed), Some(false));
+        // Spaces typed around the default are not a change.
+        let padded = Settings {
+            putty_path: "  ".to_owned(),
+            ..Settings::default()
+        };
+        assert!(!SettingRow::PuttyPath.is_modified(&padded));
+        assert_eq!(
+            ToolPath::X11Server.applied("x".to_owned()),
+            SettingsMessage::X11ServerPath("x".to_owned())
+        );
+        assert_ne!(ToolPath::Putty.index(), ToolPath::X11Server.index());
     }
 
     #[test]

@@ -97,6 +97,8 @@ async fn tab(dir: &Path) -> (App, TabId) {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {
@@ -1332,6 +1334,8 @@ async fn what_is_cut_is_pasted_only_on_the_same_server_behind_the_same_gateway()
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     };
     store.merge([
         profile("direct", None),

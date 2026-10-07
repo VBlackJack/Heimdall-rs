@@ -41,7 +41,7 @@ use crate::profile::{
     DEFAULT_RDP_PORT, DEFAULT_SSH_PORT, DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT,
     DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT, Forwards, FtpProfile, LocalArguments,
     LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
-    SshGateway, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 /// `connectionType` of an SSH profile.
@@ -686,12 +686,16 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
             Dropped::CitrixCacheLaunch,
         )])
     } else {
+        // A shell opens in PuTTY, which forwards X11, as the C# one; an SFTP profile opens
+        // its files in a tab, where neither is done.
+        let shell = kind == SSH_CONNECTION_TYPE;
+        let external = is_external(server.ssh_mode.as_deref());
         let mut dropped = turned_on(&[
+            (external && !shell, Dropped::ExternalClient),
             (
-                is_external(server.ssh_mode.as_deref()),
-                Dropped::ExternalClient,
+                server.ssh_x11_forwarding && !(shell && external),
+                Dropped::X11Forwarding,
             ),
-            (server.ssh_x11_forwarding, Dropped::X11Forwarding),
         ]);
         match library_links(server) {
             0 => {}
@@ -1217,6 +1221,14 @@ fn convert(server: &LegacyServer, gateways: &HashSet<&str>) -> Result<SshProfile
         sftp,
         legacy_algorithms: false,
         session_logging: server.session_logging_override,
+        // As the C# `SshMode` and `SshX11Forwarding`, for a shell: an SFTP profile opens its
+        // files in a tab.
+        ssh_mode: if !sftp && is_external(server.ssh_mode.as_deref()) {
+            SshMode::External
+        } else {
+            SshMode::Embedded
+        },
+        x11_forwarding: !sftp && server.ssh_x11_forwarding,
     })
 }
 

@@ -442,6 +442,8 @@ async fn tab(dir: &Path, shell: Option<Connection>) -> (App, TabId) {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {
