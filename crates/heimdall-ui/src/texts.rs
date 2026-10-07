@@ -24,9 +24,7 @@ use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
 use heimdall_core::import::csharp::{Dropped, SkipReason};
-use heimdall_core::profile::{
-    FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, RdpExtra, display_address,
-};
+use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
 use heimdall_files::ftps_trust::ValidationIssue;
 use heimdall_files::{LocalNameError, Refusal};
@@ -351,23 +349,6 @@ pub fn validation_issue(issue: ValidationIssue) -> String {
     }
 }
 
-/// A choice of an RDP profile the built-in client does not honour yet, as the form lists it.
-#[must_use]
-pub fn rdp_extra(extra: RdpExtra) -> String {
-    match extra {
-        RdpExtra::External => fl!("ui-import-dropped-external-client"),
-        RdpExtra::RdGateway => fl!("ui-import-dropped-rd-gateway"),
-        RdpExtra::Printers => fl!("ui-import-dropped-rdp-printers"),
-        RdpExtra::ComPorts => fl!("ui-import-dropped-rdp-com-ports"),
-        RdpExtra::SmartCards => fl!("ui-import-dropped-rdp-smart-cards"),
-        RdpExtra::Webcam => fl!("ui-import-dropped-rdp-webcam"),
-        RdpExtra::Usb => fl!("ui-import-dropped-rdp-usb"),
-        RdpExtra::Microphone => fl!("ui-import-dropped-rdp-microphone"),
-        RdpExtra::MultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
-        RdpExtra::FullScreen => fl!("ui-rdp-extra-full-screen"),
-    }
-}
-
 /// Why an imported profile was left out.
 #[must_use]
 pub fn skip_reason(reason: &SkipReason) -> String {
@@ -419,6 +400,7 @@ pub fn origin_name(origin: heimdall_core::metadata::ProfileOrigin) -> String {
 pub fn draft_error(error: DraftError) -> String {
     match error {
         DraftError::MacAddressInvalid => fl!("ui-profile-error-mac-address"),
+        DraftError::RdGatewayInvalid => fl!("ui-profile-error-rd-gateway"),
         DraftError::NameMissing => fl!("ui-profile-error-name-missing"),
         DraftError::HostMissing => fl!("ui-profile-error-host-missing"),
         DraftError::HostInvalid => fl!("ui-profile-error-host-invalid"),

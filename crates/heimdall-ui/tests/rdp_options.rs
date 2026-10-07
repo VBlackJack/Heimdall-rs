@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
-//! The audio mode and colour depth lists of an RDP profile's form, and the application's RDP
-//! options on the settings page.
+//! The RDP options of a profile's form: the audio mode and colour depth lists, the C# groups
+//! and the boxes only Remote Desktop Connection honours, greyed while the global defaults
+//! decide them; and the application's RDP options on the settings page.
 //!
 //! A list draws its value and its entries without a text widget, so they are reached by
 //! position: a list lies under its label, which can be found. Each entry is found by
@@ -24,14 +25,18 @@
 
 mod common;
 
-use heimdall_app::profile_draft::{DraftProtocol, ProfileChoice, ProfileDraft, ProfileField};
+use heimdall_app::profile_draft::{
+    DraftProtocol, ProfileChoice, ProfileDraft, ProfileField, ProfileToggle,
+};
 use heimdall_app::{Message as AppMessage, SettingsMessage};
 use heimdall_core::profile::{
-    AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, Resolution,
+    AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, RdpSwitch, Resolution,
 };
+use heimdall_ui::rdp_options::Monitor;
 use heimdall_ui::shell::Message;
 use heimdall_ui::terminal_view::FONTS;
-use iced::{Point, Settings, Size, mouse};
+use iced::{Point, Rectangle, Settings, Size, mouse};
+use iced_test::selector::Candidate;
 use iced_test::simulator::Simulator;
 
 /// Size of the simulated form.
@@ -46,7 +51,11 @@ fn simulator(options: RdpOptions) -> common::Drawn<'static> {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    common::simulator(settings, WINDOW, heimdall_ui::rdp_options::view(options))
+    common::simulator(
+        settings,
+        WINDOW,
+        heimdall_ui::rdp_options::view(options, false),
+    )
 }
 
 /// Moves the pointer to `at`, then clicks: a list's menu picks the entry the pointer moved
@@ -67,11 +76,21 @@ fn choices(label: &str) -> Vec<String> {
 
 /// The choices the list under `label` offers in what `make` draws.
 fn choices_in<'a>(label: &str, make: &dyn Fn() -> common::Drawn<'a>) -> Vec<String> {
+    choices_within(label, make, WINDOW.height)
+}
+
+/// The choices the list under `label` offers in what `make` draws, its menu tried down to
+/// `bottom`.
+fn choices_within<'a>(
+    label: &str,
+    make: &dyn Fn() -> common::Drawn<'a>,
+    bottom: f32,
+) -> Vec<String> {
     let bounds = make().find(label).expect(label).bounds();
     let list = Point::new(bounds.x + INTO_LIST, bounds.y + bounds.height + INTO_LIST);
     let mut found: Vec<String> = Vec::new();
     let mut y = list.y;
-    while y < WINDOW.height {
+    while y < bottom {
         let mut ui = make();
         click(&mut ui, list);
         click(&mut ui, Point::new(list.x, y));
@@ -98,16 +117,23 @@ fn resolution(draft: &ProfileDraft) -> common::Drawn<'_> {
     common::simulator(
         settings,
         WINDOW,
-        heimdall_ui::rdp_options::resolution(draft, |field| {
+        heimdall_ui::rdp_options::resolution(draft, &[], |field| {
             iced::widget::text_input("", draft.value(field)).into()
         }),
     )
 }
 
+/// A new RDP form with options of its own: out of the global defaults, every box in reach.
+fn own_options() -> ProfileDraft {
+    let mut draft = ProfileDraft::new_for(DraftProtocol::Rdp);
+    draft.toggle(ProfileToggle::FollowDefaults, false);
+    draft
+}
+
 /// The fields the resolution card of `draft` asks the form to draw.
 fn fields_asked(draft: &ProfileDraft) -> Vec<ProfileField> {
     let asked = std::cell::RefCell::new(Vec::new());
-    let _ = heimdall_ui::rdp_options::resolution(draft, |field| {
+    let _ = heimdall_ui::rdp_options::resolution(draft, &[], |field| {
         asked.borrow_mut().push(field);
         iced::widget::text("").into()
     });
@@ -157,7 +183,7 @@ fn the_resolution_modes_are_offered_in_the_csharp_order_without_multi_monitor() 
 
 #[test]
 fn the_fixed_mode_offers_the_csharp_sizes_and_its_own_fields_only_there() {
-    let mut draft = ProfileDraft::new_for(DraftProtocol::Rdp);
+    let mut draft = own_options();
     assert_eq!(fields_asked(&draft), [], "fitting the window");
     {
         let mut ui = resolution(&draft);
@@ -191,10 +217,12 @@ fn the_fixed_mode_offers_the_csharp_sizes_and_its_own_fields_only_there() {
         )
     })
     .collect();
-    assert_eq!(
-        choices_in("Common resolutions", &|| resolution(&draft)),
-        expected
-    );
+    // Only the list's own: a click below its menu may reach the boxes further down.
+    let offered: Vec<String> = choices_in("Common resolutions", &|| resolution(&draft))
+        .into_iter()
+        .filter(|said| said.starts_with("ProfileChoice(Preset("))
+        .collect();
+    assert_eq!(offered, expected);
     assert_eq!(
         fields_asked(&draft),
         [ProfileField::FixedWidth, ProfileField::FixedHeight]
@@ -479,5 +507,252 @@ fn each_list_shows_the_value_chosen() {
         differ_by_side(&defaults, &audio),
         (true, false),
         "the audio list, on the left"
+    );
+}
+
+/// A window tall enough for every group of the RDP options.
+const GROUPS_WINDOW: Size = Size::new(700.0, 2000.0);
+/// How far below a list's label its menu's first entries are tried.
+const MENU_REACH: f32 = 120.0;
+/// How far apart, at most, the middles of a box and of the note beside it are.
+const SAME_ROW: f32 = 4.0;
+
+/// Two screens side by side, the second upright.
+const SCREENS: [Monitor; 2] = [
+    Monitor {
+        index: 0,
+        width: 1920,
+        height: 1080,
+        primary: true,
+    },
+    Monitor {
+        index: 1,
+        width: 1080,
+        height: 1920,
+        primary: false,
+    },
+];
+
+/// The boxes only Remote Desktop Connection honours, by their C# label.
+const EXTERNAL_ONLY: [(&str, RdpSwitch); 11] = [
+    ("Capture local microphone", RdpSwitch::Microphone),
+    ("Redirect printers", RdpSwitch::Printers),
+    ("Redirect COM ports", RdpSwitch::ComPorts),
+    ("Redirect smart cards", RdpSwitch::SmartCards),
+    ("Redirect webcam", RdpSwitch::Webcam),
+    ("Redirect USB devices", RdpSwitch::Usb),
+    (
+        "Keep bitmap cache on disk between sessions",
+        RdpSwitch::BitmapCaching,
+    ),
+    ("Enable RDP compression", RdpSwitch::Compression),
+    (
+        "Use hardware-accelerated rendering",
+        RdpSwitch::HardwareAcceleration,
+    ),
+    ("Avoid UDP transport probing", RdpSwitch::DisableUdp),
+    ("Open in fullscreen", RdpSwitch::FullScreen),
+];
+
+/// What the form says beside an option only Remote Desktop Connection honours.
+const EXTERNAL_ONLY_NOTE: &str = "External client (mstsc.exe) only";
+
+/// The boxes the global defaults decide while the profile follows them.
+const DECIDED_BY_DEFAULTS: [&str; 18] = [
+    "Allow dynamic resolution updates",
+    "Enable multi-monitor mode",
+    "Capture local microphone",
+    "Redirect clipboard",
+    "Redirect drives",
+    "Redirect printers",
+    "Redirect COM ports",
+    "Redirect smart cards",
+    "Redirect webcam",
+    "Redirect USB devices",
+    "Keep bitmap cache on disk between sessions",
+    "Enable RDP compression",
+    "Use hardware-accelerated rendering",
+    "Automatically reconnect",
+    "Enable Network Level Authentication",
+    "Require server identity validation",
+    // Twice for the lists, by their labels: tried below.
+    "Audio mode",
+    "Color depth",
+];
+
+/// The boxes the global defaults do not have, the profile's own whatever it follows.
+const PROFILE_OWN: [&str; 5] = [
+    "Enable anti-idle keepalive",
+    "Disable wallpaper",
+    "Avoid UDP transport probing",
+    "Run as administrator session (/admin)",
+    "Open in fullscreen",
+];
+
+/// The RDP groups of `draft` as the form shows them, `monitors` the computer's screens.
+fn groups<'a>(draft: &'a ProfileDraft, monitors: &[Monitor]) -> common::Drawn<'a> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    common::simulator(
+        settings,
+        GROUPS_WINDOW,
+        iced::widget::column![
+            heimdall_ui::rdp_options::display_audio(draft, monitors, |field| {
+                iced::widget::text_input("", draft.value(field)).into()
+            }),
+            heimdall_ui::rdp_options::devices(draft),
+            heimdall_ui::rdp_options::performance(draft),
+            heimdall_ui::rdp_options::behavior(draft),
+        ],
+    )
+}
+
+/// Where each text reading `wanted` is drawn, in the order of the window's tree.
+fn every(ui: &mut Simulator<'_, Message>, wanted: &str) -> Vec<Rectangle> {
+    let mut found = Vec::new();
+    let _ = ui.find(|candidate: Candidate<'_>| {
+        if let Candidate::Text {
+            content, bounds, ..
+        } = candidate
+            && content == wanted
+        {
+            found.push(bounds);
+        }
+        None::<()>
+    });
+    found
+}
+
+/// The messages a click on `label` in the groups of `draft` sends.
+fn sent_by(draft: &ProfileDraft, label: &str) -> Vec<String> {
+    let mut ui = groups(draft, &SCREENS);
+    ui.click(label).expect(label);
+    ui.into_messages()
+        .map(|message| format!("{message:?}"))
+        .collect()
+}
+
+#[test]
+fn each_option_of_the_external_client_is_a_box_said_to_be_its_own_while_the_profile_opens_in_a_tab()
+{
+    let draft = own_options();
+    {
+        let mut ui = groups(&draft, &SCREENS);
+        let notes = every(&mut ui, EXTERNAL_ONLY_NOTE);
+        assert_eq!(
+            notes.len(),
+            EXTERNAL_ONLY.len() + 1,
+            "one beside each box, and the multi-monitor one"
+        );
+        for label in EXTERNAL_ONLY
+            .iter()
+            .map(|(label, _)| *label)
+            .chain(["Enable multi-monitor mode"])
+        {
+            let row = ui.find(label).expect(label).bounds();
+            assert!(
+                notes
+                    .iter()
+                    .any(|note| (note.center_y() - row.center_y()).abs() < SAME_ROW
+                        && note.x > row.x),
+                "{label}: the note beside it"
+            );
+        }
+    }
+    for (label, switch) in EXTERNAL_ONLY {
+        let on = !switch.is_on(&draft.rdp_extras);
+        let expected = format!(
+            "{:?}",
+            Message::App(AppMessage::ProfileChoice(ProfileChoice::Extra(switch, on)))
+        );
+        assert!(sent_by(&draft, label).contains(&expected), "{label}");
+    }
+    // Opened in Remote Desktop Connection, or through an RD Gateway, which opens it there:
+    // every option applies, nothing is said.
+    let mut external = draft.clone();
+    external.choose(ProfileChoice::External(true));
+    let mut through_gateway = draft.clone();
+    through_gateway.set(ProfileField::RdGateway, "rdg.lab".to_owned());
+    for opened_outside in [&external, &through_gateway] {
+        let mut ui = groups(opened_outside, &SCREENS);
+        assert!(every(&mut ui, EXTERNAL_ONLY_NOTE).is_empty());
+    }
+}
+
+#[test]
+fn following_the_defaults_greys_what_they_decide_until_left_and_leaves_the_rest_in_reach() {
+    let following = ProfileDraft::new_for(DraftProtocol::Rdp);
+    assert!(following.is_on(ProfileToggle::FollowDefaults), "as the C#");
+    let own = own_options();
+    let (boxes, lists) = DECIDED_BY_DEFAULTS.split_at(DECIDED_BY_DEFAULTS.len() - 2);
+    for label in boxes {
+        assert!(sent_by(&following, label).is_empty(), "{label}: greyed");
+        assert!(!sent_by(&own, label).is_empty(), "{label}: in reach, left");
+    }
+    for (label, prefix) in lists
+        .iter()
+        .zip(["ProfileChoice(Audio(", "ProfileChoice(ColorDepth("])
+    {
+        let offered = |draft: &ProfileDraft| -> Vec<String> {
+            let top = groups(draft, &SCREENS)
+                .find(*label)
+                .expect(label)
+                .bounds()
+                .y;
+            choices_within(label, &|| groups(draft, &SCREENS), top + MENU_REACH)
+                .into_iter()
+                .filter(|said| said.starts_with(prefix))
+                .collect()
+        };
+        assert!(offered(&following).is_empty(), "{label}: veiled");
+        assert!(!offered(&own).is_empty(), "{label}: in reach, left");
+    }
+    for label in PROFILE_OWN {
+        assert!(!sent_by(&following, label).is_empty(), "{label}: its own");
+    }
+}
+
+#[test]
+fn the_monitors_spanned_are_ticked_among_the_screens_and_those_not_connected_are_kept() {
+    let mut draft = own_options();
+    {
+        let mut ui = groups(&draft, &SCREENS[..1]);
+        ui.click("Enable multi-monitor mode")
+            .expect("shown, greyed out");
+        assert_eq!(
+            ui.into_messages().count(),
+            0,
+            "one screen: nothing to span, as the C#"
+        );
+    }
+    let expected = format!(
+        "{:?}",
+        Message::App(AppMessage::ProfileChoice(ProfileChoice::MultiMonitor(true)))
+    );
+    assert!(sent_by(&draft, "Enable multi-monitor mode").contains(&expected));
+    draft.choose(ProfileChoice::MultiMonitor(true));
+    // Chosen at a desk with more screens than here.
+    draft.choose(ProfileChoice::Monitor(5, true));
+    let mut ui = groups(&draft, &SCREENS);
+    for label in [
+        "Multi-monitor uses the selected local displays. Changes require reconnection.",
+        "Monitors saved for this session that are not connected right now are kept.",
+        "Selected monitors",
+        "Choose which monitors the remote session uses. Leaving none checked = all monitors.",
+        "Monitor 1: 1920x1080 (primary)",
+    ] {
+        ui.find(label).expect(label);
+    }
+    ui.click("Monitor 2: 1080x1920 (vertical)")
+        .expect("the upright screen");
+    let expected = format!(
+        "{:?}",
+        Message::App(AppMessage::ProfileChoice(ProfileChoice::Monitor(1, true)))
+    );
+    assert!(
+        ui.into_messages()
+            .any(|message| format!("{message:?}") == expected)
     );
 }

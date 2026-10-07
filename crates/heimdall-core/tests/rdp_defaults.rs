@@ -19,7 +19,8 @@
 
 use heimdall_core::export;
 use heimdall_core::profile::{
-    AudioPlayback, ColorDepth, Forwards, ProfileId, RdpDefaults, RdpOptions, RdpProfile,
+    AudioPlayback, ColorDepth, Forwards, ProfileId, RdpDefaults, RdpExtras, RdpOptions, RdpProfile,
+    RdpSwitch,
 };
 use heimdall_core::settings::{SETTINGS_FILE_NAME, Settings};
 use heimdall_core::store::ProfileStore;
@@ -248,6 +249,52 @@ fn each_csharp_default_reaches_a_following_profile_and_one_with_its_own_keeps_th
     own_choice.extras.strict_server_authentication = true;
     own_choice.extras.compression = false;
     assert_eq!(own_choice.clone().effective(&defaults), own_choice);
+}
+
+/// Every box of the profile form's RDP extras.
+const SWITCHES: [RdpSwitch; 11] = [
+    RdpSwitch::Printers,
+    RdpSwitch::ComPorts,
+    RdpSwitch::SmartCards,
+    RdpSwitch::Webcam,
+    RdpSwitch::Usb,
+    RdpSwitch::Microphone,
+    RdpSwitch::BitmapCaching,
+    RdpSwitch::Compression,
+    RdpSwitch::HardwareAcceleration,
+    RdpSwitch::DisableUdp,
+    RdpSwitch::FullScreen,
+];
+
+#[test]
+fn each_extras_box_reads_and_writes_its_own_option_and_says_whether_the_defaults_take_it() {
+    for switch in SWITCHES {
+        for on in [true, false] {
+            let mut extras = RdpExtras::default();
+            let before = extras.clone();
+            switch.set(&mut extras, on);
+            assert_eq!(switch.is_on(&extras), on, "{switch:?}");
+            // The others untouched: each box is one option.
+            for other in SWITCHES.iter().filter(|other| **other != switch) {
+                assert_eq!(other.is_on(&extras), other.is_on(&before), "{switch:?}");
+            }
+            // A box the defaults take is the defaults' whatever the profile says; one
+            // they do not have stays the profile's.
+            let mut following = own(true);
+            following.extras = extras;
+            let effective = following.effective(&RdpDefaults::default()).extras;
+            let defaults_value = {
+                let mut factory = own(true);
+                switch.set(&mut factory.extras, !on);
+                switch.is_on(&factory.effective(&RdpDefaults::default()).extras)
+            };
+            if switch.follows_defaults() {
+                assert_eq!(switch.is_on(&effective), defaults_value, "{switch:?}");
+            } else {
+                assert_eq!(switch.is_on(&effective), on, "{switch:?}");
+            }
+        }
+    }
 }
 
 #[test]

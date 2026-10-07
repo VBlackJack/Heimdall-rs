@@ -281,13 +281,14 @@ pub struct RdpProfile {
     /// `RdpAutoReconnect`: on unless cleared.
     #[serde(default = "shared", skip_serializing_if = "is_shared")]
     pub auto_reconnect: bool,
-    /// What the profile asks that the built-in client does not do yet, kept.
+    /// What the profile asks that the built-in client does not do yet, for the external one.
     #[serde(flatten)]
     pub extras: RdpExtras,
 }
 
-/// What a C# RDP profile asks that the built-in client does not do yet: kept, so that an
-/// import loses nothing and the external client can be given it, and shown as not used.
+/// What a C# RDP profile asks that the built-in client does not do yet, but strict server
+/// authentication: kept, so that an import loses nothing, given to the external client, and
+/// edited in the form, each said to be the external client's.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "one switch per C# RDP option, each saved on its own"
@@ -368,57 +369,81 @@ impl Default for RdpExtras {
     }
 }
 
-/// A choice of [`RdpExtras`] the built-in client does not honour yet.
+/// A box of [`RdpExtras`] that only the external client honours: the built-in client does
+/// not share these devices, cache, compress, decode through the graphics adapter, probe UDP
+/// or open full screen yet.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum RdpExtra {
-    /// Opened in the Windows client.
-    External,
-    /// Through a Remote Desktop Gateway.
-    RdGateway,
-    /// Printers shared.
+pub enum RdpSwitch {
+    /// Printers shared, as the C# `RdpRedirectPrinters`.
     Printers,
-    /// Serial ports shared.
+    /// Serial ports shared, as the C# `RdpRedirectComPorts`.
     ComPorts,
-    /// Smart cards shared.
+    /// Smart cards shared, as the C# `RdpRedirectSmartCards`.
     SmartCards,
-    /// Webcam shared.
+    /// Webcam shared, as the C# `RdpRedirectWebcam`.
     Webcam,
-    /// USB devices shared.
+    /// USB devices shared, as the C# `RdpRedirectUsb`.
     Usb,
-    /// Microphone recorded.
+    /// Microphone recorded, as the C# `RdpAudioCapture`.
     Microphone,
-    /// Several monitors spanned.
-    MultiMonitor,
-    /// Opened in full screen.
+    /// Bitmaps kept on disk, as the C# `RdpBitmapCaching`.
+    BitmapCaching,
+    /// Traffic compressed, as the C# `RdpCompression`.
+    Compression,
+    /// Decoded through the graphics adapter, as the C# `RdpHardwareAcceleration`.
+    HardwareAcceleration,
+    /// UDP never probed, as the C# `RdpDisableUdp`.
+    DisableUdp,
+    /// Opened in full screen, as the C# `RdpFullScreen`.
     FullScreen,
 }
 
-impl RdpExtras {
-    /// The choices turned on that the built-in client does not honour yet, in a fixed order;
-    /// the external client is not one, the form's session mode showing it.
+impl RdpSwitch {
+    /// Whether the box is ticked in `extras`.
     #[must_use]
-    pub fn unused(&self) -> Vec<RdpExtra> {
-        [
-            (
-                self.rd_gateway
-                    .as_deref()
-                    .is_some_and(|host| !host.trim().is_empty()),
-                RdpExtra::RdGateway,
-            ),
-            (self.redirect_printers, RdpExtra::Printers),
-            (self.redirect_com_ports, RdpExtra::ComPorts),
-            (self.redirect_smart_cards, RdpExtra::SmartCards),
-            (self.redirect_webcam, RdpExtra::Webcam),
-            (self.redirect_usb, RdpExtra::Usb),
-            (self.microphone, RdpExtra::Microphone),
-            (self.multi_monitor, RdpExtra::MultiMonitor),
-            (self.full_screen, RdpExtra::FullScreen),
-        ]
-        .into_iter()
-        .filter_map(|(on, extra)| on.then_some(extra))
-        .collect()
+    pub fn is_on(self, extras: &RdpExtras) -> bool {
+        match self {
+            Self::Printers => extras.redirect_printers,
+            Self::ComPorts => extras.redirect_com_ports,
+            Self::SmartCards => extras.redirect_smart_cards,
+            Self::Webcam => extras.redirect_webcam,
+            Self::Usb => extras.redirect_usb,
+            Self::Microphone => extras.microphone,
+            Self::BitmapCaching => extras.bitmap_caching,
+            Self::Compression => extras.compression,
+            Self::HardwareAcceleration => extras.hardware_acceleration,
+            Self::DisableUdp => extras.disable_udp,
+            Self::FullScreen => extras.full_screen,
+        }
     }
 
+    /// Ticks or clears the box in `extras`, the others kept.
+    pub fn set(self, extras: &mut RdpExtras, on: bool) {
+        *match self {
+            Self::Printers => &mut extras.redirect_printers,
+            Self::ComPorts => &mut extras.redirect_com_ports,
+            Self::SmartCards => &mut extras.redirect_smart_cards,
+            Self::Webcam => &mut extras.redirect_webcam,
+            Self::Usb => &mut extras.redirect_usb,
+            Self::Microphone => &mut extras.microphone,
+            Self::BitmapCaching => &mut extras.bitmap_caching,
+            Self::Compression => &mut extras.compression,
+            Self::HardwareAcceleration => &mut extras.hardware_acceleration,
+            Self::DisableUdp => &mut extras.disable_udp,
+            Self::FullScreen => &mut extras.full_screen,
+        } = on;
+    }
+
+    /// Whether a profile following the application's [`RdpDefaults`] takes this box from
+    /// them, as [`RdpProfile::effective`] does: every one but UDP and full screen, which
+    /// the C# defaults do not have.
+    #[must_use]
+    pub fn follows_defaults(self) -> bool {
+        !matches!(self, Self::DisableUdp | Self::FullScreen)
+    }
+}
+
+impl RdpExtras {
     /// The Remote Desktop Gateway the server is reached through, when one is named.
     #[must_use]
     pub fn rd_gateway(&self) -> Option<&str> {
