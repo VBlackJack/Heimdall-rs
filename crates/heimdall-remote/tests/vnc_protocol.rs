@@ -18,7 +18,8 @@
 //! the code under test.
 
 use heimdall_remote::vnc::{
-    MAX_CUT_TEXT, Quality, Rect, Rfb, RfbError, RfbEvent, SecurityPolicy, Version,
+    Authentication, MAX_CUT_TEXT, Quality, Rect, Rfb, RfbError, RfbEvent, Security, SecurityPolicy,
+    SecurityWrapper, Version,
 };
 
 const VERSION_3_8: &[u8] = b"RFB 003.008\n";
@@ -519,4 +520,394 @@ fn tight_rectangles_are_drawn_whole_even_fed_byte_by_byte() {
     bytes.extend(rect_header(1, 0, 3, 1, 7));
     bytes.extend_from_slice(&[0x80, 0, 255, 0]);
     assert!(matches!(rfb.receive(&bytes), Err(RfbError::Protocol(_))));
+}
+
+/// A Tight capability: a code, a vendor and a signature.
+fn capability(code: u32, vendor: [u8; 4], signature: [u8; 8]) -> Vec<u8> {
+    let mut bytes = code.to_be_bytes().to_vec();
+    bytes.extend_from_slice(&vendor);
+    bytes.extend_from_slice(&signature);
+    bytes
+}
+
+/// A Tight list: its count, then its capabilities.
+fn tight_list(capabilities: &[Vec<u8>]) -> Vec<u8> {
+    let mut bytes = u32::try_from(capabilities.len())
+        .expect("few")
+        .to_be_bytes()
+        .to_vec();
+    bytes.extend(capabilities.concat());
+    bytes
+}
+
+/// `VeNCrypt` subtypes: their count in a byte, then each in 32 bits.
+fn vencrypt_subtypes(subtypes: &[u32]) -> Vec<u8> {
+    let mut bytes = vec![u8::try_from(subtypes.len()).expect("few")];
+    for subtype in subtypes {
+        bytes.extend_from_slice(&subtype.to_be_bytes());
+    }
+    bytes
+}
+
+/// Tight's capability lists after `ServerInit`: 1 server message, 1 client message and 2
+/// encodings, as `TightVNC` sends them.
+fn tight_init_capabilities() -> Vec<u8> {
+    let mut bytes = vec![0, 1, 0, 1, 0, 2, 0, 0];
+    bytes.extend(capability(150, *b"TGHT", *b"FTS_LSDT"));
+    bytes.extend(capability(132, *b"TGHT", *b"FTC_LSRQ"));
+    bytes.extend(capability(7, *b"TGHT", *b"TIGHT___"));
+    bytes.extend(capability(0xffff_ff20, *b"TGHT", *b"LASTRECT"));
+    bytes
+}
+
+/// A session at the start of its security, version 3.8, with `policy`.
+fn at_security(policy: SecurityPolicy) -> Rfb {
+    let mut rfb = Rfb::new(policy);
+    rfb.receive(VERSION_3_8).expect("version");
+    let _ = rfb.take_output();
+    rfb
+}
+
+#[test]
+fn tight_takes_no_tunnel_then_vnc_authentication_and_reads_past_its_capabilities() {
+    let mut rfb = at_security(SecurityPolicy::default());
+    // No authentication is offered too, but this profile requires a password.
+    rfb.receive(&[2, 1, 16]).expect("types");
+    assert_eq!(rfb.take_output(), [16]);
+    rfb.receive(&tight_list(&[
+        capability(7, *b"VEND", *b"SOMETUNL"),
+        capability(0, *b"TGHT", *b"NOTUNNEL"),
+    ]))
+    .expect("tunnels");
+    assert_eq!(rfb.take_output(), [0, 0, 0, 0], "no tunnel");
+    // VNC Authentication is taken though no authentication is offered first.
+    rfb.receive(&tight_list(&[
+        capability(1, *b"STDV", *b"NOAUTH__"),
+        capability(2, *b"STDV", *b"VNCAUTH_"),
+    ]))
+    .expect("authentication types");
+    assert_eq!(rfb.take_output(), [0, 0, 0, 2]);
+    assert_eq!(
+        rfb.receive(&CHALLENGE).expect("challenge"),
+        [RfbEvent::PasswordRequired]
+    );
+    rfb.answer_password(b"Secret12").expect("answered");
+    assert_eq!(rfb.take_output(), RESPONSE);
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1], "ClientInit, shared");
+
+    let mut init = server_init(2, 1, b"tight");
+    init.extend(tight_init_capabilities());
+    let (head, last) = init.split_at(init.len() - 1);
+    assert!(
+        rfb.receive(head).expect("most of it").is_empty(),
+        "the capability lists are waited for"
+    );
+    assert_eq!(
+        rfb.receive(last).expect("init"),
+        [RfbEvent::Connected {
+            width: 2,
+            height: 1,
+            name: "tight".to_owned()
+        }]
+    );
+    assert_eq!(rfb.take_output(), opening_requests(2, 1));
+    assert_eq!(
+        rfb.security(),
+        Some(Security {
+            wrapper: Some(SecurityWrapper::Tight),
+            authentication: Authentication::VncAuth,
+        })
+    );
+
+    // The next message is read where the lists end.
+    let mut bytes = update(1);
+    bytes.extend(rect_header(1, 0, 1, 1, 0));
+    bytes.extend_from_slice(&[0, 255, 0, 0]);
+    let area = Rect {
+        x: 1,
+        y: 0,
+        width: 1,
+        height: 1,
+    };
+    assert_eq!(
+        rfb.receive(&bytes).expect("update"),
+        [RfbEvent::Updated(area)]
+    );
+    assert_eq!(pixel(rfb.screen(), 1, 0), [0, 255, 0, 255]);
+}
+
+#[test]
+fn tight_without_authentication_types_is_no_authentication_and_is_confirmed() {
+    // 3.7: Tight confirms even no authentication, as noVNC reads it.
+    let mut rfb = Rfb::new(NO_AUTHENTICATION);
+    rfb.receive(b"RFB 003.007\n").expect("version");
+    let _ = rfb.take_output();
+    rfb.receive(&[1, 16]).expect("types");
+    assert_eq!(rfb.take_output(), [16]);
+    // No tunnel offered, none answered; no authentication type offered, none answered.
+    rfb.receive(&[0, 0, 0, 0]).expect("tunnels");
+    rfb.receive(&[0, 0, 0, 0]).expect("authentication types");
+    assert!(rfb.take_output().is_empty());
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1], "ClientInit");
+    assert_eq!(
+        rfb.security(),
+        Some(Security {
+            wrapper: Some(SecurityWrapper::Tight),
+            authentication: Authentication::NoAuthentication,
+        })
+    );
+    let mut init = server_init(1, 1, b"open");
+    init.extend_from_slice(&[0, 0, 0, 0, 0, 0, 0, 0]);
+    assert!(matches!(
+        rfb.receive(&init).expect("init")[..],
+        [RfbEvent::Connected { .. }]
+    ));
+}
+
+#[test]
+fn a_siemens_server_takes_no_tunnel_though_it_does_not_say_so() {
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 16]).expect("types");
+    let _ = rfb.take_output();
+    rfb.receive(&tight_list(&[capability(1, *b"SICR", *b"SCHANNEL")]))
+        .expect("tunnels");
+    assert_eq!(rfb.take_output(), [0, 0, 0, 0]);
+}
+
+#[test]
+fn vencrypt_0_2_takes_vnc_authentication_and_sends_no_more_than_the_subtype() {
+    let mut rfb = at_security(SecurityPolicy::default());
+    // No authentication is not allowed: VeNCrypt is taken.
+    rfb.receive(&[2, 1, 19]).expect("types");
+    assert_eq!(rfb.take_output(), [19]);
+    rfb.receive(&[0, 2]).expect("version");
+    assert_eq!(rfb.take_output(), [0, 2]);
+    rfb.receive(&[0]).expect("accepted");
+    // Plain and the TLS ones are not spoken; VNC Authentication is taken, though not first.
+    rfb.receive(&vencrypt_subtypes(&[256, 259, 2, 1]))
+        .expect("subtypes");
+    assert_eq!(rfb.take_output(), [0, 0, 0, 2]);
+    assert_eq!(
+        rfb.receive(&CHALLENGE).expect("challenge"),
+        [RfbEvent::PasswordRequired]
+    );
+    rfb.answer_password(b"Secret12").expect("answered");
+    assert_eq!(rfb.take_output(), RESPONSE);
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1]);
+    rfb.receive(&server_init(2, 2, b"vencrypt")).expect("init");
+    assert_eq!(rfb.take_output(), opening_requests(2, 2));
+    assert_eq!(
+        rfb.security(),
+        Some(Security {
+            wrapper: Some(SecurityWrapper::VeNCrypt),
+            authentication: Authentication::VncAuth,
+        })
+    );
+}
+
+#[test]
+fn vencrypt_takes_no_authentication_when_allowed_confirmed_in_3_8_only() {
+    let mut rfb = at_security(NO_AUTHENTICATION);
+    rfb.receive(&[1, 19]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    rfb.receive(&vencrypt_subtypes(&[257, 1]))
+        .expect("subtypes");
+    assert_eq!(rfb.take_output(), [19, 0, 2, 0, 0, 0, 1]);
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1]);
+    assert_eq!(
+        rfb.security(),
+        Some(Security {
+            wrapper: Some(SecurityWrapper::VeNCrypt),
+            authentication: Authentication::NoAuthentication,
+        })
+    );
+
+    // 3.7: straight to initialisation, as with no security offered directly.
+    let mut rfb = Rfb::new(NO_AUTHENTICATION);
+    rfb.receive(b"RFB 003.007\n").expect("version");
+    let _ = rfb.take_output();
+    rfb.receive(&[1, 19]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    rfb.receive(&vencrypt_subtypes(&[1])).expect("subtypes");
+    assert_eq!(rfb.take_output(), [19, 0, 2, 0, 0, 0, 1, 1]);
+}
+
+#[test]
+fn a_vencrypt_version_other_than_0_2_or_refused_ends_the_connection() {
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 19]).expect("types");
+    let _ = rfb.take_output();
+    assert_eq!(
+        rfb.receive(&[0, 1]),
+        Err(RfbError::UnsupportedVersion("VeNCrypt 0.1".to_owned()))
+    );
+    assert!(rfb.take_output().is_empty(), "no version answered");
+
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 19]).expect("types");
+    assert!(matches!(
+        rfb.receive(&[0, 2, 1]),
+        Err(RfbError::Protocol(_))
+    ));
+}
+
+#[test]
+fn counts_past_their_bounds_are_refused_before_their_lists_come() {
+    // 65 Tight tunnels.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 16]).expect("types");
+    assert!(matches!(
+        rfb.receive(&[0, 0, 0, 65]),
+        Err(RfbError::Protocol(_))
+    ));
+    // 64 are waited for.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 16]).expect("types");
+    assert!(rfb.receive(&[0, 0, 0, 64]).expect("waiting").is_empty());
+
+    // 4 billion Tight authentication types.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 16]).expect("types");
+    assert!(matches!(
+        rfb.receive(&[0, 0, 0, 0, 0xff, 0xff, 0xff, 0xff]),
+        Err(RfbError::Protocol(_))
+    ));
+
+    // 65 VeNCrypt subtypes.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 19]).expect("types");
+    assert!(matches!(
+        rfb.receive(&[0, 2, 0, 65]),
+        Err(RfbError::Protocol(_))
+    ));
+
+    // 257 encodings in Tight's capability lists after ServerInit.
+    let mut rfb = at_security(NO_AUTHENTICATION);
+    rfb.receive(&[1, 16]).expect("types");
+    rfb.receive(&[0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0])
+        .expect("no tunnel, no authentication, accepted");
+    let mut init = server_init(1, 1, b"many");
+    init.extend_from_slice(&[0, 0, 0, 0, 1, 1, 0, 0]);
+    assert!(matches!(rfb.receive(&init), Err(RfbError::Protocol(_))));
+}
+
+#[test]
+fn only_types_not_spoken_are_refused_with_what_was_offered() {
+    // TLS and Apple's.
+    let mut rfb = at_security(NO_AUTHENTICATION);
+    assert_eq!(
+        rfb.receive(&[2, 18, 30]),
+        Err(RfbError::NoAcceptableSecurity(vec![18, 30]))
+    );
+
+    // VeNCrypt's Plain and TLS subtypes.
+    let mut rfb = at_security(NO_AUTHENTICATION);
+    rfb.receive(&[1, 19]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    assert_eq!(
+        rfb.receive(&vencrypt_subtypes(&[256, 257, 262])),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::VeNCrypt,
+            offered: vec![256, 257, 262],
+        })
+    );
+
+    // No VeNCrypt subtype at all.
+    let mut rfb = at_security(NO_AUTHENTICATION);
+    rfb.receive(&[1, 19]).expect("types");
+    assert_eq!(
+        rfb.receive(&[0, 2, 0, 0]),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::VeNCrypt,
+            offered: Vec::new(),
+        })
+    );
+
+    // Tight tunnels without the no-tunnel one, or with it under another vendor.
+    for tunnel in [
+        capability(5, *b"TGHT", *b"NOTUNNEL"),
+        capability(0, *b"VEND", *b"NOTUNNEL"),
+    ] {
+        let mut rfb = at_security(NO_AUTHENTICATION);
+        rfb.receive(&[1, 16]).expect("types");
+        assert!(matches!(
+            rfb.receive(&tight_list(&[tunnel])),
+            Err(RfbError::NoAcceptableInnerSecurity {
+                wrapper: SecurityWrapper::Tight,
+                ..
+            })
+        ));
+    }
+
+    // Tight's Unix login only.
+    let mut rfb = at_security(NO_AUTHENTICATION);
+    rfb.receive(&[1, 16]).expect("types");
+    rfb.receive(&[0, 0, 0, 0]).expect("tunnels");
+    assert_eq!(
+        rfb.receive(&tight_list(&[capability(129, *b"TGHT", *b"ULGNAUTH")])),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::Tight,
+            offered: vec![129],
+        })
+    );
+}
+
+#[test]
+fn a_profile_requiring_a_password_refuses_no_authentication_inside_a_wrapper() {
+    // Tight offering no authentication by name.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 16]).expect("types");
+    rfb.receive(&[0, 0, 0, 0]).expect("tunnels");
+    assert_eq!(
+        rfb.receive(&tight_list(&[capability(1, *b"STDV", *b"NOAUTH__")])),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::Tight,
+            offered: vec![1],
+        })
+    );
+    assert_eq!(rfb.security(), None);
+
+    // Tight offering no authentication type at all.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 16]).expect("types");
+    assert_eq!(
+        rfb.receive(&[0, 0, 0, 0, 0, 0, 0, 0]),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::Tight,
+            offered: vec![1],
+        })
+    );
+
+    // VeNCrypt offering no authentication only.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[1, 19]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    assert_eq!(
+        rfb.receive(&vencrypt_subtypes(&[1])),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::VeNCrypt,
+            offered: vec![1],
+        })
+    );
+}
+
+#[test]
+fn the_type_taken_is_vnc_authentication_then_none_if_allowed_then_tight_then_vencrypt() {
+    for (policy, offered, taken) in [
+        (SecurityPolicy::default(), vec![19, 16, 1, 2], 2),
+        (NO_AUTHENTICATION, vec![19, 16, 1], 1),
+        (SecurityPolicy::default(), vec![19, 16, 1], 16),
+        (NO_AUTHENTICATION, vec![19, 16], 16),
+        (SecurityPolicy::default(), vec![1, 19], 19),
+    ] {
+        let mut rfb = at_security(policy);
+        let mut types = vec![u8::try_from(offered.len()).expect("few")];
+        types.extend(&offered);
+        rfb.receive(&types).expect("types");
+        assert_eq!(rfb.take_output(), [taken], "offered {offered:?}");
+    }
 }
