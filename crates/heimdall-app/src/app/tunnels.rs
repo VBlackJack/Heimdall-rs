@@ -21,7 +21,8 @@
 //! gateway's question is answered only from what is saved for that gateway, under the rules
 //! a tab follows (the endpoint it was saved for, once an attempt), and anything else is
 //! declined. Only a gateway's unknown host key is put to the user, in its own dialog; the
-//! same dialog asks about the key of a server `PuTTY` is to open.
+//! same dialog asks about the key of a server `PuTTY` is to open. A launch of `PuTTY` through
+//! a gateway answers its route's questions the same way.
 
 use std::sync::Arc;
 use std::time::SystemTime;
@@ -462,27 +463,41 @@ impl App {
     /// The answer to `kind` for tunnel `id`: what is saved for the gateway on the way that
     /// asks, given as a tab gives it, or nothing.
     fn tunnel_saved_answer(&mut self, id: TunnelId, kind: &QuestionKind) -> Option<Answer> {
-        let gateway = self
-            .tunnel_runs
-            .iter()
-            .find(|run| run.id == id)?
-            .spec
-            .gateway
-            .clone();
-        if let QuestionKind::Passphrase(question) = kind {
-            let owner = self.route_key_owner(Some(&gateway), &question.key_path)?;
-            return self.saved_passphrase(&owner, &question.key_path, question.attempt);
-        }
-        let (profile, endpoint) = self.route_endpoint(&gateway, kind)?;
-        let answered_before = self
-            .tunnel_runs
-            .iter()
-            .any(|run| run.id == id && run.answered.contains(&profile));
-        let answer = self.saved_password(&profile, &endpoint, kind, answered_before)?;
-        if let Some(run) = self.tunnel_runs.iter_mut().find(|run| run.id == id) {
+        let run = self.tunnel_runs.iter().find(|run| run.id == id)?;
+        let (gateway, answered) = (run.spec.gateway.clone(), run.answered.clone());
+        let (answer, given) = self.route_saved_answer(&gateway, &answered, kind);
+        if let Some(profile) = given
+            && let Some(run) = self.tunnel_runs.iter_mut().find(|run| run.id == id)
+        {
             run.answered.push(profile);
         }
-        Some(answer)
+        answer
+    }
+
+    /// The answer to `kind`, asked on the route through `gateway` with nobody there to ask:
+    /// what is saved for the gateway on the way that asks, given as a tab gives it, or
+    /// nothing. `answered` are the gateways whose saved password this attempt gave already;
+    /// with the answer, the gateway whose saved password it is.
+    pub(super) fn route_saved_answer(
+        &mut self,
+        gateway: &ProfileId,
+        answered: &[ProfileId],
+        kind: &QuestionKind,
+    ) -> (Option<Answer>, Option<ProfileId>) {
+        if let QuestionKind::Passphrase(question) = kind {
+            let answer = self
+                .route_key_owner(Some(gateway), &question.key_path)
+                .and_then(|owner| {
+                    self.saved_passphrase(&owner, &question.key_path, question.attempt)
+                });
+            return (answer, None);
+        }
+        let Some((profile, endpoint)) = self.route_endpoint(gateway, kind) else {
+            return (None, None);
+        };
+        let answer = self.saved_password(&profile, &endpoint, kind, answered.contains(&profile));
+        let given = answer.is_some().then_some(profile);
+        (answer, given)
     }
 
     /// The user's answer about an unknown key: learnt, or trusted for this run only, and the
@@ -580,7 +595,7 @@ impl App {
 }
 
 /// Declines `question`: nobody is there to answer it.
-fn decline(question: QuestionId) -> Effect {
+pub(super) fn decline(question: QuestionId) -> Effect {
     Effect::Answer {
         question,
         answer: None,

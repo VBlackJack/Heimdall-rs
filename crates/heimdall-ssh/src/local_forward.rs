@@ -20,7 +20,11 @@
 //!
 //! [`start`] listens on the loopback address, on a port the system picks, and [`start_on`] on
 //! a port the user chose, for as long as the [`LocalForward`] returned lives: every connection
-//! it carries ends with it.
+//! it carries ends with it. [`start_limited`] carries fewer clients at once, for a forward made
+//! for one program alone.
+//!
+//! A client that is not on the loopback address is refused, whatever the listener: only a
+//! program of this computer goes the gateway's way.
 
 use std::io;
 use std::net::{Ipv4Addr, SocketAddr};
@@ -77,10 +81,36 @@ pub async fn start_on<O: Opener>(
     port: u16,
     local: Option<u16>,
 ) -> io::Result<LocalForward> {
+    listen(opener, (host, port), local, MAX_CLIENTS).await
+}
+
+/// Starts a forward as [`start`] does, carrying at most `limit` clients at once: a forward
+/// made for one program takes no more than what that program opens.
+///
+/// # Errors
+///
+/// No port of the loopback address could be taken.
+pub async fn start_limited<O: Opener>(
+    opener: Arc<O>,
+    host: String,
+    port: u16,
+    limit: usize,
+) -> io::Result<LocalForward> {
+    listen(opener, (host, port), None, limit).await
+}
+
+/// Listens on port `local` of the loopback address, or on one the system picks, carrying at
+/// most `limit` clients at once to `destination`.
+async fn listen<O: Opener>(
+    opener: Arc<O>,
+    destination: (String, u16),
+    local: Option<u16>,
+    limit: usize,
+) -> io::Result<LocalForward> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, local.unwrap_or(0))).await?;
     let address = listener.local_addr()?;
     let stop = CancellationToken::new();
-    tokio::spawn(serve(listener, opener, (host, port), stop.clone()));
+    tokio::spawn(serve(listener, opener, destination, limit, stop.clone()));
     Ok(LocalForward {
         address,
         _stop: stop.drop_guard(),
@@ -98,11 +128,18 @@ pub fn port_unavailable(error: &io::Error) -> bool {
     )
 }
 
-/// Takes clients on `listener` until `cancel`, each one carried both ways to `destination`.
+/// Whether the client at `peer` may go the gateway's way: only from the loopback address.
+fn admits(peer: SocketAddr) -> bool {
+    peer.ip().is_loopback()
+}
+
+/// Takes clients on `listener` until `cancel`, each one carried both ways to `destination`,
+/// at most `limit` at once.
 async fn serve<O: Opener>(
     listener: TcpListener,
     opener: Arc<O>,
     destination: (String, u16),
+    limit: usize,
     cancel: CancellationToken,
 ) {
     let carried = Arc::new(AtomicUsize::new(0));
@@ -119,8 +156,12 @@ async fn serve<O: Opener>(
                 continue;
             }
         };
-        if carried.load(Ordering::Acquire) >= MAX_CLIENTS {
-            log::warn!("the local forward refused {peer}: {MAX_CLIENTS} clients already");
+        if !admits(peer) {
+            log::warn!("the local forward refused {peer}: not on the loopback address");
+            continue;
+        }
+        if carried.load(Ordering::Acquire) >= limit {
+            log::warn!("the local forward refused {peer}: {limit} clients already");
             continue;
         }
         log::debug!("the local forward took {peer}");
@@ -313,6 +354,40 @@ mod tests {
                 .expect("closed in time");
             assert!(matches!(late, Ok(0) | Err(_)), "{late:?}");
         }
+    }
+
+    #[test]
+    fn only_a_client_on_the_loopback_address_is_admitted() {
+        for (peer, admitted) in [
+            ("127.0.0.1:50000", true),
+            ("127.8.9.10:50000", true),
+            ("[::1]:50000", true),
+            ("192.0.2.7:50000", false),
+            ("10.0.0.1:50000", false),
+            ("[2001:db8::7]:50000", false),
+        ] {
+            let peer: SocketAddr = peer.parse().expect("address");
+            assert_eq!(admits(peer), admitted, "{peer}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_limited_forward_carries_no_more_than_its_limit() {
+        let gateway = Arc::new(FakeGateway::default());
+        let forward = start_limited(Arc::clone(&gateway), "web.lab".to_owned(), 22, 1)
+            .await
+            .expect("start");
+        assert!(forward.address().ip().is_loopback());
+        let mut first = TcpStream::connect(forward.address()).await.expect("first");
+        first.write_all(b"x").await.expect("write");
+        let _far = far(&gateway).await;
+        let mut second = TcpStream::connect(forward.address()).await.expect("second");
+        let mut read = [0; 1];
+        let refused = tokio::time::timeout(Duration::from_secs(5), second.read(&mut read))
+            .await
+            .expect("closed in time");
+        assert!(matches!(refused, Ok(0) | Err(_)), "{refused:?}");
+        assert_eq!(gateway.asked.lock().expect("asked").len(), 1);
     }
 
     #[tokio::test]
