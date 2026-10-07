@@ -322,6 +322,13 @@ pub struct Settings {
     /// Wrong master passwords in a row when the application starts, kept across runs as
     /// the C# startup gate keeps them: quitting does not give the tries back.
     pub vault_unlock: Lockout,
+    /// Minutes without any input on the computer after which the workspace locks, as the C#
+    /// `AutoLockIdleMinutes`: [`AUTO_LOCK_IDLE_MINUTES_OFF`] never locks, else at most
+    /// [`AUTO_LOCK_IDLE_MINUTES_MAX`]. Only with a master password set.
+    pub auto_lock_idle_minutes: u32,
+    /// Locking the workspace also closes every session, as the C# `DisconnectOnLock`: off,
+    /// the sessions go on running hidden behind the lock.
+    pub disconnect_on_lock: bool,
     /// The application PIN asked at start, as the C# one; `None` when none is set.
     pub pin: Option<PinHash>,
     /// Wrong PINs in a row, kept across runs as the master password's are.
@@ -670,6 +677,22 @@ pub fn ssh_tmout_reset_interval_accepted(seconds: u32) -> bool {
     seconds <= SSH_TMOUT_RESET_INTERVAL_MAX
 }
 
+/// The idle auto-lock threshold that turns it off, and its default, as the C#.
+pub const AUTO_LOCK_IDLE_MINUTES_OFF: u32 = 0;
+
+/// Idle auto-lock threshold unless chosen: off.
+pub const AUTO_LOCK_IDLE_MINUTES_DEFAULT: u32 = AUTO_LOCK_IDLE_MINUTES_OFF;
+
+/// Longest idle auto-lock threshold accepted, in minutes, as the C# setting's range: a day.
+pub const AUTO_LOCK_IDLE_MINUTES_MAX: u32 = 1440;
+
+/// Whether `minutes` is an idle auto-lock threshold the settings accept: off, up to
+/// [`AUTO_LOCK_IDLE_MINUTES_MAX`].
+#[must_use]
+pub fn auto_lock_idle_minutes_accepted(minutes: u32) -> bool {
+    minutes <= AUTO_LOCK_IDLE_MINUTES_MAX
+}
+
 /// Largest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
 
@@ -691,6 +714,8 @@ impl Default for Settings {
             terminal_font_family: TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
             language: None,
             vault_unlock: Lockout::default(),
+            auto_lock_idle_minutes: AUTO_LOCK_IDLE_MINUTES_DEFAULT,
+            disconnect_on_lock: false,
             pin: None,
             pin_unlock: Lockout::default(),
             credential_provider: ProviderSettings::default(),
@@ -729,6 +754,8 @@ struct SettingsFile {
     general: GeneralSection,
     #[serde(default)]
     vault_unlock: VaultUnlockSection,
+    #[serde(default)]
+    vault: VaultSection,
     #[serde(default)]
     pin: PinSection,
     #[serde(default)]
@@ -910,6 +937,16 @@ struct VaultUnlockSection {
     locked_until: Option<u64>,
 }
 
+/// The workspace lock's preferences; apart from the tries above, which stay on this
+/// computer. Absent values are the C# defaults.
+#[derive(Serialize, Deserialize, Default)]
+struct VaultSection {
+    #[serde(default)]
+    auto_lock_idle_minutes: Option<u32>,
+    #[serde(default)]
+    disconnect_on_lock: Option<bool>,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct GeneralSection {
     /// Written only once chosen, as TOML leaves an absent value out: until then the
@@ -1083,6 +1120,13 @@ impl Settings {
                 file.vault_unlock.locked_until.map(from_epoch),
                 SystemTime::now(),
             ),
+            // Out of the range, as the C# load warns and keeps the default.
+            auto_lock_idle_minutes: within(
+                file.vault.auto_lock_idle_minutes,
+                auto_lock_idle_minutes_accepted,
+                AUTO_LOCK_IDLE_MINUTES_DEFAULT,
+            ),
+            disconnect_on_lock: file.vault.disconnect_on_lock.unwrap_or_default(),
             // Half a PIN is still one: it takes nothing, and the application stays closed.
             pin: match (file.pin.salt, file.pin.hash) {
                 (None, None) => None,
@@ -1253,6 +1297,10 @@ impl Settings {
                 failures: self.vault_unlock.failures(),
                 locked_until: self.vault_unlock.until().map(to_epoch),
             },
+            vault: VaultSection {
+                auto_lock_idle_minutes: Some(self.auto_lock_idle_minutes),
+                disconnect_on_lock: Some(self.disconnect_on_lock),
+            },
             pin: PinSection {
                 salt: self.pin.as_ref().map(|pin| pin.salt().to_owned()),
                 hash: self.pin.as_ref().map(|pin| pin.hash().to_owned()),
@@ -1409,10 +1457,11 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 9] = [
+const TRANSFERRED: [&str; 10] = [
     "terminal",
     "session_log",
     "general",
+    "vault",
     "credential_provider",
     "ssh",
     "rdp",

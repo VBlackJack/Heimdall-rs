@@ -39,6 +39,7 @@ mod gateways_view;
 mod health_view;
 pub mod hostkeys_view;
 pub mod i18n;
+mod idle;
 mod integrated_editor;
 pub mod keysym;
 pub mod local_form;

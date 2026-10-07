@@ -94,6 +94,7 @@ mod gateway_overview;
 mod gateways;
 mod health_tab;
 mod hostkeys_import;
+mod idle_lock;
 mod keep_alive;
 mod local_browser;
 mod local_menu;
@@ -156,6 +157,7 @@ pub use gateway_overview::{
     GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession,
 };
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
+pub use idle_lock::{IDLE_POLL, should_auto_lock};
 pub use local_tab::LocalConfirmation;
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
@@ -745,6 +747,9 @@ pub enum Message {
     VaultOpened(Result<OpenedVault, VaultProblem>),
     /// Close the vault.
     LockVault,
+    /// How long the computer has had no input, as the window measured it: the workspace
+    /// locks once that reaches the idle auto-lock threshold.
+    Idle(Duration),
     /// The application PIN.
     Pin(PinMessage),
     /// The external credential provider's settings.
@@ -973,6 +978,7 @@ impl fmt::Debug for Message {
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
+            Self::Idle(idle) => write!(f, "Idle({idle:?})"),
             Self::Pin(message) => write!(f, "Pin({message:?})"),
             Self::CredentialProvider(message) => write!(f, "CredentialProvider({message:?})"),
             Self::CredentialProvided(answer) => {
@@ -2791,6 +2797,9 @@ pub struct App {
     pending_plans: std::collections::VecDeque<PendingPlan>,
     pending_operation: Option<PendingOperation>,
     vault: VaultState,
+    /// The auto-reconnects due while the workspace was locked, by tab and failed attempt:
+    /// attempted once it is unlocked.
+    deferred_reconnects: Vec<(TabId, AttemptId)>,
     /// SSH keys trusted for this run only, shared with every connection.
     run_trust: RunTrust,
     /// RDP certificates trusted for this run only: server, port, key.
@@ -2908,6 +2917,7 @@ impl App {
             pending_plans: std::collections::VecDeque::new(),
             pending_operation: None,
             vault,
+            deferred_reconnects: Vec::new(),
             run_trust: RunTrust::default(),
             rdp_run_trust: Vec::new(),
             session_logs: crate::session_log::SessionLogs::default(),
@@ -3205,7 +3215,8 @@ impl App {
             | Message::DisableMasterPassword
             | Message::SubmitVault { .. }
             | Message::VaultOpened(_)
-            | Message::LockVault) => self.vault_message(message),
+            | Message::LockVault
+            | Message::Idle(_)) => self.vault_message(message),
             Message::Pin(message) => self.pin_message(message),
             Message::CredentialProvider(message) => self.provider_message(message),
             Message::CredentialProvided(answer) => self.provider_answered(*answer),

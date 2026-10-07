@@ -22,6 +22,9 @@
 //!
 //! An SSH shell does the same when its connection is lost or cannot be made again, as the C#
 //! `SshAutoReconnect`: off unless the setting turns it on, up to the attempts it sets.
+//!
+//! An attempt due while the workspace is locked waits for the unlock, as the C#
+//! `VaultReconnectPolicy` defers it.
 
 use std::time::{Duration, Instant};
 
@@ -133,7 +136,8 @@ impl App {
         let waiting = self.tab(tab_id).is_some_and(|tab| {
             tab.retry.is_some() && tab.attempt == attempt && matches!(tab.phase, Phase::Failed(_))
         });
-        if !waiting {
+        // Locked, its saved password cannot be read: it waits for the unlock.
+        if !waiting || self.defer_reconnect(tab_id, attempt) {
             return Vec::new();
         }
         if self

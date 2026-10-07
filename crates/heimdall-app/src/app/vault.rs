@@ -654,12 +654,13 @@ impl App {
                 new,
                 confirm,
             } => self.submit_vault(password, new, confirm.as_ref()),
-            Message::VaultOpened(result) => {
-                self.vault_opened(result);
-                Vec::new()
-            }
+            Message::VaultOpened(result) => self.vault_opened(result),
             Message::LockVault => {
                 self.lock_vault();
+                Vec::new()
+            }
+            Message::Idle(idle) => {
+                self.idle_measured(idle);
                 Vec::new()
             }
             _ => Vec::new(),
@@ -756,12 +757,16 @@ impl App {
     }
 
     /// The vault was opened, created or sealed again, or could not be: finishes what the
-    /// dialog was for.
-    pub(super) fn vault_opened(&mut self, result: Result<OpenedVault, VaultProblem>) {
+    /// dialog was for. The workspace unlocked, the auto-reconnects that waited for it are
+    /// attempted.
+    pub(super) fn vault_opened(
+        &mut self,
+        result: Result<OpenedVault, VaultProblem>,
+    ) -> Vec<Effect> {
         let mode = match &self.dialog {
             Some(Dialog::Vault(dialog)) if dialog.busy => dialog.mode,
             // Cancelled while the key was derived: nothing changes.
-            _ => return,
+            _ => return Vec::new(),
         };
         let names = self.password_entries();
         let done = result.and_then(|opened| {
@@ -780,7 +785,12 @@ impl App {
         let done = self.count_unlock(mode, done);
         log_vault_outcome(mode, &done);
         match done {
-            Ok(()) => self.dialog = None,
+            Ok(()) => {
+                self.dialog = None;
+                if mode == VaultMode::Locked {
+                    return self.resume_reconnects();
+                }
+            }
             Err(problem) => {
                 if let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() {
                     dialog.busy = false;
@@ -788,6 +798,7 @@ impl App {
                 }
             }
         }
+        Vec::new()
     }
 
     /// The count of wrong master passwords `mode` keeps: at start, kept across runs; at the
@@ -858,13 +869,16 @@ impl App {
 
     /// Closes the vault: its saved passwords leave memory, and nothing is answered from it.
     /// Locks the workspace, as Ctrl+L does in the C# Heimdall: the vault closes, and the
-    /// master password is asked for before anything else. Without an open vault, nothing
-    /// happens.
+    /// master password is asked for before anything else; every session closes too when the
+    /// settings ask. Without an open vault, nothing happens.
     pub(super) fn lock_vault(&mut self) {
         if self.vault_status() != VaultStatus::Open {
             return;
         }
         self.vault.open = None;
+        if self.settings.disconnect_on_lock {
+            self.close_all_for_lock();
+        }
         log::info!("Workspace locked.");
         self.dialog = Some(Dialog::Vault(VaultDialog {
             mode: VaultMode::Locked,
