@@ -241,6 +241,73 @@ impl client::Handler for ClientHandler {
             Ok(())
         }
     }
+
+    // The channels below are never asked for by this side: russh accepts each by default,
+    // so each is refused here, dropping `reply` refusing it.
+
+    fn server_channel_open_session(
+        &mut self,
+        _channel: Channel<Msg>,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        refuse_unasked(reply, "session")
+    }
+
+    fn server_channel_open_x11(
+        &mut self,
+        _channel: Channel<Msg>,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        refuse_unasked(reply, "X11")
+    }
+
+    fn server_channel_open_direct_tcpip(
+        &mut self,
+        _channel: Channel<Msg>,
+        _host_to_connect: &str,
+        _port_to_connect: u32,
+        _originator_address: &str,
+        _originator_port: u32,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        refuse_unasked(reply, "direct TCP/IP")
+    }
+
+    fn server_channel_open_direct_streamlocal(
+        &mut self,
+        _channel: Channel<Msg>,
+        _socket_path: &str,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        refuse_unasked(reply, "direct Unix socket")
+    }
+
+    fn server_channel_open_forwarded_streamlocal(
+        &mut self,
+        _channel: Channel<Msg>,
+        _socket_path: &str,
+        reply: ChannelOpenHandle,
+        _session: &mut client::Session,
+    ) -> impl Future<Output = Result<(), Self::Error>> + Send {
+        refuse_unasked(reply, "forwarded Unix socket")
+    }
+}
+
+/// Refuses a channel the server opened of a kind this side never asks for, and says so in
+/// the diagnostics log.
+fn refuse_unasked(
+    reply: ChannelOpenHandle,
+    kind: &'static str,
+) -> impl Future<Output = Result<(), HandlerError>> + Send {
+    log::warn!("the server opened a {kind} channel, which is never asked for: refused");
+    drop(reply);
+    std::future::ready(Ok(()))
 }
 
 /// Compression asked for with `ssh -C`, in OpenSSH's order: compressed first, uncompressed
