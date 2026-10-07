@@ -7682,23 +7682,49 @@ fn read_desktop_clipboard(tab: TabId) -> Task<Message> {
 
 /// The clipboard's image as a device-independent bitmap, when it holds one no larger than
 /// an RDP server is offered; none elsewhere than on Windows.
+///
+/// The image is read through the system's own drawing calls, sized from the picture, and
+/// never copied as the memory block the clipboard names: for a bitmap the system made from
+/// another program's format (a picture copied from a browser), that block's stated size can
+/// run past what can be read, which ended the application.
 fn clipboard_image() -> Option<Vec<u8>> {
     #[cfg(windows)]
     {
         use clipboard_win::{Clipboard, formats, raw};
         let _open = Clipboard::new_attempts(CLIPBOARD_ATTEMPTS).ok()?;
+        // The block's size only, nothing read from it: an image too large is not offered.
         let size = raw::size(formats::CF_DIB)?.get();
         if size > heimdall_rdp::MAX_IMAGE_BYTES {
             return None;
         }
-        let mut image = Vec::with_capacity(size);
-        raw::get_vec(formats::CF_DIB, &mut image).ok()?;
-        Some(image)
+        let mut file = Vec::new();
+        raw::get_bitmap(&mut file).ok()?;
+        dib_of_bitmap_file(&file)
+            .filter(|image| image.len() <= heimdall_rdp::MAX_IMAGE_BYTES)
+            .map(<[u8]>::to_vec)
     }
     #[cfg(not(windows))]
     {
         None
     }
+}
+
+/// Bytes of a bitmap file's header, before its device-independent bitmap.
+#[cfg(any(windows, test))]
+const BITMAP_FILE_HEADER_BYTES: usize = 14;
+
+/// The two bytes a bitmap file starts with, "BM".
+#[cfg(any(windows, test))]
+const BITMAP_FILE_MAGIC: [u8; 2] = *b"BM";
+
+/// The device-independent bitmap a bitmap file holds: the file without its header. `None`
+/// for anything that is not a bitmap file, or holds nothing after its header.
+#[cfg(any(windows, test))]
+fn dib_of_bitmap_file(file: &[u8]) -> Option<&[u8]> {
+    let image = file
+        .strip_prefix(&BITMAP_FILE_MAGIC)
+        .filter(|_| file.len() > BITMAP_FILE_HEADER_BYTES)?;
+    Some(&image[BITMAP_FILE_HEADER_BYTES - BITMAP_FILE_MAGIC.len()..])
 }
 
 /// Puts `image`, a device-independent bitmap an RDP server copied, on the clipboard in
@@ -10931,6 +10957,21 @@ mod tests {
 
     fn message(key: Named, modifiers: Modifiers, status: event::Status) -> Option<Message> {
         window_event(pressed(key, modifiers), status, window::Id::unique())
+    }
+
+    #[test]
+    fn a_bitmap_file_gives_its_image_without_its_header_and_nothing_else_does() {
+        let mut file = b"BM".to_vec();
+        file.extend_from_slice(&[0; 12]);
+        file.extend_from_slice(b"dib");
+        assert_eq!(dib_of_bitmap_file(&file), Some(&b"dib"[..]));
+        // A header with nothing after it, a short file, another format: no image.
+        assert_eq!(dib_of_bitmap_file(&file[..BITMAP_FILE_HEADER_BYTES]), None);
+        assert_eq!(dib_of_bitmap_file(b"BM"), None);
+        assert_eq!(dib_of_bitmap_file(b""), None);
+        let mut png = b"PNG image".to_vec();
+        png.extend_from_slice(&[0; 20]);
+        assert_eq!(dib_of_bitmap_file(&png), None);
     }
 
     #[test]
