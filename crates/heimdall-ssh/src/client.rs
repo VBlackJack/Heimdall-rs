@@ -80,6 +80,8 @@ pub(crate) enum HandlerError {
 }
 
 pub(crate) struct ClientHandler {
+    /// The server, `host:port`, as the diagnostics log names it.
+    target: String,
     recorded: Vec<PublicKey>,
     /// Fingerprints pinned for the server, consulted when nothing is recorded.
     pins: Vec<String>,
@@ -94,30 +96,65 @@ pub(crate) struct ClientHandler {
 pub(crate) type Reached = (client::Handle<ClientHandler>, Routes);
 
 impl ClientHandler {
+    /// Decides about the server's key, and says so in the diagnostics log: a key trusted,
+    /// one that changed, one of another algorithm, a certificate. An unknown key is said by
+    /// whoever asks the user about it.
     fn decide(&self, server_key: &PublicKeyOrCertificate) -> Result<bool, HandlerError> {
+        let target = &self.target;
         let PublicKeyOrCertificate::PublicKey { key, .. } = server_key else {
+            log::warn!("{target} presented a host certificate, which is not trusted: refused");
             return Err(HandlerError::HostKey(HostKeyRejection::Certificate));
         };
         let rejection = match verdict(&self.recorded, key) {
-            Verdict::Trusted => return Ok(true),
+            Verdict::Trusted => {
+                log::info!(
+                    "the host key of {target} is the one trusted: {}",
+                    fingerprint(key)
+                );
+                return Ok(true);
+            }
             Verdict::Unknown => match pin_verdict(&self.pins, key) {
                 PinVerdict::None => HostKeyRejection::Unknown(Box::new(key.clone())),
                 PinVerdict::Matches => {
+                    log::info!(
+                        "the host key of {target} has its pinned fingerprint {}",
+                        fingerprint(key)
+                    );
                     if let Ok(mut slot) = self.pinned.lock() {
                         *slot = Some(key.clone());
                     }
                     return Ok(true);
                 }
-                PinVerdict::Differs { pinned } => HostKeyRejection::PinChanged {
-                    pinned,
+                PinVerdict::Differs { pinned } => {
+                    log::warn!(
+                        "the host key of {target} is not the one pinned: pinned {pinned}, presented {}: refused",
+                        fingerprint(key)
+                    );
+                    HostKeyRejection::PinChanged {
+                        pinned,
+                        offered: Box::new(key.clone()),
+                    }
+                }
+            },
+            Verdict::Changed { recorded } => {
+                log::warn!(
+                    "the host key of {target} changed: recorded {}, presented {}: refused",
+                    fingerprint(&recorded),
+                    fingerprint(key)
+                );
+                HostKeyRejection::Changed {
+                    recorded,
                     offered: Box::new(key.clone()),
-                },
-            },
-            Verdict::Changed { recorded } => HostKeyRejection::Changed {
-                recorded,
-                offered: Box::new(key.clone()),
-            },
-            Verdict::OtherAlgorithm { recorded } => HostKeyRejection::OtherAlgorithm(recorded),
+                }
+            }
+            Verdict::OtherAlgorithm { recorded } => {
+                log::warn!(
+                    "{target} presented a {} host key, another algorithm than the {} recorded: refused",
+                    key.algorithm(),
+                    algorithm_names(&recorded).join(", ")
+                );
+                HostKeyRejection::OtherAlgorithm(recorded)
+            }
         };
         Err(HandlerError::HostKey(rejection))
     }
@@ -566,6 +603,7 @@ pub(crate) async fn hop<P: Prompter>(
     let server_message = ServerMessage::default();
     let routes = Routes::default();
     let handler = ClientHandler {
+        target: heimdall_core::profile::display_address(&host, port),
         recorded: recorded.clone(),
         pins: pinned_fingerprints,
         pinned: pinned.clone(),

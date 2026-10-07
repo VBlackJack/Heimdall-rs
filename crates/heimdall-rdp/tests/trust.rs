@@ -664,3 +664,104 @@ async fn under_strict_authentication_a_server_no_authority_vouches_for_is_refuse
     );
     assert!(seen.asked, "the credentials come once the pin matches");
 }
+
+/// Every line logged by this test binary, as `LEVEL message`.
+static LOGGED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+/// Keeps every log line in [`LOGGED`].
+struct Capture;
+
+impl log::Log for Capture {
+    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if let Ok(mut lines) = LOGGED.lock() {
+            lines.push(format!("{} {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static CAPTURE: Capture = Capture;
+
+/// Starts keeping the log lines, once for the binary.
+fn capture_log() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let _ = log::set_logger(&CAPTURE);
+        log::set_max_level(log::LevelFilter::Info);
+    });
+}
+
+/// The lines logged so far that name `needle`.
+fn logged_with(needle: &str) -> Vec<String> {
+    LOGGED
+        .lock()
+        .map(|lines| {
+            lines
+                .iter()
+                .filter(|line| line.contains(needle))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn each_certificate_decision_is_in_the_diagnostics_log_and_never_the_password() {
+    /// A port no other test of this file uses, to find this test's lines.
+    const LOG_PORT: u16 = 4389;
+    capture_log();
+    let target = format!("{HOST}:{LOG_PORT}");
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+
+    let (outcome, _) = attempt(&config(&known, Some(expected_pin()), LOG_PORT), KEY).await;
+    assert!(
+        !matches!(outcome, Err(RdpError::UnknownCertificate(_))),
+        "{outcome:?}"
+    );
+    let (outcome, _) = attempt(&config(&known, None, LOG_PORT), KEY).await;
+    assert!(
+        !matches!(outcome, Err(RdpError::UnknownCertificate(_))),
+        "{outcome:?}"
+    );
+    let other: Fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+        .parse()
+        .expect("fingerprint");
+    std::fs::write(&known, format!("{target} {other}\n")).expect("known");
+    let (outcome, _) = attempt(&config(&known, None, LOG_PORT), KEY).await;
+    assert!(
+        matches!(outcome, Err(RdpError::CertificateChanged { .. })),
+        "{outcome:?}"
+    );
+
+    let lines = logged_with(&target);
+    let pin = expected_pin().to_string();
+    assert!(
+        lines.iter().any(|line| line.starts_with("INFO")
+            && line.contains("is recorded")
+            && line.contains(&pin)),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("INFO")
+            && line.contains("the one trusted")
+            && line.contains(&pin)),
+        "{lines:?}"
+    );
+    assert!(
+        lines.iter().any(|line| line.starts_with("WARN")
+            && line.contains("changed")
+            && line.contains(&other.to_string())
+            && line.contains(&pin)),
+        "{lines:?}"
+    );
+    assert!(
+        logged_with("hunter2-password").is_empty(),
+        "the password is never logged"
+    );
+}

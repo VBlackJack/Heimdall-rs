@@ -935,3 +935,93 @@ async fn a_relative_key_path_is_refused_before_anything_is_dialled() {
         "{error:?}"
     );
 }
+
+// ---- the diagnostics log ---------------------------------------------------------------
+
+/// Every line logged by this test binary, as `LEVEL message`.
+static LOGGED: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
+
+/// Keeps every log line in [`LOGGED`].
+struct Capture;
+
+impl log::Log for Capture {
+    fn enabled(&self, _metadata: &log::Metadata<'_>) -> bool {
+        true
+    }
+
+    fn log(&self, record: &log::Record<'_>) {
+        if let Ok(mut lines) = LOGGED.lock() {
+            lines.push(format!("{} {}", record.level(), record.args()));
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+static CAPTURE: Capture = Capture;
+
+/// Starts keeping the log lines, once for the binary.
+fn capture_log() {
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let _ = log::set_logger(&CAPTURE);
+        log::set_max_level(log::LevelFilter::Info);
+    });
+}
+
+/// The lines logged so far that name `needle`.
+fn logged_with(needle: &str) -> Vec<String> {
+    LOGGED
+        .lock()
+        .map(|lines| {
+            lines
+                .iter()
+                .filter(|line| line.contains(needle))
+                .cloned()
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_trusted_and_a_changed_host_key_are_in_the_diagnostics_log_never_the_password() {
+    capture_log();
+    let trusted = start(Spec::default()).await;
+    let changed = start(Spec::default()).await;
+    let dir = tempfile::tempdir().expect("temp dir");
+    let prompter = Arc::new(ScriptedPrompter::passwords(&[PASSWORD, PASSWORD]));
+
+    let options = options_trusting(dir.path(), trusted.port, "host-ed25519");
+    let session = run(trusted.port, None, &options, prompter.clone()).await;
+    assert!(session.is_ok(), "{:?}", session.err());
+    let other = tempfile::tempdir().expect("temp dir");
+    let options = options_trusting(other.path(), changed.port, "host-ed25519-other");
+    let error = run(changed.port, None, &options, prompter)
+        .await
+        .expect_err("changed");
+    assert!(
+        matches!(error, ConnectError::HostKeyChanged { .. }),
+        "{error:?}"
+    );
+
+    let presented = fingerprint(&host_public_key("host-ed25519"));
+    let lines = logged_with(&format!(":{} ", trusted.port));
+    assert!(
+        lines.iter().any(|line| line.starts_with("INFO")
+            && line.contains("the one trusted")
+            && line.contains(&presented)),
+        "{lines:?}"
+    );
+    let lines = logged_with(&format!(":{} ", changed.port));
+    assert!(
+        lines.iter().any(|line| line.starts_with("WARN")
+            && line.contains("changed")
+            && line.contains(&fingerprint(&host_public_key("host-ed25519-other")))
+            && line.contains(&presented)),
+        "{lines:?}"
+    );
+    assert!(
+        logged_with(PASSWORD).is_empty(),
+        "the password is never logged"
+    );
+}

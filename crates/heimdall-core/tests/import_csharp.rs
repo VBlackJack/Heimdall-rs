@@ -1123,6 +1123,58 @@ fn post_connect_steps_are_imported_as_the_csharp_migration_reads_them_and_never_
 }
 
 #[test]
+fn a_step_linked_to_the_command_library_loses_its_link_and_the_report_counts_it() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+
+    let json = servers(
+        r#"{"id": "linked", "displayName": "Linked", "remoteServer": "a.lab",
+            "connectionType": "SSH",
+            "postConnectSteps": [
+                {"input": "uptime", "commandLibraryId": "c1"},
+                {"input": "whoami"},
+                {"commandLibraryId": "c2", "enabled": false},
+                {"commandLibraryId": "  "}]},
+           {"id": "one", "remoteServer": "b.lab", "connectionType": "SSH",
+            "sshX11Forwarding": true,
+            "postConnectSteps": [{"input": "df -h", "commandLibraryId": "c3"}]},
+           {"id": "plain", "remoteServer": "c.lab", "connectionType": "SSH",
+            "postConnectSteps": [{"input": "ls"}]}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    assert_eq!(
+        report.dropped,
+        [
+            DroppedSettings {
+                name: "Linked".to_owned(),
+                // On or off, each link is lost; a blank one was no link.
+                settings: vec![Dropped::CommandLibraryLinks(2)],
+            },
+            DroppedSettings {
+                name: "b.lab".to_owned(),
+                settings: vec![Dropped::X11Forwarding, Dropped::CommandLibraryLinks(1)],
+            },
+        ]
+    );
+    let linked = report
+        .profiles
+        .iter()
+        .find(|profile| profile.id.as_str() == "linked")
+        .expect("imported");
+    let inputs: Vec<&str> = linked
+        .post_connect
+        .steps
+        .iter()
+        .map(|step| step.input.as_str())
+        .collect();
+    assert_eq!(
+        inputs,
+        ["uptime", "whoami", "", ""],
+        "each step keeps its own text"
+    );
+}
+
+#[test]
 fn forwarding_the_agent_is_imported_off_unless_the_csharp_profile_turned_it_on() {
     let json = servers(
         r#"{"id": "on", "remoteServer": "a.lab", "connectionType": "SSH", "sshAgentForwarding": true, "sshCompression": true},

@@ -1906,15 +1906,7 @@ pub async fn move_remote(
     client: RemoteSession,
     moves: Vec<(RemotePath, RemotePath)>,
 ) -> Vec<(RemotePath, Result<(), FilesError>)> {
-    let mut results = Vec::with_capacity(moves.len());
-    for (from, to) in moves {
-        let result = client
-            .rename(&from, &to)
-            .await
-            .map_err(|e| FilesError::from(&e));
-        results.push((from, result));
-    }
-    results
+    crate::session_log::move_remote_recorded(client, moves, None).await
 }
 
 /// An entry of the server to copy on the server.
@@ -1943,19 +1935,11 @@ pub async fn copy_remote(
     folder: RemotePath,
     cancel: CancellationToken,
 ) -> Vec<(RemotePath, Result<RemotePath, FilesError>)> {
-    let mut results = Vec::with_capacity(sources.len());
-    for source in sources {
-        let result = copy_one(&client, shell.as_ref(), &source, &folder, &cancel).await;
-        let failed = result.is_err();
-        results.push((source.path, result));
-        if failed {
-            break;
-        }
-    }
-    results
+    crate::session_log::copy_remote_recorded(client, shell, sources, folder, cancel, None).await
 }
 
-async fn copy_one(
+/// Copies `source` into `folder` on the server itself, as [`copy_remote`] does each entry.
+pub(crate) async fn copy_one(
     client: &RemoteSession,
     shell: Option<&heimdall_ssh::Connection>,
     source: &CopySource,

@@ -1010,7 +1010,7 @@ ui-settings-session-log-directory = Répertoire des journaux de session :
 ui-settings-session-log-directory-hint = Dossier des journaux de session, relatif au dossier des paramètres sauf s'il est absolu. Appuyez sur Entrée pour appliquer.
 ui-settings-session-log-retention = Supprimer les transcripts de plus de
 ui-settings-days-unit = jours
-ui-settings-session-log-retention-hint = 0 conserve tous les transcripts. Seuls les transcripts de session sont supprimés.
+ui-settings-session-log-retention-hint = 0 conserve tous les transcripts. Seuls les transcripts de session sont supprimés ; les journaux d'événements et d'opérations sur fichiers sont conservés.
 ui-settings-session-log-retention-refused = La conservation des transcripts doit valoir 0 (tout garder) ou être comprise entre { $min } et { $max } jours.
 
 ui-broadcast-button = DIFFUSION
@@ -1934,6 +1934,10 @@ ui-import-dropped-citrix-cache-launch = lancement depuis le cache Citrix Workspa
 ui-import-dropped-local-post-connect = { $count ->
     [one] séquence post-connexion de { $count } étape, qu'un shell local n'exécute jamais
    *[other] séquence post-connexion de { $count } étapes, qu'un shell local n'exécute jamais
+}
+ui-import-dropped-command-library-links = { $count ->
+    [one] { $count } étape post-connexion liée à la bibliothèque de commandes, importée sans son lien
+   *[other] { $count } étapes post-connexion liées à la bibliothèque de commandes, importées sans leur lien
 }
 ui-citrix-import-title = Applications Citrix
 ui-citrix-import-none = Aucune application Citrix trouvée dans le cache local. Ouvrez Citrix Workspace et connectez-vous à un magasin.

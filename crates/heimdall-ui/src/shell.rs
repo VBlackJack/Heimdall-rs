@@ -26,8 +26,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 use heimdall_app::files::{
-    EntryKind, FilesError, FilesKey, Side, copy_remote, file_operation, list_local, list_remote,
-    move_remote, plan_transfer, transfer_events,
+    EntryKind, FilesError, FilesKey, Side, list_local, list_remote, plan_transfer,
 };
 use heimdall_app::ftp_driver::ftp_events;
 use heimdall_app::gateway_draft::{GATEWAY_FIELDS, GatewayDraft};
@@ -37,6 +36,10 @@ use heimdall_app::profile_draft::{
     SavedSecret,
 };
 use heimdall_app::rdp_driver::rdp_events;
+use heimdall_app::session_log::{
+    OperationJournal, copy_remote_recorded, file_operation_recorded, move_remote_recorded,
+    transfer_events_recorded,
+};
 use heimdall_app::telnet_driver::telnet_events;
 use heimdall_app::tunnel_driver::tunnel_events;
 use heimdall_app::vnc_driver::vnc_events;
@@ -3292,7 +3295,10 @@ impl Shell {
             | Effect::SendEditAnyway { .. }
             | Effect::OpenFolder { .. }
             | Effect::OpenLocalFile { .. }
-            | Effect::OpenWithChooser { .. }) => files_task(effect),
+            | Effect::OpenWithChooser { .. }) => {
+                let journal = self.app.operation_journal(&effect);
+                files_task(effect, journal)
+            }
             effect @ (Effect::OpenEditor { .. } | Effect::SaveEditor { .. }) => {
                 crate::integrated_editor::task(effect)
             }
@@ -10011,9 +10017,10 @@ fn edit_task(effect: Effect) -> Task<Message> {
     }
 }
 
-/// The work of a Files tab: listing, transferring, changing entries.
+/// The work of a Files tab: listing, transferring, changing entries; each change on the
+/// server recorded in `journal` when given.
 #[expect(clippy::too_many_lines, reason = "one arm per effect")]
-fn files_task(effect: Effect) -> Task<Message> {
+fn files_task(effect: Effect, journal: Option<OperationJournal>) -> Task<Message> {
     match effect {
         Effect::ListRemote { tab, client, path } => {
             Task::perform(list_remote(client, path), move |result| {
@@ -10038,7 +10045,8 @@ fn files_task(effect: Effect) -> Task<Message> {
         }
         Effect::Transfer { tab, id, request } => {
             // Started inside the task, like a connection: spawning needs the runtime.
-            let events = stream::once(async move { transfer_events(*request) }).flatten();
+            let events =
+                stream::once(async move { transfer_events_recorded(*request, journal) }).flatten();
             Task::stream(events).map(move |event| {
                 Message::App(AppMessage::Files(FilesMessage::TransferEvent {
                     tab,
@@ -10047,30 +10055,33 @@ fn files_task(effect: Effect) -> Task<Message> {
                 }))
             })
         }
-        Effect::FileBatchStep { tab, operation, .. } => {
-            Task::perform(file_operation(*operation), move |result| {
+        Effect::FileBatchStep { tab, operation, .. } => Task::perform(
+            file_operation_recorded(*operation, journal),
+            move |result| {
                 Message::App(AppMessage::Files(FilesMessage::BatchStepDone {
                     tab,
                     result,
                 }))
-            })
-        }
+            },
+        ),
         Effect::FileOperation {
             tab,
             side,
             operation,
-        } => Task::perform(file_operation(*operation), move |result| {
-            Message::App(AppMessage::Files(FilesMessage::OperationDone {
-                tab,
-                side,
-                result,
-            }))
-        }),
-        Effect::MoveRemote { tab, client, moves } => {
-            Task::perform(move_remote(client, moves), move |results| {
-                Message::App(AppMessage::Files(FilesMessage::Moved { tab, results }))
-            })
-        }
+        } => Task::perform(
+            file_operation_recorded(*operation, journal),
+            move |result| {
+                Message::App(AppMessage::Files(FilesMessage::OperationDone {
+                    tab,
+                    side,
+                    result,
+                }))
+            },
+        ),
+        Effect::MoveRemote { tab, client, moves } => Task::perform(
+            move_remote_recorded(client, moves, journal),
+            move |results| Message::App(AppMessage::Files(FilesMessage::Moved { tab, results })),
+        ),
         effect @ (Effect::StartEdit { .. }
         | Effect::LaunchEditor { .. }
         | Effect::CheckEdits { .. }
@@ -10108,7 +10119,7 @@ fn files_task(effect: Effect) -> Task<Message> {
             cancel,
             duplicate,
         } => Task::perform(
-            copy_remote(client, Some(shell), sources, folder, cancel),
+            copy_remote_recorded(client, Some(shell), sources, folder, cancel, journal),
             move |results| {
                 Message::App(AppMessage::Files(FilesMessage::Copied {
                     tab,

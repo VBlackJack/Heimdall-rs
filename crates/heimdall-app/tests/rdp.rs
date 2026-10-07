@@ -16,6 +16,9 @@
 
 //! What the application decides for an RDP tab, through `update` and its effects.
 
+#[path = "support/log_capture.rs"]
+mod log_capture;
+
 use std::path::Path;
 
 use heimdall_app::rdp_driver::DEFAULT_DESKTOP;
@@ -1206,4 +1209,213 @@ fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
         app.notice(),
         Some(&Notice::RdpExternalRefused(ExternalRefusal::SshGateway))
     );
+}
+
+// ---- the session events log ------------------------------------------------------------
+
+/// Session logging turned on from the settings, the question it asks agreed to.
+fn session_logging_on(app: &mut App) {
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::SessionLogging(true),
+    ));
+    if matches!(
+        app.dialog,
+        Some(heimdall_app::Dialog::ConfirmSessionLogging)
+    ) {
+        app.update(Message::ConfirmDialog);
+    }
+    assert!(app.settings().session_logging);
+}
+
+/// The lines of the session events log beside the transcripts of the application over
+/// `dir`, read as JSON.
+fn session_events(app: &App, dir: &Path) -> Vec<serde_json::Value> {
+    app.sync_session_logs();
+    let folder = app
+        .settings()
+        .session_log_folder(&dir.join(heimdall_core::settings::SETTINGS_FILE_NAME));
+    std::fs::read_to_string(folder.join(heimdall_app::session_log::SESSION_EVENTS_FILE))
+        .unwrap_or_default()
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON object a line"))
+        .collect()
+}
+
+/// The desktop of `tab` connected.
+fn desktop_ready(app: &mut App, tab: TabId, attempt: AttemptId) {
+    let (input, _received) = mpsc::unbounded_channel();
+    event(
+        app,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(64, 48),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    assert_eq!(app.tab(tab).expect("tab").phase, Phase::Connected);
+}
+
+#[test]
+fn a_desktop_s_connect_and_each_kind_of_end_go_to_the_session_events_log() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    session_logging_on(&mut app);
+
+    // Ended by the server, saying why.
+    let (tab, attempt) = open(&mut app);
+    desktop_ready(&mut app, tab, attempt);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Ended {
+            reason: Ending::AdminDisconnect,
+        },
+    );
+    // Disconnected by the user, then the tab closed: one end only.
+    let (user, attempt) = open(&mut app);
+    desktop_ready(&mut app, user, attempt);
+    app.update(Message::DisconnectDesktop(user));
+    app.update(Message::ConfirmDialog);
+    app.update(Message::RequestCloseTab(user));
+    if app.dialog.is_some() {
+        app.update(Message::ConfirmDialog);
+    }
+    // Its tab closed while connected.
+    let (closed, attempt) = open(&mut app);
+    desktop_ready(&mut app, closed, attempt);
+    app.update(Message::RequestCloseTab(closed));
+    if app.dialog.is_some() {
+        app.update(Message::ConfirmDialog);
+    }
+    assert!(app.tab(closed).is_none());
+    // A connection that never opened logs nothing.
+    let (failed, attempt) = open(&mut app);
+    event(
+        &mut app,
+        failed,
+        attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+
+    let lines = session_events(&app, dir.path());
+    let field = |index: usize, name: &str| lines[index][name].clone();
+    let kinds: Vec<String> = (0..lines.len())
+        .map(|index| {
+            field(index, "event")
+                .as_str()
+                .unwrap_or_default()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        kinds,
+        [
+            "Connected",
+            "Disconnected",
+            "Connected",
+            "Disconnected",
+            "Connected",
+            "Disconnected"
+        ],
+        "{lines:?}"
+    );
+    for line in &lines {
+        assert_eq!(line["protocol"], "RDP");
+        assert_eq!(line["host"], "dc.lab");
+        assert_eq!(line["title"], "Domain controller");
+        assert!(
+            line["ts"].as_str().is_some_and(|ts| ts.ends_with('Z')),
+            "{line}"
+        );
+    }
+    assert!(
+        lines[0].get("durationMs").is_none(),
+        "a connect has no duration"
+    );
+    assert_eq!(field(1, "reason"), "RDP_ADMIN_DISCONNECT");
+    assert!(lines[1].get("endTrigger").is_none(), "the reason says it");
+    assert!(lines[1]["durationMs"].is_u64());
+    assert_eq!(field(3, "endTrigger"), "user");
+    assert!(lines[3].get("reason").is_none());
+    assert_eq!(field(5, "endTrigger"), "teardown");
+}
+
+#[test]
+fn without_session_logging_a_desktop_writes_no_event_and_quitting_ends_one_still_open() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    desktop_ready(&mut app, tab, attempt);
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::Closed { exit_status: None },
+    );
+    assert!(session_events(&app, dir.path()).is_empty());
+
+    // On while connected: the end is written, the connect it closes having been off.
+    let (tab, attempt) = open(&mut app);
+    desktop_ready(&mut app, tab, attempt);
+    session_logging_on(&mut app);
+    let (other, attempt) = open(&mut app);
+    desktop_ready(&mut app, other, attempt);
+    app.update(Message::WindowCloseRequested);
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(
+        effects.iter().any(|effect| matches!(effect, Effect::Exit)),
+        "{effects:?}"
+    );
+    let lines = session_events(&app, dir.path());
+    let ends: Vec<(String, String)> = lines
+        .iter()
+        .map(|line| {
+            (
+                line["event"].as_str().unwrap_or_default().to_owned(),
+                line["endTrigger"].as_str().unwrap_or_default().to_owned(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        ends,
+        [
+            ("Connected".to_owned(), String::new()),
+            ("Disconnected".to_owned(), "teardown".to_owned()),
+            ("Disconnected".to_owned(), "teardown".to_owned()),
+        ],
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn the_answer_to_a_certificate_question_is_in_the_diagnostics_log_with_the_key() {
+    let dir = tempfile::tempdir().expect("dir");
+    log_capture::start();
+    let mut app = app(dir.path());
+    for (accept, answer) in [(true, "trusted, recorded"), (false, "refused")] {
+        let (tab, attempt) = open(&mut app);
+        event(
+            &mut app,
+            tab,
+            attempt,
+            ConnectionEvent::UnknownRdpCertificate {
+                subject: None,
+                host: "dc.lab".to_owned(),
+                port: 3389,
+                fingerprint: key(),
+                details: None,
+            },
+        );
+        app.update(Message::HostKeyDecision { tab, accept });
+        assert!(
+            log_capture::has("INFO", &["RDP server dc.lab:3389", KEY, answer]),
+            "{:?}",
+            log_capture::lines()
+        );
+        app.update(Message::RequestCloseTab(tab));
+    }
 }

@@ -82,7 +82,7 @@ impl App {
 
     /// Whether `tab`'s session keeps a transcript from when it connects: as its profile
     /// says, else as the settings say, as the C# `SessionLoggingOverride`.
-    fn logs_sessions(&self, tab: &Tab) -> bool {
+    pub(super) fn logs_sessions(&self, tab: &Tab) -> bool {
         let chosen = match &tab.profile {
             TabProfile::Ssh(profile) => profile.session_logging,
             TabProfile::Telnet(profile) => profile.session_logging,

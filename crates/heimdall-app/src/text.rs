@@ -86,7 +86,7 @@ fn is_separator(c: char) -> bool {
 }
 
 /// Whether `c` is one of the [`INVISIBLE`] characters.
-fn is_invisible(c: char) -> bool {
+pub(crate) fn is_invisible(c: char) -> bool {
     INVISIBLE
         .iter()
         .any(|(first, last)| (*first..=*last).contains(&c))

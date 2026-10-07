@@ -225,7 +225,12 @@ fn record_accepted(request: &FtpRequest, slot: &AcceptedSlot) -> Result<(), UiEr
     }
     .map_err(|error| UiError::KnownHosts {
         detail: error.to_string(),
-    })
+    })?;
+    log::info!(
+        "the FTPS certificate of {} accepted by the user is recorded: {accepted}",
+        display_address(host, port)
+    );
+    Ok(())
 }
 
 /// The handshake stopped: the certificate question for a certificate nobody trusts yet, a
@@ -256,11 +261,18 @@ async fn certificate_refused(
     let presented = certificate.fingerprint;
     match KnownRdpHosts::new(&request.known_hosts).verdict(&profile.host, profile.port, &presented)
     {
-        Ok(Verdict::Changed { recorded }) => Err(UiError::HostKeyChanged {
-            target: None,
-            recorded: recorded.to_string(),
-            offered: presented.to_string(),
-        }),
+        Ok(Verdict::Changed { recorded }) => {
+            // As the C# "FTPS certificate rejected" line.
+            log::warn!(
+                "the FTPS certificate of {} changed: trusted {recorded}, presented {presented}: refused",
+                display_address(&profile.host, profile.port)
+            );
+            Err(UiError::HostKeyChanged {
+                target: None,
+                recorded: recorded.to_string(),
+                offered: presented.to_string(),
+            })
+        }
         Ok(_) => {
             log::info!(
                 "{} presented an unknown certificate {presented}",

@@ -464,13 +464,19 @@ impl App {
         let Some(pending) = self.pending_tunnel_key.take() else {
             return Vec::new();
         };
+        let target = heimdall_core::profile::display_address(&pending.host, pending.port);
+        let presented = heimdall_ssh::fingerprint(&pending.key);
         match trust {
             super::KeyTrust::Refused => {
+                log::info!("the host key of {target} was refused by the user");
                 self.tell(Notice::TunnelFailed(UiError::Cancelled));
                 return Vec::new();
             }
             // Held in memory for this run: the file is not written, as a tab's.
             super::KeyTrust::Once => {
+                log::info!(
+                    "the host key of {target} is trusted by the user for this run: {presented}"
+                );
                 self.run_trust
                     .trust(&pending.host, pending.port, PublicKey::clone(&pending.key));
                 return self.open_tunnel(pending.spec);
@@ -484,6 +490,11 @@ impl App {
                 Verdict::Trusted => Ok(()),
                 Verdict::Unknown => known_hosts
                     .learn(&pending.host, pending.port, &pending.key)
+                    .inspect(|()| {
+                        log::info!(
+                            "the host key of {target} is trusted by the user and recorded: {presented}"
+                        );
+                    })
                     .map_err(|error| UiError::from(&error)),
                 // Changed since it was asked about: not learnt, never overwritten.
                 Verdict::Changed { .. } | Verdict::OtherAlgorithm { .. } => Err(UiError::Cancelled),
