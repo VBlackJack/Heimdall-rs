@@ -21,12 +21,12 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, anti_idle_interval_accepted, auto_lock_idle_minutes_accepted,
-    max_sessions_accepted, rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
-    reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
-    session_log_retention_days_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
-    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted, terminal_font_family,
-    terminal_font_size_accepted,
+    Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
+    auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
+    rdp_connect_timeout_accepted, reachability_interval_accepted, reachability_probes_accepted,
+    reachability_timeout_accepted, session_log_retention_days_accepted, settings_path,
+    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
+    ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -55,6 +55,10 @@ pub enum SettingsMessage {
     TerminalFontFamily(String),
     /// The language chosen, once the window shows it.
     Language(Language),
+    /// The window's theme.
+    Theme(AppTheme),
+    /// The window's accent.
+    Accent(Accent),
     /// SSH auto-reconnect on or off.
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
@@ -179,8 +183,6 @@ impl App {
         self.apply_settings(&SettingsMessage::SessionLogging(true))
     }
 
-    /// Sets the reachability number `message` changes, when within its range; whether it
-    /// was.
     /// A limit of the settings, refused out of the C# range, which leaves it as it was;
     /// whether it was taken.
     fn set_limit(&mut self, message: &SettingsMessage) -> bool {
@@ -208,11 +210,31 @@ impl App {
             {
                 self.settings.auto_lock_idle_minutes = minutes;
             }
+            SettingsMessage::SshAutoReconnectAttempts(attempts)
+                if ssh_auto_reconnect_attempts_accepted(attempts) =>
+            {
+                self.settings.ssh_auto_reconnect_attempts = attempts;
+            }
+            SettingsMessage::AntiIdleInterval(seconds) if anti_idle_interval_accepted(seconds) => {
+                self.settings.anti_idle_interval = seconds;
+            }
+            SettingsMessage::SshKeepAliveInterval(seconds)
+                if ssh_keep_alive_interval_accepted(seconds) =>
+            {
+                self.settings.ssh_keep_alive_interval = seconds;
+            }
+            SettingsMessage::SshTmoutResetInterval(seconds)
+                if ssh_tmout_reset_interval_accepted(seconds) =>
+            {
+                self.settings.ssh_tmout_reset_interval = seconds;
+            }
             _ => return false,
         }
         true
     }
 
+    /// Sets the reachability number `message` changes, when within its range; whether it
+    /// was.
     fn set_reachability(&mut self, message: &SettingsMessage) -> bool {
         let reachability = &mut self.settings.reachability;
         match message {
@@ -260,6 +282,8 @@ impl App {
                 self.settings.terminal_font_family = terminal_font_family(family);
             }
             SettingsMessage::Language(language) => self.settings.language = Some(*language),
+            SettingsMessage::Theme(theme) => self.settings.theme = *theme,
+            SettingsMessage::Accent(accent) => self.settings.accent = *accent,
             SettingsMessage::SshAutoReconnect(on) => self.settings.ssh_auto_reconnect = *on,
             SettingsMessage::PowerShellExecutionPolicy(policy) => {
                 self.settings.powershell_execution_policy = *policy;
@@ -270,36 +294,16 @@ impl App {
                 // The agent chip says what the next connection reaches.
                 self.agent_chip = super::agent_chip::AgentChip::Unknown;
             }
-            SettingsMessage::SshAutoReconnectAttempts(attempts) => {
-                if !ssh_auto_reconnect_attempts_accepted(*attempts) {
-                    return Vec::new();
-                }
-                self.settings.ssh_auto_reconnect_attempts = *attempts;
-            }
-            SettingsMessage::AntiIdleInterval(seconds) => {
-                if !anti_idle_interval_accepted(*seconds) {
-                    return Vec::new();
-                }
-                self.settings.anti_idle_interval = *seconds;
-            }
-            SettingsMessage::SshKeepAliveInterval(seconds) => {
-                if !ssh_keep_alive_interval_accepted(*seconds) {
-                    return Vec::new();
-                }
-                self.settings.ssh_keep_alive_interval = *seconds;
-            }
-            SettingsMessage::SshTmoutResetInterval(seconds) => {
-                if !ssh_tmout_reset_interval_accepted(*seconds) {
-                    return Vec::new();
-                }
-                self.settings.ssh_tmout_reset_interval = *seconds;
-            }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
             message @ (SettingsMessage::RdpConnectTimeout(_)
             | SettingsMessage::RdpAutoReconnectAttempts(_)
             | SettingsMessage::MaxSessions(_)
             | SettingsMessage::SessionLogRetentionDays(_)
-            | SettingsMessage::AutoLockIdleMinutes(_)) => {
+            | SettingsMessage::AutoLockIdleMinutes(_)
+            | SettingsMessage::SshAutoReconnectAttempts(_)
+            | SettingsMessage::AntiIdleInterval(_)
+            | SettingsMessage::SshKeepAliveInterval(_)
+            | SettingsMessage::SshTmoutResetInterval(_)) => {
                 if !self.set_limit(message) {
                     return Vec::new();
                 }

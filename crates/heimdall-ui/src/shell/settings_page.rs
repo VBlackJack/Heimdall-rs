@@ -27,8 +27,8 @@
 use heimdall_app::{Effect, Message as AppMessage, PinMessage, VaultStatus, search_folded};
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    AgentPreference, ColorScheme, CtrlVPaste, ExecutionPolicy, Language, MAX_SESSIONS_MAX,
-    RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
+    Accent, AgentPreference, AppTheme, ColorScheme, CtrlVPaste, ExecutionPolicy, Language,
+    MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
     SSH_AUTO_RECONNECT_ATTEMPTS_MAX, SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings,
 };
 use iced::widget::scrollable::RelativeOffset;
@@ -49,6 +49,7 @@ use crate::search_keys::SearchKeys;
 use crate::settings_rows::{
     PostureKey, PostureLine, PostureState, SettingRow, SettingsCard, posture,
 };
+use crate::themes::{AccentChoice, ThemeChoice};
 
 /// Width of the search box, as the C# one.
 const SEARCH_WIDTH: f32 = 220.0;
@@ -154,6 +155,8 @@ fn row_label(row: SettingRow) -> String {
     }
     match row {
         SettingRow::Language => fl!("ui-settings-language"),
+        SettingRow::Theme => fl!("ui-settings-theme"),
+        SettingRow::Accent => fl!("ui-settings-accent"),
         SettingRow::CollapseTunnelsPanel => fl!("ui-settings-collapse-tunnels-panel"),
         SettingRow::PreventSleep => fl!("ui-settings-prevent-sleep"),
         SettingRow::MaxSessions => fl!("ui-settings-max-sessions"),
@@ -227,6 +230,8 @@ fn row_choices(row: SettingRow) -> Vec<String> {
         SettingRow::Language => Language::ALL
             .map(|l| LanguageChoice(l).to_string())
             .to_vec(),
+        SettingRow::Theme => AppTheme::ALL.map(|t| ThemeChoice(t).to_string()).to_vec(),
+        SettingRow::Accent => Accent::ALL.map(|a| AccentChoice(a).to_string()).to_vec(),
         SettingRow::ColorScheme => ColorScheme::ALL
             .map(|s| SchemeChoice(s).to_string())
             .to_vec(),
@@ -700,6 +705,8 @@ impl Shell {
             return on_off(on);
         }
         match row {
+            SettingRow::Theme => ThemeChoice(defaults.theme).to_string(),
+            SettingRow::Accent => AccentChoice(defaults.accent).to_string(),
             SettingRow::MaxSessions => SessionsChoice(defaults.max_sessions).to_string(),
             SettingRow::FontSize => defaults.terminal_font_size.to_string(),
             SettingRow::FontFamily => defaults.terminal_font_family,
@@ -815,6 +822,22 @@ impl Shell {
                         settings.language.unwrap_or_else(crate::i18n::current),
                     )),
                     |LanguageChoice(language)| Message::LanguageChosen(language),
+                ),
+            ),
+            SettingRow::Theme => labelled(
+                label,
+                pick_list(
+                    AppTheme::ALL.map(ThemeChoice).to_vec(),
+                    Some(ThemeChoice(settings.theme)),
+                    |ThemeChoice(theme)| send(SettingsMessage::Theme(theme)),
+                ),
+            ),
+            SettingRow::Accent => labelled(
+                label,
+                pick_list(
+                    Accent::ALL.map(AccentChoice).to_vec(),
+                    Some(AccentChoice(settings.accent)),
+                    |AccentChoice(accent)| send(SettingsMessage::Accent(accent)),
                 ),
             ),
             SettingRow::MaxSessions => labelled(

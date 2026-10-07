@@ -70,6 +70,7 @@ pub mod status_bar;
 pub mod tab_drag;
 pub mod terminal_view;
 mod texts;
+pub mod themes;
 pub mod transcript_lines;
 mod tree_drag;
 pub mod tree_view;

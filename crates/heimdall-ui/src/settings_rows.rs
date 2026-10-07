@@ -32,7 +32,7 @@ use crate::shell::SettingsTab;
 /// A card of the Settings page: the rows under one heading, on one tab.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SettingsCard {
-    /// The application's language.
+    /// The application's language, theme and accent.
     Appearance,
     /// The tunnels panel, the computer's sleep, the most sessions.
     Behavior,
@@ -136,6 +136,10 @@ impl SettingsCard {
 pub enum SettingRow {
     /// The language of the window.
     Language,
+    /// The window's theme.
+    Theme,
+    /// The window's accent.
+    Accent,
     /// The tunnels panel starts collapsed.
     CollapseTunnelsPanel,
     /// The computer kept from sleeping while a session is open.
@@ -224,8 +228,10 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 45] = [
         Self::Language,
+        Self::Theme,
+        Self::Accent,
         Self::CollapseTunnelsPanel,
         Self::PreventSleep,
         Self::MaxSessions,
@@ -274,7 +280,7 @@ impl SettingRow {
     #[must_use]
     pub fn card(self) -> SettingsCard {
         match self {
-            Self::Language => SettingsCard::Appearance,
+            Self::Language | Self::Theme | Self::Accent => SettingsCard::Appearance,
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
             }
@@ -378,6 +384,8 @@ impl SettingRow {
             return Some(on) != self.flag(&defaults);
         }
         match self {
+            Self::Theme => settings.theme != defaults.theme,
+            Self::Accent => settings.accent != defaults.accent,
             Self::MaxSessions => settings.max_sessions != defaults.max_sessions,
             Self::FontSize => settings.terminal_font_size != defaults.terminal_font_size,
             Self::FontFamily => settings.terminal_font_family != defaults.terminal_font_family,
@@ -421,6 +429,8 @@ impl SettingRow {
             return self.toggled(settings, on);
         }
         Some(match self {
+            Self::Theme => SettingsMessage::Theme(defaults.theme),
+            Self::Accent => SettingsMessage::Accent(defaults.accent),
             Self::MaxSessions => SettingsMessage::MaxSessions(defaults.max_sessions),
             Self::FontSize => SettingsMessage::TerminalFontSize(defaults.terminal_font_size),
             Self::FontFamily => SettingsMessage::TerminalFontFamily(defaults.terminal_font_family),

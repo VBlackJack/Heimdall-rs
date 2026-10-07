@@ -303,6 +303,8 @@ pub struct Screen {
     pub display_offset: usize,
     /// Background of the whole area.
     pub background: Rgb,
+    /// Background of selected cells, the palette's.
+    pub selection: Rgb,
 }
 
 impl Screen {
@@ -726,6 +728,7 @@ impl Terminal {
             cursor: None,
             display_offset: 0,
             background: self.palette.background,
+            selection: self.palette.selection,
         };
         self.snapshot_into(&mut screen);
         screen
@@ -741,6 +744,7 @@ impl Terminal {
         screen.rows = rows;
         screen.display_offset = offset;
         screen.background = self.color(NamedColor::Background as usize);
+        screen.selection = self.palette.selection;
         screen.cells.clear();
         screen
             .cells

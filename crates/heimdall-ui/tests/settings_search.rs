@@ -28,7 +28,7 @@ use std::sync::{Mutex, MutexGuard, PoisonError};
 use heimdall_app::{App, AppConfig, Message as AppMessage, SettingsMessage, SystemCredentials};
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, ExecutionPolicy, Language, Settings, SftpBrowser, settings_path,
+    Accent, AppTheme, ColorScheme, ExecutionPolicy, Language, Settings, SftpBrowser, settings_path,
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -468,6 +468,74 @@ fn the_security_overview_reflects_the_settings_and_leads_to_them() {
     let mut ui = simulator(&shell);
     ui.find("The options of every RDP server that uses the global defaults.")
         .expect("the RDP options");
+}
+
+#[test]
+fn the_theme_and_accent_are_chosen_on_the_general_tab_applied_at_once_and_reset() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    {
+        let mut ui = simulator(&shell);
+        // A list's value is drawn by the list itself, not as a text to find.
+        for said in ["Appearance", "Theme", "Accent"] {
+            ui.find(said).expect(said);
+        }
+    }
+    assert!(shell.theme().extended_palette().is_dark);
+    assert_eq!(
+        shell.settings_found("parchment"),
+        [SettingRow::Theme],
+        "a theme of its list"
+    );
+    assert_eq!(
+        shell.settings_found("accent"),
+        [SettingRow::Accent],
+        "by its name"
+    );
+    assert!(
+        shell.settings_found("dracula").contains(&SettingRow::Theme),
+        "the theme and the terminal's scheme both offer Dracula"
+    );
+
+    change(&mut shell, SettingsMessage::Theme(AppTheme::Parchment));
+    change(&mut shell, SettingsMessage::Accent(Accent::Blue));
+    let theme = shell.theme();
+    assert!(!theme.extended_palette().is_dark, "a light theme");
+    assert_eq!(
+        theme.palette().primary,
+        heimdall_ui::themes::colors(AppTheme::Parchment).blue,
+        "the accent chosen"
+    );
+    assert_eq!(
+        shell.app().settings().color_scheme,
+        ColorScheme::Dracula,
+        "the terminals' scheme stays apart, as the C#"
+    );
+    let marked: Vec<SettingRow> = SettingRow::ALL
+        .into_iter()
+        .filter(|row| row.is_modified(shell.app().settings()))
+        .collect();
+    assert_eq!(marked, [SettingRow::Theme, SettingRow::Accent]);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Modified").expect("their markers");
+    }
+
+    for row in [SettingRow::Theme, SettingRow::Accent] {
+        let _ = shell.update(Message::ResetSetting(row));
+    }
+    let defaults = Settings::default();
+    assert_eq!(shell.app().settings().theme, defaults.theme);
+    assert_eq!(shell.app().settings().accent, defaults.accent);
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert_eq!(
+        (saved.theme, saved.accent),
+        (AppTheme::Drakul, Accent::Default)
+    );
+    assert!(shell.theme().extended_palette().is_dark);
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Modified").is_err());
 }
 
 #[test]

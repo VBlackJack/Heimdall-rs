@@ -71,13 +71,6 @@ const MULTI_CLICK: Duration = Duration::from_millis(400);
 /// Thickness of beam and underline cursors, and of text decorations, in pixels.
 const LINE_THICKNESS: f32 = 2.0;
 
-/// Background of selected cells (Dracula "current line").
-const SELECTION_BACKGROUND: Rgb = Rgb {
-    r: 0x44,
-    g: 0x47,
-    b: 0x5a,
-};
-
 fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.r, rgb.g, rgb.b)
 }
@@ -486,7 +479,7 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
         fill(renderer, bounds, screen.background);
         for row in 0..screen.rows {
             let cells = &screen.cells[row * screen.cols..(row + 1) * screen.cols];
-            for run in runs::backgrounds(cells, screen.background, SELECTION_BACKGROUND) {
+            for run in runs::backgrounds(cells, screen.background, screen.selection) {
                 fill(
                     renderer,
                     self.cells_rect(bounds, row, run.col, run.cells),

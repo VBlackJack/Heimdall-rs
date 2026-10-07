@@ -1696,10 +1696,17 @@ impl Shell {
         CursorTracker::new(layers, floating.cursor.clone()).into()
     }
 
-    /// Theme: the terminal palette is Dracula, so is the window.
+    /// Theme: the one the Settings page chose, tinted with its accent. The terminals keep
+    /// their own colour scheme, apart from it as in the C#.
     #[must_use]
     pub fn theme(&self) -> Theme {
-        Theme::Dracula
+        let settings = self.app.settings();
+        crate::themes::theme(settings.theme, settings.accent)
+    }
+
+    /// The colours the integrated editor highlights code with, light on a light theme.
+    fn editor_syntax(&self) -> iced::highlighter::Theme {
+        crate::themes::syntax(self.app.settings().theme)
     }
 
     /// Window events and shortcuts.
@@ -6031,6 +6038,7 @@ impl Shell {
                 edit,
                 self.editors.get(edit.id),
                 pane.client.is_some(),
+                self.editor_syntax(),
             ),
             None => crate::files_view::view(
                 tab,
@@ -6182,7 +6190,13 @@ impl Shell {
                 if let Some(edit) = tab.files.as_deref().and_then(|pane| pane.editor.as_ref()) =>
             {
                 column![
-                    crate::integrated_editor::view(tab.id, edit, self.editors.get(edit.id), false),
+                    crate::integrated_editor::view(
+                        tab.id,
+                        edit,
+                        self.editors.get(edit.id),
+                        false,
+                        self.editor_syntax(),
+                    ),
                     self.session_actions(tab),
                 ]
                 .spacing(SPACING)
