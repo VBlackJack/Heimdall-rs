@@ -333,6 +333,8 @@ fn menu_names(message: &FilesMessage, tab: TabId) -> bool {
         | FilesMessage::Refresh { tab: named, .. }
         | FilesMessage::OpenInTerminal { tab: named }
         | FilesMessage::OpenInExplorer { tab: named }
+        | FilesMessage::OpenWith { tab: named, .. }
+        | FilesMessage::OpenInEditor { tab: named, .. }
         | FilesMessage::OpenBookmark { tab: named, .. }
         | FilesMessage::RemoveBookmark { tab: named, .. } => *named == tab,
         _ => false,

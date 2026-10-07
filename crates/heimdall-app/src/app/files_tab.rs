@@ -217,12 +217,14 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
     },
-    /// Hold the server's selected entries to be copied when pasted, as the C# "Copy".
+    /// Hold the server's selected entries to be copied when pasted, as the C# "Copy"; in
+    /// the local file browser, copy its entries chosen, as its C# "Copy".
     Copy {
         /// Tab.
         tab: TabId,
     },
-    /// Move or copy the entries held into the server's folder shown, as the C# "Paste".
+    /// Move or copy the entries held into the server's folder shown, as the C# "Paste"; in
+    /// the local file browser, copy the files copied into the folder it shows.
     Paste {
         /// Tab.
         tab: TabId,
@@ -421,6 +423,22 @@ pub enum FilesMessage {
         /// Tab.
         tab: TabId,
         /// The script's entry.
+        index: usize,
+    },
+    /// Show the system's "Open with" chooser for a file of the local file browser, asked
+    /// first when it would run, as the C# "Open With".
+    OpenWith {
+        /// Tab.
+        tab: TabId,
+        /// The file's entry.
+        index: usize,
+    },
+    /// Open a file of the local file browser in the external editor, as the C# "Open in
+    /// Editor".
+    OpenInEditor {
+        /// Tab.
+        tab: TabId,
+        /// The file's entry.
         index: usize,
     },
     /// The copies of a paste or a duplicate ended.
@@ -729,6 +747,10 @@ impl std::fmt::Debug for FilesMessage {
             Self::OpenInExplorer { tab } => write!(f, "OpenInExplorer({})", tab.value()),
             Self::RunInShell { tab, index } => {
                 write!(f, "RunInShell({}, {index})", tab.value())
+            }
+            Self::OpenWith { tab, index } => write!(f, "OpenWith({}, {index})", tab.value()),
+            Self::OpenInEditor { tab, index } => {
+                write!(f, "OpenInEditor({}, {index})", tab.value())
             }
             Self::Copied { tab, results, .. } => {
                 write!(f, "Copied({}, {})", tab.value(), results.len())
@@ -1049,6 +1071,8 @@ impl App {
             FilesMessage::OpenInTerminal { tab } => self.open_in_terminal(tab),
             FilesMessage::OpenInExplorer { tab } => self.open_in_explorer(tab),
             FilesMessage::RunInShell { tab, index } => self.run_in_shell(tab, index),
+            FilesMessage::OpenWith { tab, index } => self.open_with(tab, index),
+            FilesMessage::OpenInEditor { tab, index } => self.open_in_editor(tab, index),
             FilesMessage::Moved { tab, results } => self.moved_held(tab, results),
             FilesMessage::DropEntries {
                 tab,
@@ -1139,12 +1163,8 @@ impl App {
                 Vec::new()
             }
             FilesMessage::Dropped { tab, path } => self.upload_paths(tab, &[path]),
-            FilesMessage::ExplorerFilesRead { paths, .. } if paths.is_empty() => {
-                self.tell(super::Notice::ExplorerHoldsNoFiles);
-                Vec::new()
-            }
-            FilesMessage::UploadPicked { tab, paths }
-            | FilesMessage::ExplorerFilesRead { tab, paths } => self.upload_paths(tab, &paths),
+            FilesMessage::ExplorerFilesRead { tab, paths } => self.explorer_files_read(tab, paths),
+            FilesMessage::UploadPicked { tab, paths } => self.upload_paths(tab, &paths),
             FilesMessage::Filter { tab, side, text } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -1240,7 +1260,7 @@ impl App {
     /// Uploads `paths`, files and folders of this computer, into the server's folder shown,
     /// in one plan: one question for whatever is in the way. What is neither a file nor a
     /// folder is said failed, the others go.
-    fn upload_paths(&mut self, tab: TabId, paths: &[PathBuf]) -> Vec<Effect> {
+    pub(super) fn upload_paths(&mut self, tab: TabId, paths: &[PathBuf]) -> Vec<Effect> {
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -1529,7 +1549,7 @@ impl App {
         if self.dialog.is_some() {
             return Vec::new();
         }
-        let holding = self.files_clipboard.is_some();
+        let holding = self.files_clipboard.is_some() || !self.local_copied.is_empty();
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -1569,6 +1589,9 @@ impl App {
             FilesKey::Delete => return self.ask_delete(tab, side),
             FilesKey::Refresh => return self.list(tab, side),
             FilesKey::CopyPath => return self.copy_path(tab, side),
+            // The local file browser's Ctrl+C and Ctrl+V, as the C# browser's.
+            FilesKey::Copy if files.local_only => return self.copy_local(tab),
+            FilesKey::Paste if files.local_only => return self.paste_held(tab),
             // The server's entries only, as the C# clipboard holds them.
             FilesKey::Cut | FilesKey::Copy if side == Side::Local => return Vec::new(),
             FilesKey::Cut => return self.hold_entries(tab, super::ClipMode::Cut),
@@ -2101,8 +2124,13 @@ impl App {
         }
     }
 
-    /// Shows what the selected entry of the server is.
+    /// Shows what the selected entry of the server is; in the local file browser, what its
+    /// entry is.
     fn show_properties(&mut self, tab: TabId, side: Side) {
+        if side == Side::Local {
+            self.show_local_properties(tab);
+            return;
+        }
         let Some(files) = self.files_mut(tab).filter(|_| side == Side::Remote) else {
             return;
         };

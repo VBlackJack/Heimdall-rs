@@ -609,12 +609,44 @@ pub fn open_with_default(file: &Path) -> io::Result<()> {
         .map(drop)
 }
 
+/// Shows the system's "Open with" chooser for local file `file`, as the C# local file
+/// browser does: on Windows `rundll32.exe shell32.dll,OpenAs_RunDLL` by its full path in
+/// Windows' own folder, the path as one argument of its own, no shell reading it. Other
+/// systems have no such chooser: nothing is started there.
+///
+/// # Errors
+///
+/// [`io::ErrorKind::InvalidInput`] for a path that is not absolute;
+/// [`io::ErrorKind::Unsupported`] elsewhere than on Windows; what the system said when the
+/// chooser could not start.
+pub fn open_with_chooser(file: &Path) -> io::Result<()> {
+    if !file.is_absolute() {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "not an absolute path",
+        ));
+    }
+    if !cfg!(windows) {
+        return Err(io::Error::from(io::ErrorKind::Unsupported));
+    }
+    std::process::Command::new(system_program(RUNDLL_PROGRAM))
+        .arg(OPEN_WITH_ENTRY)
+        .arg(file)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .map(drop)
+}
+
 /// The system's own text editor on Windows, as the C# default.
 const NOTEPAD_PROGRAM: &str = "notepad.exe";
 /// The Windows program that calls a library's entry point.
 const RUNDLL_PROGRAM: &str = "rundll32.exe";
 /// The shell's entry point opening a file or an address with its default program.
 const FILE_HANDLER_ENTRY: &str = "url.dll,FileProtocolHandler";
+/// The shell's entry point showing its "Open with" chooser for a file, as the C# calls it.
+const OPEN_WITH_ENTRY: &str = "shell32.dll,OpenAs_RunDLL";
 /// What opens a file with its default program on macOS.
 const MAC_OPEN_PROGRAM: &str = "/usr/bin/open";
 /// What opens a file with its default program on other Unix desktops.

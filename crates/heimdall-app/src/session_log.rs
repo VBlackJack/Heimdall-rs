@@ -713,7 +713,8 @@ fn pending_record(operation: &FileOperation) -> Option<OperationRecord> {
         FileOperation::RemoteSudoRemove { path, .. } => (OperationKind::Delete, path, None, true),
         FileOperation::LocalMakeFolder { .. }
         | FileOperation::LocalRename { .. }
-        | FileOperation::LocalRemove { .. } => return None,
+        | FileOperation::LocalRemove { .. }
+        | FileOperation::LocalPaste { .. } => return None,
     };
     Some(OperationRecord {
         kind,

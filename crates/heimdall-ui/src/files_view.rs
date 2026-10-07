@@ -32,6 +32,7 @@ use heimdall_app::files::{
     Direction, EntryKind, FileProperties, FilesError, FilesKey, FilesPane, Listed, Side, Sort,
     SortColumn, Special, Transfer, TransferState, local_segments, remote_segments, symbolic_mode,
 };
+use heimdall_app::local_properties::LocalProperties;
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use heimdall_core::utc::UtcTime;
 use heimdall_files::Refusal;
@@ -445,14 +446,61 @@ pub fn properties<'a>(
         (fl!("ui-files-properties-group"), number(properties.group)),
         (fl!("ui-files-properties-path"), properties.path.clone()),
     ];
-    let mut content = column![
-        text(fl!(
-            "ui-files-properties-title",
-            name = properties.name.as_str()
-        ))
-        .size(TITLE_SIZE)
-    ]
-    .spacing(SPACING);
+    property_lines(&properties.name, lines, ok)
+}
+
+/// What an entry of the local file browser is, as the C# local Properties shows it: its
+/// name, kind, size, when it was created, modified and last read, its attributes, where a
+/// link points and its path; with `ok` to close it.
+pub fn local_properties<'a>(
+    properties: &LocalProperties,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let time = |time: Option<SystemTime>| time.map(modified_long).unwrap_or_default();
+    let mut attributes = Vec::new();
+    if properties.read_only {
+        attributes.push(fl!("ui-files-attribute-read-only"));
+    }
+    if properties.hidden == Some(true) {
+        attributes.push(fl!("ui-files-attribute-hidden"));
+    }
+    if attributes.is_empty() {
+        attributes.push(fl!("ui-files-attribute-normal"));
+    }
+    let mut lines = vec![
+        (fl!("ui-files-properties-name"), properties.name.clone()),
+        (fl!("ui-files-properties-type"), kind_name(properties.kind)),
+        (
+            fl!("ui-files-properties-size"),
+            properties.size.map(texts::size).unwrap_or_default(),
+        ),
+        (fl!("ui-files-properties-created"), time(properties.created)),
+        (
+            fl!("ui-files-properties-modified"),
+            time(properties.modified),
+        ),
+        (
+            fl!("ui-files-properties-accessed"),
+            time(properties.accessed),
+        ),
+        (fl!("ui-files-properties-attributes"), attributes.join(", ")),
+    ];
+    if let Some(target) = &properties.link_target {
+        lines.push((fl!("ui-files-properties-link-target"), target.clone()));
+    }
+    lines.push((fl!("ui-files-properties-path"), properties.path.clone()));
+    property_lines(&properties.name, lines, ok)
+}
+
+/// A Properties dialog: its title naming `name`, then each of `lines`, a label and its
+/// value, then `ok`.
+fn property_lines<'a>(
+    name: &str,
+    lines: impl IntoIterator<Item = (String, String)>,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let mut content = column![text(fl!("ui-files-properties-title", name = name)).size(TITLE_SIZE)]
+        .spacing(SPACING);
     for (label, value) in lines {
         content = content.push(
             row![

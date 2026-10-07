@@ -38,6 +38,8 @@
 //!
 //! Opening a file is as [`crate::local_open`] says: a text file in the external editor, a
 //! file that would run only once agreed, anything else with the system's default program.
+//! The other entries of its menu the C# has, "Open With", "Open in Editor", "Copy",
+//! "Paste" and "Properties", are as the module `local_menu` says.
 //!
 //! Here the browser is a Files tab of this computer's files alone, docked as the second
 //! pane of the shell's tab once it started, the keyboard left on the shell. It is no
@@ -54,7 +56,6 @@ use super::reconnect::Reopen;
 use super::split::{Axis, MAX_PANES, Placement, SplitMessage};
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
-use crate::external_edit::editor;
 use crate::files::{EntryKind, FilesPane, LocalPane, ShellFollow, Side};
 use crate::ids::{AttemptId, TabId};
 use crate::local_driver::LocalShell;
@@ -195,7 +196,6 @@ impl App {
     /// with the system's default program. A link to a folder goes into it; a device, a pipe
     /// or a socket opens nothing.
     pub(super) fn open_local_file(&mut self, tab: TabId, index: usize) -> Vec<Effect> {
-        let setting = self.settings.external_editor.clone();
         let Some(files) = self.files_mut(tab) else {
             return Vec::new();
         };
@@ -215,18 +215,13 @@ impl App {
         }
         files.local.select_only(Some(index));
         match local_open::opening(&name, local_open::runnable(&name, &file)) {
-            LocalOpening::Edit => match editor(&setting) {
-                Ok(editor) => vec![Effect::LaunchEditor { tab, editor, file }],
-                Err(refused) => {
-                    files.local.error = Some(super::files_edit::editor_error(refused));
-                    Vec::new()
-                }
-            },
+            LocalOpening::Edit => self.edit_local_file(tab, file),
             LocalOpening::Confirm => {
                 self.dialog = Some(Dialog::ConfirmOpenRunnable {
                     tab,
                     shown: visible_text(&file.to_string_lossy()),
                     file,
+                    chooser: false,
                 });
                 Vec::new()
             }

@@ -1814,6 +1814,98 @@ async fn paste_from_explorer_uploads_the_files_copied_or_says_there_are_none() {
     assert_eq!(request.roots[0].root.remote.as_bytes(), b"/srv/report.pdf");
 }
 
+/// What a local shell of these tests writes to: nothing reads it.
+#[cfg(not(windows))]
+#[derive(Debug)]
+struct NoInput;
+
+#[cfg(not(windows))]
+impl heimdall_app::InputSink for NoInput {
+    fn write(&self, _bytes: Vec<u8>) -> Result<(), heimdall_ssh::SessionClosed> {
+        Ok(())
+    }
+    fn resize(&self, _size: heimdall_ssh::TerminalSize) -> Result<(), heimdall_ssh::SessionClosed> {
+        Ok(())
+    }
+    fn close(&self) {}
+}
+
+/// The file browser docked beside a local shell started in `app`, listing `file` alone,
+/// chosen.
+#[cfg(not(windows))]
+fn local_browser(app: &mut App, file: &Path) -> TabId {
+    let (shell, attempt) = match app
+        .update(Message::OpenLocal(heimdall_app::local_driver::LocalShell {
+            name: "Shell".to_owned(),
+            program: None,
+            arguments: heimdall_term::local::LocalArguments::List(Vec::new()),
+            working_directory: None,
+            environment: Vec::new(),
+        }))
+        .as_slice()
+    {
+        [Effect::ConnectLocal { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("{other:?}"),
+    };
+    let effects = app.update(Message::Connection {
+        tab: shell,
+        attempt,
+        event: ConnectionEvent::Connected {
+            input: std::sync::Arc::new(NoInput),
+        },
+    });
+    let [Effect::ListLocal { tab: browser, .. }] = effects.as_slice() else {
+        panic!("the browser's listing: {effects:?}");
+    };
+    let browser = *browser;
+    let name = file.file_name().expect("name");
+    files(
+        app,
+        FilesMessage::LocalListed {
+            tab: browser,
+            result: Ok((
+                file.parent().expect("folder").to_owned(),
+                vec![LocalEntry {
+                    name: name.to_owned(),
+                    label: name.to_string_lossy().into_owned(),
+                    kind: EntryKind::File,
+                    size: None,
+                    modified: None,
+                }],
+            )),
+        },
+    );
+    select(app, browser, Side::Local, 0);
+    browser
+}
+
+/// Where no clipboard holds copied files, Heimdall holds what the local file browser
+/// copies: a Files tab's Paste uploads it, until the server's entries are cut or copied.
+/// On Windows the system's clipboard holds it, and "Paste from Explorer" uploads it.
+#[cfg(not(windows))]
+#[tokio::test]
+async fn files_copied_in_the_local_browser_are_uploaded_by_a_files_tabs_paste() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut app, tab) = tab(dir.path()).await;
+    let copied = dir.path().join("report.pdf");
+    std::fs::write(&copied, b"%PDF").expect("copied");
+    let browser = local_browser(&mut app, &copied);
+    assert!(!app.can_paste(tab), "nothing held yet");
+    assert!(files(&mut app, FilesMessage::Copy { tab: browser }).is_empty());
+    assert!(app.can_paste(tab));
+    let planned = files(&mut app, FilesMessage::Paste { tab });
+    let request = plan_request(&planned);
+    assert_eq!(request.direction, Direction::Upload);
+    assert_eq!(request.roots.len(), 1);
+    assert_eq!(request.roots[0].root.remote.as_bytes(), b"/srv/report.pdf");
+    assert!(app.can_paste(browser), "still held, as a copy");
+
+    // The server's entries cut take their place, as on a clipboard.
+    select(&mut app, tab, Side::Remote, 0);
+    files(&mut app, FilesMessage::Cut { tab });
+    assert!(!app.can_paste(browser), "no longer held");
+}
+
 /// The fingerprint a test's server file has.
 fn fingerprint(size: u64) -> heimdall_files::Fingerprint {
     heimdall_files::Fingerprint {
