@@ -31,8 +31,9 @@ use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
 
 const WINDOW: Size = Size::new(1200.0, 720.0);
-/// Height of a window showing a whole form: RDP, or SSH with its post-connect steps.
-const TALL_HEIGHT: f32 = 1400.0;
+/// Height of a window showing a whole form: RDP with its C# groups, or SSH with its
+/// post-connect steps.
+const TALL_HEIGHT: f32 = 3000.0;
 
 const SNAPSHOT_VARIABLE: &str = "HEIMDALL_SNAPSHOT_DIR";
 
@@ -244,6 +245,14 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
             ui.find(label).expect(label);
         }
         assert!(ui.find("SSH key").is_err(), "an SSH field");
+    }
+    // The box is the global defaults' while the new form follows them.
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    {
+        let mut ui = tall_simulator(&shell);
         ui.click("Enable Network Level Authentication")
             .expect("nla box");
         assert!(ui.into_messages().any(|message| matches!(
@@ -744,26 +753,274 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
         let mut ui = tall_simulator(&shell);
         ui.find("This server is using your global RDP defaults. Uncheck \"Use global RDP defaults\" to set per-server options.")
             .expect("the banner");
-        ui.find("Colours, sound, clipboard, drives, Network Level Authentication, strict server authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.")
+        ui.find("The greyed options below come from the global defaults: the values shown for them are this server's own, not the ones in effect.")
             .expect("what the options below are");
+        ui.click("Redirect printers").expect("shown");
         ui.click("Use global RDP defaults").expect("its box");
-        assert!(ui.into_messages().any(|message| matches!(
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(messages.iter().any(|message| matches!(
             message,
             Message::App(AppMessage::ProfileToggle {
                 toggle: ProfileToggle::FollowDefaults,
                 on: false
             })
         )));
+        assert!(
+            !messages
+                .iter()
+                .any(|message| matches!(message, Message::App(AppMessage::ProfileChoice(_)))),
+            "the printers are the defaults' while followed: greyed"
+        );
     }
     let _ = shell.update(app(AppMessage::ProfileToggle {
         toggle: ProfileToggle::FollowDefaults,
         on: false,
     }));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.click("Redirect printers").expect("shown");
+        assert!(
+            ui.into_messages().any(|message| matches!(
+                message,
+                Message::App(AppMessage::ProfileChoice(
+                    heimdall_app::profile_draft::ProfileChoice::Extra(
+                        heimdall_core::profile::RdpSwitch::Printers,
+                        true
+                    )
+                ))
+            )),
+            "the profile's own once left"
+        );
+    }
     let mut ui = tall_simulator(&shell);
     assert!(
-        ui.find("Colours, sound, clipboard, drives, Network Level Authentication, strict server authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.")
+        ui.find("The greyed options below come from the global defaults: the values shown for them are this server's own, not the ones in effect.")
             .is_err(),
         "its own options are the ones in effect"
+    );
+}
+
+#[test]
+fn the_rdp_form_groups_its_options_as_the_csharp_tabs_and_asks_the_rd_gateway_last() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let mut ui = tall_simulator(&shell);
+    let mut above = f32::MIN;
+    for label in [
+        "Use global RDP defaults",
+        "Display & Audio",
+        "Audio mode",
+        "Resolution profile",
+        "Session mode",
+        "Enable multi-monitor mode",
+        "Display",
+        "Allow dynamic resolution updates",
+        "Audio",
+        "Capture local microphone",
+        "Devices",
+        "Redirect clipboard",
+        "Redirect drives",
+        "Redirect printers",
+        "Redirect COM ports",
+        "Redirect smart cards",
+        "Redirect webcam",
+        "Redirect USB devices",
+        "Performance",
+        "Connection",
+        "Enable anti-idle keepalive",
+        "Keep bitmap cache on disk between sessions",
+        "Enable RDP compression",
+        "Use hardware-accelerated rendering",
+        "Automatically reconnect",
+        "Visual experience",
+        "Avoid UDP transport probing",
+        "Behavior",
+        "Security",
+        "Enable Network Level Authentication",
+        "Require server identity validation",
+        "Run as administrator session (/admin)",
+        "Open in fullscreen",
+        "Gateway routing",
+        "RD Gateway server",
+        "Microsoft Remote Desktop Gateway used to reach this host over HTTPS. Not the same as the SSH jump host configured above.",
+        "Organization",
+    ] {
+        let top = ui.find(label).expect(label).bounds().y;
+        assert!(
+            top > above,
+            "{label} below the one before, as in the C# dialog"
+        );
+        above = top;
+    }
+}
+
+#[test]
+fn every_rdp_extra_is_saved_from_the_form_and_read_back_from_the_store() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_core::profile::{RdpExtras, RdpSwitch, Resolution};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    for (field, value) in [
+        (ProfileField::Name, "dc"),
+        (ProfileField::Host, "dc.lab"),
+        (ProfileField::RdGateway, "rdg.lab.example"),
+    ] {
+        let _ = shell.update(app(AppMessage::ProfileField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let defaults = RdpExtras::default();
+    let switches = [
+        RdpSwitch::Printers,
+        RdpSwitch::ComPorts,
+        RdpSwitch::SmartCards,
+        RdpSwitch::Webcam,
+        RdpSwitch::Usb,
+        RdpSwitch::Microphone,
+        RdpSwitch::BitmapCaching,
+        RdpSwitch::Compression,
+        RdpSwitch::HardwareAcceleration,
+        RdpSwitch::DisableUdp,
+        RdpSwitch::FullScreen,
+    ];
+    // Each the other way from a new profile's.
+    for switch in switches {
+        let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::Extra(
+            switch,
+            !switch.is_on(&defaults),
+        ))));
+    }
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::MultiMonitor(
+        true,
+    ))));
+    for index in [2, 0] {
+        let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::Monitor(
+            index, true,
+        ))));
+    }
+    let _ = shell.update(Message::SaveProfileForm);
+    let store =
+        heimdall_core::store::ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    let saved = store
+        .rdp_profiles()
+        .iter()
+        .find(|profile| profile.name == "dc")
+        .cloned()
+        .expect("saved");
+    for switch in switches {
+        assert_eq!(
+            switch.is_on(&saved.extras),
+            !switch.is_on(&defaults),
+            "{switch:?}"
+        );
+    }
+    assert_eq!(saved.extras.rd_gateway.as_deref(), Some("rdg.lab.example"));
+    assert!(saved.extras.multi_monitor);
+    assert_eq!(saved.extras.monitors, [0, 2]);
+    assert_eq!(saved.options.resolution, Resolution::MultiMonitor);
+    // Edited again: the form reads every one back.
+    let _ = shell.update(app(AppMessage::EditProfile(saved.id.clone())));
+    let mut ui = tall_simulator(&shell);
+    ui.find("rdg.lab.example").expect("the gateway typed");
+}
+
+#[test]
+fn the_multi_monitor_picker_shows_the_screens_as_listed_not_as_drawn() {
+    use heimdall_app::profile_draft::ProfileChoice;
+    use heimdall_ui::rdp_options::Monitor;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileToggle {
+        toggle: ProfileToggle::FollowDefaults,
+        on: false,
+    }));
+    // Screens this test machine does not have: shown only if the form reads the list kept.
+    shell.set_monitors(vec![
+        Monitor {
+            index: 0,
+            width: 2560,
+            height: 1440,
+            primary: true,
+        },
+        Monitor {
+            index: 1,
+            width: 1200,
+            height: 1920,
+            primary: false,
+        },
+    ]);
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::MultiMonitor(
+        true,
+    ))));
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("Monitor 1: 2560x1440 (primary)")
+            .expect("the first screen kept");
+        ui.click("Monitor 2: 1200x1920 (vertical)")
+            .expect("the second screen kept");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileChoice(ProfileChoice::Monitor(1, true)))
+        )));
+    }
+    // The form closed, the list goes; opened again, the screens there are are listed.
+    let _ = shell.update(app(AppMessage::DismissDialog));
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::MultiMonitor(
+        true,
+    ))));
+    let mut ui = tall_simulator(&shell);
+    assert!(
+        ui.find("Monitor 1: 2560x1440 (primary)").is_err(),
+        "listed again on opening"
+    );
+}
+
+#[test]
+fn an_rd_gateway_that_is_no_host_name_is_refused_with_the_csharp_reason() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    for (field, value) in [
+        (ProfileField::Name, "dc"),
+        (ProfileField::Host, "dc.lab"),
+        (ProfileField::RdGateway, "https://rdg.lab:443"),
+    ] {
+        let _ = shell.update(app(AppMessage::ProfileField {
+            field,
+            value: value.to_owned(),
+        }));
+    }
+    let _ = shell.update(Message::SaveProfileForm);
+    {
+        let mut ui = tall_simulator(&shell);
+        ui.find("The RD Gateway must be a valid host name or IP address.")
+            .expect("the reason");
+    }
+    assert!(shell.app().profiles().is_empty() && shell.app().rdp_profiles().is_empty());
+    let _ = shell.update(app(AppMessage::ProfileField {
+        field: ProfileField::RdGateway,
+        value: "rdg.lab".to_owned(),
+    }));
+    let _ = shell.update(Message::SaveProfileForm);
+    assert_eq!(
+        shell.app().rdp_profiles()[0].extras.rd_gateway.as_deref(),
+        Some("rdg.lab")
     );
 }
 

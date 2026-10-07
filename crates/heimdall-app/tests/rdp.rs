@@ -1196,6 +1196,33 @@ fn a_profile_set_to_the_external_client_opens_in_it_and_no_tab() {
 }
 
 #[test]
+fn full_screen_opens_remote_desktop_connection_full_screen_and_leaves_a_tab_as_it_is() {
+    use heimdall_core::profile::Resolution;
+
+    // As the C#: `RdpFullScreen` is written into the connection file of the external
+    // client, outside its automatic mode, and never read by the embedded session.
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), |profile| {
+        profile.extras.full_screen = true;
+        profile.options.resolution = Resolution::Fixed;
+    });
+    let (tab, _attempt) = open(&mut app);
+    assert!(app.tab(tab).is_some(), "a tab, as without it");
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), |profile| {
+        profile.extras.full_screen = true;
+        profile.extras.external = true;
+        profile.options.resolution = Resolution::Fixed;
+    });
+    let effects = app.update(Message::OpenRdp(ProfileId::new("dc")));
+    let [Effect::LaunchRdpExternal { content, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert!(content.contains("\r\nscreen mode id:i:2\r\n"), "{content}");
+}
+
+#[test]
 fn an_external_profile_through_an_ssh_gateway_is_refused_not_sent_straight() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app_with(dir.path(), |profile| {

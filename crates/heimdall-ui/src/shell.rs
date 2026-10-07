@@ -1182,6 +1182,10 @@ pub struct Shell {
     /// The window's drawn area, as last reported, in full screen too: what a tab dragged
     /// out of it is let go beyond to detach.
     window_extent: Option<iced::Size>,
+    /// This computer's screens while an RDP profile form is open, as its multi-monitor
+    /// picker offers them: listed when the form opens and again when the main window is
+    /// rescaled or resized, never while it is drawn; none while no such form is open.
+    monitors: Option<Vec<crate::rdp_options::Monitor>>,
     /// The sidebar's width, as dragged.
     sidebar_width: f32,
     /// The handle between the sidebar and the sessions is held.
@@ -1442,6 +1446,7 @@ impl Shell {
             floating: std::collections::BTreeMap::new(),
             window_size: None,
             window_extent: None,
+            monitors: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
             split_drag: None,
@@ -1488,6 +1493,13 @@ impl Shell {
     #[must_use]
     pub fn into_app(self) -> App {
         self.app
+    }
+
+    /// Takes `monitors` as this computer's screens for the RDP profile form open, in place
+    /// of those listed, until the window is next rescaled or resized or the form closes:
+    /// what a test gives the multi-monitor picker.
+    pub fn set_monitors(&mut self, monitors: Vec<crate::rdp_options::Monitor>) {
+        self.monitors = Some(monitors);
     }
 
     /// Whether something typed into `question` is held.
@@ -2210,6 +2222,7 @@ impl Shell {
             self.sudo_password = Zeroizing::default();
         }
         self.forget_finished();
+        self.keep_monitors();
         // The previous run's sessions, offered once nothing else is asked and the window is
         // open to the user.
         if !self.gated() {
@@ -2323,6 +2336,7 @@ impl Shell {
             Message::WindowOpened(id) => window::scale_factor(*id).map(Message::Rescaled),
             Message::Rescaled(scale) => {
                 self.density = *scale;
+                self.relist_monitors();
                 // RDP desktops opened from now on ask for this scale.
                 let _ = self.app.update(AppMessage::DisplayScale(*scale));
                 Task::none()
@@ -2479,6 +2493,7 @@ impl Shell {
     fn forms(&self, height: f32) -> Forms<'_> {
         Forms {
             fields_height: (height - DIALOG_RESERVED_HEIGHT).max(0.0),
+            monitors: self.monitors.as_deref().unwrap_or_default(),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
             sudo_password: &self.sudo_password,
@@ -3032,6 +3047,28 @@ impl Shell {
                     .any(|prompt| prompt.question == *question)
             })
         });
+    }
+
+    /// Lists the screens when an RDP profile form opens, and forgets them once it is
+    /// closed: the form reads them as they were listed, not at each redraw.
+    fn keep_monitors(&mut self) {
+        let rdp_form = matches!(
+            &self.app.dialog,
+            Some(Dialog::EditProfile { draft, .. }) if draft.protocol == DraftProtocol::Rdp
+        );
+        if !rdp_form {
+            self.monitors = None;
+        } else if self.monitors.is_none() {
+            self.monitors = Some(crate::screens::monitors());
+        }
+    }
+
+    /// Lists the screens again for an RDP profile form open: the window rescaled or resized,
+    /// a screen may have been plugged or removed.
+    fn relist_monitors(&mut self) {
+        if self.monitors.is_some() {
+            self.monitors = Some(crate::screens::monitors());
+        }
     }
 
     /// Gives focus to the first field of the question shown, once per question: the main
@@ -5774,6 +5811,7 @@ impl Shell {
             }
             // Full screen is not the window's own size.
             Message::WindowResized(size) => {
+                self.relist_monitors();
                 if !self.fullscreen {
                     self.window_size = Some(size);
                 }
@@ -8060,6 +8098,8 @@ struct Forms<'a> {
     passwords: PasswordStore,
     /// The most a dialog's scrolling fields may take, so its buttons stay in the window.
     fields_height: f32,
+    /// This computer's screens, as last listed for the RDP profile form.
+    monitors: &'a [crate::rdp_options::Monitor],
 }
 
 /// Whether a password typed now can be saved.
@@ -8242,6 +8282,10 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::RemoteLocalPort => {
             (fl!("ui-profile-remote-local-port"), PORT_OFF.to_string())
         }
+        ProfileField::RdGateway => (
+            fl!("ui-profile-field-rd-gateway"),
+            fl!("ui-profile-rd-gateway-placeholder"),
+        ),
         ProfileField::LocalProgram => (
             fl!("ui-profile-local-executable"),
             fl!("ui-profile-local-default-shell"),
@@ -8487,7 +8531,7 @@ fn gateway_choice(gateway: &SshGateway) -> GatewayChoice {
 }
 
 /// A session's gateway routing, as the C# Network tab: connect directly, or through a
-/// gateway chosen, added or edited here.
+/// gateway chosen, added or edited here; for RDP, then the RD Gateway.
 fn network_section<'a>(
     draft: &'a ProfileDraft,
     gateways: &'a [SshGateway],
@@ -8563,6 +8607,13 @@ fn network_section<'a>(
     }
     if draft.shows(ProfileField::SocksPort) {
         section_column = forward_cards(draft, section_column);
+    }
+    // After the SSH gateway, as the C# Network tab asks it.
+    if draft.shows(ProfileField::RdGateway) {
+        section_column = section_column.push(crate::rdp_options::rd_gateway(
+            draft,
+            form_field(draft, ProfileField::RdGateway),
+        ));
     }
     section_column.into()
 }
@@ -8955,8 +9006,11 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
     form
 }
 
-/// The protocol's options, as its C# card.
-fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
+/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`.
+fn options_section<'a>(
+    draft: &'a ProfileDraft,
+    monitors: &[crate::rdp_options::Monitor],
+) -> Column<'a, Message> {
     let mut form = Column::new().spacing(SPACING);
     let options = match draft.protocol {
         DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
@@ -8971,8 +9025,8 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         form = form.push(section(options, None));
     }
     if draft.protocol == DraftProtocol::Rdp {
-        // As the C# card: the choice first; the profile's own options stay shown, said not to
-        // be the ones in effect.
+        // As the C# card: the choice first; the profile's own options stay shown, those the
+        // defaults decide greyed and said not to be the ones in effect; then the C# tabs.
         form = form.push(toggle_box(
             draft,
             ProfileToggle::FollowDefaults,
@@ -8983,9 +9037,15 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
                 .push(text(fl!("ui-profile-rdp-defaults-banner")).size(SMALL_SIZE))
                 .push(text(fl!("ui-profile-rdp-defaults-not-in-effect")).size(SMALL_SIZE));
         }
-        form = form.push(crate::rdp_options::view(draft.rdp_options)).push(
-            crate::rdp_options::resolution(draft, |field| form_field(draft, field)),
-        );
+        form = form
+            .push(crate::rdp_options::display_audio(
+                draft,
+                monitors,
+                |field| form_field(draft, field),
+            ))
+            .push(crate::rdp_options::devices(draft))
+            .push(crate::rdp_options::performance(draft))
+            .push(crate::rdp_options::behavior(draft));
     }
     if draft.protocol == DraftProtocol::Citrix {
         form = form.push(crate::citrix_form::advanced(|field| {
@@ -8993,7 +9053,9 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
         }));
     }
     for toggle in ProfileToggle::of(draft.protocol) {
-        if *toggle != ProfileToggle::StoredCredential && draft.shows_toggle(*toggle) {
+        // The RDP groups draw their own boxes, in the C# tabs.
+        let grouped = draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle);
+        if *toggle != ProfileToggle::StoredCredential && !grouped && draft.shows_toggle(*toggle) {
             form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
             // What the box does, under it, as the C# dialog's hint.
             if let Some(hint) = toggle_hint(*toggle) {
@@ -9034,9 +9096,6 @@ fn options_section(draft: &ProfileDraft) -> Column<'_, Message> {
                 .size(SMALL_SIZE)
                 .style(text::danger),
         );
-    }
-    if draft.protocol == DraftProtocol::Rdp {
-        form = form.push(crate::rdp_options::experience(draft.rdp_options));
     }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(crate::post_connect_form::view(&draft.post_connect));
@@ -9114,7 +9173,7 @@ fn profile_form<'a>(
 
     form = form
         .push(credentials_section(draft, forms))
-        .push(options_section(draft));
+        .push(options_section(draft, forms.monitors));
 
     if draft.protocol.routes_through_gateway() {
         form = form.push(network_section(draft, forms.gateways));

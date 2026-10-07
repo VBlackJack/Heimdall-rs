@@ -14,16 +14,23 @@
  * limitations under the License.
  */
 
-//! The display and sound choices of an RDP profile's form, as the C# "Display & Audio"
-//! card: the audio mode beside the colour depth, then how the desktop is sized.
+//! The RDP options of a profile's form, as the C# server dialog's RDP tabs in their order:
+//! "Display & Audio" (the audio mode beside the colour depth, then how the desktop is sized,
+//! the monitors spanned and the microphone), "Devices", "Performance" and "Behavior"; the RD
+//! Gateway, which the C# asks on its Network tab; and the application's RDP options on the
+//! settings page.
+//!
+//! While a profile follows the global defaults, the options they decide are greyed and out
+//! of reach, their values the profile's own, as the C# greys them. What only Remote Desktop
+//! Connection honours says so while the profile opens in a tab.
 
-use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField};
+use heimdall_app::profile_draft::{ProfileChoice, ProfileDraft, ProfileField, ProfileToggle};
 use heimdall_app::{Message as AppMessage, SettingsMessage};
 use heimdall_core::profile::{
-    Aspect, AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, Resolution,
+    Aspect, AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, RdpSwitch, Resolution,
 };
-use iced::widget::{checkbox, column, pick_list, row, text};
-use iced::{Element, Length};
+use iced::widget::{checkbox, column, container, opaque, pick_list, row, space, stack, text};
+use iced::{Alignment, Color, Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -32,6 +39,26 @@ use crate::shell::Message;
 const SPACING: f32 = 8.0;
 /// Size of a list's label.
 const LABEL_SIZE: f32 = 12.0;
+/// How much of the form's background veils a list the global defaults decide, as a
+/// disabled C# control is greyed.
+const VEIL_OPACITY: f32 = 0.5;
+/// The fewest screens that can be spanned, as the C# `RdpDisplayCapabilities` offers the
+/// multi-monitor mode.
+const MULTI_MONITOR_SCREENS: usize = 2;
+
+/// A screen of this computer, as the C# `MonitorInfo` gives it to the monitors an RDP
+/// profile spans.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Monitor {
+    /// Its place among the screens, as Remote Desktop Connection numbers them.
+    pub index: u32,
+    /// Its width, in pixels.
+    pub width: u32,
+    /// Its height, in pixels.
+    pub height: u32,
+    /// Whether it is the primary screen.
+    pub primary: bool,
+}
 
 /// A colour depth as the list names it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,14 +88,333 @@ impl std::fmt::Display for AudioChoice {
     }
 }
 
-/// The audio mode and colour depth lists of `options`, side by side.
+/// The audio mode and colour depth lists of `options`, side by side; greyed and out of
+/// reach when `locked`, the global defaults deciding them.
 #[must_use]
-pub fn view<'a>(options: RdpOptions) -> Element<'a, Message> {
-    lists(
-        options.audio,
-        options.color_depth,
-        |audio| Message::App(AppMessage::ProfileChoice(ProfileChoice::Audio(audio))),
-        |depth| Message::App(AppMessage::ProfileChoice(ProfileChoice::ColorDepth(depth))),
+pub fn view<'a>(options: RdpOptions, locked: bool) -> Element<'a, Message> {
+    veiled(
+        lists(
+            options.audio,
+            options.color_depth,
+            |audio| Message::App(AppMessage::ProfileChoice(ProfileChoice::Audio(audio))),
+            |depth| Message::App(AppMessage::ProfileChoice(ProfileChoice::ColorDepth(depth))),
+        ),
+        locked,
+    )
+}
+
+/// `element` greyed and out of reach when `locked`, as the C# greys a control: a list has
+/// no disabled state of its own, so a veil takes the clicks meant for it.
+fn veiled(element: Element<'_, Message>, locked: bool) -> Element<'_, Message> {
+    if !locked {
+        return element;
+    }
+    let veil = container(space::horizontal())
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .style(|theme: &Theme| container::Style {
+            background: Some(
+                Color {
+                    a: VEIL_OPACITY,
+                    ..theme.palette().background
+                }
+                .into(),
+            ),
+            ..container::Style::default()
+        });
+    stack![element, opaque(veil)].width(Length::Fill).into()
+}
+
+/// Whether the form's profile follows the global defaults, which then decide the options
+/// they have.
+fn following(draft: &ProfileDraft) -> bool {
+    draft.is_on(ProfileToggle::FollowDefaults)
+}
+
+/// Whether the profile opens in a tab, where only the built-in client's options apply: not
+/// set to Remote Desktop Connection, and no RD Gateway typed, which opens it there too.
+fn opens_in_tab(draft: &ProfileDraft) -> bool {
+    !draft.rdp_extras.external && draft.rd_gateway.trim().is_empty()
+}
+
+/// A group of the options, named as the C# names its tab.
+fn group<'a>(title: String) -> Element<'a, Message> {
+    text(title).into()
+}
+
+/// A part of a group, named as the C# labels it.
+fn part<'a>(title: String) -> Element<'a, Message> {
+    text(title).size(LABEL_SIZE).into()
+}
+
+/// `element`, and beside it, while the profile opens in a tab, that only Remote Desktop
+/// Connection honours it.
+fn external_only<'a>(draft: &ProfileDraft, element: Element<'a, Message>) -> Element<'a, Message> {
+    if !opens_in_tab(draft) {
+        return element;
+    }
+    row![
+        element,
+        text(fl!("ui-profile-rdp-mstsc-only"))
+            .size(LABEL_SIZE)
+            .style(text::secondary),
+    ]
+    .spacing(SPACING)
+    .align_y(Alignment::Center)
+    .into()
+}
+
+/// The box of `toggle`, out of reach when `locked`.
+fn toggle_box<'a>(
+    draft: &ProfileDraft,
+    toggle: ProfileToggle,
+    label: String,
+    locked: bool,
+) -> Element<'a, Message> {
+    checkbox(draft.is_on(toggle))
+        .label(label)
+        .on_toggle_maybe(
+            (!locked).then_some(move |on| Message::App(AppMessage::ProfileToggle { toggle, on })),
+        )
+        .into()
+}
+
+/// The box of `switch`, out of reach while the global defaults decide it, said to be
+/// Remote Desktop Connection's.
+fn switch_box<'a>(draft: &ProfileDraft, switch: RdpSwitch) -> Element<'a, Message> {
+    let locked = following(draft) && switch.follows_defaults();
+    external_only(
+        draft,
+        checkbox(switch.is_on(&draft.rdp_extras))
+            .label(switch_label(switch))
+            .on_toggle_maybe(
+                (!locked).then_some(move |on| choice(ProfileChoice::Extra(switch, on))),
+            )
+            .into(),
+    )
+}
+
+/// The C# server dialog's label of `switch`, the RDP settings' where the words are the same.
+fn switch_label(switch: RdpSwitch) -> String {
+    match switch {
+        RdpSwitch::Printers => fl!("ui-settings-rdp-redirect-printers"),
+        RdpSwitch::ComPorts => fl!("ui-settings-rdp-redirect-com-ports"),
+        RdpSwitch::SmartCards => fl!("ui-settings-rdp-redirect-smart-cards"),
+        RdpSwitch::Webcam => fl!("ui-settings-rdp-redirect-webcam"),
+        RdpSwitch::Usb => fl!("ui-settings-rdp-redirect-usb"),
+        RdpSwitch::Microphone => fl!("ui-profile-rdp-microphone"),
+        RdpSwitch::BitmapCaching => fl!("ui-profile-rdp-bitmap-cache"),
+        RdpSwitch::Compression => fl!("ui-profile-rdp-compression"),
+        RdpSwitch::HardwareAcceleration => fl!("ui-profile-rdp-hardware-acceleration"),
+        RdpSwitch::DisableUdp => fl!("ui-profile-rdp-disable-udp"),
+        RdpSwitch::FullScreen => fl!("ui-profile-rdp-full-screen"),
+    }
+}
+
+/// Whether the RDP form draws the box of `toggle` in one of its groups, rather than the
+/// form's list of boxes.
+#[must_use]
+pub fn draws(toggle: ProfileToggle) -> bool {
+    matches!(
+        toggle,
+        ProfileToggle::RedirectClipboard
+            | ProfileToggle::RedirectDrives
+            | ProfileToggle::AntiIdle
+            | ProfileToggle::AutoReconnect
+            | ProfileToggle::Nla
+            | ProfileToggle::StrictServerAuthentication
+            | ProfileToggle::AdminSession
+    )
+}
+
+/// The C# "Display & Audio" tab of `draft`: the audio mode and colour depth, then the
+/// resolution card, its fields drawn by `field`, with the monitors among `monitors`.
+pub fn display_audio<'a>(
+    draft: &'a ProfileDraft,
+    monitors: &[Monitor],
+    field: impl Fn(ProfileField) -> Element<'a, Message>,
+) -> Element<'a, Message> {
+    column![
+        group(fl!("ui-profile-rdp-tab-display-audio")),
+        view(draft.rdp_options, following(draft)),
+        resolution(draft, monitors, field),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The C# "Devices" tab of `draft`: what this computer shares with the server.
+#[must_use]
+pub fn devices<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
+    let locked = following(draft);
+    let mut tab = column![
+        group(fl!("ui-profile-rdp-tab-devices")),
+        toggle_box(
+            draft,
+            ProfileToggle::RedirectClipboard,
+            fl!("ui-profile-toggle-clipboard"),
+            locked
+        ),
+        toggle_box(
+            draft,
+            ProfileToggle::RedirectDrives,
+            fl!("ui-profile-toggle-drives"),
+            locked
+        ),
+    ]
+    .spacing(SPACING);
+    for switch in [
+        RdpSwitch::Printers,
+        RdpSwitch::ComPorts,
+        RdpSwitch::SmartCards,
+        RdpSwitch::Webcam,
+        RdpSwitch::Usb,
+    ] {
+        tab = tab.push(switch_box(draft, switch));
+    }
+    tab.into()
+}
+
+/// The C# "Performance" tab of `draft`: the connection's boxes, the visual experience, then
+/// UDP.
+#[must_use]
+pub fn performance<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
+    let locked = following(draft);
+    column![
+        group(fl!("ui-profile-rdp-tab-performance")),
+        part(fl!("ui-profile-rdp-connection-section")),
+        toggle_box(
+            draft,
+            ProfileToggle::AntiIdle,
+            fl!("ui-profile-toggle-anti-idle"),
+            false
+        ),
+        switch_box(draft, RdpSwitch::BitmapCaching),
+        switch_box(draft, RdpSwitch::Compression),
+        switch_box(draft, RdpSwitch::HardwareAcceleration),
+        toggle_box(
+            draft,
+            ProfileToggle::AutoReconnect,
+            fl!("ui-profile-toggle-auto-reconnect"),
+            locked
+        ),
+        experience(draft.rdp_options),
+        switch_box(draft, RdpSwitch::DisableUdp),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The C# "Behavior" tab of `draft`: the security boxes, strict server authentication only
+/// with Network Level Authentication, then the administrative session and full screen.
+#[must_use]
+pub fn behavior<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
+    let locked = following(draft);
+    column![
+        group(fl!("ui-profile-rdp-tab-behavior")),
+        part(fl!("ui-profile-rdp-security-section")),
+        toggle_box(
+            draft,
+            ProfileToggle::Nla,
+            fl!("ui-profile-toggle-nla"),
+            locked
+        ),
+        toggle_box(
+            draft,
+            ProfileToggle::StrictServerAuthentication,
+            fl!("ui-profile-toggle-strict-server-auth"),
+            locked || !draft.is_on(ProfileToggle::Nla),
+        ),
+        toggle_box(
+            draft,
+            ProfileToggle::AdminSession,
+            fl!("ui-profile-toggle-admin"),
+            false
+        ),
+        switch_box(draft, RdpSwitch::FullScreen),
+    ]
+    .spacing(SPACING)
+    .into()
+}
+
+/// The C# "RD Gateway server" of `draft`: its `field`, the C# hint, and, while the profile
+/// would open in a tab, that a gateway opens it in Remote Desktop Connection.
+pub fn rd_gateway<'a>(draft: &ProfileDraft, field: Element<'a, Message>) -> Element<'a, Message> {
+    let mut card = column![
+        field,
+        text(fl!("ui-profile-rd-gateway-hint")).size(LABEL_SIZE),
+    ]
+    .spacing(SPACING / 2.0);
+    if !draft.rdp_extras.external {
+        card = card.push(
+            text(fl!("ui-profile-rd-gateway-mstsc"))
+                .size(LABEL_SIZE)
+                .style(text::secondary),
+        );
+    }
+    card.into()
+}
+
+/// The C# monitors of `draft` while it spans them: the note, the saved ones not connected
+/// said kept, then each of `monitors` to tick when there are several, as the C# picker.
+fn spanned<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Option<Element<'a, Message>> {
+    if !draft.spans_monitors() {
+        return None;
+    }
+    let mut card =
+        column![text(fl!("ui-profile-rdp-multi-monitor-note")).size(LABEL_SIZE)].spacing(SPACING);
+    let saved = &draft.rdp_extras.monitors;
+    if saved
+        .iter()
+        .any(|index| !monitors.iter().any(|monitor| monitor.index == *index))
+    {
+        card = card.push(text(fl!("ui-profile-rdp-monitors-offline-kept")).size(LABEL_SIZE));
+    }
+    if monitors.len() >= MULTI_MONITOR_SCREENS {
+        card = card
+            .push(text(fl!("ui-profile-rdp-monitors-title")).size(LABEL_SIZE))
+            .push(text(fl!("ui-profile-rdp-monitors-caption")).size(LABEL_SIZE));
+        for monitor in monitors {
+            let index = monitor.index;
+            card = card.push(
+                checkbox(saved.contains(&index))
+                    .label(monitor_label(monitor))
+                    .on_toggle(move |on| choice(ProfileChoice::Monitor(index, on))),
+            );
+        }
+    }
+    Some(card.into())
+}
+
+/// A monitor as the C# picker names it: its number from 1 and its size, then whether it is
+/// the primary one, then whether it stands upright.
+fn monitor_label(monitor: &Monitor) -> String {
+    let mut label = fl!(
+        "ui-profile-rdp-monitor",
+        number = monitor.index.saturating_add(1),
+        width = monitor.width,
+        height = monitor.height
+    );
+    if monitor.primary {
+        label = fl!("ui-profile-rdp-monitor-primary", monitor = label);
+    }
+    if monitor.width > 0 && monitor.height > 0 && monitor.width < monitor.height {
+        label = fl!("ui-profile-rdp-monitor-vertical", monitor = label);
+    }
+    label
+}
+
+/// The C# "Enable multi-monitor mode" of `draft`: offered with several `monitors`, or to
+/// turn it off; out of reach while the global defaults decide it.
+fn multi_monitor<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Element<'a, Message> {
+    let spans = draft.spans_monitors();
+    let offered = (monitors.len() >= MULTI_MONITOR_SCREENS || spans) && !following(draft);
+    external_only(
+        draft,
+        checkbox(spans)
+            .label(fl!("ui-profile-rdp-multi-monitor"))
+            .on_toggle_maybe(offered.then_some(|on| choice(ProfileChoice::MultiMonitor(on))))
+            .into(),
     )
 }
 
@@ -368,13 +714,16 @@ fn choice(choice: ProfileChoice) -> Message {
 }
 
 /// The C# "Resolution profile" card of `draft`: the mode, and in the fixed mode its common
-/// sizes, the width and height drawn by `field`, and whether it is scaled; then whether the
-/// desktop follows the tab.
+/// sizes, the width and height drawn by `field`, and whether it is scaled; then the
+/// monitors spanned among `monitors` and the multi-monitor box; then the C# "Display" with
+/// whether the desktop follows the tab, and "Audio" with the microphone.
 pub fn resolution<'a>(
     draft: &'a ProfileDraft,
+    monitors: &[Monitor],
     field: impl Fn(ProfileField) -> Element<'a, Message>,
 ) -> Element<'a, Message> {
     let options = draft.rdp_options;
+    let locked = following(draft);
     let mut card = column![
         text(fl!("ui-profile-resolution-title")),
         text(fl!("ui-profile-resolution-desc")).size(LABEL_SIZE),
@@ -401,19 +750,6 @@ pub fn resolution<'a>(
             )
             .width(Length::Fill),
         );
-    // What an imported profile asks that the built-in client does not do: said, not lost.
-    let unused = draft.rdp_extras.unused();
-    if !unused.is_empty() {
-        let names: Vec<String> = unused.into_iter().map(crate::texts::rdp_extra).collect();
-        card = card.push(
-            text(fl!(
-                "ui-profile-rdp-extras",
-                extras = names.join(&fl!("ui-dialog-import-dropped-separator"))
-            ))
-            .size(LABEL_SIZE)
-            .style(text::secondary),
-        );
-    }
     if draft.shows(ProfileField::FixedWidth) {
         // The size typed, when it is one of the list's.
         let typed = (
@@ -450,10 +786,19 @@ pub fn resolution<'a>(
                     .on_toggle(|on| choice(ProfileChoice::ScaleFixed(on))),
             );
     }
-    card.push(
-        checkbox(options.dynamic_resolution)
-            .label(fl!("ui-profile-resolution-dynamic"))
-            .on_toggle(|on| choice(ProfileChoice::DynamicResolution(on))),
-    )
-    .into()
+    if let Some(spanned) = spanned(draft, monitors) {
+        card = card.push(spanned);
+    }
+    card.push(multi_monitor(draft, monitors))
+        .push(part(fl!("ui-profile-rdp-display-section")))
+        .push(
+            checkbox(options.dynamic_resolution)
+                .label(fl!("ui-profile-resolution-dynamic"))
+                .on_toggle_maybe(
+                    (!locked).then_some(|on| choice(ProfileChoice::DynamicResolution(on))),
+                ),
+        )
+        .push(part(fl!("ui-profile-rdp-audio-section")))
+        .push(switch_box(draft, RdpSwitch::Microphone))
+        .into()
 }

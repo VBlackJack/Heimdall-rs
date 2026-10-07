@@ -26,8 +26,8 @@ use heimdall_core::profile::{
     Aspect, AudioPlayback, CitrixProfile, ColorDepth, DEFAULT_FTP_PORT, DEFAULT_RDP_PORT,
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
     Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile,
-    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
-    SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, RdpSwitch,
+    Resolution, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 use crate::local_draft;
@@ -39,6 +39,13 @@ const NO_PORT: u16 = 0;
 
 /// Port when the field is left empty.
 pub const DEFAULT_SSH_PORT: u16 = 22;
+
+/// The longest name a Remote Desktop Gateway can have, as the C# `InputValidator` bounds a
+/// DNS name.
+const MAX_GATEWAY_NAME_LENGTH: usize = 255;
+
+/// The longest label of a DNS name, between two dots.
+const MAX_DNS_LABEL_LENGTH: usize = 63;
 
 /// Prefix of the identifiers this application gives, apart from imported ones.
 const ID_PREFIX: &str = "rs-";
@@ -78,6 +85,9 @@ pub enum ProfileField {
     RemoteBindPort,
     /// The local port of the remote forward.
     RemoteLocalPort,
+    /// RDP: the Remote Desktop Gateway the server is reached through, as the C# "RD Gateway
+    /// server"; empty goes straight to it.
+    RdGateway,
     /// The program a local shell runs; empty is the default shell.
     LocalProgram,
     /// Its arguments, as one line.
@@ -92,7 +102,7 @@ pub enum ProfileField {
 
 impl ProfileField {
     /// Every field, in form order.
-    pub const ALL: [Self; 21] = [
+    pub const ALL: [Self; 22] = [
         Self::Name,
         Self::Group,
         Self::Host,
@@ -109,6 +119,7 @@ impl ProfileField {
         Self::SocksPort,
         Self::RemoteBindPort,
         Self::RemoteLocalPort,
+        Self::RdGateway,
         Self::LocalProgram,
         Self::LocalArguments,
         Self::WorkingDirectory,
@@ -184,9 +195,10 @@ impl DraftProtocol {
                     Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm | Self::Ftp
                 )
             }
-            ProfileField::Domain | ProfileField::FixedWidth | ProfileField::FixedHeight => {
-                self == Self::Rdp
-            }
+            ProfileField::Domain
+            | ProfileField::FixedWidth
+            | ProfileField::FixedHeight
+            | ProfileField::RdGateway => self == Self::Rdp,
             ProfileField::KeyPath => self.is_ssh_family(),
             // The protocols whose password the external credential provider gives.
             ProfileField::VaultEntry => self.saves_password(),
@@ -375,6 +387,13 @@ pub enum ProfileChoice {
     DynamicResolution(bool),
     /// A box of the visual experience, ticked or cleared.
     Experience(Experience, bool),
+    /// A box of the options only the external client honours, ticked or cleared.
+    Extra(RdpSwitch, bool),
+    /// The C# "Enable multi-monitor mode": on, the multi-monitor mode; off, the automatic
+    /// one, as the C# toggle switches the resolution mode.
+    MultiMonitor(bool),
+    /// A monitor spanned, by index, ticked or cleared.
+    Monitor(u32, bool),
     /// The environment, none for `None`.
     Environment(Option<Environment>),
     /// Whether its sessions keep a transcript; `None` follows the settings.
@@ -439,10 +458,12 @@ pub struct ProfileDraft {
     /// RDP: the options chosen from lists and boxes of their own; the administrative session
     /// is a toggle, the fixed size is typed in `fixed_width` and `fixed_height`.
     pub rdp_options: RdpOptions,
-    /// RDP: what the profile asks that the built-in client does not do yet, which the form
-    /// does not edit but for the session mode: kept as it is, so that saving the form never
-    /// drops it.
+    /// RDP: what the profile asks that the built-in client does not do yet, edited by its
+    /// own boxes; the RD Gateway is typed in `rd_gateway`, strict server authentication is a
+    /// toggle.
     pub rdp_extras: RdpExtras,
+    /// RDP: the Remote Desktop Gateway, as typed.
+    pub rd_gateway: String,
     /// What the profile's metadata says that the form does not show (where it came from,
     /// its place in its folder, its tunnels panel): kept as it is.
     pub metadata_kept: ProfileMetadata,
@@ -551,6 +572,8 @@ pub enum DraftError {
     ArgumentsInvalid,
     /// The MAC address typed is not twelve hexadecimal digits.
     MacAddressInvalid,
+    /// The Remote Desktop Gateway is neither a host name nor an IPv4 address.
+    RdGatewayInvalid,
 }
 
 impl DraftError {
@@ -574,6 +597,7 @@ impl DraftError {
             Self::RemoteLocalPortInvalid => ProfileField::RemoteLocalPort,
             Self::ArgumentsInvalid => ProfileField::LocalArguments,
             Self::MacAddressInvalid => ProfileField::MacAddress,
+            Self::RdGatewayInvalid => ProfileField::RdGateway,
         }
     }
 }
@@ -782,6 +806,7 @@ impl ProfileDraft {
             toggles,
             rdp_options: profile.options,
             rdp_extras: profile.extras.clone(),
+            rd_gateway: profile.extras.rd_gateway.clone().unwrap_or_default(),
             fixed_width: profile.options.fixed_width.to_string(),
             fixed_height: profile.options.fixed_height.to_string(),
             ..Self::default()
@@ -986,6 +1011,23 @@ impl ProfileDraft {
             ProfileChoice::ScaleFixed(on) => self.rdp_options.scale_fixed = on,
             ProfileChoice::DynamicResolution(on) => self.rdp_options.dynamic_resolution = on,
             ProfileChoice::Experience(experience, on) => self.rdp_options.set(experience, on),
+            ProfileChoice::Extra(switch, on) => switch.set(&mut self.rdp_extras, on),
+            ProfileChoice::MultiMonitor(on) => {
+                self.rdp_options.resolution = if on {
+                    Resolution::MultiMonitor
+                } else {
+                    Resolution::Auto
+                };
+                self.rdp_extras.multi_monitor = on;
+            }
+            ProfileChoice::Monitor(index, on) => {
+                let monitors = &mut self.rdp_extras.monitors;
+                monitors.retain(|kept| *kept != index);
+                if on {
+                    monitors.push(index);
+                    monitors.sort_unstable();
+                }
+            }
             ProfileChoice::Environment(environment) => self.environment = environment,
             ProfileChoice::SessionLogging(logging) => self.session_logging = logging,
         }
@@ -1025,6 +1067,34 @@ impl ProfileDraft {
             (options.fixed_width, options.fixed_height) = fixed_desktop(width, height);
         }
         Ok(options)
+    }
+
+    /// Whether the external client spans the monitors, as it reads the profile: always in the
+    /// multi-monitor mode, never in the automatic one, and in the others when the profile
+    /// asks for it, as the C# reads `RdpMultiMonitor` for a profile saved before its modes.
+    #[must_use]
+    pub fn spans_monitors(&self) -> bool {
+        match self.rdp_options.resolution {
+            Resolution::MultiMonitor => true,
+            Resolution::Auto => false,
+            Resolution::FitWindow | Resolution::Fixed | Resolution::SmartSizing => {
+                self.rdp_extras.multi_monitor
+            }
+        }
+    }
+
+    /// The Remote Desktop Gateway saved: none when the field is empty.
+    ///
+    /// # Errors
+    ///
+    /// [`DraftError::RdGatewayInvalid`] for anything but a host name or an IPv4 address,
+    /// as the C# dialog checks it with the rule the connection applies.
+    fn saved_rd_gateway(&self) -> Result<Option<String>, DraftError> {
+        match self.rd_gateway.trim() {
+            "" => Ok(None),
+            typed if is_gateway_address(typed) => Ok(Some(typed.to_owned())),
+            _ => Err(DraftError::RdGatewayInvalid),
+        }
     }
 
     /// Whether `field` is shown now: the `WinRM` account only for a stored credential, an RDP
@@ -1306,6 +1376,7 @@ impl ProfileDraft {
                 extras: RdpExtras {
                     strict_server_authentication: self
                         .is_on(ProfileToggle::StrictServerAuthentication),
+                    rd_gateway: self.saved_rd_gateway()?,
                     ..self.rdp_extras.clone()
                 },
                 id,
@@ -1402,6 +1473,7 @@ impl ProfileDraft {
             ProfileField::SocksPort => &self.socks_port,
             ProfileField::RemoteBindPort => &self.remote_bind_port,
             ProfileField::RemoteLocalPort => &self.remote_local_port,
+            ProfileField::RdGateway => &self.rd_gateway,
             ProfileField::LocalProgram => &self.local_program,
             ProfileField::LocalArguments => &self.local_arguments,
             ProfileField::WorkingDirectory => &self.working_directory,
@@ -1433,6 +1505,7 @@ impl ProfileDraft {
             ProfileField::SocksPort => &mut self.socks_port,
             ProfileField::RemoteBindPort => &mut self.remote_bind_port,
             ProfileField::RemoteLocalPort => &mut self.remote_local_port,
+            ProfileField::RdGateway => &mut self.rd_gateway,
             ProfileField::LocalProgram => &mut self.local_program,
             ProfileField::LocalArguments => &mut self.local_arguments,
             ProfileField::WorkingDirectory => &mut self.working_directory,
@@ -1524,6 +1597,27 @@ pub(crate) fn host(typed: &str) -> Result<String, DraftError> {
         _ if bare.contains(['[', ']']) => Err(DraftError::HostHasPort),
         _ => Ok(bare.to_owned()),
     }
+}
+
+/// Whether `typed` names a Remote Desktop Gateway as the C# `InputValidator` "Address" rule
+/// reads one: an IPv4 address, or a DNS name starting with a letter, of letters, digits and
+/// hyphens, no label empty, longer than [`MAX_DNS_LABEL_LENGTH`] or starting or ending with a
+/// hyphen, the whole at most [`MAX_GATEWAY_NAME_LENGTH`] long.
+fn is_gateway_address(typed: &str) -> bool {
+    if typed.len() > MAX_GATEWAY_NAME_LENGTH {
+        return false;
+    }
+    if typed.parse::<std::net::Ipv4Addr>().is_ok() {
+        return true;
+    }
+    typed.starts_with(|c: char| c.is_ascii_alphabetic())
+        && typed.split('.').all(|label| {
+            !label.is_empty()
+                && label.len() <= MAX_DNS_LABEL_LENGTH
+                && !label.starts_with('-')
+                && !label.ends_with('-')
+                && label.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+        })
 }
 
 /// An identifier none of `taken` holds.
@@ -2124,7 +2218,7 @@ mod tests {
     }
 
     #[test]
-    fn strict_server_authentication_is_a_box_of_the_form_and_no_longer_said_unused() {
+    fn strict_server_authentication_is_a_box_of_the_form() {
         let mut form = ProfileDraft::new_for(DraftProtocol::Rdp);
         form.name = "dc".to_owned();
         form.host = "dc.lab".to_owned();
@@ -2133,8 +2227,124 @@ mod tests {
             panic!("an RDP profile");
         };
         assert!(saved.extras.strict_server_authentication);
-        assert!(saved.extras.unused().is_empty(), "honoured, so not listed");
         assert!(ProfileDraft::from_rdp(&saved).is_on(ProfileToggle::StrictServerAuthentication));
+    }
+
+    /// A new RDP form for `dc.lab`, ready to save.
+    fn rdp_form() -> ProfileDraft {
+        let mut form = ProfileDraft::new_for(DraftProtocol::Rdp);
+        form.name = "dc".to_owned();
+        form.host = "dc.lab".to_owned();
+        form
+    }
+
+    /// The RDP profile `form` saves.
+    fn saved_rdp(form: &ProfileDraft) -> RdpProfile {
+        let Ok(DraftProfile::Rdp(saved)) = form.to_saved(id()) else {
+            panic!("an RDP profile");
+        };
+        saved
+    }
+
+    #[test]
+    fn each_box_of_the_external_client_is_saved_and_read_back() {
+        for switch in [
+            RdpSwitch::Printers,
+            RdpSwitch::ComPorts,
+            RdpSwitch::SmartCards,
+            RdpSwitch::Webcam,
+            RdpSwitch::Usb,
+            RdpSwitch::Microphone,
+            RdpSwitch::BitmapCaching,
+            RdpSwitch::Compression,
+            RdpSwitch::HardwareAcceleration,
+            RdpSwitch::DisableUdp,
+            RdpSwitch::FullScreen,
+        ] {
+            let mut form = rdp_form();
+            let on = !switch.is_on(&form.rdp_extras);
+            form.choose(ProfileChoice::Extra(switch, on));
+            let saved = saved_rdp(&form);
+            assert_eq!(switch.is_on(&saved.extras), on, "{switch:?}");
+            assert_eq!(
+                switch.is_on(&ProfileDraft::from_rdp(&saved).rdp_extras),
+                on,
+                "{switch:?} read back"
+            );
+        }
+    }
+
+    #[test]
+    fn the_multi_monitor_box_switches_the_mode_as_the_csharp_and_the_monitors_are_kept() {
+        let mut form = rdp_form();
+        assert!(!form.spans_monitors(), "the automatic mode");
+        form.choose(ProfileChoice::MultiMonitor(true));
+        assert!(form.spans_monitors());
+        form.choose(ProfileChoice::Monitor(2, true));
+        form.choose(ProfileChoice::Monitor(0, true));
+        form.choose(ProfileChoice::Monitor(2, true));
+        let saved = saved_rdp(&form);
+        assert_eq!(saved.options.resolution, Resolution::MultiMonitor);
+        assert!(saved.extras.multi_monitor);
+        assert_eq!(saved.extras.monitors, [0, 2], "in order, once each");
+        let mut again = ProfileDraft::from_rdp(&saved);
+        again.choose(ProfileChoice::Monitor(0, false));
+        again.choose(ProfileChoice::MultiMonitor(false));
+        let saved = saved_rdp(&again);
+        assert_eq!(saved.options.resolution, Resolution::Auto);
+        assert!(!saved.extras.multi_monitor);
+        assert_eq!(
+            saved.extras.monitors,
+            [2],
+            "the others kept, as the C# keeps them"
+        );
+        // A profile saved before the modes spans them outside the automatic mode.
+        let mut legacy = rdp_form();
+        legacy.rdp_extras.multi_monitor = true;
+        legacy.choose(ProfileChoice::Resolution(Resolution::FitWindow));
+        assert!(legacy.spans_monitors());
+    }
+
+    #[test]
+    fn the_rd_gateway_is_typed_checked_as_the_csharp_and_saved_trimmed() {
+        let mut form = rdp_form();
+        assert_eq!(saved_rdp(&form).extras.rd_gateway, None, "empty: direct");
+        for good in ["rdg.lab", " rdg.corp.example ", "10.0.0.4", "a-b.c1"] {
+            form.set(ProfileField::RdGateway, good.to_owned());
+            assert_eq!(
+                saved_rdp(&form).extras.rd_gateway.as_deref(),
+                Some(good.trim()),
+                "{good}"
+            );
+        }
+        let long_label = "a".repeat(MAX_DNS_LABEL_LENGTH + 1);
+        let long_name = format!("a{}", ".b".repeat(MAX_GATEWAY_NAME_LENGTH / 2 + 1));
+        for bad in [
+            "rdg.lab:443",
+            "https://rdg.lab",
+            "rdg..lab",
+            "rdg.-lab",
+            "rdg-.lab",
+            "1rdg.lab",
+            "rdg lab",
+            "rdg.lab\r\nx",
+            "rdg.lab.",
+            long_label.as_str(),
+            long_name.as_str(),
+        ] {
+            form.set(ProfileField::RdGateway, bad.to_owned());
+            assert_eq!(
+                form.to_saved(id()),
+                Err(DraftError::RdGatewayInvalid),
+                "{bad}"
+            );
+        }
+        assert_eq!(
+            DraftError::RdGatewayInvalid.field(),
+            ProfileField::RdGateway
+        );
+        assert!(DraftProtocol::Rdp.shows(ProfileField::RdGateway));
+        assert!(!DraftProtocol::Ssh.shows(ProfileField::RdGateway));
     }
 
     #[test]
@@ -2151,10 +2361,6 @@ mod tests {
             panic!("an RDP profile");
         };
         assert!(saved.extras.external);
-        assert!(
-            saved.extras.unused().is_empty(),
-            "shown by its list, so not listed"
-        );
         let mut again = ProfileDraft::from_rdp(&saved);
         assert!(again.rdp_extras.external, "read back");
         again.choose(ProfileChoice::External(false));
