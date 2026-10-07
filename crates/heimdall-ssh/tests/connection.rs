@@ -25,7 +25,7 @@ use std::time::Duration;
 use common::{
     COMMAND_ECHO, COMMAND_ERROR, COMMAND_FLOOD, COMMAND_HANG, COMMAND_REFUSED, DROP_COMMAND,
     FORWARDED_GREETING, PASSWORD, STEP_TIMEOUT, SUBSYSTEM_ACCEPTED, SUBSYSTEM_SILENT,
-    ScriptedPrompter, Spec, TestServer, options_trusting, profile, start,
+    ScriptedPrompter, Spec, TestServer, Unasked, options_trusting, profile, start,
 };
 use heimdall_ssh::{CommandEnd, ConnectError, Connection, OUTPUT_LIMIT, SessionEvent, establish};
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -335,7 +335,7 @@ async fn the_agent_is_forwarded_only_to_a_shell_that_asked() {
 #[tokio::test]
 async fn a_server_cannot_reach_the_agent_of_a_shell_that_did_not_ask() {
     let server = start(Spec {
-        agent_unasked: true,
+        unasked: Unasked::Agent,
         ..Spec::default()
     })
     .await;
@@ -363,6 +363,45 @@ async fn a_server_cannot_reach_the_agent_of_a_shell_that_did_not_ask() {
     let observed = server.observed.lock().expect("observed").clone();
     assert_eq!(observed.agent_asked, 0);
     assert_eq!(observed.agent_opens, [false]);
+}
+
+#[tokio::test]
+async fn a_server_cannot_open_a_channel_of_a_kind_never_asked_for() {
+    let server = start(Spec {
+        unasked: Unasked::Channels,
+        ..Spec::default()
+    })
+    .await;
+    let dir = tempfile::tempdir().expect("dir");
+    let connection = connected(&server, dir.path()).await;
+    let options = options_trusting(dir.path(), server.port, "host-ed25519");
+    let _shell = connection
+        .open_shell(&options, CancellationToken::new())
+        .await
+        .expect("shell");
+    let deadline = tokio::time::Instant::now() + SETTLE;
+    while server
+        .observed
+        .lock()
+        .expect("observed")
+        .unasked_opens
+        .len()
+        < 5
+        && tokio::time::Instant::now() < deadline
+    {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let observed = server.observed.lock().expect("observed").clone();
+    assert_eq!(
+        observed.unasked_opens,
+        [
+            ("session", false),
+            ("x11", false),
+            ("direct-tcpip", false),
+            ("direct-streamlocal", false),
+            ("forwarded-streamlocal", false),
+        ]
+    );
 }
 
 /// A relay in front of `port` counting the bytes it carries from the server: what the wire
