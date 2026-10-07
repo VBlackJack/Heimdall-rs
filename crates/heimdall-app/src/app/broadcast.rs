@@ -152,9 +152,7 @@ impl App {
         self.settings.broadcast_scope = scope;
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings.broadcast_scope = before;
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         self.tell(if self.broadcast.on {

@@ -114,7 +114,7 @@ fn an_unreadable_settings_file_is_said_and_never_written_over() {
     let path = dir.path().join(SETTINGS_FILE_NAME);
     std::fs::write(&path, "version = 1\nterminal = [").expect("written");
     let mut app = app(dir.path());
-    assert!(matches!(app.dialog, Some(Dialog::StoreError { .. })));
+    assert!(matches!(app.dialog, Some(Dialog::StoreUnreadable { .. })));
     assert_eq!(app.settings().color_scheme, ColorScheme::Dracula);
     app.update(Message::DismissDialog);
 

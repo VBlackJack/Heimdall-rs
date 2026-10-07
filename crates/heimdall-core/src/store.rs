@@ -17,6 +17,7 @@
 //! The profile file of Heimdall-rs.
 
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
@@ -125,6 +126,30 @@ impl MetadataEntry {
     }
 }
 
+/// What the profile file held when a store last read or wrote it: a content found there
+/// since was written by something else, another instance or an editor.
+#[derive(Clone)]
+enum OnDisk {
+    /// Not known, the store having been made without reading its file: whatever is there
+    /// is replaced, as by a store saving beside an unreadable file.
+    Unknown,
+    /// There was no file.
+    Absent,
+    /// This text.
+    Text(String),
+}
+
+impl fmt::Debug for OnDisk {
+    /// Its kind and length only: the text is the whole profile file.
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Unknown => f.write_str("Unknown"),
+            Self::Absent => f.write_str("Absent"),
+            Self::Text(text) => write!(f, "Text({} bytes)", text.len()),
+        }
+    }
+}
+
 /// Why the profile file could not be read or written.
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -158,6 +183,13 @@ pub enum StoreError {
         found: u32,
         /// Version this build reads.
         expected: u32,
+    },
+    /// The file was changed by something else since this store read or wrote it, and is
+    /// left as it is rather than overwritten with what this store holds.
+    #[error("{path}: changed outside this instance since it was read, so it was not overwritten")]
+    ChangedOutside {
+        /// File concerned.
+        path: PathBuf,
     },
 }
 
@@ -193,6 +225,9 @@ pub struct ProfileStore {
     metadata: BTreeMap<ProfileId, ProfileMetadata>,
     /// The colours given to folders, by normalised path, as the C# group colour.
     folder_colors: BTreeMap<String, FolderColor>,
+    /// What the file held when last read or written here, for a change made outside to be
+    /// kept rather than overwritten.
+    on_disk: OnDisk,
 }
 
 /// What removing a gateway changed.
@@ -236,6 +271,7 @@ impl ProfileStore {
             favorites: Vec::new(),
             metadata: BTreeMap::new(),
             folder_colors: BTreeMap::new(),
+            on_disk: OnDisk::Unknown,
         }
     }
 
@@ -250,7 +286,10 @@ impl ProfileStore {
         let text = match fs::read_to_string(&path) {
             Ok(text) => text,
             Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                return Ok(Self::empty(path));
+                return Ok(Self {
+                    on_disk: OnDisk::Absent,
+                    ..Self::empty(path)
+                });
             }
             Err(source) => return Err(StoreError::Io { path, source }),
         };
@@ -303,6 +342,7 @@ impl ProfileStore {
                     (!path.is_empty()).then_some((path, color))
                 })
                 .collect(),
+            on_disk: OnDisk::Text(text),
         })
     }
 
@@ -983,20 +1023,47 @@ impl ProfileStore {
     }
 
     /// Applies `change` to a copy, saves the copy, and only then keeps it: a save that fails
-    /// leaves the store as it was, the same as its file.
+    /// leaves the store as it was, the same as its file. A file changed by something else
+    /// since this store read or wrote it is not overwritten: another instance on the same
+    /// file, the single-instance guard notwithstanding, or an editor, would otherwise lose
+    /// its changes without a word.
     ///
     /// # Errors
     ///
-    /// Returns [`StoreError`] when the save fails; the store is then unchanged.
+    /// Returns [`StoreError`] when the save fails, [`StoreError::ChangedOutside`] when the
+    /// file changed; the store is then unchanged.
     pub fn apply<T>(&mut self, change: impl FnOnce(&mut Self) -> T) -> Result<T, StoreError> {
         let mut next = self.clone();
         let result = change(&mut next);
-        next.save()?;
+        self.check_unchanged()?;
+        next.on_disk = OnDisk::Text(next.write()?);
         *self = next;
         Ok(result)
     }
 
-    /// Writes the store to its file, creating the directory if needed.
+    /// Fails when the file holds something other than what this store last read or wrote:
+    /// a file created since it was found missing, or one whose content changed. A file
+    /// removed since, or one that cannot be read now, is written as before: nothing of it is
+    /// lost, or the write tells what is wrong.
+    fn check_unchanged(&self) -> Result<(), StoreError> {
+        let Ok(now) = fs::read_to_string(&self.path) else {
+            return Ok(());
+        };
+        let changed = match &self.on_disk {
+            OnDisk::Unknown => false,
+            OnDisk::Absent => true,
+            OnDisk::Text(known) => *known != now,
+        };
+        if changed {
+            return Err(StoreError::ChangedOutside {
+                path: self.path.clone(),
+            });
+        }
+        Ok(())
+    }
+
+    /// Writes the store to its file, creating the directory if needed, whatever the file
+    /// holds now: [`Self::apply`] is what looks for a change made outside.
     ///
     /// The content goes to a temporary file in the same directory, which then replaces the
     /// profile file, so an interruption never leaves a truncated file behind.
@@ -1005,6 +1072,11 @@ impl ProfileStore {
     ///
     /// Returns [`StoreError`] when serialisation or any file operation fails.
     pub fn save(&self) -> Result<(), StoreError> {
+        self.write().map(drop)
+    }
+
+    /// Writes the store to its file as [`Self::save`] does, and returns the text written.
+    fn write(&self) -> Result<String, StoreError> {
         let text = toml::to_string_pretty(&ProfileFile {
             version: PROFILE_FILE_VERSION,
             ssh: self.ssh.clone(),
@@ -1029,7 +1101,8 @@ impl ProfileStore {
                 .map(|(path, color)| (path.clone(), color.name().to_owned()))
                 .collect(),
         })?;
-        write_atomic(&self.path, &text)
+        write_atomic(&self.path, &text)?;
+        Ok(text)
     }
 }
 

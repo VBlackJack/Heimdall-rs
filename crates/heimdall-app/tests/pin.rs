@@ -220,7 +220,7 @@ fn a_dialog_the_start_had_to_show_waits_for_the_pin() {
     assert!(app.pin_asked(), "the PIN before the error");
     submit(&mut app, PIN);
     assert!(
-        matches!(&app.dialog, Some(Dialog::StoreError { .. })),
+        matches!(&app.dialog, Some(Dialog::StoreUnreadable { .. })),
         "{:?}",
         app.dialog
     );

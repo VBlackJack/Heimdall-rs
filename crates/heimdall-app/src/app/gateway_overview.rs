@@ -246,9 +246,7 @@ impl App {
             }
             Ok(None) => {}
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }
@@ -276,9 +274,7 @@ impl App {
             Ok(count) if to.is_some() => self.tell(Notice::GatewaysReassigned(count)),
             Ok(count) => self.tell(Notice::GatewaysCleared(count)),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }

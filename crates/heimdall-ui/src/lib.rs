@@ -61,6 +61,7 @@ pub mod sessions_view;
 mod settings_file;
 pub mod shell;
 mod shortcuts_view;
+mod single_instance;
 mod sleep_guard;
 pub mod split_view;
 pub mod status_bar;
@@ -96,12 +97,20 @@ const MAX_WINDOW_SIDE: f32 = 16_384.0;
 ///
 /// A daemon rather than an application, so that windows beside the main one can open; it
 /// ends through `iced::exit`, as every quit already did, and when the main window closes.
+/// A launch finding another instance on the configuration folder brings it forward and
+/// ends without reading a file, as the C# hands over.
 ///
 /// # Errors
 ///
 /// When the window or the graphics backend cannot start.
 pub fn run() -> iced::Result {
     logging::init(paths::log_dir());
+    let single_instance::Start::Run(instance) =
+        single_instance::claim(paths::config_dir().as_deref())
+    else {
+        return Ok(());
+    };
+    let watched = instance.as_ref().map(|guard| guard.dir().to_owned());
     i18n::init();
     // The connection files Remote Desktop Connection was given by a run that ended before
     // removing them, swept beside the start.
@@ -136,6 +145,9 @@ pub fn run() -> iced::Result {
         let (main, opened) = window::open(settings.clone());
         let mut shell = Shell::new();
         shell.set_main_window(main);
+        if let Some(dir) = &watched {
+            shell.watch_instance(dir.clone());
+        }
         let left = left.clone();
         (shell, opened.then(move |id| screens::restore(id, &left)))
     };
@@ -144,8 +156,11 @@ pub fn run() -> iced::Result {
         .theme(|shell: &Shell, _window| shell.theme())
         .subscription(Shell::subscription)
         .default_font(Font::with_name(UI_FONT_FAMILY));
-    FONTS
+    let ran = FONTS
         .iter()
         .fold(daemon, |daemon, face| daemon.font(*face))
-        .run()
+        .run();
+    // The folder owned until the windows are gone, then freed for the next launch.
+    drop(instance);
+    ran
 }

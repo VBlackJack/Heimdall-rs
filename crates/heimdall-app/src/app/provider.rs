@@ -149,9 +149,7 @@ impl App {
         self.provider_test = None;
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings.credential_provider = before;
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
         }
         Vec::new()
     }

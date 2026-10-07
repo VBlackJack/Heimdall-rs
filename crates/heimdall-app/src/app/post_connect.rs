@@ -76,9 +76,7 @@ impl App {
             .store
             .apply(|store| store.approve_post_connect(&profile.id, &steps));
         if let Err(error) = recorded {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return Vec::new();
         }
         // Approved for this session whether or not the profile is still saved: the user

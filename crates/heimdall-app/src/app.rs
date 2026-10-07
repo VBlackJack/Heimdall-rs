@@ -34,7 +34,7 @@ use heimdall_core::profile::{
     VncProfile, WinRmProfile,
 };
 use heimdall_core::settings::Settings;
-use heimdall_core::store::{MergeReport, ProfileStore};
+use heimdall_core::store::{MergeReport, ProfileStore, StoreError};
 use heimdall_core::winrm_diagnostic::{Diagnostic, EarlyOutput};
 use heimdall_ssh::{
     AgentSource, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust, Secret, TerminalSize,
@@ -2446,8 +2446,20 @@ pub enum Dialog {
         /// What it did.
         counts: SessionsCounts,
     },
-    /// The profile file could not be read or written.
+    /// The profile or settings file could not be read at start: started without it, saving
+    /// beside it.
+    StoreUnreadable {
+        /// Technical detail.
+        detail: String,
+    },
+    /// A change could not be saved, as the C# `EditorSaveErrorMessage` says.
     StoreError {
+        /// Technical detail.
+        detail: String,
+    },
+    /// A change was not saved: the profile file was changed by another program or instance
+    /// since it was read, and is kept as it is.
+    StoreChanged {
         /// Technical detail.
         detail: String,
     },
@@ -2557,6 +2569,18 @@ pub enum Dialog {
 }
 
 impl Dialog {
+    /// What a save that failed with `error` shows: the file changed outside told apart from
+    /// any other failure.
+    #[must_use]
+    pub fn save_failed(error: &StoreError) -> Self {
+        let detail = error.to_string();
+        if matches!(error, StoreError::ChangedOutside { .. }) {
+            Self::StoreChanged { detail }
+        } else {
+            Self::StoreError { detail }
+        }
+    }
+
     /// Whether Enter may answer it. Not for running a program: a key pressed as the dialog
     /// appears, meant for whatever had the focus, must not be taken for agreement.
     #[must_use]
@@ -2740,7 +2764,7 @@ impl App {
             // Start empty, saving beside the unreadable file so it is never overwritten.
             Err(error) => (
                 ProfileStore::empty(config.profiles_file.with_extension(RECOVERY_EXTENSION)),
-                Some(Dialog::StoreError {
+                Some(Dialog::StoreUnreadable {
                     detail: error.to_string(),
                 }),
             ),
@@ -4263,7 +4287,9 @@ impl App {
                 | Dialog::HostKeysUnreadable { .. }
                 | Dialog::HostKeysEmpty
                 | Dialog::HostKeysDone { .. }
+                | Dialog::StoreUnreadable { .. }
                 | Dialog::StoreError { .. }
+                | Dialog::StoreChanged { .. }
                 | Dialog::PasswordSaveFailed { .. }
                 | Dialog::Shortcuts
                 // Confirmed before: see `confirm_dialog`.

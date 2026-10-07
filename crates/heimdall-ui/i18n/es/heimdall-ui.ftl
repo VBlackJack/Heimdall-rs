@@ -291,6 +291,10 @@ ui-import-mobaxterm-passwords-detected = { $count ->
 }
 ui-dialog-store-title = No se pudo usar el archivo de perfiles
 ui-dialog-store-body = Heimdall arrancó sin perfiles; los cambios se guardan junto al archivo ilegible, que queda intacto.
+ui-dialog-save-failed-title = Error al guardar
+ui-dialog-save-failed-body = No se pudo guardar: { $detail }
+ui-dialog-store-changed-title = Perfiles no guardados
+ui-dialog-store-changed-body = El archivo de perfiles fue modificado por otro programa u otro Heimdall desde que se leyó, así que este cambio no se guardó y el archivo quedó como estaba. Vuelva a abrir Heimdall para cargar el archivo actual y luego repita el cambio.
 ui-dialog-detail = Detalle: { $detail }
 
 ui-import-skip-not-ssh = no es un perfil SSH ({ $kind })

@@ -3295,6 +3295,50 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         .expect("the profile and what it came without");
 }
 
+/// What the dialog of a profile file unreadable at start says, never said of a save.
+const UNREADABLE_BODY: &str = "Heimdall started with no profile; changes are saved beside the unreadable file, which is left untouched.";
+
+#[test]
+fn a_save_over_a_profile_file_changed_outside_says_so_and_not_that_it_was_unreadable() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    // Another instance on the same file records a profile of its own.
+    let mut other = ProfileStore::open(dir.path().join("profiles.toml")).expect("opens");
+    other
+        .apply(|store| store.merge([profile("other", None)]))
+        .expect("saves");
+    core.update(AppMessage::ProfileMenu(
+        heimdall_app::ProfileMenuMessage::Move {
+            id: ProfileId::new("c"),
+            to: Some("Production".to_owned()),
+        },
+    ));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Profiles not saved").expect("titled");
+    ui.find(
+        "The profile file was changed by another program or another Heimdall since it was \
+         read, so this change was not saved and the file was left as it is. Reopen Heimdall \
+         to load the current file, then make the change again.",
+    )
+    .expect("what happened and what to do");
+    assert!(ui.find(UNREADABLE_BODY).is_err());
+}
+
+#[test]
+fn a_save_that_fails_says_why_and_not_that_the_file_was_unreadable() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::StoreError {
+        detail: "disk full".to_owned(),
+    });
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("Save Error").expect("titled as the C#");
+    ui.find("Failed to save: disk full").expect("the reason");
+    assert!(ui.find(UNREADABLE_BODY).is_err());
+}
+
 #[test]
 fn the_profile_form_saves_a_key_passphrase_and_then_says_it_is_saved() {
     let dir = tempfile::tempdir().expect("dir");

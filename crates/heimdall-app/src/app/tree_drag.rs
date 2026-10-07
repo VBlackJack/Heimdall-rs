@@ -197,9 +197,7 @@ impl App {
             }
         });
         if let Err(error) = saved {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return false;
         }
         true
@@ -248,9 +246,7 @@ impl App {
             }
         });
         if let Err(error) = saved {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         self.tell(Notice::DroppedProfiles {
@@ -350,9 +346,7 @@ impl App {
             // A folder of that name there already: nothing moves.
             Ok(Err(_)) => self.tell(Notice::DropRefused),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }
@@ -394,9 +388,7 @@ impl App {
             Ok(true) => self.tell(Notice::MoveUndone),
             Ok(false) => self.tell(Notice::UndoConflict),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }

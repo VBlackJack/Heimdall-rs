@@ -131,9 +131,7 @@ impl App {
                     .store
                     .apply(|store| store.set_folder_color(&path, color))
                 {
-                    self.dialog = Some(Dialog::StoreError {
-                        detail: error.to_string(),
-                    });
+                    self.dialog = Some(Dialog::save_failed(&error));
                 }
             }
             FolderMessage::RequestDelete(path) => {
@@ -269,9 +267,7 @@ impl App {
                 });
             }
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }
@@ -287,9 +283,7 @@ impl App {
             // The menu offers only the moves that can be made.
             Ok(Err(_)) => {}
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }
@@ -308,9 +302,7 @@ impl App {
     /// Deletes folder `path` as asked; its profiles go to no folder.
     pub(super) fn confirm_delete_folder(&mut self, path: &str) {
         if let Err(error) = self.store.apply(|store| store.delete_folder(path)) {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
         }
     }
 

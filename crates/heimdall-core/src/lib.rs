@@ -23,6 +23,7 @@ pub mod export;
 pub mod files_state;
 pub mod folder;
 pub mod import;
+pub mod instance;
 pub mod lockout;
 pub mod macros;
 pub mod metadata;

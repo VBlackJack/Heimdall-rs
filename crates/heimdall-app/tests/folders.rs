@@ -403,6 +403,32 @@ fn a_profile_moves_to_a_folder_or_to_none_as_the_menu_lists_them() {
 }
 
 #[test]
+fn a_move_over_a_profile_file_changed_outside_is_refused_and_said_so() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    // Another instance on the same file records a profile of its own.
+    let path = dir.path().join("profiles.toml");
+    let mut other = ProfileStore::open(&path).expect("opens");
+    other
+        .apply(|store| store.merge([profile("other", "other", None)]))
+        .expect("saves");
+    let written = std::fs::read_to_string(&path).expect("readable");
+
+    app.update(Message::ProfileMenu(ProfileMenuMessage::Move {
+        id: ProfileId::new("db"),
+        to: Some("dev".to_owned()),
+    }));
+
+    assert!(
+        matches!(app.dialog, Some(Dialog::StoreChanged { .. })),
+        "{:?}",
+        app.dialog
+    );
+    assert_eq!(group_of(&app, "db").as_deref(), Some("Prod"));
+    assert_eq!(std::fs::read_to_string(&path).expect("readable"), written);
+}
+
+#[test]
 fn a_profile_is_renamed_and_an_empty_name_leaves_it() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());

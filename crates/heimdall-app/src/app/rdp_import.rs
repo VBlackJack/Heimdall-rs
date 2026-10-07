@@ -313,9 +313,7 @@ impl App {
         });
         self.dialog = Some(match saved {
             Ok(()) => Dialog::RdpDone(done),
-            Err(error) => Dialog::StoreError {
-                detail: error.to_string(),
-            },
+            Err(error) => Dialog::save_failed(&error),
         });
     }
 

@@ -158,9 +158,7 @@ impl App {
             // Deleted meanwhile: nothing to approve, and nothing is run.
             Ok(false) => Vec::new(),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
                 Vec::new()
             }
         }

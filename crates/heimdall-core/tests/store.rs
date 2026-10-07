@@ -83,6 +83,106 @@ fn save_leaves_no_temporary_file_behind() {
 }
 
 #[test]
+fn a_store_saves_over_its_own_writes_again_and_again() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store
+        .apply(|store| store.merge([profile("a", "h1")]))
+        .expect("first save");
+    store
+        .apply(|store| store.merge([profile("b", "h2")]))
+        .expect("saves over what it wrote");
+    let mut reopened = ProfileStore::open(&path).expect("reopens");
+    reopened
+        .apply(|store| store.merge([profile("c", "h3")]))
+        .expect("saves over what it read");
+    assert_eq!(
+        ProfileStore::open(&path)
+            .expect("reopens")
+            .ssh_profiles()
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn a_file_changed_outside_is_not_overwritten() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut first = ProfileStore::open(&path).expect("opens");
+    first
+        .apply(|store| store.merge([profile("a", "h1")]))
+        .expect("saves");
+    // Another instance on the same file records a profile of its own.
+    let mut other = ProfileStore::open(&path).expect("opens");
+    other
+        .apply(|store| store.merge([profile("b", "h2")]))
+        .expect("saves");
+    let written = fs::read_to_string(&path).expect("readable");
+
+    let refused = first.apply(|store| store.merge([profile("c", "h3")]));
+
+    assert!(
+        matches!(refused, Err(StoreError::ChangedOutside { .. })),
+        "{refused:?}"
+    );
+    assert_eq!(fs::read_to_string(&path).expect("readable"), written);
+    let ids: Vec<_> = first.ssh_profiles().iter().map(|p| p.id.as_str()).collect();
+    assert_eq!(ids, vec!["a"], "the store is left as it was");
+}
+
+#[test]
+fn a_file_created_since_it_was_found_missing_is_not_overwritten() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut first = ProfileStore::open(&path).expect("opens");
+    let mut other = ProfileStore::open(&path).expect("opens");
+    other
+        .apply(|store| store.merge([profile("b", "h2")]))
+        .expect("saves");
+
+    let refused = first.apply(|store| store.merge([profile("a", "h1")]));
+
+    assert!(
+        matches!(refused, Err(StoreError::ChangedOutside { .. })),
+        "{refused:?}"
+    );
+}
+
+#[test]
+fn a_file_removed_outside_is_written_again() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    let mut store = ProfileStore::open(&path).expect("opens");
+    store
+        .apply(|store| store.merge([profile("a", "h1")]))
+        .expect("saves");
+    fs::remove_file(&path).expect("removed");
+    store
+        .apply(|store| store.merge([profile("b", "h2")]))
+        .expect("nothing there is lost");
+    assert_eq!(
+        ProfileStore::open(&path)
+            .expect("reopens")
+            .ssh_profiles()
+            .len(),
+        2
+    );
+}
+
+#[test]
+fn a_store_made_without_reading_replaces_what_is_there() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join(PROFILES_FILE_NAME);
+    fs::write(&path, format!("version = {PROFILE_FILE_VERSION}\n")).expect("writes");
+    let mut store = ProfileStore::empty(&path);
+    store
+        .apply(|store| store.merge([profile("a", "h1")]))
+        .expect("saves, as a store saving beside an unreadable file always has");
+}
+
+#[test]
 fn merging_twice_updates_instead_of_duplicating() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
