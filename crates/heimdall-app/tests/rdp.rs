@@ -1407,6 +1407,7 @@ fn the_answer_to_a_certificate_question_is_in_the_diagnostics_log_with_the_key()
                 host: "dc.lab".to_owned(),
                 port: 3389,
                 fingerprint: key(),
+                details: None,
             },
         );
         app.update(Message::HostKeyDecision { tab, accept });
