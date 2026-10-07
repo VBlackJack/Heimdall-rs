@@ -260,6 +260,17 @@ impl App {
         };
         let ftp = matches!(tab.profile, TabProfile::Ftp(_));
         tab.certificate_context = None;
+        // As the C# `[RdpCertPrompt]` line: the server, the key, the answer.
+        log::info!(
+            "certificate question for the {} server {}: {fingerprint}, answered {}",
+            if ftp { "FTPS" } else { "RDP" },
+            heimdall_core::profile::display_address(&host, port),
+            match trust {
+                KeyTrust::Refused => "refused",
+                KeyTrust::Once => "trusted for this run",
+                KeyTrust::Always => "trusted, recorded at the next connection",
+            }
+        );
         match trust {
             // Said as the C# says it of an RDP server: the user stopped it, at the certificate.
             KeyTrust::Refused => {

@@ -550,13 +550,15 @@ pub async fn connect_over(
 }
 
 /// Decides about the server's key; `Ok` lets the credentials go. `validated`: this
-/// computer's certificate authorities validate its chain for the server's name.
+/// computer's certificate authorities validate its chain for the server's name. Each
+/// decision but an unknown key, which the caller asks about, is said in the diagnostics log.
 fn trust(
     config: &RdpConfig,
     certificate: ServerCertificate,
     validated: bool,
 ) -> Result<(), RdpError> {
     let presented = certificate.fingerprint;
+    let target = heimdall_core::profile::display_address(&config.host, config.port);
     let verdict = match config
         .known_hosts
         .verdict(&config.host, config.port, &presented)
@@ -568,26 +570,52 @@ fn trust(
         verdict => verdict,
     };
     match (verdict, config.accepted) {
-        (Verdict::Known, _) => Ok(()),
-        (Verdict::Unknown, _) if config.trusted_for_run.contains(&presented) => Ok(()),
-        (Verdict::Changed { recorded }, _) => Err(RdpError::CertificateChanged {
-            recorded,
-            presented: Box::new(certificate),
-        }),
-        (Verdict::Unknown, Some(accepted)) if accepted == presented => config
-            .known_hosts
-            .record_certificate(&config.host, config.port, &certificate)
-            .map_err(RdpError::KnownHosts),
+        (Verdict::Known, _) => {
+            log::info!("the certificate of {target} is the one trusted: {presented}");
+            Ok(())
+        }
+        (Verdict::Unknown, _) if config.trusted_for_run.contains(&presented) => {
+            log::info!("the certificate of {target} is trusted for this run: {presented}");
+            Ok(())
+        }
+        (Verdict::Changed { recorded }, _) => {
+            log::warn!(
+                "the certificate of {target} changed: trusted {recorded}, presented {presented}: refused"
+            );
+            Err(RdpError::CertificateChanged {
+                recorded,
+                presented: Box::new(certificate),
+            })
+        }
+        (Verdict::Unknown, Some(accepted)) if accepted == presented => {
+            config
+                .known_hosts
+                .record_certificate(&config.host, config.port, &certificate)
+                .map_err(RdpError::KnownHosts)?;
+            log::info!("the certificate of {target} accepted by the user is recorded: {presented}");
+            Ok(())
+        }
         // The key changed between the question and this connection.
-        (Verdict::Unknown, Some(accepted)) => Err(RdpError::CertificateChanged {
-            recorded: accepted,
-            presented: Box::new(certificate),
-        }),
+        (Verdict::Unknown, Some(accepted)) => {
+            log::warn!(
+                "the certificate of {target} changed since it was accepted: accepted {accepted}, presented {presented}: refused"
+            );
+            Err(RdpError::CertificateChanged {
+                recorded: accepted,
+                presented: Box::new(certificate),
+            })
+        }
         // Strict: never asked about; the system's certificate authorities decide.
         (Verdict::Unknown, None) if config.strict_server_authentication => {
             if validated {
+                log::info!(
+                    "the certificate of {target} is validated by this computer's authorities: {presented}"
+                );
                 Ok(())
             } else {
+                log::warn!(
+                    "the certificate of {target} is not validated by this computer's authorities: refused"
+                );
                 Err(RdpError::ServerNotAuthenticated)
             }
         }

@@ -1007,7 +1007,7 @@ ui-settings-session-log-directory = Directorio de registro de sesiones:
 ui-settings-session-log-directory-hint = Carpeta de los registros de sesión, relativa a la carpeta de configuración salvo si es absoluta. Pulsa Intro para aplicar.
 ui-settings-session-log-retention = Eliminar transcripciones con más de
 ui-settings-days-unit = días
-ui-settings-session-log-retention-hint = 0 conserva todas las transcripciones. Solo se eliminan las transcripciones de sesión.
+ui-settings-session-log-retention-hint = 0 conserva todas las transcripciones. Solo se eliminan las transcripciones de sesión; los registros de eventos y de operaciones de archivos se conservan.
 ui-settings-session-log-retention-refused = La retención de transcripciones debe ser 0 (conservar todo) o estar entre { $min } y { $max } días.
 
 ui-broadcast-button = DIFUSIÓN
@@ -1921,6 +1921,10 @@ ui-import-dropped-citrix-cache-launch = inicio desde la caché de Citrix Workspa
 ui-import-dropped-local-post-connect = { $count ->
     [one] secuencia posterior a la conexión de { $count } paso, que un shell local nunca ejecuta
    *[other] secuencia posterior a la conexión de { $count } pasos, que un shell local nunca ejecuta
+}
+ui-import-dropped-command-library-links = { $count ->
+    [one] { $count } paso posterior a la conexión vinculado a la biblioteca de comandos, importado sin su vínculo
+   *[other] { $count } pasos posteriores a la conexión vinculados a la biblioteca de comandos, importados sin sus vínculos
 }
 ui-citrix-import-title = Aplicaciones de Citrix
 ui-citrix-import-none = No se encontraron aplicaciones de Citrix en la caché local. Abre Citrix Workspace y conecta primero a una tienda.

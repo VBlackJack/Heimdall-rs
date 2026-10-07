@@ -225,6 +225,10 @@ pub enum Dropped {
     /// A local shell's post-connect sequence, of this many steps that would run: the C# runs
     /// a sequence on an SSH session only, so it never ran, and a local profile keeps none.
     LocalPostConnect(usize),
+    /// Post-connect steps linked to an action of the C# Command Library, this many: each is
+    /// imported with its own text only, without the link, which Heimdall-rs has nowhere to
+    /// resolve.
+    CommandLibraryLinks(usize),
 }
 
 /// A profile imported without some of its settings.
@@ -680,14 +684,30 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
             Dropped::CitrixCacheLaunch,
         )])
     } else {
-        turned_on(&[
+        let mut dropped = turned_on(&[
             (
                 is_external(server.ssh_mode.as_deref()),
                 Dropped::ExternalClient,
             ),
             (server.ssh_x11_forwarding, Dropped::X11Forwarding),
-        ])
+        ]);
+        match library_links(server) {
+            0 => {}
+            links => dropped.push(Dropped::CommandLibraryLinks(links)),
+        }
+        dropped
     }
+}
+
+/// The post-connect steps of `server` linked to the C# Command Library, on or off: each
+/// loses its link in the import, as [`post_connect_of`] keeps only its own text.
+fn library_links(server: &LegacyServer) -> usize {
+    server
+        .post_connect_steps
+        .iter()
+        .flatten()
+        .filter(|step| !is_blank(step.command_library_id.as_deref()))
+        .count()
 }
 
 /// What `server` says of itself besides how to reach it: an environment or an address that

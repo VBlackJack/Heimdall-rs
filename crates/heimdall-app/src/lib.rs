@@ -51,6 +51,7 @@ pub mod reachability;
 pub mod route_test;
 pub mod script_shell;
 pub mod server_health;
+pub mod session_log;
 mod sink;
 pub mod steps_draft;
 pub mod sudo_edit;
