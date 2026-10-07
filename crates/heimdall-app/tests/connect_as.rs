@@ -49,6 +49,8 @@ fn app(dir: &Path) -> App {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.merge_rdp([RdpProfile {
         extras: heimdall_core::profile::RdpExtras::default(),

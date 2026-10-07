@@ -60,7 +60,7 @@ use heimdall_app::{
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
-use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, display_address};
+use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
 use heimdall_core::settings::{BroadcastScope, ColorScheme};
 use heimdall_ssh::{AgentSource, Secret};
@@ -93,7 +93,7 @@ use crate::palette::Palette;
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
-use crate::settings_rows::SettingRow;
+use crate::settings_rows::{SettingRow, ToolPath};
 use crate::split_view::{self, Shape, SplitView};
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::font::TerminalFont;
@@ -799,6 +799,10 @@ pub enum Message {
     EditorEdited(String),
     /// Apply the external editor typed.
     EditorApply,
+    /// A program's path typed in the Settings page: `PuTTY` or the X server.
+    ToolPathEdited(ToolPath, String),
+    /// Apply the program's path typed.
+    ToolPathApply(ToolPath),
     /// The transcripts' folder typed in the Settings page.
     LogDirectoryEdited(String),
     /// Apply the folder typed.
@@ -964,6 +968,8 @@ impl fmt::Debug for Message {
             Self::OpenWithSystem(_) => f.write_str("OpenWithSystem(..)"),
             Self::NewNote { id, template } => write!(f, "NewNote({id}, {template:?})"),
             Self::EditorApply => f.write_str("EditorApply"),
+            Self::ToolPathEdited(path, _) => write!(f, "ToolPathEdited({path:?}, ..)"),
+            Self::ToolPathApply(path) => write!(f, "ToolPathApply({path:?})"),
             Self::FilesHovered(over) => write!(f, "FilesHovered({over})"),
             Self::FileDropped(_) => f.write_str("FileDropped(..)"),
             Self::LogDirectoryApply => f.write_str("LogDirectoryApply"),
@@ -1239,6 +1245,9 @@ pub struct Shell {
     log_directory: Option<String>,
     /// The external editor typed in the Settings page, until applied.
     editor_typed: Option<String>,
+    /// The programs' paths typed in the Settings page, until applied, by
+    /// [`ToolPath::index`].
+    tool_paths_typed: [Option<String>; ToolPath::COUNT],
     /// The Settings page's box of resolution presets.
     presets: crate::presets_editor::PresetsEditor,
     /// The terminals' font size as typed in the Settings page, until applied.
@@ -1504,6 +1513,7 @@ impl Shell {
             focus_next: None,
             log_directory: None,
             editor_typed: None,
+            tool_paths_typed: Default::default(),
             presets,
             font_size_typed: None,
             session_typed: Default::default(),
@@ -2295,6 +2305,9 @@ impl Shell {
             | Message::FontSizeApply
             | Message::SessionFieldEdited(..)
             | Message::SessionFieldApply(_)) => self.settings_field_message(message),
+            message @ (Message::ToolPathEdited(..) | Message::ToolPathApply(_)) => {
+                self.tool_path_message(message)
+            }
             message @ (Message::FilesHovered(_) | Message::FileDropped(_)) => {
                 self.drop_message(message)
             }
@@ -3528,6 +3541,27 @@ impl Shell {
                     gateway,
                     result,
                 })
+            }),
+            Effect::ProbePuttyHostKey { profile, options } => Task::future(async move {
+                let profile = *profile;
+                let probe = heimdall_app::putty::probe_host_key(profile.clone(), *options).await;
+                Message::App(AppMessage::PuttyHostKey {
+                    profile: Box::new(profile),
+                    probe,
+                })
+            }),
+            Effect::LaunchPutty { name, launch } => Task::future(async move {
+                // Finding PuTTY, the X server and starting them wait on the system: off the
+                // UI thread, as Remote Desktop Connection.
+                let result =
+                    tokio::task::spawn_blocking(move || heimdall_app::putty::launch(&launch))
+                        .await
+                        .unwrap_or_else(|error| {
+                            Err(heimdall_app::putty::PuttyRefusal::NotStarted(
+                                error.to_string(),
+                            ))
+                        });
+                Message::App(AppMessage::PuttyLaunched { name, result })
             }),
             Effect::WriteClipboardImage(image) => Task::future(async move {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
@@ -7894,6 +7928,7 @@ fn toggle_hint(toggle: ProfileToggle) -> Option<String> {
         ProfileToggle::UseSsl => Some(fl!("ui-profile-use-ssl-hint")),
         ProfileToggle::SkipCertificateCheck => Some(fl!("ui-profile-skip-cert-hint")),
         ProfileToggle::Sso => Some(fl!("ui-profile-toggle-sso-hint")),
+        ProfileToggle::X11Forwarding => Some(fl!("ui-profile-toggle-x11-hint")),
         _ => None,
     }
 }
@@ -7917,6 +7952,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
         ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
         ProfileToggle::Compression => fl!("ui-profile-toggle-compression"),
+        ProfileToggle::X11Forwarding => fl!("ui-profile-toggle-x11"),
         ProfileToggle::LegacyAlgorithms => fl!("ui-profile-toggle-legacy-algorithms"),
         ProfileToggle::Passive => fl!("ui-profile-toggle-passive"),
         ProfileToggle::Tls => fl!("ui-profile-toggle-ftps"),
@@ -8553,6 +8589,9 @@ fn options_section<'a>(
             form_field(draft, field)
         }));
     }
+    if draft.protocol == DraftProtocol::Ssh {
+        form = form.push(ssh_mode_choice(draft));
+    }
     for toggle in ProfileToggle::of(draft.protocol) {
         // The RDP groups draw their own boxes, in the C# tabs.
         let grouped = draft.protocol == DraftProtocol::Rdp && crate::rdp_options::draws(*toggle);
@@ -8582,21 +8621,8 @@ fn options_section<'a>(
             .style(text::danger),
         );
     }
-    if matches!(draft.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
-        && draft.is_on(ProfileToggle::LegacyAlgorithms)
-    {
-        form = form.push(
-            text(fl!("ui-profile-legacy-algorithms-hint"))
-                .size(SMALL_SIZE)
-                .style(text::danger),
-        );
-    }
-    if draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::Nla) {
-        form = form.push(
-            text(fl!("ui-profile-nla-off-hint"))
-                .size(SMALL_SIZE)
-                .style(text::danger),
-        );
+    for warning in option_warnings(draft) {
+        form = form.push(text(warning).size(SMALL_SIZE).style(text::danger));
     }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(crate::post_connect_form::view(&draft.post_connect));
@@ -8615,6 +8641,25 @@ fn options_section<'a>(
     }
 
     form
+}
+
+/// What the options chosen in `draft` weaken, each said under them: the legacy algorithms,
+/// X11 forwarding, which lets the server's X clients reach this computer's display, and
+/// NLA turned off.
+fn option_warnings(draft: &ProfileDraft) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if matches!(draft.protocol, DraftProtocol::Ssh | DraftProtocol::Sftp)
+        && draft.is_on(ProfileToggle::LegacyAlgorithms)
+    {
+        warnings.push(fl!("ui-profile-legacy-algorithms-hint"));
+    }
+    if draft.warns_x11() {
+        warnings.push(fl!("ui-profile-x11-warning"));
+    }
+    if draft.protocol == DraftProtocol::Rdp && !draft.is_on(ProfileToggle::Nla) {
+        warnings.push(fl!("ui-profile-nla-off-hint"));
+    }
+    warnings
 }
 
 /// The profile form, in the C# session dialog's order: the protocol, the connection basics,
@@ -9898,6 +9943,49 @@ impl fmt::Display for LoggingChoice {
             Some(false) => fl!("ui-profile-session-logging-off"),
         })
     }
+}
+
+/// Where an SSH profile's shell opens, as the C# "SSH mode" list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SshModeChoice(SshMode);
+
+impl SshModeChoice {
+    /// The choices, in the C# order.
+    const ALL: [Self; 2] = [Self(SshMode::Embedded), Self(SshMode::External)];
+}
+
+impl fmt::Display for SshModeChoice {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&match self.0 {
+            SshMode::Embedded => fl!("ui-profile-ssh-mode-embedded"),
+            SshMode::External => fl!("ui-profile-ssh-mode-external"),
+        })
+    }
+}
+
+/// The C# "SSH mode" list of an SSH profile's form: in a tab, or in `PuTTY`, which is then
+/// explained.
+fn ssh_mode_choice(draft: &ProfileDraft) -> Element<'_, Message> {
+    let mut mode = column![
+        row![
+            text(fl!("ui-profile-ssh-mode")),
+            iced::widget::space::horizontal(),
+            pick_list(
+                SshModeChoice::ALL.to_vec(),
+                Some(SshModeChoice(draft.ssh_mode)),
+                |SshModeChoice(mode)| Message::App(AppMessage::ProfileChoice(
+                    ProfileChoice::SshMode(mode)
+                )),
+            ),
+        ]
+        .spacing(SPACING)
+        .align_y(iced::Alignment::Center),
+    ]
+    .spacing(SPACING / 2.0);
+    if draft.ssh_mode == SshMode::External {
+        mode = mode.push(text(fl!("ui-profile-ssh-mode-external-desc")).size(SMALL_SIZE));
+    }
+    mode.into()
 }
 
 /// Whether the profile's sessions keep a transcript, as the C# server dialog's choice.

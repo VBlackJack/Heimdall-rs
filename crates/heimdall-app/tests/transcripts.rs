@@ -52,6 +52,8 @@ fn app(dir: &Path) -> App {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.merge_telnet([TelnetProfile {
         id: ProfileId::new("switch"),

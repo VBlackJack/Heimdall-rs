@@ -66,6 +66,8 @@ fn shell(dir: &Path) -> Shell {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     };
     store.merge([ssh("web", "edge"), ssh("old", "gone")]);
     store.save().expect("save");

@@ -652,3 +652,73 @@ fn the_lock_settings_are_marked_reset_and_shown_in_the_security_overview() {
     assert_eq!(settings.auto_lock_idle_minutes, 0);
     assert!(!settings.disconnect_on_lock);
 }
+
+#[test]
+fn putty_and_the_x_server_are_typed_applied_found_and_reset_on_the_ssh_tab() {
+    use heimdall_ui::settings_rows::ToolPath;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
+    assert_eq!(
+        shell.settings_found("X11 server"),
+        SettingsCard::X11.rows(),
+        "the card's heading finds its rows"
+    );
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "PuTTY path (for External SSH mode)",
+            "X11 server path",
+            "Auto-start X11 server when needed",
+        ] {
+            ui.find(said).expect(said);
+        }
+    }
+    // Typed, nothing applied until Enter.
+    let _ = shell.update(Message::ToolPathEdited(
+        ToolPath::Putty,
+        " /opt/putty/putty ".to_owned(),
+    ));
+    assert!(shell.app().settings().putty_path.is_empty());
+    let _ = shell.update(Message::ToolPathApply(ToolPath::Putty));
+    assert_eq!(shell.app().settings().putty_path, "/opt/putty/putty");
+    let _ = shell.update(Message::ToolPathEdited(
+        ToolPath::X11Server,
+        "/opt/x/vcxsrv".to_owned(),
+    ));
+    let _ = shell.update(Message::ToolPathApply(ToolPath::X11Server));
+    change(&mut shell, SettingsMessage::X11AutoStart(false));
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert_eq!(saved.putty_path, "/opt/putty/putty");
+    assert_eq!(saved.x11_server_path, "/opt/x/vcxsrv");
+    assert!(!saved.x11_auto_start);
+    let modified: Vec<SettingRow> = shell
+        .settings_found("modified")
+        .into_iter()
+        .filter(|row| row.tab() == SettingsTab::Ssh)
+        .collect();
+    assert_eq!(
+        modified,
+        [
+            SettingRow::PuttyPath,
+            SettingRow::X11ServerPath,
+            SettingRow::X11AutoStart
+        ]
+    );
+
+    for row in [
+        SettingRow::PuttyPath,
+        SettingRow::X11ServerPath,
+        SettingRow::X11AutoStart,
+    ] {
+        let _ = shell.update(Message::ResetSetting(row));
+    }
+    let defaults = Settings::default();
+    let settings = shell.app().settings();
+    assert_eq!(settings.putty_path, defaults.putty_path);
+    assert_eq!(settings.x11_server_path, defaults.x11_server_path);
+    assert!(settings.x11_auto_start);
+}

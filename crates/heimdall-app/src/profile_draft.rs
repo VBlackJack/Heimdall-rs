@@ -27,7 +27,7 @@ use heimdall_core::profile::{
     DEFAULT_TELNET_PORT, DEFAULT_VNC_PORT, DEFAULT_WINRM_HTTP_PORT, DEFAULT_WINRM_HTTPS_PORT,
     Experience, FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, Forwards, FtpProfile,
     LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, RdpSwitch,
-    Resolution, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
+    Resolution, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
 
 use crate::local_draft;
@@ -278,6 +278,9 @@ pub enum ProfileToggle {
     ForwardAgent,
     /// SSH: compress the traffic, as the C# "Enable compression".
     Compression,
+    /// SSH: forward the server's X11 windows to this computer's X server, as the C# "Enable
+    /// X11 forwarding"; only `PuTTY` forwards them for now.
+    X11Forwarding,
     /// FTP: passive data connections, as the C# "Passive mode", ticked by default.
     Passive,
     /// FTP: explicit FTPS, as the C# "Enable SSL/TLS (FTPS)".
@@ -332,6 +335,7 @@ impl ProfileToggle {
             DraftProtocol::Ssh => &[
                 Self::Compression,
                 Self::ForwardAgent,
+                Self::X11Forwarding,
                 Self::LegacyAlgorithms,
                 Self::Favorite,
             ],
@@ -379,6 +383,8 @@ pub enum ProfileChoice {
     /// Opened in Remote Desktop Connection rather than in a tab, as the C# "Session mode"
     /// External.
     External(bool),
+    /// SSH: where the shell opens, in a tab or in `PuTTY`, as the C# "SSH mode".
+    SshMode(SshMode),
     /// A common size, written into the width and height.
     Preset(u16, u16),
     /// Whether a fixed desktop is scaled into the tab.
@@ -504,6 +510,8 @@ pub struct ProfileDraft {
     /// SSH, Telnet and local: whether its sessions keep a transcript; `None` follows the
     /// settings, as the C# "Inherit".
     pub session_logging: Option<bool>,
+    /// SSH: where the shell opens, in a tab or in `PuTTY`.
+    pub ssh_mode: SshMode,
 }
 
 /// The form's "Test address", as the C# chip.
@@ -627,6 +635,7 @@ impl ProfileDraft {
             toggles: [
                 (profile.compression, ProfileToggle::Compression),
                 (profile.forward_agent, ProfileToggle::ForwardAgent),
+                (profile.x11_forwarding, ProfileToggle::X11Forwarding),
                 (profile.legacy_algorithms, ProfileToggle::LegacyAlgorithms),
             ]
             .into_iter()
@@ -639,6 +648,7 @@ impl ProfileDraft {
             },
             protocol_chosen: true,
             session_logging: profile.session_logging,
+            ssh_mode: profile.ssh_mode,
             ..Self::default()
         }
     }
@@ -1004,6 +1014,7 @@ impl ProfileDraft {
             ProfileChoice::Resolution(resolution) => self.rdp_options.resolution = resolution,
             ProfileChoice::Aspect(aspect) => self.rdp_options.aspect = aspect,
             ProfileChoice::External(on) => self.rdp_extras.external = on,
+            ProfileChoice::SshMode(mode) => self.ssh_mode = mode,
             ProfileChoice::Preset(width, height) => {
                 self.fixed_width = width.to_string();
                 self.fixed_height = height.to_string();
@@ -1230,6 +1241,28 @@ impl ProfileDraft {
         self.is_on(ProfileToggle::UseSsl) && !self.winrm_routed()
     }
 
+    /// The SSH mode saved: `PuTTY` only for a shell, an SFTP profile always opening its files
+    /// in a tab.
+    fn saved_ssh_mode(&self) -> SshMode {
+        if self.protocol == DraftProtocol::Ssh {
+            self.ssh_mode
+        } else {
+            SshMode::Embedded
+        }
+    }
+
+    /// X11 forwarding saved: for a shell only, as the C# box shows for SSH alone.
+    fn saved_x11_forwarding(&self) -> bool {
+        self.protocol == DraftProtocol::Ssh && self.is_on(ProfileToggle::X11Forwarding)
+    }
+
+    /// Whether the form warns that X11 forwarding lets the server see this computer's
+    /// display: the box ticked on a shell.
+    #[must_use]
+    pub fn warns_x11(&self) -> bool {
+        self.saved_x11_forwarding()
+    }
+
     /// The gateway saved with the profile: none when "Connect directly" is ticked, the
     /// chosen one being kept in the form as the C# combo keeps its selection.
     #[must_use]
@@ -1371,6 +1404,8 @@ impl ProfileDraft {
                 sftp: self.protocol == DraftProtocol::Sftp,
                 legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
                 session_logging: self.saved_session_logging(),
+                ssh_mode: self.saved_ssh_mode(),
+                x11_forwarding: self.saved_x11_forwarding(),
             }),
             DraftProtocol::Rdp => DraftProfile::Rdp(RdpProfile {
                 extras: RdpExtras {
@@ -1564,6 +1599,8 @@ impl ProfileDraft {
             sftp: false,
             legacy_algorithms: self.is_on(ProfileToggle::LegacyAlgorithms),
             session_logging: self.session_logging,
+            ssh_mode: self.saved_ssh_mode(),
+            x11_forwarding: self.saved_x11_forwarding(),
         })
     }
 }
@@ -1749,6 +1786,8 @@ mod tests {
             sftp: false,
             legacy_algorithms: false,
             session_logging: None,
+            ssh_mode: heimdall_core::profile::SshMode::Embedded,
+            x11_forwarding: false,
         };
         let second = new_id(std::slice::from_ref(&taken));
         assert_ne!(second, first);
@@ -2051,6 +2090,7 @@ mod tests {
             [
                 ProfileToggle::Compression,
                 ProfileToggle::ForwardAgent,
+                ProfileToggle::X11Forwarding,
                 // Not in the C# dialog, which always offers them: after its boxes.
                 ProfileToggle::LegacyAlgorithms,
                 ProfileToggle::Favorite
@@ -2087,6 +2127,40 @@ mod tests {
             reread.is_on(ProfileToggle::Compression) && reread.is_on(ProfileToggle::ForwardAgent)
         );
         assert!(draft.to_profile(id()).expect("profile").compression);
+    }
+
+    #[test]
+    fn the_ssh_mode_and_x11_forwarding_are_saved_for_a_shell_and_read_back() {
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Ssh);
+        draft.set(ProfileField::Name, "web".to_owned());
+        draft.set(ProfileField::Host, "web.lab".to_owned());
+        let saved = |draft: &ProfileDraft| match draft.to_saved(id()) {
+            Ok(DraftProfile::Ssh(profile)) => profile,
+            other => panic!("{other:?}"),
+        };
+        let profile = saved(&draft);
+        assert_eq!(profile.ssh_mode, SshMode::Embedded, "the C# default");
+        assert!(!profile.x11_forwarding && !draft.warns_x11());
+        draft.choose(ProfileChoice::SshMode(SshMode::External));
+        draft.toggle(ProfileToggle::X11Forwarding, true);
+        assert!(draft.warns_x11());
+        let profile = saved(&draft);
+        assert_eq!(profile.ssh_mode, SshMode::External);
+        assert!(profile.x11_forwarding);
+        let reread = ProfileDraft::from_profile(&profile);
+        assert_eq!(reread.ssh_mode, SshMode::External);
+        assert!(reread.is_on(ProfileToggle::X11Forwarding));
+        let direct = draft.to_profile(id()).expect("profile");
+        assert_eq!(
+            (direct.ssh_mode, direct.x11_forwarding),
+            (SshMode::External, true)
+        );
+        // An SFTP profile opens its files in a tab: neither is kept, even chosen.
+        draft.protocol = DraftProtocol::Sftp;
+        let files = saved(&draft);
+        assert_eq!(files.ssh_mode, SshMode::Embedded);
+        assert!(!files.x11_forwarding && !draft.warns_x11());
+        assert!(!ProfileToggle::of(DraftProtocol::Sftp).contains(&ProfileToggle::X11Forwarding));
     }
 
     #[test]

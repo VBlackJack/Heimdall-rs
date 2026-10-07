@@ -50,6 +50,8 @@ fn app(dir: &Path) -> App {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {
@@ -457,6 +459,8 @@ fn a_blank_vault_entry_name_written_in_the_file_is_the_name() {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     let mut app = App::new(AppConfig {

@@ -535,6 +535,15 @@ pub struct Settings {
     /// The program a server's file is edited with, as the C# `ExternalEditorPath`; empty
     /// takes the system's own text editor.
     pub external_editor: String,
+    /// `PuTTY`, which an SSH profile in the external mode opens in, as the C# `PuttyPath`;
+    /// empty looks for it in the folders of `PATH`.
+    pub putty_path: String,
+    /// The X server started for X11 forwarding when none runs, as the C# `X11ServerPath`;
+    /// empty tries the places the C# knows, then the folders of `PATH`.
+    pub x11_server_path: String,
+    /// An X server is started when X11 forwarding needs one and none runs, as the C#
+    /// `X11AutoStart`: on.
+    pub x11_auto_start: bool,
     /// Which SSH agent's keys are offered first, or alone; applied to the next connection.
     pub ssh_agent_preference: AgentPreference,
     /// The execution policy a local `PowerShell` is started with.
@@ -899,6 +908,9 @@ impl Default for Settings {
             ssh_tmout_reset_interval: SSH_TMOUT_RESET_INTERVAL_DEFAULT,
             rdp_defaults: RdpDefaults::default(),
             external_editor: String::new(),
+            putty_path: String::new(),
+            x11_server_path: String::new(),
+            x11_auto_start: true,
             ssh_agent_preference: AgentPreference::default(),
             powershell_execution_policy: ExecutionPolicy::default(),
             ctrl_v_paste: CtrlVPaste::default(),
@@ -1022,6 +1034,13 @@ struct SshSection {
     /// The C# name of the agent preference.
     #[serde(default)]
     agent_preference: Option<String>,
+    #[serde(default)]
+    putty_path: String,
+    #[serde(default)]
+    x11_server_path: String,
+    /// Absent is the C# default: on.
+    #[serde(default)]
+    x11_auto_start: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -1380,6 +1399,9 @@ impl Settings {
             rdp_defaults: file.rdp,
             sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
+            putty_path: file.ssh.putty_path.trim().to_owned(),
+            x11_server_path: file.ssh.x11_server_path.trim().to_owned(),
+            x11_auto_start: file.ssh.x11_auto_start.unwrap_or(true),
             collapse_tunnels_panel: file.general.collapse_tunnels_panel.unwrap_or(true),
             prevent_sleep: file.general.prevent_sleep.unwrap_or(true),
             max_sessions: within(
@@ -1505,6 +1527,9 @@ impl Settings {
                 keep_alive_interval: Some(self.ssh_keep_alive_interval),
                 tmout_reset_interval: Some(self.ssh_tmout_reset_interval),
                 agent_preference: Some(self.ssh_agent_preference.name().to_owned()),
+                putty_path: self.putty_path.clone(),
+                x11_server_path: self.x11_server_path.clone(),
+                x11_auto_start: Some(self.x11_auto_start),
             },
             rdp: self.rdp_defaults,
             rdp_session: RdpSessionSection {

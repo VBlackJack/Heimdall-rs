@@ -331,6 +331,13 @@ pub enum Notice {
     },
     /// An RDP profile did not open in Remote Desktop Connection, for this reason.
     RdpExternalRefused(crate::rdp_external::ExternalRefusal),
+    /// The SSH profile of this name opened in `PuTTY`.
+    PuttyLaunched(String),
+    /// An SSH profile did not open in `PuTTY`, for this reason.
+    PuttyRefused(crate::putty::PuttyRefusal),
+    /// X11 forwarding was asked and no X server could be found or started: `PuTTY` started
+    /// without it, as the C# `X11ServerNotFound` says.
+    X11ServerNotFound,
 }
 
 /// A session's state: the one the status bar names, its tab's dot shows and its profile's
