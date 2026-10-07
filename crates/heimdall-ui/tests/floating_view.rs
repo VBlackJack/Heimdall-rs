@@ -757,7 +757,8 @@ fn a_message_the_window_does_not_let_through_is_dropped() {
         Message::OpenTreeMenu(TreeMenu::Tab(b)),
         Message::ContentRelease,
         Message::CloseKey,
-        Message::FinderClose,
+        // The search bar of the main window's tab.
+        Message::FinderClose(a),
         Message::FilesKey(heimdall_app::files::FilesKey::SwitchPane),
     ];
     let floating = shell.app().tab(b).expect("detached");
@@ -775,6 +776,160 @@ fn a_message_the_window_does_not_let_through_is_dropped() {
     }
     assert!(sink_a.taken().is_empty());
     assert!(sink_b.taken().is_empty());
+}
+
+/// Tab `a` connected and shown in the main window, `b` connected and detached, each with
+/// `output` on its screen; `b`'s window.
+fn searchable_pair(dir: &Path, output: [&str; 2]) -> (Shell, TabId, TabId, window::Id) {
+    let mut core = app(dir);
+    let mut tabs = Vec::new();
+    for (id, shown) in ["a", "b"].into_iter().zip(output) {
+        let (tab, attempt) = open(&mut core, id);
+        core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::Connected {
+                input: Arc::new(RecordingSink::default()),
+            },
+        });
+        core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::Output(shown.as_bytes().to_vec()),
+        });
+        tabs.push(tab);
+    }
+    let (a, b) = (tabs[0], tabs[1]);
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Float(FloatMessage::Detach(b))));
+    let window = shell.floating_window(b).expect("its own window");
+    (shell, a, b, window)
+}
+
+/// Whether `view` draws a terminal's search bar: its "previous" button.
+fn bar_shown(view: Element<'_, Message>) -> bool {
+    simulator(view).find("\u{25b2}").is_ok()
+}
+
+/// What is selected on `tab`'s screen.
+fn selected(shell: &Shell, tab: TabId) -> Option<String> {
+    shell.app().tab(tab).expect("tab").terminal.selected_text()
+}
+
+#[test]
+fn ctrl_shift_f_searches_a_detached_terminal_in_its_own_window_and_leaves_the_main_bar_alone() {
+    use heimdall_term::FindDirection;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, a, b, window) =
+        searchable_pair(dir.path(), ["main line\r\nneedle\r\n", "a needle here\r\n"]);
+    let in_window = |message: Message| Message::InFloating(window, Box::new(message));
+    // The main window's bar, over `a`, its text typed.
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    let _ = shell.update(Message::FinderQuery {
+        tab: a,
+        query: "main".to_owned(),
+    });
+    assert!(
+        !bar_shown(shell.window_view(window)),
+        "none in the window yet"
+    );
+
+    let _ = shell.update(Message::Float(window, FloatEvent::TerminalFind));
+    assert!(bar_shown(shell.window_view(window)), "drawn in the window");
+    {
+        let mut ui = simulator(shell.window_view(window));
+        ui.click("Search...").expect("its field");
+        ui.typewrite("n");
+        let messages: Vec<Message> = ui.into_messages().collect();
+        assert!(
+            messages.iter().any(|message| matches!(
+                message,
+                Message::InFloating(from, inner) if *from == window
+                    && matches!(&**inner, Message::FinderQuery { tab, query } if *tab == b && query == "n")
+            )),
+            "{messages:?}"
+        );
+    }
+    let _ = shell.update(in_window(Message::FinderQuery {
+        tab: b,
+        query: "needle".to_owned(),
+    }));
+    let _ = shell.update(in_window(Message::FinderFind {
+        tab: b,
+        direction: FindDirection::Up,
+    }));
+    assert_eq!(selected(&shell, b).as_deref(), Some("needle"), "found in b");
+    assert_eq!(
+        selected(&shell, a),
+        None,
+        "a, on the main window, untouched"
+    );
+
+    // The main window's bar kept its own text, and searches its own tab.
+    assert!(bar_shown(shell.view()));
+    let _ = shell.update(Message::FinderFind {
+        tab: a,
+        direction: FindDirection::Up,
+    });
+    assert_eq!(selected(&shell, a).as_deref(), Some("main"));
+
+    // Escape in the window closes its bar alone; Ctrl+Shift+F again opens it, then closes it.
+    let _ = shell.update(Message::Float(window, FloatEvent::Escape));
+    assert!(!bar_shown(shell.window_view(window)));
+    assert!(bar_shown(shell.view()), "the main window's still open");
+    let _ = shell.update(Message::Float(window, FloatEvent::TerminalFind));
+    let _ = shell.update(Message::Float(window, FloatEvent::TerminalFind));
+    assert!(!bar_shown(shell.window_view(window)));
+    let _ = shell.update(Message::Float(window, FloatEvent::TerminalFind));
+    let _ = shell.update(in_window(Message::FinderClose(b)));
+    assert!(!bar_shown(shell.window_view(window)));
+    assert_ne!(
+        heimdall_ui::finder::field_id(a),
+        heimdall_ui::finder::field_id(b),
+        "each bar's field its own"
+    );
+}
+
+#[test]
+fn the_window_lets_through_the_search_of_its_own_tab_only() {
+    use heimdall_term::FindDirection;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, a, b, window) = searchable_pair(dir.path(), ["needle\r\n", "needle\r\n"]);
+    let finder_messages = |tab: TabId| {
+        [
+            Message::FinderQuery {
+                tab,
+                query: "needle".to_owned(),
+            },
+            Message::FinderFind {
+                tab,
+                direction: FindDirection::Up,
+            },
+            Message::FinderClose(tab),
+        ]
+    };
+    {
+        let floating = shell.app().tab(b).expect("detached");
+        for message in finder_messages(b) {
+            assert!(floating_message_allowed(&message, floating), "{message:?}");
+        }
+        for message in finder_messages(a) {
+            assert!(!floating_message_allowed(&message, floating), "{message:?}");
+        }
+    }
+    // The main window's bar open over `a`: a message of the window naming `a` reaches it not.
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
+    for message in finder_messages(a) {
+        let _ = shell.update(Message::InFloating(window, Box::new(message)));
+    }
+    assert_eq!(selected(&shell, a), None, "nothing searched in a");
+    assert!(bar_shown(shell.view()), "the main window's bar still open");
+    assert!(
+        !bar_shown(shell.window_view(window)),
+        "none opened in the window"
+    );
 }
 
 /// An SFTP server that answers the start, then nothing.

@@ -102,5 +102,6 @@ pub use event::{
 /// The quality a VNC desktop is asked at, from its toolbar's "Quality" menu.
 pub use heimdall_remote::vnc::Quality as VncQuality;
 pub use ids::{AttemptId, EditorId, FloatId, QuestionId, TabId};
+pub use paste_guard::PastePreview;
 pub use sink::InputSink;
 pub use text::{MAX_SERVER_TEXT_CHARS, server_text, visible_text};

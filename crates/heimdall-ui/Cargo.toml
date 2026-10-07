@@ -39,6 +39,8 @@ rfd.workspace = true
 rust-embed.workspace = true
 # fs: the exported sessions written where the save dialog says.
 tokio = { workspace = true, features = ["fs"] }
+# The cell of a terminal font chosen, read from its own tables.
+ttf-parser.workspace = true
 two-face.workspace = true
 zeroize.workspace = true
 

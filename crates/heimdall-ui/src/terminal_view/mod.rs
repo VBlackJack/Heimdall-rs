@@ -21,6 +21,7 @@
 //! A canvas has none of these in iced 0.14, and keys through a global subscription can be
 //! dropped when its queue is full.
 
+pub mod font;
 pub mod keys;
 pub mod metrics;
 pub mod runs;
@@ -47,13 +48,14 @@ use iced::{
     alignment,
 };
 
+use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
     Shortcut, Zoom, committed_text, key_input, shortcut, window_shortcut,
 };
 use crate::terminal_view::metrics::{CellMetrics, as_f32};
 
 /// Family name of the embedded terminal font.
-pub const FONT_FAMILY: &str = "Source Code Pro";
+pub use crate::terminal_view::font::FONT_FAMILY;
 
 /// The four embedded faces of [`FONT_FAMILY`], to load when the application starts.
 pub const FONTS: [&[u8]; 4] = [
@@ -80,9 +82,9 @@ fn color(rgb: Rgb) -> Color {
     Color::from_rgb8(rgb.r, rgb.g, rgb.b)
 }
 
-fn font(bold: bool, italic: bool) -> Font {
+fn font(family: &'static str, bold: bool, italic: bool) -> Font {
     Font {
-        family: Family::Name(FONT_FAMILY),
+        family: Family::Name(family),
         weight: if bold { Weight::Bold } else { Weight::Normal },
         style: if italic { Style::Italic } else { Style::Normal },
         ..Font::default()
@@ -109,6 +111,7 @@ struct State {
 pub struct TerminalView<'a, M> {
     terminal: &'a Terminal,
     tab: TabId,
+    font: TerminalFont,
     metrics: CellMetrics,
     wrap: fn(AppMessage) -> M,
     interactive: bool,
@@ -123,6 +126,7 @@ impl<'a, M> TerminalView<'a, M> {
         Self {
             terminal,
             tab,
+            font: TerminalFont::EMBEDDED,
             metrics: CellMetrics::default(),
             wrap,
             interactive: true,
@@ -141,8 +145,28 @@ impl<'a, M> TerminalView<'a, M> {
     /// The terminal's text at `font_size`.
     #[must_use]
     pub fn font_size(mut self, font_size: f32) -> Self {
-        self.metrics = CellMetrics::for_size(font_size);
+        self.metrics = CellMetrics::of(self.font.metrics, font_size);
         self
+    }
+
+    /// The terminal's text in `font`, its cells of that font's proportions.
+    #[must_use]
+    pub fn font(mut self, font: TerminalFont) -> Self {
+        self.font = font;
+        self.metrics = CellMetrics::of(font.metrics, self.metrics.font_size);
+        self
+    }
+
+    /// The size of a cell, as the terminal is laid out.
+    #[must_use]
+    pub fn metrics(&self) -> CellMetrics {
+        self.metrics
+    }
+
+    /// The family its text is drawn in.
+    #[must_use]
+    pub fn family(&self) -> &'static str {
+        self.font.family
     }
 
     /// The wheel with Ctrl held asks for its text larger or smaller with `on_zoom`, as in
@@ -543,7 +567,7 @@ impl<M> TerminalView<'_, M> {
                 bounds: room,
                 size: Pixels(self.metrics.font_size),
                 line_height: text::LineHeight::Absolute(Pixels(self.metrics.height)),
-                font: font(run.bold, run.italic),
+                font: font(self.font.family, run.bold, run.italic),
                 align_x: text::Alignment::Left,
                 align_y: alignment::Vertical::Top,
                 shaping: if run.ascii {

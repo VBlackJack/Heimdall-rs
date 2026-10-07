@@ -14,23 +14,20 @@
  * limitations under the License.
  */
 
-//! Cell geometry of the embedded terminal font, and pixel to cell conversions.
+//! Cell geometry of the terminal font, and pixel to cell conversions.
 //!
-//! Measured in the four embedded Source Code Pro faces on 2026-09-26 (`hmtx`, `hhea`):
-//! every glyph advances 600 units of a 1000-unit em; ascender 984, descender 273, no line
-//! gap. So a cell is 0.6 em wide and 1.257 em tall, whatever the face.
+//! A cell is as wide as the font's glyphs advance and as tall as its ascender and descender,
+//! no line gap: 0.6 em by 1.257 em in the embedded Source Code Pro, whatever the face; the
+//! proportions of a family chosen are read from its own tables (see [`super::font`]).
 
 use heimdall_term::{CellPixels, CellPoint, GridSize};
 use iced::{Point, Rectangle, Size};
 
-/// Terminal font size in logical pixels; 15 makes the cell exactly 9 pixels wide.
+use super::font::FaceMetrics;
+
+/// Terminal font size in logical pixels; 15 makes the embedded font's cell exactly 9 pixels
+/// wide.
 pub const DEFAULT_FONT_SIZE: f32 = 15.0;
-
-/// Advance of every glyph, in em.
-const ADVANCE_EM: f32 = 0.6;
-
-/// Ascender plus descender, in em.
-const LINE_EM: f32 = 1.257;
 
 /// Size of one cell.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -44,13 +41,19 @@ pub struct CellMetrics {
 }
 
 impl CellMetrics {
-    /// Metrics at `font_size`.
+    /// Metrics of the embedded font at `font_size`.
     #[must_use]
     pub fn for_size(font_size: f32) -> Self {
+        Self::of(FaceMetrics::EMBEDDED, font_size)
+    }
+
+    /// Metrics of a font of proportions `face` at `font_size`.
+    #[must_use]
+    pub fn of(face: FaceMetrics, font_size: f32) -> Self {
         Self {
             font_size,
-            width: font_size * ADVANCE_EM,
-            height: (font_size * LINE_EM).ceil(),
+            width: font_size * face.advance,
+            height: (font_size * face.line).ceil(),
         }
     }
 
@@ -134,7 +137,7 @@ pub(crate) fn as_f32(value: usize) -> f32 {
 mod tests {
     use iced::{Point, Rectangle, Size};
 
-    use super::{CellMetrics, DEFAULT_FONT_SIZE};
+    use super::{CellMetrics, DEFAULT_FONT_SIZE, FaceMetrics};
 
     #[test]
     fn the_default_size_is_the_one_the_settings_start_at() {
@@ -152,6 +155,23 @@ mod tests {
         let metrics = CellMetrics::for_size(DEFAULT_FONT_SIZE);
         assert!((metrics.width - 9.0).abs() < 1e-4);
         assert!((metrics.height - 19.0).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_cell_follows_the_proportions_of_the_font() {
+        let narrow = FaceMetrics {
+            advance: 0.5,
+            line: 1.1,
+        };
+        let metrics = CellMetrics::of(narrow, 20.0);
+        assert!((metrics.width - 10.0).abs() < 1e-4);
+        assert!((metrics.height - 22.0).abs() < 1e-4);
+        let grid = metrics.grid(Size::new(800.0, 440.0));
+        assert_eq!((grid.cols, grid.rows), (80, 20));
+        assert_eq!(
+            CellMetrics::of(FaceMetrics::EMBEDDED, DEFAULT_FONT_SIZE),
+            CellMetrics::default()
+        );
     }
 
     #[test]

@@ -16,17 +16,14 @@
 
 //! The tree's filters, as the C# sidebar's filter button offers them: protocols, connected,
 //! through a gateway, favorites; every one chosen must hold, as the C# `ServerFilterSpec` combines them.
-//! Showing the gateway badge is a view choice beside them, not a filter.
+//! Showing the gateway badge is a view choice beside them, not a filter: kept in the
+//! settings across runs, as the C# `ShowGatewayBadge`, where the filters are not.
 
 use super::tree::{ProfileKind, ProfileSummary};
-use super::{App, SessionState};
+use super::{App, Dialog, SessionState};
 
 /// Which profiles the tree lists, beyond its search.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "one switch per box of the C# filter menu"
-)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct TreeFilter {
     /// Only these protocols; none chosen is every one.
     protocols: Vec<ProfileKind>,
@@ -36,20 +33,6 @@ pub struct TreeFilter {
     gateway: bool,
     /// Only profiles marked as favorites.
     favorites: bool,
-    /// Rows show the gateway a profile goes through: on, as in the C#.
-    show_gateway_badge: bool,
-}
-
-impl Default for TreeFilter {
-    fn default() -> Self {
-        Self {
-            protocols: Vec::new(),
-            connected: false,
-            gateway: false,
-            favorites: false,
-            show_gateway_badge: true,
-        }
-    }
 }
 
 /// A change to the tree's filters.
@@ -63,7 +46,7 @@ pub enum FilterMessage {
     Gateway,
     /// Favorites only, or no longer.
     Favorites,
-    /// The gateway badge shown, or hidden.
+    /// The gateway badge shown, or hidden, and kept so in the settings.
     GatewayBadge,
     /// Every filter off, as the C# "Reset filters"; the badge choice stays.
     Reset,
@@ -94,12 +77,6 @@ impl TreeFilter {
         self.favorites
     }
 
-    /// Whether rows show their gateway.
-    #[must_use]
-    pub fn shows_gateway_badge(&self) -> bool {
-        self.show_gateway_badge
-    }
-
     /// Whether any filter leaves profiles out: the C# button's dot.
     #[must_use]
     pub fn is_active(&self) -> bool {
@@ -126,13 +103,9 @@ impl TreeFilter {
             FilterMessage::Connected => self.connected = !self.connected,
             FilterMessage::Gateway => self.gateway = !self.gateway,
             FilterMessage::Favorites => self.favorites = !self.favorites,
-            FilterMessage::GatewayBadge => self.show_gateway_badge = !self.show_gateway_badge,
-            FilterMessage::Reset => {
-                *self = Self {
-                    show_gateway_badge: self.show_gateway_badge,
-                    ..Self::default()
-                };
-            }
+            // The settings', not a filter: see `App::filter_message`.
+            FilterMessage::GatewayBadge => {}
+            FilterMessage::Reset => *self = Self::default(),
         }
     }
 }
@@ -144,7 +117,28 @@ impl App {
         &self.tree_filter
     }
 
+    /// Whether the tree's rows show the gateway their profile goes through, as the
+    /// settings keep it.
+    #[must_use]
+    pub fn shows_gateway_badge(&self) -> bool {
+        self.settings.show_gateway_badge
+    }
+
     pub(super) fn filter_message(&mut self, message: FilterMessage) {
-        self.tree_filter.apply(message);
+        if message == FilterMessage::GatewayBadge {
+            self.toggle_gateway_badge();
+        } else {
+            self.tree_filter.apply(message);
+        }
+    }
+
+    /// The gateway badge shown or hidden, saved at once as the C# saves `ShowGatewayBadge`;
+    /// a choice that cannot be saved is said and not made.
+    fn toggle_gateway_badge(&mut self) {
+        self.settings.show_gateway_badge = !self.settings.show_gateway_badge;
+        if let Err(error) = self.settings.save(&self.settings_file) {
+            self.settings.show_gateway_badge = !self.settings.show_gateway_badge;
+            self.dialog = Some(Dialog::save_failed(&error));
+        }
     }
 }

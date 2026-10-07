@@ -717,8 +717,8 @@ pub fn menu_entries<'a>(
 
 /// The tree's filters, as the C# filter button's menu: the protocols, then connected and
 /// through a gateway, then the gateway badge. A box ticked leaves the menu open, as the C#
-/// entries stay open, so several can be chosen.
-pub fn filter_entries<'a>(filter: &TreeFilter) -> Element<'a, Message> {
+/// entries stay open, so several can be chosen. `badge`: rows show their gateway.
+pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Message> {
     let filter_box = |label: String, on: bool, message: FilterMessage| -> Element<'a, Message> {
         container(
             checkbox(on)
@@ -760,7 +760,7 @@ pub fn filter_entries<'a>(filter: &TreeFilter) -> Element<'a, Message> {
         .push(separator())
         .push(filter_box(
             fl!("ui-tree-filter-gateway-badge"),
-            filter.shows_gateway_badge(),
+            badge,
             FilterMessage::GatewayBadge,
         ));
     menu_card(entries).into()

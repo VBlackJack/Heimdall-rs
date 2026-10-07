@@ -753,6 +753,49 @@ fn a_paste_counts_every_line_the_shell_would_run() {
 }
 
 #[test]
+fn a_paste_asked_about_shows_what_it_holds_and_pastes_all_of_it() {
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut app = App::new(config(dir.path()));
+    let (tab, _, sink) = connected(&mut app, "a");
+    let lines: Vec<String> = (0..=heimdall_app::PastePreview::MAX_LINES)
+        .map(|n| format!("echo {n}"))
+        .collect();
+    let text = lines.join("\n");
+    app.update(Message::ClipboardText {
+        tab,
+        text: Some(text.clone()),
+    });
+    let Some(Dialog::ConfirmPaste { preview, .. }) = &app.dialog else {
+        panic!("asked: {:?}", app.dialog);
+    };
+    assert_eq!(
+        preview.lines[..],
+        lines[..heimdall_app::PastePreview::MAX_LINES]
+    );
+    assert!(preview.truncated, "one line out of sight");
+    app.update(Message::ConfirmDialog);
+    assert_eq!(
+        sink.written(),
+        text.replace('\n', "\r").as_bytes(),
+        "all of it"
+    );
+
+    app.update(Message::ClipboardText {
+        tab,
+        text: Some("rm -rf /\u{1b}[8m".to_owned()),
+    });
+    let Some(Dialog::ConfirmPaste {
+        command, preview, ..
+    }) = &app.dialog
+    else {
+        panic!("asked: {:?}", app.dialog);
+    };
+    assert_eq!(*command, Some("rm -rf"));
+    assert_eq!(preview.lines, [r"rm -rf /\u{001B}[8m"]);
+    assert!(!preview.truncated);
+}
+
+#[test]
 fn while_a_dialog_is_open_keys_and_pointer_never_reach_the_session() {
     let dir = tempfile::tempdir().expect("temp dir");
     let mut app = App::new(config(dir.path()));

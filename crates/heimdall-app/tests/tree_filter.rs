@@ -157,14 +157,34 @@ fn every_filter_chosen_must_hold_and_reset_keeps_the_badge_choice() {
     );
 
     filter(&mut app, FilterMessage::GatewayBadge);
-    assert!(!app.tree_filter().shows_gateway_badge());
+    assert!(!app.shows_gateway_badge());
     filter(&mut app, FilterMessage::Reset);
     assert!(!app.tree_filter().is_active());
-    assert!(
-        !app.tree_filter().shows_gateway_badge(),
-        "a view choice, not a filter"
-    );
+    assert!(!app.shows_gateway_badge(), "a view choice, not a filter");
     assert_eq!(outline(&app).len(), 7);
+}
+
+#[test]
+fn the_gateway_badge_choice_is_kept_across_runs_as_the_csharp_setting() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut first = app(dir.path());
+    assert!(first.shows_gateway_badge(), "shown, as the C# default");
+    filter(&mut first, FilterMessage::GatewayBadge);
+    filter(&mut first, FilterMessage::Gateway);
+    assert!(!first.shows_gateway_badge());
+    drop(first);
+    let settings = heimdall_core::settings::settings_path(&dir.path().join("profiles.toml"));
+    let text = std::fs::read_to_string(settings).expect("saved");
+    assert!(text.contains("show_gateway_badge = false"), "{text}");
+
+    let mut next = app(dir.path());
+    assert!(!next.shows_gateway_badge(), "hidden, as it was left");
+    assert!(!next.tree_filter().is_active(), "the filters are not kept");
+    filter(&mut next, FilterMessage::GatewayBadge);
+    assert!(
+        app(dir.path()).shows_gateway_badge(),
+        "shown again, kept so"
+    );
 }
 
 #[test]

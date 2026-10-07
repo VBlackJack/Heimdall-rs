@@ -81,7 +81,8 @@ impl Shell {
             FloatEvent::CloseRequested
             | FloatEvent::Focused(_)
             | FloatEvent::Rescaled(_)
-            | FloatEvent::Modifiers(_) => Task::none(),
+            | FloatEvent::Modifiers(_)
+            | FloatEvent::TerminalFind => Task::none(),
         }
     }
 

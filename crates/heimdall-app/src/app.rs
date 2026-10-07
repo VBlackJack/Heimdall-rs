@@ -2299,6 +2299,8 @@ pub enum Dialog {
         lines: usize,
         /// The destructive command the text holds, as the C# names it.
         command: Option<&'static str>,
+        /// The text as it is shown before it is pasted.
+        preview: crate::paste_guard::PastePreview,
     },
     /// A name for a new folder or a renamed entry.
     AskName {
@@ -3965,6 +3967,7 @@ impl App {
                 tab: tab_id,
                 lines: command_lines(&text),
                 command,
+                preview: crate::paste_guard::PastePreview::of(&text),
             });
             self.pending_paste = Some((tab_id, text));
             return Vec::new();
