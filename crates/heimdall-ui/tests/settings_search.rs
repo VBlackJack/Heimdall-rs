@@ -722,3 +722,95 @@ fn putty_and_the_x_server_are_typed_applied_found_and_reset_on_the_ssh_tab() {
     assert_eq!(settings.x11_server_path, defaults.x11_server_path);
     assert!(settings.x11_auto_start);
 }
+
+#[test]
+fn the_default_ssh_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
+    use heimdall_core::profile::{ProfileId, SshMode, SshProfile};
+    use heimdall_core::store::ProfileStore;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge([SshProfile {
+        id: ProfileId::new("web"),
+        name: "web".to_owned(),
+        group: None,
+        host: "web.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        gateway: None,
+        vault_entry: None,
+        forwards: heimdall_core::profile::Forwards::default(),
+        post_connect: heimdall_core::post_connect::PostConnect::default(),
+        forward_agent: false,
+        compression: false,
+        sftp: false,
+        legacy_algorithms: false,
+        session_logging: None,
+        ssh_mode: SshMode::Embedded,
+        x11_forwarding: false,
+    }]);
+    store.save().expect("save");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("default ssh mode"),
+        [SettingRow::SshDefaultMode]
+    );
+    assert!(
+        shell
+            .settings_found("apply to all")
+            .contains(&SettingRow::SshDefaultMode),
+        "its button"
+    );
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Default SSH mode",
+            "Embedded: terminal runs inside Heimdall. External: opens PuTTY in a separate window.",
+            "Apply to all saved sessions",
+        ] {
+            ui.find(said).expect(said);
+        }
+        assert!(ui.find("Modified").is_err(), "the default");
+    }
+
+    change(
+        &mut shell,
+        SettingsMessage::SshDefaultMode(SshMode::External),
+    );
+    assert_eq!(
+        shell.settings_found("modified"),
+        [SettingRow::SshDefaultMode]
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Apply to all saved sessions").expect("the button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::ApplySshModeToAll))
+        )));
+    }
+    change(&mut shell, SettingsMessage::ApplySshModeToAll);
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "Apply to all saved SSH sessions?",
+            "1 of 1 saved SSH sessions will switch to the External mode, and External becomes \
+             the default for new sessions. This cannot be undone.",
+        ] {
+            ui.find(said).expect(said);
+        }
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    assert_eq!(shell.app().profiles()[0].ssh_mode, SshMode::External);
+
+    let _ = shell.update(Message::ResetSetting(SettingRow::SshDefaultMode));
+    assert_eq!(shell.app().settings().ssh_default_mode, SshMode::Embedded);
+    assert_eq!(
+        shell.app().profiles()[0].ssh_mode,
+        SshMode::External,
+        "a reset changes no profile"
+    );
+}

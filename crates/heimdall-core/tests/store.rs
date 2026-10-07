@@ -1083,3 +1083,30 @@ fn each_origin_has_the_csharp_badge_code() {
         .collect();
     assert_eq!(codes, ["RDP", "OSSH", "PTY", "MRNG", "MXTM", "RDCM"]);
 }
+
+#[test]
+fn every_ssh_shell_takes_a_mode_and_sftp_profiles_keep_theirs() {
+    use heimdall_core::profile::SshMode;
+
+    let dir = tempfile::tempdir().expect("temp dir");
+    let mut store = ProfileStore::open(dir.path().join(PROFILES_FILE_NAME)).expect("opens");
+    let mut external = profile("b", "b.lab");
+    external.ssh_mode = SshMode::External;
+    let mut sftp = profile("c", "c.lab");
+    sftp.sftp = true;
+    store.merge([profile("a", "a.lab"), external, sftp]);
+    assert_eq!(store.ssh_mode_changes(SshMode::External), (1, 2));
+    assert_eq!(store.ssh_mode_changes(SshMode::Embedded), (1, 2));
+    assert_eq!(store.set_ssh_modes(SshMode::External), 1);
+    let modes: Vec<SshMode> = store
+        .ssh_profiles()
+        .iter()
+        .map(|profile| profile.ssh_mode)
+        .collect();
+    assert_eq!(
+        modes,
+        [SshMode::External, SshMode::External, SshMode::Embedded]
+    );
+    assert_eq!(store.set_ssh_modes(SshMode::External), 0, "already so");
+    assert_eq!(store.ssh_mode_changes(SshMode::External), (0, 2));
+}
