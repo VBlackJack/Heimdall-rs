@@ -302,6 +302,45 @@ fn focus_window(window: window::Id) -> Task<Message> {
     })
 }
 
+/// Where a tab dragged goes when let go, said over the part of the window `zone` it takes,
+/// as the C# `ContentDropZone`: the window shaded under an outline, `label` in the middle.
+fn drop_zone_overlay(label: String, zone: Rectangle) -> Element<'static, Message> {
+    let label = text(label)
+        .size(HEADING_SIZE)
+        .style(|theme: &Theme| text::Style {
+            color: Some(theme.extended_palette().primary.strong.color),
+        });
+    let shaded = container(label)
+        .width(Length::Fixed(zone.width))
+        .height(Length::Fixed(zone.height))
+        .align_x(iced::alignment::Horizontal::Center)
+        .align_y(iced::alignment::Vertical::Center)
+        .style(|theme: &Theme| {
+            let palette = theme.extended_palette();
+            container::Style {
+                background: Some(
+                    Color {
+                        a: SPLIT_DROP_SHADE,
+                        ..palette.background.base.color
+                    }
+                    .into(),
+                ),
+                border: iced::Border {
+                    color: palette.primary.strong.color,
+                    width: SPLIT_DROP_EDGE,
+                    radius: SPLIT_DROP_RADIUS.into(),
+                },
+                ..container::Style::default()
+            }
+        });
+    pin(shaded)
+        .x(zone.x)
+        .y(zone.y)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
 /// While the sidebar's handle is dragged: where the pointer is, and its release.
 #[expect(
     clippy::needless_pass_by_value,
@@ -1098,6 +1137,9 @@ pub struct Shell {
     tab_drag: Option<crate::tab_drag::TabDrag>,
     /// Where the content was drawn when that drag started.
     tab_drop_area: Option<Rectangle>,
+    /// The tab detached by a drag let go out of the window, and where the pointer was on
+    /// the screens, in physical pixels: where its window opens.
+    detach_place: Option<(FloatId, (f64, f64))>,
     /// The computer kept from sleeping while a session is open.
     sleep_guard: crate::sleep_guard::SleepGuard,
     /// A press in the tree, held: a drag once the pointer moves.
@@ -1112,6 +1154,9 @@ pub struct Shell {
     floating: std::collections::BTreeMap<window::Id, FloatingWindow>,
     /// The window's size, as last resized out of full screen.
     window_size: Option<iced::Size>,
+    /// The window's drawn area, as last reported, in full screen too: what a tab dragged
+    /// out of it is let go beyond to detach.
+    window_extent: Option<iced::Size>,
     /// The sidebar's width, as dragged.
     sidebar_width: f32,
     /// The handle between the sidebar and the sessions is held.
@@ -1360,6 +1405,7 @@ impl Shell {
             tab_hover: None,
             tab_drag: None,
             tab_drop_area: None,
+            detach_place: None,
             sleep_guard: crate::sleep_guard::SleepGuard::new(),
             tree_drag: None,
             sidebar_hidden: false,
@@ -1367,6 +1413,7 @@ impl Shell {
             main_window: None,
             floating: std::collections::BTreeMap::new(),
             window_size: None,
+            window_extent: None,
             sidebar_width: SIDEBAR_WIDTH,
             sidebar_drag: false,
             split_drag: None,
@@ -1694,18 +1741,37 @@ impl Shell {
         Task::batch(tasks)
     }
 
-    /// Opens the window of the tab detached as `key`, at the C# size and centred, and gives
-    /// it the focus; one already open is focused.
+    /// Opens the window of the tab detached as `key`, at the C# size, and gives it the
+    /// focus; one already open is focused. Centred, as the C#'s, unless the tab was dragged
+    /// out of the main window: then opened hidden, moved for the pointer to be on its title
+    /// bar, then shown.
     fn open_floating(&mut self, key: FloatId) -> Task<Message> {
         if let Some(window) = self.window_of(key) {
             return focus_window(window);
         }
-        let (window, opened) = window::open(crate::floating_view::settings());
+        let place = self
+            .detach_place
+            .take()
+            .filter(|(placed, _)| *placed == key)
+            .map(|(_, pointer)| pointer);
+        let settings = window::Settings {
+            visible: place.is_none(),
+            ..crate::floating_view::settings()
+        };
+        let (window, opened) = window::open(settings);
         self.floating
             .insert(window, FloatingWindow::new(key, self.density));
-        opened.then(|window| {
+        opened.then(move |window| {
+            let shown = place.map_or_else(Task::none, |pointer| {
+                crate::screens::show_near_pointer(
+                    window,
+                    pointer,
+                    crate::floating_view::WINDOW_SIZE,
+                    crate::tab_drag::DETACH_GRAB,
+                )
+            });
             Task::batch([
-                window::gain_focus(window),
+                shown.chain(window::gain_focus(window)),
                 window::scale_factor(window)
                     .map(move |scale| Message::Float(window, FloatEvent::Rescaled(scale))),
             ])
@@ -1873,6 +1939,14 @@ impl Shell {
         // Behind the lock screen, the window's keys do nothing; its sessions go on. Nothing
         // else of the window is drawn to be clicked.
         if self.gated() && matches!(message, Message::Shortcut(_) | Message::FilesKey(_)) {
+            return Task::none();
+        }
+        // Escape, a tab dragged, gives the drag up first, taken by a widget or not.
+        if matches!(
+            message,
+            Message::EscapeUntaken | Message::DialogKey { confirm: false }
+        ) && self.cancel_tab_drag()
+        {
             return Task::none();
         }
         // Escape no widget took leaves full screen when there is nothing else to close, as
@@ -3452,6 +3526,9 @@ impl Shell {
             layers = layers.push(overlay);
         }
         if let Some(overlay) = self.tab_drop_overlay().filter(|_| !locked) {
+            layers = layers.push(overlay);
+        }
+        if let Some(overlay) = self.detach_overlay().filter(|_| !locked) {
             layers = layers.push(overlay);
         }
         if let Some((entries, at)) = open_menu {
@@ -5271,9 +5348,15 @@ impl Shell {
             }
             Message::TabDragEnd => {
                 let area = self.tab_drop_area.take();
+                let outside = self.tab_drag_outside();
                 let Some(drag) = self.tab_drag.take() else {
                     return Vec::new();
                 };
+                // Out of the window: to a window of its own, as the C# drop no target
+                // takes; a split tab refused, and said.
+                if outside.is_some() {
+                    return self.detach_dropped(drag.tab);
+                }
                 if let Some(onto) = drag.onto(self.tab_hover) {
                     return self.app.update(AppMessage::MoveTab {
                         tab: drag.tab,
@@ -5295,9 +5378,43 @@ impl Shell {
         Vec::new()
     }
 
+    /// Detaches `tab`, let go out of the window, as the menu's "Detach to Window" does; its
+    /// window opens where the pointer is, when the screens are known.
+    fn detach_dropped(&mut self, tab: TabId) -> Vec<Effect> {
+        let effects = self
+            .app
+            .update(AppMessage::Float(FloatMessage::Detach(tab)));
+        let opened = effects.iter().find_map(|effect| match effect {
+            Effect::OpenWindow(key) => Some(*key),
+            _ => None,
+        });
+        self.detach_place = opened.zip(crate::screens::pointer());
+        effects
+    }
+
+    /// The tab dragged, when the pointer is out of the main window by more than
+    /// [`crate::tab_drag::DETACH_MARGIN`]: let go there, it goes to a window of its own.
+    fn tab_drag_outside(&self) -> Option<crate::tab_drag::TabDrag> {
+        let drag = self.tab_drag.filter(|drag| drag.active)?;
+        let window = self.window_extent?;
+        crate::tab_drag::beyond_window(window, drag.at()).then_some(drag)
+    }
+
+    /// Escape, a tab dragged: the drag given up, as the C# `QueryContinueDrag`; let go, the
+    /// tab stays where it was. Whether there was one to give up.
+    fn cancel_tab_drag(&mut self) -> bool {
+        if !self.tab_drag.is_some_and(|drag| drag.active) {
+            return false;
+        }
+        self.tab_drag = None;
+        self.tab_drop_area = None;
+        true
+    }
+
     /// The pointer moved, a press on a tab held: once it is a drag, where the content is
-    /// drawn is asked, for a drop there to split the tab shown. The content is not watched
-    /// for the pointer: a terminal or a desktop takes its moves.
+    /// drawn is asked, for a drop there to split the tab shown, and how large the window
+    /// is, for a drop out of it to detach the tab. The content is not watched for the
+    /// pointer: a terminal or a desktop takes its moves.
     fn tab_drag_moved(&mut self, at: Point) -> Task<Message> {
         let Some(drag) = self.tab_drag.as_mut() else {
             return Task::none();
@@ -5305,7 +5422,12 @@ impl Shell {
         let started = !drag.active;
         drag.moved(at);
         if started && drag.active {
-            return crate::screenshot::area_bounds().map(Message::TabDropArea);
+            return Task::batch([
+                crate::screenshot::area_bounds().map(Message::TabDropArea),
+                main_window_task(self.main_window)
+                    .and_then(window::size)
+                    .map(Message::WindowResized),
+            ]);
         }
         Task::none()
     }
@@ -5340,42 +5462,21 @@ impl Shell {
             return None;
         }
         let half = crate::tab_drag::drop_half(area, zone);
-        let label = text(fl!("ui-split-drop-to-split"))
-            .size(HEADING_SIZE)
-            .style(|theme: &Theme| text::Style {
-                color: Some(theme.extended_palette().primary.strong.color),
-            });
-        let zone = container(label)
-            .width(Length::Fixed(half.width))
-            .height(Length::Fixed(half.height))
-            .align_x(iced::alignment::Horizontal::Center)
-            .align_y(iced::alignment::Vertical::Center)
-            .style(|theme: &Theme| {
-                let palette = theme.extended_palette();
-                container::Style {
-                    background: Some(
-                        Color {
-                            a: SPLIT_DROP_SHADE,
-                            ..palette.background.base.color
-                        }
-                        .into(),
-                    ),
-                    border: iced::Border {
-                        color: palette.primary.strong.color,
-                        width: SPLIT_DROP_EDGE,
-                        radius: SPLIT_DROP_RADIUS.into(),
-                    },
-                    ..container::Style::default()
-                }
-            });
-        Some(
-            pin(zone)
-                .x(half.x)
-                .y(half.y)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .into(),
-        )
+        Some(drop_zone_overlay(fl!("ui-split-drop-to-split"), half))
+    }
+
+    /// "Release to detach to a window" over the whole content while a tab dragged is out of
+    /// the window beyond [`crate::tab_drag::DETACH_MARGIN`], the "Drop to split" overlay
+    /// gone; none for a tab that cannot go, a split one, whose drop says why. The C# shows
+    /// only the system's drag pointer there.
+    fn detach_overlay(&self) -> Option<Element<'_, Message>> {
+        let drag = self.tab_drag_outside()?;
+        let area = self.tab_drop_area?;
+        let tab = self.app.tab(drag.tab)?;
+        if !self.app.can_detach(tab) {
+            return None;
+        }
+        Some(drop_zone_overlay(fl!("ui-tab-drag-detach-hint"), area))
     }
 
     fn files_drag_message(&mut self, message: &Message) -> Vec<Effect> {
@@ -5517,6 +5618,7 @@ impl Shell {
                 if !self.fullscreen {
                     self.window_size = Some(size);
                 }
+                self.window_extent = Some(size);
                 Vec::new()
             }
             Message::SidebarDragged(x) if self.sidebar_drag => {

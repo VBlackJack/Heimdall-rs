@@ -845,6 +845,7 @@ ui-status-detach-split-refused = Un onglet divisé ne peut pas être déplacé d
 ui-split-menu = Diviser...
 ui-split-palette-hint = Rechercher un serveur avec lequel diviser...
 ui-split-drop-to-split = Déposer pour diviser
+ui-tab-drag-detach-hint = Relâcher pour détacher dans une fenêtre
 ui-split-open-in-split = Ouvrir dans une division
 ui-split-open-in-split-disabled = Ouvrez d'abord une session : une division partage la session active.
 ui-dialog-rename-tab-title = Renommer l'onglet

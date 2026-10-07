@@ -21,7 +21,7 @@
 //! to is given in the scale of the screen it opened on, as the move reads it.
 
 use heimdall_core::window_state::{Bounds, WindowState, place};
-use iced::{Point, Task, window};
+use iced::{Point, Size, Task, Vector, window};
 
 /// Every screen's working area, the screen less its taskbar, in physical pixels.
 #[cfg(windows)]
@@ -53,6 +53,65 @@ pub fn work_areas() -> Vec<Bounds> {
 #[must_use]
 pub fn work_areas() -> Vec<Bounds> {
     Vec::new()
+}
+
+/// Where the pointer is on the screens, in physical pixels.
+#[cfg(windows)]
+#[must_use]
+pub fn pointer() -> Option<(f64, f64)> {
+    match winsafe::GetPhysicalCursorPos() {
+        Ok(at) => Some((f64::from(at.x), f64::from(at.y))),
+        Err(error) => {
+            log::warn!("the pointer could not be found: {error}");
+            None
+        }
+    }
+}
+
+/// The pointer is found on Windows only, as the screens are: elsewhere, the system places
+/// a window.
+#[cfg(not(windows))]
+#[must_use]
+pub fn pointer() -> Option<(f64, f64)> {
+    None
+}
+
+/// Where a window `size` logical pixels large, on a screen of this `scale`, is moved to have
+/// the `pointer`, in physical pixels, at `grab` from its top left corner: kept within the
+/// screen's working area among `areas`, as [`place`] keeps a window put back. In the
+/// screen's logical pixels, as the move reads them; none without a screen.
+#[must_use]
+pub fn near_pointer(
+    pointer: (f64, f64),
+    size: Size,
+    grab: Vector,
+    scale: f32,
+    areas: &[Bounds],
+) -> Option<Point> {
+    let factor = f64::from(scale);
+    let wanted = Bounds {
+        x: pointer.0 - f64::from(grab.x) * factor,
+        y: pointer.1 - f64::from(grab.y) * factor,
+        width: f64::from(size.width) * factor,
+        height: f64::from(size.height) * factor,
+    };
+    place(wanted, areas).map(|(x, y)| logical(x, y, scale))
+}
+
+/// Moves window `id`, opened hidden, so that the `pointer` is at `grab` from its corner, as
+/// [`near_pointer`] places it, then shows it; shown where it opened when no screen is
+/// listed.
+pub fn show_near_pointer<Message: Send + 'static>(
+    id: window::Id,
+    pointer: (f64, f64),
+    size: Size,
+    grab: Vector,
+) -> Task<Message> {
+    window::scale_factor(id).then(move |scale| {
+        let moved = near_pointer(pointer, size, grab, scale, &work_areas())
+            .map_or_else(Task::none, |at| window::move_to(id, at));
+        moved.chain(window::set_mode(id, window::Mode::Windowed))
+    })
 }
 
 /// Whether the window opens hidden, to be put back where it was by [`restore`]: when its
@@ -122,6 +181,57 @@ mod tests {
             Point::new(-1266.6666, 26.666_666)
         );
         assert_eq!(physical(Point::new(100.0, 50.0), 1.0), (100, 50));
+    }
+
+    /// Two screens side by side: 1920 by 1040 at 100%, then 2560 by 1400 at 150%.
+    const SCREENS: [Bounds; 2] = [
+        Bounds {
+            x: 0.0,
+            y: 0.0,
+            width: 1920.0,
+            height: 1040.0,
+        },
+        Bounds {
+            x: 1920.0,
+            y: 0.0,
+            width: 2560.0,
+            height: 1400.0,
+        },
+    ];
+
+    #[test]
+    fn a_window_opens_with_the_pointer_where_it_grabs_it() {
+        let size = Size::new(1024.0, 768.0);
+        let grab = Vector::new(120.0, 16.0);
+        assert_eq!(
+            near_pointer((500.0, 200.0), size, grab, 1.0, &SCREENS),
+            Some(Point::new(380.0, 184.0))
+        );
+        // On the screen at 150%: the grab and the size in its pixels, the place read back
+        // in its logical ones.
+        assert_eq!(
+            near_pointer((2400.0, 249.0), size, grab, 1.5, &SCREENS),
+            Some(Point::new(1480.0, 150.0))
+        );
+    }
+
+    #[test]
+    fn a_window_opened_at_the_pointer_stays_on_its_screen() {
+        let size = Size::new(1024.0, 768.0);
+        let grab = Vector::new(120.0, 16.0);
+        // Near the bottom right corner of a single screen, its foot under the taskbar:
+        // moved in.
+        assert_eq!(
+            near_pointer((1900.0, 1000.0), size, grab, 1.0, &SCREENS[..1]),
+            Some(Point::new(1920.0 - 1024.0, 1040.0 - 768.0))
+        );
+        // There, with a screen beside it: on the one it covers most, the second.
+        assert_eq!(
+            near_pointer((1900.0, 1000.0), size, grab, 1.0, &SCREENS),
+            Some(Point::new(1920.0, 1400.0 - 768.0))
+        );
+        // No screen listed: no place, the window stays where the system opened it.
+        assert_eq!(near_pointer((500.0, 300.0), size, grab, 1.0, &[]), None);
     }
 
     #[test]

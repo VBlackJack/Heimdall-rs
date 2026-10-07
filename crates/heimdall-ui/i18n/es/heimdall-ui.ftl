@@ -845,6 +845,7 @@ ui-status-detach-split-refused = Una pestaña dividida no se puede mover a su pr
 ui-split-menu = Dividir...
 ui-split-palette-hint = Buscar servidor con el que dividir...
 ui-split-drop-to-split = Soltar para dividir
+ui-tab-drag-detach-hint = Soltar para separar a una ventana
 ui-split-open-in-split = Abrir en división
 ui-split-open-in-split-disabled = Abre primero una sesión: una división reparte la sesión activa.
 ui-dialog-rename-tab-title = Renombrar pestaña

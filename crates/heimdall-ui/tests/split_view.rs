@@ -18,7 +18,8 @@
 //! with the focused one only, a press giving it to the other, the divider dragged then kept
 //! once let go, a double click giving each half, the tab's menu and Ctrl+Shift+O; a tab
 //! dropped on the content, the tree's "Open in split", "Split..." through Quick Connect,
-//! and the keys that move between the panes.
+//! and the keys that move between the panes; a tab let go out of the window detached, and
+//! Escape giving its drag up.
 
 mod common;
 
@@ -733,6 +734,180 @@ fn no_overlay_for_the_tab_shown_a_split_tab_or_onto_a_full_split() {
     assert!(drop_label(&shell).is_none(), "a split tab is not merged");
     let _ = shell.update(Message::TabDragEnd);
     assert!(layout_of(&shell, third).is_none());
+}
+
+/// The main window's size known, as the window reports it once a drag starts.
+fn sized_window(shell: &mut Shell) {
+    let _ = shell.update(Message::WindowResized(WINDOW));
+}
+
+/// A place beyond the window's right edge, past the margin a drop there detaches beyond.
+fn out_right() -> Point {
+    Point::new(WINDOW.width + tab_drag::DETACH_MARGIN + 10.0, 300.0)
+}
+
+/// Whether the hint that a tab let go detaches is drawn.
+fn detach_hint(shell: &Shell) -> bool {
+    let mut ui = simulator(shell);
+    ui.find("Release to detach to a window").is_ok()
+}
+
+fn strip_of(shell: &Shell) -> Vec<TabId> {
+    shell.app().strip().iter().map(|tab| tab.id).collect()
+}
+
+#[test]
+fn a_tab_let_go_out_of_the_window_goes_to_a_window_of_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    sized_window(&mut shell);
+    let area = content_area(&shell);
+    // Over the content, the hint is not drawn: a drop there splits.
+    drag_to(&mut shell, right, area.center());
+    assert!(drop_label(&shell).is_some());
+    assert!(!detach_hint(&shell), "inside: no hint");
+    // Out of the window: the overlay gone, the hint drawn.
+    let _ = shell.update(Message::TabDragMoved(out_right()));
+    assert!(
+        drop_label(&shell).is_none(),
+        "out of the window: no overlay"
+    );
+    assert!(detach_hint(&shell), "out of the window: the hint");
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(shell.app().is_floating(right));
+    assert_eq!(strip_of(&shell), [left]);
+    assert!(layout_of(&shell, left).is_none(), "not split");
+    assert!(!detach_hint(&shell), "gone once let go");
+
+    // Above the window and beyond the margin, the tab shown goes too.
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    sized_window(&mut shell);
+    drag_to(
+        &mut shell,
+        left,
+        Point::new(400.0, -tab_drag::DETACH_MARGIN - 1.0),
+    );
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(shell.app().is_floating(left));
+    assert_eq!(strip_of(&shell), [right]);
+}
+
+#[test]
+fn a_tab_let_go_on_the_window_frame_stays() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    sized_window(&mut shell);
+    // Just above the drawn area, on the title bar: within the margin.
+    drag_to(
+        &mut shell,
+        right,
+        Point::new(400.0, -tab_drag::DETACH_MARGIN + 1.0),
+    );
+    assert!(!detach_hint(&shell), "within the margin: no hint");
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(!shell.app().is_floating(right));
+    assert_eq!(strip_of(&shell), [left, right]);
+    assert!(layout_of(&shell, left).is_none());
+
+    // The window's size unknown, nothing is out of it.
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, right) = two_tabs(dir.path());
+    drag_to(&mut shell, right, out_right());
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(!shell.app().is_floating(right));
+}
+
+#[test]
+fn a_split_tab_let_go_out_of_the_window_is_refused_and_stays() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = split_shell(dir.path());
+    sized_window(&mut shell);
+    drag_to(&mut shell, left, out_right());
+    assert!(!detach_hint(&shell), "a split tab cannot go: no hint");
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(!shell.app().is_floating(left) && !shell.app().is_floating(right));
+    assert_eq!(
+        shell.app().notice(),
+        Some(&heimdall_app::Notice::DetachSplitRefused)
+    );
+    assert_eq!(
+        layout_of(&shell, left).expect("still split").leaves(),
+        [left, right]
+    );
+    assert_eq!(strip_of(&shell), [left]);
+}
+
+#[test]
+fn the_window_size_known_drops_inside_still_reorder_and_split() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    sized_window(&mut shell);
+    let area = content_area(&shell);
+    drag_to(&mut shell, right, Point::new(area.x + 10.0, area.y - 10.0));
+    let _ = shell.update(Message::TabHover(left));
+    let _ = shell.update(Message::TabDragEnd);
+    assert_eq!(strip_of(&shell), [right, left], "the strip reorders");
+    assert!(!shell.app().is_floating(right));
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    sized_window(&mut shell);
+    drag_to(
+        &mut shell,
+        right,
+        Point::new(area.x + area.width * 0.9, area.center_y()),
+    );
+    let _ = shell.update(Message::TabDragEnd);
+    assert_eq!(
+        layout_of(&shell, left).expect("split").leaves(),
+        [left, right],
+        "the content splits"
+    );
+    assert!(!shell.app().is_floating(right));
+}
+
+#[test]
+fn escape_gives_a_tab_drag_up_and_nothing_moves() {
+    // Escape no widget took, then one a terminal took: either gives the drag up.
+    for escape in [
+        Message::EscapeUntaken,
+        Message::DialogKey { confirm: false },
+    ] {
+        let dir = tempfile::tempdir().expect("dir");
+        let (mut shell, left, right) = two_tabs(dir.path());
+        sized_window(&mut shell);
+        drag_to(&mut shell, right, out_right());
+        assert!(detach_hint(&shell));
+        let _ = shell.update(escape);
+        assert!(!detach_hint(&shell), "given up: no hint");
+        let _ = shell.update(Message::TabDragEnd);
+        assert!(!shell.app().is_floating(right));
+        assert_eq!(strip_of(&shell), [left, right]);
+
+        // Over the content, given up, nothing splits.
+        let area = content_area(&shell);
+        drag_to(&mut shell, right, area.center());
+        let _ = shell.update(Message::EscapeUntaken);
+        assert!(drop_label(&shell).is_none(), "given up: no overlay");
+        let _ = shell.update(Message::TabDragEnd);
+        assert!(layout_of(&shell, left).is_none());
+    }
+}
+
+#[test]
+fn a_drag_whose_release_was_lost_ends_with_the_next_press() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, left, right) = two_tabs(dir.path());
+    sized_window(&mut shell);
+    drag_to(&mut shell, right, out_right());
+    // The release went elsewhere: the next press, on no tab, starts no drag, and its own
+    // release detaches nothing.
+    let _ = shell.update(Message::PointerPressed);
+    assert!(!detach_hint(&shell), "the press ends it");
+    let _ = shell.update(Message::TabDragEnd);
+    assert!(!shell.app().is_floating(right));
+    assert_eq!(strip_of(&shell), [left, right]);
 }
 
 #[test]
