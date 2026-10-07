@@ -214,6 +214,8 @@ pub enum SettingRow {
     HostKeys,
     /// The trusted FTPS certificates.
     FtpsCertificates,
+    /// The trusted VNC certificates.
+    VncCertificates,
     /// The RDP options profiles following the application's take.
     RdpDefaults,
     /// Attempts of an RDP auto-reconnect.
@@ -242,7 +244,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 48] = [
+    pub const ALL: [Self; 49] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -279,6 +281,7 @@ impl SettingRow {
         Self::ExternalEditor,
         Self::HostKeys,
         Self::FtpsCertificates,
+        Self::VncCertificates,
         Self::RdpDefaults,
         Self::RdpAutoReconnectAttempts,
         Self::RdpConnectTimeout,
@@ -326,7 +329,9 @@ impl SettingRow {
             | Self::LocalFollow => SettingsCard::Sftp,
             Self::X11ServerPath | Self::X11AutoStart => SettingsCard::X11,
             Self::ExternalEditor => SettingsCard::ExternalEditor,
-            Self::HostKeys | Self::FtpsCertificates => SettingsCard::SshTrusted,
+            Self::HostKeys | Self::FtpsCertificates | Self::VncCertificates => {
+                SettingsCard::SshTrusted
+            }
             Self::RdpDefaults => SettingsCard::RdpDefaults,
             Self::RdpAutoReconnectAttempts | Self::RdpConnectTimeout => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
@@ -392,6 +397,7 @@ impl SettingRow {
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates
+                | Self::VncCertificates
                 | Self::RdpResetAll
                 | Self::Certificates
                 | Self::Gateways

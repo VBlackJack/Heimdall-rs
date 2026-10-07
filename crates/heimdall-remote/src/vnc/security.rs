@@ -16,9 +16,16 @@
 
 //! The security types spoken, and what the two wrapping ones carry: Tight (16) and `VeNCrypt`
 //! (19), each with no authentication or VNC Authentication inside, as noVNC 1.5.0 speaks
-//! them. Neither encrypts here: the TLS subtypes of `VeNCrypt` are not spoken, nor Plain.
+//! them; and, beyond noVNC, the X509 subtypes of `VeNCrypt`: TLS 1.2 or 1.3 with the server's
+//! certificate checked, then no authentication, VNC Authentication or Plain inside.
+//!
+//! The anonymous TLS subtypes (`TLSNone`, `TLSVnc`, `TLSPlain`) are not spoken: they need an
+//! anonymous Diffie-Hellman exchange, which proves nothing of the server and which rustls
+//! does not offer. Plain is never sent outside TLS.
 
 use std::fmt;
+
+use super::protocol::SecurityPolicy;
 
 /// Security types.
 pub(super) const SECURITY_NONE: u8 = 1;
@@ -26,15 +33,16 @@ pub(super) const SECURITY_VNC_AUTH: u8 = 2;
 pub(super) const SECURITY_TIGHT: u8 = 16;
 pub(super) const SECURITY_VENCRYPT: u8 = 19;
 
-/// The types taken, first preferred. A type with VNC Authentication or none at all goes
-/// first: what a wrapper carries is known only once it is chosen, and a wrapper chosen
-/// cannot be left for another. Tight goes before `VeNCrypt`, which servers offer mostly for
-/// TLS.
+/// The types taken, first preferred. `VeNCrypt` goes first: TLS is only there, and what a
+/// wrapper carries is known only once it is chosen. A `VeNCrypt` server offering no X509
+/// subtype is still answered inside with VNC Authentication or none, as the subtypes it
+/// offers allow. Then VNC Authentication, none at all, and Tight last: a Tight server offers
+/// the same authentications directly.
 pub(super) const PREFERENCE: [u8; 4] = [
+    SECURITY_VENCRYPT,
     SECURITY_VNC_AUTH,
     SECURITY_NONE,
     SECURITY_TIGHT,
-    SECURITY_VENCRYPT,
 ];
 
 /// Bytes of one Tight capability: a code, a vendor and a signature.
@@ -79,6 +87,24 @@ pub(super) const MAX_VENCRYPT_SUBTYPES: usize = 64;
 /// The `VeNCrypt` subtypes spoken: the standard types, unencrypted.
 pub(super) const VENCRYPT_NONE: u32 = 1;
 pub(super) const VENCRYPT_VNC_AUTH: u32 = 2;
+/// And the X509 ones: TLS with the server's certificate, then none, VNC Authentication or
+/// Plain inside.
+pub(super) const VENCRYPT_X509_NONE: u32 = 260;
+pub(super) const VENCRYPT_X509_VNC: u32 = 261;
+pub(super) const VENCRYPT_X509_PLAIN: u32 = 262;
+/// The server's answer to an X509 subtype when it starts TLS.
+pub(super) const VENCRYPT_TLS_ACCEPTED: u8 = 1;
+
+/// The `VeNCrypt` subtypes taken, first preferred: the X509 ones before any in clear. Plain
+/// only with a user name, none at all only when the policy allows it, and those in clear
+/// only when it does not require TLS.
+const VENCRYPT_PREFERENCE: [u32; 5] = [
+    VENCRYPT_X509_VNC,
+    VENCRYPT_X509_PLAIN,
+    VENCRYPT_X509_NONE,
+    VENCRYPT_VNC_AUTH,
+    VENCRYPT_NONE,
+];
 
 /// A security type that carries another.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,6 +142,8 @@ pub enum Authentication {
     NoAuthentication,
     /// VNC Authentication: the password answered a challenge.
     VncAuth,
+    /// `VeNCrypt` Plain: a user name and a password, sent inside TLS only.
+    Plain,
 }
 
 impl fmt::Display for Authentication {
@@ -123,6 +151,7 @@ impl fmt::Display for Authentication {
         formatter.write_str(match self {
             Self::NoAuthentication => "no authentication",
             Self::VncAuth => "VNC Authentication",
+            Self::Plain => "Plain",
         })
     }
 }
@@ -134,13 +163,20 @@ pub struct Security {
     pub wrapper: Option<SecurityWrapper>,
     /// The authentication.
     pub authentication: Authentication,
+    /// Whether it went inside TLS, the server's certificate checked: an X509 subtype of
+    /// `VeNCrypt`.
+    pub tls: bool,
 }
 
 impl fmt::Display for Security {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(formatter, "{}", self.authentication)?;
+        if self.tls {
+            formatter.write_str(" over TLS")?;
+        }
         match self.wrapper {
-            Some(wrapper) => write!(formatter, "{} inside {wrapper}", self.authentication),
-            None => write!(formatter, "{}", self.authentication),
+            Some(wrapper) => write!(formatter, " inside {wrapper}"),
+            None => Ok(()),
         }
     }
 }
@@ -213,26 +249,33 @@ pub(super) fn tight_authentication(bytes: &[u8], allow_none: bool) -> Option<Aut
 pub(super) fn tight_code(authentication: Authentication) -> u32 {
     match authentication {
         Authentication::NoAuthentication => TIGHT_AUTH_NONE,
-        Authentication::VncAuth => TIGHT_AUTH_VNC,
+        // Plain is never taken inside Tight.
+        Authentication::VncAuth | Authentication::Plain => TIGHT_AUTH_VNC,
     }
 }
 
-/// The `VeNCrypt` subtype taken from those offered: VNC Authentication first, then none when
-/// `allow_none`; `None` when neither is there.
-pub(super) fn vencrypt_subtype(offered: &[u32], allow_none: bool) -> Option<Authentication> {
-    if offered.contains(&VENCRYPT_VNC_AUTH) {
-        Some(Authentication::VncAuth)
-    } else if allow_none && offered.contains(&VENCRYPT_NONE) {
-        Some(Authentication::NoAuthentication)
-    } else {
-        None
-    }
+/// The `VeNCrypt` subtype taken from those offered, in the order of [`VENCRYPT_PREFERENCE`]
+/// as `policy` allows; `None` when none will do.
+pub(super) fn vencrypt_subtype(offered: &[u32], policy: &SecurityPolicy) -> Option<u32> {
+    VENCRYPT_PREFERENCE
+        .into_iter()
+        .filter(|code| {
+            let (authentication, tls) = vencrypt_meaning(*code);
+            (tls || !policy.require_tls)
+                && (authentication != Authentication::NoAuthentication
+                    || policy.allow_no_authentication)
+                && (authentication != Authentication::Plain || policy.username.is_some())
+        })
+        .find(|code| offered.contains(code))
 }
 
-/// The code the client answers for `authentication` inside `VeNCrypt`.
-pub(super) fn vencrypt_code(authentication: Authentication) -> u32 {
-    match authentication {
-        Authentication::NoAuthentication => VENCRYPT_NONE,
-        Authentication::VncAuth => VENCRYPT_VNC_AUTH,
+/// What a `VeNCrypt` subtype spoken carries, and whether inside TLS.
+pub(super) fn vencrypt_meaning(code: u32) -> (Authentication, bool) {
+    match code {
+        VENCRYPT_X509_NONE => (Authentication::NoAuthentication, true),
+        VENCRYPT_X509_VNC => (Authentication::VncAuth, true),
+        VENCRYPT_X509_PLAIN => (Authentication::Plain, true),
+        VENCRYPT_VNC_AUTH => (Authentication::VncAuth, false),
+        _ => (Authentication::NoAuthentication, false),
     }
 }

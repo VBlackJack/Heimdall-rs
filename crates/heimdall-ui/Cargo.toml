@@ -27,6 +27,7 @@ heimdall-files.workspace = true
 heimdall-rdp.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
+heimdall-tls.workspace = true
 i18n-embed.workspace = true
 i18n-embed-fl.workspace = true
 # advanced: custom widgets; tokio: one runtime shared with the SSH client; fira-sans: the

@@ -184,6 +184,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::X11AutoStart => fl!("ui-settings-x11-auto-start"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-title"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-title"),
+        SettingRow::VncCertificates => fl!("ui-trusted-vnc-certificates-title"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults"),
         SettingRow::RdpAutoReconnectAttempts => fl!("ui-settings-rdp-auto-reconnect-attempts"),
         SettingRow::RdpConnectTimeout => fl!("ui-settings-rdp-connect-timeout"),
@@ -218,6 +219,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-hint"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-hint"),
+        SettingRow::VncCertificates => fl!("ui-trusted-vnc-certificates-hint"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults-hint"),
         SettingRow::RdpResolutionPresets => fl!("ui-settings-rdp-resolution-presets-hint"),
         SettingRow::RdpResetAll => fl!("ui-settings-rdp-reset-defaults-tooltip"),
@@ -787,6 +789,7 @@ impl Shell {
             SettingRow::PuttyPath | SettingRow::X11ServerPath => self.tool_path_row(row),
             SettingRow::HostKeys
             | SettingRow::FtpsCertificates
+            | SettingRow::VncCertificates
             | SettingRow::Certificates
             | SettingRow::Macros
             | SettingRow::Gateways
@@ -1131,6 +1134,12 @@ impl Shell {
             SettingRow::FtpsCertificates => container(crate::trusted_keys_view::ftps_certificates(
                 keys,
                 &self.ftps_certificate_search,
+            ))
+            .max_width(SETTINGS_WIDTH)
+            .into(),
+            SettingRow::VncCertificates => container(crate::trusted_keys_view::vnc_certificates(
+                keys,
+                &self.vnc_certificate_search,
             ))
             .max_width(SETTINGS_WIDTH)
             .into(),

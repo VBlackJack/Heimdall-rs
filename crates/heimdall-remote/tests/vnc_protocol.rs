@@ -18,8 +18,8 @@
 //! the code under test.
 
 use heimdall_remote::vnc::{
-    Authentication, MAX_CUT_TEXT, Quality, Rect, Rfb, RfbError, RfbEvent, Security, SecurityPolicy,
-    SecurityWrapper, Version,
+    Authentication, MAX_CUT_TEXT, MAX_PLAIN_PASSWORD, MAX_PLAIN_USERNAME, Quality, Rect, Rfb,
+    RfbError, RfbEvent, Security, SecurityPolicy, SecurityWrapper, TooLong, Version,
 };
 
 const VERSION_3_8: &[u8] = b"RFB 003.008\n";
@@ -35,7 +35,26 @@ const RESPONSE: [u8; 16] = [
 
 const NO_AUTHENTICATION: SecurityPolicy = SecurityPolicy {
     allow_no_authentication: true,
+    require_tls: false,
+    exclude_vencrypt: false,
+    username: None,
 };
+
+/// A profile with a certificate trusted for its server: TLS or nothing.
+const TLS_REQUIRED: SecurityPolicy = SecurityPolicy {
+    allow_no_authentication: false,
+    require_tls: true,
+    exclude_vencrypt: false,
+    username: None,
+};
+
+/// A profile with a user name, for Plain inside TLS.
+fn with_username(username: &str) -> SecurityPolicy {
+    SecurityPolicy {
+        username: Some(username.to_owned()),
+        ..SecurityPolicy::default()
+    }
+}
 
 /// `ServerInit` for a `width` by `height` desktop named `name`, the server's own pixel format.
 fn server_init(width: u16, height: u16, name: &[u8]) -> Vec<u8> {
@@ -118,8 +137,8 @@ fn a_vnc_authentication_handshake_answers_the_challenge_and_opens_the_session() 
     let mut rfb = Rfb::new(SecurityPolicy::default());
     assert!(rfb.receive(VERSION_3_8).expect("version").is_empty());
     assert_eq!(rfb.take_output(), VERSION_3_8);
-    // VeNCrypt and VNC Authentication offered: the second is chosen.
-    rfb.receive(&[2, 19, 2]).expect("types");
+    // Tight and VNC Authentication offered: the second is chosen.
+    rfb.receive(&[2, 16, 2]).expect("types");
     assert_eq!(rfb.take_output(), [2]);
     assert_eq!(
         rfb.receive(&CHALLENGE).expect("challenge"),
@@ -617,6 +636,7 @@ fn tight_takes_no_tunnel_then_vnc_authentication_and_reads_past_its_capabilities
         Some(Security {
             wrapper: Some(SecurityWrapper::Tight),
             authentication: Authentication::VncAuth,
+            tls: false,
         })
     );
 
@@ -656,6 +676,7 @@ fn tight_without_authentication_types_is_no_authentication_and_is_confirmed() {
         Some(Security {
             wrapper: Some(SecurityWrapper::Tight),
             authentication: Authentication::NoAuthentication,
+            tls: false,
         })
     );
     let mut init = server_init(1, 1, b"open");
@@ -704,6 +725,7 @@ fn vencrypt_0_2_takes_vnc_authentication_and_sends_no_more_than_the_subtype() {
         Some(Security {
             wrapper: Some(SecurityWrapper::VeNCrypt),
             authentication: Authentication::VncAuth,
+            tls: false,
         })
     );
 }
@@ -723,6 +745,7 @@ fn vencrypt_takes_no_authentication_when_allowed_confirmed_in_3_8_only() {
         Some(Security {
             wrapper: Some(SecurityWrapper::VeNCrypt),
             authentication: Authentication::NoAuthentication,
+            tls: false,
         })
     );
 
@@ -896,18 +919,259 @@ fn a_profile_requiring_a_password_refuses_no_authentication_inside_a_wrapper() {
 }
 
 #[test]
-fn the_type_taken_is_vnc_authentication_then_none_if_allowed_then_tight_then_vencrypt() {
+fn the_type_taken_is_vencrypt_then_vnc_authentication_then_none_if_allowed_then_tight() {
     for (policy, offered, taken) in [
-        (SecurityPolicy::default(), vec![19, 16, 1, 2], 2),
-        (NO_AUTHENTICATION, vec![19, 16, 1], 1),
-        (SecurityPolicy::default(), vec![19, 16, 1], 16),
-        (NO_AUTHENTICATION, vec![19, 16], 16),
+        (SecurityPolicy::default(), vec![19, 16, 1, 2], 19),
+        (SecurityPolicy::default(), vec![16, 1, 2], 2),
+        (NO_AUTHENTICATION, vec![16, 1], 1),
+        (SecurityPolicy::default(), vec![16, 1], 16),
+        (NO_AUTHENTICATION, vec![16], 16),
         (SecurityPolicy::default(), vec![1, 19], 19),
+        (TLS_REQUIRED, vec![2, 19], 19),
     ] {
         let mut rfb = at_security(policy);
         let mut types = vec![u8::try_from(offered.len()).expect("few")];
         types.extend(&offered);
         rfb.receive(&types).expect("types");
         assert_eq!(rfb.take_output(), [taken], "offered {offered:?}");
+    }
+}
+
+/// A session that took `VeNCrypt` 0.2 with `policy`, at its subtypes.
+fn at_vencrypt_subtypes(policy: SecurityPolicy) -> Rfb {
+    let mut rfb = at_security(policy);
+    rfb.receive(&[1, 19]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    let _ = rfb.take_output();
+    rfb
+}
+
+/// The subtype a server offering `offered` gets from a client with `policy`.
+fn subtype_taken(policy: SecurityPolicy, offered: &[u32]) -> Result<u32, RfbError> {
+    let mut rfb = at_vencrypt_subtypes(policy);
+    rfb.receive(&vencrypt_subtypes(offered))?;
+    let output = rfb.take_output();
+    Ok(u32::from_be_bytes(
+        output[..].try_into().expect("one subtype"),
+    ))
+}
+
+#[test]
+fn x509_subtypes_go_first_plain_with_a_user_name_and_none_only_when_allowed() {
+    let every = [1, 2, 256, 257, 258, 259, 260, 261, 262];
+    // X509Vnc before all.
+    assert_eq!(subtype_taken(SecurityPolicy::default(), &every), Ok(261));
+    assert_eq!(subtype_taken(with_username("admin"), &every), Ok(261));
+    // X509Plain next, only with a user name; never Plain (256) in clear.
+    let no_vnc = [1, 2, 256, 260, 262];
+    assert_eq!(subtype_taken(with_username("admin"), &no_vnc), Ok(262));
+    assert_eq!(subtype_taken(SecurityPolicy::default(), &no_vnc), Ok(2));
+    // X509None before anything in clear, only when no password is allowed.
+    assert_eq!(subtype_taken(NO_AUTHENTICATION, &no_vnc), Ok(260));
+    assert_eq!(
+        subtype_taken(SecurityPolicy::default(), &[1, 260]),
+        Err(RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::VeNCrypt,
+            offered: vec![1, 260],
+        })
+    );
+    // The anonymous TLS ones are never taken.
+    assert_eq!(subtype_taken(NO_AUTHENTICATION, &[257, 258, 259, 1]), Ok(1));
+}
+
+#[test]
+fn x509_vnc_starts_tls_then_answers_the_challenge_inside_it() {
+    let mut rfb = at_vencrypt_subtypes(SecurityPolicy::default());
+    assert!(
+        rfb.receive(&vencrypt_subtypes(&[2, 261]))
+            .expect("subtypes")
+            .is_empty()
+    );
+    assert_eq!(rfb.take_output(), [0, 0, 1, 5], "X509Vnc");
+    // The server starts TLS: nothing more is read in clear.
+    assert_eq!(rfb.receive(&[1]).expect("ack"), [RfbEvent::StartTls]);
+    assert!(rfb.take_output().is_empty());
+    assert!(rfb.tls_started().expect("started").is_empty());
+    assert_eq!(
+        rfb.receive(&CHALLENGE).expect("challenge"),
+        [RfbEvent::PasswordRequired]
+    );
+    rfb.answer_password(b"Secret12").expect("answered");
+    assert_eq!(rfb.take_output(), RESPONSE);
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1], "ClientInit");
+    assert_eq!(
+        rfb.security(),
+        Some(Security {
+            wrapper: Some(SecurityWrapper::VeNCrypt),
+            authentication: Authentication::VncAuth,
+            tls: true,
+        })
+    );
+    assert!(rfb.tls_started().is_err(), "TLS starts once");
+}
+
+#[test]
+fn a_server_refusing_tls_or_talking_in_clear_where_it_starts_ends_the_connection() {
+    let mut rfb = at_vencrypt_subtypes(SecurityPolicy::default());
+    rfb.receive(&vencrypt_subtypes(&[261])).expect("subtypes");
+    assert!(matches!(rfb.receive(&[0]), Err(RfbError::Protocol(_))));
+
+    // The challenge right after the ack, in clear: refused, not answered.
+    let mut rfb = at_vencrypt_subtypes(SecurityPolicy::default());
+    rfb.receive(&vencrypt_subtypes(&[261])).expect("subtypes");
+    let _ = rfb.take_output();
+    let mut clear = vec![1];
+    clear.extend_from_slice(&CHALLENGE);
+    assert!(matches!(rfb.receive(&clear), Err(RfbError::Protocol(_))));
+    assert!(rfb.take_output().is_empty());
+
+    // TLS cannot start before the server says so.
+    let mut rfb = at_vencrypt_subtypes(SecurityPolicy::default());
+    rfb.receive(&vencrypt_subtypes(&[261])).expect("subtypes");
+    assert!(rfb.tls_started().is_err());
+}
+
+#[test]
+fn x509_plain_asks_the_password_once_tls_is_up_and_sends_both_with_their_lengths() {
+    let mut rfb = at_vencrypt_subtypes(with_username("admin"));
+    rfb.receive(&vencrypt_subtypes(&[262, 2]))
+        .expect("subtypes");
+    assert_eq!(rfb.take_output(), [0, 0, 1, 6], "X509Plain");
+    assert_eq!(rfb.receive(&[1]).expect("ack"), [RfbEvent::StartTls]);
+    assert!(
+        rfb.answer_password(b"pass").is_err(),
+        "no password before TLS is up"
+    );
+    assert_eq!(
+        rfb.tls_started().expect("started"),
+        [RfbEvent::PasswordRequired]
+    );
+    rfb.answer_password(b"pass").expect("answered");
+    let mut expected = vec![0, 0, 0, 5, 0, 0, 0, 4];
+    expected.extend_from_slice(b"adminpass");
+    assert_eq!(rfb.take_output(), expected);
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1]);
+    assert_eq!(
+        rfb.security(),
+        Some(Security {
+            wrapper: Some(SecurityWrapper::VeNCrypt),
+            authentication: Authentication::Plain,
+            tls: true,
+        })
+    );
+}
+
+#[test]
+fn plain_credentials_past_their_bounds_are_refused_and_nothing_is_sent() {
+    for (username, password, which) in [
+        (
+            "u".repeat(MAX_PLAIN_USERNAME + 1),
+            b"pass".to_vec(),
+            TooLong::Username,
+        ),
+        (
+            "admin".to_owned(),
+            vec![b'p'; MAX_PLAIN_PASSWORD + 1],
+            TooLong::Password,
+        ),
+    ] {
+        let mut rfb = at_vencrypt_subtypes(with_username(&username));
+        rfb.receive(&vencrypt_subtypes(&[262])).expect("subtypes");
+        rfb.receive(&[1]).expect("ack");
+        rfb.tls_started().expect("started");
+        let _ = rfb.take_output();
+        assert_eq!(
+            rfb.answer_password(&password),
+            Err(RfbError::CredentialTooLong(which))
+        );
+        assert!(rfb.take_output().is_empty(), "nothing sent");
+    }
+}
+
+#[test]
+fn x509_none_needs_no_password_allowed_and_is_confirmed_inside_tls() {
+    let mut rfb = at_vencrypt_subtypes(NO_AUTHENTICATION);
+    rfb.receive(&vencrypt_subtypes(&[260])).expect("subtypes");
+    rfb.receive(&[1]).expect("ack");
+    assert!(rfb.tls_started().expect("started").is_empty());
+    assert_eq!(rfb.take_output(), [0, 0, 1, 4], "X509None, nothing else");
+    rfb.receive(&[0, 0, 0, 0]).expect("result");
+    assert_eq!(rfb.take_output(), [1]);
+}
+
+#[test]
+fn a_profile_requiring_tls_refuses_any_server_offering_none_never_falling_back_to_clear() {
+    // No VeNCrypt at all: refused before anything is answered.
+    let mut rfb = at_security(TLS_REQUIRED);
+    assert_eq!(
+        rfb.receive(&[3, 2, 1, 16]),
+        Err(RfbError::TlsRequired(vec![2, 1, 16]))
+    );
+    assert!(rfb.take_output().is_empty());
+    // Version 3.3: the server naming VNC Authentication.
+    let mut rfb = Rfb::new(TLS_REQUIRED);
+    rfb.receive(b"RFB 003.003\n").expect("version");
+    assert_eq!(
+        rfb.receive(&[0, 0, 0, 2]),
+        Err(RfbError::TlsRequired(vec![2]))
+    );
+    // VeNCrypt without an X509 subtype, VNC Authentication and none offered in clear.
+    let mut rfb = at_vencrypt_subtypes(SecurityPolicy {
+        allow_no_authentication: true,
+        ..TLS_REQUIRED
+    });
+    assert_eq!(
+        rfb.receive(&vencrypt_subtypes(&[2, 1, 258])),
+        Err(RfbError::TlsRequired(vec![2, 1, 258]))
+    );
+    assert!(rfb.take_output().is_empty(), "no subtype answered");
+    // With one, it is taken.
+    assert_eq!(subtype_taken(TLS_REQUIRED, &[2, 261]), Ok(261));
+}
+
+#[test]
+fn nothing_accepted_inside_vencrypt_asks_to_connect_again_without_it_only_when_that_helps() {
+    // VeNCrypt and VNC Authentication offered, only TLSVnc inside VeNCrypt.
+    let mut rfb = at_security(SecurityPolicy::default());
+    rfb.receive(&[2, 19, 2]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    let _ = rfb.take_output();
+    assert_eq!(
+        rfb.receive(&vencrypt_subtypes(&[258])),
+        Err(RfbError::RetryWithoutVencrypt(vec![258]))
+    );
+    assert!(rfb.take_output().is_empty(), "no subtype answered");
+    // Again, VeNCrypt left out: VNC Authentication.
+    let mut rfb = at_security(SecurityPolicy {
+        exclude_vencrypt: true,
+        ..SecurityPolicy::default()
+    });
+    rfb.receive(&[2, 19, 2]).expect("types");
+    assert_eq!(rfb.take_output(), [2]);
+    assert_eq!(
+        rfb.receive(&CHALLENGE).expect("challenge"),
+        [RfbEvent::PasswordRequired]
+    );
+
+    // TLS required: refused, never asked to go on in clear.
+    let mut rfb = at_security(TLS_REQUIRED);
+    rfb.receive(&[2, 19, 2]).expect("types");
+    rfb.receive(&[0, 2, 0]).expect("version and accepted");
+    assert_eq!(
+        rfb.receive(&vencrypt_subtypes(&[258])),
+        Err(RfbError::TlsRequired(vec![258]))
+    );
+
+    // VeNCrypt alone, or beside a type the policy refuses: nothing else to try.
+    for types in [vec![1, 19], vec![2, 19, 1]] {
+        let mut rfb = at_security(SecurityPolicy::default());
+        rfb.receive(&types).expect("types");
+        rfb.receive(&[0, 2, 0]).expect("version and accepted");
+        assert!(matches!(
+            rfb.receive(&vencrypt_subtypes(&[258])),
+            Err(RfbError::NoAcceptableInnerSecurity { .. })
+        ));
     }
 }

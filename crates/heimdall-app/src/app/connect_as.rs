@@ -200,6 +200,7 @@ fn transient(profile: &ProfileSummary, protocol: ConnectAs) -> Option<(TabProfil
                 port: DEFAULT_VNC_PORT,
                 view_only: false,
                 allow_no_password: false,
+                username: None,
                 vault_entry: None,
             }),
             Purpose::Vnc,

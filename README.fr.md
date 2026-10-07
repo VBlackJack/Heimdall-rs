@@ -42,6 +42,7 @@ embarqué.
 | `heimdall-rdp` | Sessions RDP |
 | `heimdall-twinshell` | Bibliothèque de commandes |
 | `heimdall-remote` | VNC, Telnet, série |
+| `heimdall-tls` | Vérification du certificat serveur de FTPS et de VNC sur TLS |
 | `heimdall-ui` | L'application de bureau |
 | `xtask` | Outillage de développement |
 

@@ -65,6 +65,8 @@ pub enum TrustedList {
     Certificates,
     /// FTPS certificates.
     FtpsCertificates,
+    /// VNC certificates.
+    VncCertificates,
 }
 
 /// What a list of certificates says of itself: its title, its hint, and what stands in it
@@ -287,6 +289,27 @@ pub fn ftps_certificates<'a>(
     )
 }
 
+/// The trusted VNC certificates, `search` typed, in the columns of the RDP ones.
+pub fn vnc_certificates<'a>(
+    keys: &'a heimdall_app::TrustedKeys,
+    search: &'a str,
+) -> Element<'a, Message> {
+    certificate_card(
+        CertificateList {
+            list: TrustedList::VncCertificates,
+            entries: &keys.vnc,
+            key: TrustedKey::Vnc,
+            search,
+        },
+        CertificateTexts {
+            title: fl!("ui-trusted-vnc-certificates-title"),
+            hint: fl!("ui-trusted-vnc-certificates-hint"),
+            empty_title: fl!("ui-trusted-vnc-certificates-empty-title"),
+            empty_body: fl!("ui-trusted-vnc-certificates-empty-body"),
+        },
+    )
+}
+
 /// The card of the certificates of `certificates`, which says itself in `texts`.
 fn certificate_card<'a>(
     certificates: CertificateList<'a>,
@@ -447,7 +470,7 @@ pub fn forget_question(key: &TrustedKey) -> Element<'_, Message> {
             fl!("ui-dialog-cancel-button"),
             fl!("ui-dialog-forget-host-key-confirm"),
         ),
-        TrustedKey::Rdp(_) | TrustedKey::Ftps(_) => (
+        TrustedKey::Rdp(_) | TrustedKey::Ftps(_) | TrustedKey::Vnc(_) => (
             fl!("ui-dialog-forget-certificate-title"),
             fl!(
                 "ui-dialog-forget-certificate-body",

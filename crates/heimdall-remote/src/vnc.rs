@@ -16,9 +16,10 @@
 
 //! VNC (RFB) sessions.
 //!
-//! None of the security spoken here encrypts: no authentication and VNC Authentication,
+//! Only the X509 subtypes of `VeNCrypt` encrypt: TLS 1.2 or 1.3, the server's certificate
+//! checked before any password is sent. The rest, no authentication and VNC Authentication,
 //! directly or inside Tight or `VeNCrypt`, leave the desktop and what is typed to cross the
-//! network in clear, and VNC Authentication does not prove who the server is. Reach a VNC
+//! network in clear, and VNC Authentication does not prove who the server is. Reach such a
 //! server over a network through an SSH tunnel.
 
 mod auth;
@@ -29,7 +30,7 @@ mod session;
 mod tight;
 mod zrle;
 
-pub use auth::PASSWORD_BYTES;
+pub use auth::{MAX_PLAIN_PASSWORD, MAX_PLAIN_USERNAME, PASSWORD_BYTES, TooLong};
 pub use protocol::{MAX_CUT_TEXT, Quality, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
 pub use screen::{MAX_SIDE, Rect, Screen};
 pub use security::{Authentication, Security, SecurityWrapper};

@@ -18,7 +18,8 @@
 //! bytes to send out.
 //!
 //! Versions 3.3, 3.7 and 3.8; security None and VNC Authentication, directly or inside
-//! Tight or `VeNCrypt` (without TLS); encodings Tight, ZRLE, `CopyRect` and Raw, with the
+//! Tight or `VeNCrypt`, and the X509 subtypes of `VeNCrypt`, whose TLS the caller starts when
+//! told to; encodings Tight, ZRLE, `CopyRect` and Raw, with the
 //! `DesktopSize` and `LastRect` pseudo-encodings and the Tight compression and JPEG quality
 //! levels. A message is read once it is whole; whatever the server announces (a name, a
 //! clipboard, a rectangle, a list of security types) is bounded before anything is
@@ -26,13 +27,14 @@
 
 use zeroize::Zeroizing;
 
-use super::auth::{self, CHALLENGE_LENGTH};
+use super::auth::{self, CHALLENGE_LENGTH, TooLong};
 use super::screen::{MAX_SIDE, PIXEL_BYTES, Rect, Screen};
 use super::security::{
     self, Authentication, MAX_TIGHT_AUTH_TYPES, MAX_TIGHT_INIT_CAPABILITIES, MAX_TIGHT_TUNNELS,
     MAX_VENCRYPT_SUBTYPES, PREFERENCE, SECURITY_NONE, SECURITY_TIGHT, SECURITY_VENCRYPT,
     SECURITY_VNC_AUTH, Security, SecurityWrapper, TIGHT_AUTH_NONE, TIGHT_CAPABILITY_BYTES,
-    TIGHT_NO_TUNNEL, VENCRYPT_ACCEPTED, VENCRYPT_SUBTYPE_BYTES, VENCRYPT_VERSION,
+    TIGHT_NO_TUNNEL, VENCRYPT_ACCEPTED, VENCRYPT_SUBTYPE_BYTES, VENCRYPT_TLS_ACCEPTED,
+    VENCRYPT_VERSION,
 };
 use super::tight::Tight;
 use super::zrle::Zrle;
@@ -184,12 +186,23 @@ pub enum Version {
 }
 
 /// Which security the client accepts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct SecurityPolicy {
     /// Whether a server asking for no password at all is accepted. Off by default: a
     /// profile that expects a password must not be answered by anyone pretending to be
     /// the server with no password.
     pub allow_no_authentication: bool,
+    /// Whether only an X509 subtype of `VeNCrypt` is accepted: a server offering none is
+    /// refused, never answered in clear. Set once a certificate is trusted for the server,
+    /// so that whoever stands in its way cannot make the client fall back to clear.
+    pub require_tls: bool,
+    /// Whether `VeNCrypt` is left out of the choice: set for the one connection made again
+    /// after a `VeNCrypt` server offered nothing accepted inside it, though it offered
+    /// another type. Never with `require_tls`, which keeps only `VeNCrypt`.
+    pub exclude_vencrypt: bool,
+    /// The user name of `VeNCrypt` Plain, sent inside TLS only: `X509Plain` is taken only with
+    /// one.
+    pub username: Option<String>,
 }
 
 /// What the protocol reports.
@@ -197,6 +210,9 @@ pub struct SecurityPolicy {
 pub enum RfbEvent {
     /// The server asks for a password: answer with [`Rfb::answer_password`].
     PasswordRequired,
+    /// The server starts TLS: wrap the connection in it, the server's certificate checked,
+    /// then call [`Rfb::tls_started`]. Nothing more goes in clear either way.
+    StartTls,
     /// The session is open.
     Connected {
         /// Desktop width.
@@ -243,6 +259,21 @@ pub enum RfbError {
         /// The codes offered inside it.
         offered: Vec<u32>,
     },
+    /// The profile requires TLS and the server offers no X509 subtype of `VeNCrypt`; the codes
+    /// offered, `VeNCrypt`'s subtypes when it got that far.
+    #[error("the server offers no TLS, which this profile requires (offered: {0:?})")]
+    TlsRequired(Vec<u32>),
+    /// `VeNCrypt` offers nothing accepted inside it, TLS is not required, and the server
+    /// offered another type the client accepts: connect again with
+    /// [`SecurityPolicy::exclude_vencrypt`]. The `VeNCrypt` subtypes offered. Nothing was sent
+    /// for them.
+    #[error(
+        "the server offers nothing accepted inside VeNCrypt (offered: {0:?}), but another type: connect again without VeNCrypt"
+    )]
+    RetryWithoutVencrypt(Vec<u32>),
+    /// A Plain credential is longer than the client sends; nothing was sent.
+    #[error("the {0} is too long to be sent")]
+    CredentialTooLong(TooLong),
     /// The password was refused; the server's reason when it gives one, untrusted.
     #[error("the server refused the password")]
     AuthenticationFailed(Option<String>),
@@ -269,6 +300,10 @@ enum State {
     VencryptAccepted,
     /// `VeNCrypt`: the subtypes offered.
     VencryptSubtypes,
+    /// `VeNCrypt`: whether the server starts the TLS of the X509 subtype taken.
+    VencryptTlsAck,
+    /// Waiting for the caller to start TLS: nothing is read in clear.
+    StartingTls,
     Challenge,
     AwaitingPassword,
     SecurityResult,
@@ -294,6 +329,11 @@ pub struct Rfb {
     wrapper: Option<SecurityWrapper>,
     /// The authentication chosen, once it is.
     authentication: Option<Authentication>,
+    /// Whether it goes inside TLS: an X509 subtype was taken.
+    tls: bool,
+    /// Whether `VeNCrypt` was chosen while the server offered another type the client
+    /// accepts: the way out when nothing inside `VeNCrypt` will do.
+    other_type_offered: bool,
     screen: Screen,
     zrle: Zrle,
     tight: Tight,
@@ -440,6 +480,8 @@ impl Rfb {
             challenge: [0; CHALLENGE_LENGTH],
             wrapper: None,
             authentication: None,
+            tls: false,
+            other_type_offered: false,
             screen: Screen::new(0, 0),
             zrle: Zrle::new(),
             tight: Tight::new(),
@@ -520,6 +562,7 @@ impl Rfb {
         self.authentication.map(|authentication| Security {
             wrapper: self.wrapper,
             authentication,
+            tls: self.tls,
         })
     }
 
@@ -528,19 +571,47 @@ impl Rfb {
         std::mem::take(&mut self.output)
     }
 
-    /// Answers [`RfbEvent::PasswordRequired`]. Only the first 8 bytes of `password` count.
+    /// Answers [`RfbEvent::PasswordRequired`]. For VNC Authentication only the first 8 bytes
+    /// of `password` count; Plain sends it whole, with the policy's user name.
     ///
     /// # Errors
     ///
-    /// [`RfbError::Protocol`] when no password was asked for.
+    /// [`RfbError::Protocol`] when no password was asked for;
+    /// [`RfbError::CredentialTooLong`] for a Plain user name or password past its bound,
+    /// and then nothing is sent.
     pub fn answer_password(&mut self, password: &[u8]) -> Result<(), RfbError> {
         if self.state != State::AwaitingPassword {
             return Err(RfbError::Protocol("no password was asked for".to_owned()));
         }
-        let response = Zeroizing::new(auth::response(password, &self.challenge));
-        self.output.extend_from_slice(&*response);
+        if self.authentication == Some(Authentication::Plain) {
+            let username = self.policy.username.as_deref().unwrap_or_default();
+            let credentials =
+                auth::plain(username.as_bytes(), password).map_err(RfbError::CredentialTooLong)?;
+            self.output.extend_from_slice(&credentials);
+        } else {
+            let response = Zeroizing::new(auth::response(password, &self.challenge));
+            self.output.extend_from_slice(&*response);
+        }
         self.state = State::SecurityResult;
         Ok(())
+    }
+
+    /// Goes on inside the TLS started after [`RfbEvent::StartTls`]: the authentication of
+    /// the X509 subtype taken, [`RfbEvent::PasswordRequired`] at once for Plain.
+    ///
+    /// # Errors
+    ///
+    /// [`RfbError::Protocol`] when no TLS was to start.
+    pub fn tls_started(&mut self) -> Result<Vec<RfbEvent>, RfbError> {
+        let (State::StartingTls, Some(authentication)) = (self.state, self.authentication) else {
+            return Err(RfbError::Protocol("no TLS was to start".to_owned()));
+        };
+        self.authenticate(authentication);
+        Ok(if self.state == State::AwaitingPassword {
+            vec![RfbEvent::PasswordRequired]
+        } else {
+            Vec::new()
+        })
     }
 
     /// Takes the next bytes from the server.
@@ -636,6 +707,25 @@ impl Rfb {
             State::VencryptVersion => self.vencrypt_version(&mut reader),
             State::VencryptAccepted => self.vencrypt_accepted(&mut reader),
             State::VencryptSubtypes => self.vencrypt_subtypes(&mut reader),
+            State::VencryptTlsAck => {
+                let Some(status) = reader.u8() else {
+                    return Ok(Step::More);
+                };
+                if status != VENCRYPT_TLS_ACCEPTED {
+                    return Err(RfbError::Protocol(format!(
+                        "the server did not start TLS (status {status})"
+                    )));
+                }
+                self.state = State::StartingTls;
+                events.push(RfbEvent::StartTls);
+                done(&reader)
+            }
+            // TLS speaks first from the client: whatever the server sends before is refused,
+            // not read in clear.
+            State::StartingTls if data.is_empty() => Ok(Step::More),
+            State::StartingTls => Err(RfbError::Protocol(
+                "the server sent data in clear where TLS was to start".to_owned(),
+            )),
             State::Challenge => {
                 let Some(challenge) = reader.take(CHALLENGE_LENGTH) else {
                     return Ok(Step::More);
@@ -720,13 +810,29 @@ impl Rfb {
     }
 
     /// The type taken from those offered, in the order of [`PREFERENCE`]; no security only
-    /// when the policy allows it.
-    fn choose(&self, offered: &[u8]) -> Result<u8, RfbError> {
-        PREFERENCE
-            .into_iter()
-            .filter(|kind| *kind != SECURITY_NONE || self.policy.allow_no_authentication)
-            .find(|kind| offered.contains(kind))
-            .ok_or_else(|| RfbError::NoAcceptableSecurity(offered.to_vec()))
+    /// when the policy allows it, only `VeNCrypt` when it requires TLS, and never `VeNCrypt`
+    /// when it leaves it out.
+    fn choose(&mut self, offered: &[u8]) -> Result<u8, RfbError> {
+        if self.policy.require_tls {
+            return if offered.contains(&SECURITY_VENCRYPT) {
+                Ok(SECURITY_VENCRYPT)
+            } else {
+                Err(RfbError::TlsRequired(
+                    offered.iter().copied().map(u32::from).collect(),
+                ))
+            };
+        }
+        let acceptable = |skip_vencrypt: bool| {
+            PREFERENCE
+                .into_iter()
+                .filter(|kind| *kind != SECURITY_NONE || self.policy.allow_no_authentication)
+                .filter(|kind| *kind != SECURITY_VENCRYPT || !skip_vencrypt)
+                .find(|kind| offered.contains(kind))
+        };
+        let chosen = acceptable(self.policy.exclude_vencrypt)
+            .ok_or_else(|| RfbError::NoAcceptableSecurity(offered.to_vec()))?;
+        self.other_type_offered = chosen == SECURITY_VENCRYPT && acceptable(true).is_some();
+        Ok(chosen)
     }
 
     fn after_choice(&mut self, chosen: u8) {
@@ -761,6 +867,8 @@ impl Rfb {
                 self.output.push(1);
                 State::ServerInit
             }
+            // Asked for by the caller, inside TLS only.
+            Authentication::Plain => State::AwaitingPassword,
         };
     }
 
@@ -848,8 +956,8 @@ impl Rfb {
         Ok(Step::Done(reader.at))
     }
 
-    /// `VeNCrypt`: the subtypes offered, then the one taken. Nothing follows it before the
-    /// standard authentication: the server confirms only the TLS subtypes.
+    /// `VeNCrypt`: the subtypes offered, then the one taken. A standard one goes on at once;
+    /// an X509 one waits for the server to start TLS.
     fn vencrypt_subtypes(&mut self, reader: &mut Reader<'_>) -> Result<Step, RfbError> {
         let Some(count) = reader.u8() else {
             return Ok(Step::More);
@@ -864,16 +972,27 @@ impl Rfb {
             .iter()
             .map(|subtype| u32::from_be_bytes(*subtype))
             .collect();
-        let authentication =
-            security::vencrypt_subtype(&offered, self.policy.allow_no_authentication).ok_or(
+        let Some(code) = security::vencrypt_subtype(&offered, &self.policy) else {
+            return Err(if self.policy.require_tls {
+                RfbError::TlsRequired(offered)
+            } else if self.other_type_offered {
+                RfbError::RetryWithoutVencrypt(offered)
+            } else {
                 RfbError::NoAcceptableInnerSecurity {
                     wrapper: SecurityWrapper::VeNCrypt,
                     offered,
-                },
-            )?;
-        self.output
-            .extend_from_slice(&security::vencrypt_code(authentication).to_be_bytes());
-        self.authenticate(authentication);
+                }
+            });
+        };
+        self.output.extend_from_slice(&code.to_be_bytes());
+        let (authentication, tls) = security::vencrypt_meaning(code);
+        if tls {
+            self.authentication = Some(authentication);
+            self.tls = true;
+            self.state = State::VencryptTlsAck;
+        } else {
+            self.authenticate(authentication);
+        }
         Ok(Step::Done(reader.at))
     }
 

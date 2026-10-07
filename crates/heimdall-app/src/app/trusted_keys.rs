@@ -16,7 +16,8 @@
 
 //! The keys trusted for servers, as the C# Settings lists them: SSH host keys and RDP
 //! certificates, each copied or forgotten from the Settings page; and the FTPS certificates,
-//! which the C# keeps out of sight in its settings file, listed and forgotten the same way.
+//! which the C# keeps out of sight in its settings file, and the VNC ones, which the C# never
+//! asks about, listed and forgotten the same way.
 
 use std::path::{Path, PathBuf};
 
@@ -45,6 +46,8 @@ pub enum TrustedKey {
     Rdp(KnownRdpHost),
     /// The key of an FTPS server's certificate, pinned as an RDP one, in a file of its own.
     Ftps(KnownRdpHost),
+    /// The key of a VNC server's certificate, pinned as an FTPS one, in a file of its own.
+    Vnc(KnownRdpHost),
 }
 
 impl TrustedKey {
@@ -53,7 +56,9 @@ impl TrustedKey {
     pub fn address(&self) -> String {
         match self {
             Self::Ssh(entry) => display_address(&entry.host, entry.port),
-            Self::Rdp(entry) | Self::Ftps(entry) => display_address(&entry.host, entry.port),
+            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => {
+                display_address(&entry.host, entry.port)
+            }
         }
     }
 
@@ -62,18 +67,20 @@ impl TrustedKey {
     pub fn fingerprint(&self) -> String {
         match self {
             Self::Ssh(entry) => entry.fingerprint.clone(),
-            Self::Rdp(entry) | Self::Ftps(entry) => entry.fingerprint.to_string(),
+            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => {
+                entry.fingerprint.to_string()
+            }
         }
     }
 
-    /// When an RDP or FTPS certificate was trusted, in this computer's time, as the C#
+    /// When an RDP, FTPS or VNC certificate was trusted, in this computer's time, as the C#
     /// "Trusted since" column; `None` for an SSH key or a certificate recorded without the
     /// time.
     #[must_use]
     pub fn trusted_since(&self) -> Option<String> {
         match self {
             Self::Ssh(_) => None,
-            Self::Rdp(entry) | Self::Ftps(entry) => entry.trusted.map(|time| {
+            Self::Rdp(entry) | Self::Ftps(entry) | Self::Vnc(entry) => entry.trusted.map(|time| {
                 chrono::DateTime::<chrono::Local>::from(time)
                     .format(TRUSTED_SINCE_FORMAT)
                     .to_string()
@@ -91,6 +98,8 @@ pub struct TrustedKeys {
     pub rdp: Vec<KnownRdpHost>,
     /// FTPS certificates, in the order of their file.
     pub ftps: Vec<KnownRdpHost>,
+    /// VNC certificates, in the order of their file.
+    pub vnc: Vec<KnownRdpHost>,
     /// Why a file could not be read, when one could not: its list is then empty.
     pub unreadable: Option<String>,
 }
@@ -109,6 +118,7 @@ impl TrustedKeys {
             }
             TrustedKey::Rdp(entry) => (&self.rdp, &entry.host, entry.port),
             TrustedKey::Ftps(entry) => (&self.ftps, &entry.host, entry.port),
+            TrustedKey::Vnc(entry) => (&self.vnc, &entry.host, entry.port),
         };
         list.iter()
             .filter(|other| &other.host == host && other.port == port)
@@ -161,10 +171,12 @@ impl App {
             TrustedKeysMessage::RequestForgetServer(key) => {
                 self.dialog = Some(match key {
                     TrustedKey::Ssh(_) => Dialog::ForgetTrustedKey(key.clone()),
-                    TrustedKey::Rdp(_) | TrustedKey::Ftps(_) => Dialog::ForgetTrustedServer {
-                        key: key.clone(),
-                        count: self.trusted_keys.keys_of_server(key),
-                    },
+                    TrustedKey::Rdp(_) | TrustedKey::Ftps(_) | TrustedKey::Vnc(_) => {
+                        Dialog::ForgetTrustedServer {
+                            key: key.clone(),
+                            count: self.trusted_keys.keys_of_server(key),
+                        }
+                    }
                 });
                 Vec::new()
             }
@@ -202,7 +214,7 @@ impl App {
         self.tell(notice);
     }
 
-    /// Reads the three files of trusted keys.
+    /// Reads the four files of trusted keys.
     pub(super) fn read_trusted_keys(&mut self) {
         let mut unreadable = Vec::new();
         let ssh = KnownHosts::new(&self.config.known_hosts)
@@ -213,10 +225,12 @@ impl App {
             });
         let rdp = read_certificates(&self.known_rdp_hosts(), &mut unreadable);
         let ftps = read_certificates(&self.known_ftps_hosts(), &mut unreadable);
+        let vnc = read_certificates(&self.known_vnc_hosts(), &mut unreadable);
         self.trusted_keys = TrustedKeys {
             ssh,
             rdp,
             ftps,
+            vnc,
             unreadable: (!unreadable.is_empty()).then(|| unreadable.join("\n")),
         };
     }
@@ -227,6 +241,7 @@ impl App {
             TrustedKey::Ssh(_) => None,
             TrustedKey::Rdp(_) => Some(self.known_rdp_hosts()),
             TrustedKey::Ftps(_) => Some(self.known_ftps_hosts()),
+            TrustedKey::Vnc(_) => Some(self.known_vnc_hosts()),
         }
     }
 
@@ -234,7 +249,7 @@ impl App {
     /// certificate. The next connection to it asks again, unless it presents another
     /// certificate still trusted for it.
     pub(super) fn forget_trusted_key(&mut self, key: &TrustedKey) {
-        let (TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry), Some(file)) =
+        let (TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry) | TrustedKey::Vnc(entry), Some(file)) =
             (key, self.certificates_file(key))
         else {
             // An SSH key goes with its server's, as the C# removes it.
@@ -258,11 +273,12 @@ impl App {
     /// confirmed: the next connection to it asks again.
     pub(super) fn forget_server_of(&mut self, key: &TrustedKey) {
         let forgotten = match (key, self.certificates_file(key)) {
-            (TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry), Some(file)) => {
-                KnownRdpHosts::new(file)
-                    .forget(&entry.host, entry.port)
-                    .map_err(|error| error.to_string())
-            }
+            (
+                TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry) | TrustedKey::Vnc(entry),
+                Some(file),
+            ) => KnownRdpHosts::new(file)
+                .forget(&entry.host, entry.port)
+                .map_err(|error| error.to_string()),
             (TrustedKey::Ssh(entry), _) => KnownHosts::new(&self.config.known_hosts)
                 .forget(&entry.host, entry.port)
                 .map_err(|error| error.to_string()),
@@ -272,7 +288,7 @@ impl App {
         match forgotten {
             Ok(_) => self.tell(match key {
                 TrustedKey::Ssh(_) => Notice::HostKeyRemoved(key.address()),
-                TrustedKey::Rdp(_) | TrustedKey::Ftps(_) => {
+                TrustedKey::Rdp(_) | TrustedKey::Ftps(_) | TrustedKey::Vnc(_) => {
                     Notice::ServerCertificatesForgotten(key.address())
                 }
             }),

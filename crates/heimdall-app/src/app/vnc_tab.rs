@@ -16,7 +16,10 @@
 
 //! VNC tabs: a remote desktop like an RDP one, drawn from a VNC session.
 
+use std::path::PathBuf;
+
 use heimdall_core::profile::{ProfileId, VncProfile};
+use heimdall_rdp::Fingerprint;
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Effect, Phase, Tab, TabProfile};
@@ -26,7 +29,34 @@ use crate::event::ConnectionEvent;
 use crate::ids::{AttemptId, TabId};
 use crate::vnc_driver::VncRequest;
 
+/// File of the VNC servers whose certificate the user trusts, beside the FTPS one.
+const KNOWN_VNC_HOSTS_FILE_NAME: &str = "known_vnc_hosts";
+
 impl App {
+    /// File of the VNC servers whose certificate the user trusts.
+    pub(super) fn known_vnc_hosts(&self) -> PathBuf {
+        self.config
+            .known_hosts
+            .with_file_name(KNOWN_VNC_HOSTS_FILE_NAME)
+    }
+
+    /// What connecting to `profile` needs, with `accepted` as the key the user just agreed
+    /// to.
+    fn vnc_request(
+        &self,
+        profile: &VncProfile,
+        accepted: Option<Fingerprint>,
+        cancel: CancellationToken,
+    ) -> VncRequest {
+        VncRequest {
+            profile: profile.clone(),
+            known_hosts: self.known_vnc_hosts(),
+            accepted,
+            trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
+            cancel,
+        }
+    }
+
     /// Opens a VNC tab for a saved profile.
     pub(super) fn open_vnc(&mut self, id: &ProfileId) -> Vec<Effect> {
         let Some(profile) = self.vnc_profiles().iter().find(|p| &p.id == id).cloned() else {
@@ -43,10 +73,7 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = VncRequest {
-            profile: profile.clone(),
-            cancel: cancel.clone(),
-        };
+        let request = self.vnc_request(&profile, None, cancel.clone());
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -59,6 +86,32 @@ impl App {
         tab.files = None;
         self.tabs.push(tab);
         self.active = Some(tab_id);
+        vec![Effect::ConnectVnc {
+            tab: tab_id,
+            attempt,
+            request: Box::new(request),
+        }]
+    }
+
+    /// Connects a VNC tab again, with a key the user just accepted if any.
+    pub(super) fn reconnect_vnc(
+        &mut self,
+        tab_id: TabId,
+        accepted: Option<Fingerprint>,
+    ) -> Vec<Effect> {
+        let Some(TabProfile::Vnc(profile)) = self.tab(tab_id).map(|tab| tab.profile.clone()) else {
+            return Vec::new();
+        };
+        let attempt = AttemptId::fresh();
+        let cancel = CancellationToken::new();
+        let request = self.vnc_request(&profile, accepted, cancel.clone());
+        let Some(tab) = self.tab_mut(tab_id) else {
+            return Vec::new();
+        };
+        tab.attempt = attempt;
+        tab.cancel = cancel;
+        tab.phase = Phase::Connecting;
+        tab.desktop = None;
         vec![Effect::ConnectVnc {
             tab: tab_id,
             attempt,
@@ -80,6 +133,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         name,
         framebuffer,
         input,
+        tls,
     } = event
     {
         let view_only = matches!(&tab.profile, TabProfile::Vnc(profile) if profile.view_only);
@@ -88,6 +142,7 @@ pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
         // Shown on its bar, as the C# session title: the server's words, made safe.
         let name = crate::text::server_text(name.trim());
         pane.desktop_name = (!name.is_empty()).then_some(name);
+        pane.tls = tls;
         tab.desktop = Some(Box::new(pane));
     }
 }

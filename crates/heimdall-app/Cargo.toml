@@ -21,6 +21,7 @@ heimdall-remote.workspace = true
 heimdall-sftp.workspace = true
 heimdall-ssh.workspace = true
 heimdall-term.workspace = true
+heimdall-tls.workspace = true
 sealvault.workspace = true
 shlex.workspace = true
 log.workspace = true

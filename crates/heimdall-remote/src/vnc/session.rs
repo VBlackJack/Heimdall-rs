@@ -14,9 +14,10 @@
  * limitations under the License.
  */
 
-//! VNC sessions over TCP: the handshake, then a task that keeps the desktop up to date and
-//! carries the keyboard and the pointer.
+//! VNC sessions over TCP: the handshake, in TLS once an X509 subtype of `VeNCrypt` starts it,
+//! then a task that keeps the desktop up to date and carries the keyboard and the pointer.
 
+use std::collections::VecDeque;
 use std::future::Future;
 use std::io;
 use std::pin::Pin;
@@ -27,6 +28,9 @@ use std::time::Duration;
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio_rustls::TlsConnector;
+use tokio_rustls::rustls::ProtocolVersion;
+use tokio_rustls::rustls::pki_types::ServerName;
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
@@ -61,18 +65,34 @@ pub fn given_password(password: Zeroizing<String>) -> AskPassword {
 }
 
 /// Where to connect.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VncConfig {
-    /// Server.
+    /// Server, also the name its certificate is checked against.
     pub host: String,
     /// Port.
     pub port: u16,
     /// Which security is accepted.
     pub policy: SecurityPolicy,
+    /// The TLS client of the X509 subtypes of `VeNCrypt`: its certificate check decides
+    /// whether the server is trusted, before any password is sent.
+    pub tls: TlsConnector,
     /// Bound on reaching the server.
     pub connect_timeout: Duration,
-    /// Bound on each exchange of the handshake.
+    /// Bound on each exchange of the handshake, the TLS one included.
     pub handshake_timeout: Duration,
+}
+
+impl std::fmt::Debug for VncConfig {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VncConfig")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("policy", &self.policy)
+            .field("connect_timeout", &self.connect_timeout)
+            .field("handshake_timeout", &self.handshake_timeout)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Why a connection did not open.
@@ -87,6 +107,10 @@ pub enum VncError {
     /// Cancelled, or no password was given.
     #[error("the connection was cancelled")]
     Cancelled,
+    /// The TLS handshake failed: the server's certificate is not trusted, or TLS broke. No
+    /// password was sent.
+    #[error("the TLS handshake failed: {0}")]
+    Tls(String),
     /// The protocol refused to go on.
     #[error(transparent)]
     Rfb(#[from] RfbError),
@@ -124,6 +148,8 @@ pub struct VncConnection {
     rfb: Rfb,
     /// The desktop's name, as the server gives it: untrusted.
     pub name: String,
+    /// The TLS version the connection is encrypted with, when it is.
+    tls: Option<&'static str>,
 }
 
 impl VncConnection {
@@ -132,6 +158,12 @@ impl VncConnection {
     pub fn security(&self) -> Option<Security> {
         self.rfb.security()
     }
+
+    /// The TLS version the connection is encrypted with, as "TLS 1.3"; `None` in clear.
+    #[must_use]
+    pub fn tls_version(&self) -> Option<&'static str> {
+        self.tls
+    }
 }
 
 impl std::fmt::Debug for VncConnection {
@@ -139,6 +171,7 @@ impl std::fmt::Debug for VncConnection {
         formatter
             .debug_struct("VncConnection")
             .field("rfb", &self.rfb)
+            .field("tls", &self.tls)
             .finish_non_exhaustive()
     }
 }
@@ -172,7 +205,9 @@ pub async fn connect(
     handshake(Box::new(stream), config, password, cancel).await
 }
 
-/// Runs the handshake over `stream`, already connected to the server.
+/// Runs the handshake over `stream`, already connected to the server. An X509 subtype of
+/// `VeNCrypt` wraps it in TLS with `config.tls`, whose check of the certificate decides before
+/// any password is asked for or sent.
 ///
 /// # Errors
 ///
@@ -183,8 +218,9 @@ pub async fn handshake(
     password: AskPassword,
     cancel: &CancellationToken,
 ) -> Result<VncConnection, VncError> {
-    let mut rfb = Rfb::new(config.policy);
+    let mut rfb = Rfb::new(config.policy.clone());
     let mut password = Some(password);
+    let mut tls = None;
     let mut buffer = vec![0; READ_BUFFER];
     loop {
         let read = tokio::select! {
@@ -196,7 +232,8 @@ pub async fn handshake(
         if read == 0 {
             return Err(VncError::Network(io::ErrorKind::UnexpectedEof.into()));
         }
-        for event in rfb.receive(&buffer[..read])? {
+        let mut events = VecDeque::from(rfb.receive(&buffer[..read])?);
+        while let Some(event) = events.pop_front() {
             match event {
                 RfbEvent::PasswordRequired => {
                     let ask = password.take().ok_or(VncError::Cancelled)?;
@@ -207,28 +244,70 @@ pub async fn handshake(
                     };
                     rfb.answer_password(answer.as_bytes())?;
                 }
+                RfbEvent::StartTls => {
+                    flush(&mut stream, &mut rfb, cancel).await?;
+                    let (encrypted, version) = start_tls(stream, config, cancel).await?;
+                    stream = encrypted;
+                    tls = Some(version);
+                    events.extend(rfb.tls_started()?);
+                }
                 RfbEvent::Connected { name, .. } => {
-                    send(&mut stream, &rfb.take_output(), cancel)
-                        .await
-                        .map_err(|reason| match reason {
-                            CloseReason::Failed(detail) => {
-                                VncError::Network(io::Error::other(detail))
-                            }
-                            _ => VncError::Cancelled,
-                        })?;
-                    return Ok(VncConnection { stream, rfb, name });
+                    flush(&mut stream, &mut rfb, cancel).await?;
+                    return Ok(VncConnection {
+                        stream,
+                        rfb,
+                        name,
+                        tls,
+                    });
                 }
                 // Nothing else comes before the session opens.
                 _ => {}
             }
         }
-        send(&mut stream, &rfb.take_output(), cancel)
-            .await
-            .map_err(|reason| match reason {
-                CloseReason::Failed(detail) => VncError::Network(io::Error::other(detail)),
-                _ => VncError::Cancelled,
-            })?;
+        flush(&mut stream, &mut rfb, cancel).await?;
     }
+}
+
+/// Sends what the protocol has to send during the handshake, wiped once sent: a Plain
+/// password is in it.
+async fn flush(
+    stream: &mut Box<dyn Transport>,
+    rfb: &mut Rfb,
+    cancel: &CancellationToken,
+) -> Result<(), VncError> {
+    let output = Zeroizing::new(rfb.take_output());
+    send(stream, &output, cancel)
+        .await
+        .map_err(|reason| match reason {
+            CloseReason::Failed(detail) => VncError::Network(io::Error::other(detail)),
+            _ => VncError::Cancelled,
+        })
+}
+
+/// Wraps `stream` in TLS for `config.host`; the version agreed on, as "TLS 1.3".
+async fn start_tls(
+    stream: Box<dyn Transport>,
+    config: &VncConfig,
+    cancel: &CancellationToken,
+) -> Result<(Box<dyn Transport>, &'static str), VncError> {
+    let name = ServerName::try_from(config.host.clone())
+        .map_err(|_| VncError::Tls(format!("{:?} is not a server name", config.host)))?;
+    let encrypted = tokio::select! {
+        () = cancel.cancelled() => return Err(VncError::Cancelled),
+        connected = tokio::time::timeout(
+            config.handshake_timeout,
+            config.tls.connect(name, stream),
+        ) => connected
+            .map_err(|_| VncError::Timeout)?
+            .map_err(|error| VncError::Tls(error.to_string()))?,
+    };
+    let version = match encrypted.get_ref().1.protocol_version() {
+        Some(ProtocolVersion::TLSv1_3) => "TLS 1.3",
+        Some(ProtocolVersion::TLSv1_2) => "TLS 1.2",
+        // The client speaks no other.
+        _ => "TLS",
+    };
+    Ok((Box::new(encrypted), version))
 }
 
 /// Why a session ended.
@@ -523,7 +602,9 @@ async fn receive(
             RfbEvent::ServerCutText(text) => VncEvent::CutText(text),
             RfbEvent::Renamed(name) => VncEvent::Renamed(name),
             // Only during the handshake.
-            RfbEvent::PasswordRequired | RfbEvent::Connected { .. } => continue,
+            RfbEvent::PasswordRequired | RfbEvent::StartTls | RfbEvent::Connected { .. } => {
+                continue;
+            }
         };
         if !emit(events, event, cancel).await {
             return Err(CloseReason::Local);

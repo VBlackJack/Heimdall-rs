@@ -34,6 +34,35 @@ use crate::rdp_driver::{DEFAULT_DESKTOP, RdpRequest};
 /// File of trusted RDP servers, beside the SSH `known_hosts`.
 const KNOWN_RDP_HOSTS_FILE_NAME: &str = "known_rdp_hosts";
 
+/// The kind of server a certificate question is about: each has its file of pins and its
+/// way to connect again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CertifiedServer {
+    Rdp,
+    Ftps,
+    Vnc,
+}
+
+impl CertifiedServer {
+    /// The kind of `profile`'s server.
+    fn of(profile: &TabProfile) -> Self {
+        match profile {
+            TabProfile::Ftp(_) => Self::Ftps,
+            TabProfile::Vnc(_) => Self::Vnc,
+            _ => Self::Rdp,
+        }
+    }
+
+    /// As the log names it.
+    fn name(self) -> &'static str {
+        match self {
+            Self::Rdp => "RDP",
+            Self::Ftps => "FTPS",
+            Self::Vnc => "VNC",
+        }
+    }
+}
+
 /// Applies an event only an RDP attempt sends.
 pub(super) fn apply(tab: &mut Tab, event: ConnectionEvent) {
     match event {
@@ -258,12 +287,12 @@ impl App {
         ) else {
             return Vec::new();
         };
-        let ftp = matches!(tab.profile, TabProfile::Ftp(_));
+        let server = CertifiedServer::of(&tab.profile);
         tab.certificate_context = None;
         // As the C# `[RdpCertPrompt]` line: the server, the key, the answer.
         log::info!(
             "certificate question for the {} server {}: {fingerprint}, answered {}",
-            if ftp { "FTPS" } else { "RDP" },
+            server.name(),
             heimdall_core::profile::display_address(&host, port),
             match trust {
                 KeyTrust::Refused => "refused",
@@ -274,35 +303,49 @@ impl App {
         match trust {
             // Said as the C# says it of an RDP server: the user stopped it, at the certificate.
             KeyTrust::Refused => {
-                tab.phase = Phase::Failed(if ftp {
-                    UiError::Cancelled
-                } else {
+                tab.phase = Phase::Failed(if server == CertifiedServer::Rdp {
                     UiError::CertificateRefused
+                } else {
+                    UiError::Cancelled
                 });
                 Vec::new()
             }
             // Held in memory for this run: the file is not written.
             KeyTrust::Once => {
-                let server = (host, port, fingerprint);
-                if !self.rdp_run_trust.contains(&server) {
-                    self.rdp_run_trust.push(server);
+                let trusted = (host, port, fingerprint);
+                if !self.rdp_run_trust.contains(&trusted) {
+                    self.rdp_run_trust.push(trusted);
                 }
-                if ftp {
-                    self.reconnect_ftp(tab_id, None)
-                } else {
-                    self.reconnect_rdp(tab_id, None)
-                }
+                self.reconnect_certified(tab_id, server, None)
             }
             // Recorded by the next attempt, and only if the server presents exactly this key.
-            KeyTrust::Always if ftp => self.reconnect_ftp(tab_id, Some(fingerprint)),
-            KeyTrust::Always => self.reconnect_rdp(tab_id, Some(fingerprint)),
+            KeyTrust::Always => self.reconnect_certified(tab_id, server, Some(fingerprint)),
         }
     }
 
-    /// Forgets the keys recorded for the server of an RDP or FTPS tab whose key changed,
-    /// then connects again: the certificate question comes back.
+    /// Connects the tab of a `server` asking about its certificate again, with `accepted` as
+    /// the key the user just agreed to.
+    fn reconnect_certified(
+        &mut self,
+        tab_id: TabId,
+        server: CertifiedServer,
+        accepted: Option<Fingerprint>,
+    ) -> Vec<Effect> {
+        match server {
+            CertifiedServer::Rdp => self.reconnect_rdp(tab_id, accepted),
+            CertifiedServer::Ftps => self.reconnect_ftp(tab_id, accepted),
+            CertifiedServer::Vnc => self.reconnect_vnc(tab_id, accepted),
+        }
+    }
+
+    /// Forgets the keys recorded for the server of an RDP, FTPS or VNC tab whose key
+    /// changed, then connects again: the certificate question comes back.
     pub(super) fn forget_rdp_certificate(&mut self, tab_id: TabId) -> Vec<Effect> {
-        let (rdp_file, ftps_file) = (self.known_rdp_hosts(), self.known_ftps_hosts());
+        let (rdp_file, ftps_file, vnc_file) = (
+            self.known_rdp_hosts(),
+            self.known_ftps_hosts(),
+            self.known_vnc_hosts(),
+        );
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };
@@ -313,9 +356,10 @@ impl App {
         ) {
             return Vec::new();
         }
-        let (path, host, port, ftp) = match &tab.profile {
-            TabProfile::Rdp(profile) => (rdp_file, &profile.host, profile.port, false),
-            TabProfile::Ftp(profile) => (ftps_file, &profile.host, profile.port, true),
+        let (path, host, port) = match &tab.profile {
+            TabProfile::Rdp(profile) => (rdp_file, &profile.host, profile.port),
+            TabProfile::Ftp(profile) => (ftps_file, &profile.host, profile.port),
+            TabProfile::Vnc(profile) => (vnc_file, &profile.host, profile.port),
             _ => return Vec::new(),
         };
         if let Err(error) = KnownRdpHosts::new(path).forget(host, port) {
@@ -324,11 +368,8 @@ impl App {
             });
             return Vec::new();
         }
-        if ftp {
-            self.reconnect_ftp(tab_id, None)
-        } else {
-            self.reconnect_rdp(tab_id, None)
-        }
+        let server = CertifiedServer::of(&tab.profile);
+        self.reconnect_certified(tab_id, server, None)
     }
 
     /// Keyboard or mouse input for the remote desktop of a tab.
@@ -541,6 +582,7 @@ impl App {
         let (file, gateway) = match &tab.profile {
             TabProfile::Rdp(profile) => (self.known_rdp_hosts(), profile.gateway.as_ref()),
             TabProfile::Ftp(_) => (self.known_ftps_hosts(), None),
+            TabProfile::Vnc(_) => (self.known_vnc_hosts(), None),
             _ => return None,
         };
         let host = host.to_ascii_lowercase();

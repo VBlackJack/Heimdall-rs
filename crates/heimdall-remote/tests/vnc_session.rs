@@ -52,6 +52,8 @@ fn config(port: u16, policy: SecurityPolicy) -> VncConfig {
         host: "127.0.0.1".to_owned(),
         port,
         policy,
+        // Trusting what the system trusts only: no server here starts TLS.
+        tls: heimdall_tls::connector(Arc::new(|_| false), heimdall_tls::PresentedSlot::default()),
         connect_timeout: WAIT,
         handshake_timeout: WAIT,
     }
@@ -79,12 +81,12 @@ fn set_encodings(encodings: &[i32]) -> Vec<u8> {
 /// A non-incremental `FramebufferUpdateRequest` for the whole 4 by 2 desktop.
 const FULL_UPDATE_REQUEST: [u8; 10] = [3, 0, 0, 0, 0, 0, 0, 4, 0, 2];
 
-/// Plays a TigerVNC-like server up to the opened session on a 4 by 2 desktop; what the
-/// client sent once it opened.
+/// Plays a TigerVNC-like server with VNC Authentication up to the opened session on a 4 by 2
+/// desktop; what the client sent once it opened.
 async fn serve_handshake(stream: &mut TcpStream) -> Vec<u8> {
     stream.write_all(b"RFB 003.008\n").await.expect("version");
     assert_eq!(read_exactly(stream, 12).await, b"RFB 003.008\n");
-    stream.write_all(&[2, 19, 2]).await.expect("types");
+    stream.write_all(&[1, 2]).await.expect("types");
     assert_eq!(read_exactly(stream, 1).await, [2]);
     stream.write_all(&CHALLENGE).await.expect("challenge");
     assert_eq!(read_exactly(stream, 16).await, RESPONSE);
@@ -264,6 +266,7 @@ async fn the_password_is_asked_only_when_the_server_requires_one() {
     });
     let policy = SecurityPolicy {
         allow_no_authentication: true,
+        ..SecurityPolicy::default()
     };
     connect(&config(port, policy), password, &CancellationToken::new())
         .await
@@ -410,6 +413,7 @@ async fn opens_through(wrapper: SecurityWrapper, expected: &[u8]) {
         Some(Security {
             wrapper: Some(wrapper),
             authentication: Authentication::VncAuth,
+            tls: false,
         })
     );
     let mut session = start(connection, cancel.clone());
