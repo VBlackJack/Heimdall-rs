@@ -1728,6 +1728,33 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Username updated on { $count } servers.
 }
 ui-status-bulk-username-unchanged = No changes applied - every selected server already uses this username.
+ui-selection-edit-password = Password... ({ $count })
+ui-bulk-password-header = { $count ->
+    [one] Setting password on { $count } server
+   *[other] Setting password on { $count } servers
+}
+ui-bulk-password-label = New password:
+ui-bulk-password-confirm-label = Confirm password:
+ui-bulk-password-control = Password cannot contain control characters.
+ui-bulk-password-mismatch = Passwords do not match.
+ui-bulk-password-skipped-winrm = { $count ->
+    [one] Skipped { $count } WinRM profile because its password is not saved.
+   *[other] Skipped { $count } WinRM profiles because their passwords are not saved.
+}
+ui-bulk-password-skipped-no-account = { $count ->
+    [one] Skipped { $count } profile because no username is configured.
+   *[other] Skipped { $count } profiles because no username is configured.
+}
+ui-bulk-password-skipped-other = { $count ->
+    [one] Skipped { $count } profile whose protocol has no saved password.
+   *[other] Skipped { $count } profiles whose protocol has no saved password.
+}
+ui-status-bulk-password-updated = { $count ->
+    [one] Password updated on { $count } server.
+   *[other] Password updated on { $count } servers.
+}
+ui-status-bulk-password-updated-with-skipped = { $updated } { $skipped }
+ui-status-bulk-password-partial = Password saved on { $count } of { $total } servers.
 ui-desktop-disconnect = Disconnect
 ui-desktop-disconnect-tooltip = Disconnect session
 ui-desktop-disconnect-title = Disconnect Remote Desktop?

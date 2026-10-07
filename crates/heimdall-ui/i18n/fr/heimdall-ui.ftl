@@ -1595,6 +1595,33 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Nom d'utilisateur modifié sur { $count } serveurs.
 }
 ui-status-bulk-username-unchanged = Aucune modification - tous les serveurs sélectionnés utilisent déjà ce nom d'utilisateur.
+ui-selection-edit-password = Mot de passe... ({ $count })
+ui-bulk-password-header = { $count ->
+    [one] Modification du mot de passe sur { $count } serveur
+   *[other] Modification du mot de passe sur { $count } serveurs
+}
+ui-bulk-password-label = Nouveau mot de passe :
+ui-bulk-password-confirm-label = Confirmer le mot de passe :
+ui-bulk-password-control = Le mot de passe ne peut pas contenir de caractères de contrôle.
+ui-bulk-password-mismatch = Les mots de passe ne correspondent pas.
+ui-bulk-password-skipped-winrm = { $count ->
+    [one] { $count } profil WinRM ignoré, car son mot de passe n'est pas enregistré.
+   *[other] { $count } profils WinRM ignorés, car leur mot de passe n'est pas enregistré.
+}
+ui-bulk-password-skipped-no-account = { $count ->
+    [one] { $count } profil ignoré, car aucun nom d'utilisateur n'est configuré.
+   *[other] { $count } profils ignorés, car aucun nom d'utilisateur n'est configuré.
+}
+ui-bulk-password-skipped-other = { $count ->
+    [one] { $count } profil ignoré, car son protocole n'enregistre pas de mot de passe.
+   *[other] { $count } profils ignorés, car leur protocole n'enregistre pas de mot de passe.
+}
+ui-status-bulk-password-updated = { $count ->
+    [one] Mot de passe modifié sur { $count } serveur.
+   *[other] Mot de passe modifié sur { $count } serveurs.
+}
+ui-status-bulk-password-updated-with-skipped = { $updated } { $skipped }
+ui-status-bulk-password-partial = Mot de passe enregistré sur { $count } des { $total } serveurs.
 ui-desktop-disconnect = Déconnecter
 ui-desktop-disconnect-tooltip = Déconnecter la session
 ui-desktop-disconnect-title = Déconnecter Bureau à distance ?

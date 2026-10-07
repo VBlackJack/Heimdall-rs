@@ -74,6 +74,7 @@ mod appearance;
 mod auto_reconnect;
 mod broadcast;
 mod bulk_edit;
+mod bulk_password;
 mod citrix_import;
 mod citrix_launch;
 mod connect_as;
@@ -142,6 +143,7 @@ pub use appearance::SettingsMessage;
 pub use auto_reconnect::Retry;
 pub use broadcast::BroadcastMessage;
 pub use bulk_edit::{BulkField, BulkRefusal};
+pub use bulk_password::{BulkPasswordRefusal, BulkPasswordSkips, bulk_password_refusal};
 pub use citrix_import::CitrixImportOutcome;
 pub use connect_as::ConnectAs;
 pub use detail::SavedCredentials;
@@ -745,6 +747,14 @@ pub enum Message {
     },
     /// The vault was opened, or could not be.
     VaultOpened(Result<OpenedVault, VaultProblem>),
+    /// What was typed into the bulk password dialog: saved for its profiles when the two
+    /// are alike.
+    SetBulkPassword {
+        /// The password.
+        password: Secret,
+        /// The password typed again.
+        confirm: Secret,
+    },
     /// Close the vault.
     LockVault,
     /// How long the computer has had no input, as the window measured it: the workspace
@@ -976,6 +986,7 @@ impl fmt::Debug for Message {
             Self::ChangeMasterPassword => f.write_str("ChangeMasterPassword"),
             Self::DisableMasterPassword => f.write_str("DisableMasterPassword"),
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
+            Self::SetBulkPassword { .. } => f.write_str("SetBulkPassword(..)"),
             Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
             Self::LockVault => f.write_str("LockVault"),
             Self::Idle(idle) => write!(f, "Idle({idle:?})"),
@@ -2595,6 +2606,16 @@ pub enum Dialog {
         /// Why the value confirmed was refused.
         refused: Option<BulkRefusal>,
     },
+    /// One password for several profiles at once, as the C# bulk edit asks it, typed
+    /// twice. What is typed stays in the window until it is confirmed.
+    BulkPassword {
+        /// The profiles selected whose password is saved.
+        ids: Vec<ProfileId>,
+        /// The profiles selected left alone, counted by why.
+        skipped: BulkPasswordSkips,
+        /// Why the password confirmed was refused.
+        refused: Option<BulkPasswordRefusal>,
+    },
     /// End a Remote Desktop session from its bar, the tab kept to reconnect, as the C#
     /// asks first.
     ConfirmDisconnectDesktop {
@@ -3217,6 +3238,10 @@ impl App {
             | Message::VaultOpened(_)
             | Message::LockVault
             | Message::Idle(_)) => self.vault_message(message),
+            Message::SetBulkPassword { password, confirm } => {
+                self.set_bulk_password(&password, &confirm);
+                Vec::new()
+            }
             Message::Pin(message) => self.pin_message(message),
             Message::CredentialProvider(message) => self.provider_message(message),
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
@@ -4377,7 +4402,8 @@ impl App {
                 dialog @ (Dialog::Vault(_)
                 | Dialog::Pin(_)
                 | Dialog::EditGateway { .. }
-                | Dialog::SudoPassword { .. }),
+                | Dialog::SudoPassword { .. }
+                | Dialog::BulkPassword { .. }),
             ) => {
                 self.dialog = Some(dialog);
                 Vec::new()

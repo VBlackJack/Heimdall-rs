@@ -593,6 +593,17 @@ pub enum Message {
     ProfilePassphrase(String),
     /// Save the profile form, with the password typed into it.
     SaveProfileForm,
+    /// A field of the bulk password dialog changed.
+    BulkPasswordField {
+        /// Field: the password, then again.
+        index: usize,
+        /// New content.
+        value: String,
+    },
+    /// Move to field `index` of the bulk password dialog.
+    FocusBulkPasswordField(usize),
+    /// Hand the password typed twice in the bulk password dialog to the core.
+    SubmitBulkPassword,
     /// Show this tab of the Settings page.
     SettingsTab(SettingsTab),
     /// The Settings page's search changed: its rows are filtered by what it holds.
@@ -872,6 +883,9 @@ impl fmt::Debug for Message {
             Self::SudoPasswordConfirm => f.write_str("SudoPasswordConfirm"),
             Self::ProfilePassphrase(_) => f.write_str("ProfilePassphrase(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
+            Self::BulkPasswordField { index, .. } => write!(f, "BulkPasswordField({index}, ..)"),
+            Self::FocusBulkPasswordField(index) => write!(f, "FocusBulkPasswordField({index})"),
+            Self::SubmitBulkPassword => f.write_str("SubmitBulkPassword"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
             Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
             Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
@@ -1125,6 +1139,8 @@ pub struct Shell {
     vault_fields: [Zeroizing<String>; 3],
     /// What is typed into the password field of the profile form.
     profile_password: Zeroizing<String>,
+    /// What is typed into the bulk password dialog: the password, then again.
+    bulk_password: [Zeroizing<String>; 2],
     /// The password typed in sudo's question, until given.
     sudo_password: Zeroizing<String>,
     /// What is typed into the key passphrase field of the profile form.
@@ -1377,6 +1393,8 @@ enum DialogFocus {
     Vault,
     /// The PIN's first field.
     Pin,
+    /// The bulk password dialog's first field.
+    BulkPassword,
 }
 
 /// A dialog made of fields, focused on its name when it opens.
@@ -1440,6 +1458,7 @@ impl Shell {
             dialog_focus: None,
             vault_fields: Default::default(),
             profile_password: Zeroizing::default(),
+            bulk_password: Default::default(),
             sudo_password: Zeroizing::default(),
             profile_passphrase: Zeroizing::default(),
             provider_unlock: Zeroizing::default(),
@@ -2122,6 +2141,8 @@ impl Shell {
             | Message::Search(_)
             | Message::SettingsTab(_)
             | Message::ProfilePassword(_)
+            | Message::BulkPasswordField { .. }
+            | Message::FocusBulkPasswordField(_)
             | Message::SudoPasswordEdited(_)
             | Message::SudoPasswordConfirm
             | Message::ProfilePassphrase(_)
@@ -2197,6 +2218,7 @@ impl Shell {
             Message::RemovePin => self.remove_pin(),
             Message::SaveProviderUnlock => self.save_provider_unlock(),
             Message::SaveProfileForm => self.save_profile_form(),
+            Message::SubmitBulkPassword => self.submit_bulk_password(),
             Message::SaveGatewayForm => self.save_gateway_form(),
             Message::TestRouteForm => self.test_route_form(),
             message @ (Message::OpenTreeMenu(_)
@@ -2355,6 +2377,17 @@ impl Shell {
                 self.settings_highlight = None;
             }
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
+            Message::BulkPasswordField { index, value } => {
+                if let Some(field) = self.bulk_password.get_mut(index) {
+                    *field = Zeroizing::new(value);
+                }
+                let _ = self
+                    .app
+                    .update(AppMessage::Selection(SelectionMessage::BulkPasswordEdited));
+            }
+            Message::FocusBulkPasswordField(index) => {
+                return operation::focus(bulk_password_field_id(index));
+            }
             Message::SudoPasswordEdited(value) => self.sudo_password = Zeroizing::new(value),
             Message::SudoPasswordConfirm => {
                 let typed = std::mem::take(&mut self.sudo_password);
@@ -2551,6 +2584,20 @@ impl Shell {
         })
     }
 
+    /// Hands the password typed twice in the bulk password dialog to the core; the fields
+    /// are emptied either way.
+    fn submit_bulk_password(&mut self) -> Vec<Effect> {
+        if !matches!(self.app.dialog, Some(Dialog::BulkPassword { .. })) {
+            return Vec::new();
+        }
+        let [password, confirm] = std::mem::take(&mut self.bulk_password);
+        let secret = |mut text: Zeroizing<String>| Secret::new(std::mem::take(&mut *text));
+        self.app.update(AppMessage::SetBulkPassword {
+            password: secret(password),
+            confirm: secret(confirm),
+        })
+    }
+
     /// Hands the profile form to the core with the password and passphrase typed, which
     /// leave the window.
     fn save_profile_form(&mut self) -> Vec<Effect> {
@@ -2577,13 +2624,19 @@ impl Shell {
             gateways: self.app.gateways(),
             tunnel_problem: self.app.tunnel_problem(),
             agent_chip: self.app.agent_chip(),
-            passwords: if self.app.can_save_passwords() {
-                PasswordStore::Ready
-            } else if self.app.vault_status() == VaultStatus::Locked {
-                PasswordStore::VaultLocked
-            } else {
-                PasswordStore::None
-            },
+            bulk_password: &self.bulk_password,
+            passwords: self.password_store(),
+        }
+    }
+
+    /// Whether a password typed now can be saved.
+    fn password_store(&self) -> PasswordStore {
+        if self.app.can_save_passwords() {
+            PasswordStore::Ready
+        } else if self.app.vault_status() == VaultStatus::Locked {
+            PasswordStore::VaultLocked
+        } else {
+            PasswordStore::None
         }
     }
 
@@ -3002,6 +3055,10 @@ impl Shell {
             (true, _) if matches!(self.app.dialog, Some(Dialog::EditGateway { .. })) => {
                 self.save_gateway_form()
             }
+            // The password typed twice is here too.
+            (true, true) if matches!(self.app.dialog, Some(Dialog::BulkPassword { .. })) => {
+                self.submit_bulk_password()
+            }
             (true, true) => self.app.update(AppMessage::ConfirmDialog),
             // Only a click agrees to this one.
             (true, false) => Vec::new(),
@@ -3108,6 +3165,9 @@ impl Shell {
             self.profile_password = Zeroizing::default();
             self.profile_passphrase = Zeroizing::default();
         }
+        if !matches!(app.dialog, Some(Dialog::BulkPassword { .. })) {
+            self.bulk_password = Default::default();
+        }
         if !matches!(app.dialog, Some(Dialog::EditGateway { .. })) {
             self.gateway_password = Zeroizing::default();
             self.gateway_passphrase = Zeroizing::default();
@@ -3187,6 +3247,9 @@ impl Shell {
             ) => (Some(DialogFocus::Name), name_field_id()),
             Some(Dialog::Vault(_)) => (Some(DialogFocus::Vault), vault_field_id(0)),
             Some(Dialog::Pin(_)) => (Some(DialogFocus::Pin), vault_field_id(0)),
+            Some(Dialog::BulkPassword { .. }) => {
+                (Some(DialogFocus::BulkPassword), bulk_password_field_id(0))
+            }
             Some(Dialog::EditProfile { error, .. }) => {
                 match self.form_focus(DialogForm::Profile, *error, profile_field_id) {
                     Some(focus) => focus,
@@ -3906,6 +3969,8 @@ impl Shell {
             tree_view::edit_selection_entries(
                 self.app
                     .bulk_targets(&selected, heimdall_app::BulkField::Username),
+                self.app.bulk_password_targets(&selected),
+                self.password_store().blocked(),
                 self.app.gateway_targets(&selected),
             )
         } else if let TreeMenu::GatewaySelection = menu {
@@ -7503,6 +7568,8 @@ struct Forms<'a> {
     vault: &'a [Zeroizing<String>; 3],
     /// The profile form's password.
     profile_password: &'a str,
+    /// The bulk password dialog's fields.
+    bulk_password: &'a [Zeroizing<String>; 2],
     /// The password typed in sudo's question.
     sudo_password: &'a str,
     /// The profile form's key passphrase.
@@ -7534,6 +7601,17 @@ enum PasswordStore {
     VaultLocked,
     /// No master password, and no store on this system.
     None,
+}
+
+impl PasswordStore {
+    /// Why no password can be saved now, as the profile form says it; `None` when one can.
+    fn blocked(self) -> Option<String> {
+        match self {
+            Self::Ready => None,
+            Self::VaultLocked => Some(fl!("ui-profile-password-locked")),
+            Self::None => Some(fl!("ui-profile-password-no-store")),
+        }
+    }
 }
 
 /// The password of a profile, as the C# editor shows it: an empty field whatever is saved,
@@ -8755,6 +8833,84 @@ fn bulk_edit_dialog(
         .spacing(SPACING),
     )
     .into()
+}
+
+/// One password for `count` profiles, as the C# bulk password dialog asks it: for how
+/// many, the profiles `skipped` and why, the password and again, and why it was refused.
+/// OK waits for a password, as the C# Apply does.
+fn bulk_password_dialog(
+    count: usize,
+    skipped: heimdall_app::BulkPasswordSkips,
+    refused: Option<heimdall_app::BulkPasswordRefusal>,
+    fields: &[Zeroizing<String>; 2],
+) -> Element<'_, Message> {
+    use heimdall_app::BulkPasswordRefusal;
+
+    let mut body = column![text(fl!("ui-bulk-password-header", count = count)).size(HEADING_SIZE)]
+        .spacing(SPACING);
+    let lines = [
+        (
+            skipped.winrm,
+            fl!("ui-bulk-password-skipped-winrm", count = skipped.winrm),
+        ),
+        (
+            skipped.no_account,
+            fl!(
+                "ui-bulk-password-skipped-no-account",
+                count = skipped.no_account
+            ),
+        ),
+        (
+            skipped.other,
+            fl!("ui-bulk-password-skipped-other", count = skipped.other),
+        ),
+    ];
+    for (skipped, line) in lines {
+        if skipped > 0 {
+            body = body.push(text(line).size(SMALL_SIZE));
+        }
+    }
+    let labels = [
+        fl!("ui-bulk-password-label"),
+        fl!("ui-bulk-password-confirm-label"),
+    ];
+    let last = labels.len() - 1;
+    for (index, label) in labels.into_iter().enumerate() {
+        let input = text_input("", fields[index].as_str())
+            .id(bulk_password_field_id(index))
+            .secure(true)
+            .on_input(move |value| Message::BulkPasswordField { index, value })
+            .on_submit(if index < last {
+                Message::FocusBulkPasswordField(index + 1)
+            } else {
+                Message::SubmitBulkPassword
+            });
+        body = body.push(column![text(label).size(SMALL_SIZE), input].spacing(SPACING / 2.0));
+    }
+    if let Some(refused) = refused {
+        body = body.push(
+            text(match refused {
+                BulkPasswordRefusal::Control => fl!("ui-bulk-password-control"),
+                BulkPasswordRefusal::Mismatch => fl!("ui-bulk-password-mismatch"),
+            })
+            .style(text::danger),
+        );
+    }
+    body.push(
+        row![
+            button(text(fl!("ui-dialog-cancel-button")))
+                .style(button::secondary)
+                .on_press(Message::App(AppMessage::DismissDialog)),
+            button(text(fl!("ui-dialog-ok-button")))
+                .on_press_maybe((!fields[0].is_empty()).then_some(Message::SubmitBulkPassword)),
+        ]
+        .spacing(SPACING),
+    )
+    .into()
+}
+
+fn bulk_password_field_id(index: usize) -> iced::widget::Id {
+    iced::widget::Id::from(format!("bulk-password-field-{index}"))
 }
 
 fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
@@ -10328,6 +10484,11 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmImportFile(_)
         | Dialog::ConfirmCitrixImport(_) => import_preview(dialog),
         Dialog::Vault(vault) => vault_dialog(vault, forms.vault),
+        Dialog::BulkPassword {
+            ids,
+            skipped,
+            refused,
+        } => bulk_password_dialog(ids.len(), *skipped, *refused, forms.bulk_password),
         Dialog::Pin(pin) => pin_dialog(pin, forms.vault),
         Dialog::EditGateway { draft, error, .. } => gateway_dialog(draft, *error, forms),
     }

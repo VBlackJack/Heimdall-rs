@@ -57,6 +57,11 @@ pub enum SelectionMessage {
     Edit(super::BulkField),
     /// The value typed for them.
     BulkEdited(String),
+    /// Set the password of every one selected whose password is saved, as the C# "Edit"
+    /// menu's "Password...".
+    EditPassword,
+    /// What is typed into the bulk password dialog changed; the text stays in the window.
+    BulkPasswordEdited,
     /// Delete every one selected, once asked.
     RequestDelete,
 }
@@ -152,6 +157,11 @@ impl App {
                 self.bulk_edited(value);
                 Vec::new()
             }
+            SelectionMessage::EditPassword => {
+                self.open_bulk_password();
+                Vec::new()
+            }
+            SelectionMessage::BulkPasswordEdited => self.bulk_password_edited(),
             SelectionMessage::Favorite(favorite) => {
                 let ids = self.selected_profiles();
                 self.set_favorites(&ids, favorite);

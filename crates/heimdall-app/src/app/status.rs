@@ -111,6 +111,24 @@ pub enum Notice {
     BulkUsernameUpdated(usize),
     /// The account set at once was every profile's already.
     BulkUsernameUnchanged,
+    /// A password was saved for this many profiles at once.
+    BulkPasswordUpdated {
+        /// Profiles saved.
+        count: usize,
+        /// `WinRM` profiles selected and left alone.
+        winrm_skipped: usize,
+    },
+    /// A password was saved for some of the profiles only: the system's store failed for
+    /// the others.
+    BulkPasswordPartial {
+        /// Profiles saved.
+        count: usize,
+        /// Profiles it was to be saved for.
+        total: usize,
+    },
+    /// No password was set at once: of those selected, only this many `WinRM` profiles
+    /// could have taken one.
+    BulkPasswordWinRmSkipped(usize),
     /// The route of this many profiles changed with the bulk "Set gateway"; none when they
     /// all went that way already.
     BulkGatewayUpdated(usize),

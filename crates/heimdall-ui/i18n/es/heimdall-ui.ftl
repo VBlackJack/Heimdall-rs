@@ -1592,6 +1592,33 @@ ui-status-bulk-username-updated = { $count ->
    *[other] Usuario actualizado en { $count } servidores.
 }
 ui-status-bulk-username-unchanged = No se aplicó ningún cambio: todos los servidores seleccionados ya usan este usuario.
+ui-selection-edit-password = Contraseña... ({ $count })
+ui-bulk-password-header = { $count ->
+    [one] Estableciendo la contraseña en { $count } servidor
+   *[other] Estableciendo la contraseña en { $count } servidores
+}
+ui-bulk-password-label = Nueva contraseña:
+ui-bulk-password-confirm-label = Confirmar contraseña:
+ui-bulk-password-control = La contraseña no puede contener caracteres de control.
+ui-bulk-password-mismatch = Las contraseñas no coinciden.
+ui-bulk-password-skipped-winrm = { $count ->
+    [one] Se omitió { $count } perfil WinRM porque su contraseña no se guarda.
+   *[other] Se omitieron { $count } perfiles WinRM porque sus contraseñas no se guardan.
+}
+ui-bulk-password-skipped-no-account = { $count ->
+    [one] Se omitió { $count } perfil porque no hay usuario configurado.
+   *[other] Se omitieron { $count } perfiles porque no hay usuario configurado.
+}
+ui-bulk-password-skipped-other = { $count ->
+    [one] Se omitió { $count } perfil cuyo protocolo no guarda contraseña.
+   *[other] Se omitieron { $count } perfiles cuyo protocolo no guarda contraseña.
+}
+ui-status-bulk-password-updated = { $count ->
+    [one] Contraseña actualizada en { $count } servidor.
+   *[other] Contraseña actualizada en { $count } servidores.
+}
+ui-status-bulk-password-updated-with-skipped = { $updated } { $skipped }
+ui-status-bulk-password-partial = Contraseña guardada en { $count } de { $total } servidores.
 ui-desktop-disconnect = Desconectar
 ui-desktop-disconnect-tooltip = Desconectar sesión
 ui-desktop-disconnect-title = ¿Desconectar Escritorio remoto?
