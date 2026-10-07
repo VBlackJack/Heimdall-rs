@@ -50,7 +50,7 @@ const GRID: GridSize = GridSize { cols: 80, rows: 24 };
 const WINDOW: Size = Size::new(1100.0, 700.0);
 
 /// A window tall enough for a tab's whole menu, the split entries at its foot.
-const TALL_WINDOW: Size = Size::new(1100.0, 1200.0);
+const TALL_WINDOW: Size = Size::new(1100.0, 1400.0);
 
 /// Tries of a double click, which iced tells by the real time between its presses.
 const DOUBLE_CLICK_TRIES: usize = 3;

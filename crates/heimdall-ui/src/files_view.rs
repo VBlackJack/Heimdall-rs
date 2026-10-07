@@ -139,24 +139,31 @@ pub enum PaneField {
     Filter,
 }
 
-/// Widget identifier of a pane's `field`.
+/// Widget identifier of the `field` of `tab`'s pane `side`. Made of the tab: an operation
+/// reaches every window, and a Files tab in a window of its own has the same fields as one
+/// in the main window.
 #[must_use]
-pub fn field_id(side: Side, field: PaneField) -> Id {
-    Id::new(match (side, field) {
-        (Side::Local, PaneField::Path) => "files-local-path",
-        (Side::Remote, PaneField::Path) => "files-remote-path",
-        (Side::Local, PaneField::Filter) => "files-local-filter",
-        (Side::Remote, PaneField::Filter) => "files-remote-filter",
-    })
+pub fn field_id(tab: TabId, side: Side, field: PaneField) -> Id {
+    let field = match field {
+        PaneField::Path => "path",
+        PaneField::Filter => "filter",
+    };
+    Id::from(format!("files-{}-{}-{field}", tab.value(), side_name(side)))
 }
 
-/// Widget identifier of a pane's list, to scroll the selection into view.
+/// Widget identifier of the list of `tab`'s pane `side`, to scroll the selection into view;
+/// made of the tab as its fields are.
 #[must_use]
-pub fn list_id(side: Side) -> Id {
-    Id::new(match side {
-        Side::Local => "files-local",
-        Side::Remote => "files-remote",
-    })
+pub fn list_id(tab: TabId, side: Side) -> Id {
+    Id::from(format!("files-{}-{}", tab.value(), side_name(side)))
+}
+
+/// A pane's side in its widgets' identifiers.
+fn side_name(side: Side) -> &'static str {
+    match side {
+        Side::Local => "local",
+        Side::Remote => "remote",
+    }
 }
 
 /// What `key` at `physical` does in a Files tab, as the C# `FileBrowserShortcutPolicy`:
@@ -758,7 +765,7 @@ fn pane_narrowing<'a>(
     row![
         crate::search_keys::SearchKeys::escape_only(
             text_input(&fl!("ui-files-filter-placeholder"), filter)
-                .id(field_id(side, PaneField::Filter))
+                .id(field_id(tab, side, PaneField::Filter))
                 .size(SMALL_SIZE)
                 .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
                 .width(Length::Fill),
@@ -1065,7 +1072,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         match breadcrumb.filter(|_| typed.is_none()) {
             Some(segments) => breadcrumb_bar(tab, side, segments),
             None => text_input(&location, typed.unwrap_or(&location))
-                .id(field_id(side, PaneField::Path))
+                .id(field_id(tab, side, PaneField::Path))
                 .size(SMALL_SIZE)
                 .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
                 .on_submit(files(FilesMessage::GoTo { tab, side }))
@@ -1100,7 +1107,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
             list = list.push(entry_row(entry, (&shown, &laid), (picked, target), place));
         }
         // A right click beside the entries: the menu of the folder shown, as the C# list's.
-        let list = mouse_area(scrollable(list).id(list_id(side)).height(Length::Fill))
+        let list = mouse_area(scrollable(list).id(list_id(tab, side)).height(Length::Fill))
             .on_right_press(Message::OpenTreeMenu(TreeMenu::FilesEntry {
                 tab,
                 side,

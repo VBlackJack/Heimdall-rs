@@ -16,7 +16,8 @@
 
 //! A tab's own window drawn headless, as the C# floating window: its header naming the
 //! session, its state and Reattach, the session's question drawn under it, its title, the
-//! veil behind the lock screen; and the tab menu's "Detach to Window".
+//! veil behind the lock screen; a Files tab in it, its fields its own, its keys, drops and
+//! menus its own; and the tab menu's "Detach to Window" and "Detach Secondary Pane".
 //!
 //! Strings are the fallback language's (English): the tests never select a language.
 
@@ -26,22 +27,31 @@ use std::path::Path;
 
 use std::sync::Arc;
 
+use heimdall_app::files::{Direction, EntryKind, FilesKey, RemoteEntry, Side, SortColumn};
 use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
-    App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent, Dialog, FloatMessage, KeyInput,
-    Message as AppMessage, PointerInput, QuestionId, QuestionKind, SpecialKeys, TabGroup, TabId,
-    TabMenuMessage, VncQuality,
+    App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent, Dialog, EditorId, FilesMessage,
+    FloatMessage, KeyInput, Message as AppMessage, PointerInput, QuestionId, QuestionKind,
+    SpecialKeys, TabGroup, TabId, TabMenuMessage, VncQuality,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::store::ProfileStore;
+use heimdall_files::RemoteSession;
+use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
+use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::{AgentSource, PasswordQuestion};
 use heimdall_term::{CellPixels, CellPoint, GridSize, Key, KeyLocation, Modifiers, MouseAction};
-use heimdall_ui::floating_view::floating_message_allowed;
+use heimdall_ui::files_drag::Spot;
+use heimdall_ui::floating_view::{
+    ColumnWidths, EditorKey, EditorMessage, FloatEvent, PaneField, field_id,
+    floating_message_allowed, list_id,
+};
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::WindowShortcut;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::{Element, Settings, Size, window};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 
 const GRID: GridSize = GridSize { cols: 80, rows: 24 };
 
@@ -383,7 +393,7 @@ fn chosen(shell: &Shell, label: &str) -> Vec<Message> {
 }
 
 #[test]
-fn the_tab_menu_offers_detach_to_a_tab_not_split_and_not_files() {
+fn the_tab_menu_offers_detach_to_a_tab_not_split_and_detach_secondary_to_a_split_one() {
     let dir = tempfile::tempdir().expect("dir");
     let mut core = app(dir.path());
     let (a, _) = open(&mut core, "a");
@@ -399,14 +409,24 @@ fn the_tab_menu_offers_detach_to_a_tab_not_split_and_not_files() {
         ),
         "{detach:?}"
     );
-    // A Files tab: its panes stay in the main window for now.
-    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(files)));
     {
         let mut ui = common::simulator(settings(), TALL_WINDOW, shell.view());
-        ui.find("Duplicate Session").expect("the menu is open");
-        assert!(ui.find("Detach to Window").is_err(), "not for a Files tab");
+        assert!(
+            ui.find("Detach Secondary Pane").is_err(),
+            "not for a tab not split"
+        );
     }
-    // A split tab: refused, as the C# offers Detach Secondary Pane there instead.
+    // A Files tab too, as the C# offers it to any tab not split.
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(files)));
+    let detach = chosen(&shell, "Detach to Window");
+    assert!(
+        matches!(
+            detach.as_slice(),
+            [Message::MenuChoice(AppMessage::Float(FloatMessage::Detach(tab)))] if *tab == files
+        ),
+        "{detach:?}"
+    );
+    // A split tab: Detach Secondary Pane in its place, as the C# `AppendDetachItem`.
     let _ = shell.update(Message::App(AppMessage::Split(SplitMessage::Merge {
         host: a,
         tab: b,
@@ -414,9 +434,26 @@ fn the_tab_menu_offers_detach_to_a_tab_not_split_and_not_files() {
         placement: Placement::Second,
     })));
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(a)));
-    let mut ui = common::simulator(settings(), TALL_WINDOW, shell.view());
-    ui.find("Unsplit").expect("the split's menu");
-    assert!(ui.find("Detach to Window").is_err(), "not for a split tab");
+    {
+        let mut ui = common::simulator(settings(), TALL_WINDOW, shell.view());
+        ui.find("Unsplit").expect("the split's menu");
+        assert!(ui.find("Detach to Window").is_err(), "not for a split tab");
+    }
+    let detach = chosen(&shell, "Detach Secondary Pane");
+    assert!(
+        matches!(
+            detach.as_slice(),
+            [Message::MenuChoice(AppMessage::Float(FloatMessage::DetachSecondary(host)))]
+                if *host == a
+        ),
+        "{detach:?}"
+    );
+    // Chosen: the secondary pane in its own window, the host alone on the strip.
+    let _ = shell.update(detach.into_iter().next().expect("chosen"));
+    assert!(shell.app().is_floating(b));
+    assert!(shell.floating_window(b).is_some(), "its window asked for");
+    assert!(!shell.app().in_split(a));
+    assert_eq!(shell.app().active, Some(a), "the host keeps the keyboard");
 }
 
 /// Records what the application sends to a session.
@@ -738,4 +775,588 @@ fn a_message_the_window_does_not_let_through_is_dropped() {
     }
     assert!(sink_a.taken().is_empty());
     assert!(sink_b.taken().is_empty());
+}
+
+/// An SFTP server that answers the start, then nothing.
+async fn idle_client() -> RemoteSession {
+    let (client_end, mut server) = tokio::io::duplex(4096);
+    tokio::spawn(async move {
+        let mut length = [0; 4];
+        server.read_exact(&mut length).await.expect("init length");
+        let mut body = vec![0; u32::from_be_bytes(length) as usize];
+        server.read_exact(&mut body).await.expect("init");
+        assert!(matches!(Request::decode(&body), Ok(Request::Init { .. })));
+        let version = Response::Version {
+            version: SFTP_VERSION,
+            extensions: Vec::new(),
+        };
+        server.write_all(&version.encode()).await.expect("version");
+        std::future::pending::<()>().await;
+    });
+    RemoteSession::Sftp(
+        SftpClient::start(client_end, ClientConfig::default())
+            .await
+            .expect("started"),
+    )
+}
+
+/// A file of the server's folder.
+fn remote_file(name: &str) -> RemoteEntry {
+    RemoteEntry {
+        name: name.as_bytes().to_vec(),
+        label: name.to_owned(),
+        kind: EntryKind::File,
+        size: Some(4),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+        inode: None,
+    }
+}
+
+/// Files tab `floating`, detached to `window`, and Files tab `shown`, shown in the main
+/// window; both connected, their server's folder listing two files, its pane with the
+/// keyboard.
+struct TwoFiles {
+    shell: Shell,
+    floating: TabId,
+    shown: TabId,
+    window: window::Id,
+}
+
+async fn two_files(dir: &Path) -> TwoFiles {
+    let mut core = app(dir);
+    let mut tabs = Vec::new();
+    for id in ["a", "b"] {
+        let (tab, attempt) = open_as(&mut core, AppMessage::OpenFiles(ProfileId::new(id)));
+        core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event: ConnectionEvent::FilesReady {
+                client: idle_client().await,
+                shell: None,
+            },
+        });
+        core.update(AppMessage::Files(FilesMessage::RemoteListed {
+            tab,
+            result: Ok((
+                RemotePath::from("/srv"),
+                vec![remote_file("notes.txt"), remote_file("old.txt")],
+            )),
+        }));
+        core.update(AppMessage::Files(FilesMessage::Key {
+            tab,
+            key: FilesKey::Focus(Side::Remote),
+        }));
+        tabs.push(tab);
+    }
+    let (floating, shown) = (tabs[0], tabs[1]);
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::App(AppMessage::Float(FloatMessage::Detach(
+        floating,
+    ))));
+    let window = shell.floating_window(floating).expect("its own window");
+    assert_eq!(shell.app().active, Some(shown));
+    TwoFiles {
+        shell,
+        floating,
+        shown,
+        window,
+    }
+}
+
+/// The entries of the server's pane of `tab` chosen, and the one selected.
+fn chosen_files(shell: &Shell, tab: TabId) -> (Vec<usize>, Option<usize>) {
+    shell
+        .app()
+        .tab(tab)
+        .and_then(|found| found.files.as_deref())
+        .map(|files| (files.remote.chosen(), files.remote.selected))
+        .unwrap_or_default()
+}
+
+#[tokio::test]
+async fn a_detached_files_tab_draws_its_fields_by_ids_of_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let TwoFiles {
+        mut shell,
+        floating,
+        shown,
+        window,
+    } = two_files(dir.path()).await;
+    let path = |tab| field_id(tab, Side::Remote, PaneField::Path);
+    let filter = |tab| field_id(tab, Side::Remote, PaneField::Filter);
+    // Alt+D in its window: its own path bar typed in, the one the focus is given to.
+    let _ = shell.update(Message::Float(
+        window,
+        FloatEvent::FilesKey(FilesKey::FocusPath),
+    ));
+    {
+        let mut ui = simulator(shell.window_view(window));
+        ui.find(path(floating)).expect("its path bar, to type in");
+        ui.find(filter(floating)).expect("its filter");
+        ui.find(list_id(floating, Side::Remote)).expect("its list");
+        for id in [path(shown), filter(shown), list_id(shown, Side::Remote)] {
+            assert!(ui.find(id).is_err(), "nothing answers for the main tab");
+        }
+    }
+    {
+        let mut main = common::simulator(settings(), TALL_WINDOW, shell.view());
+        main.find(filter(shown)).expect("the main tab's filter");
+        main.find(list_id(shown, Side::Remote))
+            .expect("the main tab's list");
+        for id in [
+            path(floating),
+            filter(floating),
+            list_id(floating, Side::Remote),
+            path(shown),
+        ] {
+            assert!(
+                main.find(id).is_err(),
+                "nothing answers for the detached tab"
+            );
+        }
+    }
+    // Escape in the main window is its own tab's: the window's path bar stays typed in.
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    simulator(shell.window_view(window))
+        .find(path(floating))
+        .expect("still typed in");
+    // Escape in the window gives its folders back.
+    let _ = shell.update(Message::Float(window, FloatEvent::Escape));
+    assert!(
+        simulator(shell.window_view(window))
+            .find(path(floating))
+            .is_err()
+    );
+}
+
+#[tokio::test]
+async fn the_windows_files_keys_drops_and_clicks_reach_its_tab_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let TwoFiles {
+        mut shell,
+        floating,
+        shown,
+        window,
+    } = two_files(dir.path()).await;
+    let before = chosen_files(&shell, shown);
+    let _ = shell.update(Message::Float(window, FloatEvent::FilesKey(FilesKey::Last)));
+    assert_eq!(chosen_files(&shell, floating), (vec![1], Some(1)));
+    assert_eq!(
+        chosen_files(&shell, shown),
+        before,
+        "the main tab untouched"
+    );
+    assert_eq!(shell.app().active, Some(shown));
+    // The main window's keys stay its own tab's.
+    let _ = shell.update(Message::FilesKey(FilesKey::First));
+    assert_eq!(chosen_files(&shell, shown).1, Some(0));
+    assert_eq!(chosen_files(&shell, floating).1, Some(1));
+
+    // Ctrl held over the window: a click adds to its selection, as in the C# list.
+    let _ = shell.update(Message::Float(
+        window,
+        FloatEvent::Modifiers(iced::keyboard::Modifiers::CTRL),
+    ));
+    let _ = shell.update(Message::InFloating(
+        window,
+        Box::new(Message::App(AppMessage::Files(FilesMessage::Select {
+            tab: floating,
+            side: Side::Remote,
+            index: 0,
+        }))),
+    ));
+    assert_eq!(chosen_files(&shell, floating).0, [0, 1]);
+    let _ = shell.update(Message::Float(
+        window,
+        FloatEvent::Modifiers(iced::keyboard::Modifiers::empty()),
+    ));
+
+    // Files dragged from Explorer over the window: said there alone, and dropped there.
+    let _ = shell.update(Message::Float(window, FloatEvent::FilesHovered(true)));
+    simulator(shell.window_view(window))
+        .find("Drop files to upload")
+        .expect("said over its tab");
+    assert!(
+        common::simulator(settings(), TALL_WINDOW, shell.view())
+            .find("Drop files to upload")
+            .is_err(),
+        "not over the main window"
+    );
+    let outside = tempfile::tempdir().expect("dir");
+    let file = outside.path().join("report.pdf");
+    std::fs::write(&file, b"12345").expect("written");
+    let _ = shell.update(Message::Float(window, FloatEvent::FileDropped(file)));
+    let transfers = |shell: &Shell, tab| {
+        shell
+            .app()
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .map_or(0, |files| files.transfers.len())
+    };
+    assert_eq!(transfers(&shell, floating), 1, "sent to its server");
+    assert_eq!(transfers(&shell, shown), 0);
+    assert!(
+        simulator(shell.window_view(window))
+            .find("Drop files to upload")
+            .is_err(),
+        "dropped: no longer said"
+    );
+    assert_eq!(shell.app().active, Some(shown));
+    assert!(shell.app().floating_invariant_holds());
+}
+
+#[tokio::test]
+async fn a_files_menu_opened_in_the_window_is_drawn_and_chosen_there() {
+    let dir = tempfile::tempdir().expect("dir");
+    let TwoFiles {
+        mut shell,
+        floating,
+        window,
+        ..
+    } = two_files(dir.path()).await;
+    let _ = shell.update(Message::InFloating(
+        window,
+        Box::new(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab: floating,
+            side: Side::Remote,
+            index: Some(0),
+        })),
+    ));
+    assert!(
+        common::simulator(settings(), TALL_WINDOW, shell.view())
+            .find("Copy path")
+            .is_err(),
+        "not in the main window"
+    );
+    {
+        let mut ui = simulator(shell.window_view(window));
+        ui.click("Copy path").expect("in its window");
+        assert!(ui.into_messages().any(|message| matches!(
+            &message,
+            Message::InFloating(from, inner) if *from == window
+                && matches!(
+                    **inner,
+                    Message::MenuChoice(AppMessage::Files(FilesMessage::CopyPath {
+                        tab,
+                        side: Side::Remote,
+                    })) if tab == floating
+                )
+        )));
+    }
+    // A click beside it, in its window, closes it; Escape there too.
+    let _ = shell.update(Message::InFloating(
+        window,
+        Box::new(Message::CloseTreeMenu),
+    ));
+    assert!(
+        simulator(shell.window_view(window))
+            .find("Copy path")
+            .is_err()
+    );
+    let _ = shell.update(Message::InFloating(
+        window,
+        Box::new(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab: floating,
+            side: Side::Remote,
+            index: Some(0),
+        })),
+    ));
+    let _ = shell.update(Message::Float(window, FloatEvent::Escape));
+    assert!(
+        simulator(shell.window_view(window))
+            .find("Copy path")
+            .is_err()
+    );
+}
+
+/// Every message a Files pane, its menus and its integrated editor send for `tab`, drawn
+/// in a tab's own window, as the view code sends them.
+fn files_messages(tab: TabId, editor: EditorId) -> Vec<Message> {
+    let mut messages = pane_messages(tab);
+    messages.extend(menu_messages(tab));
+    messages.extend(window_messages(tab, editor));
+    messages
+}
+
+/// What a Files pane's lists, buttons, fields, transfers and external edits send for `tab`.
+fn pane_messages(tab: TabId) -> Vec<Message> {
+    let pane = |message| Message::App(AppMessage::Files(message));
+    let side = Side::Remote;
+    let local = std::path::PathBuf::from("edited.txt");
+    let transfer = heimdall_app::files::TransferId::fresh();
+    vec![
+        pane(FilesMessage::Select {
+            tab,
+            side,
+            index: 0,
+        }),
+        pane(FilesMessage::SortBy {
+            tab,
+            side,
+            column: SortColumn::Name,
+        }),
+        pane(FilesMessage::Back { tab, side }),
+        pane(FilesMessage::Up { tab, side }),
+        pane(FilesMessage::Home { tab, side }),
+        pane(FilesMessage::Ascend {
+            tab,
+            side,
+            levels: 1,
+        }),
+        pane(FilesMessage::PathEdited {
+            tab,
+            side,
+            text: "/srv".to_owned(),
+        }),
+        pane(FilesMessage::GoTo { tab, side }),
+        pane(FilesMessage::Refresh { tab, side }),
+        pane(FilesMessage::Filter {
+            tab,
+            side,
+            text: "notes".to_owned(),
+        }),
+        pane(FilesMessage::ToggleHidden { tab, side }),
+        pane(FilesMessage::AskNewFolder { tab, side }),
+        pane(FilesMessage::AskRename { tab, side }),
+        pane(FilesMessage::AskDelete { tab, side }),
+        pane(FilesMessage::Bookmark { tab }),
+        pane(FilesMessage::ToggleFollow { tab }),
+        pane(FilesMessage::ToggleSudo { tab }),
+        pane(FilesMessage::ToggleLocal { tab }),
+        pane(FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        }),
+        pane(FilesMessage::Cancel { tab, id: transfer }),
+        pane(FilesMessage::Retry { tab, id: transfer }),
+        pane(FilesMessage::ClearFinished { tab }),
+        pane(FilesMessage::StopBatch { tab }),
+        pane(FilesMessage::EditSaveWithSudo {
+            tab,
+            local: local.clone(),
+        }),
+        pane(FilesMessage::EditSendAnyway {
+            tab,
+            local: local.clone(),
+        }),
+        pane(FilesMessage::EditOpenFolder {
+            tab,
+            local: local.clone(),
+        }),
+        pane(FilesMessage::EditStop { tab, local }),
+    ]
+}
+
+/// What the entries of a Files pane's menus send for `tab`.
+fn menu_messages(tab: TabId) -> Vec<Message> {
+    let menu = |message| Message::MenuChoice(AppMessage::Files(message));
+    let side = Side::Remote;
+    vec![
+        menu(FilesMessage::Open {
+            tab,
+            side,
+            index: 0,
+        }),
+        menu(FilesMessage::EditIntegrated { tab }),
+        menu(FilesMessage::EditExternal { tab }),
+        menu(FilesMessage::EditWithSudo { tab }),
+        menu(FilesMessage::Transfer {
+            tab,
+            direction: Direction::Download,
+        }),
+        menu(FilesMessage::AskRename { tab, side }),
+        menu(FilesMessage::AskDelete { tab, side }),
+        menu(FilesMessage::AskPermissions { tab, side }),
+        menu(FilesMessage::UploadHere { tab }),
+        menu(FilesMessage::PasteFromExplorer { tab }),
+        menu(FilesMessage::Cut { tab }),
+        menu(FilesMessage::Copy { tab }),
+        menu(FilesMessage::Paste { tab }),
+        menu(FilesMessage::Duplicate { tab }),
+        menu(FilesMessage::CopyPath { tab, side }),
+        menu(FilesMessage::ShowProperties { tab, side }),
+        menu(FilesMessage::AskNewFolder { tab, side }),
+        menu(FilesMessage::Refresh { tab, side }),
+        menu(FilesMessage::OpenInTerminal { tab }),
+        menu(FilesMessage::OpenInExplorer { tab }),
+        menu(FilesMessage::OpenBookmark { tab, index: 0 }),
+        menu(FilesMessage::RemoveBookmark { tab, index: 0 }),
+    ]
+}
+
+/// What the window's own messages about a Files pane of `tab` and its editor `editor` are:
+/// its editor's, its path bar's, its columns', its menus' and the pointer over it.
+fn window_messages(tab: TabId, editor: EditorId) -> Vec<Message> {
+    let side = Side::Remote;
+    let spot = Spot {
+        tab,
+        side,
+        index: Some(0),
+    };
+    vec![
+        Message::Editor(EditorMessage::Action {
+            tab,
+            id: editor,
+            action: iced::widget::text_editor::Action::SelectAll,
+        }),
+        Message::Editor(EditorMessage::Key {
+            tab,
+            id: editor,
+            key: EditorKey::Save,
+        }),
+        Message::EditPath { tab, side },
+        Message::FileColumns {
+            tab,
+            side,
+            widths: ColumnWidths::default(),
+        },
+        Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab,
+            side,
+            index: Some(0),
+        }),
+        Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab)),
+        Message::OpenTreeMenu(TreeMenu::FilesBookmarksRemove(tab)),
+        Message::FilesHover(spot),
+        Message::FilesHoverLeft(spot),
+    ]
+}
+
+#[tokio::test]
+async fn what_a_files_tab_in_the_window_sends_is_let_through_for_it_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let TwoFiles {
+        mut shell,
+        floating,
+        shown,
+        window,
+    } = two_files(dir.path()).await;
+    // Its integrated editor opened from its menu, in its window.
+    let _ = shell.update(Message::Float(
+        window,
+        FloatEvent::FilesKey(FilesKey::First),
+    ));
+    let _ = shell.update(Message::InFloating(
+        window,
+        Box::new(Message::MenuChoice(AppMessage::Files(
+            FilesMessage::EditIntegrated { tab: floating },
+        ))),
+    ));
+    let editor = shell
+        .app()
+        .tab(floating)
+        .and_then(|tab| tab.files.as_deref())
+        .and_then(|files| files.editor.as_ref())
+        .map(|edit| edit.id)
+        .expect("its editor opened");
+    let (detached, main) = (
+        shell.app().tab(floating).expect("detached"),
+        shell.app().tab(shown).expect("shown"),
+    );
+    for message in files_messages(floating, editor) {
+        assert!(
+            floating_message_allowed(&message, detached),
+            "let through: {message:?}"
+        );
+        assert!(
+            !floating_message_allowed(&message, main),
+            "naming another tab: {message:?}"
+        );
+    }
+    for message in files_messages(shown, editor) {
+        assert!(
+            !floating_message_allowed(&message, detached),
+            "naming the main window's tab: {message:?}"
+        );
+    }
+    // Naming it, but not sent by its view: keys and drops come from its window, typed;
+    // an editor's save from the window's editors; a pane's message is no menu's.
+    for message in [
+        Message::App(AppMessage::Files(FilesMessage::Key {
+            tab: floating,
+            key: FilesKey::Next,
+        })),
+        Message::App(AppMessage::Files(FilesMessage::Dropped {
+            tab: floating,
+            path: std::path::PathBuf::from("dropped.txt"),
+        })),
+        Message::App(AppMessage::Files(FilesMessage::EditorSave {
+            tab: floating,
+            id: editor,
+            text: String::new(),
+            overwrite: true,
+        })),
+        Message::App(AppMessage::Files(FilesMessage::Duplicate { tab: floating })),
+        Message::MenuChoice(AppMessage::Files(FilesMessage::ToggleLocal {
+            tab: floating,
+        })),
+        Message::OpenTreeMenu(TreeMenu::Tab(floating)),
+        Message::FilesKey(FilesKey::Next),
+    ] {
+        assert!(
+            !floating_message_allowed(&message, detached),
+            "dropped: {message:?}"
+        );
+    }
+}
+
+/// Opens the menu of the first entry of `tab`'s server pane in its own window `window`.
+fn open_entry_menu(shell: &mut Shell, window: window::Id, tab: TabId) {
+    let _ = shell.update(Message::InFloating(
+        window,
+        Box::new(Message::OpenTreeMenu(TreeMenu::FilesEntry {
+            tab,
+            side: Side::Remote,
+            index: Some(0),
+        })),
+    ));
+    simulator(shell.window_view(window))
+        .find("Copy path")
+        .expect("open in its window");
+}
+
+#[tokio::test]
+async fn a_menu_of_the_window_goes_with_it_when_its_tab_comes_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let TwoFiles {
+        mut shell,
+        floating,
+        window,
+        ..
+    } = two_files(dir.path()).await;
+    // Reattach: the tab shown in the main window, its menu not drawn there.
+    open_entry_menu(&mut shell, window, floating);
+    let key = shell.app().floating_of(floating).expect("detached");
+    let _ = shell.update(Message::App(AppMessage::Float(FloatMessage::Reattach(key))));
+    assert_eq!(
+        shell.app().active,
+        Some(floating),
+        "shown in the main window"
+    );
+    assert!(
+        common::simulator(settings(), TALL_WINDOW, shell.view())
+            .find("Copy path")
+            .is_err(),
+        "no menu of the closed window"
+    );
+
+    // Its window's close button: back on the strip first, the menu gone too.
+    let _ = shell.update(Message::App(AppMessage::Float(FloatMessage::Detach(
+        floating,
+    ))));
+    let window = shell
+        .floating_window(floating)
+        .expect("its own window again");
+    open_entry_menu(&mut shell, window, floating);
+    let _ = shell.update(Message::Float(window, FloatEvent::CloseRequested));
+    assert!(!shell.app().is_floating(floating));
+    assert!(
+        common::simulator(settings(), TALL_WINDOW, shell.view())
+            .find("Copy path")
+            .is_err(),
+        "no menu of the closed window"
+    );
 }

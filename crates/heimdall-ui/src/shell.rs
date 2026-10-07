@@ -78,6 +78,8 @@ use iced::{
 };
 use zeroize::Zeroizing;
 
+mod floating_files;
+
 use crate::desktop_view::DesktopView;
 use crate::files_view;
 use crate::finder::Finder;
@@ -265,6 +267,28 @@ pub(crate) fn main_window_task(main: Option<window::Id>) -> Task<Option<window::
         Some(id) => Task::done(Some(id)),
         None => window::latest(),
     }
+}
+
+/// Whether files dropped from Explorer on `tab` go to it: a Files tab with its session open,
+/// as the C# tab takes them.
+fn takes_drops(tab: &Tab) -> bool {
+    tab.phase == Phase::Connected
+        && tab
+            .files
+            .as_ref()
+            .is_some_and(|files| files.client.is_some())
+}
+
+/// "Drop files to upload", over a Files tab while files are dragged over its window.
+fn drop_layer<'a>() -> Element<'a, Message> {
+    opaque(
+        container(
+            container(text(fl!("ui-files-drop-overlay")).size(HEADING_SIZE))
+                .padding(PADDING)
+                .style(container::bordered_box),
+        )
+        .center(Length::Fill),
+    )
 }
 
 /// Gives `window` the focus, restored first when it is minimized.
@@ -1034,6 +1058,9 @@ pub struct Shell {
     cursor: CursorSpot,
     /// The menu open in the profile tree, and where.
     menu: Option<(TreeMenu, Point)>,
+    /// The tab's own window that menu was opened in, at its cursor; `None` for the main
+    /// window.
+    menu_window: Option<window::Id>,
     /// What the content area shows.
     page: Page,
     /// Full screen: the window shows the session only.
@@ -1058,8 +1085,13 @@ pub struct Shell {
     file_columns: HashMap<TabId, crate::files_view::TabColumns>,
     /// Where the pointer is in a Files tab's panes.
     files_hover: Option<crate::files_drag::Spot>,
+    /// The tab's own window the pointer was last over a Files tab's place in; `None` for
+    /// the main window.
+    files_hover_window: Option<window::Id>,
     /// A press on a Files tab's entry, held: a drag once the pointer moves.
     files_drag: Option<crate::files_drag::FilesDrag>,
+    /// The tab's own window that press was in; `None` for the main window.
+    files_drag_window: Option<window::Id>,
     /// The tab under the pointer.
     tab_hover: Option<TabId>,
     /// A press on a tab, a drag once the pointer moves.
@@ -1310,6 +1342,7 @@ impl Shell {
             gateway_passphrase: Zeroizing::default(),
             cursor: CursorSpot::default(),
             menu: None,
+            menu_window: None,
             page: Page::Tab,
             fullscreen: false,
             density: 1.0,
@@ -1321,7 +1354,9 @@ impl Shell {
             path_editing: None,
             file_columns: HashMap::new(),
             files_hover: None,
+            files_hover_window: None,
             files_drag: None,
+            files_drag_window: None,
             tab_hover: None,
             tab_drag: None,
             tab_drop_area: None,
@@ -1465,9 +1500,13 @@ impl Shell {
     }
 
     /// A tab's own window: its header above its session, drawn as its tab draws it, every
-    /// message of the session marked as the window's; behind the lock, a veil.
+    /// message of the session marked as the window's; over a Files tab, the files dragged
+    /// from Explorer said and its menu open; behind the lock, a veil.
     fn floating_view(&self, window: window::Id, key: FloatId) -> Element<'_, Message> {
         let Some(tab) = self.app.floating_tab(key).filter(|_| !self.gated()) else {
+            return crate::floating_view::veil();
+        };
+        let Some(floating) = self.floating.get(&window) else {
             return crate::floating_view::veil();
         };
         let route = self.app.tab_route(tab);
@@ -1488,7 +1527,15 @@ impl Shell {
         let body = self
             .tab_page(tab, true)
             .map(move |message| Message::InFloating(window, Box::new(message)));
-        crate::floating_view::view(heading, body)
+        let mut layers = stack![crate::floating_view::view(heading, body)];
+        if floating.hovered && takes_drops(tab) {
+            layers = layers.push(drop_layer());
+        }
+        if let Some(menu) = self.floating_menu(tab.id) {
+            layers = layers
+                .push(menu.map(move |message| Message::InFloating(window, Box::new(message))));
+        }
+        CursorTracker::new(layers, floating.cursor.clone()).into()
     }
 
     /// Theme: the terminal palette is Dracula, so is the window.
@@ -1534,10 +1581,11 @@ impl Shell {
             )
         );
         let mut subscriptions = vec![events];
+        // A drag of a Files tab's entries, followed in the window it started in.
         if self.files_drag.is_some() {
             subscriptions.push(in_main_window(
                 window_tagged!(crate::files_drag::drag_event),
-                main,
+                self.files_drag_window.or(main),
             ));
         }
         if self.tab_drag.is_some() {
@@ -1653,14 +1701,8 @@ impl Shell {
             return focus_window(window);
         }
         let (window, opened) = window::open(crate::floating_view::settings());
-        self.floating.insert(
-            window,
-            FloatingWindow {
-                key,
-                scale: self.density,
-                question: None,
-            },
-        );
+        self.floating
+            .insert(window, FloatingWindow::new(key, self.density));
         opened.then(|window| {
             Task::batch([
                 window::gain_focus(window),
@@ -1670,17 +1712,33 @@ impl Shell {
         })
     }
 
-    /// Closes the window of the tab detached as `key`.
+    /// Closes the window of the tab detached as `key`: its tab went back to the strip, or is
+    /// gone. What was opened or pointed at in it goes with it, its menu, the place under its
+    /// pointer and a drag started there, so nothing of it shows in the main window at its
+    /// cursor's place.
     fn close_floating(&mut self, key: FloatId) -> Task<Message> {
         let Some(window) = self.window_of(key) else {
             return Task::none();
         };
         self.floating.remove(&window);
+        if self.menu_window == Some(window) {
+            self.menu = None;
+            self.menu_window = None;
+        }
+        if self.files_hover_window == Some(window) {
+            self.files_hover = None;
+            self.files_hover_window = None;
+        }
+        if self.files_drag_window == Some(window) {
+            self.files_drag = None;
+            self.files_drag_window = None;
+        }
         window::close(window)
     }
 
     /// What a tab's own window reported of itself: its close button asks the core, its
-    /// focus is its session's, its screen its desktop's.
+    /// focus is its session's, its screen its desktop's; the keys, drops and presses of a
+    /// Files tab are that tab's.
     fn float_event(&mut self, window: window::Id, event: FloatEvent) -> Task<Message> {
         let Some(key) = self.floating.get(&window).map(|floating| floating.key) else {
             return Task::none();
@@ -1701,16 +1759,22 @@ impl Shell {
                 self.modifiers = modifiers;
                 return Task::none();
             }
+            event @ (FloatEvent::FilesKey(_)
+            | FloatEvent::FindKey
+            | FloatEvent::Escape
+            | FloatEvent::PointerPressed
+            | FloatEvent::FilesHovered(_)
+            | FloatEvent::FileDropped(_)) => return self.floating_files_event(window, event),
         };
         let effects = self.app.update(AppMessage::Float(message));
         Task::batch(effects.into_iter().map(|effect| self.run(effect)))
     }
 
     /// A message of the session drawn in a tab's own window. Behind the lock it is dropped;
-    /// a zoom, which names no tab, is made that tab's; anything else passes only when
-    /// [`crate::floating_view::floating_message_allowed`] lets it, naming that tab. A dialog
-    /// it opens is the main window's, as the C# dialogs are: that window is brought forward
-    /// for it.
+    /// a zoom, which names no tab, is made that tab's, and so is the close of a menu drawn
+    /// there; anything else passes only when
+    /// [`crate::floating_view::floating_message_allowed`] lets it, naming that tab. A menu
+    /// of its Files pane opens where the pointer is in that window.
     fn in_floating(&mut self, window: window::Id, message: Message) -> Task<Message> {
         let Some(tab) = self.floating_tab_of(window) else {
             return Task::none();
@@ -1723,10 +1787,34 @@ impl Shell {
             self.zoom(tab, zoom);
             return Task::none();
         }
+        if matches!(message, Message::CloseTreeMenu) {
+            let tab = tab.id;
+            self.close_floating_menu(tab);
+            return Task::none();
+        }
         if !crate::floating_view::floating_message_allowed(&message, tab) {
             log::debug!("dropped from a detached window: {message:?}");
             return Task::none();
         }
+        if let Message::OpenTreeMenu(menu) = message {
+            let at = self
+                .floating
+                .get(&window)
+                .map_or_else(|| self.cursor.get(), |floating| floating.cursor.get());
+            self.open_tree_menu_at(menu, at, Some(window));
+            return Task::none();
+        }
+        let hover = matches!(message, Message::FilesHover(_));
+        let task = self.apply_floating(message);
+        if hover {
+            self.files_hover_window = Some(window);
+        }
+        task
+    }
+
+    /// Applies `message`, sent from a tab's own window. A dialog it opens is the main
+    /// window's, as the C# dialogs are: that window is brought forward for it.
+    fn apply_floating(&mut self, message: Message) -> Task<Message> {
         let asked = self.app.dialog.is_some();
         let task = self.update(message);
         if !asked && self.app.dialog.is_some() {
@@ -1747,7 +1835,7 @@ impl Shell {
                     || self.palette.is_some()
                     || self.finder.is_some()
                     || self.menu.is_some()
-                    || self.path_editing.is_some()
+                    || self.main_path_editing().is_some()
                     || self.app.active.is_none();
                 if open {
                     Task::none()
@@ -1849,10 +1937,19 @@ impl Shell {
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
                 if self.app.dialog.is_some() {
+                    // Through the main window's fields, which hold the dialog: an operation
+                    // reaches every window, and a tab's own window has fields of its own.
+                    use iced::advanced::widget::operation::{focusable, scope};
                     return if backward {
-                        operation::focus_previous()
+                        iced::advanced::widget::operate(scope(
+                            main_area_id(),
+                            focusable::focus_previous(),
+                        ))
                     } else {
-                        operation::focus_next()
+                        iced::advanced::widget::operate(scope(
+                            main_area_id(),
+                            focusable::focus_next(),
+                        ))
                     };
                 }
                 self.files_key(FilesKey::SwitchPane)
@@ -1878,7 +1975,9 @@ impl Shell {
             Message::FocusSearch => {
                 // Ctrl+F in a Files tab's lists is its filter's, as the C# file browser's.
                 let field = match self.shown_files_side() {
-                    Some(side) => files_view::field_id(side, files_view::PaneField::Filter),
+                    Some((tab, side)) => {
+                        files_view::field_id(tab, side, files_view::PaneField::Filter)
+                    }
                     None => search_field_id(),
                 };
                 return operation::focus(field.clone()).chain(operation::select_all(field));
@@ -2521,6 +2620,12 @@ impl Shell {
 
     /// Opens `menu` at the pointer, or, for a sub-menu, where its menu was.
     fn open_tree_menu(&mut self, menu: TreeMenu) {
+        self.open_tree_menu_at(menu, self.cursor.get(), None);
+    }
+
+    /// Opens `menu` at `cursor` in `window`, a tab's own window or, `None`, the main one;
+    /// for a sub-menu, where its menu was.
+    fn open_tree_menu_at(&mut self, menu: TreeMenu, cursor: Point, window: Option<window::Id>) {
         let at = match (&menu, &self.menu) {
             (
                 TreeMenu::ConnectAs(_)
@@ -2533,7 +2638,7 @@ impl Shell {
                 | TreeMenu::GatewaySelection,
                 Some((_, at)),
             ) => *at,
-            _ => self.cursor.get(),
+            _ => cursor,
         };
         // A right click on one of the profiles selected together is theirs, as in C#.
         let menu = match menu {
@@ -2568,6 +2673,7 @@ impl Shell {
             }
         }
         self.menu = Some((menu, at));
+        self.menu_window = window;
     }
 
     /// Whether Escape leaves full screen: in it, with no dialog, menu, Quick Connect, search
@@ -2578,7 +2684,7 @@ impl Shell {
             && self.palette.is_none()
             && self.finder.is_none()
             && self.menu.is_none()
-            && self.path_editing.is_none()
+            && self.main_path_editing().is_none()
     }
 
     /// Whether the page shown is a remote desktop under its bar, whose bar has its own way
@@ -2610,8 +2716,9 @@ impl Shell {
         }
         if !confirm
             && self.app.dialog.is_none()
-            && let Some((tab, side)) = self.path_editing.take()
+            && let Some((tab, side)) = self.main_path_editing()
         {
+            self.path_editing = None;
             // Then a path bar typed in, back to the folder shown, as the C# one.
             return self
                 .app
@@ -2646,29 +2753,34 @@ impl Shell {
         }
     }
 
-    /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
-    /// The pane that has the keyboard in the Files tab shown, its lists in sight: none for
-    /// another tab, the settings, a dialog or the integrated editor.
-    fn shown_files_side(&self) -> Option<heimdall_app::files::Side> {
+    /// The Files tab shown and the pane that has the keyboard in it, its lists in sight:
+    /// none for another tab, the settings, a dialog or the integrated editor.
+    fn shown_files_side(&self) -> Option<(TabId, heimdall_app::files::Side)> {
         if self.settings_shown() || self.app.dialog.is_some() || self.tree_focused {
             return None;
         }
-        let files = self.app.active_tab()?.files.as_deref()?;
-        files.editor.is_none().then_some(files.focus)
+        let tab = self.app.active_tab()?;
+        let files = tab.files.as_deref()?;
+        files.editor.is_none().then_some((tab.id, files.focus))
+    }
+
+    /// The Files pane of the main window whose path bar is typed in: none while it is a
+    /// pane of a tab's own window.
+    fn main_path_editing(&self) -> Option<(TabId, heimdall_app::files::Side)> {
+        self.path_editing
+            .filter(|(tab, _)| !self.app.is_floating(*tab))
     }
 
     /// The path bar of `side` in `tab` given the keyboard, its path shown to type in.
     fn edit_path(&mut self, tab: TabId, side: heimdall_app::files::Side) {
         self.path_editing = Some((tab, side));
-        self.focus_next = Some(files_view::field_id(side, files_view::PaneField::Path));
+        self.focus_next = Some(files_view::field_id(tab, side, files_view::PaneField::Path));
     }
 
+    /// Sends `key` to the tab shown; the core ignores it unless that is a Files tab.
     fn files_key(&mut self, key: FilesKey) -> Vec<Effect> {
         if key == FilesKey::FocusPath {
-            if let (Some(side), Some(tab)) = (
-                self.shown_files_side(),
-                self.app.active_tab().map(|tab| tab.id),
-            ) {
+            if let Some((tab, side)) = self.shown_files_side() {
                 self.edit_path(tab, side);
             }
             return Vec::new();
@@ -2688,11 +2800,18 @@ impl Shell {
             .update(AppMessage::Files(FilesMessage::Key { tab, key }))
     }
 
-    /// Scrolls the focused list of the Files tab shown so its selection is in view. The
-    /// list is snapped to the selection's share of its length, which keeps a row of equal
-    /// height inside the viewport wherever it is.
+    /// Scrolls the focused list of the Files tab shown so its selection is in view.
     fn reveal_selection(&self) -> Task<Message> {
-        let Some(files) = self.app.active_tab().and_then(|tab| tab.files.as_deref()) else {
+        self.app
+            .active
+            .map_or_else(Task::none, |tab| self.reveal_selection_of(tab))
+    }
+
+    /// Scrolls the focused list of Files tab `tab` so its selection is in view. The list is
+    /// snapped to the selection's share of its length, which keeps a row of equal height
+    /// inside the viewport wherever it is.
+    fn reveal_selection_of(&self, tab: TabId) -> Task<Message> {
+        let Some(files) = self.app.tab(tab).and_then(|found| found.files.as_deref()) else {
             return Task::none();
         };
         let (Some(index), count) = files.focused() else {
@@ -2707,7 +2826,7 @@ impl Shell {
         )]
         let share = index as f32 / last as f32;
         operation::snap_to(
-            files_view::list_id(files.focus),
+            files_view::list_id(tab, files.focus),
             RelativeOffset {
                 x: None,
                 y: Some(share),
@@ -3072,7 +3191,8 @@ impl Shell {
             Effect::SaveExport { document, count } => save_export(document, count, main),
             Effect::PickOpenSshConfig => pick_openssh(main),
             Effect::PickRdpFiles => pick_rdp(main),
-            Effect::PickUploads { tab } => pick_uploads(tab, main),
+            // Held by the window the Files tab is in, as its C# browser's.
+            Effect::PickUploads { tab } => pick_uploads(tab, self.owner_of(tab)),
             Effect::ReadExplorerFiles { tab } => read_explorer_files(tab),
             Effect::ReadDesktopClipboard { tab } => read_desktop_clipboard(tab),
             // Held by the window the desktop is in, as the C# prompts are.
@@ -3311,7 +3431,7 @@ impl Shell {
         let open_menu = self
             .menu
             .as_ref()
-            .filter(|_| !locked)
+            .filter(|(menu, _)| !locked && !self.menu_in_floating(menu))
             .and_then(|(menu, at)| Some((self.open_menu_entries(menu)?, *at)));
         if let Some(palette) = self.palette.as_ref().filter(|_| !locked) {
             let results = self
@@ -3354,7 +3474,9 @@ impl Shell {
                 .on_right_press(Message::CloseTreeMenu),
             ));
         }
-        CursorTracker::new(layers, self.cursor.clone()).into()
+        container(CursorTracker::new(layers, self.cursor.clone()))
+            .id(main_area_id())
+            .into()
     }
 
     /// A terminal tab's Macros menu; `None` once the tab takes none.
@@ -4759,12 +4881,7 @@ impl Shell {
     fn drop_target(&self) -> Option<TabId> {
         self.app
             .active_tab()
-            .filter(|tab| !self.settings_shown() && tab.phase == Phase::Connected)
-            .filter(|tab| {
-                tab.files
-                    .as_ref()
-                    .is_some_and(|files| files.client.is_some())
-            })
+            .filter(|tab| !self.settings_shown() && takes_drops(tab))
             .map(|tab| tab.id)
     }
 
@@ -4798,14 +4915,7 @@ impl Shell {
     /// "Drop files to upload" over the Files tab shown while files are dragged over it.
     fn drop_overlay(&self) -> Option<Element<'_, Message>> {
         self.drop_target().filter(|_| self.files_hovered)?;
-        Some(opaque(
-            container(
-                container(text(fl!("ui-files-drop-overlay")).size(HEADING_SIZE))
-                    .padding(PADDING)
-                    .style(container::bordered_box),
-            )
-            .center(Length::Fill),
-        ))
+        Some(drop_layer())
     }
 
     /// The transcripts' folder typed, or applied.
@@ -5283,6 +5393,8 @@ impl Shell {
         match *message {
             Message::FilesHover(spot) => {
                 self.files_hover = Some(spot);
+                // The main window's, unless a tab's own window says it is its own.
+                self.files_hover_window = None;
                 if let Some(drag) = self.files_drag.as_mut() {
                     drag.over = Some(spot);
                 }
@@ -5311,8 +5423,9 @@ impl Shell {
                     .map(|tab| crate::tab_drag::TabDrag::pressed(tab, self.cursor.get()));
                 self.files_drag = self
                     .files_hover
-                    .filter(|spot| spot.index.is_some())
+                    .filter(|spot| spot.index.is_some() && !self.app.is_floating(spot.tab))
                     .map(|spot| crate::files_drag::FilesDrag::pressed(spot, self.cursor.get()));
+                self.files_drag_window = None;
             }
             Message::FilesDragMoved(at) => {
                 let started = self.files_drag.as_mut().is_some_and(|drag| drag.moved(at));
@@ -5945,6 +6058,11 @@ impl Shell {
             pane: false,
             docked: self.app.is_docked(id),
             detach: self.app.can_detach(tab),
+            detach_secondary: self
+                .app
+                .host_of(id)
+                .and_then(|host| self.app.detachable_secondary(host))
+                .is_some(),
             split: match self.app.host_of(id).filter(|_| self.app.in_split(id)) {
                 Some(host) => SplitEntries::Split(host),
                 None => SplitEntries::Merge(!self.app.merge_candidates(id).is_empty()),
@@ -9803,6 +9921,12 @@ impl fmt::Display for KeysChoice {
 
 fn search_field_id() -> iced::widget::Id {
     iced::widget::Id::new("tree-search")
+}
+
+/// Widget identifier of the main window's whole content: the fields Tab goes through under
+/// a dialog, those of the tabs' own windows left out.
+fn main_area_id() -> iced::widget::Id {
+    iced::widget::Id::new("main-window")
 }
 
 fn vault_field_id(index: usize) -> iced::widget::Id {

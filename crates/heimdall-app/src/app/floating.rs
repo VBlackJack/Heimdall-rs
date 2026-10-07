@@ -20,13 +20,16 @@
 //! naming it, with a Reattach button, above the session. Reattached, it goes back after the
 //! last tab of its group, pinned or not, and is shown. Its window closed, it goes back to the
 //! strip first, then is closed as any tab is: a close declined leaves it on the strip. A
-//! split tab is refused, its panes being one tab.
+//! split tab is refused, its panes being one tab; its secondary pane can go alone, taken out
+//! of the split first, as the C# "Detach Secondary Pane": how an SSH shell's SFTP pane or a
+//! local shell's file browser gets a window of its own.
 //!
 //! Here a detached tab stays among the tabs, with its session, and leaves the strip, as a
 //! pane docked in a split does. The window's `active` pane is never a detached tab: showing
-//! one focuses its window instead. Files tabs stay on the strip for now: their panes take
-//! keys and drops through the main window.
+//! one focuses its window instead. A Files tab's keys and drops reach it from its own
+//! window, named, never through `active`.
 
+use super::split::Layout;
 use super::{App, Effect, Notice, Tab};
 use crate::ids::{FloatId, TabId};
 
@@ -42,9 +45,12 @@ pub struct Floating {
 /// Something about a tab's own window.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FloatMessage {
-    /// Move a tab to a window of its own, as the C# "Detach to Window": refused for a tab
-    /// split or docked in a split, and for a Files tab, each said.
+    /// Move a tab to a window of its own, as the C# "Detach to Window": refused, and said,
+    /// for a tab split or docked in a split.
     Detach(TabId),
+    /// Take the secondary pane of split tab `0` out of its split and move it to a window
+    /// of its own, as the C# "Detach Secondary Pane"; the split keeps the keyboard.
+    DetachSecondary(TabId),
     /// Put the tab of a window back on the strip, as the C# Reattach button, and show it.
     Reattach(FloatId),
     /// The close button of a window: its tab goes back on the strip, then closes as any
@@ -90,17 +96,29 @@ impl App {
             .and_then(|floating| self.tab(floating.tab))
     }
 
-    /// Whether the tab's menu offers "Detach to Window": a tab of the strip, not split, not
-    /// a Files tab, as the C# offers it to a tab not split.
+    /// Whether the tab's menu offers "Detach to Window": a tab of the strip, not split, as
+    /// the C# offers it to a tab not split.
     #[must_use]
     pub fn can_detach(&self, tab: &Tab) -> bool {
-        tab.files.is_none() && !self.in_split(tab.id) && !self.is_floating(tab.id)
+        !self.in_split(tab.id) && !self.is_floating(tab.id)
+    }
+
+    /// The pane "Detach Secondary Pane" takes out of split tab `host`, as the C#
+    /// `SecondaryPaneOrNull`: the first of the outer split's second side; `None` for a tab
+    /// not split, docked in another's split or detached.
+    #[must_use]
+    pub fn detachable_secondary(&self, host: TabId) -> Option<TabId> {
+        self.tab(host)
+            .filter(|_| !self.is_docked(host) && !self.is_floating(host))
+            .and_then(|tab| tab.layout.as_ref())
+            .and_then(Layout::secondary)
     }
 
     /// Applies a message about a tab's own window.
     pub(super) fn float_message(&mut self, message: FloatMessage) -> Vec<Effect> {
         match message {
             FloatMessage::Detach(tab) => self.detach(tab),
+            FloatMessage::DetachSecondary(host) => self.detach_secondary(host),
             FloatMessage::Reattach(key) => self.reattach(key),
             FloatMessage::CloseRequested(key) => {
                 let Some(tab) = self.floating_tab(key).map(|tab| tab.id) else {
@@ -121,19 +139,15 @@ impl App {
     /// Detaches `tab_id` to a window of its own; the keyboard, when it was the tab shown's,
     /// goes to the tab of the strip that takes its place, else to the one before.
     fn detach(&mut self, tab_id: TabId) -> Vec<Effect> {
-        let Some(files) = self.tab(tab_id).map(|tab| tab.files.is_some()) else {
+        if self.tab(tab_id).is_none() {
             return Vec::new();
-        };
+        }
         if let Some(key) = self.floating_of(tab_id) {
             return vec![Effect::FocusWindow(key)];
         }
         // A split's panes are one tab, as the C# refuses it; a pane docked in one too.
         if self.in_split(tab_id) {
             self.tell(Notice::DetachSplitRefused);
-            return Vec::new();
-        }
-        if files {
-            self.tell(Notice::DetachFilesRefused);
             return Vec::new();
         }
         let shown = self.shown_tab().map(|shown| shown.id) == Some(tab_id);
@@ -155,6 +169,24 @@ impl App {
             }
         }
         effects
+    }
+
+    /// Takes the secondary pane of `host`'s split out of it, then detaches it, as the C#
+    /// `DetachPaneToFloatingWindow`. The panes left keep their split, a single one back to
+    /// a plain tab. The keyboard, when it was in the split, stays with the panes left: on
+    /// the one that had it, else on the first.
+    fn detach_secondary(&mut self, host: TabId) -> Vec<Effect> {
+        let Some(secondary) = self.detachable_secondary(host) else {
+            return Vec::new();
+        };
+        let in_split = self.active.and_then(|active| self.host_of(active)) == Some(host);
+        let Some(left) = self.take_out_pane(secondary) else {
+            return Vec::new();
+        };
+        if in_split {
+            self.active = Some(self.focus_of(left));
+        }
+        self.detach(secondary)
     }
 
     /// Puts the tab of window `key` back on the strip, after the last tab of its group,
