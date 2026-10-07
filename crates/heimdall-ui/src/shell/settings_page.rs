@@ -25,7 +25,7 @@
 //! edits, has nothing to save.
 
 use heimdall_app::{Effect, Message as AppMessage, PinMessage, VaultStatus, search_folded};
-use heimdall_core::profile::RdpDefaults;
+use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
     Accent, AgentPreference, AppTheme, ColorScheme, CtrlVPaste, ExecutionPolicy, Language,
     MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
@@ -81,6 +81,24 @@ const POSTURE_RISKY_MARK: &str = "!";
 
 /// Between the items of a default made of several, as the C# words a list.
 const DEFAULT_LIST_SEPARATOR: &str = ", ";
+
+/// A default SSH mode in the Settings page's list, named as the C# Settings tab names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct DefaultSshModeChoice(SshMode);
+
+impl std::fmt::Display for DefaultSshModeChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&ssh_mode_name(self.0))
+    }
+}
+
+/// The name of `mode`, as the C# Settings tab and its "Apply to all" question say it.
+pub(super) fn ssh_mode_name(mode: SshMode) -> String {
+    match mode {
+        SshMode::Embedded => fl!("ui-settings-ssh-default-mode-embedded"),
+        SshMode::External => fl!("ui-settings-ssh-default-mode-external"),
+    }
+}
 
 /// Widget identifier of the Settings page's search box.
 #[must_use]
@@ -180,6 +198,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::LocalFollow => fl!("ui-settings-local-follow"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-path"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
+        SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
         SettingRow::X11AutoStart => fl!("ui-settings-x11-auto-start"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-title"),
@@ -216,6 +235,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::SshAgentPreference => fl!("ui-settings-ssh-agent-preference-hint"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-hint"),
         SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
+        SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-hint"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-hint"),
@@ -251,6 +271,12 @@ fn row_choices(row: SettingRow) -> Vec<String> {
             .map(|a| AgentChoice(a).to_string())
             .to_vec(),
         SettingRow::MaxSessions => vec![SessionsChoice(0).to_string()],
+        // The modes, and the button beside them, which the C# search finds as well.
+        SettingRow::SshDefaultMode => SshMode::ALL
+            .map(|mode| DefaultSshModeChoice(mode).to_string())
+            .into_iter()
+            .chain([fl!("ui-settings-apply-mode-to-all")])
+            .collect(),
         SettingRow::RdpDefaults => rdp_switches()
             .into_iter()
             .map(|(label, _)| label)
@@ -732,6 +758,9 @@ impl Shell {
             }
             SettingRow::ExternalEditor => or_empty(&defaults.external_editor),
             SettingRow::PuttyPath => or_empty(&defaults.putty_path),
+            SettingRow::SshDefaultMode => {
+                DefaultSshModeChoice(defaults.ssh_default_mode).to_string()
+            }
             SettingRow::X11ServerPath => or_empty(&defaults.x11_server_path),
             SettingRow::RdpDefaults => {
                 rdp_changes(&self.app.settings().rdp_defaults, &defaults.rdp_defaults)
@@ -787,6 +816,7 @@ impl Shell {
             SettingRow::FontFamily => self.font_family_row(),
             SettingRow::SessionLogDirectory | SettingRow::ExternalEditor => self.path_row(row),
             SettingRow::PuttyPath | SettingRow::X11ServerPath => self.tool_path_row(row),
+            SettingRow::SshDefaultMode => self.ssh_default_mode_row(),
             SettingRow::HostKeys
             | SettingRow::FtpsCertificates
             | SettingRow::VncCertificates
@@ -1103,6 +1133,35 @@ impl Shell {
             body = body.push(text(hint).size(SMALL_SIZE));
         }
         body.into()
+    }
+
+    /// The default SSH mode's list, and "Apply to all saved sessions" beside it, as the C#
+    /// row; what is said of it under them.
+    fn ssh_default_mode_row(&self) -> Element<'_, Message> {
+        let modes = pick_list(
+            SshMode::ALL.map(DefaultSshModeChoice).to_vec(),
+            Some(DefaultSshModeChoice(self.app.settings().ssh_default_mode)),
+            |DefaultSshModeChoice(mode)| send(SettingsMessage::SshDefaultMode(mode)),
+        );
+        let apply = tooltip(
+            button(text(fl!("ui-settings-apply-mode-to-all")).size(SMALL_SIZE))
+                .style(button::secondary)
+                .on_press(send(SettingsMessage::ApplySshModeToAll)),
+            text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(SMALL_SIZE),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box);
+        column![
+            labelled(
+                row_label(SettingRow::SshDefaultMode),
+                row![modes, apply]
+                    .spacing(SPACING)
+                    .align_y(iced::Alignment::Center),
+            ),
+            text(fl!("ui-settings-ssh-default-mode-hint")).size(SMALL_SIZE),
+        ]
+        .spacing(SPACING)
+        .into()
     }
 
     /// The program's path typed, or applied.

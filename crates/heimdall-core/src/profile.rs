@@ -152,10 +152,31 @@ pub enum SshMode {
 }
 
 impl SshMode {
+    /// Every mode, in the order of the C# list.
+    pub const ALL: [Self; 2] = [Self::Embedded, Self::External];
+
     /// Whether it is [`SshMode::Embedded`], the default.
     #[must_use]
     pub fn is_embedded(&self) -> bool {
         *self == Self::Embedded
+    }
+
+    /// The name the settings file holds: the C# one.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Embedded => "Embedded",
+            Self::External => "External",
+        }
+    }
+
+    /// The mode named `name`, whatever its case; the default for a name not known.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|mode| mode.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
     }
 }
 

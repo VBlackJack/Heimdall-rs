@@ -30,7 +30,7 @@ use crate::metadata::{Environment, MacAddress, ProfileMetadata, ProfileOrigin};
 use crate::post_connect::PostConnectStep;
 use crate::profile::{
     CitrixProfile, FtpProfile, LocalApproval, LocalProfile, ProfileId, RdpProfile, SshGateway,
-    SshProfile, TelnetProfile, VncProfile, WinRmProfile,
+    SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile,
 };
 
 /// Format version written into the profile file.
@@ -854,6 +854,30 @@ impl ProfileStore {
         }
         *current = gateway;
         true
+    }
+
+    /// The SSH profiles that are not in `mode`, and the SSH profiles there are, as the C#
+    /// "Apply to all" counts them: shells only, an SFTP profile always opening its files in
+    /// a tab.
+    #[must_use]
+    pub fn ssh_mode_changes(&self, mode: SshMode) -> (usize, usize) {
+        let shells = self.ssh.iter().filter(|profile| !profile.sftp);
+        let total = shells.clone().count();
+        let changes = shells.filter(|profile| profile.ssh_mode != mode).count();
+        (changes, total)
+    }
+
+    /// Sets `mode` on every SSH profile, as the C# "Apply to all" rewrites every saved SSH
+    /// session; SFTP profiles are left as they are. How many changed.
+    pub fn set_ssh_modes(&mut self, mode: SshMode) -> usize {
+        let mut changed = 0;
+        for profile in &mut self.ssh {
+            if !profile.sftp && profile.ssh_mode != mode {
+                profile.ssh_mode = mode;
+                changed += 1;
+            }
+        }
+        changed
     }
 
     fn port_mut(&mut self, id: &ProfileId) -> Option<&mut u16> {

@@ -60,10 +60,13 @@ impl App {
                 }
             }
             Message::ChooseProtocol(protocol) => {
+                let ssh_mode = self.settings.ssh_default_mode;
                 if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut()
                     && draft.editing.is_none()
                 {
                     **draft = ProfileDraft::new_for(protocol);
+                    // As the C# "Add server" starts with the settings' default SSH mode.
+                    draft.ssh_mode = ssh_mode;
                     *error = None;
                 }
             }
@@ -92,9 +95,18 @@ impl App {
     /// Opens an empty profile form, on its protocol picker.
     pub(super) fn new_profile(&mut self) {
         self.dialog = Some(Dialog::EditProfile {
-            draft: Box::default(),
+            draft: Box::new(self.blank_draft()),
             error: None,
         });
+    }
+
+    /// An empty profile form, with the settings' default SSH mode, as the C# "Add server"
+    /// starts. Quick connect and the imports keep their own, as the C# ones do.
+    pub(super) fn blank_draft(&self) -> ProfileDraft {
+        ProfileDraft {
+            ssh_mode: self.settings.ssh_default_mode,
+            ..ProfileDraft::default()
+        }
     }
 
     /// Opens the form of a saved profile, in its own protocol.
