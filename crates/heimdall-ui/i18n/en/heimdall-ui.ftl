@@ -331,6 +331,10 @@ ui-import-dropped-local-post-connect = { $count ->
     [one] post-connect sequence of { $count } step, which a local shell never runs
    *[other] post-connect sequence of { $count } steps, which a local shell never runs
 }
+ui-import-dropped-command-library-links = { $count ->
+    [one] { $count } post-connect step linked to the Command Library, imported without its link
+   *[other] { $count } post-connect steps linked to the Command Library, imported without their links
+}
 ui-citrix-import-title = Citrix Applications
 ui-citrix-import-none = No Citrix applications found in the local cache. Open Citrix Workspace and connect to a store first.
 ui-citrix-import-confirm = { $count ->
@@ -1107,7 +1111,7 @@ ui-settings-session-log-directory = Session log directory:
 ui-settings-session-log-directory-hint = Directory for session log files, relative to the settings folder unless absolute. Press Enter to apply.
 ui-settings-session-log-retention = Delete transcripts older than
 ui-settings-days-unit = days
-ui-settings-session-log-retention-hint = 0 keeps every transcript. Only session transcripts are deleted.
+ui-settings-session-log-retention-hint = 0 keeps every transcript. Only session transcripts are deleted; the event and file-operation logs are kept.
 ui-settings-session-log-retention-refused = Transcript retention must be 0 (keep all) or between { $min } and { $max } days.
 
 ## Broadcast input, as the C# one.

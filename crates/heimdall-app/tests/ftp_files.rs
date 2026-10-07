@@ -485,3 +485,204 @@ async fn an_ftp_tabs_entries_are_copied_and_pasted_on_another_server() {
         "a copy leaves the source"
     );
 }
+
+// ---- the operations log ----------------------------------------------------------------
+
+/// Session logging turned on or off from the settings, the question it asks agreed to.
+fn session_logging(app: &mut App, on: bool) {
+    app.update(Message::Settings(
+        heimdall_app::SettingsMessage::SessionLogging(on),
+    ));
+    if matches!(
+        app.dialog,
+        Some(heimdall_app::Dialog::ConfirmSessionLogging)
+    ) {
+        app.update(Message::ConfirmDialog);
+    }
+    assert_eq!(app.settings().session_logging, on);
+}
+
+/// Carries out `operation` on the server of `tab` as the window would, recorded as the
+/// application says.
+async fn change(app: &App, tab: TabId, operation: heimdall_app::files::FileOperation) {
+    let effect = Effect::FileOperation {
+        tab,
+        side: Side::Remote,
+        operation: Box::new(operation),
+    };
+    let journal = app.operation_journal(&effect);
+    let Effect::FileOperation { operation, .. } = effect else {
+        unreachable!("built above");
+    };
+    let _ = tokio::time::timeout(
+        STEP,
+        heimdall_app::session_log::file_operation_recorded(*operation, journal),
+    )
+    .await
+    .expect("in time");
+}
+
+/// Uploads `local` to `remote` on the server of `tab` as the window would, recorded as the
+/// application says.
+async fn upload(app: &App, tab: TabId, client: RemoteSession, local: &Path, remote: &str) {
+    use heimdall_app::files::{Direction, TransferRequest};
+    use tokio_stream::StreamExt as _;
+
+    let request = TransferRequest {
+        client,
+        direction: Direction::Upload,
+        remote: RemotePath::from(remote),
+        local: local.to_owned(),
+        replace: false,
+        folder: false,
+        steps: Vec::new(),
+        left_out: 0,
+        cancel: tokio_util::sync::CancellationToken::new(),
+    };
+    let effect = Effect::Transfer {
+        tab,
+        id: heimdall_app::files::TransferId::fresh(),
+        request: Box::new(request.clone()),
+    };
+    let journal = app.operation_journal(&effect);
+    let events = heimdall_app::session_log::transfer_events_recorded(request, journal);
+    let mut events = std::pin::pin!(events);
+    tokio::time::timeout(STEP, async { while events.next().await.is_some() {} })
+        .await
+        .expect("transferred");
+}
+
+/// The text of the operations log of the application over `dir`, once written.
+fn operations_log(app: &App, dir: &Path) -> String {
+    app.sync_session_logs();
+    let folder = app
+        .settings()
+        .session_log_folder(&dir.join(heimdall_core::settings::SETTINGS_FILE_NAME));
+    std::fs::read_to_string(folder.join(heimdall_app::session_log::SESSION_OPERATIONS_FILE))
+        .expect("the operations log")
+}
+
+/// The server's changes, made on `client` from `tab` while session logging is on: a folder
+/// made, `local` uploaded into it, renamed, deleted, and a folder that cannot be made.
+async fn changes(app: &App, tab: TabId, client: &RemoteSession, local: &Path) {
+    use heimdall_app::files::FileOperation;
+
+    change(
+        app,
+        tab,
+        FileOperation::RemoteMakeFolder {
+            client: client.clone(),
+            path: RemotePath::from("/docs"),
+        },
+    )
+    .await;
+    upload(app, tab, client.clone(), local, "/docs/report.txt").await;
+    change(
+        app,
+        tab,
+        FileOperation::RemoteRename {
+            client: client.clone(),
+            from: RemotePath::from("/docs/report.txt"),
+            to: RemotePath::from("/docs/kept.txt"),
+        },
+    )
+    .await;
+    change(
+        app,
+        tab,
+        FileOperation::RemoteRemove {
+            client: client.clone(),
+            path: RemotePath::from("/docs/kept.txt"),
+        },
+    )
+    .await;
+    change(
+        app,
+        tab,
+        FileOperation::RemoteMakeFolder {
+            client: client.clone(),
+            path: RemotePath::from("/missing/deeper"),
+        },
+    )
+    .await;
+}
+
+#[tokio::test]
+async fn each_change_on_the_server_is_one_line_of_the_operations_log_never_a_file_s_content() {
+    use heimdall_app::files::FileOperation;
+
+    const CONTENT: &str = "TOP-SECRET-CONTENT of the file";
+    let dir = tempfile::tempdir().expect("dir");
+    let served = tempfile::tempdir().expect("served");
+    let port = serve(served.path()).await;
+    let mut app = app(dir.path(), vec![profile("ftp", port)]);
+    let client = session(port).await;
+    let tab = ftp_tab(&mut app, "ftp", client.clone(), Vec::new());
+
+    // Off: nothing is recorded, the change is still made.
+    change(
+        &app,
+        tab,
+        FileOperation::RemoteMakeFolder {
+            client: client.clone(),
+            path: RemotePath::from("/unlogged"),
+        },
+    )
+    .await;
+    assert!(served.path().join("unlogged").is_dir());
+
+    session_logging(&mut app, true);
+    let local = dir.path().join("report.txt");
+    std::fs::write(&local, CONTENT).expect("local file");
+    changes(&app, tab, &client, &local).await;
+    // A change on this computer is not the server's: not recorded.
+    change(
+        &app,
+        tab,
+        FileOperation::LocalMakeFolder {
+            path: dir.path().join("local-only"),
+        },
+    )
+    .await;
+
+    let text = operations_log(&app, dir.path());
+    assert!(
+        !text.contains("TOP-SECRET"),
+        "never a file's content: {text}"
+    );
+    let lines: Vec<serde_json::Value> = text
+        .lines()
+        .map(|line| serde_json::from_str(line).expect("one JSON object a line"))
+        .collect();
+    let summary: Vec<(String, String, String)> = lines
+        .iter()
+        .map(|line| {
+            let word = |name: &str| line[name].as_str().unwrap_or_default().to_owned();
+            (word("op"), word("remotePath"), word("result"))
+        })
+        .collect();
+    let row =
+        |op: &str, path: &str, result: &str| (op.to_owned(), path.to_owned(), result.to_owned());
+    assert_eq!(
+        summary,
+        [
+            row("mkdir", "/docs", "success"),
+            row("upload", "/docs/report.txt", "success"),
+            row("rename", "/docs/report.txt", "success"),
+            row("delete", "/docs/kept.txt", "success"),
+            row("mkdir", "/missing/deeper", "error"),
+        ],
+        "{text}"
+    );
+    for line in &lines {
+        assert_eq!(line["protocol"], "FTP");
+        assert_eq!(line["host"], "127.0.0.1");
+        assert!(line["durationMs"].is_u64(), "{line}");
+    }
+    let content_len = u64::try_from(CONTENT.len()).expect("small");
+    assert_eq!(lines[1]["bytes"], content_len);
+    assert_eq!(lines[1]["localPath"], local.display().to_string());
+    assert_eq!(lines[2]["remotePathTo"], "/docs/kept.txt");
+    assert!(lines[4]["errorCategory"].is_string());
+    assert!(lines[4].get("bytes").is_none());
+}

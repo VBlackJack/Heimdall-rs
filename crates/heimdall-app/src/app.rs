@@ -115,6 +115,7 @@ mod resolution;
 mod route_test;
 mod run_in_shell;
 mod selection;
+mod session_events;
 mod session_restore;
 mod sessions_import;
 mod settings_transfer;
@@ -2731,6 +2732,10 @@ pub struct App {
     run_trust: RunTrust,
     /// RDP certificates trusted for this run only: server, port, key.
     rdp_run_trust: Vec<(String, u16, heimdall_rdp::Fingerprint)>,
+    /// The shared session logs beside the transcripts: desktops' events, Files changes.
+    session_logs: crate::session_log::SessionLogs,
+    /// The desktops connected, for the events log.
+    desktop_sessions: session_events::DesktopSessions,
     /// The folders of the tree shown closed, by path, [`NO_FOLDER`] included.
     closed_folders: std::collections::HashSet<String>,
     /// The tree's filters, beyond its search.
@@ -2841,6 +2846,8 @@ impl App {
             vault,
             run_trust: RunTrust::default(),
             rdp_run_trust: Vec::new(),
+            session_logs: crate::session_log::SessionLogs::default(),
+            desktop_sessions: session_events::DesktopSessions::default(),
             closed_folders: std::collections::HashSet::new(),
             tree_filter: TreeFilter::default(),
         };
@@ -2938,10 +2945,15 @@ impl App {
         self.focus_pane(pane)
     }
 
-    /// Applies a message; the windows of the tabs it closed close with them.
+    /// Applies a message; the windows of the tabs it closed close with them, and the
+    /// desktops it connected or ended go to the session events log.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
         let mut effects = self.apply(message);
         effects.extend(self.prune_floating());
+        self.follow_desktop_sessions();
+        if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
+            self.close_session_logs();
+        }
         debug_assert!(
             self.floating_invariant_holds(),
             "the keyboard's pane is a detached tab"
@@ -3647,7 +3659,9 @@ impl App {
         else {
             return Vec::new();
         };
+        let target = heimdall_core::profile::display_address(&host, port);
         if trust == KeyTrust::Refused {
+            log::info!("the host key of {target} was refused by the user");
             tab.phase = Phase::Failed(UiError::Cancelled);
             return Vec::new();
         }
@@ -3655,6 +3669,10 @@ impl App {
         let learned = match known_hosts.recorded(&host, port) {
             // Held in memory for this run: the file is not written.
             Ok(_) if trust == KeyTrust::Once => {
+                log::info!(
+                    "the host key of {target} is trusted by the user for this run: {}",
+                    fingerprint(&key)
+                );
                 run_trust.trust(&host, port, PublicKey::clone(&key));
                 Ok(())
             }
@@ -3662,6 +3680,12 @@ impl App {
                 Verdict::Trusted => Ok(()),
                 Verdict::Unknown => known_hosts
                     .learn(&host, port, &key)
+                    .inspect(|()| {
+                        log::info!(
+                            "the host key of {target} is trusted by the user and recorded: {}",
+                            fingerprint(&key)
+                        );
+                    })
                     .map_err(|error| UiError::from(&error)),
                 Verdict::Changed { recorded } => Err(UiError::HostKeyChanged {
                     target: Some(ServerAddress {
@@ -4055,6 +4079,7 @@ impl App {
     /// so nothing reconnects by itself, and whatever the old session still reports is
     /// another attempt's.
     fn disconnect_desktop(&mut self, tab_id: TabId) {
+        self.desktop_disconnected_by_user(tab_id);
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };

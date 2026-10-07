@@ -310,6 +310,9 @@ pub fn dropped_setting(dropped: Dropped) -> String {
         Dropped::LocalPostConnect(count) => {
             fl!("ui-import-dropped-local-post-connect", count = count)
         }
+        Dropped::CommandLibraryLinks(count) => {
+            fl!("ui-import-dropped-command-library-links", count = count)
+        }
     }
 }
 

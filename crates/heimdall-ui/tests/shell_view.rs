@@ -4385,7 +4385,7 @@ fn transcript_retention_is_typed_under_the_transcripts_folder_within_the_csharp_
         for said in [
             "Delete transcripts older than",
             "days",
-            "0 keeps every transcript. Only session transcripts are deleted.",
+            "0 keeps every transcript. Only session transcripts are deleted; the event and file-operation logs are kept.",
         ] {
             ui.find(said).expect(said);
         }

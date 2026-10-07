@@ -19,10 +19,13 @@
 //!
 //! Wrong PINs are counted wherever the PIN is checked, the Settings dialog included, where
 //! the C# one lets a person at the keyboard try as many as they like.
+//!
+//! The diagnostics log says what the C# `FileLogger` says, the gate at start taken or not,
+//! the PIN set or removed, and each wrong PIN and lockout besides; never a PIN.
 
 use std::time::SystemTime;
 
-use heimdall_core::lockout::{Lockout, MAX_FAILED_ATTEMPTS};
+use heimdall_core::lockout::{Lockout, MAX_FAILED_ATTEMPTS, minutes_left};
 use heimdall_core::pin::{PinHash, PinProblem, pin_problem};
 
 use super::{App, Dialog, Effect};
@@ -174,6 +177,7 @@ impl App {
         let start = matches!(dialog.mode, PinMode::Start { .. });
         self.dialog = None;
         Some(if start {
+            log::info!("PIN gate not satisfied; exiting.");
             vec![Effect::Exit]
         } else {
             Vec::new()
@@ -202,6 +206,7 @@ impl App {
         }
         match self.check_pin(pin, |remaining| PinFailure::Wrong { remaining }) {
             Ok(()) => {
+                log::info!("PIN gate satisfied.");
                 self.dialog = then.map(|dialog| *dialog);
                 if self.dialog.is_none() {
                     self.show_vault_if_locked();
@@ -221,6 +226,10 @@ impl App {
         let now = SystemTime::now();
         let lockout: &mut Lockout = &mut self.settings.pin_unlock;
         if let Some(until) = lockout.locked_until(now) {
+            log::warn!(
+                "a PIN was not checked: tries locked out for {} more minute(s)",
+                minutes_left(until, now)
+            );
             return Err(PinFailure::LockedOut { until });
         }
         let taken = self
@@ -234,9 +243,19 @@ impl App {
             Ok(())
         } else {
             lockout.register_failure(now);
+            let failures = lockout.failures();
             Err(lockout.locked_until(now).map_or_else(
-                || wrong(MAX_FAILED_ATTEMPTS.saturating_sub(lockout.failures())),
-                |until| PinFailure::LockedOut { until },
+                || {
+                    log::warn!("a wrong PIN was typed: {failures} in a row");
+                    wrong(MAX_FAILED_ATTEMPTS.saturating_sub(failures))
+                },
+                |until| {
+                    log::warn!(
+                        "a wrong PIN was typed: {failures} in a row, tries locked out for {} minute(s)",
+                        minutes_left(until, now)
+                    );
+                    PinFailure::LockedOut { until }
+                },
             ))
         };
         // Not saved, the count still holds for this run.
@@ -293,10 +312,18 @@ impl App {
     /// it cannot be saved, the PIN stays as it was and the dialog says why.
     fn store_pin(&mut self, pin: Option<PinHash>) {
         let before = (self.settings.pin.clone(), self.settings.pin_unlock);
+        let set = pin.is_some();
         self.settings.pin = pin;
         self.settings.pin_unlock.reset();
         match self.settings.save(&self.settings_file) {
-            Ok(()) => self.dialog = None,
+            Ok(()) => {
+                if set {
+                    log::info!("PIN configured: set.");
+                } else {
+                    log::info!("PIN configured: removed.");
+                }
+                self.dialog = None;
+            }
             Err(error) => {
                 (self.settings.pin, self.settings.pin_unlock) = before;
                 self.pin_problem_shown(PinFailure::System {

@@ -33,6 +33,10 @@
 //! last one saved wins; a vault replaced on disk while open is overwritten by the next save.
 //! On Linux, a Secret Service that asks the user to unlock its keyring does so while the
 //! window waits.
+//!
+//! The diagnostics log says what the C# `FileLogger` says, the unlock gate taken or not, the
+//! workspace locked and unlocked, and besides each wrong master password, each lockout and
+//! each change of the master password; never a password.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -44,7 +48,7 @@ use heimdall_core::credentials::{
     decode_citrix_launch, decode_passphrase, encode, encode_citrix_launch, encode_passphrase,
     passphrase_entry, password_entry, rdp_account,
 };
-use heimdall_core::lockout::Lockout;
+use heimdall_core::lockout::{Lockout, minutes_left};
 use heimdall_core::profile::ProfileId;
 use heimdall_keyring::SystemKeyring;
 use heimdall_ssh::Secret;
@@ -471,6 +475,40 @@ impl VaultState {
 
 /// Why a new master password typed with `confirm` is refused, if it is: the C# Heimdall's
 /// rules, then the two typed alike.
+/// Where the vault dialog's try was, for the diagnostics log.
+fn vault_step(mode: VaultMode) -> &'static str {
+    match mode {
+        VaultMode::Unlock => "at start",
+        VaultMode::Locked => "at the lock screen",
+        VaultMode::Create => "creating the vault",
+        VaultMode::Change => "changing the master password",
+        VaultMode::Disable => "removing the master password",
+    }
+}
+
+/// Says in the diagnostics log how the vault dialog's try ended, in the C# words for the
+/// unlock gate and the workspace lock.
+fn log_vault_outcome(mode: VaultMode, done: &Result<(), VaultProblem>) {
+    match (mode, done) {
+        (VaultMode::Unlock, Ok(())) => log::info!("Vault unlock gate satisfied."),
+        (VaultMode::Locked, Ok(())) => log::info!("Workspace unlocked."),
+        (VaultMode::Create, Ok(())) => log::info!("vault created with a master password"),
+        (VaultMode::Change, Ok(())) => log::info!("master password changed"),
+        (VaultMode::Disable, Ok(())) => {
+            log::info!("master password removed, the vault deleted");
+        }
+        (_, Err(VaultProblem::Unreadable)) => {
+            log::warn!("a wrong master password was typed {}", vault_step(mode));
+        }
+        (_, Err(VaultProblem::LockedOut { until })) => log::warn!(
+            "a wrong master password was typed {}: tries locked out for {} minute(s)",
+            vault_step(mode),
+            minutes_left(*until, SystemTime::now())
+        ),
+        (_, Err(problem)) => log::warn!("the vault failed {}: {problem:?}", vault_step(mode)),
+    }
+}
+
 fn new_password_problem(password: &Secret, confirm: Option<&Secret>) -> Option<VaultProblem> {
     let password = password.expose();
     master_password_problem(password).or_else(|| {
@@ -685,6 +723,10 @@ impl App {
             return Vec::new();
         }
         if let Some(until) = locked_until {
+            log::warn!(
+                "a master password was not checked: tries locked out for {} more minute(s)",
+                minutes_left(until, SystemTime::now())
+            );
             dialog.problem = Some(VaultProblem::LockedOut { until });
             return Vec::new();
         }
@@ -736,6 +778,7 @@ impl App {
             }
         });
         let done = self.count_unlock(mode, done);
+        log_vault_outcome(mode, &done);
         match done {
             Ok(()) => self.dialog = None,
             Err(problem) => {
@@ -822,6 +865,7 @@ impl App {
             return;
         }
         self.vault.open = None;
+        log::info!("Workspace locked.");
         self.dialog = Some(Dialog::Vault(VaultDialog {
             mode: VaultMode::Locked,
             problem: None,
@@ -844,6 +888,7 @@ impl App {
         match dialog.mode {
             VaultMode::Locked => Some(Vec::new()),
             VaultMode::Unlock => {
+                log::info!("Vault unlock gate not satisfied; exiting.");
                 self.dialog = None;
                 Some(vec![Effect::Exit])
             }
