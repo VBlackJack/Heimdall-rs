@@ -22,8 +22,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use heimdall_remote::vnc::{
-    AskPassword, CloseReason, Quality, Rect, SecurityPolicy, VncConfig, VncError, VncEvent,
-    VncSession, connect, given_password, start,
+    AskPassword, Authentication, CloseReason, Quality, Rect, Security, SecurityPolicy,
+    SecurityWrapper, VncConfig, VncError, VncEvent, VncSession, connect, given_password, start,
 };
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::net::{TcpListener, TcpStream};
@@ -323,6 +323,117 @@ async fn cancelling_ends_a_session_whose_events_nobody_reads() {
         .await
         .expect("the session ended although its queue was full")
         .expect("server");
+}
+
+/// A Tight capability: a code, a vendor and a signature.
+fn capability(code: u32, vendor: [u8; 4], signature: [u8; 8]) -> Vec<u8> {
+    let mut bytes = code.to_be_bytes().to_vec();
+    bytes.extend_from_slice(&vendor);
+    bytes.extend_from_slice(&signature);
+    bytes
+}
+
+/// Plays the security of a server wrapping VNC Authentication in `wrapper`, then the rest
+/// of a session on a 4 by 2 desktop up to one raw green pixel at 3,1; what the client sent
+/// for the security.
+async fn serve_wrapped(stream: &mut TcpStream, wrapper: SecurityWrapper) -> Vec<u8> {
+    stream.write_all(b"RFB 003.008\n").await.expect("version");
+    assert_eq!(read_exactly(stream, 12).await, b"RFB 003.008\n");
+    stream.write_all(&[1, wrapper.code()]).await.expect("types");
+    let sent = match wrapper {
+        SecurityWrapper::Tight => {
+            // One tunnel, no tunnel; then no authentication and VNC Authentication.
+            let mut tunnels = vec![0, 0, 0, 1];
+            tunnels.extend(capability(0, *b"TGHT", *b"NOTUNNEL"));
+            stream.write_all(&tunnels).await.expect("tunnels");
+            let mut types = vec![0, 0, 0, 2];
+            types.extend(capability(1, *b"STDV", *b"NOAUTH__"));
+            types.extend(capability(2, *b"STDV", *b"VNCAUTH_"));
+            stream
+                .write_all(&types)
+                .await
+                .expect("authentication types");
+            read_exactly(stream, 1 + 4 + 4).await
+        }
+        SecurityWrapper::VeNCrypt => {
+            stream.write_all(&[0, 2]).await.expect("version");
+            let mut sent = read_exactly(stream, 1 + 2).await;
+            // Accepted; then Plain, X509Plain and VNC Authentication.
+            stream
+                .write_all(&[0, 3, 0, 0, 1, 0, 0, 0, 1, 6, 0, 0, 0, 2])
+                .await
+                .expect("subtypes");
+            sent.extend(read_exactly(stream, 4).await);
+            sent
+        }
+    };
+    stream.write_all(&CHALLENGE).await.expect("challenge");
+    assert_eq!(read_exactly(stream, 16).await, RESPONSE);
+    stream.write_all(&[0, 0, 0, 0]).await.expect("result");
+    assert_eq!(read_exactly(stream, 1).await, [1], "ClientInit");
+    let mut init = vec![0, 4, 0, 2];
+    init.extend_from_slice(&[32, 24, 0, 1, 0, 255, 0, 255, 0, 255, 16, 8, 0, 0, 0, 0]);
+    init.extend_from_slice(&[0, 0, 0, 4]);
+    init.extend_from_slice(b"desk");
+    if wrapper == SecurityWrapper::Tight {
+        // One encoding capability.
+        init.extend_from_slice(&[0, 0, 0, 0, 0, 1, 0, 0]);
+        init.extend(capability(7, *b"TGHT", *b"TIGHT___"));
+    }
+    stream.write_all(&init).await.expect("init");
+    let _ = read_exactly(stream, OPENING_REQUESTS).await;
+    let mut update = vec![0, 0, 0, 1, 0, 3, 0, 1, 0, 1, 0, 1, 0, 0, 0, 0];
+    update.extend_from_slice(&[0, 255, 0, 0]);
+    stream.write_all(&update).await.expect("update");
+    sent
+}
+
+/// Opens a session through `wrapper` and checks it draws; `expected` is what the client
+/// sends for the security.
+async fn opens_through(wrapper: SecurityWrapper, expected: &[u8]) {
+    let (listener, port) = listener().await;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_wrapped(&mut stream, wrapper).await
+    });
+    let cancel = CancellationToken::new();
+    let connection = connect(
+        &config(port, SecurityPolicy::default()),
+        given_password(Zeroizing::new("Secret12".to_owned())),
+        &cancel,
+    )
+    .await
+    .expect("connected");
+    assert_eq!(connection.name, "desk");
+    assert_eq!(
+        connection.security(),
+        Some(Security {
+            wrapper: Some(wrapper),
+            authentication: Authentication::VncAuth,
+        })
+    );
+    let mut session = start(connection, cancel.clone());
+    let area = Rect {
+        x: 3,
+        y: 1,
+        width: 1,
+        height: 1,
+    };
+    assert_eq!(next_event(&mut session).await, VncEvent::Updated(area));
+    assert_eq!(server.await.expect("server"), expected);
+    cancel.cancel();
+}
+
+#[tokio::test]
+async fn a_session_opens_through_tight_with_no_tunnel_and_vnc_authentication() {
+    // Tight, no tunnel, VNC Authentication.
+    opens_through(SecurityWrapper::Tight, &[16, 0, 0, 0, 0, 0, 0, 0, 2]).await;
+}
+
+#[tokio::test]
+async fn a_session_opens_through_vencrypt_0_2_and_vnc_authentication() {
+    // VeNCrypt, version 0.2, VNC Authentication.
+    opens_through(SecurityWrapper::VeNCrypt, &[19, 0, 2, 0, 0, 0, 2]).await;
 }
 
 /// The lab's `TigerVNC` (Heimdall-TestEnv): the session opens on its 1280 by 800 desktop and

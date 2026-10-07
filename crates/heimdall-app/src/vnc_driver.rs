@@ -35,6 +35,9 @@ use crate::event::{Answer, ConnectionEvent, QuestionKind, ServerPasswordQuestion
 /// Events buffered before the attempt waits for the UI to read them.
 const EVENT_QUEUE_LENGTH: usize = 64;
 
+/// Between the security codes a refusal lists.
+const CODE_SEPARATOR: &str = ", ";
+
 /// What a VNC attempt needs.
 #[derive(Debug, Clone)]
 pub struct VncRequest {
@@ -87,8 +90,11 @@ async fn run(request: VncRequest, registry: AnswerRegistry, events: mpsc::Sender
         }
     };
     let name = connection.name.clone();
+    match connection.security() {
+        Some(security) => log::info!("VNC session open to {target} with {security}"),
+        None => log::info!("VNC session open to {target}"),
+    }
     let mut session = vnc::start(connection, request.cancel.clone());
-    log::info!("VNC session open to {target}");
     if events
         .send(ConnectionEvent::VncReady {
             name,
@@ -158,9 +164,14 @@ fn ui_error(error: VncError) -> UiError {
             tried: vec![AuthMethod::Password],
             agent_keys: None,
         },
-        VncError::Rfb(RfbError::NoAcceptableSecurity(offered)) => UiError::SecurityRefused {
-            detail: format!("security types offered: {offered:?}"),
+        VncError::Rfb(RfbError::NoAcceptableSecurity(offered)) => UiError::VncSecurityRefused {
+            offered: codes(offered.into_iter().map(u32::from)),
         },
+        VncError::Rfb(RfbError::NoAcceptableInnerSecurity { wrapper, offered }) => {
+            UiError::VncSecurityRefused {
+                offered: format!("{wrapper} ({})", codes(offered)),
+            }
+        }
         VncError::Rfb(RfbError::Refused(reason)) => UiError::Disconnected {
             server_message: Some(reason),
         },
@@ -168,4 +179,13 @@ fn ui_error(error: VncError) -> UiError {
             detail: other.to_string(),
         },
     }
+}
+
+/// Security codes as the server sent them, in its order.
+fn codes(codes: impl IntoIterator<Item = u32>) -> String {
+    codes
+        .into_iter()
+        .map(|code| code.to_string())
+        .collect::<Vec<_>>()
+        .join(CODE_SEPARATOR)
 }

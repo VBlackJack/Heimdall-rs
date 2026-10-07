@@ -434,6 +434,7 @@ ui-session-accept-new-key-button = Accepter la nouvelle empreinte (destructif)
 ui-error-security-refused = Le serveur a refusé la sécurité qu'exige Heimdall (authentification au niveau du réseau) : { $detail }
 ui-error-rdp-protocol = Erreur RDP : { $detail }
 ui-error-vnc-protocol = Erreur VNC : { $detail }
+ui-error-vnc-security-refused = Le serveur VNC ne propose aucune sécurité qu'accepte Heimdall (proposées : { $offered }). Heimdall accepte l'authentification VNC, directe ou dans Tight ou VeNCrypt, et un serveur qui ne demande pas de mot de passe seulement si le profil l'autorise. TLS n'est pas pris en charge.
 ui-session-vnc-unencrypted = Non chiffré : ce bureau et ce que vous tapez traversent le réseau en clair.
 ui-session-vnc-quality = Qualité
 ui-session-vnc-quality-best = Meilleure qualité

@@ -16,13 +16,15 @@
 
 //! VNC (RFB) sessions.
 //!
-//! Neither of the security types spoken here encrypts: the desktop and what is typed cross
-//! the network in clear, and VNC Authentication does not prove who the server is. Reach a
-//! VNC server over a network through an SSH tunnel.
+//! None of the security spoken here encrypts: no authentication and VNC Authentication,
+//! directly or inside Tight or `VeNCrypt`, leave the desktop and what is typed to cross the
+//! network in clear, and VNC Authentication does not prove who the server is. Reach a VNC
+//! server over a network through an SSH tunnel.
 
 mod auth;
 mod protocol;
 mod screen;
+mod security;
 mod session;
 mod tight;
 mod zrle;
@@ -30,6 +32,7 @@ mod zrle;
 pub use auth::PASSWORD_BYTES;
 pub use protocol::{MAX_CUT_TEXT, Quality, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
 pub use screen::{MAX_SIDE, Rect, Screen};
+pub use security::{Authentication, Security, SecurityWrapper};
 pub use session::{
     AskPassword, CloseReason, DEFAULT_CONNECT_TIMEOUT, DEFAULT_HANDSHAKE_TIMEOUT, Framebuffer,
     SessionEnded, Transport, VncConfig, VncConnection, VncError, VncEvent, VncInput, VncSession,

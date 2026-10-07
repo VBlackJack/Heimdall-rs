@@ -17,25 +17,28 @@
 //! The RFB protocol (RFC 6143) without input or output: the server's bytes in, events and
 //! bytes to send out.
 //!
-//! Versions 3.3, 3.7 and 3.8; security None and VNC Authentication; encodings Tight, ZRLE,
-//! `CopyRect` and Raw, with the `DesktopSize` and `LastRect` pseudo-encodings and the Tight
-//! compression and JPEG quality levels. A message is read once it is whole; whatever the
-//! server announces (a name, a clipboard, a rectangle) is bounded before anything is
+//! Versions 3.3, 3.7 and 3.8; security None and VNC Authentication, directly or inside
+//! Tight or `VeNCrypt` (without TLS); encodings Tight, ZRLE, `CopyRect` and Raw, with the
+//! `DesktopSize` and `LastRect` pseudo-encodings and the Tight compression and JPEG quality
+//! levels. A message is read once it is whole; whatever the server announces (a name, a
+//! clipboard, a rectangle, a list of security types) is bounded before anything is
 //! allocated for it.
 
 use zeroize::Zeroizing;
 
 use super::auth::{self, CHALLENGE_LENGTH};
 use super::screen::{MAX_SIDE, PIXEL_BYTES, Rect, Screen};
+use super::security::{
+    self, Authentication, MAX_TIGHT_AUTH_TYPES, MAX_TIGHT_INIT_CAPABILITIES, MAX_TIGHT_TUNNELS,
+    MAX_VENCRYPT_SUBTYPES, PREFERENCE, SECURITY_NONE, SECURITY_TIGHT, SECURITY_VENCRYPT,
+    SECURITY_VNC_AUTH, Security, SecurityWrapper, TIGHT_AUTH_NONE, TIGHT_CAPABILITY_BYTES,
+    TIGHT_NO_TUNNEL, VENCRYPT_ACCEPTED, VENCRYPT_SUBTYPE_BYTES, VENCRYPT_VERSION,
+};
 use super::tight::Tight;
 use super::zrle::Zrle;
 
 /// Length of the version message.
 const VERSION_LENGTH: usize = 12;
-
-/// Security types.
-const SECURITY_NONE: u8 = 1;
-const SECURITY_VNC_AUTH: u8 = 2;
 
 /// Encodings.
 const ENCODING_RAW: i32 = 0;
@@ -232,6 +235,14 @@ pub enum RfbError {
     /// The server offers no security the client accepts; the types offered.
     #[error("the server offers no accepted security type (offered: {0:?})")]
     NoAcceptableSecurity(Vec<u8>),
+    /// The server offers nothing the client accepts inside the wrapping type it chose.
+    #[error("the server offers no accepted security inside {wrapper} (offered: {offered:?})")]
+    NoAcceptableInnerSecurity {
+        /// The wrapping type.
+        wrapper: SecurityWrapper,
+        /// The codes offered inside it.
+        offered: Vec<u32>,
+    },
     /// The password was refused; the server's reason when it gives one, untrusted.
     #[error("the server refused the password")]
     AuthenticationFailed(Option<String>),
@@ -248,6 +259,16 @@ enum State {
     SecurityType,
     /// A failure reason before any security.
     RefusalReason,
+    /// Tight: the tunnels offered.
+    TightTunnels,
+    /// Tight: the authentication types offered.
+    TightAuthentication,
+    /// `VeNCrypt`: the server's version.
+    VencryptVersion,
+    /// `VeNCrypt`: whether the server takes the client's version.
+    VencryptAccepted,
+    /// `VeNCrypt`: the subtypes offered.
+    VencryptSubtypes,
     Challenge,
     AwaitingPassword,
     SecurityResult,
@@ -269,6 +290,10 @@ pub struct Rfb {
     buffer: Vec<u8>,
     output: Vec<u8>,
     challenge: [u8; CHALLENGE_LENGTH],
+    /// The wrapping security type chosen, if one was.
+    wrapper: Option<SecurityWrapper>,
+    /// The authentication chosen, once it is.
+    authentication: Option<Authentication>,
     screen: Screen,
     zrle: Zrle,
     tight: Tight,
@@ -348,6 +373,35 @@ fn length(value: u32, limit: usize, what: &str) -> Result<usize, RfbError> {
         .ok_or_else(|| RfbError::Protocol(format!("{what} of {value} bytes")))
 }
 
+/// A count from the server as a `usize`, refused past `limit` before anything is read or
+/// kept for it.
+fn bounded(value: u32, limit: usize, what: &str) -> Result<usize, RfbError> {
+    usize::try_from(value)
+        .ok()
+        .filter(|count| *count <= limit)
+        .ok_or_else(|| RfbError::Protocol(format!("{value} {what}, more than {limit}")))
+}
+
+/// Tight's capability lists after `ServerInit`, read past as noVNC does: the counts of
+/// server messages, client messages and encodings, padding, then their entries. `false`
+/// until all of it is there.
+fn tight_init_capabilities(reader: &mut Reader<'_>) -> Result<bool, RfbError> {
+    let (Some(server_messages), Some(client_messages), Some(encodings), Some(_padding)) =
+        (reader.u16(), reader.u16(), reader.u16(), reader.take(2))
+    else {
+        return Ok(false);
+    };
+    let mut entries = 0;
+    for (count, what) in [
+        (server_messages, "Tight server message capabilities"),
+        (client_messages, "Tight client message capabilities"),
+        (encodings, "Tight encoding capabilities"),
+    ] {
+        entries += bounded(u32::from(count), MAX_TIGHT_INIT_CAPABILITIES, what)?;
+    }
+    Ok(reader.take(entries * TIGHT_CAPABILITY_BYTES).is_some())
+}
+
 /// A desktop's new name: a length, then the name in UTF-8. `false` until all of it is
 /// there.
 fn desktop_name(reader: &mut Reader<'_>, events: &mut Vec<RfbEvent>) -> Result<bool, RfbError> {
@@ -384,6 +438,8 @@ impl Rfb {
             buffer: Vec::new(),
             output: Vec::new(),
             challenge: [0; CHALLENGE_LENGTH],
+            wrapper: None,
+            authentication: None,
             screen: Screen::new(0, 0),
             zrle: Zrle::new(),
             tight: Tight::new(),
@@ -456,6 +512,15 @@ impl Rfb {
     #[must_use]
     pub fn version(&self) -> Version {
         self.version
+    }
+
+    /// The security agreed on, once the authentication is chosen.
+    #[must_use]
+    pub fn security(&self) -> Option<Security> {
+        self.authentication.map(|authentication| Security {
+            wrapper: self.wrapper,
+            authentication,
+        })
     }
 
     /// Bytes to send to the server, taken.
@@ -566,6 +631,11 @@ impl Rfb {
                 };
                 Err(RfbError::Refused(text))
             }
+            State::TightTunnels => self.tight_tunnels(&mut reader),
+            State::TightAuthentication => self.tight_authentication(&mut reader),
+            State::VencryptVersion => self.vencrypt_version(&mut reader),
+            State::VencryptAccepted => self.vencrypt_accepted(&mut reader),
+            State::VencryptSubtypes => self.vencrypt_subtypes(&mut reader),
             State::Challenge => {
                 let Some(challenge) = reader.take(CHALLENGE_LENGTH) else {
                     return Ok(Step::More);
@@ -649,26 +719,162 @@ impl Rfb {
         Ok(Step::Done(reader.at))
     }
 
+    /// The type taken from those offered, in the order of [`PREFERENCE`]; no security only
+    /// when the policy allows it.
     fn choose(&self, offered: &[u8]) -> Result<u8, RfbError> {
-        if offered.contains(&SECURITY_VNC_AUTH) {
-            Ok(SECURITY_VNC_AUTH)
-        } else if offered.contains(&SECURITY_NONE) && self.policy.allow_no_authentication {
-            Ok(SECURITY_NONE)
-        } else {
-            Err(RfbError::NoAcceptableSecurity(offered.to_vec()))
-        }
+        PREFERENCE
+            .into_iter()
+            .filter(|kind| *kind != SECURITY_NONE || self.policy.allow_no_authentication)
+            .find(|kind| offered.contains(kind))
+            .ok_or_else(|| RfbError::NoAcceptableSecurity(offered.to_vec()))
     }
 
     fn after_choice(&mut self, chosen: u8) {
-        self.state = if chosen == SECURITY_VNC_AUTH {
-            State::Challenge
-        } else if self.version == Version::V3_8 {
-            // 3.8 confirms even no security; 3.3 and 3.7 go straight to initialisation.
-            State::SecurityResult
-        } else {
-            self.output.push(1);
-            State::ServerInit
+        match chosen {
+            SECURITY_TIGHT => {
+                self.wrapper = Some(SecurityWrapper::Tight);
+                self.state = State::TightTunnels;
+            }
+            SECURITY_VENCRYPT => {
+                self.wrapper = Some(SecurityWrapper::VeNCrypt);
+                self.state = State::VencryptVersion;
+            }
+            SECURITY_VNC_AUTH => self.authenticate(Authentication::VncAuth),
+            _ => self.authenticate(Authentication::NoAuthentication),
+        }
+    }
+
+    /// Goes on with `authentication`, directly or inside the wrapper chosen.
+    fn authenticate(&mut self, authentication: Authentication) {
+        self.authentication = Some(authentication);
+        self.state = match authentication {
+            Authentication::VncAuth => State::Challenge,
+            // 3.8 confirms even no security, and Tight always does, as noVNC reads it; 3.3
+            // and 3.7 otherwise go straight to initialisation.
+            Authentication::NoAuthentication
+                if self.version == Version::V3_8
+                    || self.wrapper == Some(SecurityWrapper::Tight) =>
+            {
+                State::SecurityResult
+            }
+            Authentication::NoAuthentication => {
+                self.output.push(1);
+                State::ServerInit
+            }
         };
+    }
+
+    /// Tight: the tunnels offered, then no tunnel taken when there are some.
+    fn tight_tunnels(&mut self, reader: &mut Reader<'_>) -> Result<Step, RfbError> {
+        let Some(count) = reader.u32() else {
+            return Ok(Step::More);
+        };
+        let count = bounded(count, MAX_TIGHT_TUNNELS, "Tight tunnel types")?;
+        let Some(tunnels) = reader.take(count * TIGHT_CAPABILITY_BYTES) else {
+            return Ok(Step::More);
+        };
+        if count > 0 {
+            if !security::tight_takes_no_tunnel(tunnels) {
+                return Err(RfbError::NoAcceptableInnerSecurity {
+                    wrapper: SecurityWrapper::Tight,
+                    offered: security::tight_codes(tunnels),
+                });
+            }
+            self.output
+                .extend_from_slice(&TIGHT_NO_TUNNEL.to_be_bytes());
+        }
+        self.state = State::TightAuthentication;
+        Ok(Step::Done(reader.at))
+    }
+
+    /// Tight: the authentication types offered, then the one taken. None offered means no
+    /// authentication, which the policy must allow.
+    fn tight_authentication(&mut self, reader: &mut Reader<'_>) -> Result<Step, RfbError> {
+        let Some(count) = reader.u32() else {
+            return Ok(Step::More);
+        };
+        let count = bounded(count, MAX_TIGHT_AUTH_TYPES, "Tight authentication types")?;
+        let Some(types) = reader.take(count * TIGHT_CAPABILITY_BYTES) else {
+            return Ok(Step::More);
+        };
+        let allow_none = self.policy.allow_no_authentication;
+        let refused = |offered| RfbError::NoAcceptableInnerSecurity {
+            wrapper: SecurityWrapper::Tight,
+            offered,
+        };
+        let authentication = if count == 0 {
+            if !allow_none {
+                return Err(refused(vec![TIGHT_AUTH_NONE]));
+            }
+            Authentication::NoAuthentication
+        } else {
+            let authentication = security::tight_authentication(types, allow_none)
+                .ok_or_else(|| refused(security::tight_codes(types)))?;
+            self.output
+                .extend_from_slice(&security::tight_code(authentication).to_be_bytes());
+            authentication
+        };
+        self.authenticate(authentication);
+        Ok(Step::Done(reader.at))
+    }
+
+    /// `VeNCrypt`: the server's version, which must be 0.2; the client answers the same.
+    fn vencrypt_version(&mut self, reader: &mut Reader<'_>) -> Result<Step, RfbError> {
+        let Some(version) = reader.take(VENCRYPT_VERSION.len()) else {
+            return Ok(Step::More);
+        };
+        if version != VENCRYPT_VERSION {
+            return Err(RfbError::UnsupportedVersion(format!(
+                "VeNCrypt {}.{}",
+                version[0], version[1]
+            )));
+        }
+        self.output.extend_from_slice(&VENCRYPT_VERSION);
+        self.state = State::VencryptAccepted;
+        Ok(Step::Done(reader.at))
+    }
+
+    /// `VeNCrypt`: whether the server takes the client's version.
+    fn vencrypt_accepted(&mut self, reader: &mut Reader<'_>) -> Result<Step, RfbError> {
+        let Some(status) = reader.u8() else {
+            return Ok(Step::More);
+        };
+        if status != VENCRYPT_ACCEPTED {
+            return Err(RfbError::Protocol(format!(
+                "the server refused VeNCrypt 0.2 (status {status})"
+            )));
+        }
+        self.state = State::VencryptSubtypes;
+        Ok(Step::Done(reader.at))
+    }
+
+    /// `VeNCrypt`: the subtypes offered, then the one taken. Nothing follows it before the
+    /// standard authentication: the server confirms only the TLS subtypes.
+    fn vencrypt_subtypes(&mut self, reader: &mut Reader<'_>) -> Result<Step, RfbError> {
+        let Some(count) = reader.u8() else {
+            return Ok(Step::More);
+        };
+        let count = bounded(u32::from(count), MAX_VENCRYPT_SUBTYPES, "VeNCrypt subtypes")?;
+        let Some(subtypes) = reader.take(count * VENCRYPT_SUBTYPE_BYTES) else {
+            return Ok(Step::More);
+        };
+        let offered: Vec<u32> = subtypes
+            .as_chunks::<VENCRYPT_SUBTYPE_BYTES>()
+            .0
+            .iter()
+            .map(|subtype| u32::from_be_bytes(*subtype))
+            .collect();
+        let authentication =
+            security::vencrypt_subtype(&offered, self.policy.allow_no_authentication).ok_or(
+                RfbError::NoAcceptableInnerSecurity {
+                    wrapper: SecurityWrapper::VeNCrypt,
+                    offered,
+                },
+            )?;
+        self.output
+            .extend_from_slice(&security::vencrypt_code(authentication).to_be_bytes());
+        self.authenticate(authentication);
+        Ok(Step::Done(reader.at))
     }
 
     fn server_init(
@@ -685,6 +891,9 @@ impl Rfb {
         let Some(name) = reader.take(name_length) else {
             return Ok(Step::More);
         };
+        if self.wrapper == Some(SecurityWrapper::Tight) && !tight_init_capabilities(reader)? {
+            return Ok(Step::More);
+        }
         check_size(width, height)?;
         self.screen = Screen::new(width, height);
         self.output.push(SET_PIXEL_FORMAT);
