@@ -174,7 +174,8 @@ pub struct FeedOutput {
     /// Whether the screen may have changed.
     pub redraw: bool,
     /// The last working folder the server reported (OSC 7), an absolute path decoded, the
-    /// host left aside: untrusted. Read as the output arrives, so only [`Terminal::feed`]
+    /// host left aside, or an absolute Windows path (`ConEmu`'s OSC 9;9), as the module
+    /// `working_directory` says: untrusted. Read as the output arrives, so only [`Terminal::feed`]
     /// gives one, a synchronized update or not.
     pub working_directory: Option<String>,
 }

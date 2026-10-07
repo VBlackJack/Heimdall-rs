@@ -625,12 +625,13 @@ fn entry_row<'a, E: Listed>(
 
 /// A pane's buttons: new folder, rename (one entry), delete; on the server's, its
 /// bookmarks, and its `toggles`: over SSH the "sudo" toggle, over SFTP the "cwd" one, as in
-/// the C# tab. The row wraps: a narrow pane keeps every button whole.
+/// the C# tab; the local file browser's own "cwd" toggle on this computer's. The row wraps:
+/// a narrow pane keeps every button whole.
 fn pane_tools<'a>(
     tab: TabId,
     side: Side,
     (selected, chosen): (Option<usize>, usize),
-    toggles: ServerToggles,
+    toggles: PaneToggles,
 ) -> Element<'a, Message> {
     let mut tools = row![
         button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
@@ -663,15 +664,20 @@ fn pane_tools<'a>(
         tools = tools.push(sudo_toggle(tab, on));
     }
     if let Some(on) = toggles.follow {
-        tools = tools.push(follow_toggle(tab, on));
+        tools = tools.push(follow_toggle(tab, side, on));
     }
     tools.wrap().vertical_spacing(SPACING).into()
 }
 
 /// The C# "cwd" toggle of an SFTP server pane, lit while the pane follows the working
 /// folder of the SSH shell beside it (`on`). Only drawn while the pane is connected, as the
-/// C# toolbar only lets it be pressed then.
-fn follow_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
+/// C# toolbar only lets it be pressed then. On this computer's `side`, the local file
+/// browser's: following the local shell beside it, said so.
+fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
+    let tip = match side {
+        Side::Remote => fl!("ui-files-follow-tooltip"),
+        Side::Local => fl!("ui-files-follow-local-tooltip"),
+    };
     tooltip(
         button(text(fl!("ui-files-follow-toggle")).size(SMALL_SIZE))
             .style(if on {
@@ -680,7 +686,7 @@ fn follow_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
                 button::secondary
             })
             .on_press(files(FilesMessage::ToggleFollow { tab })),
-        text(fl!("ui-files-follow-tooltip")).size(SMALL_SIZE),
+        text(tip).size(SMALL_SIZE),
         tooltip::Position::Bottom,
     )
     .style(container::rounded_box)
@@ -839,29 +845,48 @@ struct PaneParts<'p, E> {
     batch: Option<&'p heimdall_app::files::Batch>,
     /// Where a drag would drop in this pane.
     drop: Option<DropHere>,
-    /// The server pane's own toggles; none on this computer's pane.
-    toggles: ServerToggles,
+    /// The pane's own toggles: the server's, and the local file browser's "cwd".
+    toggles: PaneToggles,
 }
 
-/// The toggles of the server's pane, as the C# SFTP toolbar's.
+/// The toggles of a pane: the server's, as the C# SFTP toolbar's, and the "cwd" toggle of
+/// the local file browser.
 #[derive(Debug, Clone, Copy, Default)]
-struct ServerToggles {
+struct PaneToggles {
     /// The "sudo" toggle, on or off; none where it is not offered: this computer's pane,
     /// and the server's without SSH.
     sudo: Option<bool>,
-    /// The "cwd" toggle, on or off; none where it is not offered: this computer's pane,
-    /// and the server's over FTP.
+    /// The "cwd" toggle, on or off; none where it is not offered: the server's pane over
+    /// FTP, and this computer's beside a server's.
     follow: Option<bool>,
 }
 
-impl ServerToggles {
+impl PaneToggles {
+    /// The toggles of `files_pane`'s local pane: the "cwd" one in the local file browser
+    /// alone, following the local shell beside it.
+    fn local(files_pane: &FilesPane) -> Self {
+        Self {
+            sudo: None,
+            follow: files_pane
+                .follow
+                .as_ref()
+                .filter(|_| files_pane.local_only)
+                .map(|follow| follow.on),
+        }
+    }
+
     /// The toggles of `files_pane`'s server pane.
-    fn of(files_pane: &FilesPane) -> Self {
+    fn server(files_pane: &FilesPane) -> Self {
         Self {
             // Over SSH only: an FTP tab has no shell to run sudo on.
             sudo: files_pane.shell.as_ref().map(|_| files_pane.sudo_mode),
-            // Over SFTP only, as the C#: an FTP tab never follows a shell.
-            follow: files_pane.follow.as_ref().map(|follow| follow.on),
+            // Over SFTP only, as the C#: an FTP tab never follows a shell, and the local
+            // file browser's toggle is on its own pane.
+            follow: files_pane
+                .follow
+                .as_ref()
+                .filter(|_| !files_pane.local_only)
+                .map(|follow| follow.on),
         }
     }
 }
@@ -1431,7 +1456,7 @@ pub fn view(
             .as_ref()
             .filter(|batch| batch.side == Side::Local),
         drop: drop_in(Side::Local),
-        toggles: ServerToggles::default(),
+        toggles: PaneToggles::local(files_pane),
     });
     let remote = pane(PaneParts {
         tab,
@@ -1462,7 +1487,7 @@ pub fn view(
             .as_ref()
             .filter(|batch| batch.side == Side::Remote),
         drop: drop_in(Side::Remote),
-        toggles: ServerToggles::of(files_pane),
+        toggles: PaneToggles::server(files_pane),
     });
     let mut content = column![panes(tab, files_pane, local, remote)]
         .spacing(SPACING)

@@ -362,7 +362,8 @@ pub enum FilesMessage {
         tab: TabId,
     },
     /// Turn the SFTP pane's following of its SSH shell's working folder on or off, as the
-    /// C# "cwd" toggle; over SFTP only.
+    /// C# "cwd" toggle; over SFTP only, and in the local file browser, following its local
+    /// shell.
     ToggleFollow {
         /// Tab.
         tab: TabId,
