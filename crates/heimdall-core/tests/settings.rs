@@ -1269,3 +1269,51 @@ fn the_sftp_browser_settings_are_kept_and_the_auto_open_needs_the_browser() {
     );
     assert!(off.sftp_browser.enabled && !off.sftp_browser.auto_opens());
 }
+
+#[test]
+fn putty_and_the_x_server_are_looked_for_and_started_by_default_and_kept_as_chosen() {
+    let dir = tempfile::tempdir().expect("dir");
+    let defaults = Settings::default();
+    assert!(defaults.putty_path.is_empty(), "PATH is searched");
+    assert!(defaults.x11_server_path.is_empty(), "the known places");
+    assert!(defaults.x11_auto_start, "as the C# X11AutoStart");
+    // Written before these settings were: the C# defaults.
+    let older = written(dir.path(), "version = 1\n[ssh]\nauto_reconnect = true\n");
+    assert!(older.putty_path.is_empty() && older.x11_server_path.is_empty());
+    assert!(older.x11_auto_start);
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let chosen = Settings {
+        putty_path: r"C:\Tools\putty.exe".to_owned(),
+        x11_server_path: r"D:\X\vcxsrv.exe".to_owned(),
+        x11_auto_start: false,
+        ..Settings::default()
+    };
+    chosen.save(&path).expect("saved");
+    let read = Settings::load(&path).expect("read");
+    assert_eq!(read.putty_path, chosen.putty_path);
+    assert_eq!(read.x11_server_path, chosen.x11_server_path);
+    assert!(!read.x11_auto_start);
+    // Typed with spaces around: trimmed when read.
+    let padded = written(
+        dir.path(),
+        "version = 1\n[ssh]\nputty_path = \"  /usr/bin/putty \"\nx11_auto_start = true\n",
+    );
+    assert_eq!(padded.putty_path, "/usr/bin/putty");
+    // They travel with an export, beside the other SSH settings.
+    let (text, _) = chosen.export(None, false);
+    let imported = Settings::default().import(&text).expect("read");
+    assert_eq!(imported.settings.putty_path, chosen.putty_path);
+    assert!(!imported.settings.x11_auto_start);
+    let keys: Vec<&str> = imported
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect();
+    for key in [
+        "ssh.putty_path",
+        "ssh.x11_server_path",
+        "ssh.x11_auto_start",
+    ] {
+        assert!(keys.contains(&key), "{keys:?}");
+    }
+}

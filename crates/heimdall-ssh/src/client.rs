@@ -87,6 +87,8 @@ pub(crate) struct ClientHandler {
     pins: Vec<String>,
     /// The key that matched a pin, to record in full once the exchange is through.
     pinned: PinnedKey,
+    /// The key trusted, recorded or pinned, once the exchange is through.
+    presented: PinnedKey,
     server_message: ServerMessage,
     /// Ports this side asked the server to listen on.
     routes: Routes,
@@ -111,6 +113,7 @@ impl ClientHandler {
                     "the host key of {target} is the one trusted: {}",
                     fingerprint(key)
                 );
+                self.keep_presented(key);
                 return Ok(true);
             }
             Verdict::Unknown => match pin_verdict(&self.pins, key) {
@@ -123,6 +126,7 @@ impl ClientHandler {
                     if let Ok(mut slot) = self.pinned.lock() {
                         *slot = Some(key.clone());
                     }
+                    self.keep_presented(key);
                     return Ok(true);
                 }
                 PinVerdict::Differs { pinned } => {
@@ -157,6 +161,13 @@ impl ClientHandler {
             }
         };
         Err(HandlerError::HostKey(rejection))
+    }
+
+    /// Keeps `key`, trusted, for whoever asked which key the server has.
+    fn keep_presented(&self, key: &PublicKey) {
+        if let Ok(mut slot) = self.presented.lock() {
+            *slot = Some(key.clone());
+        }
     }
 
     fn record_disconnect(
@@ -644,6 +655,149 @@ pub(crate) enum Pinning {
     Leave,
 }
 
+/// A hop about to be dialled: the keys it is checked against, and what its handler shares
+/// with the code waiting on it.
+struct Dial {
+    host: String,
+    port: u16,
+    known_hosts: KnownHosts,
+    pins: Pins,
+    /// The keys recorded for it, and those trusted for this run.
+    recorded: Vec<PublicKey>,
+    pinned: PinnedKey,
+    presented: PinnedKey,
+    server_message: ServerMessage,
+    routes: Routes,
+}
+
+impl Dial {
+    /// Ready to dial `profile`: its host name checked, the keys trusted for it read.
+    fn new(profile: &SshProfile, options: &ConnectOptions) -> Result<Self, ConnectError> {
+        let host = validate_host(&profile.host)?;
+        let port = profile.port;
+        let known_hosts = KnownHosts::new(&options.known_hosts);
+        let mut recorded = known_hosts.recorded(&host, port)?;
+        recorded.extend(options.run_trust.keys(&host, port));
+        Ok(Self {
+            host,
+            port,
+            known_hosts,
+            pins: Pins::beside(&options.known_hosts),
+            recorded,
+            pinned: PinnedKey::default(),
+            presented: PinnedKey::default(),
+            server_message: ServerMessage::default(),
+            routes: Routes::default(),
+        })
+    }
+
+    /// Connects over TCP or, when `carrier` is given, over a connection it opens onward, and
+    /// exchanges keys, the server's checked; within the connection's time, `cancel` ending
+    /// it at any point. The pins are consulted only when no key is recorded.
+    async fn exchange(
+        &self,
+        profile: &SshProfile,
+        carrier: Option<&client::Handle<ClientHandler>>,
+        options: &ConnectOptions,
+        cancel: &CancellationToken,
+    ) -> Result<client::Handle<ClientHandler>, ConnectError> {
+        let (host, port, recorded) = (self.host.as_str(), self.port, &self.recorded);
+        let pins = if recorded.is_empty() {
+            self.pins.pinned(host, port)?
+        } else {
+            Vec::new()
+        };
+        let handler = ClientHandler {
+            target: heimdall_core::profile::display_address(host, port),
+            recorded: recorded.clone(),
+            pins,
+            pinned: self.pinned.clone(),
+            presented: self.presented.clone(),
+            server_message: self.server_message.clone(),
+            routes: self.routes.clone(),
+        };
+        let config = Arc::new(client::Config {
+            inactivity_timeout: None,
+            keepalive_interval: Some(options.keepalive_interval),
+            keepalive_max: options.keepalive_max,
+            nodelay: true,
+            preferred: preferred(recorded, options.compression, profile.legacy_algorithms),
+            ..client::Config::default()
+        });
+        let connecting = async {
+            match carrier {
+                None => client::connect(config, (host, port), handler).await,
+                Some(carrier) => {
+                    let channel = carrier
+                        .channel_open_direct_tcpip(host, u32::from(port), ORIGINATOR_ADDRESS, 0)
+                        .await
+                        .map_err(|error| match error {
+                            russh::Error::ChannelOpenFailure(_) => HandlerError::Refused,
+                            other => HandlerError::Russh(other),
+                        })?;
+                    client::connect_stream(config, channel.into_stream(), handler).await
+                }
+            }
+        };
+        tokio::select! {
+            () = cancel.cancelled() => Err(ConnectError::Cancelled),
+            result = tokio::time::timeout(options.connect_timeout, connecting) => match result {
+                Err(_) => Err(ConnectError::Timeout),
+                Ok(Err(error)) => Err(map_handler_error(error, host, port, recorded)),
+                Ok(Ok(handle)) => Ok(handle),
+            },
+        }
+    }
+
+    /// Records in full the key that matched a pin, when it is to be.
+    fn record(&self, pinning: Pinning) {
+        if pinning == Pinning::Record {
+            record_pinned(
+                &self.known_hosts,
+                &self.pins,
+                &self.host,
+                self.port,
+                &self.pinned,
+            );
+        }
+    }
+}
+
+/// The key `profile`'s server presents, once trusted: recorded, trusted for this run, or
+/// matching a pin, which then records it in full as a connection does. Nobody signs in: the
+/// connection ends once the keys are exchanged, for another program to connect told to
+/// accept that key alone.
+///
+/// # Errors
+///
+/// As [`connect`] before anyone signs in: [`ConnectError::UnknownHostKey`] for a key never
+/// seen, which the caller asks the user about, records, and probes again.
+pub async fn trusted_host_key(
+    profile: &SshProfile,
+    options: &ConnectOptions,
+    cancel: &CancellationToken,
+) -> Result<PublicKey, ConnectError> {
+    let dial = Dial::new(profile, options)?;
+    let handle = dial.exchange(profile, None, options, cancel).await?;
+    dial.record(Pinning::Record);
+    let key = dial.presented.lock().ok().and_then(|mut slot| slot.take());
+    let _ = handle
+        .disconnect(
+            russh::Disconnect::ByApplication,
+            PROBE_DISCONNECT_DESCRIPTION,
+            PROBE_DISCONNECT_LANGUAGE,
+        )
+        .await;
+    // A key exchange that went through checked a key: one was kept.
+    key.ok_or(ConnectError::Protocol(russh::Error::UnknownKey))
+}
+
+/// What the probe's disconnect says: nothing.
+const PROBE_DISCONNECT_DESCRIPTION: &str = "";
+
+/// The language of that nothing.
+const PROBE_DISCONNECT_LANGUAGE: &str = "";
+
 /// Connects to `profile` and authenticates, over TCP or, when `carrier` is given, over a
 /// connection it opens onward.
 pub(crate) async fn hop<P: Prompter>(
@@ -654,69 +808,10 @@ pub(crate) async fn hop<P: Prompter>(
     cancel: &CancellationToken,
     pinning: Pinning,
 ) -> Result<Reached, ConnectError> {
-    let host = validate_host(&profile.host)?;
-    let port = profile.port;
-    let known_hosts = KnownHosts::new(&options.known_hosts);
-    let mut recorded = known_hosts.recorded(&host, port)?;
-    recorded.extend(options.run_trust.keys(&host, port));
-    let pins = Pins::beside(&options.known_hosts);
-    let pinned_fingerprints = if recorded.is_empty() {
-        pins.pinned(&host, port)?
-    } else {
-        Vec::new()
-    };
-    let pinned = PinnedKey::default();
-
-    let server_message = ServerMessage::default();
-    let routes = Routes::default();
-    let handler = ClientHandler {
-        target: heimdall_core::profile::display_address(&host, port),
-        recorded: recorded.clone(),
-        pins: pinned_fingerprints,
-        pinned: pinned.clone(),
-        server_message: server_message.clone(),
-        routes: routes.clone(),
-    };
-    let config = Arc::new(client::Config {
-        inactivity_timeout: None,
-        keepalive_interval: Some(options.keepalive_interval),
-        keepalive_max: options.keepalive_max,
-        nodelay: true,
-        preferred: preferred(&recorded, options.compression, profile.legacy_algorithms),
-        ..client::Config::default()
-    });
-
-    let connecting = async {
-        match carrier {
-            None => client::connect(config, (host.as_str(), port), handler).await,
-            Some(carrier) => {
-                let channel = carrier
-                    .channel_open_direct_tcpip(
-                        host.as_str(),
-                        u32::from(port),
-                        ORIGINATOR_ADDRESS,
-                        0,
-                    )
-                    .await
-                    .map_err(|error| match error {
-                        russh::Error::ChannelOpenFailure(_) => HandlerError::Refused,
-                        other => HandlerError::Russh(other),
-                    })?;
-                client::connect_stream(config, channel.into_stream(), handler).await
-            }
-        }
-    };
-    let mut handle = tokio::select! {
-        () = cancel.cancelled() => return Err(ConnectError::Cancelled),
-        result = tokio::time::timeout(options.connect_timeout, connecting) => match result {
-            Err(_) => return Err(ConnectError::Timeout),
-            Ok(Err(error)) => return Err(map_handler_error(error, &host, port, &recorded)),
-            Ok(Ok(handle)) => handle,
-        },
-    };
-    if pinning == Pinning::Record {
-        record_pinned(&known_hosts, &pins, &host, port, &pinned);
-    }
+    let dial = Dial::new(profile, options)?;
+    let mut handle = dial.exchange(profile, carrier, options, cancel).await?;
+    dial.record(pinning);
+    let (host, port) = (dial.host.clone(), dial.port);
 
     let username = if let Some(username) = profile.username.clone() {
         username
@@ -737,11 +832,11 @@ pub(crate) async fn hop<P: Prompter>(
         key_path: profile.key_path.as_deref(),
         options,
         cancel,
-        server_message: &server_message,
+        server_message: &dial.server_message,
     })
     .await?;
 
-    Ok((handle, routes))
+    Ok((handle, dial.routes))
 }
 
 /// Records in full the key that matched a pinned fingerprint, and drops the pin: from now

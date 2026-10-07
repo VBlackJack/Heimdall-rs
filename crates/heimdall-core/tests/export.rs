@@ -85,6 +85,9 @@ fn ssh() -> Vec<SshProfile> {
         sftp: false,
         legacy_algorithms: false,
         session_logging: Some(true),
+        // Opened in PuTTY with X11 forwarding: both travel.
+        ssh_mode: heimdall_core::profile::SshMode::External,
+        x11_forwarding: true,
     };
     let files = SshProfile {
         id: ProfileId::new("files"),
@@ -103,6 +106,8 @@ fn ssh() -> Vec<SshProfile> {
         sftp: true,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     };
     vec![base, files]
 }
@@ -417,6 +422,12 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
     assert!(
         mail.get("citrixLaunchCommandLine").is_none(),
         "the Workspace cache launch line is a secret"
+    );
+    assert_eq!(by_id("web")["sshMode"], "External");
+    assert_eq!(by_id("web")["sshX11Forwarding"], true);
+    assert!(
+        by_id("files").get("sshMode").is_none(),
+        "embedded, the C# default"
     );
     assert_eq!(by_id("web")["postConnectSteps"][1]["onFailure"], 1);
     assert!(by_id("web").get("postConnectCommand").is_none());

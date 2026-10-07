@@ -37,11 +37,9 @@ fn id(value: &str) -> ProfileId {
     ProfileId::new(value)
 }
 
-/// One profile of each protocol.
-fn app(dir: &Path, system: &SystemCredentials) -> App {
-    let profiles_file = dir.join("profiles.toml");
-    let mut store = ProfileStore::open(&profiles_file).expect("store");
-    store.merge([SshProfile {
+/// The SSH profile of [`app`].
+fn web() -> SshProfile {
+    SshProfile {
         id: id("ssh"),
         name: "web".to_owned(),
         group: Some("Prod".to_owned()),
@@ -58,7 +56,16 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
-    }]);
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
+    }
+}
+
+/// One profile of each protocol.
+fn app(dir: &Path, system: &SystemCredentials) -> App {
+    let profiles_file = dir.join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge([web()]);
     store.merge_rdp([RdpProfile {
         extras: heimdall_core::profile::RdpExtras::default(),
         id: id("rdp"),

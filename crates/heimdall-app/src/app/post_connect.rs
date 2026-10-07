@@ -45,6 +45,10 @@ impl App {
     /// Opens a shell for `profile`, asking first when it would type steps the user has not
     /// approved as they are.
     pub(super) fn open_ssh(&mut self, profile: SshProfile, purpose: Purpose) -> Vec<Effect> {
+        // Opened in PuTTY, which types no step: no tab, nothing to approve.
+        if let Some(effects) = self.open_ssh_external(&profile, purpose) {
+            return effects;
+        }
         if purpose == Purpose::Shell && profile.post_connect.needs_approval() {
             let commands = profile
                 .post_connect

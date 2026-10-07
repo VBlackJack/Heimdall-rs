@@ -28,8 +28,8 @@ use crate::metadata::ProfileOrigin;
 use crate::post_connect::{OnFailure, PostConnectStep};
 use crate::profile::{
     Aspect, AudioPlayback, CitrixProfile, Forwards, FtpProfile, LocalArguments, LocalProfile,
-    RdpDefaults, RdpProfile, Resolution, SshGateway, SshProfile, TelnetProfile, VncProfile,
-    WinRmProfile,
+    RdpDefaults, RdpProfile, Resolution, SshGateway, SshMode, SshProfile, TelnetProfile,
+    VncProfile, WinRmProfile,
 };
 use crate::store::ProfileStore;
 
@@ -117,6 +117,11 @@ struct Entry {
     ssh_agent_forwarding: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     ssh_compression: bool,
+    /// The C# `SshMode`, written only for a shell opened in `PuTTY`: absent is embedded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ssh_mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    ssh_x11_forwarding: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     socks_proxy_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -365,6 +370,8 @@ fn ssh(profile: &SshProfile) -> Entry {
             .map(|path| path.to_string_lossy().into_owned()),
         ssh_agent_forwarding: profile.forward_agent,
         ssh_compression: profile.compression,
+        ssh_mode: (profile.ssh_mode == SshMode::External).then_some("External"),
+        ssh_x11_forwarding: profile.x11_forwarding,
         session_logging_override: profile.session_logging,
         post_connect_steps: profile.post_connect.steps.iter().map(step).collect(),
         ..server(

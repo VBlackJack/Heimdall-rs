@@ -912,6 +912,8 @@ pub fn plan<S: BuildHasher>(
             sftp: false,
             legacy_algorithms: false,
             session_logging: None,
+            ssh_mode: crate::profile::SshMode::Embedded,
+            x11_forwarding: false,
         });
     }
     plan.gateways = planner.made;

@@ -67,6 +67,8 @@ fn app(dir: &Path, route: Option<&str>, gateways: Vec<SshGateway>) -> App {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     App::new(AppConfig {

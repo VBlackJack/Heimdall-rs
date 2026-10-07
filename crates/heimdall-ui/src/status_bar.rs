@@ -258,6 +258,35 @@ fn rdp_external_notice(notice: &Notice) -> String {
     }
 }
 
+/// What the bar says of an SSH profile opened in `PuTTY`, or not, and of its X server.
+fn putty_notice(notice: &Notice) -> String {
+    use heimdall_app::putty::PuttyRefusal;
+    match notice {
+        Notice::PuttyLaunched(name) => {
+            fl!("ui-status-putty-launched", name = server_text(name))
+        }
+        Notice::X11ServerNotFound => fl!("ui-status-x11-server-not-found"),
+        Notice::PuttyRefused(refusal) => match refusal {
+            PuttyRefusal::SshGateway => fl!("ui-status-putty-ssh-gateway"),
+            PuttyRefusal::InvalidHost => fl!("ui-status-putty-invalid-host"),
+            PuttyRefusal::InvalidUsername => fl!("ui-status-putty-invalid-username"),
+            PuttyRefusal::KeyFile(path) => fl!(
+                "ui-status-putty-key-file",
+                path = server_text(&path.display().to_string())
+            ),
+            PuttyRefusal::HostKey(error) => fl!(
+                "ui-status-putty-host-key",
+                reason = crate::texts::error(error)
+            ),
+            PuttyRefusal::NotFound => fl!("ui-status-putty-not-found"),
+            PuttyRefusal::NotStarted(reason) => {
+                fl!("ui-status-putty-not-started", reason = server_text(reason))
+            }
+        },
+        _ => String::new(),
+    }
+}
+
 /// What the bar says of a desktop: its size, or the files copied not offered to it.
 fn desktop_notice(notice: &Notice) -> String {
     match notice {
@@ -479,6 +508,9 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             notice @ (Notice::RdpExternalLaunched { .. } | Notice::RdpExternalRefused(_)) => {
                 rdp_external_notice(notice)
             }
+            notice @ (Notice::PuttyLaunched(_)
+            | Notice::PuttyRefused(_)
+            | Notice::X11ServerNotFound) => putty_notice(notice),
             Notice::BroadcastScope(scope) => {
                 fl!(
                     "ui-broadcast-scope-status",
@@ -608,6 +640,40 @@ mod tests {
             ExternalRefusal::NotWritten(named("full")),
         ] {
             assert!(!said(Notice::RdpExternalRefused(refusal)).is_empty());
+        }
+    }
+
+    #[test]
+    fn an_ssh_profile_opened_in_putty_is_said_with_its_reason() {
+        use heimdall_app::putty::PuttyRefusal;
+
+        let said = |notice: Notice| status_text(&SessionStatus::Ready, Some(&notice), 0);
+        assert_eq!(
+            said(Notice::PuttyLaunched(named("web"))),
+            "External client launched: web opened in PuTTY."
+        );
+        assert_eq!(
+            said(Notice::X11ServerNotFound),
+            "No X11 server found. Install VcXsrv or Xming for X11 forwarding support."
+        );
+        assert_eq!(
+            said(Notice::PuttyRefused(PuttyRefusal::InvalidUsername)),
+            "Invalid SSH username (rejected by input validation)."
+        );
+        assert!(
+            said(Notice::PuttyRefused(PuttyRefusal::NotStarted(named(
+                "denied"
+            ))))
+            .ends_with("denied")
+        );
+        for refusal in [
+            PuttyRefusal::SshGateway,
+            PuttyRefusal::InvalidHost,
+            PuttyRefusal::KeyFile(std::path::PathBuf::from("keys/id")),
+            PuttyRefusal::HostKey(heimdall_app::UiError::Cancelled),
+            PuttyRefusal::NotFound,
+        ] {
+            assert!(!said(Notice::PuttyRefused(refusal)).is_empty());
         }
     }
 

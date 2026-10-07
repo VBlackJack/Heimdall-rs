@@ -1353,7 +1353,7 @@ fn what_a_profile_turned_on_that_has_no_equivalent_is_said_not_silently_dropped(
     assert_eq!(
         report.dropped,
         [
-            dropped("shell", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
+            // A shell in PuTTY with X11 forwarding is carried now, not dropped.
             // Anti-idle is carried over, not dropped.
             dropped("desk", &[Dropped::RdpPrinters, Dropped::RdpSmartCards]),
             // On the global defaults: the settings' choices are the ones dropped.
@@ -1579,5 +1579,62 @@ fn an_rdp_profile_keeps_what_the_built_in_client_does_not_do_and_where_it_came_f
             Dropped::RdpMultiMonitor,
         ],
         "said, as the built-in client does not use them"
+    );
+}
+
+#[test]
+fn the_ssh_mode_and_x11_forwarding_of_a_shell_are_carried_and_dropped_where_nothing_does_them() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+    use heimdall_core::profile::SshMode;
+
+    let report = import(
+        &servers(
+            r#"
+            {"id": "putty", "displayName": "putty", "remoteServer": "a.lab",
+             "connectionType": "SSH", "sshMode": " external ", "sshX11Forwarding": true},
+            {"id": "tab", "displayName": "tab", "remoteServer": "b.lab", "connectionType": "SSH",
+             "sshMode": "Embedded", "sshX11Forwarding": true},
+            {"id": "plain", "displayName": "plain", "remoteServer": "c.lab",
+             "connectionType": "SSH"},
+            {"id": "files", "displayName": "files", "remoteServer": "d.lab",
+             "connectionType": "SFTP", "sshMode": "External", "sshX11Forwarding": true}
+            "#,
+        ),
+        None,
+    )
+    .expect("valid JSON");
+    let profile = |id: &str| {
+        report
+            .profiles
+            .iter()
+            .find(|profile| profile.id.as_str() == id)
+            .expect("imported")
+    };
+    assert_eq!(profile("putty").ssh_mode, SshMode::External);
+    assert!(profile("putty").x11_forwarding);
+    assert_eq!(profile("tab").ssh_mode, SshMode::Embedded);
+    assert!(
+        profile("tab").x11_forwarding,
+        "kept for when PuTTY opens it"
+    );
+    assert_eq!(
+        profile("plain").ssh_mode,
+        SshMode::Embedded,
+        "the C# default"
+    );
+    assert!(!profile("plain").x11_forwarding);
+    assert_eq!(profile("files").ssh_mode, SshMode::Embedded);
+    assert!(!profile("files").x11_forwarding);
+    let dropped = |name: &str, settings: &[Dropped]| DroppedSettings {
+        name: name.to_owned(),
+        settings: settings.to_vec(),
+    };
+    assert_eq!(
+        report.dropped,
+        [
+            // The built-in terminal does not forward X11 yet.
+            dropped("tab", &[Dropped::X11Forwarding]),
+            dropped("files", &[Dropped::ExternalClient, Dropped::X11Forwarding]),
+        ]
     );
 }

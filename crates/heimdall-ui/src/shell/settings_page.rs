@@ -124,6 +124,7 @@ fn card_heading(card: SettingsCard) -> Option<String> {
         SettingsCard::SshReconnect => fl!("ui-settings-ssh-auto-reconnect"),
         SettingsCard::SshSession => fl!("ui-settings-ssh-session"),
         SettingsCard::Sftp => fl!("ui-settings-sftp"),
+        SettingsCard::X11 => fl!("ui-settings-x11"),
         SettingsCard::ExternalEditor => fl!("ui-settings-external-editor"),
         SettingsCard::RdpDefaults => fl!("ui-settings-rdp-defaults"),
         _ => return None,
@@ -178,6 +179,9 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::DockLocalBrowser => fl!("ui-settings-dock-local-browser"),
         SettingRow::LocalFollow => fl!("ui-settings-local-follow"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-path"),
+        SettingRow::PuttyPath => fl!("ui-settings-putty-path"),
+        SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
+        SettingRow::X11AutoStart => fl!("ui-settings-x11-auto-start"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-title"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-title"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults"),
@@ -210,6 +214,8 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::SessionLogDirectory => fl!("ui-settings-session-log-directory-hint"),
         SettingRow::SshAgentPreference => fl!("ui-settings-ssh-agent-preference-hint"),
         SettingRow::ExternalEditor => fl!("ui-settings-external-editor-hint"),
+        SettingRow::PuttyPath => fl!("ui-settings-putty-path-hint"),
+        SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-hint"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-hint"),
         SettingRow::RdpDefaults => fl!("ui-settings-rdp-defaults-hint"),
@@ -723,6 +729,8 @@ impl Shell {
                 AgentChoice(defaults.ssh_agent_preference).to_string()
             }
             SettingRow::ExternalEditor => or_empty(&defaults.external_editor),
+            SettingRow::PuttyPath => or_empty(&defaults.putty_path),
+            SettingRow::X11ServerPath => or_empty(&defaults.x11_server_path),
             SettingRow::RdpDefaults => {
                 rdp_changes(&self.app.settings().rdp_defaults, &defaults.rdp_defaults)
             }
@@ -776,6 +784,7 @@ impl Shell {
             SettingRow::FontSize => self.font_size_row(),
             SettingRow::FontFamily => self.font_family_row(),
             SettingRow::SessionLogDirectory | SettingRow::ExternalEditor => self.path_row(row),
+            SettingRow::PuttyPath | SettingRow::X11ServerPath => self.tool_path_row(row),
             SettingRow::HostKeys
             | SettingRow::FtpsCertificates
             | SettingRow::Certificates
@@ -1069,6 +1078,45 @@ impl Shell {
         body.into()
     }
 
+    /// A program's path, `PuTTY` or the X server, typed and applied with Enter, what is said
+    /// of it under it.
+    fn tool_path_row(&self, row: SettingRow) -> Element<'_, Message> {
+        let Some(path) = row.tool_path() else {
+            return column![].into();
+        };
+        let typed = self.tool_paths_typed[path.index()]
+            .as_deref()
+            .unwrap_or_else(|| path.value(self.app.settings()));
+        let field = text_input("", typed)
+            .on_input(move |typed| Message::ToolPathEdited(path, typed))
+            .on_submit(Message::ToolPathApply(path));
+        let mut body = column![
+            row![text(row_label(row)), field]
+                .spacing(SPACING)
+                .align_y(iced::Alignment::Center)
+        ]
+        .spacing(SPACING);
+        if let Some(hint) = row_hint(row) {
+            body = body.push(text(hint).size(SMALL_SIZE));
+        }
+        body.into()
+    }
+
+    /// The program's path typed, or applied.
+    pub(super) fn tool_path_message(&mut self, message: Message) -> Vec<Effect> {
+        match message {
+            Message::ToolPathEdited(path, typed) => {
+                self.tool_paths_typed[path.index()] = Some(typed);
+                Vec::new()
+            }
+            Message::ToolPathApply(path) => match self.tool_paths_typed[path.index()].take() {
+                Some(typed) => self.app.update(AppMessage::Settings(path.applied(typed))),
+                None => Vec::new(),
+            },
+            _ => Vec::new(),
+        }
+    }
+
     /// A list or a card drawn by its own view: the trusted keys, the macros, the gateways,
     /// the RDP options and presets, and "Reset RDP defaults".
     fn list_card_row(&self, row: SettingRow) -> Element<'_, Message> {
@@ -1242,6 +1290,9 @@ impl Shell {
     pub(super) fn reset_setting(&mut self, row: SettingRow) -> Vec<Effect> {
         if let Some(field) = row.session_field() {
             self.session_typed[field.index()] = None;
+        }
+        if let Some(path) = row.tool_path() {
+            self.tool_paths_typed[path.index()] = None;
         }
         match row {
             SettingRow::FontSize => self.font_size_typed = None,

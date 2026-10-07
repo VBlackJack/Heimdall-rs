@@ -129,6 +129,34 @@ pub struct SshProfile {
     /// follows the Settings page's session logging, `Some` decides for this profile alone.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session_logging: Option<bool>,
+    /// Where its shell opens, as the C# `SshMode`: in a tab, or in `PuTTY`. Written down only
+    /// when it is `PuTTY`.
+    #[serde(default, skip_serializing_if = "SshMode::is_embedded")]
+    pub ssh_mode: SshMode,
+    /// Forward the server's X11 windows to this computer's X server (`putty -X`), as the C#
+    /// `SshX11Forwarding`: off unless turned on, written down only when on. Only `PuTTY`
+    /// forwards them for now.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub x11_forwarding: bool,
+}
+
+/// Where an SSH profile's shell opens, as the C# `SshMode`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SshMode {
+    /// In a tab of the application, the C# default.
+    #[default]
+    Embedded,
+    /// In `PuTTY`'s own window: no tab opens.
+    External,
+}
+
+impl SshMode {
+    /// Whether it is [`SshMode::Embedded`], the default.
+    #[must_use]
+    pub fn is_embedded(&self) -> bool {
+        *self == Self::Embedded
+    }
 }
 
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
@@ -205,6 +233,8 @@ impl SshGateway {
             sftp: false,
             legacy_algorithms: false,
             session_logging: None,
+            ssh_mode: SshMode::Embedded,
+            x11_forwarding: false,
         }
     }
 }

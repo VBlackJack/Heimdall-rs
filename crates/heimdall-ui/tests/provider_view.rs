@@ -300,6 +300,8 @@ fn the_profile_form_has_the_vault_entry_name_and_takes_typing() {
         sftp: false,
         legacy_algorithms: false,
         session_logging: None,
+        ssh_mode: heimdall_core::profile::SshMode::Embedded,
+        x11_forwarding: false,
     }]);
     store.save().expect("save");
     let mut shell = shell(dir.path());

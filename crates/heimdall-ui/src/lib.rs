@@ -163,6 +163,9 @@ pub fn run() -> iced::Result {
         .iter()
         .fold(daemon, |daemon, face| daemon.font(*face))
         .run();
+    // The X server started for X11 forwarding, if one was, stops with the application; one
+    // started elsewhere is left running.
+    heimdall_app::x11_server::shared().stop();
     // The folder owned until the windows are gone, then freed for the next launch.
     drop(instance);
     ran
