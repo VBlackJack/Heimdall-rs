@@ -4742,7 +4742,8 @@ impl Shell {
     /// The C# "SFTP browser" card: the browser on or off, and under it the pane opened beside
     /// an SSH shell and that pane following the shell's working folder, as the C# checkboxes
     /// it enables; then the file browser docked beside a local shell, whatever the SFTP
-    /// browser's state, as it reaches no server.
+    /// browser's state, as it reaches no server, and under it that browser following the
+    /// local shell's working folder.
     fn sftp_settings(&self) -> Element<'_, Message> {
         let sftp = self.app.settings().sftp_browser;
         let set = |sftp| Message::App(AppMessage::Settings(SettingsMessage::SftpBrowser(sftp)));
@@ -4775,6 +4776,16 @@ impl Shell {
                             ..sftp
                         })
                     }),
+                checkbox(sftp.follow_local_directory)
+                    .label(fl!("ui-settings-local-follow"))
+                    .on_toggle_maybe(sftp.dock_local_browser.then_some(
+                        move |follow_local_directory| {
+                            set(SftpBrowser {
+                                follow_local_directory,
+                                ..sftp
+                            })
+                        },
+                    )),
             ]
             .spacing(SPACING),
         )

@@ -1817,7 +1817,8 @@ pub struct Tab {
     /// of the strip is.
     pub layout: Option<split::Layout>,
     /// The working folder its shell last reported (OSC 7), an absolute path, the host left
-    /// aside: the server's word, untrusted. Kept for any terminal tab, SSH or local, for the
+    /// aside, or an absolute Windows path (OSC 9;9), never starting with `/`: the server's
+    /// word, untrusted. Kept for any terminal tab, SSH or local, for the
     /// panes that follow the shell; none until the shell reports one, and none after a
     /// reconnect, which opens a tab of its own.
     pub working_directory: Option<String>,

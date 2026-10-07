@@ -22,6 +22,21 @@
 //! A report is the server's word: it is kept only when it names an absolute path, valid
 //! UTF-8 once decoded, with no control character, and no longer than
 //! [`MAX_REPORT_LENGTH`].
+//!
+//! `ConEmu`'s report, OSC 9;9, `ESC ] 9 ; 9 ; path`, is read the same way, within the same
+//! bounds: Windows Terminal's shell integration and the usual Windows prompts send it
+//! rather than OSC 7. Its path is a Windows path as it is, not a URL: never
+//! percent-decoded, one pair of double quotes around it taken off. It is kept only when
+//! absolute, `C:\...` or `C:/...` or `\\server\share\...`, and given with backslashes, so
+//! it never starts with `/` as an OSC 7 path always does: a POSIX path is an OSC 7 report.
+//! The other OSC 9 forms, such as 9;4 for progress, are no report.
+//!
+//! On this computer, the path a local shell reports is the folder [`local_folder`] makes of
+//! it: on Windows, as [`windows_folder`] reads it, `/C:/Users/x` and `C:\Users\x` naming
+//! `C:\Users\x`; elsewhere, as [`unix_folder`] reads it, the path as it is when it is a
+//! POSIX one.
+
+use std::path::PathBuf;
 
 /// Escape, which opens every sequence; in an operating system command, it ends the
 /// command, as the first byte of ST.
@@ -45,6 +60,15 @@ const PARAMETER_SEPARATOR: u8 = b';';
 /// The number of the operating system command reporting the working folder.
 const WORKING_DIRECTORY_COMMAND: &[u8] = b"7";
 
+/// The number of `ConEmu`'s operating system commands, among them its working folder report.
+const CONEMU_COMMAND: &[u8] = b"9";
+
+/// What starts `ConEmu`'s working folder report, after its command number.
+const CONEMU_DIRECTORY: &[u8] = b"9;";
+
+/// What may surround the path of `ConEmu`'s report.
+const QUOTE: char = '"';
+
 /// The most digits of a command number read: past them, it is no command looked for.
 const MAX_COMMAND_DIGITS: usize = 4;
 
@@ -66,9 +90,19 @@ const HEX_RADIX: u32 = 16;
 /// The bits of one hexadecimal digit.
 const NIBBLE_BITS: u8 = 4;
 
+/// What ends a drive letter in a Windows path.
+const DRIVE_SUFFIX: char = ':';
+
+/// What separates the folders of a Windows path.
+const WINDOWS_SEPARATOR: char = '\\';
+
+/// What a Windows path to a network share starts with, before the server's name.
+const UNC_PREFIX: &str = "\\\\";
+
 /// The longest report read, in bytes, scheme and host included: a path as long as Linux
 /// takes one (4096 bytes), each byte escaped as three, and room for the scheme and a host.
-/// A longer one is no folder this side would follow, and is dropped whole.
+/// A longer one is no folder this side would follow, and is dropped whole. An OSC 9;9
+/// report is held to the same bound.
 pub const MAX_REPORT_LENGTH: usize = 16 * 1024;
 
 /// Where the scanner is in the output.
@@ -147,10 +181,13 @@ impl WorkingDirectoryScanner {
         None
     }
 
-    /// Reads `byte` of a command's number.
+    /// Reads `byte` of a command's number. An OSC 9 is read whole as a report would be,
+    /// its form told once it ends.
     fn step_command(&mut self, byte: u8) {
         self.state = match byte {
-            PARAMETER_SEPARATOR if self.command == WORKING_DIRECTORY_COMMAND => {
+            PARAMETER_SEPARATOR
+                if self.command == WORKING_DIRECTORY_COMMAND || self.command == CONEMU_COMMAND =>
+            {
                 self.report.clear();
                 State::Report
             }
@@ -195,11 +232,36 @@ impl WorkingDirectoryScanner {
         }
     }
 
-    /// The folder the report read names, when valid; the report let go.
+    /// The folder the report read names, when valid, read as its command's: OSC 7 or
+    /// `ConEmu`'s OSC 9;9; the report let go.
     fn finish(&mut self) -> Option<String> {
         let report = std::mem::take(&mut self.report);
-        directory(&report)
+        if self.command == CONEMU_COMMAND {
+            conemu_directory(&report)
+        } else {
+            directory(&report)
+        }
     }
+}
+
+/// The absolute Windows path `ConEmu`'s report `report` names, with backslashes: after `9;`,
+/// the path as it is, never percent-decoded, one pair of double quotes around it taken off.
+/// None for another OSC 9 form, such as 9;4 for progress, bytes that are not UTF-8, a
+/// control character or a double quote in the path, or a path that is not an absolute
+/// Windows one.
+fn conemu_directory(report: &[u8]) -> Option<String> {
+    let path = std::str::from_utf8(report.strip_prefix(CONEMU_DIRECTORY)?).ok()?;
+    let path = path
+        .strip_prefix(QUOTE)
+        .and_then(|inner| inner.strip_suffix(QUOTE))
+        .unwrap_or(path);
+    if path
+        .chars()
+        .any(|character| character.is_control() || character == QUOTE)
+    {
+        return None;
+    }
+    windows_absolute(path)
 }
 
 /// The absolute path `report` names, as the C# `tryParseOsc7Path`: after the scheme, the
@@ -236,4 +298,92 @@ fn hex_digit(digit: u8) -> Option<u8> {
     char::from(digit)
         .to_digit(HEX_RADIX)
         .and_then(|value| u8::try_from(value).ok())
+}
+
+/// The folder of this computer reported path `reported` names, as a local shell reports it:
+/// read as [`windows_folder`] reads it on Windows, as [`unix_folder`] elsewhere. None when
+/// it names no folder of this computer.
+#[must_use]
+pub fn local_folder(reported: &str) -> Option<PathBuf> {
+    #[cfg(windows)]
+    let folder = windows_folder(reported);
+    #[cfg(not(windows))]
+    let folder = unix_folder(reported);
+    folder.map(PathBuf::from)
+}
+
+/// The Windows path reported path `reported` names. An OSC 7 path is read as a Windows
+/// shell writes it in its file URL (RFC 8089): `/C:/Users/x` is `C:\Users\x`, `/c:` and
+/// `/c:/` the root of drive `c:`, and `//server/share/x`, from a `file:////server/share/x`
+/// report, the network share `\\server\share\x`. An OSC 9;9 path, already a Windows one,
+/// is taken as it is. None for any other path: one with no drive letter, as WSL's shells
+/// report their Linux folders, or a share with no server or no share named. A
+/// `file://server/share/x` report loses its host to the scanner, as the C# leaves it, and
+/// arrives as `/share/x`: refused too. Either separator is taken.
+#[must_use]
+pub fn windows_folder(reported: &str) -> Option<String> {
+    let separator = char::from(PATH_SEPARATOR);
+    match reported.strip_prefix(separator) {
+        // A file URL's path to a share: `//server/share`.
+        Some(rest) if rest.starts_with(separator) => windows_absolute(reported),
+        // A file URL's path to a drive: `/C:/x`, or `/C:` for its root.
+        Some(rest) => {
+            let mut chars = rest.chars();
+            let bare_drive = chars
+                .next()
+                .is_some_and(|drive| drive.is_ascii_alphabetic())
+                && chars.next() == Some(DRIVE_SUFFIX)
+                && chars.as_str().is_empty();
+            if bare_drive {
+                windows_absolute(&format!("{rest}{WINDOWS_SEPARATOR}"))
+            } else {
+                windows_absolute(rest)
+            }
+        }
+        // A Windows path as it is, as `ConEmu`'s report gives it.
+        None => windows_absolute(reported),
+    }
+}
+
+/// The absolute Windows path `path` is, with backslashes: a drive's, `C:\...`, or a
+/// share's, `\\server\share\...`, either separator taken. None for any other: a relative
+/// one, a drive with no separator after it, or a share with no server or no share named.
+fn windows_absolute(path: &str) -> Option<String> {
+    let path = backslashed(path);
+    let absolute = if let Some(share) = path.strip_prefix(UNC_PREFIX) {
+        let mut names = share.split(WINDOWS_SEPARATOR);
+        let (server, name) = (names.next()?, names.next()?);
+        !server.is_empty() && !name.is_empty()
+    } else {
+        let mut chars = path.chars();
+        chars
+            .next()
+            .is_some_and(|drive| drive.is_ascii_alphabetic())
+            && chars.next() == Some(DRIVE_SUFFIX)
+            && chars.next() == Some(WINDOWS_SEPARATOR)
+    };
+    absolute.then_some(path)
+}
+
+/// `path` with each `/` turned into the Windows separator.
+fn backslashed(path: &str) -> String {
+    let separator = char::from(PATH_SEPARATOR);
+    path.chars()
+        .map(|character| {
+            if character == separator {
+                WINDOWS_SEPARATOR
+            } else {
+                character
+            }
+        })
+        .collect()
+}
+
+/// The Unix path reported path `reported` names: the path as it is, when absolute. A
+/// Windows path, from an OSC 9;9 report, names none.
+#[must_use]
+pub fn unix_folder(reported: &str) -> Option<String> {
+    reported
+        .starts_with(char::from(PATH_SEPARATOR))
+        .then(|| reported.to_owned())
 }

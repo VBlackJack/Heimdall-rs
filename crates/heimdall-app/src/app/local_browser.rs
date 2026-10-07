@@ -31,6 +31,11 @@
 //! the script in a new tab of its own too, by its interpreter, once agreed, as the module
 //! `run_in_shell` says. Nothing the browser does reaches the shell.
 //!
+//! The other way round, the browser follows the shell: when the shell reports its working
+//! folder (OSC 7, or OSC 9;9 on Windows), the browser goes there while its "cwd" toggle
+//! is on, as the module `shell_directory` says. A shell that never reports leaves it
+//! where it is.
+//!
 //! Opening a file is as [`crate::local_open`] says: a text file in the external editor, a
 //! file that would run only once agreed, anything else with the system's default program.
 //!
@@ -50,7 +55,7 @@ use super::split::{Axis, MAX_PANES, Placement, SplitMessage};
 use super::{App, Dialog, Effect, Phase, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::external_edit::editor;
-use crate::files::{EntryKind, FilesPane, LocalPane, Side};
+use crate::files::{EntryKind, FilesPane, LocalPane, ShellFollow, Side};
 use crate::ids::{AttemptId, TabId};
 use crate::local_driver::LocalShell;
 use crate::local_open::{self, LocalOpening};
@@ -109,7 +114,12 @@ impl App {
         // Nothing to connect: shown at once.
         tab.phase = Phase::Connected;
         tab.reopen = Reopen::LocalBrowser;
-        tab.files = Some(Box::new(FilesPane::local_browser(start)));
+        let mut files = FilesPane::local_browser(start);
+        // Its "cwd" toggle, seeded as an SFTP pane's is.
+        files.follow = Some(ShellFollow::seeded(
+            self.settings.sftp_browser.follow_local_directory,
+        ));
+        tab.files = Some(Box::new(files));
         let active = self.active;
         self.tabs.push(tab);
         let mut effects = self.list(pane, Side::Local);

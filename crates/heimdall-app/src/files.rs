@@ -1024,13 +1024,15 @@ pub struct FilesPane {
     /// time: one per tab.
     pub batch: Option<Batch>,
     /// Following the working folder of the SSH shell beside it, as the C# "cwd" toggle of
-    /// an SFTP pane; none over FTP, which the C# never lets follow.
+    /// an SFTP pane; none over FTP, which the C# never lets follow. The local file browser
+    /// has one too, following the local shell it is docked beside.
     pub follow: Option<ShellFollow>,
 }
 
 /// An SFTP pane following the working folder its SSH shell reports (OSC 7), as the C#
-/// `SftpFollowSshDirectory` of a pane: on or off for this pane alone, seeded from the
-/// setting when the pane opens, its toggle never changing the setting.
+/// `SftpFollowSshDirectory` of a pane, or the local file browser following its local
+/// shell's: on or off for this pane alone, seeded from the setting when the pane opens, its
+/// toggle never changing the setting.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShellFollow {
     /// The pane goes where the shell reports it is.

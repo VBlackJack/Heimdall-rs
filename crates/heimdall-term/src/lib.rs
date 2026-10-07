@@ -19,7 +19,8 @@
 //! [`Terminal`] turns the server's output into a [`Screen`] to draw and replies to send
 //! back. [`encode_key`], [`encode_mouse`] and [`encode_paste`] turn user input into bytes
 //! for the server, following the modes the application set ([`Terminal::input_mode`]).
-//! [`FeedOutput::working_directory`] carries the working folder a shell reports (OSC 7).
+//! [`FeedOutput::working_directory`] carries the working folder a shell reports (OSC 7);
+//! [`local_folder`] reads it as a folder of this computer.
 
 pub mod keys;
 pub mod local;
@@ -45,4 +46,6 @@ pub use terminal::{
     Found, GridSize, Screen, ScreenCell, ScreenCursor, SelectionKind, Terminal, TerminalConfig,
     TitleChange, Underline,
 };
-pub use working_directory::{MAX_REPORT_LENGTH, WorkingDirectoryScanner};
+pub use working_directory::{
+    MAX_REPORT_LENGTH, WorkingDirectoryScanner, local_folder, unix_folder, windows_folder,
+};

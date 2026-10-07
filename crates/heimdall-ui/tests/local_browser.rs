@@ -15,11 +15,12 @@
  */
 
 //! The file browser docked beside a local shell, drawn headless: this computer's files
-//! alone, with no server pane, no toggle and nothing to send; its entries' menu offers the
+//! alone, with no server pane, no "Local files" toggle and nothing to send, and its own
+//! "cwd" toggle following the shell's working folder; its entries' menu offers the
 //! C# "Open in Explorer" and "Open in terminal", a new shell, and nothing that would reach
 //! a server or the shell beside it; a file that would run is asked about first; "Run in
 //! Shell" is offered for a script this platform runs alone, and asks first with the command
-//! whole; and the Settings page docks it or not.
+//! whole; and the Settings page docks it or not, and lets it follow its shell or not.
 
 mod common;
 
@@ -321,6 +322,80 @@ fn the_settings_card_docks_the_local_browser_or_not_whatever_the_sftp_browser() 
             dock_local_browser: false,
             ..sftp_off
         }]
+    );
+}
+
+/// The toggles a click on the browser's "cwd" button asks for, for browser `pane`.
+fn follow_clicks(shell: &Shell, pane: TabId) -> usize {
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.click("cwd").expect("its toggle");
+    ui.into_messages()
+        .filter(|message| {
+            matches!(
+                message,
+                Message::App(AppMessage::Files(FilesMessage::ToggleFollow { tab })) if *tab == pane
+            )
+        })
+        .count()
+}
+
+#[test]
+fn a_docked_local_browser_offers_its_cwd_toggle() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, pane) = docked(dir.path());
+    let mut shell = Shell::with_app(core);
+    let follows = |shell: &Shell| {
+        shell
+            .app()
+            .tab(pane)
+            .and_then(|tab| tab.files.as_deref())
+            .and_then(|files| files.follow.as_ref())
+            .map(|follow| follow.on)
+    };
+    assert_eq!(follows(&shell), Some(true), "on by default");
+    assert_eq!(follow_clicks(&shell, pane), 1);
+    let _ = shell.update(Message::App(AppMessage::Files(
+        FilesMessage::ToggleFollow { tab: pane },
+    )));
+    assert_eq!(follows(&shell), Some(false));
+    assert_eq!(
+        follow_clicks(&shell, pane),
+        1,
+        "off, and turned on the same way"
+    );
+}
+
+#[test]
+fn the_settings_card_lets_the_local_browser_follow_its_shell_while_it_docks() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    let label = "Local file browser follows the shell's working directory";
+    let defaults = SftpBrowser::default();
+    let off = SftpBrowser {
+        follow_local_directory: false,
+        ..defaults
+    };
+    let asked = clicked(&shell, label);
+    assert_eq!(asked, [off], "on by default");
+    for sftp in asked {
+        let _ = shell.update(Message::App(AppMessage::Settings(
+            SettingsMessage::SftpBrowser(sftp),
+        )));
+    }
+    assert_eq!(clicked(&shell, label), [defaults], "on again");
+    // No browser docked: nothing to follow.
+    let undocked = SftpBrowser {
+        dock_local_browser: false,
+        ..defaults
+    };
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        SettingsMessage::SftpBrowser(undocked),
+    )));
+    assert!(
+        clicked(&shell, label).is_empty(),
+        "under the docking, as the checkbox it depends on"
     );
 }
 
