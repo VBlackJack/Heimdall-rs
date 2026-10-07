@@ -55,5 +55,22 @@ line-number gutter and horizontal scrolling added.
 - Copyright 2019 Héctor Ramón, Iced contributors.
 - Licensed under the MIT license; its full text heads that file, and states what changed.
 
+## Dracula Theme palette
+
+The colours of the window's Dracula theme and of the terminals' Dracula colour scheme,
+reproduced in [`crates/heimdall-ui/src/themes.rs`](crates/heimdall-ui/src/themes.rs) and
+[`crates/heimdall-term/src/palette.rs`](crates/heimdall-term/src/palette.rs). The Drakul
+theme is derived from it, its comment colour lifted to be readable.
+
+- Copyright Zeno Rocha, [Dracula Theme](https://github.com/dracula/dracula-theme).
+- Licensed under the MIT license.
+
+## ThemeForge palettes
+
+The seventeen window themes are the palettes of ThemeForge 2.1.0, by Julien Bombled, under
+the Apache License, Version 2.0, as Heimdall-rs; Dracula aside, as said above. The Magellan
+theme adapts the background hue and the accent of the Magellan corporate identity:
+"Magellan" and its colours are trademarks of their owner, and no claim is made over them.
+
 Rust crates linked into the binaries are listed with their licences by
 `cargo deny list`; `deny.toml` holds the licences the project accepts.

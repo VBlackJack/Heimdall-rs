@@ -21,8 +21,8 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, anti_idle_interval_accepted, max_sessions_accepted,
-    rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
+    Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
+    max_sessions_accepted, rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
     reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
     session_log_retention_days_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
     ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted, terminal_font_family,
@@ -55,6 +55,10 @@ pub enum SettingsMessage {
     TerminalFontFamily(String),
     /// The language chosen, once the window shows it.
     Language(Language),
+    /// The window's theme.
+    Theme(AppTheme),
+    /// The window's accent.
+    Accent(Accent),
     /// SSH auto-reconnect on or off.
     SshAutoReconnect(bool),
     /// Attempts of an SSH auto-reconnect; one out of the accepted range is ignored.
@@ -250,6 +254,8 @@ impl App {
                 self.settings.terminal_font_family = terminal_font_family(family);
             }
             SettingsMessage::Language(language) => self.settings.language = Some(*language),
+            SettingsMessage::Theme(theme) => self.settings.theme = *theme,
+            SettingsMessage::Accent(accent) => self.settings.accent = *accent,
             SettingsMessage::SshAutoReconnect(on) => self.settings.ssh_auto_reconnect = *on,
             SettingsMessage::PowerShellExecutionPolicy(policy) => {
                 self.settings.powershell_execution_policy = *policy;

@@ -57,6 +57,9 @@ pub struct Palette {
     pub background: Rgb,
     /// Cursor colour.
     pub cursor: Rgb,
+    /// Background of selected cells: the C# scheme's selection colour, laid over the
+    /// background as xterm.js lays it.
+    pub selection: Rgb,
     /// Colours 0 to 15: black, red, green, yellow, blue, magenta, cyan, white, then bright.
     pub ansi: [Rgb; ANSI_COLORS],
 }
@@ -69,6 +72,7 @@ impl Palette {
             foreground: rgb(0x00F8_F8F2),
             background: rgb(0x0028_2A36),
             cursor: rgb(0x00F8_F8F2),
+            selection: rgb(0x0045_4E6D),
             ansi: [
                 rgb(0x0021_222C),
                 rgb(0x00FF_5555),
@@ -98,6 +102,7 @@ impl Palette {
             foreground: rgb(0x00FF_FFFF),
             background: rgb(0x0000_0000),
             cursor: rgb(0x00FF_FFFF),
+            selection: rgb(0x004D_4D4D),
             ansi: [
                 rgb(0x002E_3436),
                 rgb(0x00CC_0000),
@@ -126,6 +131,7 @@ impl Palette {
             foreground: rgb(0x0083_9496),
             background: rgb(0x0000_2B36),
             cursor: rgb(0x0093_A1A1),
+            selection: rgb(0x000B_4865),
             ansi: [
                 rgb(0x0007_3642),
                 rgb(0x00DC_322F),
@@ -154,6 +160,7 @@ impl Palette {
             foreground: rgb(0x00F8_F8F2),
             background: rgb(0x0027_2822),
             cursor: rgb(0x00F8_F8F0),
+            selection: rgb(0x003F_3E36),
             ansi: [
                 rgb(0x0027_2822),
                 rgb(0x00F9_2672),
@@ -182,6 +189,7 @@ impl Palette {
             foreground: rgb(0x00D8_DEE9),
             background: rgb(0x002E_3440),
             cursor: rgb(0x00D8_DEE9),
+            selection: rgb(0x003D_4555),
             ansi: [
                 rgb(0x003B_4252),
                 rgb(0x00BF_616A),
@@ -305,6 +313,40 @@ mod tests {
         assert_eq!(palette.indexed(46), rgb(0, 255, 0));
         assert_eq!(palette.indexed(110), rgb(135, 175, 215));
         assert_eq!(palette.indexed(231), rgb(255, 255, 255));
+    }
+
+    /// `over` with `color` laid on it at `alpha` out of 255, rounded as xterm.js blends.
+    fn blend(over: Rgb, color: Rgb, alpha: u16) -> Rgb {
+        let mix = |under: u8, top: u8| {
+            let under = i32::from(under);
+            let delta = (i32::from(top) - under) * i32::from(alpha);
+            let rounded = (delta * 2 + 255).div_euclid(2 * 255);
+            u8::try_from(under + rounded).expect("a channel")
+        };
+        Rgb {
+            r: mix(over.r, color.r),
+            g: mix(over.g, color.g),
+            b: mix(over.b, color.b),
+        }
+    }
+
+    #[test]
+    fn the_selection_is_the_csharp_schemes_laid_over_their_background() {
+        // The C# themes' `selectionBackground`, alpha out of 255 as xterm.js parses it; the
+        // C# Default scheme takes xterm.js's own, white at 0x4D.
+        for (palette, color, alpha) in [
+            (Palette::dracula(), rgb(98, 114, 164), 128),
+            (Palette::solarized_dark(), rgb(38, 139, 210), 77),
+            (Palette::monokai(), rgb(73, 72, 62), 179),
+            (Palette::nord(), rgb(67, 76, 94), 179),
+            (Palette::standard(), rgb(255, 255, 255), 77),
+        ] {
+            assert_eq!(
+                palette.selection,
+                blend(palette.background, color, alpha),
+                "{palette:?}"
+            );
+        }
     }
 
     #[test]

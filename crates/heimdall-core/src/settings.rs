@@ -117,6 +117,170 @@ impl BroadcastScope {
     }
 }
 
+/// The window's theme, as the C# `DefaultTheme` names the `ThemeForge` palettes. Apart
+/// from the terminals' colour scheme, as in the C#.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum AppTheme {
+    /// The canonical Dracula palette.
+    Dracula,
+    /// Dracula with its comment colour lifted to be readable: the C# default.
+    #[default]
+    Drakul,
+    /// Warm umber.
+    Striga,
+    /// Warm amber.
+    Cinder,
+    /// Fern green.
+    Bracken,
+    /// Petrol teal.
+    Tarn,
+    /// Slate cyan.
+    Mortis,
+    /// Slate blue.
+    Slate,
+    /// Navy with an indigo accent.
+    Magellan,
+    /// Deep indigo.
+    Voivode,
+    /// Velvet violet.
+    Carmilla,
+    /// Slate mauve.
+    Whitby,
+    /// Rose.
+    Vesper,
+    /// Warm cream, light.
+    Parchment,
+    /// Cool ivory, light.
+    Folio,
+    /// Green moved to viridian.
+    Wormwood,
+    /// Orange moved to amber.
+    Sconce,
+}
+
+impl AppTheme {
+    /// Every theme, in the order of the C# list.
+    pub const ALL: [Self; 17] = [
+        Self::Dracula,
+        Self::Drakul,
+        Self::Striga,
+        Self::Cinder,
+        Self::Bracken,
+        Self::Tarn,
+        Self::Mortis,
+        Self::Slate,
+        Self::Magellan,
+        Self::Voivode,
+        Self::Carmilla,
+        Self::Whitby,
+        Self::Vesper,
+        Self::Parchment,
+        Self::Folio,
+        Self::Wormwood,
+        Self::Sconce,
+    ];
+
+    /// The name the file holds: the C# one.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Dracula => "Dracula",
+            Self::Drakul => "Drakul",
+            Self::Striga => "Striga",
+            Self::Cinder => "Cinder",
+            Self::Bracken => "Bracken",
+            Self::Tarn => "Tarn",
+            Self::Mortis => "Mortis",
+            Self::Slate => "Slate",
+            Self::Magellan => "Magellan",
+            Self::Voivode => "Voivode",
+            Self::Carmilla => "Carmilla",
+            Self::Whitby => "Whitby",
+            Self::Vesper => "Vesper",
+            Self::Parchment => "Parchment",
+            Self::Folio => "Folio",
+            Self::Wormwood => "Wormwood",
+            Self::Sconce => "Sconce",
+        }
+    }
+
+    /// The theme named `name`, whatever its case; the default for a name not known, as the
+    /// C# load.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|theme| theme.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
+    }
+}
+
+/// The colour the window's accent takes, as the C# `AccentTint`: the theme's own, or one of
+/// its colours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Accent {
+    /// The theme's own accent.
+    #[default]
+    Default,
+    /// The theme's blue.
+    Blue,
+    /// The theme's cyan.
+    Cyan,
+    /// The theme's green.
+    Green,
+    /// The theme's orange.
+    Orange,
+    /// The theme's pink.
+    Pink,
+    /// The theme's purple.
+    Purple,
+    /// The theme's red.
+    Red,
+    /// The theme's yellow.
+    Yellow,
+}
+
+impl Accent {
+    /// Every accent, in the order of the C# list.
+    pub const ALL: [Self; 9] = [
+        Self::Default,
+        Self::Blue,
+        Self::Cyan,
+        Self::Green,
+        Self::Orange,
+        Self::Pink,
+        Self::Purple,
+        Self::Red,
+        Self::Yellow,
+    ];
+
+    /// The name the file holds: the C# one.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Default => "Default",
+            Self::Blue => "Blue",
+            Self::Cyan => "Cyan",
+            Self::Green => "Green",
+            Self::Orange => "Orange",
+            Self::Pink => "Pink",
+            Self::Purple => "Purple",
+            Self::Red => "Red",
+            Self::Yellow => "Yellow",
+        }
+    }
+
+    /// The accent named `name`, whatever its case; the default for a name not known, as the
+    /// C# load.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|accent| accent.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
+    }
+}
+
 /// Which SSH agent's keys are offered first, or alone, as the C# `SshAgentPreference`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AgentPreference {
@@ -306,6 +470,10 @@ pub struct Settings {
     pub terminal_font_family: String,
     /// The language chosen; `None` follows the desktop's.
     pub language: Option<Language>,
+    /// The window's theme, as the C# `DefaultTheme`: Drakul unless chosen.
+    pub theme: AppTheme,
+    /// The window's accent, as the C# `AccentTint`: the theme's own unless chosen.
+    pub accent: Accent,
     /// Wrong master passwords in a row when the application starts, kept across runs as
     /// the C# startup gate keeps them: quitting does not give the tries back.
     pub vault_unlock: Lockout,
@@ -677,6 +845,8 @@ impl Default for Settings {
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             terminal_font_family: TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
             language: None,
+            theme: AppTheme::default(),
+            accent: Accent::default(),
             vault_unlock: Lockout::default(),
             pin: None,
             pin_unlock: Lockout::default(),
@@ -903,6 +1073,12 @@ struct GeneralSection {
     /// desktop's language is followed.
     #[serde(default)]
     language: Option<String>,
+    /// The window's theme by its C# name; absent is the C# default, Drakul.
+    #[serde(default)]
+    theme: Option<String>,
+    /// The window's accent by its C# name; absent is the theme's own.
+    #[serde(default)]
+    accent: Option<String>,
     /// Absent is the C# default: collapsed.
     #[serde(default)]
     collapse_tunnels_panel: Option<bool>,
@@ -1180,6 +1356,18 @@ impl Settings {
                 .language
                 .as_deref()
                 .and_then(Language::from_code),
+            theme: file
+                .general
+                .theme
+                .as_deref()
+                .map(AppTheme::named)
+                .unwrap_or_default(),
+            accent: file
+                .general
+                .accent
+                .as_deref()
+                .map(Accent::named)
+                .unwrap_or_default(),
         }
     }
 
@@ -1230,6 +1418,8 @@ impl Settings {
             },
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),
+                theme: Some(self.theme.name().to_owned()),
+                accent: Some(self.accent.name().to_owned()),
                 collapse_tunnels_panel: Some(self.collapse_tunnels_panel),
                 prevent_sleep: Some(self.prevent_sleep),
                 max_sessions: Some(self.max_sessions),

@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime};
 use heimdall_core::lockout::{LOCKOUT_DURATION, MAX_FAILED_ATTEMPTS};
 use heimdall_core::pin::PinHash;
 use heimdall_core::settings::{
-    BroadcastScope, ColorScheme, SETTINGS_FILE_NAME, Settings, settings_path,
+    Accent, AppTheme, BroadcastScope, ColorScheme, SETTINGS_FILE_NAME, Settings, settings_path,
 };
 use heimdall_core::store::StoreError;
 
@@ -91,6 +91,106 @@ fn a_name_is_read_whatever_its_case_and_an_unknown_one_is_dracula() {
         ColorScheme::ALL.map(ColorScheme::name),
         ["Default", "Dracula", "Solarized Dark", "Monokai", "Nord"]
     );
+}
+
+#[test]
+fn the_theme_and_accent_are_drakul_and_its_own_until_chosen_then_kept_by_their_csharp_names() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.theme, AppTheme::Drakul, "as the C# default");
+    assert_eq!(settings.accent, Accent::Default);
+    for theme in AppTheme::ALL {
+        for accent in Accent::ALL {
+            Settings {
+                theme,
+                accent,
+                ..Settings::default()
+            }
+            .save(&path)
+            .expect("saved");
+            let read = Settings::load(&path).expect("read");
+            assert_eq!((read.theme, read.accent), (theme, accent));
+        }
+    }
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(text.contains("theme = \"Sconce\""), "{text}");
+    assert!(text.contains("accent = \"Yellow\""), "{text}");
+    assert_eq!(
+        AppTheme::ALL.map(AppTheme::name),
+        [
+            "Dracula",
+            "Drakul",
+            "Striga",
+            "Cinder",
+            "Bracken",
+            "Tarn",
+            "Mortis",
+            "Slate",
+            "Magellan",
+            "Voivode",
+            "Carmilla",
+            "Whitby",
+            "Vesper",
+            "Parchment",
+            "Folio",
+            "Wormwood",
+            "Sconce"
+        ]
+    );
+    assert_eq!(
+        Accent::ALL.map(Accent::name),
+        [
+            "Default", "Blue", "Cyan", "Green", "Orange", "Pink", "Purple", "Red", "Yellow"
+        ]
+    );
+}
+
+#[test]
+fn a_theme_or_accent_is_read_whatever_its_case_and_an_unknown_one_is_the_default() {
+    let dir = tempfile::tempdir().expect("dir");
+    let read = |text: &str| {
+        let settings = written(dir.path(), text);
+        (settings.theme, settings.accent)
+    };
+    assert_eq!(
+        read("version = 1\n[general]\ntheme = \" parchment \"\naccent = \"CYAN\"\n"),
+        (AppTheme::Parchment, Accent::Cyan)
+    );
+    assert_eq!(
+        read("version = 1\n[general]\ntheme = \"Dracula\"\n"),
+        (AppTheme::Dracula, Accent::Default),
+        "the C# names its root palette Dracula too"
+    );
+    assert_eq!(
+        read("version = 1\n[general]\ntheme = \"Alucard\"\naccent = \"Teal\"\n"),
+        (AppTheme::Drakul, Accent::Default)
+    );
+    assert_eq!(
+        read("version = 1\n"),
+        (AppTheme::Drakul, Accent::Default),
+        "no section"
+    );
+}
+
+#[test]
+fn the_theme_and_accent_travel_with_an_export() {
+    let settings = Settings {
+        theme: AppTheme::Folio,
+        accent: Accent::Orange,
+        ..Settings::default()
+    };
+    let (text, _) = settings.export(None, false);
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.theme, AppTheme::Folio);
+    assert_eq!(read.settings.accent, Accent::Orange);
+    let keys: Vec<&str> = read
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect();
+    assert!(keys.contains(&"general.theme"), "{keys:?}");
+    assert!(keys.contains(&"general.accent"), "{keys:?}");
 }
 
 #[test]
