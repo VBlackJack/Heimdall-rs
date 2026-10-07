@@ -265,6 +265,23 @@ impl App {
         }
     }
 
+    /// The server and account a password saved now for profile `id` is for, from the
+    /// profile as it is saved, as the editor computes it; `None` for a protocol whose
+    /// password is not saved, or a profile not found.
+    pub(super) fn stored_password_endpoint(&self, id: &ProfileId) -> Option<Endpoint> {
+        let store = &self.store;
+        let profile = if let Some(found) = store.ssh_profiles().iter().find(|p| p.id == *id) {
+            DraftProfile::Ssh(found.clone())
+        } else if let Some(found) = store.rdp_profiles().iter().find(|p| p.id == *id) {
+            DraftProfile::Rdp(found.clone())
+        } else if let Some(found) = store.vnc_profiles().iter().find(|p| p.id == *id) {
+            DraftProfile::Vnc(found.clone())
+        } else {
+            DraftProfile::Ftp(store.ftp_profiles().iter().find(|p| p.id == *id)?.clone())
+        };
+        password_endpoint(&profile)
+    }
+
     /// Deletes a profile. Its open tabs keep their own copy and stay as they are.
     pub(super) fn delete_profile(&mut self, id: &ProfileId) {
         match self.store.apply(|store| store.remove(id)) {

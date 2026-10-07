@@ -74,14 +74,15 @@ pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;
 pub use app::split;
 pub use app::{
-    AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkRefusal, CertificateContext,
-    CitrixImportOutcome, ConflictRow, ConnectAs, Dialog, DropTarget, Effect, ExportOutcome,
-    FileKind, FilesMessage, FilterMessage, FloatMessage, Floating, FolderMessage, FolderNaming,
-    GatewayBadge, HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview, IDLE_POLL,
-    ImportFile, ImportSummary, KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
-    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice,
-    OpenedVault, OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage,
-    PinMode, PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
+    AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkPasswordRefusal, BulkPasswordSkips,
+    BulkRefusal, CertificateContext, CitrixImportOutcome, ConflictRow, ConnectAs, Dialog,
+    DropTarget, Effect, ExportOutcome, FileKind, FilesMessage, FilterMessage, FloatMessage,
+    Floating, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage,
+    HostKeysOutcome, HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary, KeyInput,
+    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
+    OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
+    PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,
     ProfileSummary, Prompt, ProviderAnswer, ProviderMessage, ProviderRequest, QuickResult,
     RDP_EXTENSION, RdpMessage, RdpNames, RdpOutcome, RdpPreview, RdpRow, ResolutionChoice,
     RestoreDialog, RestoreRow, Retry, ScriptConfirmation, SelectionMessage, SessionState,
@@ -89,7 +90,8 @@ pub use app::{
     SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
     TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
     UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, WHEEL_LINES, master_password_problem, open_vault, search_folded, should_auto_lock,
+    VaultStatus, WHEEL_LINES, bulk_password_refusal, master_password_problem, open_vault,
+    search_folded, should_auto_lock,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};

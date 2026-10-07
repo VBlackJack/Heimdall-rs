@@ -387,6 +387,29 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-status-bulk-username-updated", count = (*count))
             }
             Notice::BulkUsernameUnchanged => fl!("ui-status-bulk-username-unchanged"),
+            Notice::BulkPasswordUpdated {
+                count,
+                winrm_skipped,
+            } => {
+                let updated = fl!("ui-status-bulk-password-updated", count = (*count));
+                if *winrm_skipped == 0 {
+                    updated
+                } else {
+                    fl!(
+                        "ui-status-bulk-password-updated-with-skipped",
+                        updated = updated,
+                        skipped = fl!("ui-bulk-password-skipped-winrm", count = (*winrm_skipped))
+                    )
+                }
+            }
+            Notice::BulkPasswordPartial { count, total } => fl!(
+                "ui-status-bulk-password-partial",
+                count = (*count),
+                total = (*total)
+            ),
+            Notice::BulkPasswordWinRmSkipped(count) => {
+                fl!("ui-bulk-password-skipped-winrm", count = (*count))
+            }
             Notice::KnownHostsExported {
                 count,
                 path,
