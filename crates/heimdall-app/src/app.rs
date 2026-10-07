@@ -177,7 +177,7 @@ pub use sessions_import::{
 pub use settings_transfer::SettingsTransferMessage;
 pub use status::{Notice, SessionState, SessionStatus};
 pub use tab_menu::{TabGroup, TabMenuMessage};
-pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary};
+pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
 pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};

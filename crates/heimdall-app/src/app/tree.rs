@@ -133,9 +133,9 @@ impl ProfileSummary {
         ]
         .into_iter()
         .flatten()
-        .map(folded)
+        .map(search_folded)
         .collect();
-        folded(term)
+        search_folded(term)
             .split_whitespace()
             .all(|word| fields.iter().any(|field| field.contains(word)))
     }
@@ -143,8 +143,10 @@ impl ProfileSummary {
 
 /// `text` as the search compares it, as the C# `NormalizeSearchTerm`: trimmed, each
 /// character decomposed and its combining marks dropped, so that an accented and a plain
-/// spelling meet on the plain one, then upper-cased.
-fn folded(text: &str) -> String {
+/// spelling meet on the plain one, then upper-cased. The tree's search and the Settings
+/// page's both compare through it.
+#[must_use]
+pub fn search_folded(text: &str) -> String {
     text.trim()
         .nfd()
         .filter(|c| !is_combining_mark(*c))
