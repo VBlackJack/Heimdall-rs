@@ -2556,6 +2556,7 @@ dependencies = [
  "keepawake",
  "log",
  "png",
+ "rcgen",
  "rfd",
  "rust-embed",
  "tempfile",

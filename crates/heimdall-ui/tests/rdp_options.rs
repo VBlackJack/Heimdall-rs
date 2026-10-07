@@ -14,7 +14,8 @@
  * limitations under the License.
  */
 
-//! The audio mode and colour depth lists of an RDP profile's form.
+//! The audio mode and colour depth lists of an RDP profile's form, and the application's RDP
+//! options on the settings page.
 //!
 //! A list draws its value and its entries without a text widget, so they are reached by
 //! position: a list lies under its label, which can be found. Each entry is found by
@@ -23,9 +24,11 @@
 
 mod common;
 
-use heimdall_app::Message as AppMessage;
 use heimdall_app::profile_draft::{DraftProtocol, ProfileChoice, ProfileDraft, ProfileField};
-use heimdall_core::profile::{AudioPlayback, ColorDepth, Experience, RdpOptions, Resolution};
+use heimdall_app::{Message as AppMessage, SettingsMessage};
+use heimdall_core::profile::{
+    AudioPlayback, ColorDepth, Experience, RdpDefaults, RdpOptions, Resolution,
+};
 use heimdall_ui::shell::Message;
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Point, Settings, Size, mouse};
@@ -263,6 +266,130 @@ fn the_visual_experience_boxes_are_the_csharp_ones_each_sending_its_change() {
             "{label}"
         );
     }
+}
+
+/// A window tall enough for every box of the RDP settings.
+const SETTINGS_WINDOW: Size = Size::new(600.0, 1000.0);
+
+/// The application's RDP options, as the settings page shows them.
+fn rdp_settings(defaults: RdpDefaults) -> common::Drawn<'static> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    common::simulator(
+        settings,
+        SETTINGS_WINDOW,
+        heimdall_ui::rdp_options::defaults(defaults),
+    )
+}
+
+/// What ticking or clearing a box of the RDP settings changes.
+type Change = fn(&mut RdpDefaults);
+
+/// The RDP settings' boxes in the C# page's order, each with what ticking or clearing it
+/// changes.
+fn rdp_setting_boxes() -> [(&'static str, Change); 16] {
+    [
+        ("Allow dynamic resolution updates", |d| {
+            d.dynamic_resolution = !d.dynamic_resolution;
+        }),
+        ("Multi-monitor", |d| {
+            d.multi_monitor = !d.multi_monitor;
+        }),
+        ("Audio capture (microphone)", |d| {
+            d.microphone = !d.microphone;
+        }),
+        ("Redirect clipboard", |d| {
+            d.redirect_clipboard = !d.redirect_clipboard;
+        }),
+        ("Redirect drives", |d| {
+            d.redirect_drives = !d.redirect_drives;
+        }),
+        ("Redirect printers", |d| {
+            d.redirect_printers = !d.redirect_printers;
+        }),
+        ("Redirect COM ports", |d| {
+            d.redirect_com_ports = !d.redirect_com_ports;
+        }),
+        ("Redirect smart cards", |d| {
+            d.redirect_smart_cards = !d.redirect_smart_cards;
+        }),
+        ("Redirect webcam", |d| {
+            d.redirect_webcam = !d.redirect_webcam;
+        }),
+        ("Redirect USB devices", |d| {
+            d.redirect_usb = !d.redirect_usb;
+        }),
+        ("Keep bitmap cache on disk", |d| {
+            d.bitmap_caching = !d.bitmap_caching;
+        }),
+        ("Compression", |d| {
+            d.compression = !d.compression;
+        }),
+        ("Hardware-accelerated rendering", |d| {
+            d.hardware_acceleration = !d.hardware_acceleration;
+        }),
+        ("Auto-reconnect", |d| {
+            d.auto_reconnect = !d.auto_reconnect;
+        }),
+        ("Enable Network Level Authentication", |d| {
+            d.nla = !d.nla;
+        }),
+        ("Strict server authentication", |d| {
+            d.strict_server_authentication = !d.strict_server_authentication;
+        }),
+    ]
+}
+
+#[test]
+fn the_rdp_settings_show_every_csharp_default_in_its_order_each_sending_its_change() {
+    let mut above = f32::MIN;
+    for (label, _) in rdp_setting_boxes() {
+        let top = rdp_settings(RdpDefaults::default())
+            .find(label)
+            .expect(label)
+            .bounds()
+            .y;
+        assert!(
+            top > above,
+            "{label} below the one before, as in the C# page"
+        );
+        above = top;
+    }
+    for (label, change) in rdp_setting_boxes() {
+        let mut ui = rdp_settings(RdpDefaults::default());
+        ui.click(label).expect(label);
+        let mut expected = RdpDefaults::default();
+        change(&mut expected);
+        let sent = format!(
+            "{:?}",
+            Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(expected)))
+        );
+        assert!(
+            ui.into_messages()
+                .any(|message| format!("{message:?}") == sent),
+            "{label}"
+        );
+    }
+}
+
+#[test]
+fn strict_server_authentication_is_offered_only_with_network_level_authentication() {
+    let without_nla = RdpDefaults {
+        nla: false,
+        ..RdpDefaults::default()
+    };
+    let mut ui = rdp_settings(without_nla);
+    ui.click("Strict server authentication")
+        .expect("shown, greyed out");
+    assert!(
+        !ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(_)))
+        )),
+        "as the C# page: not without NLA"
+    );
 }
 
 #[test]

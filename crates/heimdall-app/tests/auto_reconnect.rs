@@ -343,6 +343,7 @@ fn a_question_on_the_way_back_stops_the_attempts() {
         again,
         ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

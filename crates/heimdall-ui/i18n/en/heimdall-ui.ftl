@@ -303,6 +303,7 @@ ui-dialog-paste-dangerous-body = The text holds { $command }, a command that can
 ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
+ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged.
 ui-dialog-import-skipped = Left out:
 ui-dialog-import-host-keys = Trusted SSH servers carried over: { $keys ->
     [one] { $keys } key
@@ -788,10 +789,21 @@ ui-profile-experience-font-smoothing = Enable font smoothing (ClearType)
 ui-profile-experience-composition = Enable desktop composition
 ui-profile-rdp-follow-defaults = Use global RDP defaults
 ui-profile-rdp-defaults-banner = This server is using your global RDP defaults. Uncheck "Use global RDP defaults" to set per-server options.
-ui-profile-rdp-defaults-not-in-effect = Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.
+ui-profile-rdp-defaults-not-in-effect = Colours, sound, clipboard, drives, Network Level Authentication, strict server authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.
 ui-settings-rdp-defaults = RDP Defaults
 ui-settings-rdp-defaults-hint = The options of every RDP server that uses the global defaults.
 ui-settings-rdp-auto-reconnect = Auto-reconnect
+ui-settings-rdp-multi-monitor = Multi-monitor
+ui-settings-rdp-audio-capture = Audio capture (microphone)
+ui-settings-rdp-redirect-printers = Redirect printers
+ui-settings-rdp-redirect-com-ports = Redirect COM ports
+ui-settings-rdp-redirect-smart-cards = Redirect smart cards
+ui-settings-rdp-redirect-webcam = Redirect webcam
+ui-settings-rdp-redirect-usb = Redirect USB devices
+ui-settings-rdp-bitmap-cache = Keep bitmap cache on disk
+ui-settings-rdp-compression = Compression
+ui-settings-rdp-hardware-acceleration = Hardware-accelerated rendering
+ui-settings-rdp-strict-server-auth = Strict server authentication
 ui-profile-toggle-admin = Run as administrator session (/admin)
 # An RDP profile's sound and colours, as the C# Display & Audio card.
 ui-profile-audio = Audio mode
@@ -946,6 +958,15 @@ ui-error-report-header = Heimdall { $protocol } error report
 ui-error-report-time = Time:
 ui-error-report-server = Server:
 ui-error-report-app = App:
+ui-error-report-tunnel = Tunnel:
+ui-error-report-tunnel-route = via { $route }
+ui-error-report-tunnel-hops = { $count ->
+    [one] through { $count } SSH gateway
+   *[other] through { $count } SSH gateways
+}
+ui-error-report-session = Session:
+ui-error-report-session-duration = connected for { $duration }
+ui-error-report-duration = { $minutes }m { $seconds }s
 
 ## How a connection failed, as the C# Heimdall tells them apart, and why a server ended one.
 ui-error-network-refused = Connection refused.
@@ -2030,10 +2051,25 @@ ui-nav-quick-connect-tooltip = Quick connect (Ctrl+K)
 ui-profile-toggle-strict-server-auth = Require server identity validation
 ui-error-rdp-server-not-authenticated = The server's identity could not be validated: its certificate is not trusted yet and this computer's certificate authorities do not vouch for it. Strict server authentication refuses it.
 ui-certificate-subject = Subject: { $subject }
+ui-certificate-issuer = Issuer: { $issuer }
+ui-certificate-validity = Valid from / until: { $from } - { $until }{ $period ->
+    [expired] {" "}(expired)
+    [future] {" "}(not yet valid)
+   *[current] {""}
+}
+ui-certificate-validation-issue = Validation issue: { $issue }
+ui-certificate-issue-self-signed = The certificate is self-signed: no certificate authority vouches for it.
+ui-certificate-issue-unknown-issuer = It was issued by a certificate authority this computer does not trust.
+ui-certificate-issue-expired = The certificate has expired.
+ui-certificate-issue-not-yet-valid = The certificate is not valid yet.
+ui-certificate-issue-name-mismatch = The certificate was issued for another name than this server's.
+ui-certificate-issue-revoked = Its issuer has revoked the certificate.
+ui-certificate-issue-no-system-store = This computer has no certificate authority to check it against.
+ui-certificate-issue-other = The certificate did not pass this computer's validation.
 ui-session-copy-anonymous-button = Copy anonymized report
 ui-error-report-anonymous-header = { $protocol } diagnostic report (anonymized)
 ui-error-report-kind = Failure:
-ui-error-report-anonymous-hint = Includes the time, the application version and the kind of failure. Excludes server addresses, account names and error message text.
+ui-error-report-anonymous-hint = Includes the time, the number of gateways, how long the session was connected, the application version and the kind of failure. Excludes server addresses, gateway names, account names and error message text.
 ui-hostkey-algorithm = Algorithm: { $algorithm }
 ui-tunnels-column-started = Started
 ui-tunnels-manage-gateways = Manage gateways in Settings...

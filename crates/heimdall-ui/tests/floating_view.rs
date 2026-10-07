@@ -293,6 +293,7 @@ fn a_certificate_question_in_the_window_names_its_tab_as_the_csharp_one() {
         attempt,
         event: ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"

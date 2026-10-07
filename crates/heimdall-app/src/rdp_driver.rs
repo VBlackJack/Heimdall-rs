@@ -227,6 +227,8 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
                     fingerprint: certificate.fingerprint,
                     subject: Some(certificate.subject.clone())
                         .filter(|subject| !subject.trim().is_empty()),
+                    // The C# RDP question shows the subject alone.
+                    details: None,
                 })
                 .await;
             return;
@@ -304,6 +306,8 @@ fn rdp_config(request: &RdpRequest) -> RdpConfig {
         trusted_for_run: request.trusted_for_run.clone(),
         options: profile.options,
         several_servers: profile.several_servers,
+        // The profile in effect: its own choice, or the application's default when it follows
+        // them, as the C# `RdpProfileResolver` resolves it.
         strict_server_authentication: profile.extras.strict_server_authentication,
         kerberos: request.route.is_empty(),
         time_zone: crate::time_zone::local(),

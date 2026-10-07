@@ -25,6 +25,7 @@ use heimdall_ssh::{
 };
 
 use heimdall_files::RemoteSession;
+use heimdall_files::ftps_trust::ValidationIssue;
 use heimdall_rdp::{
     CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation, SaveEnd,
 };
@@ -82,6 +83,18 @@ impl fmt::Debug for Answer {
     }
 }
 
+/// What the FTPS certificate question shows of the certificate beside its subject, as the C#
+/// prompt: its issuer, when it holds, and why the system did not vouch for it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CertificateDetails {
+    /// The issuer, made safe to show.
+    pub issuer: String,
+    /// When it holds.
+    pub validity: heimdall_rdp::Validity,
+    /// Why this computer's certificate authorities did not vouch for it.
+    pub issue: ValidationIssue,
+}
+
 /// One step of a connection attempt.
 #[derive(Clone)]
 pub enum ConnectionEvent {
@@ -113,6 +126,9 @@ pub enum ConnectionEvent {
         fingerprint: Fingerprint,
         /// The certificate's subject, made safe, when it was read.
         subject: Option<String>,
+        /// Its issuer, validity and validation issue, for an FTPS server, as the C# FTPS
+        /// prompt shows them; the RDP question shows none.
+        details: Option<Box<CertificateDetails>>,
     },
     /// The RDP session is open.
     RdpReady {

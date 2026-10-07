@@ -6127,16 +6127,22 @@ impl Shell {
             .profile
             .endpoint()
             .map(|(host, port)| format!("{} ({host}:{port})", tab.profile.name()));
+        let route = self.app.tab_route(tab);
         Some(report::error_report(
             self.app.tab_kind(tab).label(),
             server.as_deref(),
+            report::Session {
+                route: &route,
+                lasted: tab.session_lasted(),
+            },
             &texts::error(error),
             now,
         ))
     }
 
-    /// The anonymized report of tab `id`'s failure at `now`: when, which version, the kind
-    /// of failure; `None` unless its session failed.
+    /// The anonymized report of tab `id`'s failure at `now`: when, how many gateways, how
+    /// long it was connected, which version, the kind of failure; `None` unless its session
+    /// failed.
     #[must_use]
     pub fn anonymous_report(&self, id: TabId, now: std::time::SystemTime) -> Option<String> {
         let tab = self.app.tab(id)?;
@@ -6149,8 +6155,13 @@ impl Shell {
             .split(|c: char| !c.is_ascii_alphanumeric())
             .next()
             .unwrap_or_default();
+        let route = self.app.tab_route(tab);
         Some(report::anonymous_report(
             self.app.tab_kind(tab).label(),
+            report::Session {
+                route: &route,
+                lasted: tab.session_lasted(),
+            },
             kind,
             now,
         ))
@@ -7199,6 +7210,9 @@ fn certificate_body<'a>(
             .font(iced::Font::MONOSPACE),
         );
     }
+    if let Some(details) = &context.details {
+        body = body.push(certificate_details(details, std::time::SystemTime::now()));
+    }
     if context.others > 0 {
         body = body.push(text(fl!(
             "ui-certificate-already-trusted",
@@ -7210,6 +7224,38 @@ fn certificate_body<'a>(
         body = body.push(text(fl!("ui-certificate-route", route = route)));
     }
     body
+}
+
+/// What the FTPS certificate question says under the subject, as the C# prompt: the issuer,
+/// when the certificate holds, marked when `now` is outside it, and why the system did not
+/// vouch for it.
+fn certificate_details<'a>(
+    details: &heimdall_app::CertificateDetails,
+    now: std::time::SystemTime,
+) -> iced::widget::Column<'a, Message> {
+    let period = match details.validity.period(now) {
+        heimdall_rdp::ValidityPeriod::Current => "current",
+        heimdall_rdp::ValidityPeriod::Expired => "expired",
+        heimdall_rdp::ValidityPeriod::NotYetValid => "future",
+    };
+    column![
+        text(fl!(
+            "ui-certificate-issuer",
+            issuer = server_text(&details.issuer)
+        ))
+        .font(iced::Font::MONOSPACE),
+        text(fl!(
+            "ui-certificate-validity",
+            from = crate::files_view::modified_text(details.validity.not_before),
+            until = crate::files_view::modified_text(details.validity.not_after),
+            period = period
+        )),
+        text(fl!(
+            "ui-certificate-validation-issue",
+            issue = texts::validation_issue(details.issue)
+        )),
+    ]
+    .spacing(SPACING)
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
@@ -7766,6 +7812,15 @@ fn import_report<'a>(
         )),
     ]
     .spacing(SPACING);
+    // The file's gateways on a line of their own, as the C# summary says them.
+    let gateways = summary.gateways;
+    if gateways.created + gateways.merged > 0 {
+        content = content.push(text(fl!(
+            "ui-dialog-import-gateways",
+            created = gateways.created,
+            merged = gateways.merged
+        )));
+    }
     if !summary.skipped.is_empty() {
         let skipped = summary.skipped.iter().fold(
             Column::new().spacing(SPACING / 2.0),

@@ -1772,6 +1772,10 @@ pub struct Tab {
     pub phase: Phase,
     /// Its session failed once open: what it showed stays in sight. See [`Tab::dropped`].
     dropped: bool,
+    /// When its session last connected, for how long it lasted.
+    connected_at: Option<Instant>,
+    /// How long its session was connected before it failed. See [`Tab::session_lasted`].
+    lasted: Option<Duration>,
     /// The terminal.
     pub terminal: Terminal,
     /// Questions waiting, oldest first; only the first is shown.
@@ -1886,6 +1890,33 @@ impl Tab {
         self.dropped && matches!(self.phase, Phase::Failed(_))
     }
 
+    /// How long the tab's failed session had been connected when it failed, as the C# RDP
+    /// error report's "Session" line says it; `None` unless it failed after it connected.
+    #[must_use]
+    pub fn session_lasted(&self) -> Option<Duration> {
+        self.lasted
+            .filter(|_| matches!(self.phase, Phase::Failed(_)))
+    }
+
+    /// Times the session from `was_connected`, its state before the event just applied, at
+    /// `now`: when it connects, and how long it lasted when it fails after that; a failure
+    /// before it connected lasted nothing.
+    fn time_session(&mut self, was_connected: bool, now: Instant) {
+        match (&self.phase, was_connected) {
+            (Phase::Connected, false) => {
+                self.connected_at = Some(now);
+                self.lasted = None;
+            }
+            (Phase::Failed(_), true) => {
+                self.lasted = self
+                    .connected_at
+                    .map(|at| now.saturating_duration_since(at));
+            }
+            (Phase::Failed(_), false) => self.lasted = None,
+            _ => {}
+        }
+    }
+
     /// Whether a live session would be lost by closing the tab. An attempt still
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
@@ -1952,6 +1983,8 @@ impl Tab {
             working_directory: None,
             local_browser_closed: false,
             dropped: false,
+            connected_at: None,
+            lasted: None,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -2018,6 +2051,9 @@ pub struct CertificateContext {
     pub route: Vec<String>,
     /// The certificate's subject, as the C# prompt shows it, when it was read.
     pub subject: Option<String>,
+    /// Its issuer, validity and validation issue, as the C# FTPS prompt shows them, for an
+    /// FTPS server.
+    pub details: Option<crate::event::CertificateDetails>,
 }
 
 /// The profile a tab connects to.
@@ -2127,6 +2163,9 @@ pub struct ImportSummary {
     /// For the migration of this computer's C# store, the trusted SSH servers carried over;
     /// or why they could not be.
     pub host_keys: Option<Result<heimdall_ssh::Carried, String>>,
+    /// The SSH gateways the file brought, created or found already saved, as the C# summary's
+    /// gateway line counts them.
+    pub gateways: heimdall_core::import::gateways::Reconciliation,
 }
 
 /// One destination in a transfer's way, and the answer picked for it.
@@ -3464,6 +3503,9 @@ impl App {
             self.docking_sftp.retain(|docking| *docking != tab_id);
         }
         let mut effects = self.apply_connection_event(tab_id, event);
+        if let Some(tab) = self.tab_mut(tab_id) {
+            tab.time_session(was_connected, Instant::now());
+        }
         self.follow_transcript(tab_id, was_connected);
         if !was_connected {
             self.note_recent(tab_id);
