@@ -32,6 +32,7 @@ use zeroize::Zeroizing;
 
 use super::protocol::{Quality, Rfb, RfbError, RfbEvent, SecurityPolicy};
 use super::screen::{Rect, Screen};
+use super::security::Security;
 
 /// Bound on reaching the server, unless the caller sets another.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
@@ -123,6 +124,14 @@ pub struct VncConnection {
     rfb: Rfb,
     /// The desktop's name, as the server gives it: untrusted.
     pub name: String,
+}
+
+impl VncConnection {
+    /// The security the handshake agreed on.
+    #[must_use]
+    pub fn security(&self) -> Option<Security> {
+        self.rfb.security()
+    }
 }
 
 impl std::fmt::Debug for VncConnection {

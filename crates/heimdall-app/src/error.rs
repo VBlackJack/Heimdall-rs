@@ -129,6 +129,11 @@ pub enum UiError {
         /// What failed, in the library's words.
         detail: String,
     },
+    /// The VNC server offers no security the client accepts.
+    VncSecurityRefused {
+        /// The security codes offered, as the server sent them: untrusted.
+        offered: String,
+    },
     /// A local shell could not be started.
     LocalShell {
         /// Operating system message.

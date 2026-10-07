@@ -173,6 +173,12 @@ pub fn error(error: &UiError) -> String {
         UiError::VncProtocol { detail } => {
             fl!("ui-error-vnc-protocol", detail = server_text(detail))
         }
+        UiError::VncSecurityRefused { offered } => {
+            fl!(
+                "ui-error-vnc-security-refused",
+                offered = server_text(offered)
+            )
+        }
         UiError::SecurityRefused { detail } => {
             fl!("ui-error-security-refused", detail = server_text(detail))
         }
