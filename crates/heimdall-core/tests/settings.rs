@@ -676,6 +676,60 @@ fn resolution_presets_round_trip_and_reset_with_the_other_rdp_settings() {
 }
 
 #[test]
+fn the_terminal_font_family_is_the_embedded_one_until_chosen_and_kept_as_named() {
+    use heimdall_core::settings::TERMINAL_FONT_FAMILY_DEFAULT;
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(TERMINAL_FONT_FAMILY_DEFAULT, "Source Code Pro");
+    assert_eq!(
+        Settings::default().terminal_font_family,
+        TERMINAL_FONT_FAMILY_DEFAULT
+    );
+    // A file written before the family could be chosen.
+    let older = written(dir.path(), "version = 1\n[terminal]\nfont_size = 15\n");
+    assert_eq!(older.terminal_font_family, TERMINAL_FONT_FAMILY_DEFAULT);
+    for (named, read) in [
+        ("Consolas", "Consolas"),
+        ("  Cascadia Mono ", "Cascadia Mono"),
+        ("Not Installed Anywhere", "Not Installed Anywhere"),
+        ("   ", TERMINAL_FONT_FAMILY_DEFAULT),
+    ] {
+        let text = format!("version = 1\n[terminal]\nfont_family = \"{named}\"\n");
+        assert_eq!(
+            written(dir.path(), &text).terminal_font_family,
+            read,
+            "{named:?}"
+        );
+    }
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    Settings {
+        terminal_font_family: "Consolas".to_owned(),
+        ..Settings::default()
+    }
+    .save(&path)
+    .expect("saved");
+    assert_eq!(
+        Settings::load(&path).expect("read").terminal_font_family,
+        "Consolas"
+    );
+}
+
+#[test]
+fn the_gateway_badge_is_shown_until_hidden_and_an_older_file_shows_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(settings.show_gateway_badge, "as the C# default");
+    assert!(
+        written(dir.path(), "version = 1\n[general]\nprevent_sleep = true\n").show_gateway_badge,
+        "a file written before the choice was kept"
+    );
+    settings.show_gateway_badge = false;
+    settings.save(&path).expect("save");
+    assert!(!Settings::load(&path).expect("load").show_gateway_badge);
+}
+
+#[test]
 fn the_diagnostics_log_is_written_unless_turned_off_as_the_csharp_default() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);

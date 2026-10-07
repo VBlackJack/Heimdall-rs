@@ -21,6 +21,12 @@
 //! The C# patterns, each ported as a small matcher rather than a regular expression: case
 //! is ignored, names stand as whole words, and a pattern never spans two lines. A fetch
 //! piped into a shell is also caught with `sudo` before the shell.
+//!
+//! What is asked about is shown first, as the C# `PasteConfirmDialog` previews it: its first
+//! lines, every character that would not show as itself written out, and a word when some
+//! of it is left out of sight. See [`PastePreview`].
+
+use crate::text::visible_text;
 
 /// Whether a line, in lower case, holds a command.
 type Matcher = fn(&str) -> bool;
@@ -69,6 +75,56 @@ pub fn dangerous_command(text: &str) -> Option<&'static str> {
             .find(|(_, matches)| matches(&lower))
             .map(|(label, _)| *label)
     })
+}
+
+/// The text of a paste as its confirmation shows it, as the C#
+/// `PasteConfirmDialogViewModel` previews it: at most [`PastePreview::MAX_LINES`] lines and
+/// [`PastePreview::MAX_CHARS`] characters of them. Each line has its control characters, an
+/// escape sequence's included, and every other invisible one written out as `\u{...}`
+/// ([`visible_text`]): what is shown can neither hide a character nor be drawn as anything
+/// but text.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PastePreview {
+    /// The lines shown, first first, each written out.
+    pub lines: Vec<String>,
+    /// Some of the text is out of sight, past the lines or the characters shown; all of it
+    /// is pasted all the same.
+    pub truncated: bool,
+}
+
+impl PastePreview {
+    /// Most lines shown, as the C# `PreviewMaxLines`.
+    pub const MAX_LINES: usize = 50;
+
+    /// Most characters shown, line breaks left out, as the C# `PreviewMaxChars`.
+    pub const MAX_CHARS: usize = 4000;
+
+    /// The preview of `text`, its lines broken where a shell would run them: at CR LF, CR
+    /// or LF. A break ending the text starts no line of its own.
+    #[must_use]
+    pub fn of(text: &str) -> Self {
+        let body = text
+            .strip_suffix("\r\n")
+            .or_else(|| text.strip_suffix(['\r', '\n']))
+            .unwrap_or(text);
+        let mut preview = Self::default();
+        let mut room = Self::MAX_CHARS;
+        for line in body.split("\r\n").flat_map(|part| part.split(['\r', '\n'])) {
+            if preview.lines.len() == Self::MAX_LINES || (room == 0 && !line.is_empty()) {
+                preview.truncated = true;
+                break;
+            }
+            let kept: String = line.chars().take(room).collect();
+            let count = kept.chars().count();
+            room -= count;
+            preview.lines.push(visible_text(&kept));
+            if count < line.chars().count() {
+                preview.truncated = true;
+                break;
+            }
+        }
+        preview
+    }
 }
 
 /// Whether `c` is part of a word, as `\w`.
@@ -305,5 +361,52 @@ mod tests {
     fn a_pattern_never_spans_two_lines() {
         assert_eq!(dangerous_command("curl https://x.example\n| sh"), None);
         assert_eq!(dangerous_command("rm\n-rf"), None);
+    }
+
+    #[test]
+    fn the_preview_breaks_lines_as_a_shell_and_writes_out_what_would_not_show() {
+        let preview = PastePreview::of("ls -l\r\n\x1b[2J\x1b]0;x\x07\rcd\t/tmp\n\nend\n");
+        assert_eq!(
+            preview.lines,
+            [
+                "ls -l",
+                r"\u{001B}[2J\u{001B}]0;x\u{0007}",
+                r"cd\u{0009}/tmp",
+                "",
+                "end"
+            ],
+            "no escape sequence left to be drawn, no line after the last break"
+        );
+        assert!(!preview.truncated);
+        assert_eq!(PastePreview::of("a\u{202E}b").lines, [r"a\u{202E}b"]);
+    }
+
+    #[test]
+    fn the_preview_stops_at_the_csharp_limits_and_says_so() {
+        let lines = |count: usize| {
+            (0..count)
+                .map(|n| format!("echo {n}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let whole = PastePreview::of(&lines(PastePreview::MAX_LINES));
+        assert_eq!(whole.lines.len(), PastePreview::MAX_LINES);
+        assert!(!whole.truncated, "at the limit, all of it shown");
+        let cut = PastePreview::of(&lines(PastePreview::MAX_LINES + 1));
+        assert_eq!(cut.lines.len(), PastePreview::MAX_LINES);
+        assert!(cut.truncated);
+
+        let long = "é".repeat(PastePreview::MAX_CHARS);
+        assert!(!PastePreview::of(&long).truncated);
+        let longer = PastePreview::of(&format!("{long}x\nnext"));
+        assert_eq!(
+            longer.lines,
+            std::slice::from_ref(&long),
+            "cut at a character, never a byte"
+        );
+        assert!(longer.truncated);
+        let filled = PastePreview::of(&format!("{long}\nnext"));
+        assert_eq!(filled.lines, [long]);
+        assert!(filled.truncated, "a line past the characters shown");
     }
 }

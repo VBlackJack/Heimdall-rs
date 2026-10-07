@@ -46,7 +46,7 @@ use heimdall_app::{
     ConnectionEvent, DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FloatId,
     FloatMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
     MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction,
-    Phase, PinDialog, PinFailure, PinMessage, PinMode, PostConnectConfirmation,
+    PastePreview, Phase, PinDialog, PinFailure, PinMessage, PinMode, PostConnectConfirmation,
     PostConnectProgress, ProfileMenuMessage, Prompt, ProviderMessage, Purpose, QuestionId,
     QuestionKind, Retry, SaveState, ScriptConfirmation, SelectionMessage, SessionState,
     SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
@@ -79,6 +79,7 @@ use iced::{
 use zeroize::Zeroizing;
 
 mod floating_files;
+mod floating_find;
 
 use crate::desktop_view::DesktopView;
 use crate::files_view;
@@ -91,6 +92,7 @@ use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
 use crate::split_view::{self, Shape, SplitView};
 use crate::terminal_view::TerminalView;
+use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
@@ -157,6 +159,9 @@ const SKIPPED_LIST_HEIGHT: f32 = 200.0;
 
 /// Height the command of a local profile scrolls within, however long it is.
 const LOCAL_COMMAND_HEIGHT: f32 = 240.0;
+
+/// Tallest the text of a paste asked about grows before it scrolls, as the C# preview box.
+const PASTE_PREVIEW_HEIGHT: f32 = 280.0;
 
 /// How often a waiting session's countdown is drawn anew.
 const COUNTDOWN_TICK: std::time::Duration = std::time::Duration::from_secs(1);
@@ -725,12 +730,22 @@ pub enum Message {
     PaletteChoose(usize),
     /// Close Quick Connect.
     PaletteClose,
-    /// The terminal search bar's text changed.
-    FinderQuery(String),
-    /// Look for the search bar's text, that way.
-    FinderFind(FindDirection),
-    /// Close the terminal's search bar.
-    FinderClose,
+    /// The text of the search bar over `tab`'s terminal changed.
+    FinderQuery {
+        /// The tab searched.
+        tab: TabId,
+        /// What is typed.
+        query: String,
+    },
+    /// Look for the text of the search bar over `tab`'s terminal, that way.
+    FinderFind {
+        /// The tab searched.
+        tab: TabId,
+        /// Down or up.
+        direction: FindDirection,
+    },
+    /// Close the search bar over this tab's terminal.
+    FinderClose(TabId),
     /// Files are dragged over the window, or no longer.
     FilesHovered(bool),
     /// A file or folder dropped on the window.
@@ -903,9 +918,9 @@ impl fmt::Debug for Message {
             Self::PaletteQuery(_) => f.write_str("PaletteQuery(..)"),
             Self::PaletteChoose(index) => write!(f, "PaletteChoose({index})"),
             Self::PaletteClose => f.write_str("PaletteClose"),
-            Self::FinderQuery(_) => f.write_str("FinderQuery(..)"),
-            Self::FinderFind(direction) => write!(f, "FinderFind({direction:?})"),
-            Self::FinderClose => f.write_str("FinderClose"),
+            Self::FinderQuery { tab, .. } => write!(f, "FinderQuery({tab:?}, ..)"),
+            Self::FinderFind { tab, direction } => write!(f, "FinderFind({tab:?}, {direction:?})"),
+            Self::FinderClose(tab) => write!(f, "FinderClose({tab:?})"),
             Self::LogDirectoryEdited(_) => f.write_str("LogDirectoryEdited(..)"),
             Self::EditorEdited(_) => f.write_str("EditorEdited(..)"),
             Self::PresetsEdited(_) => f.write_str("PresetsEdited(..)"),
@@ -1731,7 +1746,8 @@ impl Shell {
 
     /// The tabs' own windows as the core has them: a window whose tab went back or is gone
     /// closes, a tab detached with no window gets one; the search bar of a tab detached
-    /// closes, the main window's keys no longer reaching it.
+    /// closes, the main window's keys no longer reaching it, and so does a window's bar
+    /// over a tab it no longer shows, its session opened again as another.
     fn sync_floating(&mut self) -> Task<Message> {
         if self
             .finder
@@ -1739,6 +1755,16 @@ impl Shell {
             .is_some_and(|finder| self.app.is_floating(finder.tab))
         {
             self.finder = None;
+        }
+        for floating in self.floating.values_mut() {
+            let shown = self.app.floating_tab(floating.key).map(|tab| tab.id);
+            if floating
+                .finder
+                .as_ref()
+                .is_some_and(|finder| Some(finder.tab) != shown)
+            {
+                floating.finder = None;
+            }
         }
         let gone: Vec<FloatId> = self
             .floating
@@ -1845,6 +1871,8 @@ impl Shell {
                 self.modifiers = modifiers;
                 return Task::none();
             }
+            FloatEvent::TerminalFind => return self.toggle_floating_finder(window),
+            FloatEvent::Escape if self.close_floating_finder(window) => return Task::none(),
             event @ (FloatEvent::FilesKey(_)
             | FloatEvent::FindKey
             | FloatEvent::Escape
@@ -2149,9 +2177,9 @@ impl Shell {
             message @ (Message::PaletteQuery(_)
             | Message::PaletteChoose(_)
             | Message::PaletteClose) => self.palette_message(message),
-            message @ (Message::FinderQuery(_) | Message::FinderFind(_) | Message::FinderClose) => {
-                self.finder_message(message)
-            }
+            message @ (Message::FinderQuery { .. }
+            | Message::FinderFind { .. }
+            | Message::FinderClose(_)) => self.finder_message(message),
             message @ (Message::LogDirectoryEdited(_)
             | Message::LogDirectoryApply
             | Message::EditorEdited(_)
@@ -2612,27 +2640,46 @@ impl Shell {
         }
         if self.app.tab(tab).is_some_and(shows_terminal) {
             self.finder = Some(Finder::new(tab));
-            self.focus_next = Some(crate::finder::field_id());
+            self.focus_next = Some(crate::finder::field_id(tab));
         }
     }
 
-    /// A change in the terminal's search bar: its text, a search, closed.
+    /// A change in the search bar over a tab's terminal: its text, a search, closed. The bar
+    /// is the one of the window the tab is drawn in: its own window's when it is detached,
+    /// the main window's else; a message naming a tab whose bar is not open is dropped.
     fn finder_message(&mut self, message: Message) -> Vec<Effect> {
-        let Some(finder) = self.finder.as_mut() else {
+        let tab = match &message {
+            Message::FinderQuery { tab, .. }
+            | Message::FinderFind { tab, .. }
+            | Message::FinderClose(tab) => *tab,
+            _ => return Vec::new(),
+        };
+        let slot = if self.app.is_floating(tab) {
+            let Some(floating) = self
+                .floating_window(tab)
+                .and_then(|window| self.floating.get_mut(&window))
+            else {
+                return Vec::new();
+            };
+            &mut floating.finder
+        } else {
+            &mut self.finder
+        };
+        let Some(finder) = slot.as_mut().filter(|finder| finder.tab == tab) else {
             return Vec::new();
         };
         match message {
-            Message::FinderQuery(query) => finder.query = query,
-            Message::FinderFind(direction) => {
+            Message::FinderQuery { query, .. } => finder.query = query,
+            Message::FinderFind { direction, .. } => {
                 finder.searched = Some(finder.query.clone());
-                let (tab, query) = (finder.tab, finder.query.clone());
+                let query = finder.query.clone();
                 return self.app.update(AppMessage::FindInTerminal {
                     tab,
                     query,
                     direction,
                 });
             }
-            _ => self.finder = None,
+            _ => *slot = None,
         }
         Vec::new()
     }
@@ -2643,12 +2690,17 @@ impl Shell {
         focused && self.app.dialog.is_none() && (!self.tree_focused || self.app.is_floating(tab.id))
     }
 
-    /// The search bar over the terminal of `tab`, when open there.
+    /// The search bar over the terminal of `tab`, when open there: its own window's when the
+    /// tab is detached, the main window's else.
     fn finder_of(&self, tab: &Tab) -> Option<&Finder> {
-        // Never in a tab's own window: the bar's messages are the main window's.
-        self.finder
-            .as_ref()
-            .filter(|finder| finder.tab == tab.id && !self.app.is_floating(tab.id))
+        let finder = if self.app.is_floating(tab.id) {
+            self.floating_window(tab.id)
+                .and_then(|window| self.floating.get(&window))
+                .and_then(|floating| floating.finder.as_ref())
+        } else {
+            self.finder.as_ref()
+        };
+        finder.filter(|finder| finder.tab == tab.id)
     }
 
     /// `tab`'s terminal, with its search bar over it when open. Under the bar the terminal
@@ -2669,12 +2721,10 @@ impl Shell {
 
     fn searchable_terminal<'a>(&'a self, tab: &'a Tab, interactive: bool) -> Element<'a, Message> {
         let finder = self.finder_of(tab);
-        let shown = terminal(
-            tab,
-            interactive && finder.is_none(),
-            self.font_size(tab.id),
-            self.app.settings().ctrl_v_paste,
-        );
+        let shown: Element<'a, Message> =
+            container(self.terminal_view(tab, interactive && finder.is_none()))
+                .padding(TERMINAL_MARGIN)
+                .into();
         match finder {
             Some(finder) => stack![
                 shown,
@@ -2683,6 +2733,25 @@ impl Shell {
             .into(),
             None => shown,
         }
+    }
+
+    /// The terminal of `tab`, taking input when `interactive`: at its text size, in the font
+    /// every terminal is drawn in, its Ctrl+V as chosen.
+    #[must_use]
+    pub fn terminal_view<'a>(&self, tab: &'a Tab, interactive: bool) -> TerminalView<'a, Message> {
+        TerminalView::new(&tab.terminal, tab.id, Message::App)
+            .ctrl_v(self.app.settings().ctrl_v_paste)
+            .interactive(interactive)
+            .font(self.terminal_font())
+            .font_size(self.font_size(tab.id))
+            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom)))
+    }
+
+    /// The font every terminal is drawn in, those open included: the family the settings
+    /// choose when this computer has it, else the embedded one.
+    #[must_use]
+    pub fn terminal_font(&self) -> TerminalFont {
+        TerminalFont::chosen(&self.app.settings().terminal_font_family)
     }
 
     /// The text size of `tab`'s terminal: zoomed, or the one the settings give, drawn within
@@ -3696,7 +3765,7 @@ impl Shell {
         } else if let TreeMenu::MoveProfile(id) = menu {
             tree_view::move_profile_entries(id, &self.app.profile_move_targets(id))
         } else if let TreeMenu::Filter = menu {
-            tree_view::filter_entries(self.app.tree_filter())
+            tree_view::filter_entries(self.app.tree_filter(), self.app.shows_gateway_badge())
         } else if let TreeMenu::Selection = menu {
             let selected = self.app.selected_profiles();
             let connectable = selected
@@ -4375,7 +4444,7 @@ impl Shell {
                     .on_press(message),
             );
         }
-        let badge = filter.shows_gateway_badge();
+        let badge = self.app.shows_gateway_badge();
         // As the C# tree: folders nested and folded, sub-folders first, "(No Folder)" last.
         list = list.extend(rows.into_iter().map(|row| match row {
             TreeRow::Folder {
@@ -5151,6 +5220,52 @@ impl Shell {
         card
     }
 
+    /// The family of the terminals' text, as the C# box beside the size: the families this
+    /// computer can draw, and the one chosen when it cannot, then said drawn in the embedded
+    /// one.
+    fn font_family_settings(&self) -> Element<'_, Message> {
+        let chosen = &self.app.settings().terminal_font_family;
+        let mut offered: Vec<FontChoice> =
+            crate::terminal_view::font::available(crate::terminal_view::font::installed)
+                .into_iter()
+                .map(|family| FontChoice(family.to_owned()))
+                .collect();
+        let selected = offered
+            .iter()
+            .find(|offer| offer.0.eq_ignore_ascii_case(chosen))
+            .cloned()
+            .unwrap_or_else(|| FontChoice(chosen.clone()));
+        if !offered.contains(&selected) {
+            offered.push(selected.clone());
+        }
+        let mut settings = column![
+            row![
+                text(fl!("ui-settings-font-family")),
+                iced::widget::space::horizontal(),
+                pick_list(offered, Some(selected), |FontChoice(family)| {
+                    Message::App(AppMessage::Settings(SettingsMessage::TerminalFontFamily(
+                        family,
+                    )))
+                }),
+            ]
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+        ]
+        .spacing(SPACING);
+        if !self.terminal_font().is(chosen) {
+            settings = settings.push(
+                text(fl!(
+                    "ui-settings-font-family-missing",
+                    family = chosen.as_str(),
+                    fallback = crate::terminal_view::FONT_FAMILY
+                ))
+                .size(SMALL_SIZE)
+                .style(text::danger),
+            );
+        }
+        settings.into()
+    }
+
     /// The C# session health monitor's settings: whether every server is checked in the
     /// background, how often, how long each has to answer and how many at once.
     fn reachability_settings(&self) -> Element<'_, Message> {
@@ -5171,7 +5286,7 @@ impl Shell {
     }
 
     /// The terminal's appearance, as the C# Settings page offers it: its font size, applied
-    /// with Enter, and its colour scheme.
+    /// with Enter, its font family, and its colour scheme.
     fn terminal_settings(&self) -> Element<'_, Message> {
         let settings = self.app.settings();
         let shown = settings.terminal_font_size.to_string();
@@ -5205,6 +5320,7 @@ impl Shell {
                 .style(text::danger),
             );
         }
+        card = card.push(self.font_family_settings());
         card = card.push(
             row![
                 text(fl!("ui-settings-color-scheme")),
@@ -7073,23 +7189,6 @@ fn shows_terminal(tab: &Tab) -> bool {
         && tab.desktop.is_none()
         && !matches!(tab.purpose, Purpose::Files | Purpose::Rdp | Purpose::Vnc)
         && matches!(tab.phase, Phase::Connected | Phase::Closed { .. })
-}
-
-fn terminal(
-    tab: &Tab,
-    interactive: bool,
-    font_size: f32,
-    ctrl_v: CtrlVPaste,
-) -> Element<'_, Message> {
-    container(
-        TerminalView::new(&tab.terminal, tab.id, Message::App)
-            .ctrl_v(ctrl_v)
-            .interactive(interactive)
-            .font_size(font_size)
-            .on_zoom(|zoom| Message::Shortcut(WindowShortcut::Zoom(zoom))),
-    )
-    .padding(TERMINAL_MARGIN)
-    .into()
 }
 
 /// The question about an unknown key, as the C# Heimdall asks it: an SSH host's, or, when
@@ -9198,21 +9297,11 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
         Dialog::SaveMacro { name, entries } => return save_macro_dialog(name, entries.len()),
         Dialog::CustomResolution { value, .. } => return custom_resolution_dialog(value),
         Dialog::ConfirmPaste {
-            command: Some(command),
+            lines,
+            command,
+            preview,
             ..
-        } => (
-            fl!("ui-dialog-paste-dangerous-title"),
-            fl!(
-                "ui-dialog-paste-dangerous-body",
-                command = command.to_string()
-            ),
-            fl!("ui-dialog-paste-dangerous-confirm"),
-        ),
-        Dialog::ConfirmPaste { lines, .. } => (
-            fl!("ui-dialog-paste-title"),
-            fl!("ui-dialog-paste-body", count = (*lines)),
-            fl!("ui-dialog-paste-confirm"),
-        ),
+        } => return paste_dialog(*lines, *command, preview),
         Dialog::ConfirmDisconnectDesktop { name, .. } => (
             fl!("ui-desktop-disconnect-title"),
             fl!("ui-desktop-disconnect-body", name = name.as_str()),
@@ -9292,6 +9381,74 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
     ]
     .spacing(SPACING)
     .into()
+}
+
+/// Pasting several lines into a shell that would run them, or a command that can destroy
+/// data or stop the machine, as the C# `PasteConfirmDialog` asks it: what is at stake, the
+/// destructive command named in a title of its own colour, the text itself in a box that
+/// scrolls both ways, its lines never wrapped, and a word when some of it is out of sight.
+fn paste_dialog<'a>(
+    lines: usize,
+    command: Option<&'static str>,
+    preview: &'a PastePreview,
+) -> Element<'a, Message> {
+    let (title, body, action) = match command {
+        Some(command) => (
+            text(fl!("ui-dialog-paste-dangerous-title"))
+                .size(HEADING_SIZE)
+                .style(text::danger),
+            fl!(
+                "ui-dialog-paste-dangerous-body",
+                command = command.to_string()
+            ),
+            fl!("ui-dialog-paste-dangerous-confirm"),
+        ),
+        None => (
+            text(fl!("ui-dialog-paste-title")).size(HEADING_SIZE),
+            fl!("ui-dialog-paste-body", count = lines),
+            fl!("ui-dialog-paste-confirm"),
+        ),
+    };
+    let shown = scrollable(
+        text(preview.lines.join("\n"))
+            .font(iced::Font::MONOSPACE)
+            .wrapping(text::Wrapping::None),
+    )
+    .direction(scrollable::Direction::Both {
+        vertical: scrollable::Scrollbar::default(),
+        horizontal: scrollable::Scrollbar::default(),
+    })
+    .width(Length::Fill)
+    .height(Length::Shrink);
+    let mut content = column![
+        title,
+        text(body),
+        container(shown)
+            .max_height(PASTE_PREVIEW_HEIGHT)
+            .padding(PADDING)
+            .style(container::rounded_box),
+    ]
+    .spacing(SPACING);
+    if preview.truncated {
+        content = content.push(
+            text(fl!("ui-dialog-paste-truncated"))
+                .size(SMALL_SIZE)
+                .style(text::secondary),
+        );
+    }
+    content
+        .push(
+            row![
+                button(text(fl!("ui-dialog-cancel-button")))
+                    .style(button::secondary)
+                    .on_press(Message::App(AppMessage::DismissDialog)),
+                button(text(action))
+                    .style(button::danger)
+                    .on_press(Message::App(AppMessage::ConfirmDialog)),
+            ]
+            .spacing(SPACING),
+        )
+        .into()
 }
 
 /// "Reconnecting (attempt 2/20)...", as the C# countdown says it.
@@ -10051,6 +10208,16 @@ impl std::fmt::Display for SessionsChoice {
             0 => fl!("ui-settings-max-sessions-none"),
             max => max.to_string(),
         })
+    }
+}
+
+/// A family of the terminals' text, as the list names it: by its own name.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FontChoice(String);
+
+impl std::fmt::Display for FontChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
     }
 }
 

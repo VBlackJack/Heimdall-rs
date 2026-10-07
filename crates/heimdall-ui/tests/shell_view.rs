@@ -1833,6 +1833,15 @@ fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
         attempt,
         event: ConnectionEvent::Output(output.into_bytes()),
     }));
+    let typed = |shell: &mut Shell, query: &str| {
+        let _ = shell.update(Message::FinderQuery {
+            tab,
+            query: query.to_owned(),
+        });
+    };
+    let searched = |shell: &mut Shell, direction: FindDirection| {
+        let _ = shell.update(Message::FinderFind { tab, direction });
+    };
     let bar_shown = |shell: &Shell| simulator(shell).find("\u{25b2}").is_ok();
     assert!(!bar_shown(&shell));
 
@@ -1853,12 +1862,13 @@ fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
         ui.click("Search...").expect("its field");
         ui.typewrite("e");
         assert!(
-            ui.into_messages()
-                .any(|message| matches!(message, Message::FinderQuery(query) if query == "e"))
+            ui.into_messages().any(
+                |message| matches!(message, Message::FinderQuery { query, .. } if query == "e")
+            )
         );
     }
-    let _ = shell.update(Message::FinderQuery("ERROR".to_owned()));
-    let _ = shell.update(Message::FinderFind(FindDirection::Up));
+    typed(&mut shell, "ERROR");
+    searched(&mut shell, FindDirection::Up);
     assert_eq!(
         shell.app().tabs[0].terminal.selected_text().as_deref(),
         Some("error"),
@@ -1866,17 +1876,17 @@ fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
     );
     assert!(simulator(&shell).find("No match").is_err());
 
-    let _ = shell.update(Message::FinderQuery("absent".to_owned()));
-    let _ = shell.update(Message::FinderFind(FindDirection::Down));
+    typed(&mut shell, "absent");
+    searched(&mut shell, FindDirection::Down);
     simulator(&shell).find("No match").expect("said");
-    let _ = shell.update(Message::FinderQuery("absen".to_owned()));
+    typed(&mut shell, "absen");
     assert!(
         simulator(&shell).find("No match").is_err(),
         "not for a text not yet looked for"
     );
 
     // Enter looks down; with Shift, up.
-    let _ = shell.update(Message::FinderQuery(String::new()));
+    typed(&mut shell, "");
     for (modifiers, direction) in [
         (keyboard::Modifiers::empty(), FindDirection::Down),
         (keyboard::Modifiers::SHIFT, FindDirection::Up),
@@ -1887,7 +1897,7 @@ fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
         let _ = ui.tap_key(keyboard_named(Named::Enter));
         assert!(
             ui.into_messages()
-                .any(|message| matches!(message, Message::FinderFind(d) if d == direction)),
+                .any(|message| matches!(message, Message::FinderFind { direction: d, .. } if d == direction)),
             "{direction:?}"
         );
     }
@@ -1908,7 +1918,7 @@ fn ctrl_shift_f_searches_the_terminal_history_as_the_csharp_bar() {
     let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
     assert!(!bar_shown(&shell), "the shortcut again closes it");
     let _ = shell.update(Message::Shortcut(WindowShortcut::Find));
-    let _ = shell.update(Message::FinderClose);
+    let _ = shell.update(Message::FinderClose(tab));
     assert!(!bar_shown(&shell));
 }
 
@@ -2238,6 +2248,106 @@ fn the_font_size_set_starts_new_terminals_and_ctrl_0_comes_back_to_it() {
     let _ = shell.update(Message::FontSizeApply);
     assert_eq!(shell.app().settings().terminal_font_size, 72);
     assert!(same(shell.font_size(tab), 28.0));
+}
+
+#[test]
+fn the_font_family_chosen_draws_every_terminal_and_one_missing_falls_back_visibly() {
+    use heimdall_ui::terminal_view::font::{FONT_FAMILY, TerminalFont};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let drawn = |shell: &Shell| {
+        let tab = shell.app().tab(tab).expect("tab");
+        let view = shell.terminal_view(tab, true);
+        (view.family(), view.metrics())
+    };
+    assert_eq!(shell.terminal_font(), TerminalFont::EMBEDDED);
+    assert_eq!(
+        drawn(&shell),
+        (
+            FONT_FAMILY,
+            heimdall_ui::terminal_view::metrics::CellMetrics::default()
+        )
+    );
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(
+        heimdall_ui::shell::SettingsTab::Terminal,
+    ));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Font family")
+            .expect("beside the size, as the C# label");
+        assert!(
+            ui.find(
+                "Source Code Pro is not installed on this computer: the terminal uses Source                  Code Pro."
+            )
+            .is_err(),
+            "the embedded font is always there"
+        );
+    }
+    // A family no computer has, as a settings file written by hand may name: kept as named,
+    // drawn in the embedded font, and said so.
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::TerminalFontFamily(" Not A Font ".to_owned()),
+    )));
+    assert_eq!(shell.app().settings().terminal_font_family, "Not A Font");
+    assert_eq!(shell.terminal_font(), TerminalFont::EMBEDDED);
+    assert_eq!(
+        drawn(&shell).0,
+        FONT_FAMILY,
+        "never a proportional fallback"
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Not A Font is not installed on this computer: the terminal uses Source Code Pro.")
+        .expect("the fallback said");
+    drop(ui);
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::TerminalFontFamily(String::new()),
+    )));
+    assert_eq!(shell.app().settings().terminal_font_family, FONT_FAMILY);
+}
+
+#[test]
+fn a_terminal_lays_its_grid_out_in_the_cells_of_its_font() {
+    use heimdall_ui::terminal_view::font::{FaceMetrics, TerminalFont};
+    use iced::keyboard;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _) = connected_shell(dir.path());
+    let grid = |font: TerminalFont| {
+        let shown = shell.app().tab(tab).expect("tab");
+        let view = shell.terminal_view(shown, true).font(font).font_size(20.0);
+        let mut ui = common::simulator(
+            Settings {
+                fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+                ..Settings::default()
+            },
+            Size::new(800.0, 440.0),
+            view,
+        );
+        // Any event: the terminal reports its size on the first it gets.
+        let _ = ui.simulate([iced::Event::Keyboard(keyboard::Event::ModifiersChanged(
+            keyboard::Modifiers::empty(),
+        ))]);
+        ui.into_messages()
+            .find_map(|message| match message {
+                Message::App(AppMessage::Resize { grid, cell, .. }) => {
+                    Some((grid.cols, grid.rows, cell.width, cell.height))
+                }
+                _ => None,
+            })
+            .expect("a size reported")
+    };
+    let narrow = TerminalFont {
+        family: "Narrow Test Face",
+        metrics: FaceMetrics {
+            advance: 0.5,
+            line: 1.1,
+        },
+    };
+    // 800 by 440 in cells of 10 by 22, and of 12 by 26 (20 x 1.257, rounded up).
+    assert_eq!(grid(narrow), (80, 20, 10, 22));
+    assert_eq!(grid(TerminalFont::EMBEDDED), (66, 16, 12, 26));
 }
 
 /// A field of the session card, the rule said under a value out of its range, and values
@@ -3264,7 +3374,68 @@ fn a_dangerous_paste_names_the_command_before_it_reaches_the_shell() {
          before it reaches the shell.",
     )
     .expect("the command named");
-    ui.find("Paste anyway").expect("the way on");
+    ui.find("dd if=/dev/zero of=/dev/sda")
+        .expect("the text itself");
+    assert!(ui.find(TRUNCATED).is_err(), "all of it shown");
+    ui.click("Paste anyway").expect("the way on");
+    assert!(
+        ui.into_messages()
+            .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+    );
+}
+
+/// What the C# says under a paste preview cut short.
+const TRUNCATED: &str =
+    "Preview is truncated. The full clipboard content will be pasted if you continue.";
+
+#[test]
+fn a_paste_of_several_lines_shows_them_written_out_and_says_when_some_are_out_of_sight() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::ClipboardText {
+        tab,
+        text: Some("ls -l\r\nprintf '\u{1b}[2J'\techo\n".to_owned()),
+    }));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Paste several lines?").expect("title");
+        ui.find(
+            r"ls -l
+printf '\u{001B}[2J'\u{0009}echo",
+        )
+        .expect("its lines, the escape and the tab written out");
+        assert!(ui.find(TRUNCATED).is_err(), "all of it shown");
+        ui.click("Cancel").expect("cancel");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::DismissDialog)))
+        );
+    }
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Paste").expect("paste");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::ConfirmDialog)))
+        );
+    }
+    let _ = shell.update(Message::App(AppMessage::DismissDialog));
+
+    let long: Vec<String> = (0..=heimdall_app::PastePreview::MAX_LINES)
+        .map(|n| format!("echo {n}"))
+        .collect();
+    let _ = shell.update(Message::App(AppMessage::ClipboardText {
+        tab,
+        text: Some(long.join("\n")),
+    }));
+    let mut ui = simulator(&shell);
+    ui.find(
+        long[..heimdall_app::PastePreview::MAX_LINES]
+            .join("\n")
+            .as_str(),
+    )
+    .expect("the first lines");
+    ui.find(TRUNCATED).expect("said cut short");
 }
 
 #[test]

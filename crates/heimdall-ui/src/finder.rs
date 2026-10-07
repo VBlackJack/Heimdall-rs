@@ -15,7 +15,9 @@
  */
 
 //! The terminal's search bar, as the C# one: a field, previous, next and close, at the top
-//! right of the terminal; the terminal itself finds.
+//! right of the terminal; the terminal itself finds. Each message names the tab searched,
+//! and the field's identifier is made of it: a tab in its own window has a bar of its own,
+//! which an operation meant for the main window's bar never reaches.
 
 use heimdall_app::TabId;
 use heimdall_term::{FindDirection, Found};
@@ -57,14 +59,15 @@ impl Finder {
     }
 }
 
-/// Widget identifier of the bar's field.
+/// Widget identifier of the field of the bar over `tab`'s terminal.
 #[must_use]
-pub fn field_id() -> iced::widget::Id {
-    iced::widget::Id::new("terminal-find")
+pub fn field_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("terminal-find-{}", tab.value()))
 }
 
 /// The bar; `found` where what is typed, once looked for, was found, none when it was not.
 pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'a, Message> {
+    let tab = finder.tab;
     let direction = if shift {
         FindDirection::Up
     } else {
@@ -72,10 +75,10 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
     };
     let mut bar = row![
         text_input(&fl!("ui-find-placeholder"), &finder.query)
-            .id(field_id())
+            .id(field_id(tab))
             .width(FIELD_WIDTH)
-            .on_input(Message::FinderQuery)
-            .on_submit(Message::FinderFind(direction)),
+            .on_input(move |query| Message::FinderQuery { tab, query })
+            .on_submit(Message::FinderFind { tab, direction }),
     ]
     .spacing(SPACING)
     .align_y(iced::Alignment::Center);
@@ -93,17 +96,23 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
         .push(
             button(text(fl!("ui-find-previous")))
                 .style(button::secondary)
-                .on_press(Message::FinderFind(FindDirection::Up)),
+                .on_press(Message::FinderFind {
+                    tab,
+                    direction: FindDirection::Up,
+                }),
         )
         .push(
             button(text(fl!("ui-find-next")))
                 .style(button::secondary)
-                .on_press(Message::FinderFind(FindDirection::Down)),
+                .on_press(Message::FinderFind {
+                    tab,
+                    direction: FindDirection::Down,
+                }),
         )
         .push(
             button(text(fl!("ui-find-close")))
                 .style(button::text)
-                .on_press(Message::FinderClose),
+                .on_press(Message::FinderClose(tab)),
         );
     container(
         container(bar)

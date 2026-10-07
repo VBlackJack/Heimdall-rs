@@ -21,7 +21,8 @@
 //! is the application's to answer: the tab goes back to the strip, then closes as any tab.
 //! It has none of the main window's shortcuts, as the C# window has no input bindings;
 //! behind the lock screen it shows a veil and takes nothing. A Files tab takes its own keys
-//! there, as the C# file browser does, and the files dropped on the window.
+//! there, as the C# file browser does, and the files dropped on the window; a terminal its
+//! search bar, Ctrl+Shift+F, as the C# view hosted in the window does.
 //!
 //! What its session sends is let through by name, each message naming its tab: a message
 //! added later, or one the main window would apply to its own tab shown, is dropped.
@@ -44,8 +45,10 @@ pub use crate::files_view::{ColumnWidths, PaneField, field_id, list_id};
 /// The integrated editor's messages, which a tab's own window lets through for its tab.
 pub use crate::integrated_editor::{EditorKey, EditorMessage};
 
+use crate::finder::Finder;
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::terminal_view::keys::WindowShortcut;
 use crate::tree_view::{CursorSpot, TreeMenu};
 
 /// The size the window opens at, in logical pixels, as the C# one.
@@ -110,6 +113,8 @@ pub enum FloatEvent {
     FilesKey(FilesKey),
     /// Ctrl+F no widget took: a Files tab's filter, as the C# file browser's.
     FindKey,
+    /// Ctrl+Shift+F no widget took: the search bar over its terminal, opened or closed.
+    TerminalFind,
     /// Escape, taken by a widget or not: a Files tab's menu, its path bar typed in, then
     /// its listing on its way, as the main window's.
     Escape,
@@ -152,7 +157,7 @@ pub(crate) fn window_event(
 }
 
 /// A key pressed over a tab's own window, as a Files tab takes it: what the main window
-/// sends its Files tab shown, its shortcuts left out.
+/// sends its Files tab shown, its shortcuts left out but the terminal's search bar.
 fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<FloatEvent> {
     let keyboard::Event::KeyPressed {
         key,
@@ -178,6 +183,11 @@ fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<Floa
         _ if !untaken => None,
         _ if crate::terminal_view::keys::is_search_key(&key, physical_key, modifiers) => {
             Some(FloatEvent::FindKey)
+        }
+        _ if crate::terminal_view::keys::window_shortcut(&key, physical_key, modifiers)
+            == Some(WindowShortcut::Find) =>
+        {
+            Some(FloatEvent::TerminalFind)
         }
         _ => crate::files_view::files_key(&key, physical_key, modifiers).map(FloatEvent::FilesKey),
     }
@@ -241,7 +251,11 @@ pub fn floating_message_allowed(message: &Message, tab: &Tab) -> bool {
         )
         | Message::Editor(
             EditorMessage::Action { tab: named, .. } | EditorMessage::Key { tab: named, .. },
-        ) => *named == tab.id,
+        )
+        // The search bar over its terminal, drawn in its window.
+        | Message::FinderQuery { tab: named, .. }
+        | Message::FinderFind { tab: named, .. }
+        | Message::FinderClose(named) => *named == tab.id,
         // What is typed into its question, which only it asks.
         Message::Field { question, .. } | Message::FocusField { question, .. } => tab
             .prompts
@@ -350,6 +364,9 @@ pub(crate) struct FloatingWindow {
     pub hovered: bool,
     /// Where the pointer last was in it: where a menu opens, and a drag starts.
     pub cursor: CursorSpot,
+    /// The search bar over its terminal, when open: its own, the main window's bar left
+    /// as it is.
+    pub finder: Option<Finder>,
 }
 
 impl FloatingWindow {
@@ -361,6 +378,7 @@ impl FloatingWindow {
             question: None,
             hovered: false,
             cursor: CursorSpot::default(),
+            finder: None,
         }
     }
 }
@@ -525,6 +543,34 @@ mod tests {
             Modifiers::CTRL,
         );
         assert_eq!(window_event(lock, untaken, window::Id::unique()), None);
+    }
+
+    #[test]
+    fn ctrl_shift_f_left_by_its_widgets_is_its_terminals_search_bar() {
+        let find = pressed(
+            Key::Character("F".into()),
+            Physical::Code(Code::KeyF),
+            Modifiers::CTRL | Modifiers::SHIFT,
+        );
+        assert_eq!(
+            window_event(find.clone(), event::Status::Ignored, window::Id::unique()),
+            Some(FloatEvent::TerminalFind)
+        );
+        assert_eq!(
+            window_event(find, event::Status::Captured, window::Id::unique()),
+            None,
+            "a field's"
+        );
+        // Whatever the layout: the key's place.
+        let elsewhere = pressed(
+            Key::Character("\u{430}".into()),
+            Physical::Code(Code::KeyF),
+            Modifiers::CTRL | Modifiers::SHIFT,
+        );
+        assert_eq!(
+            window_event(elsewhere, event::Status::Ignored, window::Id::unique()),
+            Some(FloatEvent::TerminalFind)
+        );
     }
 
     #[test]

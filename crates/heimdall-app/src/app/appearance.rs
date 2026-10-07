@@ -25,7 +25,7 @@ use heimdall_core::settings::{
     rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
     reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
     session_log_retention_days_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
-    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted,
+    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted, terminal_font_family,
     terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
@@ -51,6 +51,8 @@ pub enum SettingsMessage {
     TrustedKeys(TrustedKeysMessage),
     /// The size a new terminal's text starts at; one out of the accepted range is ignored.
     TerminalFontSize(u16),
+    /// The family of every terminal's text, those open included; empty is the default.
+    TerminalFontFamily(String),
     /// The language chosen, once the window shows it.
     Language(Language),
     /// SSH auto-reconnect on or off.
@@ -243,6 +245,9 @@ impl App {
                     return Vec::new();
                 }
                 self.settings.terminal_font_size = *size;
+            }
+            SettingsMessage::TerminalFontFamily(family) => {
+                self.settings.terminal_font_family = terminal_font_family(family);
             }
             SettingsMessage::Language(language) => self.settings.language = Some(*language),
             SettingsMessage::SshAutoReconnect(on) => self.settings.ssh_auto_reconnect = *on,

@@ -300,6 +300,10 @@ pub struct Settings {
     /// Size of the terminals' text a new tab starts at, and Ctrl+0 comes back to, within
     /// [`TERMINAL_FONT_SIZE_MIN`] and [`TERMINAL_FONT_SIZE_MAX`].
     pub terminal_font_size: u16,
+    /// The family of the terminals' text, as the C# `TerminalFontFamily`: by name, never
+    /// empty; [`TERMINAL_FONT_FAMILY_DEFAULT`] unless chosen. One the computer lacks is
+    /// drawn in the default, said where it is chosen.
+    pub terminal_font_family: String,
     /// The language chosen; `None` follows the desktop's.
     pub language: Option<Language>,
     /// Wrong master passwords in a row when the application starts, kept across runs as
@@ -364,6 +368,9 @@ pub struct Settings {
     /// The SFTP browser, the pane it docks beside an SSH shell, and the file browser docked
     /// beside a local shell.
     pub sftp_browser: SftpBrowser,
+    /// The tree's rows show the gateway a profile goes through, as the C#
+    /// `ShowGatewayBadge`: on. A view choice of the tree's filter menu, kept across runs.
+    pub show_gateway_badge: bool,
 }
 
 /// The SFTP browser's settings, as the C# `SftpBrowserEnabled`, `SftpAutoOpenOnSsh` and
@@ -531,6 +538,19 @@ impl Language {
 pub const TERMINAL_FONT_SIZE_DEFAULT: u16 = 15;
 /// Smallest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MIN: u16 = 8;
+
+/// Family of the terminals' text unless chosen: the one embedded in the application, which
+/// every terminal was drawn in before the family could be chosen.
+pub const TERMINAL_FONT_FAMILY_DEFAULT: &str = "Source Code Pro";
+
+/// `family` as the settings keep it: trimmed, the default when nothing is left.
+#[must_use]
+pub fn terminal_font_family(family: &str) -> String {
+    match family.trim() {
+        "" => TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
+        named => named.to_owned(),
+    }
+}
 /// Attempts of an SSH auto-reconnect by default, as the C# `SshAutoReconnectAttempts`.
 pub const SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT: u32 = 3;
 
@@ -655,6 +675,7 @@ impl Default for Settings {
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
             session_log_retention_days: SESSION_LOG_RETENTION_DAYS_DEFAULT,
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
+            terminal_font_family: TERMINAL_FONT_FAMILY_DEFAULT.to_owned(),
             language: None,
             vault_unlock: Lockout::default(),
             pin: None,
@@ -679,6 +700,7 @@ impl Default for Settings {
             diagnostics_log: true,
             reachability: Reachability::default(),
             sftp_browser: SftpBrowser::default(),
+            show_gateway_badge: true,
         }
     }
 }
@@ -893,6 +915,9 @@ struct GeneralSection {
     /// Absent is the C# default: written.
     #[serde(default)]
     diagnostics_log: Option<bool>,
+    /// Absent, from a file written before it, is the C# default: shown.
+    #[serde(default)]
+    show_gateway_badge: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -914,6 +939,9 @@ struct TerminalSection {
     broadcast_scope: Option<String>,
     #[serde(default)]
     font_size: Option<u16>,
+    /// Absent, from a file written before it, is the default family.
+    #[serde(default)]
+    font_family: Option<String>,
     /// The C# name of the local `PowerShell` execution policy.
     #[serde(default)]
     powershell_execution_policy: Option<String>,
@@ -1034,6 +1062,9 @@ impl Settings {
                 .font_size
                 .filter(|size| terminal_font_size_accepted(*size))
                 .unwrap_or(TERMINAL_FONT_SIZE_DEFAULT),
+            terminal_font_family: terminal_font_family(
+                file.terminal.font_family.as_deref().unwrap_or_default(),
+            ),
             vault_unlock: Lockout::restored(
                 file.vault_unlock.failures,
                 file.vault_unlock.locked_until.map(from_epoch),
@@ -1124,6 +1155,7 @@ impl Settings {
                 MAX_SESSIONS_DEFAULT,
             ),
             diagnostics_log: file.general.diagnostics_log.unwrap_or(true),
+            show_gateway_badge: file.general.show_gateway_badge.unwrap_or(true),
             reachability: Reachability {
                 enabled: file.reachability.enabled.unwrap_or(true),
                 interval: within(
@@ -1185,6 +1217,7 @@ impl Settings {
                 color_scheme: Some(self.color_scheme.name().to_owned()),
                 broadcast_scope: Some(self.broadcast_scope.name().to_owned()),
                 font_size: Some(self.terminal_font_size),
+                font_family: Some(self.terminal_font_family.clone()),
                 powershell_execution_policy: Some(
                     self.powershell_execution_policy.name().to_owned(),
                 ),
@@ -1201,6 +1234,7 @@ impl Settings {
                 prevent_sleep: Some(self.prevent_sleep),
                 max_sessions: Some(self.max_sessions),
                 diagnostics_log: Some(self.diagnostics_log),
+                show_gateway_badge: Some(self.show_gateway_badge),
             },
             vault_unlock: VaultUnlockSection {
                 failures: self.vault_unlock.failures(),
