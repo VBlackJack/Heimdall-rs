@@ -22,7 +22,10 @@
 //! "Open in terminal" opens a new default shell in the folder; its files open in the
 //! editor, with the system's default program, or once agreed when they would run. Its
 //! "Run in Shell" runs a script this platform runs by its interpreter in a new tab, each
-//! time once agreed to the command shown whole, Reconnect included.
+//! time once agreed to the command shown whole, Reconnect included. "Open With" and "Open
+//! in Editor" take one regular file, the chooser asked about first when the file runs;
+//! "Copy" and "Paste" copy files into the folder shown, never replacing anything nor a
+//! folder into itself; "Properties" says what the file system says; Delete asks first.
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -843,9 +846,18 @@ fn a_text_file_opens_in_the_editor_another_with_its_program_and_one_that_runs_on
         opened(&mut app, pane, 2).is_empty(),
         "nothing before agreeing"
     );
-    let Some(dialog @ Dialog::ConfirmOpenRunnable { tab, file, shown }) = &app.dialog else {
+    let Some(
+        dialog @ Dialog::ConfirmOpenRunnable {
+            tab,
+            file,
+            shown,
+            chooser,
+        },
+    ) = &app.dialog
+    else {
         panic!("{:?}", app.dialog);
     };
+    assert!(!chooser, "its default program, not the chooser");
     assert_eq!((*tab, file), (pane, &runnable));
     assert_eq!(*shown, runnable.to_string_lossy());
     assert!(!dialog.confirms_on_enter(), "a click, never an Enter");
@@ -882,6 +894,532 @@ fn a_program_that_does_not_start_is_said_on_this_computers_pane() {
         .expect("files");
     assert!(files.local.error.is_some(), "its one pane");
     assert!(files.remote.error.is_none());
+}
+
+/// A browser docked beside a local shell started in the home folder `dir`: the app, the
+/// shell and the browser.
+fn browser(dir: &Path, sink: &Arc<RecordingSink>) -> (App, TabId, TabId) {
+    let mut app = app(dir);
+    let shell = open(&mut app, None);
+    let (pane, _) = docked(&start(&mut app, shell, sink));
+    (app, shell.0, pane)
+}
+
+/// `folder` listed in browser `pane` as the file system holds it, whatever it holds.
+fn listed_as_is(app: &mut App, pane: TabId, folder: &Path) {
+    let entries = std::fs::read_dir(folder)
+        .expect("folder")
+        .map(|entry| {
+            let entry = entry.expect("entry");
+            let kind = entry.file_type().expect("kind");
+            let kind = if kind.is_symlink() {
+                EntryKind::Link
+            } else if kind.is_dir() {
+                EntryKind::Directory
+            } else {
+                EntryKind::File
+            };
+            LocalEntry {
+                label: entry.file_name().to_string_lossy().into_owned(),
+                name: entry.file_name(),
+                kind,
+                size: None,
+                modified: None,
+            }
+        })
+        .collect();
+    app.update(Message::Files(FilesMessage::LocalListed {
+        tab: pane,
+        result: Ok((folder.to_owned(), entries)),
+    }));
+}
+
+/// Entries `names` of browser `pane` chosen: the first selected, the others added to it.
+fn choose(app: &mut App, pane: TabId, names: &[&str]) {
+    for (place, name) in names.iter().enumerate() {
+        let index = index_of(app, pane, name);
+        let side = Side::Local;
+        app.update(Message::Files(if place == 0 {
+            FilesMessage::Select {
+                tab: pane,
+                side,
+                index,
+            }
+        } else {
+            FilesMessage::Toggle {
+                tab: pane,
+                side,
+                index,
+            }
+        }));
+    }
+}
+
+#[test]
+fn open_with_and_open_in_editor_are_offered_for_one_regular_file_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, shell, pane) = browser(dir.path(), &sink);
+    std::fs::create_dir(dir.path().join("sub")).expect("folder");
+    for name in ["notes.md", "setup.exe"] {
+        std::fs::write(dir.path().join(name), b"x").expect("file");
+    }
+    listed_as_is(&mut app, pane, dir.path());
+    let notes = index_of(&app, pane, "notes.md");
+    let sub = index_of(&app, pane, "sub");
+    assert!(app.offers_local_file_entry(pane, notes), "a file");
+    assert!(!app.offers_local_file_entry(pane, sub), "never a folder");
+    assert!(
+        !app.offers_local_file_entry(shell, notes),
+        "the browser's alone"
+    );
+    // Several chosen: none, as the C# offers them for one alone; asking does nothing.
+    choose(&mut app, pane, &["notes.md", "setup.exe"]);
+    assert!(!app.offers_local_file_entry(pane, notes));
+    for message in [
+        FilesMessage::OpenWith {
+            tab: pane,
+            index: notes,
+        },
+        FilesMessage::OpenInEditor {
+            tab: pane,
+            index: notes,
+        },
+    ] {
+        assert!(app.update(Message::Files(message)).is_empty());
+        assert!(app.dialog.is_none());
+    }
+    // A folder alone: none either.
+    choose(&mut app, pane, &["sub"]);
+    for message in [
+        FilesMessage::OpenWith {
+            tab: pane,
+            index: sub,
+        },
+        FilesMessage::OpenInEditor {
+            tab: pane,
+            index: sub,
+        },
+    ] {
+        assert!(app.update(Message::Files(message)).is_empty());
+    }
+    assert!(sink.take().is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_is_offered_neither_open_with_nor_open_in_editor() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane) = browser(dir.path(), &sink);
+    std::fs::write(dir.path().join("notes.md"), b"x").expect("file");
+    std::os::unix::fs::symlink(dir.path().join("notes.md"), dir.path().join("link")).expect("link");
+    listed_as_is(&mut app, pane, dir.path());
+    let link = index_of(&app, pane, "link");
+    assert!(!app.offers_local_file_entry(pane, link));
+}
+
+#[test]
+fn open_in_editor_opens_any_regular_file_in_the_editor_set_nothing_asked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let shell = open(&mut app, None);
+    let (pane, folder) = docked(&start(&mut app, shell, &sink));
+    listed_files(
+        &mut app,
+        pane,
+        &folder,
+        &[("photo.png", false), ("setup.exe", true)],
+    );
+    for name in ["photo.png", "setup.exe"] {
+        let index = index_of(&app, pane, name);
+        let effects = app.update(Message::Files(FilesMessage::OpenInEditor {
+            tab: pane,
+            index,
+        }));
+        let [Effect::LaunchEditor { tab, editor, file }] = effects.as_slice() else {
+            panic!("{name}: {effects:?}");
+        };
+        assert_eq!((*tab, file), (pane, &folder.join(name)), "{name}");
+        assert_eq!(
+            *editor,
+            heimdall_app::external_edit::editor("").expect("the system's editor")
+        );
+        assert!(
+            app.dialog.is_none(),
+            "{name}: the editor shows it, nothing runs"
+        );
+    }
+    let files = app
+        .tab(pane)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert!(files.edits.is_empty(), "nothing watched");
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn open_with_shows_the_chooser_and_asks_first_for_a_file_that_runs() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let sink = Arc::new(RecordingSink::default());
+    let shell = open(&mut app, None);
+    let (pane, folder) = docked(&start(&mut app, shell, &sink));
+    listed_files(
+        &mut app,
+        pane,
+        &folder,
+        &[("photo.png", false), ("setup.exe", true)],
+    );
+    let open_with = |app: &mut App, name: &str| {
+        let index = index_of(app, pane, name);
+        app.update(Message::Files(FilesMessage::OpenWith { tab: pane, index }))
+    };
+    // A file that does not run: the chooser at once.
+    let effects = open_with(&mut app, "photo.png");
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenWithChooser { tab, file }] if *tab == pane && *file == folder.join("photo.png")),
+        "{effects:?}"
+    );
+    assert!(app.dialog.is_none());
+
+    // One that runs: the chooser can run it, so asked first with its full path.
+    let runnable = folder.join("setup.exe");
+    assert!(
+        open_with(&mut app, "setup.exe").is_empty(),
+        "nothing before agreeing"
+    );
+    let Some(
+        dialog @ Dialog::ConfirmOpenRunnable {
+            tab,
+            file,
+            shown,
+            chooser,
+        },
+    ) = &app.dialog
+    else {
+        panic!("{:?}", app.dialog);
+    };
+    assert!(*chooser, "the chooser, once agreed");
+    assert_eq!((*tab, file), (pane, &runnable));
+    assert_eq!(*shown, runnable.to_string_lossy());
+    assert!(!dialog.confirms_on_enter(), "a click, never an Enter");
+    assert!(
+        app.update(Message::DismissDialog).is_empty(),
+        "dismissed: nothing"
+    );
+    assert!(open_with(&mut app, "setup.exe").is_empty());
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenWithChooser { tab, file }] if *tab == pane && *file == runnable),
+        "{effects:?}"
+    );
+    assert!(sink.take().is_empty(), "nothing typed into the shell");
+}
+
+/// "Paste" in browser `pane`: on Windows the system's clipboard is read first, here found
+/// holding `held`, as the browser's own Copy put them there.
+fn paste(app: &mut App, pane: TabId, held: &[PathBuf]) -> Vec<Effect> {
+    let effects = app.update(Message::Files(FilesMessage::Paste { tab: pane }));
+    if cfg!(windows) {
+        assert!(
+            matches!(effects.as_slice(), [Effect::ReadExplorerFiles { tab }] if *tab == pane),
+            "the clipboard read first: {effects:?}"
+        );
+        app.update(Message::Files(FilesMessage::ExplorerFilesRead {
+            tab: pane,
+            paths: held.to_vec(),
+        }))
+    } else {
+        effects
+    }
+}
+
+/// What the paste `effects` start copies, sorted, and where.
+fn pasted(effects: &[Effect], pane: TabId) -> (Vec<PathBuf>, PathBuf) {
+    let [
+        Effect::FileOperation {
+            tab,
+            side: Side::Local,
+            operation,
+        },
+    ] = effects
+    else {
+        panic!("a paste: {effects:?}");
+    };
+    assert_eq!(*tab, pane);
+    match operation.as_ref() {
+        heimdall_app::files::FileOperation::LocalPaste { sources, folder } => {
+            let mut sources = sources.clone();
+            sources.sort();
+            (sources, folder.clone())
+        }
+        _ => panic!("a paste of this computer's files"),
+    }
+}
+
+#[test]
+fn copy_then_paste_copies_the_entries_chosen_into_the_folder_shown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane) = browser(dir.path(), &sink);
+    let from = dir.path().join("from");
+    let to = dir.path().join("to");
+    std::fs::create_dir_all(from.join("sub")).expect("folders");
+    std::fs::create_dir(&to).expect("folder");
+    std::fs::write(from.join("notes.txt"), b"notes").expect("file");
+    std::fs::write(from.join("sub").join("inner.txt"), b"inner").expect("file");
+    std::fs::write(from.join("left.txt"), b"left").expect("file");
+    listed_as_is(&mut app, pane, &from);
+    // Nothing chosen: nothing copied.
+    assert!(
+        app.update(Message::Files(FilesMessage::Copy { tab: pane }))
+            .is_empty()
+    );
+    assert!(app.notice().is_none());
+
+    choose(&mut app, pane, &["notes.txt", "sub"]);
+    let mut copied = vec![from.join("notes.txt"), from.join("sub")];
+    copied.sort();
+    let effects = app.update(Message::Files(FilesMessage::Copy { tab: pane }));
+    if cfg!(windows) {
+        // On the system's clipboard, as Explorer's Copy puts them.
+        let [Effect::WriteFileList(paths)] = effects.as_slice() else {
+            panic!("{effects:?}");
+        };
+        let mut paths = paths.clone();
+        paths.sort();
+        assert_eq!(paths, copied);
+    } else {
+        assert!(effects.is_empty(), "held by Heimdall: {effects:?}");
+    }
+    assert_eq!(app.notice(), Some(&heimdall_app::Notice::FilesCopied(2)));
+    assert!(app.can_paste(pane));
+
+    // Into another folder: copied there, the originals left.
+    listed_as_is(&mut app, pane, &to);
+    let (sources, folder) = pasted(&paste(&mut app, pane, &copied), pane);
+    assert_eq!((&sources, &folder), (&copied, &to));
+    heimdall_app::local_paste::paste(&sources, &folder).expect("pasted");
+    assert_eq!(std::fs::read(to.join("notes.txt")).expect("copy"), b"notes");
+    assert_eq!(
+        std::fs::read(to.join("sub").join("inner.txt")).expect("copy"),
+        b"inner"
+    );
+    assert!(!to.join("left.txt").exists(), "what was not chosen stays");
+    assert!(
+        from.join("notes.txt").exists() && from.join("sub").exists(),
+        "a copy, not a move"
+    );
+    // Done: the folder listed again.
+    let effects = app.update(Message::Files(FilesMessage::OperationDone {
+        tab: pane,
+        side: Side::Local,
+        result: Ok(()),
+    }));
+    assert!(
+        matches!(effects.as_slice(), [Effect::ListLocal { tab, path }] if *tab == pane && *path == to),
+        "{effects:?}"
+    );
+    // The keys do the same, as the C# Ctrl+C and Ctrl+V.
+    listed_as_is(&mut app, pane, &to);
+    choose(&mut app, pane, &["notes.txt"]);
+    let key = |key| Message::Files(FilesMessage::Key { tab: pane, key });
+    let effects = app.update(key(FilesKey::Copy));
+    assert_eq!(effects.len(), usize::from(cfg!(windows)), "{effects:?}");
+    let effects = app.update(key(FilesKey::Paste));
+    assert_eq!(effects.len(), 1, "{effects:?}");
+    assert!(sink.take().is_empty());
+}
+
+#[test]
+fn a_paste_never_replaces_and_refuses_a_folder_into_itself() {
+    use heimdall_app::local_paste::paste;
+    let dir = tempfile::tempdir().expect("dir");
+    let here = dir.path().join("here");
+    let other = dir.path().join("other");
+    std::fs::create_dir_all(here.join("sub").join("deeper")).expect("folders");
+    std::fs::create_dir(&other).expect("folder");
+    let notes = here.join("notes.txt");
+    std::fs::write(&notes, b"one").expect("file");
+    std::fs::write(other.join("notes.txt"), b"other").expect("file");
+
+    // Into its own folder: a copy beside it, then another, the original as it was.
+    paste(std::slice::from_ref(&notes), &here).expect("a copy");
+    paste(std::slice::from_ref(&notes), &here).expect("another");
+    assert_eq!(
+        std::fs::read(here.join("notes (copy).txt")).expect("copy"),
+        b"one"
+    );
+    assert_eq!(
+        std::fs::read(here.join("notes (copy 2).txt")).expect("copy"),
+        b"one"
+    );
+    assert_eq!(std::fs::read(&notes).expect("original"), b"one");
+    // Where the name is taken: never replaced.
+    paste(std::slice::from_ref(&notes), &other).expect("beside");
+    assert_eq!(
+        std::fs::read(other.join("notes.txt")).expect("kept"),
+        b"other"
+    );
+    assert_eq!(
+        std::fs::read(other.join("notes (copy).txt")).expect("copy"),
+        b"one"
+    );
+
+    // A folder into itself or one of its own folders: refused, nothing made.
+    let sub = here.join("sub");
+    for into in [sub.clone(), sub.join("deeper")] {
+        assert_eq!(
+            paste(std::slice::from_ref(&sub), &into),
+            Err(FilesError::PasteIntoItself {
+                name: "sub".to_owned()
+            }),
+            "{}",
+            into.display()
+        );
+    }
+    assert_eq!(
+        paste(std::slice::from_ref(&here), &sub),
+        Err(FilesError::PasteIntoItself {
+            name: "here".to_owned()
+        })
+    );
+    // The first refusal stops the rest.
+    assert!(paste(&[sub.clone(), notes], &sub).is_err());
+    assert!(!sub.join("notes.txt").exists(), "nothing after it");
+    assert!(!sub.join("sub").exists());
+    // What is not there: said.
+    assert!(matches!(
+        paste(&[here.join("gone")], &other),
+        Err(FilesError::Local { .. })
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_pasted_is_refused_and_one_inside_a_folder_left_out() {
+    use heimdall_app::local_paste::paste;
+    let dir = tempfile::tempdir().expect("dir");
+    let folder = dir.path().join("folder");
+    let to = dir.path().join("to");
+    std::fs::create_dir_all(&folder).expect("folder");
+    std::fs::create_dir(&to).expect("folder");
+    std::fs::write(folder.join("file.txt"), b"x").expect("file");
+    std::os::unix::fs::symlink(folder.join("file.txt"), folder.join("link")).expect("link");
+    std::os::unix::fs::symlink(&folder, dir.path().join("to-folder")).expect("link");
+    assert_eq!(
+        paste(&[dir.path().join("to-folder")], &to),
+        Err(FilesError::PasteLink {
+            name: "to-folder".to_owned()
+        }),
+        "never copied through"
+    );
+    paste(std::slice::from_ref(&folder), &to).expect("pasted");
+    assert!(to.join("folder").join("file.txt").is_file());
+    assert!(
+        to.join("folder").join("link").symlink_metadata().is_err(),
+        "left out"
+    );
+}
+
+#[test]
+fn properties_show_what_the_file_system_says_of_the_entry_chosen_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, shell, pane) = browser(dir.path(), &sink);
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, b"12345").expect("file");
+    std::fs::create_dir(dir.path().join("sub")).expect("folder");
+    listed_as_is(&mut app, pane, dir.path());
+    let ask = |app: &mut App, tab: TabId| {
+        app.update(Message::Files(FilesMessage::ShowProperties {
+            tab,
+            side: Side::Local,
+        }))
+    };
+    let shown = |app: &mut App| match app.dialog.take() {
+        Some(Dialog::LocalFileProperties(properties)) => *properties,
+        other => panic!("{other:?}"),
+    };
+
+    choose(&mut app, pane, &["notes.txt"]);
+    assert!(ask(&mut app, pane).is_empty());
+    let metadata = std::fs::metadata(&file).expect("metadata");
+    let properties = shown(&mut app);
+    assert_eq!(properties.name, "notes.txt");
+    assert_eq!(properties.path, file.to_string_lossy());
+    assert_eq!(properties.kind, EntryKind::File);
+    assert_eq!(properties.size, Some(5));
+    assert_eq!(properties.modified, metadata.modified().ok());
+    assert_eq!(properties.created, metadata.created().ok());
+    assert!(!properties.read_only);
+    assert_eq!(
+        properties.hidden,
+        cfg!(windows).then_some(false),
+        "Windows' attribute"
+    );
+    assert_eq!(properties.link_target, None);
+
+    // Read-only, as the file system says.
+    let writable = metadata.permissions();
+    let mut permissions = writable.clone();
+    permissions.set_readonly(true);
+    std::fs::set_permissions(&file, permissions).expect("read-only");
+    ask(&mut app, pane);
+    let read_only = shown(&mut app).read_only;
+    // Writable again, to be removed with its folder.
+    std::fs::set_permissions(&file, writable).expect("writable");
+    assert!(read_only);
+
+    // A folder: no size.
+    choose(&mut app, pane, &["sub"]);
+    ask(&mut app, pane);
+    let folder = shown(&mut app);
+    assert_eq!((folder.kind, folder.size), (EntryKind::Directory, None));
+
+    // Several chosen, or the shell's own tab: nothing shown.
+    choose(&mut app, pane, &["notes.txt", "sub"]);
+    ask(&mut app, pane);
+    assert!(app.dialog.is_none());
+    ask(&mut app, shell);
+    assert!(app.dialog.is_none());
+
+    // Gone since listed: said on the pane.
+    choose(&mut app, pane, &["notes.txt"]);
+    std::fs::remove_file(&file).expect("removed");
+    ask(&mut app, pane);
+    assert!(app.dialog.is_none());
+    let files = app
+        .tab(pane)
+        .and_then(|tab| tab.files.as_deref())
+        .expect("files");
+    assert!(matches!(files.local.error, Some(FilesError::Local { .. })));
+}
+
+#[test]
+fn delete_asks_first_and_deletes_nothing_before() {
+    let dir = tempfile::tempdir().expect("dir");
+    let sink = Arc::new(RecordingSink::default());
+    let (mut app, _, pane) = browser(dir.path(), &sink);
+    let file = dir.path().join("notes.txt");
+    std::fs::write(&file, b"x").expect("file");
+    listed_as_is(&mut app, pane, dir.path());
+    choose(&mut app, pane, &["notes.txt"]);
+    let effects = app.update(Message::Files(FilesMessage::AskDelete {
+        tab: pane,
+        side: Side::Local,
+    }));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(
+        matches!(&app.dialog, Some(Dialog::ConfirmDelete { tab, side: Side::Local, name, count: 1, .. }) if *tab == pane && name == "notes.txt"),
+        "{:?}",
+        app.dialog
+    );
+    assert!(file.exists(), "nothing deleted before agreeing");
+    assert!(app.update(Message::DismissDialog).is_empty());
+    assert!(file.exists());
 }
 
 /// `folder` listed in browser `pane`: folder `sub`, then files `names`.

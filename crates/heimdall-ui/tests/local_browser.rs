@@ -20,7 +20,10 @@
 //! C# "Open in Explorer" and "Open in terminal", a new shell, and nothing that would reach
 //! a server or the shell beside it; a file that would run is asked about first; "Run in
 //! Shell" is offered for a script this platform runs alone, and asks first with the command
-//! whole; and the Settings page docks it or not, and lets it follow its shell or not.
+//! whole; "Open With" (on Windows), "Open in Editor", "Copy", "Paste" and "Properties"
+//! are offered where the C# browser offers them, Properties showing what the file system
+//! says and Delete saying it cannot be undone; and the Settings page docks it or not, and
+//! lets it follow its shell or not.
 
 mod common;
 
@@ -485,6 +488,191 @@ fn run_in_shell_is_in_the_menu_of_a_script_alone() {
         menu(Some(script), server).find("Run in Shell").is_err(),
         "the local file browser's alone"
     );
+}
+
+/// The local file browser's tab facts, `can_paste` as the core says.
+fn browser_facts(can_paste: bool) -> FilesTabFacts {
+    FilesTabFacts {
+        can_paste,
+        can_copy: false,
+        connected: false,
+        sftp: false,
+        over_ssh: false,
+        local_only: true,
+    }
+}
+
+#[test]
+fn the_browsers_menu_offers_the_csharp_local_entries_where_the_csharp_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (_core, pane) = docked(dir.path());
+    let menu = |facts, tab_facts| {
+        common::simulator(
+            settings(),
+            WINDOW,
+            heimdall_ui::tree_view::files_entry_menu((pane, Side::Local), facts, tab_facts),
+        )
+    };
+    let file = FilesEntryFacts {
+        index: 3,
+        single: true,
+        one_file: true,
+        link: false,
+        runs_in_shell: false,
+    };
+    let local = browser_facts(true);
+    // One regular file: each entry sends its message.
+    let mut expected = vec![
+        (
+            "Open in Editor",
+            FilesMessage::OpenInEditor {
+                tab: pane,
+                index: 3,
+            },
+        ),
+        ("Copy", FilesMessage::Copy { tab: pane }),
+        ("Paste", FilesMessage::Paste { tab: pane }),
+        (
+            "Properties",
+            FilesMessage::ShowProperties {
+                tab: pane,
+                side: Side::Local,
+            },
+        ),
+    ];
+    // The system's "Open with" chooser is Windows' alone.
+    if cfg!(windows) {
+        expected.push((
+            "Open With...",
+            FilesMessage::OpenWith {
+                tab: pane,
+                index: 3,
+            },
+        ));
+    } else {
+        assert!(menu(Some(file), local).find("Open With...").is_err());
+    }
+    for (label, message) in expected {
+        assert_eq!(
+            chosen_from(menu(Some(file), local), label),
+            [format!("{message:?}")],
+            "{label}"
+        );
+    }
+    assert!(
+        menu(Some(file), local).find("Cut").is_err(),
+        "no Cut in the C# browser"
+    );
+
+    // A folder: no chooser nor editor; Copy and Properties.
+    let folder = FilesEntryFacts {
+        one_file: false,
+        ..file
+    };
+    let mut ui = menu(Some(folder), local);
+    for absent in ["Open With...", "Open in Editor"] {
+        assert!(ui.find(absent).is_err(), "{absent}: a folder");
+    }
+    ui.find("Copy").expect("a folder is copied");
+    ui.find("Properties").expect("its properties");
+
+    // Several chosen: copied together; one alone has properties.
+    let several = FilesEntryFacts {
+        single: false,
+        one_file: false,
+        ..file
+    };
+    let mut ui = menu(Some(several), local);
+    ui.find("Copy").expect("all of them");
+    for absent in ["Properties", "Open in Editor", "Open With..."] {
+        assert!(ui.find(absent).is_err(), "{absent}: several chosen");
+    }
+
+    // On the folder shown, nothing chosen: Paste alone, while something can be pasted.
+    let mut ui = menu(None, local);
+    ui.find("Paste").expect("the folder shown");
+    for absent in ["Copy", "Properties", "Open in Editor"] {
+        assert!(ui.find(absent).is_err(), "{absent}: nothing chosen");
+    }
+    assert!(
+        menu(None, browser_facts(false)).find("Paste").is_err(),
+        "nothing to paste"
+    );
+
+    // This computer's pane of a Files tab: none of the browser's own entries.
+    let files_tab = FilesTabFacts {
+        local_only: false,
+        ..local
+    };
+    let mut ui = menu(Some(file), files_tab);
+    for absent in [
+        "Open in Editor",
+        "Open With...",
+        "Copy",
+        "Paste",
+        "Properties",
+    ] {
+        assert!(ui.find(absent).is_err(), "{absent}: the browser's alone");
+    }
+}
+
+/// The browser of [`docked`] with `notes.md` written in `dir` and chosen.
+fn chosen_notes(dir: &Path) -> (App, TabId) {
+    let (mut core, pane) = docked(dir);
+    std::fs::write(dir.join("notes.md"), b"notes").expect("file");
+    core.update(AppMessage::Files(FilesMessage::Select {
+        tab: pane,
+        side: Side::Local,
+        index: 0,
+    }));
+    (core, pane)
+}
+
+#[test]
+fn the_properties_of_a_browsers_file_show_what_the_file_system_says() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = chosen_notes(dir.path());
+    core.update(AppMessage::Files(FilesMessage::ShowProperties {
+        tab: pane,
+        side: Side::Local,
+    }));
+    let path = dir.path().join("notes.md").to_string_lossy().into_owned();
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    for label in [
+        "Properties - notes.md",
+        "Name:",
+        "Type:",
+        "Size:",
+        "Created:",
+        "Modified:",
+        "Accessed:",
+        "Attributes:",
+        "Path:",
+        "File",
+        "Normal",
+        path.as_str(),
+    ] {
+        ui.find(label).expect(label);
+    }
+    assert!(ui.find("Link target:").is_err(), "not a link");
+    assert!(ui.find("Owner:").is_err(), "a server's entry alone");
+}
+
+#[test]
+fn deleting_a_browsers_file_asks_first_and_says_it_cannot_be_undone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane) = chosen_notes(dir.path());
+    let effects = core.update(AppMessage::Files(FilesMessage::AskDelete {
+        tab: pane,
+        side: Side::Local,
+    }));
+    assert!(effects.is_empty(), "nothing deleted before agreeing");
+    let shell = Shell::with_app(core);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    ui.find("notes.md will be deleted. This cannot be undone.")
+        .expect("permanent, as the C# says");
+    assert!(dir.path().join("notes.md").exists());
 }
 
 #[test]

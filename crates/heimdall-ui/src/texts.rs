@@ -501,6 +501,9 @@ pub fn files_error(error: &FilesError) -> String {
         FilesError::PasteIntoItself { name } => {
             fl!("ui-files-error-paste-into-itself", name = name.as_str())
         }
+        FilesError::PasteLink { name } => {
+            fl!("ui-files-error-paste-link", name = name.as_str())
+        }
     }
 }
 
