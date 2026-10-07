@@ -170,6 +170,11 @@ mod tests {
         );
     }
 
+    /// How long a test waits for a step to be typed, at most.
+    const STEP_SETTLE: std::time::Duration = std::time::Duration::from_secs(10);
+    /// How often it looks.
+    const STEP_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
     #[tokio::test]
     async fn a_step_waits_its_delay_and_a_stop_during_it_types_nothing_more() {
         let stop = CancellationToken::new();
@@ -185,8 +190,14 @@ mod tests {
             events,
             stop.clone(),
         ));
-        // Past the first step, into the second's delay.
-        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        // Past the first step, into the second's delay: waited for, not timed, as a busy
+        // machine may run the sequence late.
+        let deadline = tokio::time::Instant::now() + STEP_SETTLE;
+        while shell.typed.lock().expect("typed").is_empty()
+            && tokio::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(STEP_POLL).await;
+        }
         assert_eq!(shell.typed.lock().expect("typed").as_slice(), b"first\n");
         stop.cancel();
         running.await.expect("ran");
