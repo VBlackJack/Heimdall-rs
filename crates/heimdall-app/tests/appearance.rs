@@ -177,3 +177,46 @@ fn a_language_chosen_is_kept_for_the_next_run() {
         Some(Language::Spanish)
     );
 }
+
+#[test]
+fn the_selection_takes_the_colour_of_the_scheme_chosen() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    open(&mut app);
+    let selection = |app: &App| app.tabs[0].terminal.snapshot().selection;
+    assert_eq!(selection(&app), Palette::dracula().selection);
+    for (scheme, palette) in [
+        (ColorScheme::Standard, Palette::standard()),
+        (ColorScheme::SolarizedDark, Palette::solarized_dark()),
+        (ColorScheme::Monokai, Palette::monokai()),
+        (ColorScheme::Nord, Palette::nord()),
+    ] {
+        app.update(Message::Settings(SettingsMessage::ColorScheme(scheme)));
+        assert_eq!(selection(&app), palette.selection, "{scheme:?}");
+        assert_ne!(palette.selection, palette.background, "{scheme:?}");
+    }
+}
+
+#[test]
+fn a_theme_and_accent_chosen_are_kept_and_leave_the_terminals_scheme_alone() {
+    use heimdall_core::settings::{Accent, AppTheme};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    assert_eq!(app.settings().theme, AppTheme::Drakul);
+    assert_eq!(app.settings().accent, Accent::Default);
+    open(&mut app);
+    app.update(Message::Settings(SettingsMessage::Theme(
+        AppTheme::Parchment,
+    )));
+    app.update(Message::Settings(SettingsMessage::Accent(Accent::Green)));
+    assert_eq!(app.settings().color_scheme, ColorScheme::Dracula);
+    assert_eq!(
+        backgrounds(&app),
+        [Palette::dracula().background],
+        "the terminal keeps its own scheme, as the C#"
+    );
+    let again = self::app(dir.path());
+    assert_eq!(again.settings().theme, AppTheme::Parchment);
+    assert_eq!(again.settings().accent, Accent::Green);
+}

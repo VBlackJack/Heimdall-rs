@@ -57,5 +57,23 @@ marge de numéros de ligne et un défilement horizontal ajoutés.
 - Sous licence MIT ; son texte complet ouvre ce fichier et décrit les modifications (en
   anglais).
 
+## Palette Dracula Theme
+
+Les couleurs du thème Dracula de la fenêtre et de la palette Dracula des terminaux,
+reproduites dans [`crates/heimdall-ui/src/themes.rs`](crates/heimdall-ui/src/themes.rs) et
+[`crates/heimdall-term/src/palette.rs`](crates/heimdall-term/src/palette.rs). Le thème
+Drakul en est dérivé, sa couleur de commentaire éclaircie pour rester lisible.
+
+- Copyright Zeno Rocha, [Dracula Theme](https://github.com/dracula/dracula-theme).
+- Sous licence MIT.
+
+## Palettes ThemeForge
+
+Les dix-sept thèmes de la fenêtre sont les palettes de ThemeForge 2.1.0, de Julien Bombled,
+sous licence Apache, version 2.0, comme Heimdall-rs ; Dracula mis à part, comme dit
+ci-dessus. Le thème Magellan reprend la teinte de fond et la couleur d'accent de
+l'identité visuelle de Magellan : "Magellan" et ses couleurs sont des marques de leur
+propriétaire, sur lesquelles rien n'est revendiqué.
+
 Les crates Rust liées aux exécutables sont listées avec leurs licences par
 `cargo deny list` ; `deny.toml` contient les licences acceptées par le projet.

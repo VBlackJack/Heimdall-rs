@@ -391,12 +391,14 @@ fn binding<M: Clone>(press: KeyPress, ask: impl Fn(EditorKey) -> M) -> Option<Bi
 }
 
 /// The editor of a Files tab, in place of its lists: its file's name, Save and Close, what
-/// it says, the text, and where the cursor is. `connected` while the session is up.
+/// it says, the text, and where the cursor is. `connected` while the session is up; the
+/// code coloured with `syntax`, the window theme's.
 pub fn view<'a>(
     tab: TabId,
     edit: &'a IntegratedEdit,
     buffer: Option<&'a EditorBuffer>,
     connected: bool,
+    syntax: iced::highlighter::Theme,
 ) -> Element<'a, Message> {
     let id = edit.id;
     let key = move |key| Message::Editor(EditorMessage::Key { tab, id, key });
@@ -448,7 +450,7 @@ pub fn view<'a>(
             })
         })
         .font(Font::MONOSPACE)
-        .highlight(&buffer.syntax.token, iced::highlighter::Theme::Base16Ocean);
+        .highlight(&buffer.syntax.token, syntax);
     page.push(body)
         .push(status(edit, buffer))
         .padding(SPACING)
