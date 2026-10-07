@@ -89,7 +89,7 @@ pub use app::{
     SettingsMessage, SudoAction, SystemCredentials, Tab, TabGroup, TabMenuMessage, TabProfile,
     TreeFilter, TreeRow, TrustedKey, TrustedKeys, TrustedKeysMessage, TunnelMessage,
     UNLOCK_SECRET_ENTRY, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, WHEEL_LINES, master_password_problem, open_vault,
+    VaultStatus, WHEEL_LINES, master_password_problem, open_vault, search_folded,
 };
 pub use app::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use app::{GatewayEntry, GatewayOverview, GatewaysMessage, MissingGateway, RoutedSession};

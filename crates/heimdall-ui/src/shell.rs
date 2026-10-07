@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy, SftpBrowser};
+use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -62,10 +62,7 @@ use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, display_address};
 use heimdall_core::settings::Language;
-use heimdall_core::settings::{
-    BroadcastScope, ColorScheme, DEFAULT_SESSION_LOG_DIRECTORY, SSH_AUTO_RECONNECT_ATTEMPTS_MAX,
-    SSH_AUTO_RECONNECT_ATTEMPTS_MIN,
-};
+use heimdall_core::settings::{BroadcastScope, ColorScheme};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -83,6 +80,9 @@ use zeroize::Zeroizing;
 
 mod floating_files;
 mod floating_find;
+mod settings_page;
+
+pub use settings_page::search_field_id as settings_search_field_id;
 
 use crate::desktop_view::DesktopView;
 use crate::files_view;
@@ -93,6 +93,7 @@ use crate::palette::Palette;
 use crate::report;
 use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
+use crate::settings_rows::SettingRow;
 use crate::split_view::{self, Shape, SplitView};
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::font::TerminalFont;
@@ -594,6 +595,14 @@ pub enum Message {
     SaveProfileForm,
     /// Show this tab of the Settings page.
     SettingsTab(SettingsTab),
+    /// The Settings page's search changed: its rows are filtered by what it holds.
+    SettingsSearch(String),
+    /// "Find modified settings": the search set to the "Modified" marker's word.
+    FindModifiedSettings,
+    /// A row's "Reset": its default put back.
+    ResetSetting(SettingRow),
+    /// A line of the security overview's "Go to setting": the row shown, outlined.
+    GoToSetting(SettingRow),
     /// Pick the SSH key of the profile form in the system's open dialog.
     BrowseKeyFile,
     /// The password field of the gateway dialog changed.
@@ -859,6 +868,10 @@ impl fmt::Debug for Message {
             Self::ProfilePassphrase(_) => f.write_str("ProfilePassphrase(..)"),
             Self::SaveProfileForm => f.write_str("SaveProfileForm"),
             Self::SettingsTab(tab) => write!(f, "SettingsTab({tab:?})"),
+            Self::SettingsSearch(typed) => write!(f, "SettingsSearch({typed:?})"),
+            Self::FindModifiedSettings => f.write_str("FindModifiedSettings"),
+            Self::ResetSetting(row) => write!(f, "ResetSetting({row:?})"),
+            Self::GoToSetting(row) => write!(f, "GoToSetting({row:?})"),
             Self::BrowseKeyFile => f.write_str("BrowseKeyFile"),
             Self::GatewayPassword(_) => f.write_str("GatewayPassword(..)"),
             Self::GatewayPassphrase(_) => f.write_str("GatewayPassphrase(..)"),
@@ -1214,6 +1227,12 @@ pub struct Shell {
     host_key_search: String,
     /// The Settings tab shown, kept while the application runs.
     settings_tab: SettingsTab,
+    /// What the Settings page's search holds: while it holds a word, the rows it finds are
+    /// shown in place of the tab.
+    settings_search: String,
+    /// The row a "Go to setting" of the security overview showed, outlined until another
+    /// tab or a search is chosen.
+    settings_highlight: Option<SettingRow>,
     /// The search typed over the trusted RDP certificates.
     certificate_search: String,
     /// The search typed over the trusted FTPS certificates.
@@ -1461,11 +1480,27 @@ impl Shell {
             session_typed: Default::default(),
             host_key_search: String::new(),
             settings_tab: SettingsTab::default(),
+            settings_search: String::new(),
+            settings_highlight: None,
             certificate_search: String::new(),
             ftps_certificate_search: String::new(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
+        }
+    }
+
+    /// The field Ctrl+F gives the keyboard to: the Settings page's search on that page, as
+    /// the C# Settings tab's; a Files tab's filter in its lists, as the C# file browser's;
+    /// else the tree's search.
+    #[must_use]
+    pub fn search_field(&self) -> iced::widget::Id {
+        if self.settings_shown() {
+            return settings_search_field_id();
+        }
+        match self.shown_files_side() {
+            Some((tab, side)) => files_view::field_id(tab, side, files_view::PaneField::Filter),
+            None => search_field_id(),
         }
     }
 
@@ -2111,18 +2146,16 @@ impl Shell {
             // Under a dialog, the tree is not there to search.
             Message::FocusSearch if self.app.dialog.is_some() => return Task::none(),
             Message::FocusSearch => {
-                // Ctrl+F in a Files tab's lists is its filter's, as the C# file browser's.
-                let field = match self.shown_files_side() {
-                    Some((tab, side)) => {
-                        files_view::field_id(tab, side, files_view::PaneField::Filter)
-                    }
-                    None => search_field_id(),
-                };
+                let field = self.search_field();
                 return operation::focus(field.clone()).chain(operation::select_all(field));
             }
             message @ (Message::SearchSubmit | Message::SearchDown) => {
                 return self.search_key(&message);
             }
+            message @ (Message::SettingsSearch(_)
+            | Message::FindModifiedSettings
+            | Message::GoToSetting(_)) => return self.settings_search_message(message),
+            Message::ResetSetting(row) => self.reset_setting(row),
             Message::SubmitVault => self.submit_vault(),
             Message::SubmitPin => self.submit_pin(),
             Message::RemovePin => self.remove_pin(),
@@ -2279,7 +2312,12 @@ impl Shell {
             }
             Message::FocusVaultField(index) => return operation::focus(vault_field_id(index)),
             Message::Search(term) => self.search = term,
-            Message::SettingsTab(tab) => self.settings_tab = tab,
+            Message::SettingsTab(tab) => {
+                self.settings_tab = tab;
+                // A tab chosen is shown whole: the search, and the row outlined, give way.
+                self.settings_search.clear();
+                self.settings_highlight = None;
+            }
             Message::ProfilePassword(value) => self.profile_password = Zeroizing::new(value),
             Message::SudoPasswordEdited(value) => self.sudo_password = Zeroizing::new(value),
             Message::SudoPasswordConfirm => {
@@ -4614,484 +4652,6 @@ impl Shell {
         search.into()
     }
 
-    /// The Gateways tab: the gateways, what goes through each, and the references to one
-    /// that is not configured.
-    fn gateways_settings(&self) -> Column<'_, Message> {
-        crate::gateways_view::view(
-            self.app.gateway_overview(),
-            self.app.gateways(),
-            &self.gateway_reassign,
-        )
-    }
-
-    /// The Terminal tab: the terminals' look, the transcripts, the macros.
-    fn terminal_tab(&self) -> Column<'_, Message> {
-        column![
-            text(fl!("ui-settings-terminal")).size(BODY_SIZE),
-            self.terminal_settings(),
-            text(fl!("ui-settings-session-logging")).size(BODY_SIZE),
-            self.session_log_settings(),
-            text(fl!("ui-macros-menu")).size(BODY_SIZE),
-            crate::macros_view::card(self.app.macros()),
-        ]
-    }
-
-    /// The settings, as the C# Settings tab's Security page: the master password card.
-    fn settings_page(&self) -> Element<'_, Message> {
-        let enabled = self.app.vault_status() != VaultStatus::Missing;
-        let mut actions = row![
-            text(if enabled {
-                fl!("ui-settings-vault-enabled")
-            } else {
-                fl!("ui-settings-vault-disabled")
-            }),
-            iced::widget::space::horizontal(),
-        ]
-        .spacing(SPACING)
-        .align_y(iced::Alignment::Center);
-        if enabled {
-            actions = actions
-                .push(
-                    button(text(fl!("ui-settings-vault-change")))
-                        .style(button::secondary)
-                        .on_press(Message::App(AppMessage::ChangeMasterPassword)),
-                )
-                .push(
-                    button(text(fl!("ui-settings-vault-disable")))
-                        .style(button::secondary)
-                        .on_press(Message::App(AppMessage::DisableMasterPassword)),
-                );
-        } else {
-            actions = actions.push(
-                button(text(fl!("ui-settings-vault-enable")))
-                    .on_press(Message::App(AppMessage::ShowVault)),
-            );
-        }
-        let vault_card = container(
-            column![
-                text(fl!("ui-settings-vault-title")).size(BODY_SIZE),
-                text(fl!("ui-settings-vault-explanation")).size(SMALL_SIZE),
-                actions,
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box);
-        let pin_card = container(
-            column![
-                text(fl!("ui-settings-pin-title")).size(BODY_SIZE),
-                row![
-                    text(if self.app.settings().pin.is_some() {
-                        fl!("ui-settings-pin-enabled")
-                    } else {
-                        fl!("ui-settings-pin-disabled")
-                    }),
-                    iced::widget::space::horizontal(),
-                    button(text(fl!("ui-settings-pin-configure")))
-                        .style(button::secondary)
-                        .on_press(Message::App(AppMessage::Pin(PinMessage::Configure))),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box);
-        let body: Column<'_, Message> = match self.settings_tab {
-            SettingsTab::General => self.general_settings(),
-            SettingsTab::Terminal => self.terminal_tab(),
-            SettingsTab::Ssh => column![
-                text(fl!("ui-settings-ssh-auto-reconnect")).size(BODY_SIZE),
-                self.ssh_reconnect_settings(),
-                text(fl!("ui-settings-ssh-session")).size(BODY_SIZE),
-                self.ssh_session_settings(),
-                text(fl!("ui-settings-sftp")).size(BODY_SIZE),
-                self.sftp_settings(),
-                text(fl!("ui-settings-external-editor")).size(BODY_SIZE),
-                self.editor_settings(),
-                // The FTPS certificates beside the other file transfers' settings.
-                self.trusted_keys_settings(&[TrustedList::HostKeys, TrustedList::FtpsCertificates]),
-            ],
-            SettingsTab::Rdp => self.rdp_settings(),
-            SettingsTab::Gateways => self.gateways_settings(),
-            SettingsTab::Security => column![
-                pin_card,
-                vault_card,
-                // Last: a long card, which would push the everyday settings down.
-                container(crate::provider_view::card(&self.app, &self.provider_unlock))
-                    .max_width(SETTINGS_WIDTH),
-            ],
-        };
-        scrollable(
-            column![
-                text(fl!("ui-settings-title")).size(HEADING_SIZE),
-                settings_tabs(self.settings_tab),
-                body.spacing(SPACING),
-            ]
-            .spacing(SPACING)
-            .padding(PADDING),
-        )
-        .into()
-    }
-
-    /// The application's appearance, as the C# General tab's card: its language, applied at
-    /// once.
-    fn appearance_settings(&self) -> Element<'_, Message> {
-        let shown = self
-            .app
-            .settings()
-            .language
-            .unwrap_or_else(crate::i18n::current);
-        let card = column![
-            row![
-                text(fl!("ui-settings-language")),
-                iced::widget::space::horizontal(),
-                pick_list(
-                    Language::ALL.map(LanguageChoice).to_vec(),
-                    Some(LanguageChoice(shown)),
-                    |LanguageChoice(language)| Message::LanguageChosen(language),
-                ),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(SPACING);
-        container(card)
-            .padding(PADDING)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box)
-            .into()
-    }
-
-    /// The C# General tab: the appearance, then the behaviour.
-    fn general_settings(&self) -> Column<'_, Message> {
-        column![
-            text(fl!("ui-settings-appearance")).size(BODY_SIZE),
-            self.appearance_settings(),
-            text(fl!("ui-settings-behavior")).size(BODY_SIZE),
-            self.behavior_settings(),
-            text(fl!("ui-settings-reachability")).size(BODY_SIZE),
-            self.reachability_settings(),
-        ]
-    }
-
-    /// The C# General tab's Behavior section: whether the tunnels panel starts collapsed.
-    fn behavior_settings(&self) -> Element<'_, Message> {
-        container(
-            column![
-                checkbox(self.app.settings().collapse_tunnels_panel)
-                    .label(fl!("ui-settings-collapse-tunnels-panel"))
-                    .on_toggle(|collapse| {
-                        Message::App(AppMessage::Settings(SettingsMessage::CollapseTunnelsPanel(
-                            collapse,
-                        )))
-                    }),
-                text(fl!("ui-settings-collapse-tunnels-panel-hint")).size(SMALL_SIZE),
-                checkbox(self.app.settings().prevent_sleep)
-                    .label(fl!("ui-settings-prevent-sleep"))
-                    .on_toggle(|on| {
-                        Message::App(AppMessage::Settings(SettingsMessage::PreventSleep(on)))
-                    }),
-                text(fl!("ui-settings-prevent-sleep-hint")).size(SMALL_SIZE),
-                row![
-                    text(fl!("ui-settings-max-sessions")),
-                    iced::widget::space::horizontal(),
-                    pick_list(
-                        (0..=heimdall_core::settings::MAX_SESSIONS_MAX)
-                            .map(SessionsChoice)
-                            .collect::<Vec<_>>(),
-                        Some(SessionsChoice(self.app.settings().max_sessions)),
-                        |SessionsChoice(max)| {
-                            Message::App(AppMessage::Settings(SettingsMessage::MaxSessions(max)))
-                        },
-                    ),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
-    }
-
-    /// The keys trusted for servers of `shown`, as the C# Host keys and Certificates pages
-    /// list them, with what could not be read, said once.
-    fn trusted_keys_settings(&self, shown: &[TrustedList]) -> Element<'_, Message> {
-        let keys = self.app.trusted_keys();
-        let mut lists = Column::with_children(shown.iter().map(|list| match list {
-            TrustedList::HostKeys => {
-                crate::trusted_keys_view::host_keys(keys, &self.host_key_search)
-            }
-            TrustedList::Certificates => {
-                crate::trusted_keys_view::certificates(keys, &self.certificate_search)
-            }
-            TrustedList::FtpsCertificates => {
-                crate::trusted_keys_view::ftps_certificates(keys, &self.ftps_certificate_search)
-            }
-        }))
-        .spacing(SPACING)
-        .max_width(SETTINGS_WIDTH);
-        if let Some(unreadable) = crate::trusted_keys_view::unreadable(keys) {
-            lists = lists.push(unreadable);
-        }
-        lists.into()
-    }
-
-    /// Session logging, as the C# Settings page offers it: on or off, with what a transcript
-    /// keeps said, the folder the transcripts go to, applied with Enter, and the days a
-    /// transcript is kept, typed and applied with Enter as the other numbers.
-    fn session_log_settings(&self) -> Element<'_, Message> {
-        let settings = self.app.settings();
-        let typed = self
-            .log_directory
-            .as_deref()
-            .unwrap_or(&settings.session_log_directory);
-        let logging = column![
-            checkbox(settings.session_logging)
-                .label(fl!("ui-settings-session-logging-record"))
-                .on_toggle(|on| {
-                    Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(on)))
-                }),
-            text(fl!("ui-settings-session-logging-warning")).size(SMALL_SIZE),
-            row![
-                text(fl!("ui-settings-session-log-directory")),
-                text_input(DEFAULT_SESSION_LOG_DIRECTORY, typed)
-                    .on_input(Message::LogDirectoryEdited)
-                    .on_submit(Message::LogDirectoryApply),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-            text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
-        ]
-        .spacing(SPACING);
-        container(self.number_fields(logging, &SessionField::TRANSCRIPTS))
-            .padding(PADDING)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box)
-            .into()
-    }
-
-    /// The C# "SFTP browser" card: the browser on or off, and under it the pane opened beside
-    /// an SSH shell and that pane following the shell's working folder, as the C# checkboxes
-    /// it enables; then the file browser docked beside a local shell, whatever the SFTP
-    /// browser's state, as it reaches no server, and under it that browser following the
-    /// local shell's working folder.
-    fn sftp_settings(&self) -> Element<'_, Message> {
-        let sftp = self.app.settings().sftp_browser;
-        let set = |sftp| Message::App(AppMessage::Settings(SettingsMessage::SftpBrowser(sftp)));
-        container(
-            column![
-                checkbox(sftp.enabled)
-                    .label(fl!("ui-settings-sftp-browser-enabled"))
-                    .on_toggle(move |enabled| set(SftpBrowser { enabled, ..sftp })),
-                checkbox(sftp.auto_open_on_ssh)
-                    .label(fl!("ui-settings-sftp-auto-open"))
-                    .on_toggle_maybe(sftp.enabled.then_some(move |auto_open_on_ssh| {
-                        set(SftpBrowser {
-                            auto_open_on_ssh,
-                            ..sftp
-                        })
-                    })),
-                checkbox(sftp.follow_ssh_directory)
-                    .label(fl!("ui-settings-sftp-follow"))
-                    .on_toggle_maybe(sftp.enabled.then_some(move |follow_ssh_directory| {
-                        set(SftpBrowser {
-                            follow_ssh_directory,
-                            ..sftp
-                        })
-                    })),
-                checkbox(sftp.dock_local_browser)
-                    .label(fl!("ui-settings-dock-local-browser"))
-                    .on_toggle(move |dock_local_browser| {
-                        set(SftpBrowser {
-                            dock_local_browser,
-                            ..sftp
-                        })
-                    }),
-                checkbox(sftp.follow_local_directory)
-                    .label(fl!("ui-settings-local-follow"))
-                    .on_toggle_maybe(sftp.dock_local_browser.then_some(
-                        move |follow_local_directory| {
-                            set(SftpBrowser {
-                                follow_local_directory,
-                                ..sftp
-                            })
-                        },
-                    )),
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
-    }
-
-    /// The program a server's file is edited with, as the C# Settings page's "External
-    /// editor": applied with Enter; empty takes the system's own.
-    fn editor_settings(&self) -> Element<'_, Message> {
-        let typed = self
-            .editor_typed
-            .as_deref()
-            .unwrap_or(&self.app.settings().external_editor);
-        container(
-            column![
-                row![
-                    text(fl!("ui-settings-external-editor-path")),
-                    text_input("", typed)
-                        .on_input(Message::EditorEdited)
-                        .on_submit(Message::EditorApply),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-                text(fl!("ui-settings-external-editor-hint")).size(SMALL_SIZE),
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
-    }
-
-    /// The RDP tab: the application's RDP options, then the certificates trusted.
-    fn rdp_settings(&self) -> Column<'_, Message> {
-        column![
-            text(fl!("ui-settings-rdp-defaults")).size(BODY_SIZE),
-            container(crate::rdp_options::defaults(
-                self.app.settings().rdp_defaults
-            ))
-            .padding(PADDING)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box),
-            self.rdp_session_settings(),
-            container(self.presets.view())
-                .padding(PADDING)
-                .max_width(SETTINGS_WIDTH)
-                .style(container::bordered_box),
-            tooltip(
-                button(text(fl!("ui-settings-rdp-reset-defaults")))
-                    .style(button::secondary)
-                    .on_press(Message::App(AppMessage::Settings(
-                        SettingsMessage::ResetRdpDefaults
-                    ))),
-                text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(SMALL_SIZE),
-                tooltip::Position::Bottom,
-            )
-            .style(container::rounded_box),
-            self.trusted_keys_settings(&[TrustedList::Certificates]),
-        ]
-    }
-
-    /// How many times a dropped desktop is opened again by itself, as the C#
-    /// `RdpAutoReconnectMaxAttempts`.
-    fn rdp_session_settings(&self) -> Element<'_, Message> {
-        let attempts: Vec<u32> = (heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MIN
-            ..=heimdall_core::settings::RDP_AUTO_RECONNECT_ATTEMPTS_MAX)
-            .collect();
-        // As the C# watchdog: off, or a choice of the seconds its range allows.
-        let timeouts: Vec<TimeoutChoice> =
-            CONNECT_TIMEOUTS.into_iter().map(TimeoutChoice).collect();
-        let timeout = row![
-            text(fl!("ui-settings-rdp-connect-timeout")),
-            iced::widget::space::horizontal(),
-            pick_list(
-                timeouts,
-                Some(TimeoutChoice(self.app.settings().rdp_connect_timeout)),
-                |TimeoutChoice(seconds)| {
-                    Message::App(AppMessage::Settings(SettingsMessage::RdpConnectTimeout(
-                        seconds,
-                    )))
-                },
-            ),
-        ]
-        .spacing(SPACING)
-        .align_y(iced::Alignment::Center);
-        container(
-            column![
-                row![
-                    text(fl!("ui-settings-rdp-auto-reconnect-attempts")),
-                    iced::widget::space::horizontal(),
-                    pick_list(
-                        attempts,
-                        Some(self.app.settings().rdp_auto_reconnect_attempts),
-                        |attempts| {
-                            Message::App(AppMessage::Settings(
-                                SettingsMessage::RdpAutoReconnectAttempts(attempts),
-                            ))
-                        },
-                    ),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-                timeout,
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
-    }
-
-    /// The C# SSH Connection card: auto-reconnect, on or off, and how many attempts before
-    /// the reconnect is left to the user; which SSH agent's keys are offered first.
-    fn ssh_reconnect_settings(&self) -> Element<'_, Message> {
-        let settings = self.app.settings();
-        let attempts: Vec<u32> =
-            (SSH_AUTO_RECONNECT_ATTEMPTS_MIN..=SSH_AUTO_RECONNECT_ATTEMPTS_MAX).collect();
-        container(
-            column![
-                text(fl!("ui-settings-ssh-auto-reconnect-description")).size(SMALL_SIZE),
-                checkbox(settings.ssh_auto_reconnect)
-                    .label(fl!("ui-settings-ssh-auto-reconnect-enable"))
-                    .on_toggle(|on| {
-                        Message::App(AppMessage::Settings(SettingsMessage::SshAutoReconnect(on)))
-                    }),
-                row![
-                    text(fl!("ui-settings-ssh-auto-reconnect-attempts")),
-                    iced::widget::space::horizontal(),
-                    pick_list(
-                        attempts,
-                        Some(settings.ssh_auto_reconnect_attempts),
-                        |attempts| {
-                            Message::App(AppMessage::Settings(
-                                SettingsMessage::SshAutoReconnectAttempts(attempts),
-                            ))
-                        },
-                    ),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-                row![
-                    text(fl!("ui-settings-ssh-agent-preference")),
-                    iced::widget::space::horizontal(),
-                    pick_list(
-                        AgentPreference::ALL.map(AgentChoice).to_vec(),
-                        Some(AgentChoice(settings.ssh_agent_preference)),
-                        |AgentChoice(preference)| Message::App(AppMessage::Settings(
-                            SettingsMessage::SshAgentPreference(preference)
-                        )),
-                    ),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-                text(fl!("ui-settings-ssh-agent-preference-hint")).size(SMALL_SIZE),
-            ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
-    }
-
     /// The Files tab shown with its session open, the one files dropped on the window go to.
     fn drop_target(&self) -> Option<TabId> {
         self.app
@@ -5216,212 +4776,6 @@ impl Shell {
             .trim()
             .parse()
             .ok()
-    }
-
-    /// The session settings, as the C# SSH/SFTP Session tab: the SSH keep-alive interval,
-    /// the `TMOUT` reset of idle SSH shells, and the anti-idle interval RDP sessions asking
-    /// for anti-idle keys follow; each applied with Enter.
-    fn ssh_session_settings(&self) -> Element<'_, Message> {
-        container(self.number_fields(Column::new().spacing(SPACING), &SessionField::SESSION))
-            .padding(PADDING)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box)
-            .into()
-    }
-
-    /// `fields` under `card`, each typed and applied with Enter, its rule said under it
-    /// while what is typed is out of its range.
-    fn number_fields<'a>(
-        &'a self,
-        mut card: Column<'a, Message>,
-        fields: &[SessionField],
-    ) -> Column<'a, Message> {
-        let settings = self.app.settings();
-        for &field in fields {
-            let shown = field.value(settings).to_string();
-            let typed = self.session_typed[field.index()].clone().unwrap_or(shown);
-            let refused = self.session_typed[field.index()].is_some()
-                && !self
-                    .typed_session(field)
-                    .is_some_and(|value| field.accepted(value));
-            let mut line = row![
-                text(field.label()),
-                iced::widget::space::horizontal(),
-                text_input("", &typed)
-                    .width(FONT_SIZE_FIELD_WIDTH)
-                    .on_input(move |typed| Message::SessionFieldEdited(field, typed))
-                    .on_submit(Message::SessionFieldApply(field)),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center);
-            if let Some(unit) = field.unit() {
-                line = line.push(text(unit));
-            }
-            card = card.push(line);
-            if let Some(hint) = field.hint() {
-                card = card.push(text(hint).size(SMALL_SIZE));
-            }
-            if refused {
-                card = card.push(text(field.refusal()).size(SMALL_SIZE).style(text::danger));
-            }
-        }
-        card
-    }
-
-    /// The family of the terminals' text, as the C# box beside the size: the families this
-    /// computer can draw, and the one chosen when it cannot, then said drawn in the embedded
-    /// one.
-    fn font_family_settings(&self) -> Element<'_, Message> {
-        let chosen = &self.app.settings().terminal_font_family;
-        let mut offered: Vec<FontChoice> =
-            crate::terminal_view::font::available(crate::terminal_view::font::installed)
-                .into_iter()
-                .map(|family| FontChoice(family.to_owned()))
-                .collect();
-        let selected = offered
-            .iter()
-            .find(|offer| offer.0.eq_ignore_ascii_case(chosen))
-            .cloned()
-            .unwrap_or_else(|| FontChoice(chosen.clone()));
-        if !offered.contains(&selected) {
-            offered.push(selected.clone());
-        }
-        let mut settings = column![
-            row![
-                text(fl!("ui-settings-font-family")),
-                iced::widget::space::horizontal(),
-                pick_list(offered, Some(selected), |FontChoice(family)| {
-                    Message::App(AppMessage::Settings(SettingsMessage::TerminalFontFamily(
-                        family,
-                    )))
-                }),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(SPACING);
-        if !self.terminal_font().is(chosen) {
-            settings = settings.push(
-                text(fl!(
-                    "ui-settings-font-family-missing",
-                    family = chosen.as_str(),
-                    fallback = crate::terminal_view::FONT_FAMILY
-                ))
-                .size(SMALL_SIZE)
-                .style(text::danger),
-            );
-        }
-        settings.into()
-    }
-
-    /// The C# session health monitor's settings: whether every server is checked in the
-    /// background, how often, how long each has to answer and how many at once.
-    fn reachability_settings(&self) -> Element<'_, Message> {
-        let card = column![
-            checkbox(self.app.settings().reachability.enabled)
-                .label(fl!("ui-settings-reachability-enabled"))
-                .on_toggle(
-                    |on| Message::App(AppMessage::Settings(SettingsMessage::Reachability(on)))
-                ),
-            text(fl!("ui-settings-reachability-hint")).size(SMALL_SIZE),
-        ]
-        .spacing(SPACING);
-        container(self.number_fields(card, &SessionField::REACHABILITY))
-            .padding(PADDING)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box)
-            .into()
-    }
-
-    /// The terminal's appearance, as the C# Settings page offers it: its font size, applied
-    /// with Enter, its font family, and its colour scheme.
-    fn terminal_settings(&self) -> Element<'_, Message> {
-        let settings = self.app.settings();
-        let shown = settings.terminal_font_size.to_string();
-        let typed = self.font_size_typed.as_deref().unwrap_or(&shown);
-        let refused = self.font_size_typed.is_some()
-            && !self
-                .typed_font_size()
-                .is_some_and(heimdall_core::settings::terminal_font_size_accepted);
-        let mut card = column![
-            row![
-                text(fl!("ui-settings-font-size")),
-                iced::widget::space::horizontal(),
-                text_input("", typed)
-                    .width(FONT_SIZE_FIELD_WIDTH)
-                    .on_input(Message::FontSizeEdited)
-                    .on_submit(Message::FontSizeApply),
-                text(fl!("ui-settings-font-size-unit")),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-        ]
-        .spacing(SPACING);
-        if refused {
-            card = card.push(
-                text(fl!(
-                    "ui-settings-font-size-refused",
-                    min = heimdall_core::settings::TERMINAL_FONT_SIZE_MIN,
-                    max = heimdall_core::settings::TERMINAL_FONT_SIZE_MAX
-                ))
-                .size(SMALL_SIZE)
-                .style(text::danger),
-            );
-        }
-        card = card.push(self.font_family_settings());
-        card = card.push(
-            row![
-                text(fl!("ui-settings-color-scheme")),
-                iced::widget::space::horizontal(),
-                pick_list(
-                    ColorScheme::ALL.map(SchemeChoice).to_vec(),
-                    Some(SchemeChoice(settings.color_scheme)),
-                    |SchemeChoice(scheme)| Message::App(AppMessage::Settings(
-                        SettingsMessage::ColorScheme(scheme)
-                    )),
-                ),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-        );
-        card = card.push(
-            row![
-                text(fl!("ui-settings-ctrl-v")),
-                iced::widget::space::horizontal(),
-                pick_list(
-                    CtrlVPaste::ALL.map(CtrlVChoice).to_vec(),
-                    Some(CtrlVChoice(settings.ctrl_v_paste)),
-                    |CtrlVChoice(choice)| Message::App(AppMessage::Settings(
-                        SettingsMessage::CtrlVPaste(choice)
-                    )),
-                ),
-            ]
-            .spacing(SPACING)
-            .align_y(iced::Alignment::Center),
-        );
-        // As the C# Terminal settings' choice, applied to local PowerShell sessions.
-        card = card
-            .push(
-                row![
-                    text(fl!("ui-settings-powershell-policy")),
-                    iced::widget::space::horizontal(),
-                    pick_list(
-                        ExecutionPolicy::ALL.map(PolicyChoice).to_vec(),
-                        Some(PolicyChoice(settings.powershell_execution_policy)),
-                        |PolicyChoice(policy)| Message::App(AppMessage::Settings(
-                            SettingsMessage::PowerShellExecutionPolicy(policy)
-                        )),
-                    ),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-            )
-            .push(text(fl!("ui-settings-powershell-policy-hint")).size(SMALL_SIZE));
-        container(card)
-            .padding(PADDING)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box)
-            .into()
     }
 
     /// Where the keyboard goes after `message`: to the tree after a click in it, back to the
