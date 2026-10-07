@@ -221,6 +221,8 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         port: 5901,
         view_only: true,
         allow_no_password: false,
+        // For Plain inside TLS: carried both ways.
+        username: Some("viewer".to_owned()),
         vault_entry: None,
     }]);
     store.merge_ftp([FtpProfile {
@@ -403,6 +405,7 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
     assert_eq!(dc["rdpColorDepth"], 16);
     assert_eq!(dc["useDirectConnection"], false);
     assert_eq!(by_id("desk")["useDirectConnection"], true);
+    assert_eq!(by_id("screen")["vncUsername"], "viewer");
     assert_eq!(by_id("ps")["winRmIdentityMode"], "Credential");
     assert_eq!(by_id("ps-me")["winRmIdentityMode"], "CurrentUser");
     let mail = by_id("mail");

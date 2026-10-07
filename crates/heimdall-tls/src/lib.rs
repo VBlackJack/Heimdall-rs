@@ -14,10 +14,13 @@
  * limitations under the License.
  */
 
-//! The certificate check of explicit FTPS, as the C# one: a certificate the system trusts
-//! goes through; otherwise one the user trusted for this server, which the caller decides,
-//! as it keeps the user's pins; otherwise the handshake stops and the certificate is kept,
-//! with why the system did not vouch for it, for the user to be shown it and asked.
+//! The certificate check of the TLS clients that must trust a server before any password is
+//! sent: explicit FTPS, as the C# one, and the X509 subtypes of VNC's `VeNCrypt`.
+//!
+//! A certificate the system trusts for the server's name goes through; otherwise one the
+//! user trusted for this server, which the caller decides, as it keeps the user's pins;
+//! otherwise the handshake stops and the certificate is kept, with why the system did not
+//! vouch for it, for the user to be shown it and asked.
 //!
 //! The decision is taken in the handshake, before any password is sent. Every handshake
 //! signature is verified against the certificate, so a server proves it holds its key: a
@@ -223,8 +226,8 @@ fn system_verifier(provider: &Arc<CryptoProvider>) -> Option<Arc<WebPkiServerVer
         .ok()
 }
 
-/// A TLS client for explicit FTPS trusting what the system trusts and what `trusted`
-/// accepts; a certificate trusted by neither lands in `presented` and stops the handshake.
+/// A TLS client, 1.2 or 1.3, trusting what the system trusts and what `trusted` accepts; a
+/// certificate trusted by neither lands in `presented` and stops the handshake.
 ///
 /// # Panics
 ///

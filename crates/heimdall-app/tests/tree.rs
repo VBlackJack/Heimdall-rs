@@ -24,8 +24,8 @@ use heimdall_app::{
     SystemCredentials,
 };
 use heimdall_core::profile::{
-    LocalApproval, LocalArguments, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile,
-    TelnetProfile, VncProfile, WinRmProfile,
+    LocalApproval, LocalCommand, LocalProfile, ProfileId, RdpProfile, SshProfile, TelnetProfile,
+    VncProfile, WinRmProfile,
 };
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::{AgentSource, PasswordQuestion, Secret};
@@ -96,13 +96,11 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         port: 5900,
         view_only: false,
         allow_no_password: true,
+        username: None,
         vault_entry: None,
     }]);
-    let command = LocalCommand {
-        program: None,
-        arguments: LocalArguments::List(Vec::new()),
-        working_directory: None,
-    };
+    // The default shell.
+    let command = LocalCommand::default();
     store.merge_local([LocalProfile {
         id: id("local"),
         name: "shell".to_owned(),

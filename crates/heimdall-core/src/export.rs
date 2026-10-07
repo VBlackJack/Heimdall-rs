@@ -137,6 +137,9 @@ struct Entry {
     /// exported.
     #[serde(skip_serializing_if = "Option::is_none")]
     vnc_allow_no_password: Option<bool>,
+    /// Heimdall-rs's own key: the C# has no VNC user name.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    vnc_username: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     ftp_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -483,6 +486,7 @@ fn vnc(profile: &VncProfile) -> Entry {
         vnc_port: Some(profile.port),
         vnc_view_only: profile.view_only,
         vnc_allow_no_password: Some(profile.allow_no_password),
+        vnc_username: profile.username.clone(),
         ..server(
             &profile.id,
             &profile.name,

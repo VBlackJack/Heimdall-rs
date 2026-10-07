@@ -22,7 +22,6 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use heimdall_files::ftps_trust;
 use tokio::net::TcpStream;
 use tokio_rustls::rustls::pki_types::ServerName;
 
@@ -87,9 +86,9 @@ pub async fn ensure_reachable(host: &str, port: u16, tls: TlsCheck) -> Result<()
         check_skipped: skipped,
     };
     let name = ServerName::try_from(host.to_owned()).map_err(|_| tls_failed())?;
-    let connector = ftps_trust::connector(
+    let connector = heimdall_tls::connector(
         Arc::new(move |_: &[u8]| skipped),
-        ftps_trust::PresentedSlot::default(),
+        heimdall_tls::PresentedSlot::default(),
     );
     match tokio::time::timeout(PROBE_TIMEOUT, connector.connect(name, stream)).await {
         Ok(Ok(_)) => Ok(()),

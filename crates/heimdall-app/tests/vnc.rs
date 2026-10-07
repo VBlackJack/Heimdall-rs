@@ -58,6 +58,7 @@ fn app(dir: &Path, port: u16, view_only: bool) -> App {
         port,
         view_only,
         allow_no_password: false,
+        username: None,
         vault_entry: None,
     }]);
     store.save().expect("save");

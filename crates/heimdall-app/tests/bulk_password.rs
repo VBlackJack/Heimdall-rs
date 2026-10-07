@@ -114,6 +114,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         port: 5901,
         view_only: false,
         allow_no_password: false,
+        username: None,
         vault_entry: None,
     }]);
     store.merge_winrm([WinRmProfile {

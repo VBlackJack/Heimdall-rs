@@ -14,9 +14,7 @@ publish.workspace = true
 
 [dependencies]
 heimdall-sftp.workspace = true
-log.workspace = true
 ring.workspace = true
-rustls-native-certs.workspace = true
 suppaftp.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
@@ -24,6 +22,7 @@ tokio-util.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+heimdall-tls.workspace = true
 # An FTP server the FTP tests run against, on disk.
 libunftp.workspace = true
 # The FTPS test server's certificate.

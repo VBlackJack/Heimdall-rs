@@ -27,10 +27,10 @@ use heimdall_app::{
     SystemCredentials,
 };
 use heimdall_core::profile::{FtpProfile, ProfileId};
-use heimdall_files::ftps_trust::ValidationIssue;
 use heimdall_rdp::{ServerCertificate, Validity};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
+use heimdall_tls::ValidationIssue;
 use heimdall_ui::shell::Shell;
 use heimdall_ui::terminal_view::FONTS;
 use iced::{Settings, Size};

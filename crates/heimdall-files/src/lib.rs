@@ -30,7 +30,6 @@
 
 pub mod conflict;
 mod ftp;
-pub mod ftps_trust;
 mod plan;
 pub mod privileged;
 pub mod privileged_mode;

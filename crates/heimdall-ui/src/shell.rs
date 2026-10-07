@@ -1260,6 +1260,8 @@ pub struct Shell {
     certificate_search: String,
     /// The search typed over the trusted FTPS certificates.
     ftps_certificate_search: String,
+    /// The search typed over the trusted VNC certificates.
+    vnc_certificate_search: String,
     /// The window's own last key, click or wheel turn: the idle time where the computer's
     /// cannot be read.
     last_input: std::time::Instant,
@@ -1513,6 +1515,7 @@ impl Shell {
             settings_highlight: None,
             certificate_search: String::new(),
             ftps_certificate_search: String::new(),
+            vnc_certificate_search: String::new(),
             last_input: std::time::Instant::now(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
@@ -2501,6 +2504,9 @@ impl Shell {
                     TrustedList::Certificates => typed.clone_into(&mut self.certificate_search),
                     TrustedList::FtpsCertificates => {
                         typed.clone_into(&mut self.ftps_certificate_search);
+                    }
+                    TrustedList::VncCertificates => {
+                        typed.clone_into(&mut self.vnc_certificate_search);
                     }
                 }
                 Task::none()
@@ -6606,12 +6612,16 @@ impl Shell {
             bar = bar.push(text(name.as_str()).size(SMALL_SIZE).style(text::secondary));
         }
         if tab.purpose == Purpose::Vnc {
-            // Always in sight: nothing on a VNC connection is encrypted.
-            bar = bar.push(
-                text(fl!("ui-session-vnc-unencrypted"))
+            // Always in sight: whether the connection is encrypted, its server's certificate
+            // trusted, or crosses the network in clear.
+            bar = bar.push(match pane.tls {
+                Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
+                    .size(SMALL_SIZE)
+                    .style(text::success),
+                None => text(fl!("ui-session-vnc-unencrypted"))
                     .size(SMALL_SIZE)
                     .style(text::danger),
-            );
+            });
         }
         bar
     }
@@ -7761,10 +7771,11 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::IcaFile => (fl!("ui-profile-field-ica-file"), String::new()),
         ProfileField::Username => (
             fl!("ui-profile-field-username"),
-            if draft.protocol == DraftProtocol::Rdp {
-                fl!("ui-profile-username-rdp-placeholder")
-            } else {
-                fl!("ui-profile-optional")
+            match draft.protocol {
+                DraftProtocol::Rdp => fl!("ui-profile-username-rdp-placeholder"),
+                // Few VNC servers ask for one: said what it is for.
+                DraftProtocol::Vnc => fl!("ui-profile-username-vnc-placeholder"),
+                _ => fl!("ui-profile-optional"),
             },
         ),
         ProfileField::Domain => (
@@ -10618,6 +10629,7 @@ mod tests {
             port: 5900,
             view_only: false,
             allow_no_password: false,
+            username: None,
             vault_entry: None,
         };
         assert!(fits_by_default(&TabProfile::Vnc(vnc)));

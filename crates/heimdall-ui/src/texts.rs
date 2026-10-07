@@ -26,10 +26,10 @@ use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text}
 use heimdall_core::import::csharp::{Dropped, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
-use heimdall_files::ftps_trust::ValidationIssue;
 use heimdall_files::{LocalNameError, Refusal};
 use heimdall_rdp::{Ending, Refusal as RdpRefusal};
 use heimdall_ssh::AuthMethod;
+use heimdall_tls::ValidationIssue;
 
 use crate::i18n::fl;
 
@@ -178,6 +178,9 @@ pub fn error(error: &UiError) -> String {
                 "ui-error-vnc-security-refused",
                 offered = server_text(offered)
             )
+        }
+        UiError::VncTlsRequired { offered } => {
+            fl!("ui-error-vnc-tls-required", offered = server_text(offered))
         }
         UiError::SecurityRefused { detail } => {
             fl!("ui-error-security-refused", detail = server_text(detail))

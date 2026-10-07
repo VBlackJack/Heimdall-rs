@@ -189,10 +189,11 @@ impl DraftProtocol {
             ProfileField::LocalProgram
             | ProfileField::LocalArguments
             | ProfileField::WorkingDirectory => self == Self::Local,
+            // A VNC server asks for one only with VeNCrypt Plain, inside TLS.
             ProfileField::Username => {
                 matches!(
                     self,
-                    Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm | Self::Ftp
+                    Self::Ssh | Self::Sftp | Self::Rdp | Self::WinRm | Self::Ftp | Self::Vnc
                 )
             }
             ProfileField::Domain
@@ -829,6 +830,7 @@ impl ProfileDraft {
             group: profile.group.clone().unwrap_or_default(),
             host: profile.host.clone(),
             port: profile.port.to_string(),
+            username: profile.username.clone().unwrap_or_default(),
             vault_entry: profile.vault_entry.clone().unwrap_or_default(),
             protocol: DraftProtocol::Vnc,
             protocol_chosen: true,
@@ -1406,6 +1408,7 @@ impl ProfileDraft {
                 port,
                 view_only: self.is_on(ProfileToggle::ViewOnly),
                 allow_no_password: self.is_on(ProfileToggle::AllowNoPassword),
+                username: optional(username),
                 vault_entry: optional(vault_entry),
             }),
             DraftProtocol::WinRm => {
@@ -2426,11 +2429,21 @@ mod tests {
             port: 5901,
             view_only: true,
             allow_no_password: true,
+            username: None,
             vault_entry: None,
         };
         assert_eq!(
             ProfileDraft::from_vnc(&vnc).to_saved(id()),
-            Ok(DraftProfile::Vnc(vnc))
+            Ok(DraftProfile::Vnc(vnc.clone()))
+        );
+        // The user name of VeNCrypt Plain.
+        let plain = VncProfile {
+            username: Some("viewer".to_owned()),
+            ..vnc
+        };
+        assert_eq!(
+            ProfileDraft::from_vnc(&plain).to_saved(id()),
+            Ok(DraftProfile::Vnc(plain))
         );
         let winrm = WinRmProfile {
             id: id(),
@@ -2547,7 +2560,10 @@ mod tests {
         assert_eq!(DraftError::DomainInvalid.field(), ProfileField::Domain);
         assert!(form.shows(ProfileField::Domain));
         assert!(!ProfileDraft::new_for(DraftProtocol::Ssh).shows(ProfileField::Domain));
-        assert!(!ProfileDraft::new_for(DraftProtocol::Vnc).shows(ProfileField::Username));
+        // A VNC profile names a user only for VeNCrypt Plain, and no domain.
+        assert!(ProfileDraft::new_for(DraftProtocol::Vnc).shows(ProfileField::Username));
+        assert!(!ProfileDraft::new_for(DraftProtocol::Vnc).shows(ProfileField::Domain));
+        assert!(!ProfileDraft::new_for(DraftProtocol::Telnet).shows(ProfileField::Username));
     }
 
     #[test]

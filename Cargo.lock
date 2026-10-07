@@ -2383,6 +2383,7 @@ dependencies = [
  "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
+ "heimdall-tls",
  "libunftp",
  "log",
  "rcgen",
@@ -2425,11 +2426,10 @@ name = "heimdall-files"
 version = "0.1.0"
 dependencies = [
  "heimdall-sftp",
+ "heimdall-tls",
  "libunftp",
- "log",
  "rcgen",
  "ring",
- "rustls-native-certs",
  "suppaftp",
  "tempfile",
  "thiserror 2.0.21",
@@ -2486,8 +2486,11 @@ version = "0.1.0"
 dependencies = [
  "des",
  "flate2",
+ "heimdall-tls",
+ "rcgen",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-rustls",
  "tokio-util",
  "zeroize",
  "zune-jpeg",
@@ -2532,6 +2535,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "heimdall-tls"
+version = "0.1.0"
+dependencies = [
+ "log",
+ "rcgen",
+ "ring",
+ "rustls-native-certs",
+ "tokio-rustls",
+]
+
+[[package]]
 name = "heimdall-twinshell"
 version = "0.1.0"
 
@@ -2548,6 +2562,7 @@ dependencies = [
  "heimdall-sftp",
  "heimdall-ssh",
  "heimdall-term",
+ "heimdall-tls",
  "i18n-embed",
  "i18n-embed-fl",
  "iced",

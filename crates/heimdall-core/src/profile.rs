@@ -1254,6 +1254,11 @@ pub struct VncProfile {
     /// that expects a password, an impostor offering none would otherwise be let in.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_no_password: bool,
+    /// The user name a server asking for one gets, with the password: `VeNCrypt` Plain,
+    /// sent only inside TLS once the server's certificate is trusted. `None` for the usual
+    /// VNC server, which asks for a password alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
     /// The profile's entry in the external password manager, for `{Title}`; `None` uses
     /// its name, as the C# `VaultEntryName`.
     #[serde(default, skip_serializing_if = "Option::is_none")]

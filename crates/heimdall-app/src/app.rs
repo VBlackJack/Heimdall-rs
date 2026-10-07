@@ -1879,11 +1879,12 @@ impl fmt::Debug for Tab {
 }
 
 impl Tab {
-    /// Whether the question the tab asks is about a server's own certificate, an RDP or an
-    /// FTPS one, not an SSH key on the way to it.
+    /// Whether the question the tab asks is about a server's own certificate, an RDP, FTPS
+    /// or VNC one, not an SSH key on the way to it.
     #[must_use]
     pub fn asks_about_certificate(&self) -> bool {
-        (self.purpose == Purpose::Rdp || matches!(self.profile, TabProfile::Ftp(_)))
+        (matches!(self.purpose, Purpose::Rdp | Purpose::Vnc)
+            || matches!(self.profile, TabProfile::Ftp(_)))
             && self.pending_rdp_key.is_some()
     }
 

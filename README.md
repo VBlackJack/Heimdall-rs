@@ -39,6 +39,7 @@ embedded web engine.
 | `heimdall-rdp` | RDP sessions |
 | `heimdall-twinshell` | Command library |
 | `heimdall-remote` | VNC, Telnet, serial |
+| `heimdall-tls` | Server certificate check of FTPS and VNC over TLS |
 | `heimdall-ui` | The desktop application |
 | `xtask` | Developer tooling |
 

@@ -25,11 +25,11 @@ use heimdall_ssh::{
 };
 
 use heimdall_files::RemoteSession;
-use heimdall_files::ftps_trust::ValidationIssue;
 use heimdall_rdp::{
     CopyRefusal, Ending, Fingerprint, Framebuffer, LocalClipboard, Operation, SaveEnd,
 };
 use heimdall_remote::vnc::{Framebuffer as VncFramebuffer, VncInput};
+use heimdall_tls::ValidationIssue;
 use tokio::sync::{mpsc, watch};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
@@ -170,6 +170,8 @@ pub enum ConnectionEvent {
         framebuffer: VncFramebuffer,
         /// Where keyboard and mouse input goes.
         input: VncInput,
+        /// The TLS version the session is encrypted with, as "TLS 1.3"; `None` in clear.
+        tls: Option<&'static str>,
     },
     /// The RDP desktop changed: redraw it.
     DesktopFrame,
