@@ -10407,7 +10407,7 @@ fn with_unsaved(body: Option<String>, unsaved: usize) -> String {
 
 /// The title, text and action of a plain question: leaving the window with sessions live,
 /// broadcasting input to every tab, recording every session, resetting the RDP settings,
-/// deleting profiles or folders.
+/// writing the default SSH mode into every SSH profile, deleting profiles or folders.
 fn plain_question(dialog: &Dialog) -> (String, String, String) {
     match dialog {
         Dialog::ConfirmDeleteProfile { name, .. } => (
@@ -10442,6 +10442,20 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
             fl!("ui-dialog-reset-rdp-title"),
             fl!("ui-dialog-reset-rdp-body"),
             fl!("ui-settings-rdp-reset-defaults"),
+        ),
+        Dialog::ConfirmApplySshMode {
+            mode,
+            changes,
+            total,
+        } => (
+            fl!("ui-dialog-apply-ssh-mode-title"),
+            fl!(
+                "ui-dialog-apply-ssh-mode-body",
+                mode = settings_page::ssh_mode_name(*mode),
+                changes = (*changes),
+                total = (*total)
+            ),
+            fl!("ui-settings-apply-mode-to-all"),
         ),
         Dialog::ConfirmDeleteMacro(name) => (
             fl!("ui-macro-editor-delete-macro"),
@@ -10524,6 +10538,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::ConfirmExit { .. }
         | Dialog::ConfirmSessionLogging
         | Dialog::ConfirmResetRdpDefaults
+        | Dialog::ConfirmApplySshMode { .. }
         | Dialog::ConfirmDeleteMacro(_)
         | Dialog::ConfirmDeleteGateway { .. }
         | Dialog::ConfirmDeleteProfile { .. }

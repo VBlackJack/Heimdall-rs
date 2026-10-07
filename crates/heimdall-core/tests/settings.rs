@@ -1317,3 +1317,47 @@ fn putty_and_the_x_server_are_looked_for_and_started_by_default_and_kept_as_chos
         assert!(keys.contains(&key), "{keys:?}");
     }
 }
+
+#[test]
+fn the_default_ssh_mode_is_embedded_kept_by_its_csharp_name_and_travels() {
+    use heimdall_core::profile::SshMode;
+
+    let dir = tempfile::tempdir().expect("dir");
+    assert_eq!(Settings::default().ssh_default_mode, SshMode::Embedded);
+    // Written before it was: the C# default.
+    let older = written(dir.path(), "version = 1\n[ssh]\nauto_reconnect = true\n");
+    assert_eq!(older.ssh_default_mode, SshMode::Embedded);
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let chosen = Settings {
+        ssh_default_mode: SshMode::External,
+        ..Settings::default()
+    };
+    chosen.save(&path).expect("saved");
+    let text = std::fs::read_to_string(&path).expect("text");
+    assert!(text.contains("default_mode = \"External\""), "{text}");
+    assert_eq!(
+        Settings::load(&path).expect("read").ssh_default_mode,
+        SshMode::External
+    );
+    // Whatever its case; a name not known is the default.
+    let cased = written(
+        dir.path(),
+        "version = 1\n[ssh]\ndefault_mode = \"external\"\n",
+    );
+    assert_eq!(cased.ssh_default_mode, SshMode::External);
+    let unknown = written(
+        dir.path(),
+        "version = 1\n[ssh]\ndefault_mode = \"Inline\"\n",
+    );
+    assert_eq!(unknown.ssh_default_mode, SshMode::Embedded);
+    // It travels with an export.
+    let (exported, _) = chosen.export(None, false);
+    let imported = Settings::default().import(&exported).expect("read");
+    assert_eq!(imported.settings.ssh_default_mode, SshMode::External);
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "ssh.default_mode")
+    );
+}

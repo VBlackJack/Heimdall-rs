@@ -19,7 +19,7 @@
 
 use std::path::PathBuf;
 
-use heimdall_core::profile::RdpDefaults;
+use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
@@ -47,6 +47,10 @@ pub enum SettingsMessage {
     ExternalEditor(String),
     /// `PuTTY`, which SSH profiles in the external mode open in; empty looks on `PATH`.
     PuttyPath(String),
+    /// Where the shell of a new SSH profile opens.
+    SshDefaultMode(SshMode),
+    /// The default SSH mode written into every SSH profile, asked first as the C# asks.
+    ApplySshModeToAll,
     /// The X server started for X11 forwarding; empty tries the known places, then `PATH`.
     X11ServerPath(String),
     /// An X server is started when X11 forwarding needs one, or not.
@@ -175,8 +179,41 @@ impl App {
                 self.dialog = Some(Dialog::ConfirmResetRdpDefaults);
                 Vec::new()
             }
+            SettingsMessage::ApplySshModeToAll => {
+                self.ask_apply_ssh_mode();
+                Vec::new()
+            }
             _ => self.apply_settings(message),
         }
+    }
+
+    /// Asks before the default SSH mode is written into every SSH profile, saying how many
+    /// change of how many; nothing is asked when none would, as the C# logs "no changes
+    /// needed" and stops.
+    fn ask_apply_ssh_mode(&mut self) {
+        let mode = self.settings.ssh_default_mode;
+        let (changes, total) = self.store.ssh_mode_changes(mode);
+        if changes > 0 {
+            self.dialog = Some(Dialog::ConfirmApplySshMode {
+                mode,
+                changes,
+                total,
+            });
+        }
+    }
+
+    /// `mode` written into every SSH profile, as the user agreed to: one save, after which
+    /// it is the default too, as the C# saves it in the same gesture. A save that fails
+    /// leaves every profile as it was, and says why.
+    pub(super) fn confirm_apply_ssh_mode(&mut self, mode: SshMode) -> Vec<Effect> {
+        if let Err(error) = self.store.apply(|store| store.set_ssh_modes(mode)) {
+            self.dialog = Some(Dialog::save_failed(&error));
+            return Vec::new();
+        }
+        if self.settings.ssh_default_mode == mode {
+            return Vec::new();
+        }
+        self.apply_settings(&SettingsMessage::SshDefaultMode(mode))
     }
 
     /// The RDP settings reset, as the user agreed to.
@@ -239,11 +276,12 @@ impl App {
         true
     }
 
-    /// Sets what `message` changes of `PuTTY` and the X server.
+    /// Sets what `message` changes of `PuTTY`, the default SSH mode and the X server.
     fn set_external_ssh(&mut self, message: &SettingsMessage) {
         let settings = &mut self.settings;
         match message {
             SettingsMessage::PuttyPath(path) => path.trim().clone_into(&mut settings.putty_path),
+            SettingsMessage::SshDefaultMode(mode) => settings.ssh_default_mode = *mode,
             SettingsMessage::X11ServerPath(path) => {
                 path.trim().clone_into(&mut settings.x11_server_path);
             }
@@ -291,6 +329,7 @@ impl App {
                 editor.trim().clone_into(&mut self.settings.external_editor);
             }
             SettingsMessage::PuttyPath(_)
+            | SettingsMessage::SshDefaultMode(_)
             | SettingsMessage::X11ServerPath(_)
             | SettingsMessage::X11AutoStart(_) => self.set_external_ssh(message),
             SettingsMessage::SftpBrowser(sftp) => self.settings.sftp_browser = *sftp,
@@ -351,7 +390,7 @@ impl App {
                 self.settings.rdp_resolution_presets.clone_from(presets);
             }
             SettingsMessage::ResetRdpDefaults => self.settings.reset_rdp(),
-            SettingsMessage::TrustedKeys(_) => {}
+            SettingsMessage::TrustedKeys(_) | SettingsMessage::ApplySshModeToAll => {}
         }
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;

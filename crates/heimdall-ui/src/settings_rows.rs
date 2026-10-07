@@ -48,7 +48,7 @@ pub enum SettingsCard {
     SshReconnect,
     /// The SSH keep-alive, `TMOUT` reset and anti-idle numbers.
     SshSession,
-    /// `PuTTY`, which SSH profiles in the external mode open in.
+    /// `PuTTY`, which SSH profiles in the external mode open in, and the default SSH mode.
     Putty,
     /// The SFTP browser and the local file browser.
     Sftp,
@@ -194,6 +194,8 @@ pub enum SettingRow {
     AntiIdle,
     /// `PuTTY`, which SSH profiles in the external mode open in.
     PuttyPath,
+    /// Where the shell of a new SSH profile opens, with "Apply to all saved sessions".
+    SshDefaultMode,
     /// The SFTP browser is on.
     SftpBrowser,
     /// An SSH shell connected opens its files beside it.
@@ -244,7 +246,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 49] = [
+    pub const ALL: [Self; 50] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -271,6 +273,7 @@ impl SettingRow {
         Self::TmoutReset,
         Self::AntiIdle,
         Self::PuttyPath,
+        Self::SshDefaultMode,
         Self::SftpBrowser,
         Self::SftpAutoOpen,
         Self::SftpFollow,
@@ -321,7 +324,7 @@ impl SettingRow {
                 SettingsCard::SshReconnect
             }
             Self::KeepAlive | Self::TmoutReset | Self::AntiIdle => SettingsCard::SshSession,
-            Self::PuttyPath => SettingsCard::Putty,
+            Self::PuttyPath | Self::SshDefaultMode => SettingsCard::Putty,
             Self::SftpBrowser
             | Self::SftpAutoOpen
             | Self::SftpFollow
@@ -441,6 +444,7 @@ impl SettingRow {
             Self::SshAgentPreference => {
                 settings.ssh_agent_preference != defaults.ssh_agent_preference
             }
+            Self::SshDefaultMode => settings.ssh_default_mode != defaults.ssh_default_mode,
             Self::ExternalEditor => settings.external_editor.trim() != defaults.external_editor,
             Self::RdpDefaults => settings.rdp_defaults != defaults.rdp_defaults,
             Self::RdpAutoReconnectAttempts => {
@@ -489,6 +493,7 @@ impl SettingRow {
             Self::SshAgentPreference => {
                 SettingsMessage::SshAgentPreference(defaults.ssh_agent_preference)
             }
+            Self::SshDefaultMode => SettingsMessage::SshDefaultMode(defaults.ssh_default_mode),
             Self::ExternalEditor => SettingsMessage::ExternalEditor(defaults.external_editor),
             Self::RdpDefaults => SettingsMessage::RdpDefaults(defaults.rdp_defaults),
             Self::RdpAutoReconnectAttempts => {
@@ -776,6 +781,8 @@ fn auto_lock_line(minutes: u32, vault: bool) -> PostureLine {
 
 #[cfg(test)]
 mod tests {
+    use heimdall_core::profile::SshMode;
+
     use super::*;
 
     #[test]
@@ -828,7 +835,10 @@ mod tests {
 
     #[test]
     fn putty_and_the_x_server_are_on_the_ssh_tab_marked_and_reset() {
-        assert_eq!(SettingsCard::Putty.rows(), [SettingRow::PuttyPath]);
+        assert_eq!(
+            SettingsCard::Putty.rows(),
+            [SettingRow::PuttyPath, SettingRow::SshDefaultMode]
+        );
         assert_eq!(
             SettingsCard::X11.rows(),
             [SettingRow::X11ServerPath, SettingRow::X11AutoStart]
@@ -878,6 +888,26 @@ mod tests {
             SettingsMessage::X11ServerPath("x".to_owned())
         );
         assert_ne!(ToolPath::Putty.index(), ToolPath::X11Server.index());
+    }
+
+    #[test]
+    fn the_default_ssh_mode_is_on_the_ssh_tab_marked_and_reset_to_embedded() {
+        let row = SettingRow::SshDefaultMode;
+        assert_eq!(row.tab(), SettingsTab::Ssh);
+        assert!(row.is_marked());
+        assert!(
+            row.flag(&Settings::default()).is_none(),
+            "a list, not a box"
+        );
+        let changed = Settings {
+            ssh_default_mode: SshMode::External,
+            ..Settings::default()
+        };
+        assert!(row.is_modified(&changed));
+        assert_eq!(
+            row.reset(&changed),
+            Some(SettingsMessage::SshDefaultMode(SshMode::Embedded))
+        );
     }
 
     #[test]

@@ -23,7 +23,6 @@ use heimdall_core::store::ProfileStore;
 use super::folders::NO_FOLDER;
 use super::tree::{ProfileKind, ProfileSummary};
 use super::{App, Dialog, Effect};
-use crate::profile_draft::ProfileDraft;
 
 /// Something from a folder's menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -149,7 +148,7 @@ impl App {
                 }
             }
             FolderMessage::NewProfileIn(path) => {
-                let mut draft = ProfileDraft::default();
+                let mut draft = self.blank_draft();
                 if path != NO_FOLDER {
                     draft.group = path;
                 }

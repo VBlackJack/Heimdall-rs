@@ -2368,6 +2368,16 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// The default SSH mode written into every SSH profile, as the C# "Apply to all saved
+    /// sessions" asks, with the size of the rewrite.
+    ConfirmApplySshMode {
+        /// The mode written.
+        mode: heimdall_core::profile::SshMode,
+        /// SSH profiles that change.
+        changes: usize,
+        /// SSH profiles there are.
+        total: usize,
+    },
     /// A macro's name and inputs, edited, as the C# macro editor.
     EditMacro(Box<macro_editor::MacroDraft>),
     /// Forget the macro of this name, as the C# asks.
@@ -4382,6 +4392,7 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::ConfirmApplySshMode { mode, .. }) => self.confirm_apply_ssh_mode(mode),
             Some(Dialog::EditMacro(draft)) => {
                 self.save_edited_macro(*draft);
                 Vec::new()
