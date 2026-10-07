@@ -47,6 +47,9 @@ use crate::shell::Message;
 /// Size of a menu entry's text.
 const MENU_TEXT_SIZE: f32 = 14.0;
 
+/// Size of the line under a menu entry saying why it is disabled.
+const MENU_NOTE_SIZE: f32 = 12.0;
+
 /// Tallest a "Move to folder" list grows before it scrolls.
 const MOVE_MENU_HEIGHT: f32 = 360.0;
 
@@ -1994,10 +1997,16 @@ pub fn selection_menu_entries<'a>(
 }
 
 /// What the profiles selected together can be set at once, as the C# "Edit" menu: their
-/// port, and the account of the `usernames` among them that take one.
-pub fn edit_selection_entries<'a>(usernames: usize, routed: usize) -> Element<'a, Message> {
+/// port, the account of the `usernames` among them that take one, and the password of the
+/// `passwords` whose password is saved, unless `blocked` says why none can be saved now.
+pub fn edit_selection_entries<'a>(
+    usernames: usize,
+    passwords: usize,
+    blocked: Option<String>,
+    routed: usize,
+) -> Element<'a, Message> {
     let edit = |field| Some(AppMessage::Selection(SelectionMessage::Edit(field)));
-    let entries = column![]
+    let mut entries = column![]
         .spacing(0.0)
         .width(MENU_WIDTH)
         .push(entry(fl!("ui-selection-edit-port"), edit(BulkField::Port)))
@@ -2005,14 +2014,26 @@ pub fn edit_selection_entries<'a>(usernames: usize, routed: usize) -> Element<'a
             fl!("ui-selection-edit-username", count = usernames),
             edit(BulkField::Username).filter(|_| usernames > 0),
         ))
-        .push(
-            button(text(fl!("ui-selection-set-gateway", count = routed)).size(MENU_TEXT_SIZE))
-                .width(Length::Fill)
-                .style(menu_style)
-                .on_press_maybe(
-                    (routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)),
-                ),
+        .push(entry(
+            fl!("ui-selection-edit-password", count = passwords),
+            (passwords > 0 && blocked.is_none())
+                .then_some(AppMessage::Selection(SelectionMessage::EditPassword)),
+        ));
+    if let Some(blocked) = blocked {
+        entries = entries.push(
+            container(text(blocked).size(MENU_NOTE_SIZE))
+                .padding(MENU_PADDING)
+                .width(Length::Fill),
         );
+    }
+    let entries = entries.push(
+        button(text(fl!("ui-selection-set-gateway", count = routed)).size(MENU_TEXT_SIZE))
+            .width(Length::Fill)
+            .style(menu_style)
+            .on_press_maybe(
+                (routed > 0).then_some(Message::OpenTreeMenu(TreeMenu::GatewaySelection)),
+            ),
+    );
     menu_card(entries).into()
 }
 

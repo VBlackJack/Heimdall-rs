@@ -413,6 +413,71 @@ impl VaultState {
             error.to_string()
         })
     }
+
+    /// Writes every entry of `entries`. In the vault, all are set and the vault saved once:
+    /// on a failure none is kept, the vault in memory put back as on disk. In the system's
+    /// store, each is written on its own, and those written stay when another fails.
+    pub(super) fn write_many(&mut self, entries: &[Entry]) -> ManyWritten {
+        if !self.exists() {
+            let mut written = Vec::new();
+            let mut failure = None;
+            for (index, (name, bytes)) in entries.iter().enumerate() {
+                match self.system.set(name, bytes) {
+                    Ok(()) => written.push(index),
+                    Err(error) => {
+                        failure.get_or_insert(error);
+                    }
+                }
+            }
+            return ManyWritten { written, failure };
+        }
+        let Some(vault) = self.open.as_mut() else {
+            return ManyWritten {
+                written: Vec::new(),
+                failure: Some("the vault is locked".to_owned()),
+            };
+        };
+        let before: Vec<Option<Zeroizing<Vec<u8>>>> = entries
+            .iter()
+            .map(|(name, _)| vault.get(name).map(<[u8]>::to_vec).map(Zeroizing::new))
+            .collect();
+        for (name, bytes) in entries {
+            vault.set(name.clone(), bytes.to_vec());
+        }
+        match vault.save() {
+            Ok(()) => ManyWritten {
+                written: (0..entries.len()).collect(),
+                failure: None,
+            },
+            Err(error) => {
+                // Not saved is not used either: put back last first, as on disk.
+                for ((name, _), before) in entries.iter().zip(before).rev() {
+                    match before {
+                        Some(bytes) => vault.set(name.clone(), bytes.to_vec()),
+                        None => {
+                            vault.remove(name);
+                        }
+                    }
+                }
+                ManyWritten {
+                    written: Vec::new(),
+                    failure: Some(error.to_string()),
+                }
+            }
+        }
+    }
+}
+
+/// An entry of the vault or of the system's store: its name and its bytes.
+pub(super) type Entry = (String, Zeroizing<Vec<u8>>);
+
+/// What writing several entries at once did.
+#[derive(Debug, Default)]
+pub(super) struct ManyWritten {
+    /// The entries written, by their place in those given.
+    written: Vec<usize>,
+    /// Why the others were not: the first failure.
+    failure: Option<String>,
 }
 
 impl VaultState {
@@ -1031,6 +1096,43 @@ impl App {
         }
     }
 
+    /// Saves `password` for each of `profiles`, at the server and account each one names
+    /// now, as its editor would; a profile whose password is not saved is passed over. In
+    /// the vault, all are saved at once or none; in the system's store, each on its own.
+    /// What a server refused before no longer holds for a profile saved.
+    ///
+    /// The count saved, or with the reason, the count saved before the failure.
+    pub(super) fn save_passwords(
+        &mut self,
+        profiles: &[ProfileId],
+        password: &Secret,
+    ) -> Result<usize, (usize, String)> {
+        let (written_for, entries): (Vec<&ProfileId>, Vec<Entry>) = profiles
+            .iter()
+            .filter_map(|profile| {
+                let endpoint = self.stored_password_endpoint(profile)?;
+                let saved = SavedPassword {
+                    endpoint,
+                    password: Zeroizing::new(password.expose().to_owned()),
+                };
+                Some((profile, (password_entry(profile), encode(&saved))))
+            })
+            .unzip();
+        let done = self.vault.write_many(&entries);
+        for &index in &done.written {
+            self.vault.refused.remove(written_for[index]);
+        }
+        let count = done.written.len();
+        log::info!(
+            "a password was saved for {count} of {} profile(s) at once",
+            entries.len()
+        );
+        match done.failure {
+            None => Ok(count),
+            Some(detail) => Err((count, detail)),
+        }
+    }
+
     /// Saves `from`'s password, key passphrase and Citrix launch line for `to` as well, a
     /// copy of the profile.
     pub(super) fn copy_password(&mut self, from: &ProfileId, to: &ProfileId) {
@@ -1178,7 +1280,7 @@ impl App {
 
     /// Says a save failed, unless another dialog is open: what the user is doing there is
     /// not thrown away for it.
-    fn password_save_failed(&mut self, detail: &str) {
+    pub(super) fn password_save_failed(&mut self, detail: &str) {
         log::warn!("a password could not be saved: {detail}");
         if self.dialog.is_none() {
             self.dialog = Some(Dialog::PasswordSaveFailed {

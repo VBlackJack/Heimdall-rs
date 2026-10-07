@@ -4439,3 +4439,110 @@ fn transcript_retention_is_typed_under_the_transcripts_folder_within_the_csharp_
         "every transcript kept again"
     );
 }
+
+#[test]
+fn the_selection_menu_offers_the_password_of_its_profiles_and_says_when_it_cannot() {
+    use heimdall_app::SelectionMessage;
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.update(AppMessage::SelectProfile(ProfileId::new("a")));
+    core.update(AppMessage::Selection(SelectionMessage::Toggle(
+        ProfileId::new("b"),
+    )));
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::EditSelection));
+    let mut ui = simulator(&shell);
+    ui.click("Password... (2)").expect("the entry");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Selection(SelectionMessage::EditPassword))
+    )));
+
+    // Without a store to save passwords in, the entry says why it is disabled.
+    drop(shell);
+    let mut core = App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GRID,
+        files_start: dir.path().to_owned(),
+        system_credentials: heimdall_app::SystemCredentials::Unavailable,
+    });
+    core.update(AppMessage::SelectProfile(ProfileId::new("a")));
+    core.update(AppMessage::Selection(SelectionMessage::Toggle(
+        ProfileId::new("b"),
+    )));
+    let mut shell = Shell::with_app(core);
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::EditSelection));
+    let mut ui = simulator(&shell);
+    ui.find("This system has no credential store: set a master password to save passwords.")
+        .expect("why it is disabled");
+    ui.click("Password... (2)").expect("the entry");
+    assert!(!ui.into_messages().any(|message| matches!(
+        message,
+        Message::MenuChoice(AppMessage::Selection(SelectionMessage::EditPassword))
+    )));
+}
+
+#[test]
+fn the_bulk_password_dialog_names_its_count_and_saves_the_password_typed_twice() {
+    use heimdall_app::{BulkPasswordSkips, SelectionMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.update(AppMessage::SelectProfile(ProfileId::new("a")));
+    core.update(AppMessage::Selection(SelectionMessage::Toggle(
+        ProfileId::new("b"),
+    )));
+    core.update(AppMessage::Selection(SelectionMessage::EditPassword));
+    let mut shell = Shell::with_app(core);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Setting password on 2 servers").expect("the count");
+        ui.find("New password:").expect("the password");
+        ui.find("Confirm password:").expect("again");
+    }
+    let field = |index: usize, value: &str| Message::BulkPasswordField {
+        index,
+        value: value.to_owned(),
+    };
+    let _ = shell.update(field(0, "hunter2"));
+    let _ = shell.update(field(1, "hunter3"));
+    let _ = shell.update(Message::SubmitBulkPassword);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Passwords do not match.").expect("refused");
+    }
+    let _ = shell.update(field(0, "hunter2"));
+    let _ = shell.update(field(1, "hunter2"));
+    let _ = shell.update(Message::DialogKey { confirm: true });
+    let mut core = shell.into_app();
+    assert!(core.dialog.is_none(), "{:?}", core.dialog);
+    assert_eq!(saved_answer(&mut core).as_deref(), Some("hunter2"));
+
+    // One server, and the profiles left alone said.
+    core.dialog = Some(Dialog::BulkPassword {
+        ids: vec![ProfileId::new("a")],
+        skipped: BulkPasswordSkips {
+            winrm: 1,
+            no_account: 2,
+            other: 0,
+        },
+        refused: None,
+    });
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "bulk-password.png");
+    let mut ui = simulator(&shell);
+    ui.find("Setting password on 1 server").expect("one");
+    ui.find("Skipped 1 WinRM profile because its password is not saved.")
+        .expect("WinRM");
+    ui.find("Skipped 2 profiles because no username is configured.")
+        .expect("without an account");
+    assert!(
+        ui.find("whose protocol has no saved password").is_err(),
+        "none of that kind"
+    );
+}

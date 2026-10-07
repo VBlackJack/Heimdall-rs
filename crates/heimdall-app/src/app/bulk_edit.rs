@@ -24,7 +24,7 @@ use super::tree::ProfileKind;
 use super::{App, Dialog, Notice};
 
 /// Profiles a bulk edit needs at least, as the C# one.
-const BULK_EDIT_MINIMUM: usize = 2;
+pub(super) const BULK_EDIT_MINIMUM: usize = 2;
 
 /// What several profiles get at once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
