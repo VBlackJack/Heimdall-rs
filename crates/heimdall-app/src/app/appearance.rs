@@ -24,8 +24,9 @@ use heimdall_core::settings::{
     ColorScheme, Language, Settings, anti_idle_interval_accepted, max_sessions_accepted,
     rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
     reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
-    settings_path, ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
-    ssh_tmout_reset_interval_accepted, terminal_font_size_accepted,
+    session_log_retention_days_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
+    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted,
+    terminal_font_size_accepted,
 };
 use heimdall_term::Palette;
 
@@ -40,6 +41,8 @@ pub enum SettingsMessage {
     SessionLogging(bool),
     /// The folder transcripts go to.
     SessionLogDirectory(String),
+    /// Days a transcript is kept, 0 for every one; refused out of the C# range.
+    SessionLogRetentionDays(u32),
     /// The program a server's file is edited with; empty takes the system's own.
     ExternalEditor(String),
     /// The SFTP browser's settings: on or off, and opened beside an SSH shell or not.
@@ -180,8 +183,18 @@ impl App {
             {
                 self.settings.rdp_connect_timeout = seconds;
             }
+            SettingsMessage::RdpAutoReconnectAttempts(attempts)
+                if rdp_auto_reconnect_attempts_accepted(attempts) =>
+            {
+                self.settings.rdp_auto_reconnect_attempts = attempts;
+            }
             SettingsMessage::MaxSessions(max) if max_sessions_accepted(max) => {
                 self.settings.max_sessions = max;
+            }
+            SettingsMessage::SessionLogRetentionDays(days)
+                if session_log_retention_days_accepted(days) =>
+            {
+                self.settings.session_log_retention_days = days;
             }
             _ => return false,
         }
@@ -242,12 +255,6 @@ impl App {
                 // The agent chip says what the next connection reaches.
                 self.agent_chip = super::agent_chip::AgentChip::Unknown;
             }
-            SettingsMessage::RdpAutoReconnectAttempts(attempts) => {
-                if !rdp_auto_reconnect_attempts_accepted(*attempts) {
-                    return Vec::new();
-                }
-                self.settings.rdp_auto_reconnect_attempts = *attempts;
-            }
             SettingsMessage::SshAutoReconnectAttempts(attempts) => {
                 if !ssh_auto_reconnect_attempts_accepted(*attempts) {
                     return Vec::new();
@@ -273,7 +280,10 @@ impl App {
                 self.settings.ssh_tmout_reset_interval = *seconds;
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
-            message @ (SettingsMessage::RdpConnectTimeout(_) | SettingsMessage::MaxSessions(_)) => {
+            message @ (SettingsMessage::RdpConnectTimeout(_)
+            | SettingsMessage::RdpAutoReconnectAttempts(_)
+            | SettingsMessage::MaxSessions(_)
+            | SettingsMessage::SessionLogRetentionDays(_)) => {
                 if !self.set_limit(message) {
                     return Vec::new();
                 }

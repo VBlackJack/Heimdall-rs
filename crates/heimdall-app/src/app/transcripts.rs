@@ -25,7 +25,9 @@ use super::reconnect::Reopen;
 use super::{App, Notice, Phase, ProfileKind, Tab, TabProfile};
 use crate::driver::Purpose;
 use crate::ids::TabId;
-use crate::transcript::{TRANSCRIPT_MAX_BYTES, Transcript, TranscriptContext, TranscriptLines};
+use crate::transcript::{
+    TRANSCRIPT_MAX_BYTES, Transcript, TranscriptContext, TranscriptLines, prune_expired,
+};
 
 /// The host a local session's transcript is named after.
 const LOCAL_HOST: &str = "localhost";
@@ -34,6 +36,17 @@ impl App {
     /// Words the transcripts' first and last lines, in the window's language.
     pub fn set_transcript_lines(&mut self, lines: TranscriptLines) {
         self.transcript_lines = Some(lines);
+    }
+
+    /// Removes, on a thread of its own, the transcripts of the settings' folder older than
+    /// the retention they give, as the C# does at start; nothing when every one is kept.
+    pub fn prune_transcripts(&self) {
+        let days = self.settings.session_log_retention_days;
+        if days == 0 {
+            return;
+        }
+        let folder = self.settings.session_log_folder(&self.settings_file);
+        std::thread::spawn(move || prune_expired(&folder, days, SystemTime::now()));
     }
 
     /// Whether a transcript can be started for `tab` by hand: a session of text, connected,

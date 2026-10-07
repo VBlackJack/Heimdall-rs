@@ -1352,6 +1352,8 @@ impl Shell {
         if let Some(language) = shell.app.settings().language {
             crate::i18n::apply(Some(language));
         }
+        // Transcripts past their retention, removed beside the start, as the C# does.
+        shell.app.prune_transcripts();
         shell
     }
 
@@ -4706,37 +4708,37 @@ impl Shell {
     }
 
     /// Session logging, as the C# Settings page offers it: on or off, with what a transcript
-    /// keeps said, and the folder the transcripts go to, applied with Enter.
+    /// keeps said, the folder the transcripts go to, applied with Enter, and the days a
+    /// transcript is kept, typed and applied with Enter as the other numbers.
     fn session_log_settings(&self) -> Element<'_, Message> {
         let settings = self.app.settings();
         let typed = self
             .log_directory
             .as_deref()
             .unwrap_or(&settings.session_log_directory);
-        container(
-            column![
-                checkbox(settings.session_logging)
-                    .label(fl!("ui-settings-session-logging-record"))
-                    .on_toggle(|on| {
-                        Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(on)))
-                    }),
-                text(fl!("ui-settings-session-logging-warning")).size(SMALL_SIZE),
-                row![
-                    text(fl!("ui-settings-session-log-directory")),
-                    text_input(DEFAULT_SESSION_LOG_DIRECTORY, typed)
-                        .on_input(Message::LogDirectoryEdited)
-                        .on_submit(Message::LogDirectoryApply),
-                ]
-                .spacing(SPACING)
-                .align_y(iced::Alignment::Center),
-                text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+        let logging = column![
+            checkbox(settings.session_logging)
+                .label(fl!("ui-settings-session-logging-record"))
+                .on_toggle(|on| {
+                    Message::App(AppMessage::Settings(SettingsMessage::SessionLogging(on)))
+                }),
+            text(fl!("ui-settings-session-logging-warning")).size(SMALL_SIZE),
+            row![
+                text(fl!("ui-settings-session-log-directory")),
+                text_input(DEFAULT_SESSION_LOG_DIRECTORY, typed)
+                    .on_input(Message::LogDirectoryEdited)
+                    .on_submit(Message::LogDirectoryApply),
             ]
-            .spacing(SPACING),
-        )
-        .padding(PADDING)
-        .max_width(SETTINGS_WIDTH)
-        .style(container::bordered_box)
-        .into()
+            .spacing(SPACING)
+            .align_y(iced::Alignment::Center),
+            text(fl!("ui-settings-session-log-directory-hint")).size(SMALL_SIZE),
+        ]
+        .spacing(SPACING);
+        container(self.number_fields(logging, &SessionField::TRANSCRIPTS))
+            .padding(PADDING)
+            .max_width(SETTINGS_WIDTH)
+            .style(container::bordered_box)
+            .into()
     }
 
     /// The C# "SFTP browser" card: the browser on or off, and under it the pane opened beside
@@ -6590,9 +6592,45 @@ impl Shell {
                 ))
                 .into()
             }
+            // Dropped once open: what it showed stays in sight, the failure under it.
+            Phase::Failed(error)
+                if tab.dropped() && matches!(tab.purpose, Purpose::Shell | Purpose::Files) =>
+            {
+                self.dropped_page(tab, error, focused)
+            }
             Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
             Phase::Failed(error) => self.failure_card(tab, error),
         }
+    }
+
+    /// A session that dropped once open, as the C# "View output" leaves its output readable
+    /// after a drop: its terminal, scrolled, selected and copied as ever, or its listing, kept
+    /// in sight and read only, nothing typed reaching the session gone; under it a bar with
+    /// the failure and the failure card's ways out, or the countdown to the next attempt and
+    /// its Cancel.
+    fn dropped_page<'a>(
+        &'a self,
+        tab: &'a Tab,
+        error: &'a UiError,
+        focused: bool,
+    ) -> Element<'a, Message> {
+        let kept = match tab.files.as_deref() {
+            Some(pane) => self.files_page(tab.id, pane, false),
+            None => self.searchable_terminal(tab, self.app.dialog.is_none() && focused),
+        };
+        let bar = match tab.retry {
+            Some(retry) => countdown_bar(tab.id, retry),
+            None => column![
+                text(texts::error(error)).style(text::danger),
+                self.failure_actions(tab, error)
+                    .wrap()
+                    .vertical_spacing(SPACING),
+            ]
+            .spacing(SPACING)
+            .padding(PADDING)
+            .into(),
+        };
+        column![container(kept).height(Length::Fill), bar].into()
     }
 
     /// The line naming the tab an RDP certificate question belongs to, in a tab's own
@@ -6607,6 +6645,27 @@ impl Shell {
 
     /// A failed session's card: the error, and its ways out.
     fn failure_card<'a>(&'a self, tab: &'a Tab, error: &'a UiError) -> Element<'a, Message> {
+        center(card(
+            column![
+                text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
+                text(texts::error(error)),
+                // Buttons go to the next line whole when a translation is long, never cut.
+                self.failure_actions(tab, error)
+                    .wrap()
+                    .vertical_spacing(SPACING),
+            ]
+            .spacing(SPACING),
+        ))
+        .into()
+    }
+
+    /// The ways out of a failed session: those of [`Self::session_actions`], and the way
+    /// past a changed key.
+    fn failure_actions<'a>(
+        &'a self,
+        tab: &'a Tab,
+        error: &'a UiError,
+    ) -> iced::widget::Row<'a, Message> {
         let mut actions = self.session_actions(tab);
         // A changed key's way out is deliberate, never part of the connection: the old key
         // is forgotten, and the new one asked about as on a first contact. An RDP
@@ -6630,16 +6689,7 @@ impl Shell {
                     .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
             );
         }
-        center(card(
-            column![
-                text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
-                text(texts::error(error)),
-                // Buttons go to the next line whole when a translation is long, never cut.
-                actions.wrap().vertical_spacing(SPACING),
-            ]
-            .spacing(SPACING),
-        ))
-        .into()
+        actions
     }
 
     /// What an ended or failed session offers, as the C# Heimdall's card: Reconnect when it
@@ -9226,23 +9276,51 @@ fn reconnecting(retry: Retry) -> String {
     )
 }
 
-/// A session waiting to open again by itself: which attempt, in how long, and Cancel.
-fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
+/// The seconds before `retry` starts, rounded up: "in 0s" would show while the wait still
+/// runs.
+fn seconds_left(retry: Retry) -> u64 {
     let left = retry
         .due
         .saturating_duration_since(std::time::Instant::now());
-    // Rounded up: "in 0s" would show while the wait still runs.
-    let seconds = left.as_secs() + u64::from(left.subsec_nanos() > 0);
+    left.as_secs() + u64::from(left.subsec_nanos() > 0)
+}
+
+/// The button that stops the attempts of `tab`.
+fn cancel_retry_button<'a>(tab: TabId) -> iced::widget::Button<'a, Message> {
+    button(text(fl!("ui-session-reconnecting-cancel")))
+        .style(button::secondary)
+        .on_press(Message::App(AppMessage::CancelAutoReconnect(tab)))
+}
+
+/// A session waiting to open again by itself: which attempt, in how long, and Cancel.
+fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
     center(card(
         column![
             text(reconnecting(retry)).size(HEADING_SIZE),
-            text(fl!("ui-session-reconnecting-in", seconds = seconds)),
-            button(text(fl!("ui-session-reconnecting-cancel")))
-                .style(button::secondary)
-                .on_press(Message::App(AppMessage::CancelAutoReconnect(tab))),
+            text(fl!(
+                "ui-session-reconnecting-in",
+                seconds = seconds_left(retry)
+            )),
+            cancel_retry_button(tab),
         ]
         .spacing(SPACING),
     ))
+    .into()
+}
+
+/// The countdown of [`countdown_card`] in a bar, under a dropped session kept in sight.
+fn countdown_bar<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
+    row![
+        text(reconnecting(retry)),
+        text(fl!(
+            "ui-session-reconnecting-in",
+            seconds = seconds_left(retry)
+        )),
+        cancel_retry_button(tab),
+    ]
+    .spacing(SPACING)
+    .padding(PADDING)
+    .align_y(iced::Alignment::Center)
     .into()
 }
 

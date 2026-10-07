@@ -389,7 +389,6 @@ ui-local-shell-name = Shell local
 ui-local-starting = Démarrage de { $name }...
 ui-error-local-shell = Le shell local n'a pas pu démarrer : { $detail }
 ui-import-skip-elevation = s'exécute en administrateur, pas encore pris en charge
-ui-import-skip-post-connect = exécute des commandes après le démarrage, pas encore pris en charge
 ui-import-skip-unsafe-local = son programme, ses arguments ou son dossier ne peuvent pas être lancés tels quels (chemin relatif, guillemet, caractère NUL, ou dossier sur une autre machine)
 ui-dialog-local-title = Lancer ce programme ?
 ui-dialog-local-body = Le profil { $name } lance la commande ci-dessous. Heimdall ne la lance qu'avec votre accord, et redemande si elle change.
@@ -987,6 +986,10 @@ ui-settings-ssh-auto-reconnect-enable = Activer la reconnexion automatique born�
 ui-settings-ssh-auto-reconnect-attempts = Nombre maximum de tentatives avant le retour à la reconnexion manuelle
 ui-settings-session-log-directory = Répertoire des journaux de session :
 ui-settings-session-log-directory-hint = Dossier des journaux de session, relatif au dossier des paramètres sauf s'il est absolu. Appuyez sur Entrée pour appliquer.
+ui-settings-session-log-retention = Supprimer les transcripts de plus de
+ui-settings-days-unit = jours
+ui-settings-session-log-retention-hint = 0 conserve tous les transcripts. Seuls les transcripts de session sont supprimés.
+ui-settings-session-log-retention-refused = La conservation des transcripts doit valoir 0 (tout garder) ou être comprise entre { $min } et { $max } jours.
 
 ui-broadcast-button = DIFFUSION
 ui-broadcast-toggle-tooltip = Activer/désactiver la diffusion (envoyer à tous les terminaux), Ctrl+Alt+B
@@ -1896,6 +1899,10 @@ ui-import-dropped-rdp-usb = périphériques USB
 ui-import-dropped-rdp-microphone = microphone
 ui-import-dropped-rdp-multi-monitor = plusieurs écrans
 ui-import-dropped-citrix-cache-launch = lancement depuis le cache Citrix Workspace, non importé
+ui-import-dropped-local-post-connect = { $count ->
+    [one] séquence post-connexion de { $count } étape, qu'un shell local n'exécute jamais
+   *[other] séquence post-connexion de { $count } étapes, qu'un shell local n'exécute jamais
+}
 ui-citrix-import-title = Applications Citrix
 ui-citrix-import-none = Aucune application Citrix trouvée dans le cache local. Ouvrez Citrix Workspace et connectez-vous à un magasin.
 ui-citrix-import-confirm = { $count ->

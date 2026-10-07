@@ -1770,6 +1770,8 @@ pub struct Tab {
     pub health: crate::server_health::HealthPane,
     /// Connection state.
     pub phase: Phase,
+    /// Its session failed once open: what it showed stays in sight. See [`Tab::dropped`].
+    dropped: bool,
     /// The terminal.
     pub terminal: Terminal,
     /// Questions waiting, oldest first; only the first is shown.
@@ -1876,6 +1878,14 @@ impl Tab {
             .map(|key| key.algorithm().to_string())
     }
 
+    /// Whether the tab's session failed after it was open, a connection lost under it: its
+    /// terminal or its listing stays in sight, read-only, as the C# "View output" leaves the
+    /// output readable after a drop. A session that never opened has nothing to show.
+    #[must_use]
+    pub fn dropped(&self) -> bool {
+        self.dropped && matches!(self.phase, Phase::Failed(_))
+    }
+
     /// Whether a live session would be lost by closing the tab. An attempt still
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
@@ -1941,6 +1951,7 @@ impl Tab {
             layout: None,
             working_directory: None,
             local_browser_closed: false,
+            dropped: false,
             profile,
             phase: Phase::Connecting,
             terminal: Terminal::new(
@@ -3562,9 +3573,14 @@ impl App {
                 Vec::new()
             }
             ConnectionEvent::Failed(error) => {
+                tab.dropped = tab.phase == Phase::Connected;
                 tab.phase = Phase::Failed(error);
                 if let Some(files) = tab.files.as_deref_mut() {
                     files.cancel_waiting();
+                    // A listing kept in sight after a drop is read only: nothing it offers
+                    // reaches the session gone.
+                    files.client = None;
+                    files.shell = None;
                 }
                 tab.sink = None;
                 tab.desktop = None;

@@ -261,6 +261,23 @@ impl CtrlVPaste {
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
+/// Days transcripts are kept by default: all of them, as the C# default. They can be audit
+/// records, so deleting them is the user's choice to make.
+pub const SESSION_LOG_RETENTION_DAYS_DEFAULT: u32 = 0;
+
+/// Fewest days of transcript retention accepted besides 0, as the C# setting's range.
+pub const SESSION_LOG_RETENTION_DAYS_MIN: u32 = 7;
+
+/// Most days of transcript retention accepted, as the C# setting's range.
+pub const SESSION_LOG_RETENTION_DAYS_MAX: u32 = 3650;
+
+/// Whether `days` is a transcript retention the settings accept: 0 to keep every
+/// transcript, or within the C# range.
+#[must_use]
+pub fn session_log_retention_days_accepted(days: u32) -> bool {
+    days == 0 || (SESSION_LOG_RETENTION_DAYS_MIN..=SESSION_LOG_RETENTION_DAYS_MAX).contains(&days)
+}
+
 /// What the Settings page changes.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[expect(
@@ -276,6 +293,10 @@ pub struct Settings {
     pub session_logging: bool,
     /// Where transcripts go: a folder, or one relative to the settings file's.
     pub session_log_directory: String,
+    /// Days a transcript is kept after its last write, as the C# `SessionLogRetentionDays`:
+    /// 0 keeps every one, else within [`SESSION_LOG_RETENTION_DAYS_MIN`] and
+    /// [`SESSION_LOG_RETENTION_DAYS_MAX`].
+    pub session_log_retention_days: u32,
     /// Size of the terminals' text a new tab starts at, and Ctrl+0 comes back to, within
     /// [`TERMINAL_FONT_SIZE_MIN`] and [`TERMINAL_FONT_SIZE_MAX`].
     pub terminal_font_size: u16,
@@ -632,6 +653,7 @@ impl Default for Settings {
             broadcast_scope: BroadcastScope::default(),
             session_logging: false,
             session_log_directory: DEFAULT_SESSION_LOG_DIRECTORY.to_owned(),
+            session_log_retention_days: SESSION_LOG_RETENTION_DAYS_DEFAULT,
             terminal_font_size: TERMINAL_FONT_SIZE_DEFAULT,
             language: None,
             vault_unlock: Lockout::default(),
@@ -879,6 +901,9 @@ struct SessionLogSection {
     enabled: bool,
     #[serde(default)]
     directory: Option<String>,
+    /// Absent, from a file written before it, is the C# default: every transcript kept.
+    #[serde(default)]
+    retention_days: Option<u32>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -997,6 +1022,12 @@ impl Settings {
                 .directory
                 .filter(|directory| !directory.trim().is_empty())
                 .unwrap_or_else(|| DEFAULT_SESSION_LOG_DIRECTORY.to_owned()),
+            // Out of the range, as the C# load warns and keeps the default.
+            session_log_retention_days: within(
+                file.session_log.retention_days,
+                session_log_retention_days_accepted,
+                SESSION_LOG_RETENTION_DAYS_DEFAULT,
+            ),
             // Out of the range, as the C# load warns and keeps the default.
             terminal_font_size: file
                 .terminal
@@ -1162,6 +1193,7 @@ impl Settings {
             session_log: SessionLogSection {
                 enabled: self.session_logging,
                 directory: Some(self.session_log_directory.clone()),
+                retention_days: Some(self.session_log_retention_days),
             },
             general: GeneralSection {
                 language: self.language.map(|language| language.code().to_owned()),

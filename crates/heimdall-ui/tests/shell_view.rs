@@ -3997,3 +3997,197 @@ fn only_the_main_window_draws_the_shell_and_is_titled_as_it() {
         "another window does not draw the shell"
     );
 }
+
+/// A session's input, kept: what reached it.
+#[derive(Debug, Default)]
+struct Recorder(std::sync::Mutex<Vec<u8>>);
+
+impl heimdall_app::InputSink for Recorder {
+    fn write(&self, bytes: Vec<u8>) -> Result<(), SessionClosed> {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .extend(bytes);
+        Ok(())
+    }
+
+    fn resize(&self, _size: TerminalSize) -> Result<(), SessionClosed> {
+        Ok(())
+    }
+
+    fn close(&self) {}
+}
+
+/// A shell that said `said`, then lost its connection; the input that reached it.
+fn dropped_shell(dir: &Path, said: &[u8], auto_reconnect: bool) -> (Shell, TabId, Arc<Recorder>) {
+    let mut core = app(dir);
+    if auto_reconnect {
+        core.update(AppMessage::Settings(
+            heimdall_app::SettingsMessage::SshAutoReconnect(true),
+        ));
+    }
+    let (tab, attempt) = open(&mut core, "a");
+    let recorder = Arc::new(Recorder::default());
+    for event in [
+        ConnectionEvent::Connected {
+            input: recorder.clone(),
+        },
+        ConnectionEvent::Output(said.to_vec()),
+        ConnectionEvent::Failed(UiError::ConnectionLost),
+    ] {
+        core.update(AppMessage::Connection {
+            tab,
+            attempt,
+            event,
+        });
+    }
+    (Shell::with_app(core), tab, recorder)
+}
+
+/// Whether the window draws `tab`'s terminal: it reports its size on the first event.
+fn draws_terminal(shell: &Shell, tab: TabId) -> bool {
+    let mut ui = simulator(shell);
+    let _ = ui.simulate([iced::Event::Keyboard(
+        iced::keyboard::Event::ModifiersChanged(iced::keyboard::Modifiers::empty()),
+    )]);
+    ui.into_messages().any(
+        |message| matches!(message, Message::App(AppMessage::Resize { tab: t, .. }) if t == tab),
+    )
+}
+
+#[test]
+fn a_dropped_shell_keeps_its_terminal_in_sight_with_the_failure_and_its_ways_out_under_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, recorder) = dropped_shell(dir.path(), b"uptime: 42 days\r\n", false);
+    assert!(shell.app().tab(tab).is_some_and(heimdall_app::Tab::dropped));
+    snapshot(&shell, "session-dropped.png");
+    assert!(draws_terminal(&shell, tab), "the terminal stays drawn");
+    assert!(
+        shell
+            .app()
+            .tab(tab)
+            .expect("tab")
+            .terminal
+            .snapshot()
+            .row_text(0)
+            .contains("uptime: 42 days"),
+        "what it showed is still there to read"
+    );
+    {
+        let mut ui = simulator(&shell);
+        // As the C# says it on the disconnect marker's overlay.
+        ui.find("Session disconnected unexpectedly.")
+            .expect("the failure said");
+        assert!(
+            ui.find("The connection failed").is_err(),
+            "no card over the terminal"
+        );
+        ui.find("Copy error").expect("its error copied");
+        ui.find("Close the tab").expect("closed");
+        ui.click("Reconnect").expect("reconnect");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ReconnectTab(reconnected)) if reconnected == tab
+        )));
+    }
+    // Typed into, it sends nothing: the session is gone.
+    let typed: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        ui.typewrite("ls");
+        let _ = ui.tap_key(keyboard_named(Named::Enter));
+        ui.into_messages().collect()
+    };
+    for message in typed {
+        let _ = shell.update(message);
+    }
+    assert!(
+        recorder
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .is_empty(),
+        "nothing reached the session"
+    );
+}
+
+#[test]
+fn a_dropped_shell_counting_down_to_its_next_attempt_keeps_its_terminal_in_sight() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, tab, _) = dropped_shell(dir.path(), b"still here\r\n", true);
+    assert!(
+        shell.app().tab(tab).and_then(|found| found.retry).is_some(),
+        "the attempts started"
+    );
+    assert!(draws_terminal(&shell, tab), "the terminal stays drawn");
+    let mut ui = simulator(&shell);
+    ui.find("Reconnecting (attempt 1/3)...")
+        .expect("the countdown said");
+    ui.click("Cancel").expect("cancel");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::CancelAutoReconnect(cancelled)) if cancelled == tab
+    )));
+}
+
+#[test]
+fn a_session_that_never_connected_shows_its_failure_card_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    let (tab, attempt) = open(&mut core, "a");
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::ConnectionLost),
+    });
+    let shell = Shell::with_app(core);
+    assert!(shell.app().tab(tab).is_some_and(|found| !found.dropped()));
+    assert!(!draws_terminal(&shell, tab), "no terminal: nothing to show");
+    let mut ui = simulator(&shell);
+    ui.find("The connection failed").expect("the card");
+    ui.find("Reconnect").expect("its way out");
+}
+
+/// The window tall enough for the whole Settings page.
+fn tall_settings(shell: &Shell) -> common::Drawn<'_> {
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    common::simulator(settings, Size::new(1100.0, 2400.0), shell.view())
+}
+
+#[test]
+fn transcript_retention_is_typed_under_the_transcripts_folder_within_the_csharp_range() {
+    use heimdall_ui::shell::{SessionField, SettingsTab};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::ShowSettings);
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    let refusal = "Transcript retention must be 0 (keep all) or between 7 and 3650 days.";
+    {
+        let mut ui = tall_settings(&shell);
+        for said in [
+            "Delete transcripts older than",
+            "days",
+            "0 keeps every transcript. Only session transcripts are deleted.",
+        ] {
+            ui.find(said).expect(said);
+        }
+    }
+    let field = SessionField::TranscriptRetention;
+    for (typed, refused) in [("6", true), ("3651", true), ("week", true), (" 30 ", false)] {
+        let _ = shell.update(Message::SessionFieldEdited(field, typed.to_owned()));
+        let _ = shell.update(Message::SessionFieldApply(field));
+        let mut ui = tall_settings(&shell);
+        assert_eq!(ui.find(refusal).is_ok(), refused, "{typed}");
+    }
+    assert_eq!(shell.app().settings().session_log_retention_days, 30);
+    let _ = shell.update(Message::SessionFieldEdited(field, "0".to_owned()));
+    let _ = shell.update(Message::SessionFieldApply(field));
+    assert_eq!(
+        shell.app().settings().session_log_retention_days,
+        0,
+        "every transcript kept again"
+    );
+}

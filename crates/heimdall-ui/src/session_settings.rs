@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-//! The numbers of the Settings page, as the C# SSH/SFTP Session tab and its session health
-//! monitor have them: each typed, then applied with Enter; one out of its range stays typed,
-//! its rule said under it.
+//! The numbers of the Settings page, as the C# SSH/SFTP Session tab, its session health
+//! monitor and its session logging have them: each typed, then applied with Enter; one out of
+//! its range stays typed, its rule said under it.
 
 use heimdall_app::SettingsMessage;
 use heimdall_core::settings::{
     self, ANTI_IDLE_INTERVAL_MAX, ANTI_IDLE_INTERVAL_MIN, REACHABILITY_INTERVAL_MAX,
     REACHABILITY_INTERVAL_MIN, REACHABILITY_PROBES_MAX, REACHABILITY_PROBES_MIN,
-    REACHABILITY_TIMEOUT_MAX, REACHABILITY_TIMEOUT_MIN, SSH_KEEP_ALIVE_INTERVAL_MAX,
-    SSH_KEEP_ALIVE_INTERVAL_MIN, SSH_TMOUT_RESET_INTERVAL_MAX, Settings,
+    REACHABILITY_TIMEOUT_MAX, REACHABILITY_TIMEOUT_MIN, SESSION_LOG_RETENTION_DAYS_MAX,
+    SESSION_LOG_RETENTION_DAYS_MIN, SSH_KEEP_ALIVE_INTERVAL_MAX, SSH_KEEP_ALIVE_INTERVAL_MIN,
+    SSH_TMOUT_RESET_INTERVAL_MAX, Settings,
 };
 
 use crate::i18n::fl;
@@ -43,6 +44,8 @@ pub enum SessionField {
     ReachabilityTimeout,
     /// Servers it dials at once.
     ReachabilityProbes,
+    /// Days a session transcript is kept, 0 for every one.
+    TranscriptRetention,
 }
 
 impl SessionField {
@@ -56,8 +59,11 @@ impl SessionField {
         Self::ReachabilityProbes,
     ];
 
+    /// The session logging's, as the C# shows it under the transcripts' folder.
+    pub const TRANSCRIPTS: [Self; 1] = [Self::TranscriptRetention];
+
     /// How many there are.
-    pub(crate) const COUNT: usize = 6;
+    pub(crate) const COUNT: usize = 7;
 
     /// Its place among them all.
     pub(crate) fn index(self) -> usize {
@@ -68,6 +74,7 @@ impl SessionField {
             Self::ReachabilityInterval => 3,
             Self::ReachabilityTimeout => 4,
             Self::ReachabilityProbes => 5,
+            Self::TranscriptRetention => 6,
         }
     }
 
@@ -80,6 +87,7 @@ impl SessionField {
             Self::ReachabilityInterval => fl!("ui-settings-reachability-interval"),
             Self::ReachabilityTimeout => fl!("ui-settings-reachability-timeout"),
             Self::ReachabilityProbes => fl!("ui-settings-reachability-probes"),
+            Self::TranscriptRetention => fl!("ui-settings-session-log-retention"),
         }
     }
 
@@ -90,6 +98,7 @@ impl SessionField {
                 Some(fl!("ui-settings-anti-idle-unit"))
             }
             Self::ReachabilityTimeout => Some(fl!("ui-settings-milliseconds-unit")),
+            Self::TranscriptRetention => Some(fl!("ui-settings-days-unit")),
             Self::ReachabilityProbes => None,
         }
     }
@@ -98,6 +107,7 @@ impl SessionField {
     pub(crate) fn hint(self) -> Option<String> {
         match self {
             Self::KeepAlive => Some(fl!("ui-settings-ssh-keep-alive-hint")),
+            Self::TranscriptRetention => Some(fl!("ui-settings-session-log-retention-hint")),
             _ => None,
         }
     }
@@ -111,6 +121,7 @@ impl SessionField {
             Self::ReachabilityInterval => settings.reachability.interval,
             Self::ReachabilityTimeout => settings.reachability.timeout,
             Self::ReachabilityProbes => settings.reachability.probes,
+            Self::TranscriptRetention => settings.session_log_retention_days,
         }
     }
 
@@ -123,6 +134,7 @@ impl SessionField {
             Self::ReachabilityInterval => settings::reachability_interval_accepted(value),
             Self::ReachabilityTimeout => settings::reachability_timeout_accepted(value),
             Self::ReachabilityProbes => settings::reachability_probes_accepted(value),
+            Self::TranscriptRetention => settings::session_log_retention_days_accepted(value),
         }
     }
 
@@ -135,6 +147,7 @@ impl SessionField {
             Self::ReachabilityInterval => SettingsMessage::ReachabilityInterval(value),
             Self::ReachabilityTimeout => SettingsMessage::ReachabilityTimeout(value),
             Self::ReachabilityProbes => SettingsMessage::ReachabilityProbes(value),
+            Self::TranscriptRetention => SettingsMessage::SessionLogRetentionDays(value),
         }
     }
 
@@ -170,6 +183,11 @@ impl SessionField {
                 "ui-settings-reachability-probes-refused",
                 min = REACHABILITY_PROBES_MIN,
                 max = REACHABILITY_PROBES_MAX
+            ),
+            Self::TranscriptRetention => fl!(
+                "ui-settings-session-log-retention-refused",
+                min = SESSION_LOG_RETENTION_DAYS_MIN,
+                max = SESSION_LOG_RETENTION_DAYS_MAX
             ),
         }
     }

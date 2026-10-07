@@ -506,34 +506,43 @@ fn a_local_profile_asking_for_elevation_is_left_out_whatever_the_form() {
 }
 
 #[test]
-fn a_local_profile_with_commands_to_run_after_start_is_left_out() {
+fn a_local_profile_is_imported_without_the_commands_the_csharp_never_ran_after_start() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings};
+
     let json = servers(
-        r#"{"id": "steps", "connectionType": "LOCAL",
-            "postConnectSteps": [{"enabled": true, "input": "whoami"}]},
-           {"id": "library", "connectionType": "LOCAL",
+        r#"{"id": "steps", "displayName": "Steps", "connectionType": "LOCAL",
+            "postConnectSteps": [{"enabled": true, "input": "whoami"},
+                                 {"enabled": true, "input": "hostname"}]},
+           {"id": "library", "displayName": "Library", "connectionType": "LOCAL",
             "postConnectSteps": [{"enabled": true, "commandLibraryId": "c1"}]},
-           {"id": "unsaid", "connectionType": "LOCAL",
+           {"id": "unsaid", "displayName": "Unsaid", "connectionType": "LOCAL",
             "postConnectSteps": [{"input": "whoami"}]},
-           {"id": "off", "connectionType": "LOCAL",
+           {"id": "legacy", "displayName": "Legacy", "connectionType": "LOCAL",
+            "postConnectCommand": "whoami\n\n  \nhostname\n"},
+           {"id": "off", "displayName": "Off", "connectionType": "LOCAL",
             "postConnectSteps": [{"enabled": false, "input": "whoami"},
                                  {"enabled": true, "input": "  "}]}"#,
     );
     let report = import(&json, None).expect("valid JSON");
-    let skipped: Vec<(&str, &SkipReason)> = report
-        .skipped
-        .iter()
-        .map(|skipped| (skipped.id.as_str(), &skipped.reason))
-        .collect();
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let imported: Vec<&str> = report.local.iter().map(|local| local.id.as_str()).collect();
+    assert_eq!(imported, ["steps", "library", "unsaid", "legacy", "off"]);
+    let dropped = |name: &str, steps| DroppedSettings {
+        name: name.to_owned(),
+        settings: vec![Dropped::LocalPostConnect(steps)],
+    };
     assert_eq!(
-        skipped,
+        report.dropped,
         [
-            ("steps", &SkipReason::NeedsPostConnectCommands),
-            ("library", &SkipReason::NeedsPostConnectCommands),
+            dropped("Steps", 2),
+            dropped("Library", 1),
             // A step says nothing of being on: on, as a new C# step is.
-            ("unsaid", &SkipReason::NeedsPostConnectCommands),
-        ]
+            dropped("Unsaid", 1),
+            // The sequence before steps: one per line written.
+            dropped("Legacy", 2),
+        ],
+        "nothing enabled to run in Off: nothing said"
     );
-    assert_eq!(report.local.len(), 1, "nothing enabled to run");
 }
 
 #[test]

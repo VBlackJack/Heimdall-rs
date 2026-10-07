@@ -106,8 +106,6 @@ pub enum SkipReason {
     InvalidPort(i64),
     /// A local shell run elevated, not supported yet.
     NeedsElevation,
-    /// Runs commands once connected, not supported yet.
-    NeedsPostConnectCommands,
     /// A `WinRM` profile logging in with an account it does not name.
     MissingUsername,
     /// A `WinRM` identity mode the C# Heimdall does not define.
@@ -224,6 +222,9 @@ pub enum Dropped {
     /// A Citrix application's launch from the Workspace cache: a secret, never carried by a
     /// file, as the C# import drops it too.
     CitrixCacheLaunch,
+    /// A local shell's post-connect sequence, of this many steps that would run: the C# runs
+    /// a sequence on an SSH session only, so it never ran, and a local profile keeps none.
+    LocalPostConnect(usize),
 }
 
 /// A profile imported without some of its settings.
@@ -655,9 +656,13 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
     let kind = server.connection_type.as_str();
     if kind == RDP_CONNECTION_TYPE {
         RdpChoices::of(server, defaults).dropped(server)
+    } else if kind.eq_ignore_ascii_case(LOCAL_CONNECTION_TYPE) {
+        match dead_local_steps(server) {
+            0 => Vec::new(),
+            steps => vec![Dropped::LocalPostConnect(steps)],
+        }
     } else if [
         WINRM_CONNECTION_TYPE,
-        LOCAL_CONNECTION_TYPE,
         TELNET_CONNECTION_TYPE,
         VNC_CONNECTION_TYPE,
         FTP_CONNECTION_TYPE,
@@ -1460,19 +1465,14 @@ fn convert_citrix(server: &LegacyServer) -> Result<CitrixProfile, SkipReason> {
 
 /// A local shell profile as `LocalShellHandler` runs it, never approved: whatever the C# file
 /// says was confirmed there, the user has not seen it here. The arguments stay the string the
-/// C# handed to the program.
+/// C# handed to the program. Its post-connect sequence, which the C# never ran on a local
+/// shell, is left out, and said by [`dropped_settings`].
 fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
     }
     if is_elevated(server) {
         return Err(SkipReason::NeedsElevation);
-    }
-    if server.post_connect_steps.iter().flatten().any(|step| {
-        step.enabled.unwrap_or(true)
-            && (!step.input.trim().is_empty() || !is_blank(step.command_library_id.as_deref()))
-    }) {
-        return Err(SkipReason::NeedsPostConnectCommands);
     }
     // Blank is absent, as `string.IsNullOrWhiteSpace` makes it in the C#.
     let program = trimmed(server.local_shell_executable.as_deref());
@@ -1500,6 +1500,32 @@ fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
         approved: None,
         session_logging: server.session_logging_override,
     })
+}
+
+/// The steps of a local shell's post-connect sequence that would run, as
+/// `PostConnectMigration` reads the sequence: the steps on, with a command of their own or one
+/// of the Command Library, or else the old command field's lines. None ever ran: the C# runs
+/// a sequence on an SSH session only.
+fn dead_local_steps(server: &LegacyServer) -> usize {
+    if server.post_connect_steps.iter().flatten().next().is_some() {
+        return server
+            .post_connect_steps
+            .iter()
+            .flatten()
+            .filter(|step| {
+                step.enabled.unwrap_or(true)
+                    && (!step.input.trim().is_empty()
+                        || !is_blank(step.command_library_id.as_deref()))
+            })
+            .count();
+    }
+    server
+        .post_connect_command
+        .as_deref()
+        .unwrap_or_default()
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .count()
 }
 
 /// Whether the profile asks to run elevated, as `EffectiveElevationMode` reads it.
