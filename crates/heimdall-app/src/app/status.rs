@@ -132,8 +132,6 @@ pub enum Notice {
     /// A tab split, or a pane docked in a split, was not moved to a window of its own, as
     /// the C# `StatusDetachSplitTabRefused`.
     DetachSplitRefused,
-    /// A Files tab was not moved to a window of its own: its panes stay in the main window.
-    DetachFilesRefused,
     /// An image of the session shown was copied to the clipboard, as the C# says it.
     ScreenshotCopied,
     /// No image of the session shown could be copied.

@@ -20,17 +20,33 @@
 //! The window opens at the C# size, centred, and its place is not kept. Its close button
 //! is the application's to answer: the tab goes back to the strip, then closes as any tab.
 //! It has none of the main window's shortcuts, as the C# window has no input bindings;
-//! behind the lock screen it shows a veil and takes nothing.
+//! behind the lock screen it shows a veil and takes nothing. A Files tab takes its own keys
+//! there, as the C# file browser does, and the files dropped on the window.
 //!
 //! What its session sends is let through by name, each message naming its tab: a message
 //! added later, or one the main window would apply to its own tab shown, is dropped.
 
-use heimdall_app::{FloatId, FloatMessage, Message as AppMessage, QuestionId, SessionState, Tab};
+use std::path::PathBuf;
+
+use heimdall_app::files::FilesKey;
+use heimdall_app::{
+    FilesMessage, FloatId, FloatMessage, Message as AppMessage, QuestionId, SessionState, Tab,
+    TabId,
+};
+use iced::keyboard::key::Named;
 use iced::widget::{button, center, column, container, opaque, row, text};
-use iced::{Element, Length, Size, event, keyboard, window};
+use iced::{Element, Length, Size, event, keyboard, mouse, window};
+
+/// The widget identifiers of a Files tab's fields and lists, made of its tab: the pane drawn
+/// in a tab's own window never answers to an operation meant for the main window's. And the
+/// widths of its columns, which its headers send resized.
+pub use crate::files_view::{ColumnWidths, PaneField, field_id, list_id};
+/// The integrated editor's messages, which a tab's own window lets through for its tab.
+pub use crate::integrated_editor::{EditorKey, EditorMessage};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::tree_view::{CursorSpot, TreeMenu};
 
 /// The size the window opens at, in logical pixels, as the C# one.
 pub const WINDOW_SIZE: Size = Size::new(1024.0, 768.0);
@@ -79,7 +95,7 @@ pub fn settings() -> window::Settings {
 }
 
 /// What a tab's own window reports of itself; its session's widgets report the rest.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum FloatEvent {
     /// Its close button.
     CloseRequested,
@@ -89,16 +105,27 @@ pub enum FloatEvent {
     Rescaled(f32),
     /// Shift, Ctrl, Alt or the logo key pressed or released over it.
     Modifiers(keyboard::Modifiers),
+    /// A key of a Files tab's lists, as the C# `FileBrowserShortcutPolicy` takes it: one no
+    /// widget took, Tab whatever took it, as the main window's.
+    FilesKey(FilesKey),
+    /// Ctrl+F no widget took: a Files tab's filter, as the C# file browser's.
+    FindKey,
+    /// Escape, taken by a widget or not: a Files tab's menu, its path bar typed in, then
+    /// its listing on its way, as the main window's.
+    Escape,
+    /// The left button pressed over it, whatever took it: where a drag of a Files tab's
+    /// entry starts.
+    PointerPressed,
+    /// Files dragged from Explorer came over it, or left.
+    FilesHovered(bool),
+    /// A file dragged from Explorer dropped on it.
+    FileDropped(PathBuf),
 }
 
 /// The event of a tab's own window it reports; none of the main window's shortcuts.
-#[expect(
-    clippy::needless_pass_by_value,
-    reason = "the signature `event::listen_with` takes"
-)]
 pub(crate) fn window_event(
     event: iced::Event,
-    _status: event::Status,
+    status: event::Status,
     _window: window::Id,
 ) -> Option<FloatEvent> {
     match event {
@@ -106,10 +133,53 @@ pub(crate) fn window_event(
         iced::Event::Window(window::Event::Focused) => Some(FloatEvent::Focused(true)),
         iced::Event::Window(window::Event::Unfocused) => Some(FloatEvent::Focused(false)),
         iced::Event::Window(window::Event::Rescaled(scale)) => Some(FloatEvent::Rescaled(scale)),
+        iced::Event::Window(window::Event::FileHovered(_)) => Some(FloatEvent::FilesHovered(true)),
+        iced::Event::Window(window::Event::FilesHoveredLeft) => {
+            Some(FloatEvent::FilesHovered(false))
+        }
+        iced::Event::Window(window::Event::FileDropped(path)) => {
+            Some(FloatEvent::FileDropped(path))
+        }
+        iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)) => {
+            Some(FloatEvent::PointerPressed)
+        }
         iced::Event::Keyboard(keyboard::Event::ModifiersChanged(modifiers)) => {
             Some(FloatEvent::Modifiers(modifiers))
         }
+        iced::Event::Keyboard(keyboard) => files_key_event(keyboard, status),
         _ => None,
+    }
+}
+
+/// A key pressed over a tab's own window, as a Files tab takes it: what the main window
+/// sends its Files tab shown, its shortcuts left out.
+fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<FloatEvent> {
+    let keyboard::Event::KeyPressed {
+        key,
+        physical_key,
+        modifiers,
+        repeat,
+        ..
+    } = event
+    else {
+        return None;
+    };
+    let untaken = status == event::Status::Ignored;
+    let (ctrl, alt, logo) = (modifiers.control(), modifiers.alt(), modifiers.logo());
+    match key {
+        keyboard::Key::Named(Named::Escape) if !repeat => Some(FloatEvent::Escape),
+        keyboard::Key::Named(Named::Enter) if untaken && !repeat => {
+            Some(FloatEvent::FilesKey(FilesKey::Open))
+        }
+        // Whether or not a field took it, as in the main window: the other pane.
+        keyboard::Key::Named(Named::Tab) if !(ctrl || alt || logo) => {
+            Some(FloatEvent::FilesKey(FilesKey::SwitchPane))
+        }
+        _ if !untaken => None,
+        _ if crate::terminal_view::keys::is_search_key(&key, physical_key, modifiers) => {
+            Some(FloatEvent::FindKey)
+        }
+        _ => crate::files_view::files_key(&key, physical_key, modifiers).map(FloatEvent::FilesKey),
     }
 }
 
@@ -159,7 +229,19 @@ pub fn floating_message_allowed(message: &Message, tab: &Tab) -> bool {
         | Message::Decline(named)
         | Message::DesktopFit { tab: named, .. }
         | Message::CopyError(named)
-        | Message::CopyAnonymousError(named) => *named == tab.id,
+        | Message::CopyAnonymousError(named)
+        // Its Files pane's path bar opened, its columns resized, its menus opened, and its
+        // integrated editor's edits and keys.
+        | Message::EditPath { tab: named, .. }
+        | Message::FileColumns { tab: named, .. }
+        | Message::OpenTreeMenu(
+            TreeMenu::FilesEntry { tab: named, .. }
+            | TreeMenu::FilesBookmarks(named)
+            | TreeMenu::FilesBookmarksRemove(named),
+        )
+        | Message::Editor(
+            EditorMessage::Action { tab: named, .. } | EditorMessage::Key { tab: named, .. },
+        ) => *named == tab.id,
         // What is typed into its question, which only it asks.
         Message::Field { question, .. } | Message::FocusField { question, .. } => tab
             .prompts
@@ -168,12 +250,94 @@ pub fn floating_message_allowed(message: &Message, tab: &Tab) -> bool {
         // The main window's dialogs, naming a profile or nothing: the keyboard's help from
         // the session bar, the profile form from the failure card.
         Message::App(AppMessage::ShowShortcuts | AppMessage::EditProfile(_)) => true,
+        // Its Files panes and their menus' entries, each naming its tab; the pointer over
+        // them.
+        Message::App(AppMessage::Files(files)) => pane_names(files, tab.id),
+        Message::MenuChoice(AppMessage::Files(files)) => menu_names(files, tab.id),
+        Message::FilesHover(spot) | Message::FilesHoverLeft(spot) => spot.tab == tab.id,
         _ => false,
     }
 }
 
+/// Whether `message`, sent by a Files pane drawn in a tab's own window, names `tab`: one of
+/// those its lists, its buttons, its path bar, its filter, its transfers and its external
+/// edits send. Any other is dropped, one added later included.
+fn pane_names(message: &FilesMessage, tab: TabId) -> bool {
+    match message {
+        FilesMessage::Select { tab: named, .. }
+        | FilesMessage::SortBy { tab: named, .. }
+        | FilesMessage::Back { tab: named, .. }
+        | FilesMessage::Up { tab: named, .. }
+        | FilesMessage::Home { tab: named, .. }
+        | FilesMessage::Ascend { tab: named, .. }
+        | FilesMessage::PathEdited { tab: named, .. }
+        | FilesMessage::GoTo { tab: named, .. }
+        | FilesMessage::Refresh { tab: named, .. }
+        | FilesMessage::Filter { tab: named, .. }
+        | FilesMessage::ToggleHidden { tab: named, .. }
+        | FilesMessage::AskNewFolder { tab: named, .. }
+        | FilesMessage::AskRename { tab: named, .. }
+        | FilesMessage::AskDelete { tab: named, .. }
+        | FilesMessage::Bookmark { tab: named }
+        | FilesMessage::ToggleFollow { tab: named }
+        | FilesMessage::ToggleSudo { tab: named }
+        | FilesMessage::ToggleLocal { tab: named }
+        | FilesMessage::Transfer { tab: named, .. }
+        | FilesMessage::Cancel { tab: named, .. }
+        | FilesMessage::Retry { tab: named, .. }
+        | FilesMessage::ClearFinished { tab: named }
+        | FilesMessage::StopBatch { tab: named }
+        | FilesMessage::EditSaveWithSudo { tab: named, .. }
+        | FilesMessage::EditSendAnyway { tab: named, .. }
+        | FilesMessage::EditOpenFolder { tab: named, .. }
+        | FilesMessage::EditStop { tab: named, .. } => *named == tab,
+        _ => false,
+    }
+}
+
+/// Whether `message`, an entry of a Files pane's menu drawn in a tab's own window, names
+/// `tab`: one of those its entries' menu, its folder's and its bookmarks' send.
+fn menu_names(message: &FilesMessage, tab: TabId) -> bool {
+    match message {
+        FilesMessage::Open { tab: named, .. }
+        | FilesMessage::EditIntegrated { tab: named }
+        | FilesMessage::EditExternal { tab: named }
+        | FilesMessage::EditWithSudo { tab: named }
+        | FilesMessage::Transfer { tab: named, .. }
+        | FilesMessage::AskRename { tab: named, .. }
+        | FilesMessage::AskDelete { tab: named, .. }
+        | FilesMessage::AskPermissions { tab: named, .. }
+        | FilesMessage::UploadHere { tab: named }
+        | FilesMessage::PasteFromExplorer { tab: named }
+        | FilesMessage::Cut { tab: named }
+        | FilesMessage::Copy { tab: named }
+        | FilesMessage::Paste { tab: named }
+        | FilesMessage::Duplicate { tab: named }
+        | FilesMessage::CopyPath { tab: named, .. }
+        | FilesMessage::ShowProperties { tab: named, .. }
+        | FilesMessage::AskNewFolder { tab: named, .. }
+        | FilesMessage::Refresh { tab: named, .. }
+        | FilesMessage::OpenInTerminal { tab: named }
+        | FilesMessage::OpenInExplorer { tab: named }
+        | FilesMessage::OpenBookmark { tab: named, .. }
+        | FilesMessage::RemoveBookmark { tab: named, .. } => *named == tab,
+        _ => false,
+    }
+}
+
+/// The tab of a Files pane `menu` is about: drawn in that tab's own window when it has one.
+#[must_use]
+pub fn files_menu_tab(menu: &TreeMenu) -> Option<TabId> {
+    match *menu {
+        TreeMenu::FilesEntry { tab, .. }
+        | TreeMenu::FilesBookmarks(tab)
+        | TreeMenu::FilesBookmarksRemove(tab) => Some(tab),
+        _ => None,
+    }
+}
+
 /// What the window keeps of a tab's own window.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone)]
 pub(crate) struct FloatingWindow {
     /// The application's name for it.
     pub key: FloatId,
@@ -182,6 +346,23 @@ pub(crate) struct FloatingWindow {
     pub scale: f32,
     /// The question of its tab whose first field was last given the focus.
     pub question: Option<QuestionId>,
+    /// Files dragged from Explorer are over it.
+    pub hovered: bool,
+    /// Where the pointer last was in it: where a menu opens, and a drag starts.
+    pub cursor: CursorSpot,
+}
+
+impl FloatingWindow {
+    /// The window the application calls `key`, on a screen of `scale`.
+    pub fn new(key: FloatId, scale: f32) -> Self {
+        Self {
+            key,
+            scale,
+            question: None,
+            hovered: false,
+            cursor: CursorSpot::default(),
+        }
+    }
 }
 
 /// What a tab's own window says of its session, in its header.
@@ -270,4 +451,109 @@ pub fn veil<'a>() -> Element<'a, Message> {
             ..container::Style::default()
         }),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use iced::keyboard::key::{Code, NativeCode, Physical};
+    use iced::keyboard::{Key, Location, Modifiers};
+
+    fn pressed(key: Key, physical: Physical, modifiers: Modifiers) -> iced::Event {
+        iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: key.clone(),
+            modified_key: key,
+            physical_key: physical,
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    }
+
+    fn named(key: Named, modifiers: Modifiers, status: event::Status) -> Option<FloatEvent> {
+        let unknown = Physical::Unidentified(NativeCode::Unidentified);
+        window_event(
+            pressed(Key::Named(key), unknown, modifiers),
+            status,
+            window::Id::unique(),
+        )
+    }
+
+    #[test]
+    fn a_files_tabs_keys_come_from_its_window_as_the_main_windows_do() {
+        let (untaken, taken) = (event::Status::Ignored, event::Status::Captured);
+        let none = Modifiers::empty();
+        assert_eq!(
+            named(Named::ArrowDown, none, untaken),
+            Some(FloatEvent::FilesKey(FilesKey::Next))
+        );
+        assert_eq!(
+            named(Named::F2, none, untaken),
+            Some(FloatEvent::FilesKey(FilesKey::Rename))
+        );
+        assert_eq!(named(Named::ArrowDown, none, taken), None, "a field's");
+        assert_eq!(
+            named(Named::Enter, none, untaken),
+            Some(FloatEvent::FilesKey(FilesKey::Open))
+        );
+        assert_eq!(named(Named::Enter, none, taken), None, "a field's submit");
+        // Tab and Escape whatever took them, as in the main window.
+        assert_eq!(
+            named(Named::Tab, none, taken),
+            Some(FloatEvent::FilesKey(FilesKey::SwitchPane))
+        );
+        assert_eq!(named(Named::Tab, Modifiers::CTRL, untaken), None);
+        assert_eq!(named(Named::Escape, none, taken), Some(FloatEvent::Escape));
+        // Ctrl+F: the filter's, whatever the layout.
+        let find = pressed(
+            Key::Character("f".into()),
+            Physical::Code(Code::KeyF),
+            Modifiers::CTRL,
+        );
+        assert_eq!(
+            window_event(find.clone(), untaken, window::Id::unique()),
+            Some(FloatEvent::FindKey)
+        );
+        assert_eq!(window_event(find, taken, window::Id::unique()), None);
+        // None of the main window's shortcuts: F11, F1, Ctrl+L.
+        assert_eq!(named(Named::F11, none, untaken), None);
+        assert_eq!(named(Named::F1, none, untaken), None);
+        let lock = pressed(
+            Key::Character("l".into()),
+            Physical::Code(Code::KeyL),
+            Modifiers::CTRL,
+        );
+        assert_eq!(window_event(lock, untaken, window::Id::unique()), None);
+    }
+
+    #[test]
+    fn its_drops_and_presses_come_from_its_window() {
+        let path = std::path::PathBuf::from("report.pdf");
+        let routed = |event| window_event(event, event::Status::Ignored, window::Id::unique());
+        assert_eq!(
+            routed(iced::Event::Window(window::Event::FileHovered(
+                path.clone()
+            ))),
+            Some(FloatEvent::FilesHovered(true))
+        );
+        assert_eq!(
+            routed(iced::Event::Window(window::Event::FilesHoveredLeft)),
+            Some(FloatEvent::FilesHovered(false))
+        );
+        assert_eq!(
+            routed(iced::Event::Window(window::Event::FileDropped(
+                path.clone()
+            ))),
+            Some(FloatEvent::FileDropped(path))
+        );
+        assert_eq!(
+            window_event(
+                iced::Event::Mouse(mouse::Event::ButtonPressed(mouse::Button::Left)),
+                event::Status::Captured,
+                window::Id::unique()
+            ),
+            Some(FloatEvent::PointerPressed)
+        );
+    }
 }

@@ -15,25 +15,34 @@
  */
 
 //! A tab detached to a window of its own, as the C# Heimdall's floating window: off the
-//! strip and back after its group, refused for a split or a Files tab, closed through the
-//! strip, reconnected in place, focused rather than shown, kept in the session snapshot and
-//! counted at exit, left out of broadcast input and of docking, its window closed once the
-//! tab is gone.
+//! strip and back after its group, refused for a split, closed through the strip,
+//! reconnected in place, focused rather than shown, kept in the session snapshot and counted
+//! at exit, left out of broadcast input and of docking, its window closed once the tab is
+//! gone. A Files tab detaches too, its keys, drops and integrated editor its own there; a
+//! split's secondary pane detaches alone, as the C# "Detach Secondary Pane".
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
+use heimdall_app::files::{EntryKind, FilesKey, RemoteEntry, Side};
+use heimdall_app::local_driver::LocalShell;
 use heimdall_app::split::{Axis, Placement, SplitMessage};
 use heimdall_app::{
-    App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent, Dialog, Effect, FloatId,
-    FloatMessage, InputSink, KeyInput, Message, Notice, Phase, TabId, TabMenuMessage, UiError,
+    App, AppConfig, AttemptId, BroadcastMessage, ConnectionEvent, Dialog, Effect, FilesMessage,
+    FloatId, FloatMessage, InputSink, KeyInput, Message, Notice, Phase, TabId, TabMenuMessage,
+    UiError,
 };
 use heimdall_core::profile::{ProfileId, RdpProfile, SshProfile};
 use heimdall_core::session_snapshot;
 use heimdall_core::store::ProfileStore;
+use heimdall_files::RemoteSession;
 use heimdall_rdp::Framebuffer;
+use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION, StatusCode};
+use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
+use heimdall_term::local::LocalArguments;
 use heimdall_term::{GridSize, Key, KeyLocation, Modifiers};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use tokio::sync::mpsc;
 
 /// The grid every tab opens at until the window says otherwise.
@@ -261,7 +270,7 @@ fn the_only_tab_detached_leaves_no_tab_shown() {
 }
 
 #[test]
-fn a_split_tab_a_docked_pane_and_a_files_tab_are_refused_and_said() {
+fn a_split_tab_and_a_docked_pane_are_refused_and_said() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let (a, _) = open(&mut app, "a");
@@ -278,14 +287,8 @@ fn a_split_tab_a_docked_pane_and_a_files_tab_are_refused_and_said() {
         assert!(!app.is_floating(tab));
         assert_eq!(app.notice(), Some(&Notice::DetachSplitRefused));
     }
-
-    let (files, _) = open_as(&mut app, Message::OpenFiles(ProfileId::new("c")));
-    let effects = app.update(Message::Float(FloatMessage::Detach(files)));
-    assert!(effects.is_empty(), "{effects:?}");
-    assert!(!app.is_floating(files));
-    assert_eq!(app.notice(), Some(&Notice::DetachFilesRefused));
-    assert!(!app.can_detach(app.tab(files).expect("files")));
     assert!(!app.can_detach(app.tab(a).expect("host")));
+    assert!(!app.can_detach(app.tab(b).expect("docked")));
     let (c, _) = open(&mut app, "c");
     assert!(app.can_detach(app.tab(c).expect("shell")));
     detach(&mut app, c);
@@ -645,4 +648,321 @@ fn a_detached_desktop_is_offered_the_clipboard_when_its_window_gets_the_focus() 
     );
     // The main window's focus is the shell's: the desktop is not offered it from there.
     assert!(app.update(Message::WindowFocus(true)).is_empty());
+}
+
+#[test]
+fn a_files_tab_detaches_and_comes_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (files, _) = open_as(&mut app, Message::OpenFiles(ProfileId::new("c")));
+    assert!(app.can_detach(app.tab(files).expect("files")));
+    let key = detach(&mut app, files);
+    assert_eq!(strip(&app), [a]);
+    assert_eq!(app.active, Some(a), "the tab taking its place");
+    assert!(app.floating_invariant_holds());
+    let effects = app.update(Message::Float(FloatMessage::Reattach(key)));
+    assert!(closes(&effects, key), "{effects:?}");
+    assert_eq!(strip(&app), [a, files]);
+    assert_eq!(app.active, Some(files), "shown once back");
+}
+
+/// The SFTP pane docked by itself beside shell `d` once connected, and the shell.
+fn shell_with_sftp(app: &mut App) -> (TabId, TabId) {
+    let (shell, attempt) = open(app, "d");
+    connect(app, shell, attempt);
+    let pane = app
+        .tab(shell)
+        .and_then(|tab| tab.layout.as_ref())
+        .and_then(heimdall_app::split::Layout::secondary)
+        .expect("the SFTP pane docked");
+    assert!(app.tab(pane).expect("pane").files.is_some());
+    (shell, pane)
+}
+
+#[test]
+fn detach_secondary_takes_an_ssh_shells_sftp_pane_to_its_own_window() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (shell, pane) = shell_with_sftp(&mut app);
+    assert_eq!(app.detachable_secondary(shell), Some(pane));
+    assert_eq!(app.detachable_secondary(pane), None, "a docked pane: none");
+    assert_eq!(app.detachable_secondary(a), None, "not split: none");
+    // The keyboard on the pane: it goes back to the shell.
+    app.update(Message::Split(SplitMessage::Focus(pane)));
+    assert_eq!(app.active, Some(pane));
+
+    let effects = app.update(Message::Float(FloatMessage::DetachSecondary(shell)));
+    let key = app.floating_of(pane).expect("the pane detached");
+    assert!(
+        matches!(effects.as_slice(), [Effect::OpenWindow(opened)] if *opened == key),
+        "{effects:?}"
+    );
+    assert!(app.tab(shell).expect("shell").layout.is_none(), "unsplit");
+    assert!(!app.in_split(shell) && !app.in_split(pane));
+    assert_eq!(strip(&app), [a, shell], "the shell alone on the strip");
+    assert_eq!(app.active, Some(shell), "the shell keeps the keyboard");
+    assert!(app.floating_invariant_holds());
+    assert_eq!(app.detachable_secondary(shell), None);
+
+    // Back on the strip, a Files tab of its own.
+    app.update(Message::Float(FloatMessage::Reattach(key)));
+    assert_eq!(strip(&app), [a, shell, pane]);
+    assert!(!app.is_docked(pane));
+}
+
+#[test]
+fn detach_secondary_leaves_the_keyboard_where_it_was_outside_the_split() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (shell, pane) = shell_with_sftp(&mut app);
+    let (a, _) = open(&mut app, "a");
+    assert_eq!(app.active, Some(a));
+    app.update(Message::Float(FloatMessage::DetachSecondary(shell)));
+    assert!(app.is_floating(pane));
+    assert_eq!(app.active, Some(a), "the tab shown stays");
+    // Not split any more: nothing.
+    assert!(
+        app.update(Message::Float(FloatMessage::DetachSecondary(shell)))
+            .is_empty()
+    );
+}
+
+/// A local shell started, with the file browser docked beside it; the shell and the browser.
+fn shell_with_browser(app: &mut App, folder: &Path) -> (TabId, TabId) {
+    let local = LocalShell {
+        name: "Shell".to_owned(),
+        program: None,
+        arguments: LocalArguments::List(Vec::new()),
+        working_directory: Some(folder.to_owned()),
+        environment: Vec::new(),
+    };
+    let (shell, attempt) = match app.update(Message::OpenLocal(local)).as_slice() {
+        [Effect::ConnectLocal { tab, attempt, .. }] => (*tab, *attempt),
+        other => panic!("expected one ConnectLocal, got {other:?}"),
+    };
+    let (_, effects) = connect(app, shell, attempt);
+    let browser = match effects.as_slice() {
+        [Effect::ListLocal { tab, .. }] => *tab,
+        other => panic!("expected the browser's listing, got {other:?}"),
+    };
+    assert_eq!(app.panes_of(shell), [shell, browser]);
+    (shell, browser)
+}
+
+#[test]
+fn detach_secondary_takes_a_local_shells_browser_to_its_own_window() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (shell, browser) = shell_with_browser(&mut app, dir.path());
+    assert_eq!(app.active, Some(shell));
+    app.update(Message::Float(FloatMessage::DetachSecondary(shell)));
+    assert!(app.is_floating(browser));
+    assert!(app.tab(shell).expect("shell").layout.is_none());
+    assert_eq!(strip(&app), [shell]);
+    assert_eq!(app.active, Some(shell), "the shell keeps the keyboard");
+    assert!(
+        app.tab(shell).expect("shell").local_browser_closed,
+        "taken away by the user: none docked again when the shell restarts"
+    );
+}
+
+#[test]
+fn detach_secondary_of_a_split_whose_host_is_its_secondary_hands_the_split_over() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _) = open(&mut app, "a");
+    let (b, _) = open(&mut app, "b");
+    app.update(Message::Split(SplitMessage::Merge {
+        host: a,
+        tab: b,
+        axis: Axis::SideBySide,
+        placement: Placement::Second,
+    }));
+    // Swapped, the host is the second side's first pane: the secondary.
+    app.update(Message::Split(SplitMessage::Swap(a)));
+    assert_eq!(app.detachable_secondary(a), Some(a));
+    app.update(Message::Float(FloatMessage::DetachSecondary(a)));
+    assert!(app.is_floating(a));
+    assert_eq!(strip(&app), [b], "the pane left takes the host's place");
+    assert!(app.tab(b).expect("b").layout.is_none());
+    assert!(app.floating_invariant_holds());
+    assert!(app.active.is_some_and(|active| !app.is_floating(active)));
+}
+
+/// An SFTP server that answers the start and refuses every request after it.
+async fn idle_client() -> RemoteSession {
+    let (client_end, mut server) = tokio::io::duplex(4096);
+    tokio::spawn(async move {
+        let mut length = [0; 4];
+        server.read_exact(&mut length).await.expect("init length");
+        let mut body = vec![0; u32::from_be_bytes(length) as usize];
+        server.read_exact(&mut body).await.expect("init");
+        assert!(matches!(Request::decode(&body), Ok(Request::Init { .. })));
+        let version = Response::Version {
+            version: SFTP_VERSION,
+            extensions: Vec::new(),
+        };
+        server.write_all(&version.encode()).await.expect("version");
+        loop {
+            if server.read_exact(&mut length).await.is_err() {
+                std::future::pending::<()>().await;
+            }
+            let mut body = vec![0; u32::from_be_bytes(length) as usize];
+            server.read_exact(&mut body).await.expect("request");
+            let id = body
+                .get(1..5)
+                .and_then(|id| <[u8; 4]>::try_from(id).ok())
+                .map_or(0, u32::from_be_bytes);
+            let refused = Response::Status {
+                id,
+                code: StatusCode::NoSuchFile,
+                message: Vec::new(),
+            };
+            server.write_all(&refused.encode()).await.expect("status");
+        }
+    });
+    RemoteSession::Sftp(
+        SftpClient::start(client_end, ClientConfig::default())
+            .await
+            .expect("started"),
+    )
+}
+
+/// A Files tab of profile `id`, connected, its server's folder `/srv` listing `a.txt` and
+/// `b.txt`, its server's pane with the keyboard.
+async fn files_tab(app: &mut App, id: &str) -> TabId {
+    let (tab, attempt) = open_as(app, Message::OpenFiles(ProfileId::new(id)));
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::FilesReady {
+            client: idle_client().await,
+            shell: None,
+        },
+    });
+    let entry = |name: &str| RemoteEntry {
+        name: name.as_bytes().to_vec(),
+        label: name.to_owned(),
+        kind: EntryKind::File,
+        size: Some(4),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+        inode: None,
+    };
+    app.update(Message::Files(FilesMessage::RemoteListed {
+        tab,
+        result: Ok((
+            RemotePath::from("/srv"),
+            vec![entry("a.txt"), entry("b.txt")],
+        )),
+    }));
+    app.update(Message::Files(FilesMessage::Key {
+        tab,
+        key: FilesKey::Focus(Side::Remote),
+    }));
+    tab
+}
+
+fn remote_selected(app: &App, tab: TabId) -> Option<usize> {
+    app.tab(tab)
+        .and_then(|found| found.files.as_deref())
+        .and_then(|files| files.remote.selected)
+}
+
+#[tokio::test]
+async fn a_detached_files_tabs_keys_and_drops_reach_it_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let floating = files_tab(&mut app, "a").await;
+    let shown = files_tab(&mut app, "b").await;
+    detach(&mut app, floating);
+    assert_eq!(app.active, Some(shown), "another Files tab shown in main");
+    let (before_floating, before_shown) = (
+        remote_selected(&app, floating),
+        remote_selected(&app, shown),
+    );
+
+    app.update(Message::Files(FilesMessage::Key {
+        tab: floating,
+        key: FilesKey::Last,
+    }));
+    assert_eq!(remote_selected(&app, floating), Some(1), "its own list");
+    assert_ne!(before_floating, Some(1));
+    assert_eq!(
+        remote_selected(&app, shown),
+        before_shown,
+        "the main one's untouched"
+    );
+    assert_eq!(app.active, Some(shown));
+
+    let outside = tempfile::tempdir().expect("dir");
+    let file = outside.path().join("report.pdf");
+    std::fs::write(&file, b"12345").expect("written");
+    let effects = app.update(Message::Files(FilesMessage::Dropped {
+        tab: floating,
+        path: file,
+    }));
+    assert!(
+        matches!(effects.as_slice(), [Effect::PlanTransfer { tab, .. }] if *tab == floating),
+        "{effects:?}"
+    );
+    assert_eq!(app.active, Some(shown));
+    assert!(app.floating_invariant_holds());
+}
+
+#[tokio::test]
+async fn the_integrated_editor_of_a_detached_files_tab_saves_its_own_file() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let floating = files_tab(&mut app, "a").await;
+    let shown = files_tab(&mut app, "b").await;
+    app.update(Message::Files(FilesMessage::Select {
+        tab: floating,
+        side: Side::Remote,
+        index: 0,
+    }));
+    let id = match app
+        .update(Message::Files(FilesMessage::EditIntegrated {
+            tab: floating,
+        }))
+        .as_slice()
+    {
+        [Effect::OpenEditor { id, .. }] => *id,
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::Files(FilesMessage::EditorOpened {
+        tab: floating,
+        id,
+        result: Ok((
+            heimdall_app::text_codec::TextEncoding::Utf8 { bom: false },
+            heimdall_files::Fingerprint {
+                size: Some(4),
+                modified: Some(1),
+                permissions: Some(0o100_644),
+                uid_gid: Some((1000, 1000)),
+            },
+        )),
+    }));
+    detach(&mut app, floating);
+    app.update(Message::SelectTab(shown));
+    let effects = app.update(Message::Files(FilesMessage::EditorSave {
+        tab: floating,
+        id,
+        text: "text".to_owned(),
+        overwrite: false,
+    }));
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::SaveEditor { tab, id: saved, remote, .. }]
+                if *tab == floating && *saved == id && remote.as_bytes() == b"/srv/a.txt"
+        ),
+        "{effects:?}"
+    );
+    assert!(app.is_floating(floating));
+    assert_eq!(app.active, Some(shown));
 }
