@@ -1025,13 +1025,15 @@ pub struct FilesTabFacts {
 /// copy its path; then what applies to the folder shown. As the C#: Edit and Edit with
 /// external editor for one regular file whatever the protocol, Change permissions over
 /// SFTP only, and what runs on the server (sudo, Duplicate, Open in terminal) over its SSH
-/// connection; Paste while what was cut or copied can be pasted in this tab.
+/// connection; Paste while what was cut or copied can be pasted in this tab. The local file
+/// browser's own entries, as the C# `LocalFileBrowserView`: "Open With" (on Windows, which
+/// alone has the chooser) and "Open in Editor" for one regular file, "Copy" and "Paste" of
+/// its files, and "Properties" for an entry chosen alone.
 pub fn files_entry_menu<'a>(
     (tab, side): (TabId, Side),
     entry_facts: Option<FilesEntryFacts>,
     tab_facts: FilesTabFacts,
 ) -> Element<'a, Message> {
-    let copies = side == Side::Remote && tab_facts.over_ssh;
     // An entry's own actions only on an entry, as the C# list hides them beside it.
     let on_entry = entry_facts.is_some();
     let index = entry_facts.map(|facts| facts.index);
@@ -1043,6 +1045,10 @@ pub fn files_entry_menu<'a>(
     // SFTP renames follow a link to its target: no rename of a link there, as the C#; an
     // FTP rename is by name, a link renamed itself.
     let renames = entry_facts.is_some_and(|facts| facts.single && !(tab_facts.sftp && facts.link));
+    // A regular file of the local file browser, chosen alone.
+    let local_file = entry_facts
+        .filter(|facts| tab_facts.local_only && facts.one_file)
+        .map(|facts| facts.index);
     let files = |message| Some(AppMessage::Files(message));
     let server = |entry: Element<'a, Message>| (side == Side::Remote).then_some(entry);
     let (send, direction) = match side {
@@ -1053,6 +1059,15 @@ pub fn files_entry_menu<'a>(
         index.map(|index| entry(
             fl!("ui-files-menu-open"),
             files(FilesMessage::Open { tab, side, index })
+        )),
+        // The system's "Open with" chooser is Windows' alone.
+        local_file.filter(|_| cfg!(windows)).map(|index| entry(
+            fl!("ui-files-menu-open-with"),
+            files(FilesMessage::OpenWith { tab, index })
+        )),
+        local_file.map(|index| entry(
+            fl!("ui-files-menu-open-in-editor"),
+            files(FilesMessage::OpenInEditor { tab, index })
         )),
         edits.then(|| entry(
             fl!("ui-files-menu-edit-integrated"),
@@ -1085,41 +1100,7 @@ pub fn files_entry_menu<'a>(
             )))
             .flatten(),
         on_entry.then(separator),
-        server(entry(
-            fl!("ui-files-menu-upload-here"),
-            files(FilesMessage::UploadHere { tab })
-        )),
-        // Explorer's copied files are read on Windows only.
-        (side == Side::Remote && cfg!(windows)).then(|| entry(
-            fl!("ui-files-menu-paste-explorer"),
-            files(FilesMessage::PasteFromExplorer { tab })
-        )),
-        on_entry
-            .then(|| server(entry(
-                fl!("ui-files-menu-cut"),
-                files(FilesMessage::Cut { tab })
-            )))
-            .flatten(),
-        (side == Side::Remote && tab_facts.can_copy && on_entry)
-            .then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
-        (side == Side::Remote && tab_facts.can_paste).then(|| entry(
-            fl!("ui-files-menu-paste"),
-            files(FilesMessage::Paste { tab })
-        )),
-        (copies && on_entry).then(|| entry(
-            fl!("ui-files-menu-duplicate"),
-            files(FilesMessage::Duplicate { tab })
-        )),
-        on_entry.then(|| entry(
-            fl!("ui-files-menu-copy-path"),
-            files(FilesMessage::CopyPath { tab, side })
-        )),
-        on_entry
-            .then(|| server(entry(
-                fl!("ui-files-menu-properties"),
-                files(FilesMessage::ShowProperties { tab, side })
-            )))
-            .flatten(),
+        clipboard_entries((tab, side), entry_facts, tab_facts),
         on_entry.then(separator),
         entry(
             fl!("ui-files-menu-new-folder"),
@@ -1129,11 +1110,66 @@ pub fn files_entry_menu<'a>(
             fl!("ui-files-menu-refresh"),
             files(FilesMessage::Refresh { tab, side })
         ),
-        outside_entries(tab, copies, tab_facts.local_only, entry_facts),
+        outside_entries(
+            tab,
+            side == Side::Remote && tab_facts.over_ssh,
+            tab_facts.local_only,
+            entry_facts
+        ),
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
     menu_card(entries).into()
+}
+
+/// The middle entries of a Files entry's menu, about the clipboard and the entry itself:
+/// "Upload here..." and "Paste from Explorer" in the server's pane; Cut, Copy, Paste and
+/// Duplicate as the C# Files tab offers them, and Copy and Paste of the local file
+/// browser's files (`local_only`); "Copy path"; "Properties" of the server's entries, and
+/// of the local file browser's entry chosen alone.
+fn clipboard_entries<'a>(
+    (tab, side): (TabId, Side),
+    entry_facts: Option<FilesEntryFacts>,
+    tab_facts: FilesTabFacts,
+) -> Column<'a, Message> {
+    let on_entry = entry_facts.is_some();
+    let remote = side == Side::Remote;
+    let local_only = tab_facts.local_only;
+    let files = |message| Some(AppMessage::Files(message));
+    column![
+        remote.then(|| entry(
+            fl!("ui-files-menu-upload-here"),
+            files(FilesMessage::UploadHere { tab })
+        )),
+        // Explorer's copied files are read on Windows only.
+        (remote && cfg!(windows)).then(|| entry(
+            fl!("ui-files-menu-paste-explorer"),
+            files(FilesMessage::PasteFromExplorer { tab })
+        )),
+        (remote && on_entry)
+            .then(|| entry(fl!("ui-files-menu-cut"), files(FilesMessage::Cut { tab }))),
+        (on_entry && ((remote && tab_facts.can_copy) || local_only))
+            .then(|| entry(fl!("ui-files-menu-copy"), files(FilesMessage::Copy { tab }))),
+        ((remote || local_only) && tab_facts.can_paste).then(|| entry(
+            fl!("ui-files-menu-paste"),
+            files(FilesMessage::Paste { tab })
+        )),
+        (remote && tab_facts.over_ssh && on_entry).then(|| entry(
+            fl!("ui-files-menu-duplicate"),
+            files(FilesMessage::Duplicate { tab })
+        )),
+        on_entry.then(|| entry(
+            fl!("ui-files-menu-copy-path"),
+            files(FilesMessage::CopyPath { tab, side })
+        )),
+        ((remote && on_entry) || (local_only && entry_facts.is_some_and(|facts| facts.single)))
+            .then(|| entry(
+                fl!("ui-files-menu-properties"),
+                files(FilesMessage::ShowProperties { tab, side })
+            )),
+    ]
+    .spacing(0.0)
+    .width(Length::Fill)
 }
 
 /// The last entries of a Files entry's menu, opening the folder outside the tab: "Open in

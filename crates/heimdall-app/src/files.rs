@@ -122,9 +122,11 @@ pub enum FilesKey {
     CopyPath,
     /// Cut the server's entries chosen, as the C# Ctrl+X.
     Cut,
-    /// Copy the server's entries chosen, as the C# Ctrl+C.
+    /// Copy the server's entries chosen, as the C# Ctrl+C; in the local file browser, its
+    /// entries chosen.
     Copy,
-    /// Paste what is held, or else the files copied in Explorer, as the C# Ctrl+V.
+    /// Paste what is held, or else the files copied in Explorer, as the C# Ctrl+V; in the
+    /// local file browser, the files copied, into the folder it shows.
     Paste,
     /// Select every entry of the pane, Ctrl+A.
     SelectAll,
@@ -942,6 +944,12 @@ pub enum FilesError {
         /// The folder's name, made safe.
         name: String,
     },
+    /// A link or a junction of this computer pasted: not copied through, as the C# refuses
+    /// it.
+    PasteLink {
+        /// Its name, made safe.
+        name: String,
+    },
 }
 
 impl From<&RemoteError> for FilesError {
@@ -1427,7 +1435,8 @@ pub async fn list_remote(
     Ok((absolute, entries))
 }
 
-fn local_kind(file_type: std::fs::FileType) -> EntryKind {
+/// The kind of a local entry of `file_type`, a link not followed.
+pub(crate) fn local_kind(file_type: std::fs::FileType) -> EntryKind {
     if file_type.is_symlink() {
         EntryKind::Link
     } else if file_type.is_dir() {
@@ -1722,6 +1731,14 @@ pub enum FileOperation {
         /// What to delete.
         path: PathBuf,
     },
+    /// Copy files and folders of this computer into a folder of it, as
+    /// [`crate::local_paste::paste`] does: the local file browser's "Paste".
+    LocalPaste {
+        /// What to copy, each by its full path.
+        sources: Vec<PathBuf>,
+        /// The folder they go into.
+        folder: PathBuf,
+    },
     /// Give an entry on the server new permission bits.
     RemoteSetPermissions {
         /// Session.
@@ -1819,6 +1836,7 @@ fn local_operation(operation: &FileOperation) -> Result<(), FilesError> {
                 std::fs::remove_file(path).map_err(|e| local_failure(&e))
             }
         }
+        FileOperation::LocalPaste { sources, folder } => crate::local_paste::paste(sources, folder),
         _ => Ok(()),
     }
 }

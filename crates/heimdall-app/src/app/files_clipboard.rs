@@ -110,6 +110,10 @@ impl App {
 
     /// "Cut" or "Copy": the remote entries chosen in `tab_id`, held to be pasted.
     pub(super) fn hold_entries(&mut self, tab_id: TabId, mode: ClipMode) -> Vec<Effect> {
+        // The local file browser copies files of this computer.
+        if mode == ClipMode::Copy && self.is_local_browser_files(tab_id) {
+            return self.copy_local(tab_id);
+        }
         if mode == ClipMode::Copy && !self.can_hold_copy(tab_id) {
             return Vec::new();
         }
@@ -121,6 +125,8 @@ impl App {
             return Vec::new();
         }
         let count = entries.len();
+        // Files of this computer copied before give way, as on a clipboard.
+        self.local_copied.clear();
         self.files_clipboard = Some(FilesClipboard {
             entries,
             mode,
@@ -171,9 +177,14 @@ impl App {
     }
 
     /// Whether `tab_id` can paste what is held: something is, on its own server; or, copied
-    /// on another server, the tab it was copied in is still connected.
+    /// on another server, the tab it was copied in is still connected. Files of this
+    /// computer copied in the local file browser are pasted as the module `local_menu`
+    /// says.
     #[must_use]
     pub fn can_paste(&self, tab_id: TabId) -> bool {
+        if let Some(local) = self.pastes_local_files(tab_id) {
+            return local;
+        }
         match (&self.files_clipboard, self.files_endpoint(tab_id)) {
             (Some(clipboard), Some(endpoint)) if !clipboard.entries.is_empty() => {
                 if clipboard.endpoint == endpoint {
@@ -198,6 +209,9 @@ impl App {
     pub(super) fn paste_held(&mut self, tab_id: TabId) -> Vec<Effect> {
         if !self.can_paste(tab_id) {
             return Vec::new();
+        }
+        if let Some(effects) = self.paste_local_files(tab_id) {
+            return effects;
         }
         let Some(clipboard) = self.files_clipboard.clone() else {
             return Vec::new();

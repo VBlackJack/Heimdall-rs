@@ -39,6 +39,8 @@ pub mod keyboard_layout;
 pub mod local_draft;
 pub mod local_driver;
 pub mod local_open;
+pub mod local_paste;
+pub mod local_properties;
 pub mod macro_player;
 pub mod notes;
 mod paste_guard;

@@ -96,6 +96,7 @@ mod health_tab;
 mod hostkeys_import;
 mod keep_alive;
 mod local_browser;
+mod local_menu;
 mod local_tab;
 mod macro_editor;
 mod macros;
@@ -1136,6 +1137,10 @@ pub enum Effect {
     },
     /// Put text on the clipboard.
     WriteClipboard(String),
+    /// Put files of this computer on the system's clipboard as copied files, each by its
+    /// full path, as Explorer's Copy does: the local file browser's "Copy". Windows only:
+    /// elsewhere they stay with Heimdall.
+    WriteFileList(Vec<PathBuf>),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
     /// Launch a Citrix application outside Heimdall, off the UI thread; answered with
@@ -1368,6 +1373,15 @@ pub enum Effect {
         /// The file, an absolute path.
         file: PathBuf,
     },
+    /// Show the system's "Open with" chooser for a file of this computer, as
+    /// [`crate::external_edit::open_with_chooser`] does; a failure sends
+    /// [`FilesMessage::EditorLaunched`] with [`crate::files::FilesError::OpenFailed`].
+    OpenWithChooser {
+        /// The local file browser's tab.
+        tab: TabId,
+        /// The file, an absolute path.
+        file: PathBuf,
+    },
     /// Look at the files being edited, send their saves, then send
     /// [`FilesMessage::EditsChecked`].
     CheckEdits {
@@ -1553,6 +1567,7 @@ impl fmt::Debug for Effect {
                 write!(f, "Answer({}, {answer:?})", question.value())
             }
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
+            Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::LaunchCitrix { .. } => f.write_str("LaunchCitrix(..)"),
             Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
@@ -1610,6 +1625,7 @@ impl fmt::Debug for Effect {
             Self::SendEditAnyway { tab, .. } => write!(f, "SendEditAnyway({})", tab.value()),
             Self::OpenFolder { tab, .. } => write!(f, "OpenFolder({})", tab.value()),
             Self::OpenLocalFile { tab, .. } => write!(f, "OpenLocalFile({})", tab.value()),
+            Self::OpenWithChooser { tab, .. } => write!(f, "OpenWithChooser({})", tab.value()),
             Self::CheckEdits { tab, edits, .. } => {
                 write!(f, "CheckEdits({}, {})", tab.value(), edits.len())
             }
@@ -2255,6 +2271,9 @@ pub enum Dialog {
         file: PathBuf,
         /// Its full path, every invisible character written out.
         shown: String,
+        /// Asked for "Open With": the system's chooser is shown once agreed, which can
+        /// run it too, rather than its default program.
+        chooser: bool,
     },
     /// Download a server's file Open found not to be text, as the C# "Binary file"
     /// question offers.
@@ -2354,6 +2373,8 @@ pub enum Dialog {
     },
     /// What an entry of the server is, as the C# Properties dialog shows it.
     FileProperties(Box<crate::files::FileProperties>),
+    /// What an entry of the local file browser is, as the C# local Properties shows it.
+    LocalFileProperties(Box<crate::local_properties::LocalProperties>),
     /// Delete an entry, a folder with everything in it.
     ConfirmDelete {
         /// Tab.
@@ -2696,6 +2717,9 @@ pub struct App {
     agent_chip: AgentChip,
     /// The entries cut in a Files tab, waiting to be pasted.
     files_clipboard: Option<FilesClipboard>,
+    /// The files of this computer copied in the local file browser, waiting to be pasted,
+    /// where the system's clipboard holds no copied files: everywhere but Windows.
+    local_copied: Vec<PathBuf>,
     /// Where a server's files are edited: the user's own local folder.
     edit_dir: Option<PathBuf>,
     /// The address test running in the profile form, and what stops it.
@@ -2851,6 +2875,7 @@ impl App {
             next_route_test: 0,
             agent_chip: AgentChip::Unknown,
             files_clipboard: None,
+            local_copied: Vec::new(),
             edit_dir: heimdall_core::paths::edit_dir(),
             address_test: None,
             next_address_test: 0,
@@ -4191,8 +4216,14 @@ impl App {
                 self.download_remote(tab, &remote)
             }
             Some(Dialog::ConfirmOpenLink { url }) => vec![Effect::OpenUrl(url)],
-            Some(Dialog::ConfirmOpenRunnable { tab, file, .. }) => {
-                vec![Effect::OpenLocalFile { tab, file }]
+            Some(Dialog::ConfirmOpenRunnable {
+                tab, file, chooser, ..
+            }) => {
+                if chooser {
+                    vec![Effect::OpenWithChooser { tab, file }]
+                } else {
+                    vec![Effect::OpenLocalFile { tab, file }]
+                }
             }
             Some(Dialog::ConfirmDiscardEditor { tab, .. }) => {
                 if let Some(files) = self.files_mut(tab) {
@@ -4318,6 +4349,7 @@ impl App {
             Some(
                 Dialog::ImportDone(_)
                 | Dialog::FileProperties(_)
+                | Dialog::LocalFileProperties(_)
                 | Dialog::ImportFailed { .. }
                 | Dialog::ExportDone { .. }
                 | Dialog::ExportFailed { .. }

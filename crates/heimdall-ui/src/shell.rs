@@ -3291,7 +3291,8 @@ impl Shell {
             | Effect::SudoListRemote { .. }
             | Effect::SendEditAnyway { .. }
             | Effect::OpenFolder { .. }
-            | Effect::OpenLocalFile { .. }) => files_task(effect),
+            | Effect::OpenLocalFile { .. }
+            | Effect::OpenWithChooser { .. }) => files_task(effect),
             effect @ (Effect::OpenEditor { .. } | Effect::SaveEditor { .. }) => {
                 crate::integrated_editor::task(effect)
             }
@@ -3350,6 +3351,10 @@ impl Shell {
             }),
             Effect::WriteClipboardImage(image) => Task::future(async move {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
+            })
+            .discard(),
+            Effect::WriteFileList(paths) => Task::future(async move {
+                let _ = tokio::task::spawn_blocking(move || write_file_list(&paths)).await;
             })
             .discard(),
             Effect::SaveExport { document, count } => save_export(document, count, main),
@@ -7676,6 +7681,36 @@ fn write_clipboard_image(image: &[u8]) {
     }
 }
 
+/// Puts `paths`, files of this computer, on the clipboard as copied files in place of what
+/// it held, as Explorer's Copy puts them: the local file browser's "Copy". Windows only:
+/// elsewhere Heimdall holds them itself.
+fn write_file_list(paths: &[std::path::PathBuf]) {
+    #[cfg(windows)]
+    {
+        use clipboard_win::{Clipboard, options, raw};
+        // A path the list cannot carry, not Unicode, is left out.
+        let listed: Vec<&str> = paths.iter().filter_map(|path| path.to_str()).collect();
+        if listed.is_empty() {
+            return;
+        }
+        // Another program may hold the clipboard a moment: asked again a little later.
+        for _ in 0..CLIPBOARD_ATTEMPTS {
+            if let Ok(_open) = Clipboard::new() {
+                if let Err(error) = raw::set_file_list_with(&listed, options::DoClear) {
+                    log::warn!("the copied files did not reach the clipboard: {error}");
+                }
+                return;
+            }
+            std::thread::sleep(CLIPBOARD_RETRY);
+        }
+        log::warn!("the copied files did not reach the clipboard: it stayed held");
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = paths;
+    }
+}
+
 /// How many times the clipboard is asked for, another program holding it.
 #[cfg(windows)]
 const CLIPBOARD_ATTEMPTS: usize = 10;
@@ -9922,6 +9957,11 @@ fn edit_task(effect: Effect) -> Task<Message> {
             move || heimdall_app::external_edit::open_with_default(&file),
             |detail| FilesError::OpenFailed { detail },
         ),
+        Effect::OpenWithChooser { tab, file } => started(
+            tab,
+            move || heimdall_app::external_edit::open_with_chooser(&file),
+            |detail| FilesError::OpenFailed { detail },
+        ),
         Effect::StartEdit {
             tab,
             client,
@@ -10039,7 +10079,8 @@ fn files_task(effect: Effect) -> Task<Message> {
         | Effect::SudoListRemote { .. }
         | Effect::SendEditAnyway { .. }
         | Effect::OpenFolder { .. }
-        | Effect::OpenLocalFile { .. }) => edit_task(effect),
+        | Effect::OpenLocalFile { .. }
+        | Effect::OpenWithChooser { .. }) => edit_task(effect),
         Effect::CopyAcross {
             tab,
             from,
@@ -10767,6 +10808,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok()),
         Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
+        Dialog::LocalFileProperties(properties) => {
+            crate::files_view::local_properties(properties, ok())
+        }
         Dialog::ExportDone { .. }
         | Dialog::ExportFailed { .. }
         | Dialog::ImportFailed { .. }
