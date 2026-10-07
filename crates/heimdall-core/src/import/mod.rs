@@ -19,6 +19,7 @@
 pub mod citrix_cache;
 pub mod csharp;
 pub mod foreign;
+pub mod gateways;
 pub mod mobaxterm;
 pub mod mremoteng;
 pub mod openssh;

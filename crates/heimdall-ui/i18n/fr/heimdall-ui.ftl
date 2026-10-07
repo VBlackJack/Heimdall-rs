@@ -263,6 +263,13 @@ ui-dialog-paste-body = { $count ->
 ui-dialog-paste-confirm = Coller
 ui-dialog-import-title = Import terminé
 ui-dialog-import-counts = Ajoutés : { $added }. Mis à jour : { $updated }. Inchangés : { $unchanged }.
+ui-dialog-import-gateways = Passerelles SSH : { $created ->
+    [one] { $created } créée
+   *[other] { $created } créées
+}, { $merged ->
+    [one] { $merged } fusionnée
+   *[other] { $merged } fusionnées
+}.
 ui-dialog-import-skipped = Écartés :
 ui-dialog-import-skipped-item = { $name } : { $reason }
 ui-dialog-import-failed-title = L'import n'a pas pu s'exécuter
@@ -714,7 +721,7 @@ ui-profile-toggle-drives = Rediriger les lecteurs
 ui-profile-toggle-nla = Activer l'authentification au niveau du réseau
 ui-profile-rdp-follow-defaults = Utiliser les valeurs RDP par défaut globales
 ui-profile-rdp-defaults-banner = Ce serveur utilise vos valeurs RDP par défaut. Décochez "Utiliser les valeurs RDP par défaut globales" pour configurer des options propres à ce serveur.
-ui-profile-rdp-defaults-not-in-effect = Les couleurs, le son, le presse-papiers, les lecteurs, l'authentification au niveau du réseau et la résolution dynamique viennent des valeurs par défaut globales : les valeurs affichées ci-dessous pour eux sont celles propres à ce serveur, pas celles appliquées.
+ui-profile-rdp-defaults-not-in-effect = Les couleurs, le son, le presse-papiers, les lecteurs, l'authentification au niveau du réseau, l'authentification serveur stricte et la résolution dynamique viennent des valeurs par défaut globales : les valeurs affichées ci-dessous pour eux sont celles propres à ce serveur, pas celles appliquées.
 ui-settings-rdp-defaults = Paramètres RDP
 ui-settings-rdp-defaults-hint = Les options de tout serveur RDP qui utilise les valeurs par défaut globales.
 ui-profile-toggle-admin = Session administrateur (/admin)
@@ -862,6 +869,15 @@ ui-error-report-header = Rapport d'erreur { $protocol } de Heimdall
 ui-error-report-time = Heure :
 ui-error-report-server = Serveur :
 ui-error-report-app = Application :
+ui-error-report-tunnel = Tunnel :
+ui-error-report-tunnel-route = via { $route }
+ui-error-report-tunnel-hops = { $count ->
+    [one] par { $count } passerelle SSH
+   *[other] par { $count } passerelles SSH
+}
+ui-error-report-session = Session :
+ui-error-report-session-duration = connectée depuis { $duration }
+ui-error-report-duration = { $minutes } min { $seconds } s
 
 ui-error-network-refused = Connexion refusée.
 ui-error-network-reset = Connexion réinitialisée.
@@ -2027,6 +2043,17 @@ ui-settings-anti-idle-interval = Intervalle anti-inactivité (0 = désactivé)
 ui-settings-anti-idle-refused = L'intervalle anti-inactivité doit être 0, ou compris entre { $min } et { $max } secondes.
 ui-settings-anti-idle-unit = s
 ui-settings-rdp-auto-reconnect = Reconnexion automatique
+ui-settings-rdp-multi-monitor = Multi-écran
+ui-settings-rdp-audio-capture = Capture audio (microphone)
+ui-settings-rdp-redirect-printers = Rediriger les imprimantes
+ui-settings-rdp-redirect-com-ports = Rediriger les ports COM
+ui-settings-rdp-redirect-smart-cards = Rediriger les cartes à puce
+ui-settings-rdp-redirect-webcam = Rediriger la webcam
+ui-settings-rdp-redirect-usb = Rediriger les périphériques USB
+ui-settings-rdp-bitmap-cache = Conserver le cache bitmap sur disque
+ui-settings-rdp-compression = Compression
+ui-settings-rdp-hardware-acceleration = Rendu accéléré par le matériel
+ui-settings-rdp-strict-server-auth = Authentification serveur stricte
 ui-settings-session-logging-record = Enregistrer les transcriptions des sessions (ce que chaque terminal affiche, saisie comprise)
 ui-settings-session-logging-warning = Les transcriptions gardent ce que vous tapez comme ce qui s'affiche, y compris les mots de passe ou jetons renvoyés par le terminal. Gardez le dossier des journaux privé.
 ui-settings-ssh-keep-alive-hint = Fréquence à laquelle Heimdall envoie les maintiens de connexion SSH sur les sessions, SFTP, tunnels et passerelles, pour qu'une connexion inactive ne soit pas coupée par un pare-feu ou le serveur. S'applique aux connexions ouvertes après le changement.
@@ -2089,10 +2116,25 @@ ui-shortcuts-release-desktop = Rendre le clavier depuis un bureau distant
 ui-profile-toggle-strict-server-auth = Exiger la validation de l'identité serveur
 ui-error-rdp-server-not-authenticated = L'identité du serveur n'a pas pu être validée : son certificat n'est pas encore approuvé et les autorités de certification de cet ordinateur ne le garantissent pas. L'authentification stricte du serveur le refuse.
 ui-certificate-subject = Sujet : { $subject }
+ui-certificate-issuer = Émetteur : { $issuer }
+ui-certificate-validity = Valide du / au : { $from } - { $until }{ $period ->
+    [expired] {" "}(expiré)
+    [future] {" "}(pas encore valide)
+   *[current] {""}
+}
+ui-certificate-validation-issue = Problème de validation : { $issue }
+ui-certificate-issue-self-signed = Le certificat est auto-signé : aucune autorité de certification ne le garantit.
+ui-certificate-issue-unknown-issuer = Il a été émis par une autorité de certification que cet ordinateur n'approuve pas.
+ui-certificate-issue-expired = Le certificat a expiré.
+ui-certificate-issue-not-yet-valid = Le certificat n'est pas encore valide.
+ui-certificate-issue-name-mismatch = Le certificat a été émis pour un autre nom que celui de ce serveur.
+ui-certificate-issue-revoked = Son émetteur a révoqué le certificat.
+ui-certificate-issue-no-system-store = Cet ordinateur n'a aucune autorité de certification pour le vérifier.
+ui-certificate-issue-other = Le certificat n'a pas passé la validation de cet ordinateur.
 ui-session-copy-anonymous-button = Copier le rapport anonymisé
 ui-error-report-anonymous-header = Rapport de diagnostic { $protocol } (anonymisé)
 ui-error-report-kind = Échec :
-ui-error-report-anonymous-hint = Contient la date, la version et le type d'échec. Exclut les adresses, les comptes et le texte des erreurs.
+ui-error-report-anonymous-hint = Contient la date, le nombre de passerelles, la durée de connexion, la version et le type d'échec. Exclut les adresses, les noms de passerelles, les comptes et le texte des erreurs.
 ui-tree-changed-move = Sessions déplacées.
 ui-tree-changed-reorder = Sessions réordonnées.
 ui-tree-changed-rename = Session renommée.

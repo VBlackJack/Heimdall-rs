@@ -19,6 +19,10 @@
 //! sessions asked about, then merged, with what was left out and, for `MobaXterm`, that
 //! passwords must be entered again.
 //!
+//! Its SSH gateways are reconciled with those saved, as the C# `GatewayImportReconciler`: one
+//! logging in to the same host, port and user as a saved one is that one, and the profiles
+//! going through it are rewired to it.
+//!
 //! A file can be written by someone else, so a trust decision it carries is not taken: as the
 //! C# `ImportedProfileSanitizer`, a `WinRM` profile comes in checking its host's certificate.
 //! The C# Heimdall's own files on this machine, read by the home page's "Import Connections",
@@ -28,6 +32,7 @@ use std::fmt;
 
 use heimdall_core::import::csharp::{self, ImportReport};
 use heimdall_core::import::foreign::{FileWarning, Parsed};
+use heimdall_core::import::gateways;
 use heimdall_core::import::{mobaxterm, mremoteng, rdcman};
 use heimdall_core::metadata::ProfileOrigin;
 use heimdall_core::store::MergeReport;
@@ -227,9 +232,11 @@ impl App {
         }
     }
 
-    /// Merges `report` into the store, saved before it is kept; the summary of what it did,
-    /// or `None` with the store's error shown.
-    pub(super) fn merge_import(&mut self, report: ImportReport) -> Option<ImportSummary> {
+    /// Merges `report` into the store, saved before it is kept, its gateways reconciled with
+    /// those saved; the summary of what it did, or `None` with the store's error shown.
+    pub(super) fn merge_import(&mut self, mut report: ImportReport) -> Option<ImportSummary> {
+        let reconciled =
+            gateways::reconcile(&mut report, self.store.gateways(), &mut || self.fresh_id());
         let merged = self.store.apply(|store| {
             let ssh = store.merge(report.profiles);
             let rdp = store.merge_rdp(report.rdp);
@@ -239,7 +246,8 @@ impl App {
             let winrm = store.merge_winrm(report.winrm);
             let ftp = store.merge_ftp(report.ftp);
             let citrix = store.merge_citrix(report.citrix);
-            let gateways = store.merge_gateways(report.gateways);
+            // Counted on their own line, as the C# summary counts them.
+            store.merge_gateways(report.gateways);
             for id in &report.favorites {
                 store.set_favorite(id, true);
             }
@@ -250,7 +258,7 @@ impl App {
             for (path, color) in &report.folder_colors {
                 let _ = store.set_folder_color(path, Some(*color));
             }
-            [ssh, rdp, telnet, vnc, local, winrm, ftp, citrix, gateways]
+            [ssh, rdp, telnet, vnc, local, winrm, ftp, citrix]
                 .into_iter()
                 .fold(MergeReport::default(), |total, one| MergeReport {
                     added: total.added + one.added,
@@ -274,6 +282,7 @@ impl App {
                     .map(|dropped| (server_text(&dropped.name), dropped.settings))
                     .collect(),
                 host_keys: None,
+                gateways: reconciled,
             }),
             Err(error) => {
                 self.dialog = Some(Dialog::save_failed(&error));

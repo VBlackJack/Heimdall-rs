@@ -17,7 +17,7 @@
 //! The certificate check of explicit FTPS, as the C# one: a certificate the system trusts
 //! goes through; otherwise one the user trusted for this server, which the caller decides,
 //! as it keeps the user's pins; otherwise the handshake stops and the certificate is kept,
-//! for the user to be shown it and asked.
+//! with why the system did not vouch for it, for the user to be shown it and asked.
 //!
 //! The decision is taken in the handshake, before any password is sent. Every handshake
 //! signature is verified against the certificate, so a server proves it holds its key: a
@@ -37,7 +37,7 @@ use tokio_rustls::rustls::crypto::{
 };
 use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio_rustls::rustls::{
-    ClientConfig, DigitallySignedStruct, Error, RootCertStore, SignatureScheme,
+    CertificateError, ClientConfig, DigitallySignedStruct, Error, RootCertStore, SignatureScheme,
 };
 
 /// Length of a certificate's SHA-256 fingerprint.
@@ -54,9 +54,74 @@ pub fn fingerprint(der: &[u8]) -> CertificateFingerprint {
     fingerprint
 }
 
+/// Why the system did not vouch for a certificate, as the C# prompt's "Validation issue"
+/// says it: the first problem its check met.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidationIssue {
+    /// No authority of this computer issued it; [`ValidationIssue::refined`] tells a
+    /// certificate that is its own issuer apart.
+    UnknownIssuer,
+    /// It names itself as its issuer, which no authority of this computer is.
+    SelfSigned,
+    /// Its validity period is over.
+    Expired,
+    /// Its validity period has not begun.
+    NotYetValid,
+    /// It was issued for another name than the server's.
+    NameMismatch,
+    /// Its issuer revoked it.
+    Revoked,
+    /// This computer has no certificate authority to check it against.
+    NoSystemStore,
+    /// Anything else the check refused: a bad signature or encoding, a wrong purpose.
+    Other,
+}
+
+impl ValidationIssue {
+    /// The issue the check's `refusal` stands for.
+    #[must_use]
+    pub fn of(refusal: &Error) -> Self {
+        let Error::InvalidCertificate(problem) = refusal else {
+            return Self::Other;
+        };
+        match problem {
+            CertificateError::UnknownIssuer => Self::UnknownIssuer,
+            CertificateError::Expired | CertificateError::ExpiredContext { .. } => Self::Expired,
+            CertificateError::NotValidYet | CertificateError::NotValidYetContext { .. } => {
+                Self::NotYetValid
+            }
+            CertificateError::NotValidForName | CertificateError::NotValidForNameContext { .. } => {
+                Self::NameMismatch
+            }
+            CertificateError::Revoked => Self::Revoked,
+            _ => Self::Other,
+        }
+    }
+
+    /// The issue, told precisely for a certificate whose issuer is its subject
+    /// (`self_issued`): an unknown issuer is then the certificate itself.
+    #[must_use]
+    pub fn refined(self, self_issued: bool) -> Self {
+        if self == Self::UnknownIssuer && self_issued {
+            Self::SelfSigned
+        } else {
+            self
+        }
+    }
+}
+
+/// A certificate neither the system nor the user trusts, kept for the question.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Presented {
+    /// The certificate, whole (DER).
+    pub der: Vec<u8>,
+    /// Why the system did not vouch for it.
+    pub issue: ValidationIssue,
+}
+
 /// Where a certificate neither trusted by the system nor by the user is kept, for the
 /// question.
-pub type PresentedSlot = Arc<Mutex<Option<Vec<u8>>>>;
+pub type PresentedSlot = Arc<Mutex<Option<Presented>>>;
 
 /// Whether the user trusted a certificate, given whole (DER), for the server connected to.
 pub type UserTrust = Arc<dyn Fn(&[u8]) -> bool + Send + Sync>;
@@ -89,7 +154,7 @@ impl ServerCertVerifier for Trust {
         if (self.trusted)(end_entity.as_ref()) {
             return Ok(ServerCertVerified::assertion());
         }
-        let refusal = match &self.system {
+        let (refusal, issue) = match &self.system {
             Some(system) => match system.verify_server_cert(
                 end_entity,
                 intermediates,
@@ -98,12 +163,21 @@ impl ServerCertVerifier for Trust {
                 now,
             ) {
                 Ok(verified) => return Ok(verified),
-                Err(refusal) => refusal,
+                Err(refusal) => {
+                    let issue = ValidationIssue::of(&refusal);
+                    (refusal, issue)
+                }
             },
-            None => Error::General("no system certificate check".to_owned()),
+            None => (
+                Error::General("no system certificate check".to_owned()),
+                ValidationIssue::NoSystemStore,
+            ),
         };
         if let Ok(mut slot) = self.presented.lock() {
-            *slot = Some(end_entity.as_ref().to_vec());
+            *slot = Some(Presented {
+                der: end_entity.as_ref().to_vec(),
+                issue,
+            });
         }
         Err(refusal)
     }
@@ -184,7 +258,7 @@ mod tests {
     use tokio_rustls::rustls::crypto::ring::default_provider;
     use tokio_rustls::rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
-    use super::{PresentedSlot, Trust, UserTrust, fingerprint};
+    use super::{Presented, PresentedSlot, Trust, UserTrust, ValidationIssue, fingerprint};
 
     /// A check trusting `system_roots` as the system store and the certificates of
     /// `trusted` as the user's.
@@ -213,15 +287,64 @@ mod tests {
     }
 
     fn verdict(trust: &Trust, cert: &[u8]) -> bool {
+        verdict_for(trust, cert, "localhost")
+    }
+
+    /// Whether `trust` takes `cert` from a server named `name`.
+    fn verdict_for(trust: &Trust, cert: &[u8], name: &str) -> bool {
         trust
             .verify_server_cert(
                 &CertificateDer::from(cert.to_vec()),
                 &[],
-                &ServerName::try_from("localhost").expect("name"),
+                &ServerName::try_from(name.to_owned()).expect("name"),
                 &[],
                 UnixTime::now(),
             )
             .is_ok()
+    }
+
+    /// The issue kept for the question once `trust` refused `cert` from `name`.
+    fn issue_kept(
+        trust: &Trust,
+        presented: &PresentedSlot,
+        cert: &[u8],
+        name: &str,
+    ) -> ValidationIssue {
+        assert!(!verdict_for(trust, cert, name), "refused");
+        presented
+            .lock()
+            .expect("slot")
+            .take()
+            .expect("kept for the question")
+            .issue
+    }
+
+    /// An authority, and a certificate it issues for `name`, valid from the first of
+    /// January of `from` to that of `until`.
+    fn issued_by_authority(name: &str, (from, until): (i32, i32)) -> (Vec<u8>, Vec<u8>) {
+        use rcgen::{
+            BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, Issuer, KeyPair,
+            date_time_ymd,
+        };
+
+        let named = |common_name: &str| {
+            let mut distinguished_name = DistinguishedName::new();
+            distinguished_name.push(DnType::CommonName, common_name);
+            distinguished_name
+        };
+        let authority_key = KeyPair::generate().expect("key");
+        let mut authority = CertificateParams::new(Vec::<String>::new()).expect("params");
+        authority.distinguished_name = named("Lab Root CA");
+        authority.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        let authority_cert = authority.self_signed(&authority_key).expect("authority");
+        let issuer = Issuer::new(authority, authority_key);
+        let mut server = CertificateParams::new(vec![name.to_owned()]).expect("params");
+        server.distinguished_name = named(name);
+        server.not_before = date_time_ymd(from, 1, 1);
+        server.not_after = date_time_ymd(until, 1, 1);
+        let server_key = KeyPair::generate().expect("key");
+        let server_cert = server.signed_by(&server_key, &issuer).expect("server");
+        (authority_cert.der().to_vec(), server_cert.der().to_vec())
     }
 
     #[test]
@@ -239,16 +362,69 @@ mod tests {
         let issued =
             rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
         let cert = issued.cert.der().to_vec();
-        let other = rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
-        let (refusing, presented) = trust(&[other.cert.der()], Vec::new());
+        // Another authority, under another name: one of the same name would be tried as the
+        // issuer, and refused for its signature instead.
+        let (other, _) = issued_by_authority("other.lab", (2020, 2045));
+        let (refusing, presented) = trust(&[&other], Vec::new());
         assert!(!verdict(&refusing, &cert));
         assert_eq!(
-            presented.lock().expect("slot").as_deref(),
-            Some(cert.as_slice())
+            presented.lock().expect("slot").clone(),
+            Some(Presented {
+                der: cert.clone(),
+                issue: ValidationIssue::UnknownIssuer,
+            })
         );
         // No system store at all: the user's fingerprints alone.
         let (alone, _) = trust(&[], vec![fingerprint(&cert)]);
         assert!(verdict(&alone, &cert));
+    }
+
+    #[test]
+    fn why_the_system_refused_is_kept_with_the_certificate() {
+        // Issued by an authority the system trusts, for another name.
+        let (authority, cert) = issued_by_authority("files.lab", (2020, 2045));
+        let (system, presented) = trust(&[&authority], Vec::new());
+        assert!(verdict_for(&system, &cert, "files.lab"), "its own name");
+        assert_eq!(
+            issue_kept(&system, &presented, &cert, "other.lab"),
+            ValidationIssue::NameMismatch
+        );
+        // Over, and not begun yet.
+        let (authority, cert) = issued_by_authority("files.lab", (2000, 2001));
+        let (system, presented) = trust(&[&authority], Vec::new());
+        assert_eq!(
+            issue_kept(&system, &presented, &cert, "files.lab"),
+            ValidationIssue::Expired
+        );
+        let (authority, cert) = issued_by_authority("files.lab", (2045, 2046));
+        let (system, presented) = trust(&[&authority], Vec::new());
+        assert_eq!(
+            issue_kept(&system, &presented, &cert, "files.lab"),
+            ValidationIssue::NotYetValid
+        );
+        // No system store at all.
+        let (alone, presented) = trust(&[], Vec::new());
+        assert_eq!(
+            issue_kept(&alone, &presented, &cert, "files.lab"),
+            ValidationIssue::NoSystemStore
+        );
+    }
+
+    #[test]
+    fn an_unknown_issuer_that_is_the_certificate_itself_is_said_self_signed() {
+        assert_eq!(
+            ValidationIssue::UnknownIssuer.refined(true),
+            ValidationIssue::SelfSigned
+        );
+        assert_eq!(
+            ValidationIssue::UnknownIssuer.refined(false),
+            ValidationIssue::UnknownIssuer
+        );
+        assert_eq!(
+            ValidationIssue::Expired.refined(true),
+            ValidationIssue::Expired,
+            "the first problem met stays the one said"
+        );
     }
 
     #[test]

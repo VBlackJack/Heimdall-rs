@@ -704,6 +704,7 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
         attempt,
         ConnectionEvent::UnknownRdpCertificate {
             subject: Some("CN=dc.lab".to_owned()),
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -1130,4 +1131,106 @@ fn a_session_sharing_its_drives_and_sound_shows_both() {
     ui.find("Drives").expect("the drives shared");
     ui.find("Sound").expect("the sound played here");
     assert!(ui.find("Clipboard").is_err(), "no clipboard shared");
+}
+
+#[test]
+fn the_error_report_says_the_route_and_how_long_the_session_lasted_the_anonymized_one_no_name() {
+    use heimdall_core::profile::SshGateway;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("edge"),
+        name: "Edge".to_owned(),
+        host: "edge.corp.lab".to_owned(),
+        port: 22,
+        username: Some("ops".to_owned()),
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut core = app_of(
+        dir.path(),
+        RdpProfile {
+            gateway: Some(ProfileId::new("edge")),
+            // The failure stays on the card, no attempt chained.
+            auto_reconnect: false,
+            ..profile(heimdall_core::profile::RdpOptions::default())
+        },
+    );
+    let effects = core.update(AppMessage::OpenRdp(ProfileId::new("dc")));
+    let Some((tab, attempt)) = effects.iter().find_map(|effect| match effect {
+        Effect::ConnectRdp { tab, attempt, .. } => Some((*tab, *attempt)),
+        _ => None,
+    }) else {
+        panic!("{effects:?}");
+    };
+    let mut shell = Shell::with_app(core);
+    let (input, _received) = tokio::sync::mpsc::unbounded_channel();
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::RdpReady {
+            framebuffer: Framebuffer::new(1280, 800),
+            input,
+            size: tokio::sync::watch::channel(None).0,
+            clipboard: None,
+        },
+    );
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+
+    let report = shell
+        .failure_report(tab, std::time::UNIX_EPOCH)
+        .expect("a report");
+    let lines: Vec<&str> = report.lines().collect();
+    assert_eq!(lines[0], "Heimdall RDP error report");
+    assert_eq!(lines[2], "Server: Domain controller (dc.lab:3389)");
+    assert_eq!(lines[3], "Tunnel: via Edge", "{report}");
+    assert!(
+        lines[4].starts_with("Session: connected for 0m "),
+        "from connected to failed: {report}"
+    );
+    assert!(lines[5].starts_with("App: "), "{report}");
+
+    let anonymous = shell
+        .anonymous_report(tab, std::time::UNIX_EPOCH)
+        .expect("a report");
+    let lines: Vec<&str> = anonymous.lines().collect();
+    assert_eq!(lines[2], "Tunnel: through 1 SSH gateway", "{anonymous}");
+    assert!(
+        lines[3].starts_with("Session: connected for 0m "),
+        "{anonymous}"
+    );
+    for named in ["dc.lab", "Edge", "edge.corp.lab", "Domain controller"] {
+        assert!(!anonymous.contains(named), "{named} in {anonymous}");
+    }
+}
+
+#[test]
+fn a_session_that_failed_before_it_connected_reports_no_duration() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::Failed(UiError::Timeout),
+    );
+    for report in [
+        shell.failure_report(tab, std::time::UNIX_EPOCH),
+        shell.anonymous_report(tab, std::time::UNIX_EPOCH),
+    ] {
+        let report = report.expect("a report");
+        assert!(!report.contains("Session:"), "{report}");
+        assert!(
+            !report.contains("Tunnel:"),
+            "straight to the server: {report}"
+        );
+    }
 }

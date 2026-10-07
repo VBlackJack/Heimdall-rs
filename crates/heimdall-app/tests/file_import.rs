@@ -107,6 +107,7 @@ fn a_mobaxterm_file_is_asked_about_then_merged_with_new_ids_and_its_passwords_sa
             stored_credentials: Some(1),
             dropped: Vec::new(),
             host_keys: None,
+            gateways: heimdall_core::import::gateways::Reconciliation::default(),
         }))
     );
     let web = &app.profiles()[0];
@@ -263,4 +264,145 @@ fn a_picked_file_never_carries_the_servers_it_trusts_over() {
         !pins.path().exists(),
         "a file written elsewhere trusts nothing here"
     );
+}
+
+/// A file sharing a bastion with this machine's saved one under its own identifier, and two
+/// gateways on the same host that are not that one: another user, another port.
+const SHARED_BASTION: &str = r#"{"schemaVersion": 2,
+    "servers": [
+        {"id": "db", "displayName": "DB", "remoteServer": "db.internal",
+         "connectionType": "SSH", "sshGatewayId": "theirs"},
+        {"id": "dc", "displayName": "DC", "remoteServer": "dc.internal",
+         "connectionType": "RDP", "sshGatewayId": "theirs"},
+        {"id": "web", "displayName": "Web", "remoteServer": "web.internal",
+         "connectionType": "SSH", "sshGatewayId": "as-admin"},
+        {"id": "api", "displayName": "API", "remoteServer": "api.internal",
+         "connectionType": "SSH", "sshGatewayId": "other-port"}],
+    "gateways": [
+        {"id": "theirs", "name": "Their bastion", "host": "bastion.example.org",
+         "port": 2222, "user": "jump"},
+        {"id": "as-admin", "name": "As admin", "host": "bastion.example.org",
+         "port": 2222, "user": "admin"},
+        {"id": "other-port", "name": "Other port", "host": "bastion.example.org",
+         "port": 22, "user": "jump"}]}"#;
+
+#[test]
+fn an_imported_gateway_with_the_address_of_a_saved_one_is_that_one_its_profiles_rewired() {
+    use heimdall_core::import::gateways::Reconciliation;
+    use heimdall_core::profile::{ProfileId, SshGateway};
+    use heimdall_core::store::ProfileStore;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("saved"),
+        name: "Bastion".to_owned(),
+        // The host in other case: the same machine, as the C# compares it.
+        host: "Bastion.Example.ORG".to_owned(),
+        port: 2222,
+        username: Some("jump".to_owned()),
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    read(&mut app, "servers.json", SHARED_BASTION, None);
+    app.update(Message::ConfirmDialog);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        summary.gateways,
+        Reconciliation {
+            created: 2,
+            merged: 1
+        },
+        "as the C# summary counts them"
+    );
+    assert_eq!(summary.merged.added, 4, "the profiles alone");
+
+    let saved = ProfileStore::open(&profiles_file).expect("saved");
+    let ids: Vec<&str> = saved.gateways().iter().map(|g| g.id.as_str()).collect();
+    assert_eq!(
+        ids,
+        ["saved", "as-admin", "other-port"],
+        "no second bastion; another user or port stays a gateway of its own"
+    );
+    let through = |id: &str| {
+        saved
+            .ssh_profiles()
+            .iter()
+            .find(|profile| profile.id.as_str() == id)
+            .and_then(|profile| profile.gateway.clone())
+            .expect("a gateway")
+    };
+    assert_eq!(through("db"), ProfileId::new("saved"), "rewired");
+    assert_eq!(
+        saved.rdp_profiles()[0].gateway,
+        Some(ProfileId::new("saved")),
+        "an RDP profile too"
+    );
+    assert_eq!(through("web"), ProfileId::new("as-admin"));
+    assert_eq!(through("api"), ProfileId::new("other-port"));
+
+    // The same file again: every gateway is one already saved.
+    app.update(Message::DismissDialog);
+    read(&mut app, "servers.json", SHARED_BASTION, None);
+    app.update(Message::ConfirmDialog);
+    let Some(Dialog::ImportDone(summary)) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    assert_eq!(
+        summary.gateways,
+        Reconciliation {
+            created: 0,
+            merged: 3
+        }
+    );
+    assert_eq!(
+        ProfileStore::open(&profiles_file)
+            .expect("saved")
+            .gateways()
+            .len(),
+        3
+    );
+}
+
+#[test]
+fn an_imported_gateway_whose_identifier_names_another_saved_one_gets_one_of_its_own() {
+    use heimdall_core::profile::{ProfileId, SshGateway};
+    use heimdall_core::store::ProfileStore;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let profiles_file = dir.path().join("profiles.toml");
+    let mut store = ProfileStore::open(&profiles_file).expect("store");
+    let elsewhere = SshGateway {
+        id: ProfileId::new("theirs"),
+        name: "Elsewhere".to_owned(),
+        host: "elsewhere.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: None,
+    };
+    store.merge_gateways([elsewhere.clone()]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    read(&mut app, "servers.json", SHARED_BASTION, None);
+    app.update(Message::ConfirmDialog);
+    let saved = ProfileStore::open(&profiles_file).expect("saved");
+    assert_eq!(saved.gateways()[0], elsewhere, "never replaced");
+    let bastion = saved
+        .gateways()
+        .iter()
+        .find(|gateway| gateway.name == "Their bastion")
+        .expect("added");
+    assert_ne!(bastion.id, elsewhere.id, "an identifier of its own");
+    let db = saved
+        .ssh_profiles()
+        .iter()
+        .find(|profile| profile.id.as_str() == "db")
+        .expect("db");
+    assert_eq!(db.gateway.as_ref(), Some(&bastion.id), "rewired to it");
 }

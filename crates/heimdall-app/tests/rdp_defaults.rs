@@ -151,6 +151,50 @@ fn a_following_profile_opens_with_the_defaults_and_one_with_its_own_keeps_them()
 }
 
 #[test]
+fn strict_server_authentication_comes_from_the_defaults_unless_the_profile_has_its_own() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let strict = |app: &mut App, id: &str| {
+        asked(&app.update(Message::OpenRdp(ProfileId::new(id))))
+            .extras
+            .strict_server_authentication
+    };
+    assert!(!strict(&mut app, "following"), "the C# default: off");
+    app.update(Message::Settings(SettingsMessage::RdpDefaults(
+        RdpDefaults {
+            strict_server_authentication: true,
+            ..RdpDefaults::default()
+        },
+    )));
+    assert!(
+        strict(&mut app, "following"),
+        "RdpDefaultStrictServerAuthentication"
+    );
+    assert!(!strict(&mut app, "own"), "the profile's own choice, off");
+
+    // The profile's own choice on, the default off: its own still.
+    let mut own = profile("own", false);
+    own.extras.strict_server_authentication = true;
+    app.update(Message::Settings(SettingsMessage::RdpDefaults(
+        RdpDefaults::default(),
+    )));
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge_rdp([own]);
+    store.save().expect("save");
+    let mut app = App::new(AppConfig {
+        profiles_file: dir.path().join("profiles.toml"),
+        known_hosts: dir.path().join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.path().to_owned(),
+        system_credentials: SystemCredentials::memory(),
+    });
+    assert!(strict(&mut app, "own"), "RdpStrictServerAuthentication");
+    assert!(!strict(&mut app, "following"));
+}
+
+#[test]
 fn a_reconnect_takes_the_defaults_as_they_are_then() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());

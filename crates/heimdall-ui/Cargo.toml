@@ -58,6 +58,8 @@ heimdall-sftp.workspace = true
 heimdall-i18n.workspace = true
 iced_test.workspace = true
 png.workspace = true
+# The certificates the FTPS question's tests show.
+rcgen.workspace = true
 tempfile.workspace = true
 # The stop of a post-connect sequence, in the tab tests.
 tokio-util.workspace = true

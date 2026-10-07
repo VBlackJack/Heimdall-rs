@@ -29,7 +29,7 @@ use std::time::Duration;
 use heimdall_core::profile::{FtpProfile, display_address};
 use heimdall_files::ftps_trust::{PresentedSlot, UserTrust, connector};
 use heimdall_files::{FtpClient, FtpConnectError, FtpSecurity, FtpTarget, RemoteSession};
-use heimdall_rdp::{Fingerprint, KnownRdpHosts, ServerCertificate, Verdict};
+use heimdall_rdp::{Fingerprint, KnownRdpHosts, ServerCertificate, Validity, Verdict};
 use heimdall_ssh::{AuthMethod, PasswordQuestion};
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -37,7 +37,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::driver::{AnswerRegistry, ask};
 use crate::error::UiError;
-use crate::event::{Answer, ConnectionEvent, QuestionKind};
+use crate::event::{Answer, CertificateDetails, ConnectionEvent, QuestionKind};
 
 /// Events buffered before the attempt waits for the UI to read them.
 const EVENT_QUEUE_LENGTH: usize = 64;
@@ -241,8 +241,20 @@ async fn certificate_refused(
     events: &mpsc::Sender<ConnectionEvent>,
     detail: String,
 ) -> Result<(), UiError> {
-    let der = presented.lock().ok().and_then(|mut slot| slot.take());
-    let Some(certificate) = der.and_then(|der| ServerCertificate::from_der(&der).ok()) else {
+    let kept = presented.lock().ok().and_then(|mut slot| slot.take());
+    let Some((certificate, details)) = kept.and_then(|kept| {
+        let certificate = ServerCertificate::from_der(&kept.der).ok()?;
+        let details = Validity::from_der(&kept.der)
+            .ok()
+            .map(|validity| CertificateDetails {
+                issuer: certificate.issuer.clone(),
+                validity,
+                issue: kept
+                    .issue
+                    .refined(certificate.subject == certificate.issuer),
+            });
+        Some((certificate, details))
+    }) else {
         return Err(UiError::Protocol { detail });
     };
     let profile = &request.profile;
@@ -271,8 +283,9 @@ async fn certificate_refused(
                     host: profile.host.clone(),
                     port: profile.port,
                     fingerprint: presented,
-                    // Shown in the question, as the C# FTPS one shows it.
+                    // Shown in the question, as the C# FTPS one shows them.
                     subject: Some(certificate.subject.clone()),
+                    details: details.map(Box::new),
                 })
                 .await;
             Ok(())
