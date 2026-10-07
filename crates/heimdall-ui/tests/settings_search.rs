@@ -64,9 +64,9 @@ fn english() -> English {
     English { _held: guard }
 }
 
-/// The Settings page of an application with every setting at its default.
-fn shell(dir: &Path) -> Shell {
-    let mut shell = Shell::with_app(App::new(AppConfig {
+/// An application with every setting at its default.
+fn app(dir: &Path) -> App {
+    App::new(AppConfig {
         profiles_file: dir.join("profiles.toml"),
         known_hosts: dir.join("known_hosts"),
         legacy_dir: None,
@@ -74,9 +74,48 @@ fn shell(dir: &Path) -> Shell {
         initial_grid: GridSize { cols: 80, rows: 24 },
         files_start: dir.to_owned(),
         system_credentials: SystemCredentials::memory(),
-    }));
+    })
+}
+
+/// The Settings page of `app`.
+fn settings_of(app: App) -> Shell {
+    let mut shell = Shell::with_app(app);
     let _ = shell.update(Message::ShowSettings);
     shell
+}
+
+/// The Settings page of an application with every setting at its default.
+fn shell(dir: &Path) -> Shell {
+    settings_of(app(dir))
+}
+
+/// Creates the vault of `core` as its dialog would, the key derivation run to its end.
+fn create_vault(core: &mut App) {
+    use heimdall_app::{Effect, open_vault};
+    use heimdall_ssh::Secret;
+
+    const MASTER: &str = "correct horse battery staple";
+    core.update(AppMessage::ShowVault);
+    let effects = core.update(AppMessage::SubmitVault {
+        password: Secret::new(MASTER.to_owned()),
+        new: None,
+        confirm: Some(Secret::new(MASTER.to_owned())),
+    });
+    let Ok(
+        [
+            Effect::OpenVault {
+                path,
+                password,
+                job,
+            },
+        ],
+    ) = <[Effect; 1]>::try_from(effects)
+    else {
+        panic!("expected OpenVault");
+    };
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let result = runtime.block_on(open_vault(path, password, job));
+    core.update(AppMessage::VaultOpened(result));
 }
 
 fn simulator(shell: &Shell) -> common::Drawn<'_> {
@@ -497,4 +536,119 @@ fn the_theme_and_accent_are_chosen_on_the_general_tab_applied_at_once_and_reset(
     assert!(shell.theme().extended_palette().is_dark);
     let mut ui = simulator(&shell);
     assert!(ui.find("Modified").is_err());
+}
+
+#[test]
+fn without_a_master_password_the_lock_settings_say_so_and_cannot_change() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert!(
+        shell
+            .settings_found("auto-lock")
+            .contains(&SettingRow::AutoLock)
+    );
+    assert_eq!(
+        shell.settings_found("disconnect sessions"),
+        [SettingRow::DisconnectOnLock]
+    );
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    let mut ui = simulator(&shell);
+    for said in [
+        "No risky setting",
+        "Auto-lock when idle: Needs the master password",
+        "Disconnect sessions when locking: Needs the master password",
+        "Auto-lock and disconnect on lock need the master password above: turn it on to use \
+         them.",
+        "Auto-lock after idle (0 = off)",
+    ] {
+        ui.find(said).expect(said);
+    }
+    ui.click("Disconnect sessions when locking")
+        .expect("its box, greyed");
+    assert!(
+        !ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::DisconnectOnLock(_)))
+        )),
+        "nothing to change without a master password"
+    );
+}
+
+#[test]
+fn the_lock_settings_are_marked_reset_and_shown_in_the_security_overview() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    create_vault(&mut core);
+    let mut shell = settings_of(core);
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "1 item needs attention",
+            "Auto-lock when idle: Never",
+            "The master password stays unlocked for as long as Heimdall runs.",
+            "Disconnect sessions when locking: Off",
+        ] {
+            ui.find(said).expect(said);
+        }
+        assert!(
+            ui.find("Auto-lock and disconnect on lock need the master password above: turn it on to use them.")
+                .is_err(),
+            "the master password is set"
+        );
+        assert!(ui.find("Modified").is_err(), "nothing changed yet");
+        ui.click("Go to setting").expect("the idle lock's");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::GoToSetting(SettingRow::AutoLock)))
+        );
+    }
+
+    // Out of the C# range, it stays typed, its rule said, and nothing changes.
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::AutoLock,
+        "1441".to_owned(),
+    ));
+    let _ = shell.update(Message::SessionFieldApply(SessionField::AutoLock));
+    assert_eq!(shell.app().settings().auto_lock_idle_minutes, 0);
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Idle auto-lock threshold must be between 0 and 1440 minutes.")
+            .expect("the C# rule");
+    }
+    let _ = shell.update(Message::SessionFieldEdited(
+        SessionField::AutoLock,
+        "15".to_owned(),
+    ));
+    let _ = shell.update(Message::SessionFieldApply(SessionField::AutoLock));
+    change(&mut shell, SettingsMessage::DisconnectOnLock(true));
+    let settings = shell.app().settings();
+    assert_eq!(settings.auto_lock_idle_minutes, 15);
+    assert!(settings.disconnect_on_lock);
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert_eq!(saved.auto_lock_idle_minutes, 15);
+    assert!(saved.disconnect_on_lock);
+    assert_eq!(
+        shell.settings_found("Modified"),
+        [SettingRow::AutoLock, SettingRow::DisconnectOnLock]
+    );
+    {
+        let mut ui = simulator(&shell);
+        for said in [
+            "No risky setting",
+            "Auto-lock when idle: After 15 minutes of inactivity",
+            "Disconnect sessions when locking: On",
+        ] {
+            ui.find(said).expect(said);
+        }
+    }
+
+    for row in [SettingRow::AutoLock, SettingRow::DisconnectOnLock] {
+        let _ = shell.update(Message::ResetSetting(row));
+    }
+    let settings = shell.app().settings();
+    assert_eq!(settings.auto_lock_idle_minutes, 0);
+    assert!(!settings.disconnect_on_lock);
 }

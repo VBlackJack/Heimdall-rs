@@ -68,14 +68,23 @@ ui-settings-posture-line = { $label }: { $state }
 ui-settings-posture-go-to = Ir al ajuste
 ui-settings-posture-state-enabled = Activada
 ui-settings-posture-state-disabled = Desactivada
+ui-settings-posture-state-after-minutes = { $minutes ->
+    [one] Tras { $minutes } minuto de inactividad
+   *[other] Tras { $minutes } minutos de inactividad
+}
+ui-settings-posture-state-never = Nunca
+ui-settings-posture-state-requires-vault = Necesita la contraseña maestra
 ui-settings-posture-label-rdp-nla = Autenticación a nivel de red (NLA) en RDP
 ui-settings-posture-label-rdp-strict-server-auth = Autenticación estricta del servidor RDP
 ui-settings-posture-label-transcripts = Transcripciones de sesión
 ui-settings-posture-label-ps-policy = Política de ejecución de PowerShell
 ui-settings-posture-label-vault = Contraseña maestra
+ui-settings-posture-label-auto-lock = Bloqueo automático por inactividad
+ui-settings-posture-label-disconnect-on-lock = Desconexión de sesiones al bloquear
 ui-settings-posture-warning-rdp-nla = Sin NLA, inicias sesión en un servidor que no ha demostrado su identidad.
 ui-settings-posture-warning-transcripts = Cada sesión de terminal se escribe en un archivo, incluidas contraseñas o tokens que el terminal repita.
 ui-settings-posture-warning-ps-policy = Esta política desactiva la comprobación de firma de scripts en las sesiones de PowerShell que abre Heimdall.
+ui-settings-posture-warning-auto-lock = La contraseña maestra queda desbloqueada mientras Heimdall esté abierto.
 ui-settings-pin-title = PIN de la aplicación
 ui-settings-pin-enabled = Actualmente hay un PIN establecido.
 ui-settings-pin-disabled = No hay ningún PIN establecido.
@@ -152,6 +161,12 @@ ui-settings-vault-disabled = Desactivado
 ui-settings-vault-enable = Activar contraseña maestra
 ui-settings-vault-change = Cambiar
 ui-settings-vault-disable = Desactivar
+ui-settings-auto-lock = Bloqueo automático por inactividad (0 = desactivado)
+ui-settings-auto-lock-hint = Bloquea el espacio de trabajo tras este número de minutos de inactividad a nivel de todo el sistema. 0 desactiva el bloqueo automático.
+ui-settings-auto-lock-requires-vault = El bloqueo automático y la desconexión al bloquear necesitan la contraseña maestra de arriba: actívala para usarlos.
+ui-settings-auto-lock-refused = El umbral de bloqueo automático por inactividad debe estar entre { $min } y { $max } minutos.
+ui-settings-disconnect-on-lock = Desconectar sesiones al bloquear
+ui-settings-disconnect-on-lock-hint = De forma predeterminada, las sesiones siguen ejecutándose ocultas tras el bloqueo. Activa esto para desconectarlas cuando se bloquee el espacio de trabajo.
 ui-profile-field-password = Contraseña
 ui-profile-password-saved = Contraseña guardada
 ui-profile-password-clear = Borrar
@@ -1088,6 +1103,7 @@ ui-settings-session-log-directory = Directorio de registro de sesiones:
 ui-settings-session-log-directory-hint = Carpeta de los registros de sesión, relativa a la carpeta de configuración salvo si es absoluta. Pulsa Intro para aplicar.
 ui-settings-session-log-retention = Eliminar transcripciones con más de
 ui-settings-days-unit = días
+ui-settings-minutes-unit = min
 ui-settings-session-log-retention-hint = 0 conserva todas las transcripciones. Solo se eliminan las transcripciones de sesión; los registros de eventos y de operaciones de archivos se conservan.
 ui-settings-session-log-retention-refused = La retención de transcripciones debe ser 0 (conservar todo) o estar entre { $min } y { $max } días.
 
@@ -1095,10 +1111,11 @@ ui-broadcast-button = DIFUSIÓN
 ui-broadcast-toggle-tooltip = Activar/desactivar la difusión (enviar a todos los terminales), Ctrl+Alt+B
 ui-broadcast-on = Modo difusión ACTIVADO - { $scope }
 ui-broadcast-off = Modo difusión DESACTIVADO
+ui-broadcast-scope-current = Pestaña actual
 ui-broadcast-scope-all = Todas las pestañas
 ui-broadcast-scope-selected = Pestañas seleccionadas ({ $count })
 ui-broadcast-scope-status = Ámbito de difusión: { $scope }
-ui-broadcast-scope-tooltip = Alcance de la difusión (clic para alternar entre todas las pestañas y las pestañas marcadas)
+ui-broadcast-scope-tooltip = Alcance de la difusión (clic para pasar de la pestaña actual a todas las pestañas y a las pestañas marcadas)
 ui-broadcast-target-on = ◉
 ui-broadcast-target-off = ○
 ui-broadcast-target-tooltip = Enviar la entrada de difusión a esta sesión (destino de difusión)

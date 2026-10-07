@@ -488,6 +488,7 @@ fn broadcast_input_leaves_the_detached_tabs_out() {
     let (c, attempt_c) = open(&mut app, "c");
     let (sink_c, _) = connect(&mut app, c, attempt_c);
     detach(&mut app, c);
+    app.update(Message::Broadcast(BroadcastMessage::Scope));
     app.update(Message::Broadcast(BroadcastMessage::Toggle));
     app.update(Message::ConfirmDialog);
     assert!(app.broadcasting());

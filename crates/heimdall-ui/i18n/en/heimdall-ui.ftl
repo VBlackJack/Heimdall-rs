@@ -71,14 +71,23 @@ ui-settings-posture-line = { $label }: { $state }
 ui-settings-posture-go-to = Go to setting
 ui-settings-posture-state-enabled = Enabled
 ui-settings-posture-state-disabled = Disabled
+ui-settings-posture-state-after-minutes = { $minutes ->
+    [one] After { $minutes } minute of inactivity
+   *[other] After { $minutes } minutes of inactivity
+}
+ui-settings-posture-state-never = Never
+ui-settings-posture-state-requires-vault = Needs the master password
 ui-settings-posture-label-rdp-nla = RDP Network Level Authentication (NLA)
 ui-settings-posture-label-rdp-strict-server-auth = RDP strict server authentication
 ui-settings-posture-label-transcripts = Session transcripts
 ui-settings-posture-label-ps-policy = PowerShell execution policy
 ui-settings-posture-label-vault = Master password
+ui-settings-posture-label-auto-lock = Auto-lock when idle
+ui-settings-posture-label-disconnect-on-lock = Disconnect sessions when locking
 ui-settings-posture-warning-rdp-nla = Without NLA, you sign in on a server that has not proved its identity.
 ui-settings-posture-warning-transcripts = Every terminal session is written to a file, including passwords or tokens echoed to the terminal.
 ui-settings-posture-warning-ps-policy = This policy turns off the script signing check in the PowerShell sessions Heimdall opens.
+ui-settings-posture-warning-auto-lock = The master password stays unlocked for as long as Heimdall runs.
 ui-settings-pin-title = Application PIN
 ui-settings-pin-enabled = A PIN is currently set.
 ui-settings-pin-disabled = No PIN is set.
@@ -176,6 +185,12 @@ ui-settings-vault-disabled = Disabled
 ui-settings-vault-enable = Enable master password
 ui-settings-vault-change = Change
 ui-settings-vault-disable = Disable
+ui-settings-auto-lock = Auto-lock after idle (0 = off)
+ui-settings-auto-lock-hint = Lock the workspace after this many minutes of system-wide inactivity. 0 disables auto-lock.
+ui-settings-auto-lock-requires-vault = Auto-lock and disconnect on lock need the master password above: turn it on to use them.
+ui-settings-auto-lock-refused = Idle auto-lock threshold must be between { $min } and { $max } minutes.
+ui-settings-disconnect-on-lock = Disconnect sessions when locking
+ui-settings-disconnect-on-lock-hint = By default, sessions keep running hidden behind the lock. Enable this to disconnect them when the workspace locks.
 ui-profile-field-password = Password
 ui-profile-password-saved = Password saved
 ui-profile-password-clear = Clear
@@ -1214,6 +1229,7 @@ ui-settings-session-log-directory = Session log directory:
 ui-settings-session-log-directory-hint = Directory for session log files, relative to the settings folder unless absolute. Press Enter to apply.
 ui-settings-session-log-retention = Delete transcripts older than
 ui-settings-days-unit = days
+ui-settings-minutes-unit = min
 ui-settings-session-log-retention-hint = 0 keeps every transcript. Only session transcripts are deleted; the event and file-operation logs are kept.
 ui-settings-session-log-retention-refused = Transcript retention must be 0 (keep all) or between { $min } and { $max } days.
 
@@ -1222,10 +1238,11 @@ ui-broadcast-button = BROADCAST
 ui-broadcast-toggle-tooltip = Toggle Broadcast Mode (send to all terminals), Ctrl+Alt+B
 ui-broadcast-on = Broadcast mode ON - { $scope }
 ui-broadcast-off = Broadcast mode OFF
+ui-broadcast-scope-current = Current tab
 ui-broadcast-scope-all = All tabs
 ui-broadcast-scope-selected = Selected tabs ({ $count })
 ui-broadcast-scope-status = Broadcast scope: { $scope }
-ui-broadcast-scope-tooltip = Broadcast scope (click to switch between all tabs and the tabs marked)
+ui-broadcast-scope-tooltip = Broadcast scope (click to switch between the current tab, all tabs and the tabs marked)
 ui-broadcast-target-on = ◉
 ui-broadcast-target-off = ○
 ui-broadcast-target-tooltip = Send broadcast input to this session (broadcast target)

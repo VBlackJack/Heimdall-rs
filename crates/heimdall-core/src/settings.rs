@@ -89,8 +89,11 @@ impl ColorScheme {
 /// Which terminals broadcast input reaches besides the one typed into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BroadcastScope {
-    /// Every terminal of every tab, asked before it starts.
+    /// The panes of the tab typed into, as the C#'s default: it cannot reach a terminal not
+    /// in sight.
     #[default]
+    CurrentTab,
+    /// Every terminal of every tab, asked before it starts.
     AllTabs,
     /// The tabs marked as targets.
     SelectedTabs,
@@ -101,21 +104,31 @@ impl BroadcastScope {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::CurrentTab => "CurrentTab",
             Self::AllTabs => "AllTabs",
             Self::SelectedTabs => "SelectedTabs",
         }
     }
 
-    /// The scope named `name`, all tabs for a name not known.
+    /// The scope named `name`, the C#'s `SelectedPanes` being the tabs marked; for a name
+    /// not known, the current tab, the narrowest.
     #[must_use]
     pub fn named(name: &str) -> Self {
-        if name.trim().eq_ignore_ascii_case(Self::SelectedTabs.name()) {
+        let name = name.trim();
+        if name.eq_ignore_ascii_case(Self::AllTabs.name()) {
+            Self::AllTabs
+        } else if name.eq_ignore_ascii_case(Self::SelectedTabs.name())
+            || name.eq_ignore_ascii_case(SELECTED_PANES)
+        {
             Self::SelectedTabs
         } else {
-            Self::AllTabs
+            Self::CurrentTab
         }
     }
 }
+
+/// The C#'s name for the tabs marked, read as [`BroadcastScope::SelectedTabs`].
+const SELECTED_PANES: &str = "SelectedPanes";
 
 /// The window's theme, as the C# `DefaultTheme` names the `ThemeForge` palettes. Apart
 /// from the terminals' colour scheme, as in the C#.
@@ -477,6 +490,13 @@ pub struct Settings {
     /// Wrong master passwords in a row when the application starts, kept across runs as
     /// the C# startup gate keeps them: quitting does not give the tries back.
     pub vault_unlock: Lockout,
+    /// Minutes without any input on the computer after which the workspace locks, as the C#
+    /// `AutoLockIdleMinutes`: [`AUTO_LOCK_IDLE_MINUTES_OFF`] never locks, else at most
+    /// [`AUTO_LOCK_IDLE_MINUTES_MAX`]. Only with a master password set.
+    pub auto_lock_idle_minutes: u32,
+    /// Locking the workspace also closes every session, as the C# `DisconnectOnLock`: off,
+    /// the sessions go on running hidden behind the lock.
+    pub disconnect_on_lock: bool,
     /// The application PIN asked at start, as the C# one; `None` when none is set.
     pub pin: Option<PinHash>,
     /// Wrong PINs in a row, kept across runs as the master password's are.
@@ -825,6 +845,22 @@ pub fn ssh_tmout_reset_interval_accepted(seconds: u32) -> bool {
     seconds <= SSH_TMOUT_RESET_INTERVAL_MAX
 }
 
+/// The idle auto-lock threshold that turns it off, and its default, as the C#.
+pub const AUTO_LOCK_IDLE_MINUTES_OFF: u32 = 0;
+
+/// Idle auto-lock threshold unless chosen: off.
+pub const AUTO_LOCK_IDLE_MINUTES_DEFAULT: u32 = AUTO_LOCK_IDLE_MINUTES_OFF;
+
+/// Longest idle auto-lock threshold accepted, in minutes, as the C# setting's range: a day.
+pub const AUTO_LOCK_IDLE_MINUTES_MAX: u32 = 1440;
+
+/// Whether `minutes` is an idle auto-lock threshold the settings accept: off, up to
+/// [`AUTO_LOCK_IDLE_MINUTES_MAX`].
+#[must_use]
+pub fn auto_lock_idle_minutes_accepted(minutes: u32) -> bool {
+    minutes <= AUTO_LOCK_IDLE_MINUTES_MAX
+}
+
 /// Largest terminal font size accepted, as the C# setting's range.
 pub const TERMINAL_FONT_SIZE_MAX: u16 = 72;
 
@@ -848,6 +884,8 @@ impl Default for Settings {
             theme: AppTheme::default(),
             accent: Accent::default(),
             vault_unlock: Lockout::default(),
+            auto_lock_idle_minutes: AUTO_LOCK_IDLE_MINUTES_DEFAULT,
+            disconnect_on_lock: false,
             pin: None,
             pin_unlock: Lockout::default(),
             credential_provider: ProviderSettings::default(),
@@ -886,6 +924,8 @@ struct SettingsFile {
     general: GeneralSection,
     #[serde(default)]
     vault_unlock: VaultUnlockSection,
+    #[serde(default)]
+    vault: VaultSection,
     #[serde(default)]
     pin: PinSection,
     #[serde(default)]
@@ -1067,6 +1107,16 @@ struct VaultUnlockSection {
     locked_until: Option<u64>,
 }
 
+/// The workspace lock's preferences; apart from the tries above, which stay on this
+/// computer. Absent values are the C# defaults.
+#[derive(Serialize, Deserialize, Default)]
+struct VaultSection {
+    #[serde(default)]
+    auto_lock_idle_minutes: Option<u32>,
+    #[serde(default)]
+    disconnect_on_lock: Option<bool>,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct GeneralSection {
     /// Written only once chosen, as TOML leaves an absent value out: until then the
@@ -1246,6 +1296,13 @@ impl Settings {
                 file.vault_unlock.locked_until.map(from_epoch),
                 SystemTime::now(),
             ),
+            // Out of the range, as the C# load warns and keeps the default.
+            auto_lock_idle_minutes: within(
+                file.vault.auto_lock_idle_minutes,
+                auto_lock_idle_minutes_accepted,
+                AUTO_LOCK_IDLE_MINUTES_DEFAULT,
+            ),
+            disconnect_on_lock: file.vault.disconnect_on_lock.unwrap_or_default(),
             // Half a PIN is still one: it takes nothing, and the application stays closed.
             pin: match (file.pin.salt, file.pin.hash) {
                 (None, None) => None,
@@ -1430,6 +1487,10 @@ impl Settings {
                 failures: self.vault_unlock.failures(),
                 locked_until: self.vault_unlock.until().map(to_epoch),
             },
+            vault: VaultSection {
+                auto_lock_idle_minutes: Some(self.auto_lock_idle_minutes),
+                disconnect_on_lock: Some(self.disconnect_on_lock),
+            },
             pin: PinSection {
                 salt: self.pin.as_ref().map(|pin| pin.salt().to_owned()),
                 hash: self.pin.as_ref().map(|pin| pin.hash().to_owned()),
@@ -1586,10 +1647,11 @@ const TRANSFER_VERSION_KEY: &str = "version";
 const TRANSFER_SETTINGS_KEY: &str = "settings";
 
 /// The sections of the settings file a portable settings file carries.
-const TRANSFERRED: [&str; 9] = [
+const TRANSFERRED: [&str; 10] = [
     "terminal",
     "session_log",
     "general",
+    "vault",
     "credential_provider",
     "ssh",
     "rdp",

@@ -318,12 +318,13 @@ fn transcripts_are_kept_forever_by_default_and_their_retention_within_the_csharp
 }
 
 #[test]
-fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
+fn the_broadcast_scope_is_the_current_tab_until_another_is_chosen() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
     assert_eq!(
         Settings::load(&path).expect("defaults").broadcast_scope,
-        BroadcastScope::AllTabs
+        BroadcastScope::CurrentTab,
+        "the C#'s default"
     );
     let chosen = Settings {
         broadcast_scope: BroadcastScope::SelectedTabs,
@@ -335,7 +336,17 @@ fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
         BroadcastScope::named(" selectedtabs "),
         BroadcastScope::SelectedTabs
     );
-    assert_eq!(BroadcastScope::named("CurrentTab"), BroadcastScope::AllTabs);
+    assert_eq!(
+        BroadcastScope::named("SelectedPanes"),
+        BroadcastScope::SelectedTabs,
+        "the C#'s name"
+    );
+    assert_eq!(BroadcastScope::named("alltabs"), BroadcastScope::AllTabs);
+    assert_eq!(
+        BroadcastScope::named("Everywhere"),
+        BroadcastScope::CurrentTab,
+        "a name not known: the narrowest"
+    );
 }
 
 #[test]
@@ -379,6 +390,79 @@ font_size = {size}
     };
     settings.save(&path).expect("saved");
     assert_eq!(Settings::load(&path).expect("read").terminal_font_size, 20);
+}
+
+#[test]
+fn the_idle_auto_lock_is_off_by_default_and_kept_within_the_csharp_range() {
+    use heimdall_core::settings::{
+        AUTO_LOCK_IDLE_MINUTES_DEFAULT, AUTO_LOCK_IDLE_MINUTES_MAX, AUTO_LOCK_IDLE_MINUTES_OFF,
+        auto_lock_idle_minutes_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let defaults = written(dir.path(), "version = 1\n");
+    assert_eq!(
+        defaults.auto_lock_idle_minutes, AUTO_LOCK_IDLE_MINUTES_OFF,
+        "as the C# default"
+    );
+    assert!(!defaults.disconnect_on_lock, "survive and mask, as the C#");
+    assert!(auto_lock_idle_minutes_accepted(AUTO_LOCK_IDLE_MINUTES_OFF));
+    assert!(auto_lock_idle_minutes_accepted(AUTO_LOCK_IDLE_MINUTES_MAX));
+    assert!(!auto_lock_idle_minutes_accepted(
+        AUTO_LOCK_IDLE_MINUTES_MAX + 1
+    ));
+    for (minutes, read) in [
+        (AUTO_LOCK_IDLE_MINUTES_OFF, AUTO_LOCK_IDLE_MINUTES_OFF),
+        (AUTO_LOCK_IDLE_MINUTES_MAX, AUTO_LOCK_IDLE_MINUTES_MAX),
+        (
+            AUTO_LOCK_IDLE_MINUTES_MAX + 1,
+            AUTO_LOCK_IDLE_MINUTES_DEFAULT,
+        ),
+    ] {
+        let text = format!("version = 1\n[vault]\nauto_lock_idle_minutes = {minutes}\n");
+        assert_eq!(
+            written(dir.path(), &text).auto_lock_idle_minutes,
+            read,
+            "{minutes}"
+        );
+    }
+
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    Settings {
+        auto_lock_idle_minutes: 15,
+        disconnect_on_lock: true,
+        ..Settings::default()
+    }
+    .save(&path)
+    .expect("saved");
+    let read = Settings::load(&path).expect("read");
+    assert_eq!(read.auto_lock_idle_minutes, 15);
+    assert!(read.disconnect_on_lock);
+}
+
+#[test]
+fn the_workspace_lock_travels_with_an_export_without_the_lockout() {
+    let mut settings = Settings {
+        auto_lock_idle_minutes: 30,
+        disconnect_on_lock: true,
+        ..Settings::default()
+    };
+    settings.vault_unlock.register_failure(SystemTime::now());
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("auto_lock_idle_minutes = 30"), "{text}");
+    assert!(!text.contains("vault_unlock"), "{text}");
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.auto_lock_idle_minutes, 30);
+    assert!(read.settings.disconnect_on_lock);
+    let keys: Vec<&str> = read
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .collect();
+    assert_eq!(
+        keys,
+        ["vault.auto_lock_idle_minutes", "vault.disconnect_on_lock"]
+    );
 }
 
 #[test]

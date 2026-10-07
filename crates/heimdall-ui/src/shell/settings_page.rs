@@ -189,6 +189,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::Gateways => fl!("ui-gateways-title"),
         SettingRow::Pin => fl!("ui-settings-pin-title"),
         SettingRow::Vault => fl!("ui-settings-vault-title"),
+        SettingRow::DisconnectOnLock => fl!("ui-settings-disconnect-on-lock"),
         SettingRow::Provider => fl!("ui-settings-provider-title"),
         // Numbers, named above.
         _ => String::new(),
@@ -217,6 +218,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::Certificates => fl!("ui-trusted-certificates-hint"),
         SettingRow::Gateways => fl!("ui-gateways-description"),
         SettingRow::Vault => fl!("ui-settings-vault-explanation"),
+        SettingRow::DisconnectOnLock => fl!("ui-settings-disconnect-on-lock-hint"),
         _ => return None,
     })
 }
@@ -359,6 +361,8 @@ fn posture_label(key: PostureKey) -> String {
         PostureKey::SessionTranscripts => fl!("ui-settings-posture-label-transcripts"),
         PostureKey::PowerShellExecutionPolicy => fl!("ui-settings-posture-label-ps-policy"),
         PostureKey::Vault => fl!("ui-settings-posture-label-vault"),
+        PostureKey::AutoLock => fl!("ui-settings-posture-label-auto-lock"),
+        PostureKey::DisconnectOnLock => fl!("ui-settings-posture-label-disconnect-on-lock"),
     }
 }
 
@@ -370,6 +374,11 @@ fn posture_state(state: PostureState) -> String {
         PostureState::Enabled => fl!("ui-settings-posture-state-enabled"),
         PostureState::Disabled => fl!("ui-settings-posture-state-disabled"),
         PostureState::Policy(policy) => PolicyChoice(policy).to_string(),
+        PostureState::AfterMinutes(minutes) => {
+            fl!("ui-settings-posture-state-after-minutes", minutes = minutes)
+        }
+        PostureState::Never => fl!("ui-settings-posture-state-never"),
+        PostureState::RequiresVault => fl!("ui-settings-posture-state-requires-vault"),
     }
 }
 
@@ -379,7 +388,10 @@ fn posture_warning(key: PostureKey) -> Option<String> {
         PostureKey::RdpNla => Some(fl!("ui-settings-posture-warning-rdp-nla")),
         PostureKey::SessionTranscripts => Some(fl!("ui-settings-posture-warning-transcripts")),
         PostureKey::PowerShellExecutionPolicy => Some(fl!("ui-settings-posture-warning-ps-policy")),
-        PostureKey::RdpStrictServerAuthentication | PostureKey::Vault => None,
+        PostureKey::AutoLock => Some(fl!("ui-settings-posture-warning-auto-lock")),
+        PostureKey::RdpStrictServerAuthentication
+        | PostureKey::Vault
+        | PostureKey::DisconnectOnLock => None,
     }
 }
 
@@ -730,10 +742,32 @@ impl Shell {
         }
     }
 
+    /// Whether a master password is set.
+    fn vault_set(&self) -> bool {
+        self.app.vault_status() != VaultStatus::Missing
+    }
+
+    /// Whether `row` can be changed now: a workspace lock setting only with a master
+    /// password set, as the C# panel enables them.
+    fn row_available(&self, row: SettingRow) -> bool {
+        !row.needs_vault() || self.vault_set()
+    }
+
     /// What `row` shows: its box, list or field, with what is said of it.
     fn row_body(&self, row: SettingRow) -> Element<'_, Message> {
         if let Some(field) = row.session_field() {
-            return self.number_row(field);
+            let number = self.number_row(field, self.row_available(row));
+            // Shown disabled with the reason rather than hidden, as the C#: hidden, nothing
+            // says the lock exists nor what turns it on.
+            if row == SettingRow::AutoLock && !self.vault_set() {
+                return column![
+                    text(fl!("ui-settings-auto-lock-requires-vault")).size(SMALL_SIZE),
+                    number
+                ]
+                .spacing(SPACING)
+                .into();
+            }
+            return number;
         }
         if row.flag(self.app.settings()).is_some() {
             return self.toggle_row(row);
@@ -756,11 +790,12 @@ impl Shell {
     }
 
     /// A box ticked on or off, what is said of it under it; one hanging from another box is
-    /// greyed while that box is off.
+    /// greyed while that box is off, a workspace lock one while no master password is set.
     fn toggle_row(&self, row: SettingRow) -> Element<'_, Message> {
         let settings = self.app.settings();
         let mut tick = checkbox(row.flag(settings).unwrap_or_default()).label(row_label(row));
         if row.toggle_enabled(settings)
+            && self.row_available(row)
             && let (Some(ticked), Some(unticked)) =
                 (row.toggled(settings, true), row.toggled(settings, false))
         {
@@ -897,21 +932,21 @@ impl Shell {
     }
 
     /// A number typed and applied with Enter, its unit after it, what is said of it under
-    /// it, and its rule while what is typed is out of its range.
-    fn number_row(&self, field: SessionField) -> Element<'_, Message> {
+    /// it, and its rule while what is typed is out of its range; greyed when not `enabled`.
+    fn number_row(&self, field: SessionField, enabled: bool) -> Element<'_, Message> {
         let shown = field.value(self.app.settings()).to_string();
         let typed = self.session_typed[field.index()].clone().unwrap_or(shown);
         let refused = self.session_typed[field.index()].is_some()
             && !self
                 .typed_session(field)
                 .is_some_and(|value| field.accepted(value));
-        let mut line = labelled(
-            field.label(),
-            text_input("", &typed)
-                .width(FONT_SIZE_FIELD_WIDTH)
+        let mut input = text_input("", &typed).width(FONT_SIZE_FIELD_WIDTH);
+        if enabled {
+            input = input
                 .on_input(move |typed| Message::SessionFieldEdited(field, typed))
-                .on_submit(Message::SessionFieldApply(field)),
-        );
+                .on_submit(Message::SessionFieldApply(field));
+        }
+        let mut line = labelled(field.label(), input);
         if let Some(unit) = field.unit() {
             line = line.push(text(unit));
         }

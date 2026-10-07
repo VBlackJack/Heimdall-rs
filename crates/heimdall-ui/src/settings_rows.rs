@@ -24,7 +24,7 @@
 //! each with its state and whether that state is the documented insecure one.
 
 use heimdall_app::SettingsMessage;
-use heimdall_core::settings::{ExecutionPolicy, Settings, SftpBrowser};
+use heimdall_core::settings::{AUTO_LOCK_IDLE_MINUTES_OFF, ExecutionPolicy, Settings, SftpBrowser};
 
 use crate::session_settings::SessionField;
 use crate::shell::SettingsTab;
@@ -218,13 +218,17 @@ pub enum SettingRow {
     Pin,
     /// The master password.
     Vault,
+    /// Minutes without input before the workspace locks.
+    AutoLock,
+    /// Locking the workspace closes every session.
+    DisconnectOnLock,
     /// The external credential provider.
     Provider,
 }
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 43] = [
+    pub const ALL: [Self; 45] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -267,6 +271,8 @@ impl SettingRow {
         Self::Gateways,
         Self::Pin,
         Self::Vault,
+        Self::AutoLock,
+        Self::DisconnectOnLock,
         Self::Provider,
     ];
 
@@ -309,7 +315,8 @@ impl SettingRow {
             Self::Certificates => SettingsCard::RdpTrusted,
             Self::Gateways => SettingsCard::Gateways,
             Self::Pin => SettingsCard::Pin,
-            Self::Vault => SettingsCard::Vault,
+            // Under the master password, as the C# `SettingsSectionVault` holds them.
+            Self::Vault | Self::AutoLock | Self::DisconnectOnLock => SettingsCard::Vault,
             Self::Provider => SettingsCard::Provider,
         }
     }
@@ -331,8 +338,16 @@ impl SettingRow {
             Self::KeepAlive => SessionField::KeepAlive,
             Self::TmoutReset => SessionField::TmoutReset,
             Self::AntiIdle => SessionField::AntiIdle,
+            Self::AutoLock => SessionField::AutoLock,
             _ => return None,
         })
+    }
+
+    /// Whether it means something only with a master password set: the workspace lock's
+    /// settings, shown disabled without one as the C# shows them.
+    #[must_use]
+    pub fn needs_vault(self) -> bool {
+        matches!(self, Self::AutoLock | Self::DisconnectOnLock)
     }
 
     /// Whether it carries a "Modified" marker and a reset: a value with a default. The
@@ -458,6 +473,7 @@ impl SettingRow {
             Self::Reachability => settings.reachability.enabled,
             Self::SessionLogging => settings.session_logging,
             Self::SshAutoReconnect => settings.ssh_auto_reconnect,
+            Self::DisconnectOnLock => settings.disconnect_on_lock,
             Self::SftpBrowser => sftp.enabled,
             Self::SftpAutoOpen => sftp.auto_open_on_ssh,
             Self::SftpFollow => sftp.follow_ssh_directory,
@@ -492,6 +508,7 @@ impl SettingRow {
             Self::Reachability => SettingsMessage::Reachability(on),
             Self::SessionLogging => SettingsMessage::SessionLogging(on),
             Self::SshAutoReconnect => SettingsMessage::SshAutoReconnect(on),
+            Self::DisconnectOnLock => SettingsMessage::DisconnectOnLock(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
                 ..sftp
@@ -519,10 +536,9 @@ impl SettingRow {
 
 /// A line of the security overview: a security-relevant choice the application has.
 ///
-/// The C# card has twelve; seven name what this application does not have: TFTP sharing,
-/// an idle lock of the master password, disconnecting sessions when locking, Credential
-/// Guard, Windows Hello before connecting, update checks and the `known_hosts` import at
-/// startup. They are left out rather than shown in a state nothing can change.
+/// The C# card has twelve; five name what this application does not have: TFTP sharing,
+/// Credential Guard, Windows Hello before connecting, update checks and the `known_hosts`
+/// import at startup. They are left out rather than shown in a state nothing can change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostureKey {
     /// RDP Network Level Authentication.
@@ -535,6 +551,10 @@ pub enum PostureKey {
     PowerShellExecutionPolicy,
     /// The master password.
     Vault,
+    /// The idle auto-lock.
+    AutoLock,
+    /// The sessions closed when the workspace locks.
+    DisconnectOnLock,
 }
 
 /// The state a line of the security overview reports.
@@ -550,6 +570,12 @@ pub enum PostureState {
     Disabled,
     /// The `PowerShell` policy chosen.
     Policy(ExecutionPolicy),
+    /// The workspace locks after this many minutes without input.
+    AfterMinutes(u32),
+    /// The workspace never locks by itself.
+    Never,
+    /// A workspace lock setting, which means nothing without a master password.
+    RequiresVault,
 }
 
 /// A line of the security overview, as the C# decides it.
@@ -570,10 +596,13 @@ pub struct PostureLine {
 ///
 /// As the C#: NLA off is risky, as the password then goes to a server that has not proved
 /// its identity; transcripts on keep everything typed; Bypass and Unrestricted turn the
-/// script signing check off. Strict server authentication off is the Windows default and the
-/// master password is hardening one opts into: their states are reported, never flagged.
+/// script signing check off; a master password set with no idle lock stays unlocked for as
+/// long as the application runs. Strict server authentication off is the Windows default,
+/// and the master password and disconnecting on lock are hardening one opts into: their
+/// states are reported, never flagged. Without a master password, the two lock lines say so
+/// and lead to it, as there is nothing to lock.
 #[must_use]
-pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 5] {
+pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 7] {
     let on_off = |on: bool| {
         if on {
             PostureState::On
@@ -621,7 +650,44 @@ pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 5] {
             risky: false,
             target: SettingRow::Vault,
         },
+        auto_lock_line(settings.auto_lock_idle_minutes, vault),
+        PostureLine {
+            key: PostureKey::DisconnectOnLock,
+            state: if vault {
+                on_off(settings.disconnect_on_lock)
+            } else {
+                PostureState::RequiresVault
+            },
+            risky: false,
+            target: if vault {
+                SettingRow::DisconnectOnLock
+            } else {
+                SettingRow::Vault
+            },
+        },
     ]
+}
+
+/// The idle auto-lock's line, as the C# `AutoLock`: without a master password there is
+/// nothing to lock, so it says what turns it on and leads there.
+fn auto_lock_line(minutes: u32, vault: bool) -> PostureLine {
+    let (state, risky, target) = if !vault {
+        (PostureState::RequiresVault, false, SettingRow::Vault)
+    } else if minutes == AUTO_LOCK_IDLE_MINUTES_OFF {
+        (PostureState::Never, true, SettingRow::AutoLock)
+    } else {
+        (
+            PostureState::AfterMinutes(minutes),
+            false,
+            SettingRow::AutoLock,
+        )
+    };
+    PostureLine {
+        key: PostureKey::AutoLock,
+        state,
+        risky,
+        target,
+    }
 }
 
 #[cfg(test)]
@@ -694,10 +760,93 @@ mod tests {
             [
                 PostureKey::RdpNla,
                 PostureKey::SessionTranscripts,
-                PostureKey::PowerShellExecutionPolicy
+                PostureKey::PowerShellExecutionPolicy,
+                PostureKey::AutoLock,
             ]
         );
         settings.powershell_execution_policy = ExecutionPolicy::RemoteSigned;
         assert!(!posture(&settings, true)[3].risky);
+    }
+
+    /// The line of `key` in the overview of `settings`, `vault` telling whether a master
+    /// password is set.
+    fn line(settings: &Settings, vault: bool, key: PostureKey) -> PostureLine {
+        posture(settings, vault)
+            .into_iter()
+            .find(|line| line.key == key)
+            .expect("a line")
+    }
+
+    #[test]
+    fn the_lock_lines_need_the_master_password_and_only_no_idle_lock_is_risky() {
+        let mut settings = Settings::default();
+        for key in [PostureKey::AutoLock, PostureKey::DisconnectOnLock] {
+            let without = line(&settings, false, key);
+            assert_eq!(without.state, PostureState::RequiresVault, "{key:?}");
+            assert!(!without.risky, "{key:?}");
+            assert_eq!(
+                without.target,
+                SettingRow::Vault,
+                "leads to what turns it on"
+            );
+        }
+        let never = line(&settings, true, PostureKey::AutoLock);
+        assert_eq!(
+            (never.state, never.risky, never.target),
+            (PostureState::Never, true, SettingRow::AutoLock)
+        );
+        settings.auto_lock_idle_minutes = 15;
+        let after = line(&settings, true, PostureKey::AutoLock);
+        assert_eq!(
+            (after.state, after.risky),
+            (PostureState::AfterMinutes(15), false)
+        );
+        let off = line(&settings, true, PostureKey::DisconnectOnLock);
+        assert_eq!(
+            (off.state, off.risky, off.target),
+            (PostureState::Off, false, SettingRow::DisconnectOnLock)
+        );
+        settings.disconnect_on_lock = true;
+        assert_eq!(
+            line(&settings, true, PostureKey::DisconnectOnLock).state,
+            PostureState::On
+        );
+    }
+
+    #[test]
+    fn the_lock_rows_are_under_the_master_password_and_need_it() {
+        assert_eq!(
+            SettingsCard::Vault.rows(),
+            [
+                SettingRow::Vault,
+                SettingRow::AutoLock,
+                SettingRow::DisconnectOnLock
+            ]
+        );
+        let needing: Vec<SettingRow> = SettingRow::ALL
+            .into_iter()
+            .filter(|row| row.needs_vault())
+            .collect();
+        assert_eq!(
+            needing,
+            [SettingRow::AutoLock, SettingRow::DisconnectOnLock]
+        );
+        let changed = Settings {
+            auto_lock_idle_minutes: 10,
+            disconnect_on_lock: true,
+            ..Settings::default()
+        };
+        assert!(SettingRow::AutoLock.is_modified(&changed));
+        assert!(SettingRow::DisconnectOnLock.is_modified(&changed));
+        assert_eq!(
+            SettingRow::AutoLock.reset(&changed),
+            Some(SettingsMessage::AutoLockIdleMinutes(
+                AUTO_LOCK_IDLE_MINUTES_OFF
+            ))
+        );
+        assert_eq!(
+            SettingRow::DisconnectOnLock.reset(&changed),
+            Some(SettingsMessage::DisconnectOnLock(false))
+        );
     }
 }

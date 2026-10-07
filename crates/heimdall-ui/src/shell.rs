@@ -637,6 +637,11 @@ pub enum Message {
     CopyAnonymousError(TabId),
     /// A second passed while a tab waits to open again: its countdown is drawn anew.
     Tick,
+    /// Time to measure how long the computer has had no input, for the idle auto-lock.
+    IdleTick,
+    /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
+    /// cannot be read.
+    UserInput,
     /// Shift, Ctrl, Alt or the logo key pressed or released.
     Modifiers(keyboard::Modifiers),
     /// A click on a profile of the tree: it alone selected, or, with Ctrl, added or taken,
@@ -888,6 +893,8 @@ impl fmt::Debug for Message {
             Self::CopyError(tab) => write!(f, "CopyError({})", tab.value()),
             Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
+            Self::IdleTick => f.write_str("IdleTick"),
+            Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
             Self::ContentFocus => f.write_str("ContentFocus"),
@@ -1237,6 +1244,9 @@ pub struct Shell {
     certificate_search: String,
     /// The search typed over the trusted FTPS certificates.
     ftps_certificate_search: String,
+    /// The window's own last key, click or wheel turn: the idle time where the computer's
+    /// cannot be read.
+    last_input: std::time::Instant,
     /// Files are dragged over the window.
     files_hovered: bool,
     /// A field that gets the keyboard once this update is drawn: Quick Connect's or the
@@ -1484,6 +1494,7 @@ impl Shell {
             settings_highlight: None,
             certificate_search: String::new(),
             ftps_certificate_search: String::new(),
+            last_input: std::time::Instant::now(),
             files_hovered: false,
             desktop_fit: HashMap::new(),
             search: String::new(),
@@ -1769,6 +1780,17 @@ impl Shell {
         if let Some(interval) = self.app.anti_idle_interval() {
             subscriptions
                 .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
+        }
+        // The idle time measured while the workspace can lock by itself, as the C# idle
+        // timer. Where it is not the computer's, the window's own input is always counted:
+        // counted only once a threshold is set, the time before would count as idle, and
+        // the workspace would lock as soon as one is.
+        if self.app.watches_idle() {
+            subscriptions
+                .push(iced::time::every(heimdall_app::IDLE_POLL).map(|_| Message::IdleTick));
+        }
+        if !crate::idle::SYSTEM_WIDE {
+            subscriptions.push(event::listen_with(crate::idle::input_event));
         }
         // Saves of files edited in an external editor, looked at while there are some.
         if self.app.has_edits() {
@@ -2134,6 +2156,13 @@ impl Shell {
                 self.files_key(FilesKey::SwitchPane)
             }
             Message::LockKey => self.closing_menu(AppMessage::LockVault),
+            Message::IdleTick => self
+                .app
+                .update(AppMessage::Idle(crate::idle::idle_time(self.last_input))),
+            Message::UserInput => {
+                self.last_input = std::time::Instant::now();
+                Vec::new()
+            }
             Message::MainWindowClosed => return iced::exit(),
             Message::BringForward => return self.main_window.map_or_else(Task::none, focus_window),
             message @ (Message::DesktopFit { .. }

@@ -68,14 +68,23 @@ ui-settings-posture-line = { $label } : { $state }
 ui-settings-posture-go-to = Aller au paramètre
 ui-settings-posture-state-enabled = Activé
 ui-settings-posture-state-disabled = Désactivé
+ui-settings-posture-state-after-minutes = { $minutes ->
+    [one] Après { $minutes } minute d'inactivité
+   *[other] Après { $minutes } minutes d'inactivité
+}
+ui-settings-posture-state-never = Jamais
+ui-settings-posture-state-requires-vault = Demande le mot de passe maître
 ui-settings-posture-label-rdp-nla = Authentification au niveau du réseau (NLA) en RDP
 ui-settings-posture-label-rdp-strict-server-auth = Authentification stricte du serveur RDP
 ui-settings-posture-label-transcripts = Transcription des sessions
 ui-settings-posture-label-ps-policy = Politique d'exécution PowerShell
 ui-settings-posture-label-vault = Mot de passe maître
+ui-settings-posture-label-auto-lock = Verrouillage auto après inactivité
+ui-settings-posture-label-disconnect-on-lock = Déconnexion des sessions au verrouillage
 ui-settings-posture-warning-rdp-nla = Sans NLA, vous vous connectez sur un serveur qui n'a pas prouvé son identité.
 ui-settings-posture-warning-transcripts = Chaque session de terminal est écrite dans un fichier, y compris les mots de passe ou jetons renvoyés par le terminal.
 ui-settings-posture-warning-ps-policy = Cette politique désactive la vérification de signature des scripts dans les sessions PowerShell qu'ouvre Heimdall.
+ui-settings-posture-warning-auto-lock = Le mot de passe maître reste déverrouillé tant que Heimdall tourne.
 ui-settings-pin-title = PIN de l'application
 ui-settings-pin-enabled = Un PIN est actuellement défini.
 ui-settings-pin-disabled = Aucun PIN n'est défini.
@@ -152,6 +161,12 @@ ui-settings-vault-disabled = Désactivé
 ui-settings-vault-enable = Activer le mot de passe maître
 ui-settings-vault-change = Changer
 ui-settings-vault-disable = Désactiver
+ui-settings-auto-lock = Verrouillage auto après inactivité (0 = désactivé)
+ui-settings-auto-lock-hint = Verrouille l'espace de travail après ce nombre de minutes d'inactivité globale. 0 désactive le verrouillage auto.
+ui-settings-auto-lock-requires-vault = Le verrouillage automatique et la déconnexion au verrouillage demandent le mot de passe maître ci-dessus : activez-le pour les utiliser.
+ui-settings-auto-lock-refused = Le seuil de verrouillage automatique par inactivité doit être compris entre { $min } et { $max } minutes.
+ui-settings-disconnect-on-lock = Déconnecter les sessions au verrouillage
+ui-settings-disconnect-on-lock-hint = Par défaut, les sessions continuent de tourner masquées derrière le verrou. Activez ceci pour les déconnecter au verrouillage.
 ui-profile-field-password = Mot de passe
 ui-profile-password-saved = Mot de passe enregistré
 ui-profile-password-clear = Effacer
@@ -1091,6 +1106,7 @@ ui-settings-session-log-directory = Répertoire des journaux de session :
 ui-settings-session-log-directory-hint = Dossier des journaux de session, relatif au dossier des paramètres sauf s'il est absolu. Appuyez sur Entrée pour appliquer.
 ui-settings-session-log-retention = Supprimer les transcripts de plus de
 ui-settings-days-unit = jours
+ui-settings-minutes-unit = min
 ui-settings-session-log-retention-hint = 0 conserve tous les transcripts. Seuls les transcripts de session sont supprimés ; les journaux d'événements et d'opérations sur fichiers sont conservés.
 ui-settings-session-log-retention-refused = La conservation des transcripts doit valoir 0 (tout garder) ou être comprise entre { $min } et { $max } jours.
 
@@ -1098,10 +1114,11 @@ ui-broadcast-button = DIFFUSION
 ui-broadcast-toggle-tooltip = Activer/désactiver la diffusion (envoyer à tous les terminaux), Ctrl+Alt+B
 ui-broadcast-on = Mode diffusion ACTIF - { $scope }
 ui-broadcast-off = Mode diffusion DÉSACTIVÉ
+ui-broadcast-scope-current = Onglet actuel
 ui-broadcast-scope-all = Tous les onglets
 ui-broadcast-scope-selected = Onglets sélectionnés ({ $count })
 ui-broadcast-scope-status = Portée de la diffusion : { $scope }
-ui-broadcast-scope-tooltip = Portée de la diffusion (cliquer pour basculer entre tous les onglets et les onglets marqués)
+ui-broadcast-scope-tooltip = Portée de la diffusion (cliquer pour passer de l'onglet actuel à tous les onglets, puis aux onglets marqués)
 ui-broadcast-target-on = ◉
 ui-broadcast-target-off = ○
 ui-broadcast-target-tooltip = Envoyer la diffusion vers cette session (cible de diffusion)

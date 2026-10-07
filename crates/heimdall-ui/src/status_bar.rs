@@ -35,6 +35,7 @@ const PADDING: [f32; 2] = [2.0, 8.0];
 #[must_use]
 pub fn scope_label(scope: BroadcastScope, targets: usize) -> String {
     match scope {
+        BroadcastScope::CurrentTab => fl!("ui-broadcast-scope-current"),
         BroadcastScope::AllTabs => fl!("ui-broadcast-scope-all"),
         BroadcastScope::SelectedTabs => fl!("ui-broadcast-scope-selected", count = targets),
     }
@@ -695,6 +696,10 @@ mod tests {
             "Folder \"Prod/Archive\" created."
         );
         for (notice, said) in [
+            (
+                Notice::BroadcastOn(BroadcastScope::CurrentTab),
+                "Broadcast mode ON - Current tab",
+            ),
             (
                 Notice::BroadcastOn(BroadcastScope::AllTabs),
                 "Broadcast mode ON - All tabs",
