@@ -15,10 +15,11 @@
  */
 
 //! What is read from a server's TLS certificate: the key it is pinned by, the key `CredSSP`
-//! binds to, and a subject and an issuer fit to show.
+//! binds to, a subject and an issuer fit to show, and when it holds.
 
 use std::fmt;
 use std::str::FromStr;
+use std::time::SystemTime;
 
 use data_encoding::BASE64_NOPAD;
 use ring::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
@@ -108,6 +109,55 @@ impl ServerCertificate {
     }
 }
 
+/// When a certificate holds, as its `notBefore` and `notAfter` say: shown in the FTPS
+/// certificate question, as the C# prompt's "Valid from / until".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Validity {
+    /// The first moment it holds.
+    pub not_before: SystemTime,
+    /// The last moment it holds.
+    pub not_after: SystemTime,
+}
+
+/// Where a moment falls in a certificate's [`Validity`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ValidityPeriod {
+    /// Between its two dates, both included.
+    Current,
+    /// After its last moment.
+    Expired,
+    /// Before its first moment.
+    NotYetValid,
+}
+
+impl Validity {
+    /// Reads the validity of a DER certificate.
+    ///
+    /// # Errors
+    ///
+    /// [`CertificateError`] when the DER does not parse.
+    pub fn from_der(der: &[u8]) -> Result<Self, CertificateError> {
+        let certificate = Certificate::from_der(der).map_err(|_| CertificateError)?;
+        let validity = certificate.tbs_certificate().validity();
+        Ok(Self {
+            not_before: validity.not_before.to_system_time(),
+            not_after: validity.not_after.to_system_time(),
+        })
+    }
+
+    /// Where `now` falls in it.
+    #[must_use]
+    pub fn period(&self, now: SystemTime) -> ValidityPeriod {
+        if now < self.not_before {
+            ValidityPeriod::NotYetValid
+        } else if now > self.not_after {
+            ValidityPeriod::Expired
+        } else {
+            ValidityPeriod::Current
+        }
+    }
+}
+
 /// Text chosen by the server, fit to show: no control or direction-changing characters,
 /// bounded.
 pub(crate) fn shown(text: &str) -> String {
@@ -146,6 +196,25 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn a_moment_falls_before_within_or_after_a_validity() {
+        use std::time::{Duration, UNIX_EPOCH};
+
+        let at = |seconds| UNIX_EPOCH + Duration::from_secs(seconds);
+        let validity = Validity {
+            not_before: at(100),
+            not_after: at(200),
+        };
+        assert_eq!(validity.period(at(99)), ValidityPeriod::NotYetValid);
+        assert_eq!(validity.period(at(100)), ValidityPeriod::Current);
+        assert_eq!(validity.period(at(200)), ValidityPeriod::Current);
+        assert_eq!(validity.period(at(201)), ValidityPeriod::Expired);
+        assert_eq!(
+            Validity::from_der(b"not a certificate"),
+            Err(CertificateError)
+        );
     }
 
     #[test]

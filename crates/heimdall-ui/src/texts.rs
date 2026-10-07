@@ -28,6 +28,7 @@ use heimdall_core::profile::{
     FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, RdpExtra, display_address,
 };
 use heimdall_core::store::RouteError;
+use heimdall_files::ftps_trust::ValidationIssue;
 use heimdall_files::{LocalNameError, Refusal};
 use heimdall_rdp::{Ending, Refusal as RdpRefusal};
 use heimdall_ssh::AuthMethod;
@@ -328,6 +329,22 @@ pub fn citrix_refusal(refusal: &CitrixRefusal) -> String {
         }
         CitrixRefusal::CommandRejected => fl!("ui-status-citrix-command-rejected"),
         CitrixRefusal::VaultLocked => fl!("ui-status-citrix-vault-locked"),
+    }
+}
+
+/// Why the system did not vouch for an FTPS server's certificate, as the C# prompt's
+/// "Validation issue".
+#[must_use]
+pub fn validation_issue(issue: ValidationIssue) -> String {
+    match issue {
+        ValidationIssue::SelfSigned => fl!("ui-certificate-issue-self-signed"),
+        ValidationIssue::UnknownIssuer => fl!("ui-certificate-issue-unknown-issuer"),
+        ValidationIssue::Expired => fl!("ui-certificate-issue-expired"),
+        ValidationIssue::NotYetValid => fl!("ui-certificate-issue-not-yet-valid"),
+        ValidationIssue::NameMismatch => fl!("ui-certificate-issue-name-mismatch"),
+        ValidationIssue::Revoked => fl!("ui-certificate-issue-revoked"),
+        ValidationIssue::NoSystemStore => fl!("ui-certificate-issue-no-system-store"),
+        ValidationIssue::Other => fl!("ui-certificate-issue-other"),
     }
 }
 

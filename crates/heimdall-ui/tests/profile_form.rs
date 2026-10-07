@@ -744,7 +744,7 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
         let mut ui = tall_simulator(&shell);
         ui.find("This server is using your global RDP defaults. Uncheck \"Use global RDP defaults\" to set per-server options.")
             .expect("the banner");
-        ui.find("Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.")
+        ui.find("Colours, sound, clipboard, drives, Network Level Authentication, strict server authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.")
             .expect("what the options below are");
         ui.click("Use global RDP defaults").expect("its box");
         assert!(ui.into_messages().any(|message| matches!(
@@ -761,7 +761,7 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
     }));
     let mut ui = tall_simulator(&shell);
     assert!(
-        ui.find("Colours, sound, clipboard, drives, Network Level Authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.")
+        ui.find("Colours, sound, clipboard, drives, Network Level Authentication, strict server authentication and dynamic resolution come from the global defaults: the values shown for them below are this server's own, not the ones in effect.")
             .is_err(),
         "its own options are the ones in effect"
     );

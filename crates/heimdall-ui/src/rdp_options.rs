@@ -132,21 +132,124 @@ fn experience_label(experience: Experience) -> String {
     }
 }
 
+/// A box of the RDP settings: its label, what it shows and what it changes.
+struct Switch {
+    /// Its label, in the C# words.
+    label: String,
+    /// Whether it is ticked.
+    get: fn(&RdpDefaults) -> bool,
+    /// Ticks or clears it.
+    set: fn(&mut RdpDefaults, bool),
+    /// Offered only while Network Level Authentication is on, as the C# page greys strict
+    /// server authentication out without it.
+    needs_nla: bool,
+}
+
+impl Switch {
+    fn new(label: String, get: fn(&RdpDefaults) -> bool, set: fn(&mut RdpDefaults, bool)) -> Self {
+        Self {
+            label,
+            get,
+            set,
+            needs_nla: false,
+        }
+    }
+}
+
+/// The boxes of the RDP settings, in the C# page's order: display, sound, redirections,
+/// performance, then security.
+fn switches() -> [Switch; 16] {
+    [
+        Switch::new(
+            fl!("ui-profile-resolution-dynamic"),
+            |d| d.dynamic_resolution,
+            |d, on| d.dynamic_resolution = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-multi-monitor"),
+            |d| d.multi_monitor,
+            |d, on| d.multi_monitor = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-audio-capture"),
+            |d| d.microphone,
+            |d, on| d.microphone = on,
+        ),
+        Switch::new(
+            fl!("ui-profile-toggle-clipboard"),
+            |d| d.redirect_clipboard,
+            |d, on| d.redirect_clipboard = on,
+        ),
+        Switch::new(
+            fl!("ui-profile-toggle-drives"),
+            |d| d.redirect_drives,
+            |d, on| d.redirect_drives = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-redirect-printers"),
+            |d| d.redirect_printers,
+            |d, on| d.redirect_printers = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-redirect-com-ports"),
+            |d| d.redirect_com_ports,
+            |d, on| d.redirect_com_ports = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-redirect-smart-cards"),
+            |d| d.redirect_smart_cards,
+            |d, on| d.redirect_smart_cards = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-redirect-webcam"),
+            |d| d.redirect_webcam,
+            |d, on| d.redirect_webcam = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-redirect-usb"),
+            |d| d.redirect_usb,
+            |d, on| d.redirect_usb = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-bitmap-cache"),
+            |d| d.bitmap_caching,
+            |d, on| d.bitmap_caching = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-compression"),
+            |d| d.compression,
+            |d, on| d.compression = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-hardware-acceleration"),
+            |d| d.hardware_acceleration,
+            |d, on| d.hardware_acceleration = on,
+        ),
+        Switch::new(
+            fl!("ui-settings-rdp-auto-reconnect"),
+            |d| d.auto_reconnect,
+            |d, on| d.auto_reconnect = on,
+        ),
+        Switch::new(fl!("ui-profile-toggle-nla"), |d| d.nla, |d, on| d.nla = on),
+        Switch {
+            needs_nla: true,
+            ..Switch::new(
+                fl!("ui-settings-rdp-strict-server-auth"),
+                |d| d.strict_server_authentication,
+                |d, on| d.strict_server_authentication = on,
+            )
+        },
+    ]
+}
+
 /// The application's RDP options, as the C# RDP settings: what a profile following them
-/// takes, each change applied at once.
+/// takes, in the C# page's order, each change applied at once.
 #[must_use]
 pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
     let send = |defaults: RdpDefaults| {
         Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(defaults)))
     };
-    let tick = move |on: bool, label: String, set: fn(&mut RdpDefaults, bool)| {
-        checkbox(on).label(label).on_toggle(move |on| {
-            let mut changed = defaults;
-            set(&mut changed, on);
-            send(changed)
-        })
-    };
-    column![
+    let mut page = column![
         text(fl!("ui-settings-rdp-defaults-hint")).size(LABEL_SIZE),
         lists(
             defaults.audio,
@@ -157,31 +260,21 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
                 ..defaults
             }),
         ),
-        tick(
-            defaults.redirect_clipboard,
-            fl!("ui-profile-toggle-clipboard"),
-            |d, on| d.redirect_clipboard = on,
-        ),
-        tick(
-            defaults.redirect_drives,
-            fl!("ui-profile-toggle-drives"),
-            |d, on| d.redirect_drives = on,
-        ),
-        tick(defaults.nla, fl!("ui-profile-toggle-nla"), |d, on| d.nla =
-            on),
-        tick(
-            defaults.dynamic_resolution,
-            fl!("ui-profile-resolution-dynamic"),
-            |d, on| d.dynamic_resolution = on,
-        ),
-        tick(
-            defaults.auto_reconnect,
-            fl!("ui-settings-rdp-auto-reconnect"),
-            |d, on| d.auto_reconnect = on,
-        ),
     ]
-    .spacing(SPACING)
-    .into()
+    .spacing(SPACING);
+    for switch in switches() {
+        let mut tick = checkbox((switch.get)(&defaults)).label(switch.label);
+        if !switch.needs_nla || defaults.nla {
+            let set = switch.set;
+            tick = tick.on_toggle(move |on| {
+                let mut changed = defaults;
+                set(&mut changed, on);
+                send(changed)
+            });
+        }
+        page = page.push(tick);
+    }
+    page.into()
 }
 
 /// A resolution mode as the list names it.

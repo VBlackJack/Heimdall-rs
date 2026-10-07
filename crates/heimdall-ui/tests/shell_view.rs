@@ -3453,6 +3453,7 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         warnings: Vec::new(),
         stored_credentials: None,
         host_keys: None,
+        gateways: heimdall_core::import::gateways::Reconciliation::default(),
         dropped: vec![(
             "desk".to_owned(),
             vec![Dropped::RdpPrinters, Dropped::RdpSmartCards],
@@ -3464,6 +3465,36 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
         .expect("said");
     ui.find("desk: printers, smart cards")
         .expect("the profile and what it came without");
+    assert!(
+        ui.find("SSH gateways: 0 created, 0 merged.").is_err(),
+        "no gateway line for a file without gateways"
+    );
+}
+
+#[test]
+fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport {
+            added: 4,
+            updated: 0,
+            unchanged: 0,
+        },
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        gateways: heimdall_core::import::gateways::Reconciliation {
+            created: 2,
+            merged: 1,
+        },
+        dropped: Vec::new(),
+    }));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("SSH gateways: 2 created, 1 merged.")
+        .expect("the gateway line");
 }
 
 /// What the dialog of a profile file unreadable at start says, never said of a save.

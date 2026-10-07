@@ -484,11 +484,13 @@ impl App {
                 host,
                 port,
                 subject,
+                details,
                 ..
             } => self
                 .certificate_context(tab_id, host, *port)
                 .map(|context| CertificateContext {
                     subject: subject.clone(),
+                    details: details.as_deref().cloned(),
                     ..context
                 }),
             _ => None,
@@ -547,6 +549,7 @@ impl App {
             others,
             route,
             subject: None,
+            details: None,
         })
     }
 

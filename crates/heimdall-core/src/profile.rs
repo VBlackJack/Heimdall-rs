@@ -431,7 +431,9 @@ impl RdpExtras {
 
 impl RdpProfile {
     /// The profile a session opens with: its own values, or, when it follows them, the
-    /// application's `defaults` in their place. Derived for each session, never saved.
+    /// application's `defaults` in their place, as the C# `RdpProfileResolver` takes the
+    /// `RdpDefault*` settings for a profile with `RdpUseGlobalDefaults`. Derived for each
+    /// session, never saved.
     #[must_use]
     pub fn effective(self, defaults: &RdpDefaults) -> Self {
         let mut profile = self;
@@ -443,13 +445,28 @@ impl RdpProfile {
             profile.options.audio = defaults.audio;
             profile.options.dynamic_resolution = defaults.dynamic_resolution;
             profile.auto_reconnect = defaults.auto_reconnect;
+            let extras = &mut profile.extras;
+            extras.redirect_printers = defaults.redirect_printers;
+            extras.redirect_com_ports = defaults.redirect_com_ports;
+            extras.redirect_smart_cards = defaults.redirect_smart_cards;
+            extras.redirect_webcam = defaults.redirect_webcam;
+            extras.redirect_usb = defaults.redirect_usb;
+            extras.microphone = defaults.microphone;
+            // Read only where the resolution mode leaves it the choice, as the C#
+            // `ResolveMultiMonitor`; the mode stays the profile's.
+            extras.multi_monitor = defaults.multi_monitor;
+            extras.strict_server_authentication = defaults.strict_server_authentication;
+            extras.bitmap_caching = defaults.bitmap_caching;
+            extras.compression = defaults.compression;
+            extras.hardware_acceleration = defaults.hardware_acceleration;
         }
         profile
     }
 }
 
 /// The RDP options of the application, which a profile following them takes, as the C#
-/// `RdpDefault*` settings, with their defaults.
+/// `RdpDefault*` settings, with their defaults. Each one absent from a settings file written
+/// before it existed takes its default, so that file reads as it did.
 #[expect(
     clippy::struct_excessive_bools,
     reason = "one switch per C# `RdpDefault*` setting"
@@ -462,18 +479,52 @@ pub struct RdpDefaults {
     /// Share this computer's drives, as `RdpDefaultRedirectDrives`: off.
     #[serde(default)]
     pub redirect_drives: bool,
+    /// Share this computer's printers, as `RdpDefaultRedirectPrinters`: off.
+    #[serde(default)]
+    pub redirect_printers: bool,
+    /// Share this computer's serial ports, as `RdpDefaultRedirectComPorts`: off.
+    #[serde(default)]
+    pub redirect_com_ports: bool,
+    /// Share this computer's smart cards, as `RdpDefaultRedirectSmartCards`: off.
+    #[serde(default)]
+    pub redirect_smart_cards: bool,
+    /// Share this computer's webcam, as `RdpDefaultRedirectWebcam`: off.
+    #[serde(default)]
+    pub redirect_webcam: bool,
+    /// Share this computer's USB devices, as `RdpDefaultRedirectUsb`: off.
+    #[serde(default)]
+    pub redirect_usb: bool,
     /// Require Network Level Authentication, as `RdpDefaultNla`: on.
     #[serde(default = "shared")]
     pub nla: bool,
+    /// Refuse a server whose identity cannot be checked, as
+    /// `RdpDefaultStrictServerAuthentication`: off.
+    #[serde(default)]
+    pub strict_server_authentication: bool,
     /// Colours of the desktop, as `RdpDefaultColorDepth`: 32 bits.
     #[serde(default)]
     pub color_depth: ColorDepth,
     /// Where the sound goes, as `RdpDefaultAudioMode`: not played.
     #[serde(default)]
     pub audio: AudioPlayback,
+    /// Record from this computer's microphone, as `RdpDefaultAudioCapture`: off.
+    #[serde(default)]
+    pub microphone: bool,
     /// The desktop follows the tab's size, as `RdpDefaultDynamicResolution`: on.
     #[serde(default = "shared")]
     pub dynamic_resolution: bool,
+    /// Span the desktop over several monitors, as `RdpDefaultMultiMonitor`: off.
+    #[serde(default)]
+    pub multi_monitor: bool,
+    /// Keep bitmaps in a cache, as `RdpDefaultBitmapCaching`: on.
+    #[serde(default = "shared")]
+    pub bitmap_caching: bool,
+    /// Compress the traffic, as `RdpDefaultCompression`: on.
+    #[serde(default = "shared")]
+    pub compression: bool,
+    /// Decode through the graphics adapter, as `RdpDefaultHardwareAcceleration`: off.
+    #[serde(default)]
+    pub hardware_acceleration: bool,
     /// A dropped desktop is opened again by itself, as `RdpDefaultAutoReconnect`: on.
     #[serde(default = "shared")]
     pub auto_reconnect: bool,
@@ -484,10 +535,21 @@ impl Default for RdpDefaults {
         Self {
             redirect_clipboard: true,
             redirect_drives: false,
+            redirect_printers: false,
+            redirect_com_ports: false,
+            redirect_smart_cards: false,
+            redirect_webcam: false,
+            redirect_usb: false,
             nla: true,
+            strict_server_authentication: false,
             color_depth: ColorDepth::default(),
             audio: AudioPlayback::default(),
+            microphone: false,
             dynamic_resolution: true,
+            multi_monitor: false,
+            bitmap_caching: true,
+            compression: true,
+            hardware_acceleration: false,
             auto_reconnect: true,
         }
     }

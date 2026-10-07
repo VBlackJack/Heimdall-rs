@@ -161,6 +161,7 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
         attempt,
         ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
@@ -192,6 +193,7 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
         *second,
         ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
@@ -218,6 +220,7 @@ fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
         attempt,
         ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
@@ -240,6 +243,7 @@ fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
         again_attempt,
         ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
@@ -953,6 +957,7 @@ fn the_certificate_question_counts_the_other_certificates_and_names_the_route() 
         attempt,
         ConnectionEvent::UnknownRdpCertificate {
             subject: Some("CN=dc.lab".to_owned()),
+            details: None,
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
@@ -965,6 +970,7 @@ fn the_certificate_question_counts_the_other_certificates_and_names_the_route() 
             others: 2,
             route: vec!["Edge".to_owned(), "Bastion".to_owned()],
             subject: Some("CN=dc.lab".to_owned()),
+            details: None,
         })
     );
 

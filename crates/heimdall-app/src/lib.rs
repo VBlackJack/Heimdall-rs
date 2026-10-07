@@ -97,7 +97,8 @@ pub use desktop::{
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};
 pub use event::{
-    Answer, ConnectionEvent, PostConnectProgress, QuestionKind, ServerPasswordQuestion, StepStatus,
+    Answer, CertificateDetails, ConnectionEvent, PostConnectProgress, QuestionKind,
+    ServerPasswordQuestion, StepStatus,
 };
 /// The quality a VNC desktop is asked at, from its toolbar's "Quality" menu.
 pub use heimdall_remote::vnc::Quality as VncQuality;

@@ -62,10 +62,21 @@ fn the_csharp_defaults_are_the_application_ones_until_changed() {
         RdpDefaults {
             redirect_clipboard: true,
             redirect_drives: false,
+            redirect_printers: false,
+            redirect_com_ports: false,
+            redirect_smart_cards: false,
+            redirect_webcam: false,
+            redirect_usb: false,
             nla: true,
+            strict_server_authentication: false,
             color_depth: ColorDepth::Bpp32,
             audio: AudioPlayback::Off,
+            microphone: false,
             dynamic_resolution: true,
+            multi_monitor: false,
+            bitmap_caching: true,
+            compression: true,
+            hardware_acceleration: false,
             auto_reconnect: true,
         }
     );
@@ -82,6 +93,7 @@ fn a_following_profile_takes_the_defaults_and_keeps_what_they_do_not_cover() {
         audio: AudioPlayback::OnServer,
         dynamic_resolution: true,
         auto_reconnect: true,
+        ..RdpDefaults::default()
     };
     let effective = own(true).effective(&defaults);
     assert_eq!(
@@ -156,11 +168,114 @@ fn the_defaults_are_written_in_the_settings_and_read_back() {
             audio: AudioPlayback::Local,
             dynamic_resolution: false,
             auto_reconnect: true,
+            redirect_usb: true,
+            strict_server_authentication: true,
+            compression: false,
+            ..RdpDefaults::default()
         },
         ..Settings::default()
     };
     settings.save(&path).expect("save");
     assert_eq!(Settings::load(&path).expect("load"), settings);
+}
+
+#[test]
+fn each_csharp_default_reaches_a_following_profile_and_one_with_its_own_keeps_them() {
+    // Every default the opposite of its factory value, so each one shows.
+    let factory = RdpDefaults::default();
+    let defaults = RdpDefaults {
+        redirect_printers: !factory.redirect_printers,
+        redirect_com_ports: !factory.redirect_com_ports,
+        redirect_smart_cards: !factory.redirect_smart_cards,
+        redirect_webcam: !factory.redirect_webcam,
+        redirect_usb: !factory.redirect_usb,
+        strict_server_authentication: !factory.strict_server_authentication,
+        microphone: !factory.microphone,
+        multi_monitor: !factory.multi_monitor,
+        bitmap_caching: !factory.bitmap_caching,
+        compression: !factory.compression,
+        hardware_acceleration: !factory.hardware_acceleration,
+        ..factory
+    };
+    let extras = own(true).effective(&defaults).extras;
+    assert_eq!(
+        [
+            extras.redirect_printers,
+            extras.redirect_com_ports,
+            extras.redirect_smart_cards,
+            extras.redirect_webcam,
+            extras.redirect_usb,
+            extras.strict_server_authentication,
+            extras.microphone,
+            extras.multi_monitor,
+            extras.bitmap_caching,
+            extras.compression,
+            extras.hardware_acceleration,
+        ],
+        [
+            defaults.redirect_printers,
+            defaults.redirect_com_ports,
+            defaults.redirect_smart_cards,
+            defaults.redirect_webcam,
+            defaults.redirect_usb,
+            defaults.strict_server_authentication,
+            defaults.microphone,
+            defaults.multi_monitor,
+            defaults.bitmap_caching,
+            defaults.compression,
+            defaults.hardware_acceleration,
+        ],
+        "every RdpDefault* the C# resolver reads"
+    );
+    // What the defaults do not cover stays the profile's.
+    let mut kept = own(true);
+    kept.extras.rd_gateway = Some("rdg.lab".to_owned());
+    kept.extras.disable_udp = true;
+    kept.extras.full_screen = true;
+    kept.extras.monitors = vec![1];
+    let effective = kept.clone().effective(&defaults);
+    assert_eq!(
+        (
+            effective.extras.rd_gateway,
+            effective.extras.disable_udp,
+            effective.extras.full_screen,
+            effective.extras.monitors,
+        ),
+        (Some("rdg.lab".to_owned()), true, true, vec![1])
+    );
+    // A profile with its own options keeps every one of them.
+    let mut own_choice = own(false);
+    own_choice.extras.strict_server_authentication = true;
+    own_choice.extras.compression = false;
+    assert_eq!(own_choice.clone().effective(&defaults), own_choice);
+}
+
+#[test]
+fn a_settings_file_written_before_the_new_defaults_reads_as_it_did() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    // The [rdp] section as it was written with the first seven defaults alone.
+    std::fs::write(
+        &path,
+        "version = 1\n\n[rdp]\nredirect_clipboard = false\nredirect_drives = true\nnla = false\n\
+         color_depth = 16\naudio = \"local\"\ndynamic_resolution = false\nauto_reconnect = false\n",
+    )
+    .expect("write");
+    let read = Settings::load(&path).expect("load").rdp_defaults;
+    assert_eq!(
+        read,
+        RdpDefaults {
+            redirect_clipboard: false,
+            redirect_drives: true,
+            nla: false,
+            color_depth: ColorDepth::Bpp16,
+            audio: AudioPlayback::Local,
+            dynamic_resolution: false,
+            auto_reconnect: false,
+            ..RdpDefaults::default()
+        },
+        "its seven kept, the others at their C# defaults"
+    );
 }
 
 #[test]

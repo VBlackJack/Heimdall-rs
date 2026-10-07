@@ -25,7 +25,8 @@ use std::time::Duration;
 use heimdall_app::ftp_driver::{FtpRequest, ftp_events};
 use heimdall_app::{AnswerRegistry, ConnectionEvent};
 use heimdall_core::profile::{FtpProfile, ProfileId};
-use heimdall_rdp::{KnownRdpHosts, Verdict};
+use heimdall_files::ftps_trust::ValidationIssue;
+use heimdall_rdp::{KnownRdpHosts, ValidityPeriod, Verdict};
 use tokio_stream::StreamExt as _;
 use tokio_util::sync::CancellationToken;
 use unftp_sbe_fs::Filesystem;
@@ -127,12 +128,33 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
         host,
         port: asked_port,
         fingerprint,
-        ..
+        subject,
+        details,
     } = event
     else {
         panic!("the certificate question, got {event:?}");
     };
     assert_eq!((host.as_str(), asked_port), ("localhost", port));
+    // What the C# FTPS prompt shows beside the subject.
+    let details = details.expect("the issuer, the validity and the issue");
+    assert_eq!(
+        Some(details.issuer.as_str()),
+        subject.as_deref(),
+        "self-signed: its own issuer"
+    );
+    assert_eq!(
+        details.validity.period(std::time::SystemTime::now()),
+        ValidityPeriod::Current
+    );
+    assert!(
+        matches!(
+            details.issue,
+            // A machine without certificate authorities has none to vouch for it.
+            ValidationIssue::SelfSigned | ValidationIssue::NoSystemStore
+        ),
+        "{:?}",
+        details.issue
+    );
 
     // Trusted: the next attempt goes through and records it.
     let mut accepted = request(port, true, &known);

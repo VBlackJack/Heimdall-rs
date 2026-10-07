@@ -755,7 +755,8 @@ async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_truste
         .lock()
         .expect("slot")
         .clone()
-        .expect("kept for the question");
+        .expect("kept for the question")
+        .der;
     assert_eq!(shown, cert, "the certificate the server presented");
 
     // Trusted by its fingerprint: through.
