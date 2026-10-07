@@ -23,6 +23,8 @@
 use heimdall_core::window_state::{Bounds, WindowState, place};
 use iced::{Point, Size, Task, Vector, window};
 
+use crate::rdp_options::Monitor;
+
 /// Every screen's working area, the screen less its taskbar, in physical pixels.
 #[cfg(windows)]
 #[must_use]
@@ -52,6 +54,38 @@ pub fn work_areas() -> Vec<Bounds> {
 #[cfg(not(windows))]
 #[must_use]
 pub fn work_areas() -> Vec<Bounds> {
+    Vec::new()
+}
+
+/// Every screen, in the order the system lists them, as the C# `Screen.AllScreens`.
+#[cfg(windows)]
+#[must_use]
+pub fn monitors() -> Vec<Monitor> {
+    use winsafe::prelude::*;
+
+    let mut found = Vec::new();
+    let listed = winsafe::HDC::NULL.EnumDisplayMonitors(None, |monitor, _, _| {
+        if let Ok(info) = monitor.GetMonitorInfo() {
+            let area = info.rcMonitor;
+            found.push(Monitor {
+                index: u32::try_from(found.len()).unwrap_or(u32::MAX),
+                width: u32::try_from(area.right - area.left).unwrap_or_default(),
+                height: u32::try_from(area.bottom - area.top).unwrap_or_default(),
+                primary: info.dwFlags == winsafe::co::MONITORINFOF::PRIMARY,
+            });
+        }
+        true
+    });
+    if let Err(error) = listed {
+        log::warn!("the screens could not be listed: {error}");
+    }
+    found
+}
+
+/// The screens are listed on Windows only, where Remote Desktop Connection spans them.
+#[cfg(not(windows))]
+#[must_use]
+pub fn monitors() -> Vec<Monitor> {
     Vec::new()
 }
 
