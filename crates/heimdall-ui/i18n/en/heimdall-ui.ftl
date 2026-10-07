@@ -326,6 +326,10 @@ ui-import-dropped-rdp-usb = USB devices
 ui-import-dropped-rdp-microphone = microphone
 ui-import-dropped-rdp-multi-monitor = several monitors
 ui-import-dropped-citrix-cache-launch = launch from the Citrix Workspace cache, not imported
+ui-import-dropped-local-post-connect = { $count ->
+    [one] post-connect sequence of { $count } step, which a local shell never runs
+   *[other] post-connect sequence of { $count } steps, which a local shell never runs
+}
 ui-citrix-import-title = Citrix Applications
 ui-citrix-import-none = No Citrix applications found in the local cache. Open Citrix Workspace and connect to a store first.
 ui-citrix-import-confirm = { $count ->
@@ -487,7 +491,6 @@ ui-local-shell-name = Local shell
 ui-local-starting = Starting { $name }...
 ui-error-local-shell = The local shell could not be started: { $detail }
 ui-import-skip-elevation = runs elevated, not supported yet
-ui-import-skip-post-connect = runs commands once started, not supported yet
 ui-import-skip-unsafe-local = its program, arguments or folder cannot be run as written (relative path, quote, NUL character, or a folder on another machine)
 ui-dialog-local-title = Run this program?
 ui-dialog-local-body = The profile { $name } runs the command below. Heimdall runs it only once you agree, and asks again if it changes.
@@ -1095,6 +1098,10 @@ ui-settings-anti-idle-unit = s
 ui-settings-anti-idle-refused = Anti-idle interval must be 0, or between { $min } and { $max } seconds.
 ui-settings-session-log-directory = Session log directory:
 ui-settings-session-log-directory-hint = Directory for session log files, relative to the settings folder unless absolute. Press Enter to apply.
+ui-settings-session-log-retention = Delete transcripts older than
+ui-settings-days-unit = days
+ui-settings-session-log-retention-hint = 0 keeps every transcript. Only session transcripts are deleted.
+ui-settings-session-log-retention-refused = Transcript retention must be 0 (keep all) or between { $min } and { $max } days.
 
 ## Broadcast input, as the C# one.
 ui-broadcast-button = BROADCAST

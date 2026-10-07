@@ -165,6 +165,59 @@ fn session_logging_is_off_by_default_and_its_folder_beside_the_settings() {
 }
 
 #[test]
+fn transcripts_are_kept_forever_by_default_and_their_retention_within_the_csharp_range() {
+    use heimdall_core::settings::{
+        SESSION_LOG_RETENTION_DAYS_DEFAULT, SESSION_LOG_RETENTION_DAYS_MAX,
+        SESSION_LOG_RETENTION_DAYS_MIN, session_log_retention_days_accepted,
+    };
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.session_log_retention_days, 0, "the C# default");
+    assert_eq!(SESSION_LOG_RETENTION_DAYS_DEFAULT, 0);
+    assert_eq!(
+        (
+            SESSION_LOG_RETENTION_DAYS_MIN,
+            SESSION_LOG_RETENTION_DAYS_MAX
+        ),
+        (7, 3650),
+        "the C# range"
+    );
+    for (days, accepted) in [(0, true), (1, false), (6, false), (7, true), (3650, true)] {
+        assert_eq!(
+            session_log_retention_days_accepted(days),
+            accepted,
+            "{days}"
+        );
+    }
+    assert!(!session_log_retention_days_accepted(3651));
+
+    settings.session_log_retention_days = 30;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path)
+            .expect("load")
+            .session_log_retention_days,
+        30
+    );
+
+    // A file written before the setting: every transcript kept.
+    let older = written(
+        dir.path(),
+        "version = 1\n[session_log]\nenabled = true\ndirectory = \"transcripts\"\n",
+    );
+    assert!(older.session_logging);
+    assert_eq!(older.session_log_retention_days, 0);
+    // Edited by hand out of the range: the default.
+    let out_of_range = written(
+        dir.path(),
+        "version = 1\n[session_log]\nretention_days = 3\n",
+    );
+    assert_eq!(out_of_range.session_log_retention_days, 0);
+}
+
+#[test]
 fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);

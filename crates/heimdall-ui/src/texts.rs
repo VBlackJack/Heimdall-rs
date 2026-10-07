@@ -307,6 +307,9 @@ pub fn dropped_setting(dropped: Dropped) -> String {
         Dropped::RdpMicrophone => fl!("ui-import-dropped-rdp-microphone"),
         Dropped::RdpMultiMonitor => fl!("ui-import-dropped-rdp-multi-monitor"),
         Dropped::CitrixCacheLaunch => fl!("ui-import-dropped-citrix-cache-launch"),
+        Dropped::LocalPostConnect(count) => {
+            fl!("ui-import-dropped-local-post-connect", count = count)
+        }
     }
 }
 
@@ -358,7 +361,6 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         SkipReason::MissingGateway => fl!("ui-import-skip-missing-gateway"),
         SkipReason::GatewayLoop => fl!("ui-import-skip-gateway-loop"),
         SkipReason::NeedsElevation => fl!("ui-import-skip-elevation"),
-        SkipReason::NeedsPostConnectCommands => fl!("ui-import-skip-post-connect"),
         SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),
         SkipReason::MissingUsername => fl!("ui-import-skip-missing-username"),
         SkipReason::UnknownIdentityMode => fl!("ui-import-skip-unknown-identity"),

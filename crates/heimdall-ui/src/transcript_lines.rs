@@ -101,6 +101,26 @@ mod tests {
         );
     }
 
+    /// The retention removes only the transcripts opening with the marker: a translation
+    /// whose header did not would keep its transcripts forever.
+    #[test]
+    fn every_translation_of_the_header_opens_with_the_marker_the_retention_reads() {
+        let crate_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let key = "ui-transcript-header = ";
+        for language in heimdall_i18n::SUPPORTED_LANGUAGES {
+            let path = heimdall_i18n::ftl_path(crate_root, language, env!("CARGO_PKG_NAME"));
+            let source = std::fs::read_to_string(&path).expect("readable");
+            let header = source
+                .lines()
+                .find_map(|line| line.strip_prefix(key))
+                .expect("a header");
+            assert!(
+                header.starts_with(heimdall_app::transcript::HEADER_MARKER),
+                "{language}: {header}"
+            );
+        }
+    }
+
     #[test]
     fn a_duration_is_written_as_the_csharp_constant_format() {
         assert_eq!(duration(Duration::ZERO), "00:00:00");

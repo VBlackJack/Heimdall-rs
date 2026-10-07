@@ -26,7 +26,8 @@ use heimdall_app::files::{
     Direction, EntryKind, FilesKey, LocalEntry, RemoteEntry, Side, TransferEvent, plan_transfer,
 };
 use heimdall_app::{
-    App, AppConfig, ConnectionEvent, Effect, FilesMessage, Message as AppMessage, TabId,
+    App, AppConfig, AttemptId, ConnectionEvent, Effect, FilesMessage, Message as AppMessage, TabId,
+    UiError,
 };
 use heimdall_core::profile::{ProfileId, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -127,6 +128,12 @@ fn local(name: &str, kind: EntryKind) -> LocalEntry {
 
 /// A Files tab with both panes listed.
 async fn files_tab(dir: &Path) -> (App, TabId) {
+    let (core, tab, _) = files_tab_attempt(dir).await;
+    (core, tab)
+}
+
+/// A Files tab with both panes listed, and the attempt its session came from.
+async fn files_tab_attempt(dir: &Path) -> (App, TabId, AttemptId) {
     let mut core = app(dir);
     let (tab, attempt) = match core
         .update(AppMessage::OpenFiles(ProfileId::new("a")))
@@ -163,7 +170,7 @@ async fn files_tab(dir: &Path) -> (App, TabId) {
             ],
         )),
     }));
-    (core, tab)
+    (core, tab, attempt)
 }
 
 fn simulator(shell: &Shell) -> common::Drawn<'_> {
@@ -2011,4 +2018,36 @@ async fn a_double_click_on_a_separator_fits_the_column_on_its_left_to_its_widest
         widest,
         "as wide as its header or its widest cell",
     );
+}
+
+/// A Files tab's session reports nothing once its listing is ready: no drop reaches its
+/// tab, and its listing never goes behind a failure card. Were one to come, the listing
+/// would stay in sight, read only, the failure and its ways out under it.
+#[tokio::test]
+async fn a_dropped_files_tab_keeps_its_listing_in_sight_read_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, tab, attempt) = files_tab_attempt(dir.path()).await;
+    core.update(AppMessage::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::ConnectionLost),
+    });
+    let files = core
+        .tab(tab)
+        .and_then(|found| found.files.as_deref())
+        .expect("its pane");
+    assert!(
+        files.client.is_none() && files.shell.is_none(),
+        "nothing it offers reaches the session gone"
+    );
+    let shell = Shell::with_app(core);
+    snapshot(&shell, "files-dropped.png");
+    let mut ui = simulator(&shell);
+    for entry in ["logs/", "backup.tar.gz", "Documents/", "notes.md"] {
+        ui.find(entry).expect(entry);
+    }
+    ui.find("Session disconnected unexpectedly.")
+        .expect("the failure said");
+    assert!(ui.find("The connection failed").is_err(), "no card over it");
+    ui.find("Reconnect").expect("its way out");
 }

@@ -19,7 +19,11 @@
 //! the window words; continued in `.1.log`, `.2.log`... past a size cap. A file is never
 //! written over, and a transcript dropped unfinished is finished then. On Unix only its owner may read it; on Windows it takes the rights of the
 //! folder it is in.
+//!
+//! Transcripts older than the retention the settings give are removed at start, as the C#
+//! `PruneExpiredTranscripts`: only the files this module writes, in the folder itself.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
@@ -44,6 +48,20 @@ const NEWLINE: &str = if cfg!(windows) { "\r\n" } else { "\n" };
 
 /// The characters a file name cannot hold on Windows, left out on every platform.
 const NOT_IN_NAMES: &[char] = &['<', '>', ':', '"', '/', '\\', '|', '?', '*'];
+
+/// How every translation of a transcript's header opens, as the C# `HeaderMarker`: a file
+/// that does not open with it was not written here, whatever its name.
+pub const HEADER_MARKER: &str = "=====";
+
+/// The byte order mark a file written by another tool may open with, before its text.
+const UTF8_BOM: &[u8] = &[0xEF, 0xBB, 0xBF];
+
+/// Seconds in a day of retention.
+const SECONDS_PER_DAY: u64 = 86_400;
+
+/// Digits of the date and of the time in a transcript's name, `20260927_210503`.
+const DATE_DIGITS: usize = 8;
+const TIME_DIGITS: usize = 6;
 
 /// The session a transcript is of.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,4 +260,141 @@ fn open(path: &Path, new: bool) -> io::Result<File> {
         options.mode(0o600);
     }
     options.open(path)
+}
+
+/// Removes from `folder` the transcripts whose newest file was last written more than
+/// `retention_days` days before `now`, as the C# `PruneExpiredTranscripts`; 0 keeps every
+/// one. Only the files named as this module names them, the first opening with
+/// [`HEADER_MARKER`], are touched, and only in `folder` itself: no folder inside it is
+/// entered and no link followed. A transcript and its continuations go together, once the
+/// newest of them has expired. Returns how many files were removed, and logs it; a file that
+/// cannot be removed stays for the next start.
+pub fn prune_expired(folder: &Path, retention_days: u32, now: SystemTime) -> usize {
+    if retention_days == 0 {
+        return 0;
+    }
+    let kept = Duration::from_secs(u64::from(retention_days) * SECONDS_PER_DAY);
+    let Some(cutoff) = now.checked_sub(kept) else {
+        return 0;
+    };
+    let entries = match fs::read_dir(folder) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return 0,
+        Err(error) => {
+            log::warn!(
+                "transcript retention could not list {}: {error}",
+                folder.display()
+            );
+            return 0;
+        }
+    };
+    let mut transcripts: HashMap<String, Vec<FoundFile>> = HashMap::new();
+    for entry in entries.flatten() {
+        // The entry itself, a link never followed: a link or a folder is left alone.
+        if !entry.file_type().is_ok_and(|kind| kind.is_file()) {
+            continue;
+        }
+        let name = entry.file_name();
+        let Some((stem, first)) = name.to_str().and_then(transcript_stem) else {
+            continue;
+        };
+        transcripts
+            .entry(stem.to_owned())
+            .or_default()
+            .push(FoundFile {
+                path: entry.path(),
+                first,
+                modified: entry.metadata().and_then(|found| found.modified()).ok(),
+            });
+    }
+    let mut removed = 0;
+    for files in transcripts.into_values() {
+        let expired = files
+            .iter()
+            .all(|file| file.modified.is_some_and(|modified| modified < cutoff));
+        let ours = files
+            .iter()
+            .any(|file| file.first && opens_with_header(&file.path));
+        if !expired || !ours {
+            continue;
+        }
+        for file in files {
+            match fs::remove_file(&file.path) {
+                Ok(()) => removed += 1,
+                Err(error) => log::warn!(
+                    "transcript retention could not remove {}: {error}",
+                    file.path.display()
+                ),
+            }
+        }
+    }
+    if removed > 0 {
+        log::info!(
+            "transcript retention removed {removed} file(s) older than {retention_days} day(s)"
+        );
+    }
+    removed
+}
+
+/// A file of a transcript, found in its folder.
+struct FoundFile {
+    path: PathBuf,
+    /// The transcript's first file, which holds its header, not a continuation.
+    first: bool,
+    /// When it was last written, when the system says.
+    modified: Option<SystemTime>,
+}
+
+/// The transcript file `name` belongs to, named without its continuation's number and its
+/// extension, and whether it is the first file: `name` as [`file_name`], [`create_unique`] and
+/// a continuation make it, `..._20260927_210503[_N][.N].log`, as the C# `TranscriptFileName`
+/// reads it. `None` for any other name.
+fn transcript_stem(name: &str) -> Option<(&str, bool)> {
+    let (base, extension) = name.rsplit_once('.')?;
+    if !extension.eq_ignore_ascii_case(EXTENSION) {
+        return None;
+    }
+    let (stem, first) = match base.rsplit_once('.') {
+        Some((stem, part)) if is_number(part) => (stem, false),
+        _ => (base, true),
+    };
+    let parts: Vec<&str> = stem.rsplitn(4, '_').collect();
+    let stamped = |date: &str, time: &str| {
+        date.len() == DATE_DIGITS && is_number(date) && time.len() == TIME_DIGITS && is_number(time)
+    };
+    // Something before the date, then the date and the time, then a name's number if taken.
+    let named = match parts.as_slice() {
+        [time, date, _, ..] if stamped(date, time) => true,
+        [taken, time, date, _] => is_number(taken) && stamped(date, time),
+        _ => false,
+    };
+    named.then_some((stem, first))
+}
+
+/// Whether `text` is digits only, one at least.
+fn is_number(text: &str) -> bool {
+    !text.is_empty() && text.bytes().all(|byte| byte.is_ascii_digit())
+}
+
+/// Whether the file at `path` opens with a transcript's header, after a byte order mark if
+/// it has one; a file that cannot be read is not claimed.
+fn opens_with_header(path: &Path) -> bool {
+    use std::io::Read as _;
+
+    let wanted = UTF8_BOM.len() + HEADER_MARKER.len();
+    let mut start = Vec::with_capacity(wanted);
+    let Ok(file) = File::open(path) else {
+        return false;
+    };
+    if file
+        .take(u64::try_from(wanted).unwrap_or(u64::MAX))
+        .read_to_end(&mut start)
+        .is_err()
+    {
+        return false;
+    }
+    start
+        .strip_prefix(UTF8_BOM)
+        .unwrap_or(&start)
+        .starts_with(HEADER_MARKER.as_bytes())
 }

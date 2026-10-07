@@ -16,12 +16,13 @@
 
 //! A session's transcript file, as the C# session log writes it.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use heimdall_app::transcript::{
-    TRANSCRIPT_MAX_BYTES, Transcript, TranscriptContext, TranscriptLines,
+    HEADER_MARKER, TRANSCRIPT_MAX_BYTES, Transcript, TranscriptContext, TranscriptLines,
+    prune_expired,
 };
 
 /// 2026-09-27 19:15:03 UTC.
@@ -195,4 +196,176 @@ fn a_transcript_dropped_unfinished_is_finished_with_its_footer() {
         )),
         "{text}"
     );
+}
+
+/// Days of retention the pruning tests run with.
+const RETENTION_DAYS: u32 = 30;
+
+/// A day, in seconds.
+const DAY: u64 = 86_400;
+
+/// When a file older than the retention was last written: ten days past it.
+fn long_ago() -> SystemTime {
+    SystemTime::now() - Duration::from_secs(u64::from(RETENTION_DAYS + 10) * DAY)
+}
+
+/// Writes `text` to `name` in `folder`, last written at `when`.
+fn file_at(folder: &Path, name: &str, text: &str, when: SystemTime) -> PathBuf {
+    let path = folder.join(name);
+    std::fs::write(&path, text).expect("written");
+    std::fs::File::options()
+        .write(true)
+        .open(&path)
+        .expect("opened")
+        .set_modified(when)
+        .expect("dated");
+    path
+}
+
+/// A header as every translation opens it.
+fn header() -> String {
+    format!(
+        "{HEADER_MARKER} Session started 2026-01-01T12:00:00Z | SSH | host web {HEADER_MARKER}\n"
+    )
+}
+
+#[test]
+fn only_the_transcripts_written_here_and_past_their_retention_are_removed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let folder = dir.path();
+    let old = long_ago();
+    let header = header();
+    let gone = [
+        // A transcript and its continuation, both old.
+        file_at(folder, "SSH_web_20260101_120000.log", &header, old),
+        file_at(folder, "SSH_web_20260101_120000.1.log", "more", old),
+        // A second one of the same second, its name taken.
+        file_at(folder, "SSH_web_20260101_120000_1.log", &header, old),
+        // After a byte order mark, as another editor may save it.
+        file_at(
+            folder,
+            "TELNET_my_host_20260102_080000.log",
+            &format!("\u{feff}{header}"),
+            old,
+        ),
+    ];
+    let kept = [
+        // Written within the retention.
+        file_at(
+            folder,
+            "SSH_new_20260301_120000.log",
+            &header,
+            SystemTime::now(),
+        ),
+        // Old, but its continuation is not: the transcript goes whole or stays whole.
+        file_at(folder, "SSH_mixed_20260101_120000.log", &header, old),
+        file_at(
+            folder,
+            "SSH_mixed_20260101_120000.1.log",
+            "more",
+            SystemTime::now(),
+        ),
+        // Named as a transcript, but not one written here: PuTTY's default name.
+        file_at(folder, "putty_host_20260101_120000.log", "PuTTY log", old),
+        // A continuation whose transcript is gone: nothing says it was written here.
+        file_at(folder, "SSH_orphan_20260101_120000.1.log", &header, old),
+        // Names a transcript never has.
+        file_at(folder, "notes.txt", &header, old),
+        file_at(folder, "SSH_web.log", &header, old),
+        file_at(folder, "SSH_web_2026_120000.log", &header, old),
+        file_at(folder, "20260101_120000.log", &header, old),
+        file_at(folder, "SSH_web_20260101_120000.txt", &header, old),
+    ];
+    // A folder inside is never entered, even named as a transcript.
+    let inner = folder.join("SSH_dir_20260101_120000.log");
+    std::fs::create_dir(&inner).expect("inner folder");
+    let nested = file_at(&inner, "SSH_deep_20260101_120000.log", &header, old);
+
+    let removed = prune_expired(folder, RETENTION_DAYS, SystemTime::now());
+
+    assert_eq!(removed, gone.len());
+    for path in &gone {
+        assert!(!path.exists(), "{} removed", path.display());
+    }
+    for path in kept.iter().chain([&nested]) {
+        assert!(path.exists(), "{} kept", path.display());
+    }
+    assert!(inner.is_dir());
+}
+
+#[test]
+fn zero_days_keeps_every_transcript_and_a_missing_folder_is_no_error() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = file_at(
+        dir.path(),
+        "SSH_web_20260101_120000.log",
+        &header(),
+        long_ago(),
+    );
+    assert_eq!(prune_expired(dir.path(), 0, SystemTime::now()), 0);
+    assert!(path.exists(), "0 keeps every transcript");
+    assert_eq!(
+        prune_expired(
+            &dir.path().join("absent"),
+            RETENTION_DAYS,
+            SystemTime::now()
+        ),
+        0
+    );
+}
+
+#[test]
+fn the_files_a_transcript_writes_are_the_ones_its_retention_removes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let marked = TranscriptLines {
+        header: Arc::new(|_: &TranscriptContext| format!("{HEADER_MARKER} start {HEADER_MARKER}")),
+        footer: Arc::new(|_, _| String::new()),
+    };
+    // Two of the same second, each continued past its cap.
+    let first =
+        Transcript::start(dir.path(), &context("web.lab"), Some(&marked), 4).expect("started");
+    let mut second =
+        Transcript::start(dir.path(), &context("web.lab"), Some(&marked), 4).expect("started");
+    second.write(b"continued past the cap").expect("written");
+    drop((first, second));
+    let written: Vec<PathBuf> = std::fs::read_dir(dir.path())
+        .expect("listed")
+        .map(|entry| entry.expect("entry").path())
+        .collect();
+    // Each its first file and its continuations, the second's name taken.
+    assert!(written.len() >= 4, "{written:?}");
+    for path in &written {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("opened")
+            .set_modified(long_ago())
+            .expect("dated");
+    }
+    assert_eq!(
+        prune_expired(dir.path(), RETENTION_DAYS, SystemTime::now()),
+        written.len()
+    );
+    assert_eq!(std::fs::read_dir(dir.path()).expect("listed").count(), 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_link_named_as_a_transcript_is_never_followed_nor_removed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let elsewhere = tempfile::tempdir().expect("elsewhere");
+    let target = file_at(
+        elsewhere.path(),
+        "SSH_web_20260101_120000.log",
+        &header(),
+        long_ago(),
+    );
+    let link = dir.path().join("SSH_link_20260101_120000.log");
+    std::os::unix::fs::symlink(&target, &link).expect("linked");
+    assert_eq!(
+        prune_expired(dir.path(), RETENTION_DAYS, SystemTime::now()),
+        0
+    );
+    assert!(link.symlink_metadata().is_ok(), "the link stays");
+    assert!(target.exists(), "what it points to stays");
 }
