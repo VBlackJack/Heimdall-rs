@@ -21,8 +21,8 @@ use std::path::PathBuf;
 
 use heimdall_core::profile::RdpDefaults;
 use heimdall_core::settings::{
-    ColorScheme, Language, Settings, anti_idle_interval_accepted, max_sessions_accepted,
-    rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
+    ColorScheme, Language, Settings, anti_idle_interval_accepted, auto_lock_idle_minutes_accepted,
+    max_sessions_accepted, rdp_auto_reconnect_attempts_accepted, rdp_connect_timeout_accepted,
     reachability_interval_accepted, reachability_probes_accepted, reachability_timeout_accepted,
     session_log_retention_days_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
     ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted, terminal_font_family,
@@ -99,6 +99,11 @@ pub enum SettingsMessage {
     RdpResolutionPresets(Vec<(u16, u16)>),
     /// The RDP settings back to their own values, asked first as the C# asks.
     ResetRdpDefaults,
+    /// Minutes without input before the workspace locks, 0 for never; refused out of the
+    /// C# range.
+    AutoLockIdleMinutes(u32),
+    /// Locking the workspace closes every session, or leaves them running behind the lock.
+    DisconnectOnLock(bool),
 }
 
 /// The colours of `scheme`.
@@ -198,6 +203,11 @@ impl App {
             {
                 self.settings.session_log_retention_days = days;
             }
+            SettingsMessage::AutoLockIdleMinutes(minutes)
+                if auto_lock_idle_minutes_accepted(minutes) =>
+            {
+                self.settings.auto_lock_idle_minutes = minutes;
+            }
             _ => return false,
         }
         true
@@ -288,11 +298,13 @@ impl App {
             message @ (SettingsMessage::RdpConnectTimeout(_)
             | SettingsMessage::RdpAutoReconnectAttempts(_)
             | SettingsMessage::MaxSessions(_)
-            | SettingsMessage::SessionLogRetentionDays(_)) => {
+            | SettingsMessage::SessionLogRetentionDays(_)
+            | SettingsMessage::AutoLockIdleMinutes(_)) => {
                 if !self.set_limit(message) {
                     return Vec::new();
                 }
             }
+            SettingsMessage::DisconnectOnLock(on) => self.settings.disconnect_on_lock = *on,
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
