@@ -218,12 +218,13 @@ fn transcripts_are_kept_forever_by_default_and_their_retention_within_the_csharp
 }
 
 #[test]
-fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
+fn the_broadcast_scope_is_the_current_tab_until_another_is_chosen() {
     let dir = tempfile::tempdir().expect("dir");
     let path = dir.path().join(SETTINGS_FILE_NAME);
     assert_eq!(
         Settings::load(&path).expect("defaults").broadcast_scope,
-        BroadcastScope::AllTabs
+        BroadcastScope::CurrentTab,
+        "the C#'s default"
     );
     let chosen = Settings {
         broadcast_scope: BroadcastScope::SelectedTabs,
@@ -235,7 +236,17 @@ fn the_broadcast_scope_is_all_tabs_until_another_is_chosen() {
         BroadcastScope::named(" selectedtabs "),
         BroadcastScope::SelectedTabs
     );
-    assert_eq!(BroadcastScope::named("CurrentTab"), BroadcastScope::AllTabs);
+    assert_eq!(
+        BroadcastScope::named("SelectedPanes"),
+        BroadcastScope::SelectedTabs,
+        "the C#'s name"
+    );
+    assert_eq!(BroadcastScope::named("alltabs"), BroadcastScope::AllTabs);
+    assert_eq!(
+        BroadcastScope::named("Everywhere"),
+        BroadcastScope::CurrentTab,
+        "a name not known: the narrowest"
+    );
 }
 
 #[test]

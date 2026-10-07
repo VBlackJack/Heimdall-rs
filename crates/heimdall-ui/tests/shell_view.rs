@@ -2100,11 +2100,13 @@ fn the_status_bar_turns_broadcast_on_and_marks_tabs_in_the_selected_scope() {
             .collect::<Vec<_>>()
     };
     assert_eq!(clicked(&shell, "BROADCAST"), [BroadcastMessage::Toggle]);
-    assert_eq!(clicked(&shell, "All tabs"), [BroadcastMessage::Scope]);
+    assert_eq!(clicked(&shell, "Current tab"), [BroadcastMessage::Scope]);
     assert!(
         simulator(&shell).find("\u{25cb}").is_err(),
         "no marks while off"
     );
+    let _ = shell.update(broadcast(BroadcastMessage::Scope));
+    simulator(&shell).find("All tabs").expect("the next scope");
 
     let _ = shell.update(broadcast(BroadcastMessage::Toggle));
     assert_eq!(shell.app().dialog, Some(Dialog::ConfirmBroadcast));

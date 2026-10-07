@@ -137,8 +137,8 @@ pub struct Spec {
     pub inactivity_timeout: Option<Duration>,
     /// Connects onward when a client asks, as a gateway does; off, as `AllowTcpForwarding no`.
     pub forwarding: bool,
-    /// Opens an agent channel once the shell starts, whether the client asked or not.
-    pub agent_unasked: bool,
+    /// What it opens to the client once the shell starts, unasked.
+    pub unasked: Unasked,
     /// Speaks only what an old appliance does: SHA-1 Diffie-Hellman, a CBC cipher,
     /// HMAC-SHA1.
     pub legacy_only: bool,
@@ -161,10 +161,20 @@ impl Default for Spec {
             key_algorithms: None,
             inactivity_timeout: None,
             forwarding: false,
-            agent_unasked: false,
+            unasked: Unasked::Nothing,
             legacy_only: false,
         }
     }
+}
+
+/// Channels the test server opens to a client that did not ask for them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Unasked {
+    Nothing,
+    /// An agent channel.
+    Agent,
+    /// One of every other kind a client never asks for.
+    Channels,
 }
 
 /// What the server observed, for assertions.
@@ -200,6 +210,9 @@ pub struct Observed {
     pub agent_opens: Vec<bool>,
     /// What the client's agent answered through the forwarded channel.
     pub agent_reply: Vec<u8>,
+    /// Channels of kinds a client never asks for that the server opened, by kind, and
+    /// whether the client took each.
+    pub unasked_opens: Vec<(&'static str, bool)>,
     /// Each command run, and the input it was given.
     pub commands: Vec<(String, Vec<u8>)>,
     /// Signals clients sent to their commands.
@@ -337,6 +350,45 @@ impl Connection {
 }
 
 impl Connection {
+    /// Opens to the client, one after the other, a channel of each kind it never asks for,
+    /// and records whether it took each.
+    fn open_unasked(&self, session: &Session) {
+        let handle = session.handle();
+        let observed = self.observed.clone();
+        tokio::spawn(async move {
+            let record = |kind: &'static str, opened: bool| {
+                observed
+                    .lock()
+                    .expect("observed")
+                    .unasked_opens
+                    .push((kind, opened));
+            };
+            record("session", handle.channel_open_session().await.is_ok());
+            record("x11", handle.channel_open_x11(LOOPBACK, 0).await.is_ok());
+            record(
+                "direct-tcpip",
+                handle
+                    .channel_open_direct_tcpip(LOOPBACK, 22, LOOPBACK, 0)
+                    .await
+                    .is_ok(),
+            );
+            record(
+                "direct-streamlocal",
+                handle
+                    .channel_open_direct_streamlocal("/tmp/socket")
+                    .await
+                    .is_ok(),
+            );
+            record(
+                "forwarded-streamlocal",
+                handle
+                    .channel_open_forwarded_streamlocal("/tmp/socket")
+                    .await
+                    .is_ok(),
+            );
+        });
+    }
+
     /// Opens an agent channel to the client, sends [`AGENT_REQUEST`] and records the answer.
     fn open_agent(&self, session: &Session) {
         let handle = session.handle();
@@ -551,8 +603,10 @@ impl server::Handler for Connection {
         channel: ChannelId,
         session: &mut Session,
     ) -> Result<(), Self::Error> {
-        if self.spec.agent_unasked {
-            self.open_agent(session);
+        match self.spec.unasked {
+            Unasked::Nothing => {}
+            Unasked::Agent => self.open_agent(session),
+            Unasked::Channels => self.open_unasked(session),
         }
         session.channel_success(channel)
     }

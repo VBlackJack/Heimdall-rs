@@ -89,8 +89,11 @@ impl ColorScheme {
 /// Which terminals broadcast input reaches besides the one typed into.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum BroadcastScope {
-    /// Every terminal of every tab, asked before it starts.
+    /// The panes of the tab typed into, as the C#'s default: it cannot reach a terminal not
+    /// in sight.
     #[default]
+    CurrentTab,
+    /// Every terminal of every tab, asked before it starts.
     AllTabs,
     /// The tabs marked as targets.
     SelectedTabs,
@@ -101,21 +104,31 @@ impl BroadcastScope {
     #[must_use]
     pub const fn name(self) -> &'static str {
         match self {
+            Self::CurrentTab => "CurrentTab",
             Self::AllTabs => "AllTabs",
             Self::SelectedTabs => "SelectedTabs",
         }
     }
 
-    /// The scope named `name`, all tabs for a name not known.
+    /// The scope named `name`, the C#'s `SelectedPanes` being the tabs marked; for a name
+    /// not known, the current tab, the narrowest.
     #[must_use]
     pub fn named(name: &str) -> Self {
-        if name.trim().eq_ignore_ascii_case(Self::SelectedTabs.name()) {
+        let name = name.trim();
+        if name.eq_ignore_ascii_case(Self::AllTabs.name()) {
+            Self::AllTabs
+        } else if name.eq_ignore_ascii_case(Self::SelectedTabs.name())
+            || name.eq_ignore_ascii_case(SELECTED_PANES)
+        {
             Self::SelectedTabs
         } else {
-            Self::AllTabs
+            Self::CurrentTab
         }
     }
 }
+
+/// The C#'s name for the tabs marked, read as [`BroadcastScope::SelectedTabs`].
+const SELECTED_PANES: &str = "SelectedPanes";
 
 /// Which SSH agent's keys are offered first, or alone, as the C# `SshAgentPreference`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

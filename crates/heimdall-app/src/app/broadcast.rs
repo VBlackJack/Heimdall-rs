@@ -15,9 +15,9 @@
  */
 
 //! Broadcast input, as the C# Heimdall's: while on, what is typed or pasted into a terminal
-//! reaches every other terminal of its scope too, each encoded for its own session. All
-//! tabs is asked before it starts; selected tabs starts with none marked. This version has
-//! no split panes, so the C# current-tab scope has nothing to reach and is left out.
+//! reaches every other terminal of its scope too, each encoded for its own session. The
+//! current tab, the default, reaches the panes of the split typed into; all tabs is asked
+//! before it starts; selected tabs starts with none marked.
 
 use std::collections::BTreeSet;
 
@@ -86,12 +86,18 @@ impl App {
             return targets;
         }
         let scope = self.settings.broadcast_scope;
+        let current = self
+            .host_of(source)
+            .map(|host| self.panes_of(host))
+            .unwrap_or_default();
         targets.extend(
             self.tabs
                 .iter()
                 .filter(|tab| tab.id != source && takes_input(tab) && !self.is_floating(tab.id))
-                .filter(|tab| {
-                    scope == BroadcastScope::AllTabs || self.broadcast.targets.contains(&tab.id)
+                .filter(|tab| match scope {
+                    BroadcastScope::CurrentTab => current.contains(&tab.id),
+                    BroadcastScope::AllTabs => true,
+                    BroadcastScope::SelectedTabs => self.broadcast.targets.contains(&tab.id),
                 })
                 .map(|tab| tab.id),
         );
@@ -109,16 +115,20 @@ impl App {
                 self.dialog = Some(Dialog::ConfirmBroadcast);
             }
             BroadcastMessage::Toggle => self.start_broadcast(),
+            // As the C#: the current tab, then all tabs, then the tabs marked.
             BroadcastMessage::Scope => match scope {
+                BroadcastScope::CurrentTab if self.broadcast.on => {
+                    // Reaching every tab while on is asked first, as starting it is.
+                    self.dialog = Some(Dialog::ConfirmBroadcast);
+                }
+                BroadcastScope::CurrentTab => self.set_broadcast_scope(BroadcastScope::AllTabs),
                 BroadcastScope::AllTabs => {
                     self.broadcast.targets.clear();
                     self.set_broadcast_scope(BroadcastScope::SelectedTabs);
                 }
-                BroadcastScope::SelectedTabs if self.broadcast.on => {
-                    // Reaching every tab while on is asked first, as starting it is.
-                    self.dialog = Some(Dialog::ConfirmBroadcast);
+                BroadcastScope::SelectedTabs => {
+                    self.set_broadcast_scope(BroadcastScope::CurrentTab);
                 }
-                BroadcastScope::SelectedTabs => self.set_broadcast_scope(BroadcastScope::AllTabs),
             },
             BroadcastMessage::Target(tab) => {
                 if !self.broadcast.targets.remove(&tab) && self.tab(tab).is_some() {

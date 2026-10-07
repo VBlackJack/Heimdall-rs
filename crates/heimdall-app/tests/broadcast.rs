@@ -126,6 +126,81 @@ fn broadcast(app: &mut App, message: BroadcastMessage) {
     app.update(Message::Broadcast(message));
 }
 
+/// The scope made all tabs, from the current tab, broadcast off: not asked.
+fn all_tabs(app: &mut App) {
+    broadcast(app, BroadcastMessage::Scope);
+    assert_eq!(app.dialog, None);
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::AllTabs);
+}
+
+#[test]
+fn the_current_tab_reaches_the_panes_of_its_split_only_and_starts_without_asking() {
+    use heimdall_app::split::{Axis, Placement, SplitMessage};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _, sink_a) = connected(&mut app);
+    let (b, _, sink_b) = connected(&mut app);
+    let (c, _, sink_c) = connected(&mut app);
+    app.update(Message::Split(SplitMessage::Merge {
+        host: a,
+        tab: b,
+        axis: Axis::SideBySide,
+        placement: Placement::Second,
+    }));
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::CurrentTab);
+    broadcast(&mut app, BroadcastMessage::Toggle);
+    assert_eq!(app.dialog, None, "none asked");
+    assert_eq!(
+        app.notice(),
+        Some(&Notice::BroadcastOn(BroadcastScope::CurrentTab))
+    );
+    typed(&mut app, b, "p");
+    assert_eq!(
+        [sink_a.taken(), sink_b.taken(), sink_c.taken()],
+        ["p", "p", ""],
+        "typed into a pane: its split, not the other tab"
+    );
+    typed(&mut app, c, "q");
+    assert_eq!(
+        [sink_a.taken(), sink_b.taken(), sink_c.taken()],
+        ["", "", "q"],
+        "a tab not split: itself alone"
+    );
+}
+
+#[test]
+fn the_scope_goes_from_the_current_tab_to_all_tabs_then_to_the_tabs_marked() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (a, _, sink_a) = connected(&mut app);
+    let (_, _, sink_b) = connected(&mut app);
+    broadcast(&mut app, BroadcastMessage::Toggle);
+    assert!(app.broadcasting());
+    // To all tabs while on: asked, as starting it is.
+    broadcast(&mut app, BroadcastMessage::Scope);
+    assert_eq!(app.dialog, Some(Dialog::ConfirmBroadcast));
+    app.update(Message::DismissDialog);
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::CurrentTab);
+    typed(&mut app, a, "n");
+    assert_eq!([sink_a.taken(), sink_b.taken()], ["n", ""], "no: unchanged");
+    broadcast(&mut app, BroadcastMessage::Scope);
+    app.update(Message::ConfirmDialog);
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::AllTabs);
+    typed(&mut app, a, "y");
+    assert_eq!([sink_a.taken(), sink_b.taken()], ["y", "y"]);
+    broadcast(&mut app, BroadcastMessage::Scope);
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::SelectedTabs);
+    broadcast(&mut app, BroadcastMessage::Scope);
+    assert_eq!(app.dialog, None, "back to the current tab: not asked");
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::CurrentTab);
+    assert_eq!(
+        self::app(dir.path()).settings().broadcast_scope,
+        BroadcastScope::CurrentTab,
+        "kept for the next run"
+    );
+}
+
 #[test]
 fn all_tabs_is_asked_first_then_every_session_gets_what_is_typed() {
     let dir = tempfile::tempdir().expect("dir");
@@ -138,6 +213,7 @@ fn all_tabs_is_asked_first_then_every_session_gets_what_is_typed() {
         (sink_a.taken(), sink_b.taken()),
         ("ls".to_owned(), String::new())
     );
+    all_tabs(&mut app);
 
     broadcast(&mut app, BroadcastMessage::Toggle);
     assert_eq!(app.dialog, Some(Dialog::ConfirmBroadcast));
@@ -197,6 +273,7 @@ fn a_session_not_ready_for_input_is_left_out() {
         [Effect::Connect { tab, .. }] => *tab,
         other => panic!("{other:?}"),
     };
+    all_tabs(&mut app);
     broadcast(&mut app, BroadcastMessage::Toggle);
     app.update(Message::ConfirmDialog);
     app.update(Message::Connection {
@@ -224,6 +301,7 @@ fn selected_tabs_reach_only_the_tabs_marked_and_start_without_asking() {
     let (a, _, sink_a) = connected(&mut app);
     let (b, _, sink_b) = connected(&mut app);
     let (_, _, sink_c) = connected(&mut app);
+    all_tabs(&mut app);
     broadcast(&mut app, BroadcastMessage::Scope);
     assert_eq!(app.settings().broadcast_scope, BroadcastScope::SelectedTabs);
     assert_eq!(
@@ -250,8 +328,10 @@ fn selected_tabs_reach_only_the_tabs_marked_and_start_without_asking() {
     broadcast(&mut app, BroadcastMessage::Target(b));
     assert!(!app.is_broadcast_target(b), "unmarked");
 
-    // Back to all tabs while on: asked, as starting it is.
+    // Back to all tabs, through the current tab, while on: asked, as starting it is.
     broadcast(&mut app, BroadcastMessage::Target(b));
+    broadcast(&mut app, BroadcastMessage::Scope);
+    assert_eq!(app.settings().broadcast_scope, BroadcastScope::CurrentTab);
     broadcast(&mut app, BroadcastMessage::Scope);
     assert_eq!(app.dialog, Some(Dialog::ConfirmBroadcast));
     app.update(Message::ConfirmDialog);
@@ -272,8 +352,7 @@ fn selected_tabs_reach_only_the_tabs_marked_and_start_without_asking() {
     // Off, all tabs is chosen without a question.
     broadcast(&mut app, BroadcastMessage::Toggle);
     broadcast(&mut app, BroadcastMessage::Scope);
-    assert_eq!(app.dialog, None);
-    assert_eq!(app.settings().broadcast_scope, BroadcastScope::AllTabs);
+    all_tabs(&mut app);
 }
 
 #[test]
@@ -282,6 +361,7 @@ fn a_paste_reaches_every_session_and_is_asked_when_any_would_run_its_lines() {
     let mut app = app(dir.path());
     let (a, attempt_a, sink_a) = connected(&mut app);
     let (_, _, sink_b) = connected(&mut app);
+    all_tabs(&mut app);
     broadcast(&mut app, BroadcastMessage::Toggle);
     app.update(Message::ConfirmDialog);
     app.update(Message::ClipboardText {
@@ -332,6 +412,7 @@ fn a_session_still_connecting_does_not_make_a_paste_ask() {
     });
     // Its terminal knows no bracketed paste, but it takes nothing yet.
     app.update(Message::OpenProfile(ProfileId::new("web")));
+    all_tabs(&mut app);
     broadcast(&mut app, BroadcastMessage::Toggle);
     app.update(Message::ConfirmDialog);
     app.update(Message::ClipboardText {
