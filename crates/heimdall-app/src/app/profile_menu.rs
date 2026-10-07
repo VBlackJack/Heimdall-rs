@@ -119,9 +119,7 @@ impl App {
             ProfileMenuMessage::Move { id, to } => {
                 let before = self.organizations(std::slice::from_ref(&id));
                 if let Err(error) = self.store.apply(|store| store.set_group(&id, to)) {
-                    self.dialog = Some(Dialog::StoreError {
-                        detail: error.to_string(),
-                    });
+                    self.dialog = Some(Dialog::save_failed(&error));
                 } else {
                     // As the C# "Move to folder": undone from the Undo bar.
                     self.record_organization(super::tree_drag::OrganizationChange::Move, before);
@@ -156,9 +154,7 @@ impl App {
     pub(super) fn confirm_rename_profile(&mut self, id: &ProfileId, value: &str) {
         let before = self.organizations(std::slice::from_ref(id));
         if let Err(error) = self.store.apply(|store| store.rename_profile(id, value)) {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         self.record_organization(super::tree_drag::OrganizationChange::Rename, before);

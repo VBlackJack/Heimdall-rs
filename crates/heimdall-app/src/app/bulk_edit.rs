@@ -182,9 +182,7 @@ impl App {
                 (BulkField::Username, changed) => Notice::BulkUsernameUpdated(changed),
             }),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }

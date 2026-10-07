@@ -245,9 +245,7 @@ impl App {
             }
         });
         if let Err(error) = result {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         if let Some(endpoint) = endpoint
@@ -272,9 +270,7 @@ impl App {
         match self.store.apply(|store| store.remove(id)) {
             Ok(_) => self.forget_password(id),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }

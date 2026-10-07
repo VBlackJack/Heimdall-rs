@@ -282,9 +282,7 @@ impl App {
                 source: preview.source,
                 counts,
             },
-            Err(error) => Dialog::StoreError {
-                detail: error.to_string(),
-            },
+            Err(error) => Dialog::save_failed(&error),
         });
     }
 }

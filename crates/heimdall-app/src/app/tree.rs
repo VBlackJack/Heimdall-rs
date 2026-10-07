@@ -549,9 +549,7 @@ impl App {
             store.set_metadata(&copy, source.metadata.clone());
         });
         if let Err(error) = result {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         if source.kind != ProfileKind::Rdp {

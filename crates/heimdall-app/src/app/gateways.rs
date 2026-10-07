@@ -148,9 +148,7 @@ impl App {
         let id = gateway.id.clone();
         let key_path = gateway.key_path.clone();
         if let Err(error) = self.store.apply(|store| store.merge_gateways([gateway])) {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         // Back to the session's form, the new gateway chosen, as the C# dialog does.

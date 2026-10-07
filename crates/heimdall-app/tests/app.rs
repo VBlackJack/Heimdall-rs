@@ -932,7 +932,7 @@ fn an_unreadable_profile_file_is_reported_and_never_overwritten() {
     config.legacy_dir = Some(legacy);
 
     let mut app = App::new(config.clone());
-    assert!(matches!(app.dialog, Some(Dialog::StoreError { .. })));
+    assert!(matches!(app.dialog, Some(Dialog::StoreUnreadable { .. })));
     assert!(app.profiles().is_empty());
     app.update(Message::DismissDialog);
     app.update(Message::ImportLegacy);

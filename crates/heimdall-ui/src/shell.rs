@@ -533,6 +533,9 @@ pub enum Message {
     WindowOpened(window::Id),
     /// The main window closed: the application ends, as it did with its only window.
     MainWindowClosed,
+    /// A later launch asked this instance to come forward, as the C# activation event: the
+    /// main window restored and focused.
+    BringForward,
     /// The window's screen draws this many physical pixels per logical one.
     Rescaled(f32),
     /// How a tab's remote desktop is shown: fitted to the tab, or matching it.
@@ -817,6 +820,7 @@ impl fmt::Debug for Message {
             Self::ToggleFullscreen => f.write_str("ToggleFullscreen"),
             Self::WindowOpened(_) => f.write_str("WindowOpened"),
             Self::MainWindowClosed => f.write_str("MainWindowClosed"),
+            Self::BringForward => f.write_str("BringForward"),
             Self::Rescaled(scale) => write!(f, "Rescaled({scale})"),
             Self::DesktopFit { tab, fit } => write!(f, "DesktopFit({}, {fit})", tab.value()),
             Self::Search(_) => f.write_str("Search(..)"),
@@ -1150,6 +1154,9 @@ pub struct Shell {
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
     /// The main window, named once it is asked to open; none in tests, which open none.
     main_window: Option<window::Id>,
+    /// The configuration folder this instance owns, where a later launch asks it to come
+    /// forward; none in tests, and when started unguarded.
+    instance_dir: Option<PathBuf>,
     /// The tabs' own windows, by the window's identifier.
     floating: std::collections::BTreeMap<window::Id, FloatingWindow>,
     /// The window's size, as last resized out of full screen.
@@ -1411,6 +1418,7 @@ impl Shell {
             sidebar_hidden: false,
             window_memory: None,
             main_window: None,
+            instance_dir: None,
             floating: std::collections::BTreeMap::new(),
             window_size: None,
             window_extent: None,
@@ -1495,6 +1503,12 @@ impl Shell {
     /// dialogs, the screenshot and the place kept at exit are its own.
     pub fn set_main_window(&mut self, window: window::Id) {
         self.main_window = Some(window);
+    }
+
+    /// Answers the later launches' requests to come forward, left in `dir`, the
+    /// configuration folder this instance owns.
+    pub fn watch_instance(&mut self, dir: PathBuf) {
+        self.instance_dir = Some(dir);
     }
 
     /// Draws the window `window`: a tab's own window with its session, the main window as
@@ -1628,6 +1642,10 @@ impl Shell {
             )
         );
         let mut subscriptions = vec![events];
+        // A later launch handing over to this instance, as the C# activation event.
+        if let Some(dir) = &self.instance_dir {
+            subscriptions.push(crate::single_instance::requests(dir.clone()));
+        }
         // A drag of a Files tab's entries, followed in the window it started in.
         if self.files_drag.is_some() {
             subscriptions.push(in_main_window(
@@ -2030,6 +2048,7 @@ impl Shell {
             }
             Message::LockKey => self.closing_menu(AppMessage::LockVault),
             Message::MainWindowClosed => return iced::exit(),
+            Message::BringForward => return self.main_window.map_or_else(Task::none, focus_window),
             message @ (Message::DesktopFit { .. }
             | Message::ToggleFullscreen
             | Message::WindowOpened(_)
@@ -7624,9 +7643,17 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
                 .map(text)
                 .collect(),
         ),
-        Dialog::StoreError { detail: technical } => (
+        Dialog::StoreUnreadable { detail: technical } => (
             fl!("ui-dialog-store-title"),
             vec![text(fl!("ui-dialog-store-body")), detail(technical)],
+        ),
+        Dialog::StoreError { detail: technical } => (
+            fl!("ui-dialog-save-failed-title"),
+            vec![text(fl!("ui-dialog-save-failed-body", detail = technical))],
+        ),
+        Dialog::StoreChanged { detail: technical } => (
+            fl!("ui-dialog-store-changed-title"),
+            vec![text(fl!("ui-dialog-store-changed-body")), detail(technical)],
         ),
         other => {
             let (title, lines) = crate::rdp_view::report_lines(other)
@@ -10455,7 +10482,9 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::CitrixImportNothing { .. }
         | Dialog::CitrixImportDone(_)
         | Dialog::PasswordSaveFailed { .. }
-        | Dialog::StoreError { .. } => report(dialog, ok()),
+        | Dialog::StoreUnreadable { .. }
+        | Dialog::StoreError { .. }
+        | Dialog::StoreChanged { .. } => report(dialog, ok()),
         Dialog::SessionsPreview(_)
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)

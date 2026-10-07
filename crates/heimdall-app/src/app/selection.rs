@@ -74,9 +74,7 @@ impl App {
         match changed {
             Ok(changed) => self.tell(Notice::BulkGatewayUpdated(changed)),
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }
@@ -136,9 +134,7 @@ impl App {
                     }
                 });
                 if let Err(error) = moved {
-                    self.dialog = Some(Dialog::StoreError {
-                        detail: error.to_string(),
-                    });
+                    self.dialog = Some(Dialog::save_failed(&error));
                 } else {
                     self.record_organization(super::tree_drag::OrganizationChange::Move, before);
                 }

@@ -121,7 +121,7 @@ pub(super) fn load_settings(
         Err(error) => (
             Settings::default(),
             path.with_extension(RECOVERY_EXTENSION),
-            dialog.or(Some(Dialog::StoreError {
+            dialog.or(Some(Dialog::StoreUnreadable {
                 detail: error.to_string(),
             })),
         ),
@@ -302,9 +302,7 @@ impl App {
         }
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return Vec::new();
         }
         let palette = palette(self.settings.color_scheme);

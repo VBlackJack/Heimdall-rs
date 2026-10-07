@@ -280,9 +280,7 @@ impl App {
                 self.tell(done);
             }
             Err(error) => {
-                self.dialog = Some(Dialog::StoreError {
-                    detail: error.to_string(),
-                });
+                self.dialog = Some(Dialog::save_failed(&error));
             }
         }
     }

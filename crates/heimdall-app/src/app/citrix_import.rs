@@ -93,9 +93,7 @@ impl App {
         if let Err(error) = self.store.apply(|store| {
             store.merge_citrix(added);
         }) {
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return;
         }
         let mut without_launch_lines = !keep_lines;

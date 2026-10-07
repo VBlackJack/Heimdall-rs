@@ -99,9 +99,7 @@ impl App {
         let before = std::mem::replace(&mut self.settings, read.settings);
         if let Err(error) = self.settings.save(&self.settings_file) {
             self.settings = before;
-            self.dialog = Some(Dialog::StoreError {
-                detail: error.to_string(),
-            });
+            self.dialog = Some(Dialog::save_failed(&error));
             return Vec::new();
         }
         let palette = palette(self.settings.color_scheme);

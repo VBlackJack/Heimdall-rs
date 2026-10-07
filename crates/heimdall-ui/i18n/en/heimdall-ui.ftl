@@ -370,6 +370,10 @@ ui-import-mobaxterm-passwords-detected = { $count ->
 }
 ui-dialog-store-title = The profile file could not be used
 ui-dialog-store-body = Heimdall started with no profile; changes are saved beside the unreadable file, which is left untouched.
+ui-dialog-save-failed-title = Save Error
+ui-dialog-save-failed-body = Failed to save: { $detail }
+ui-dialog-store-changed-title = Profiles not saved
+ui-dialog-store-changed-body = The profile file was changed by another program or another Heimdall since it was read, so this change was not saved and the file was left as it is. Reopen Heimdall to load the current file, then make the change again.
 ui-dialog-detail = Detail: { $detail }
 
 ui-import-skip-not-ssh = not an SSH profile ({ $kind })
