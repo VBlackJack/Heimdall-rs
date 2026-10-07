@@ -924,6 +924,7 @@ ui-status-detach-split-refused = A split tab cannot be moved to its own window. 
 ui-split-menu = Split...
 ui-split-palette-hint = Search server to split with...
 ui-split-drop-to-split = Drop to split
+ui-tab-drag-detach-hint = Release to detach to a window
 ui-split-open-in-split = Open in split
 ui-split-open-in-split-disabled = Open a session first: a split divides the active session.
 ui-dialog-rename-tab-title = Rename Tab

@@ -16,17 +16,34 @@
 
 //! A tab dragged along the tab bar, as the C# tab: pressed, it becomes a drag once the
 //! pointer moves; let go over another tab, it takes that tab's place; let go over the
-//! content, it splits the tab shown, as the C# `ContentDropZone`.
+//! content, it splits the tab shown, as the C# `ContentDropZone`; let go out of the
+//! window, it goes to a window of its own, as the C# drop no target takes. Escape gives
+//! the drag up.
+//!
+//! The pointer is followed out of the window while the button is held: Windows captures
+//! it for the window pressed, X11, Wayland and macOS hold it for the window as long as a
+//! button is down, so the moves and the release out of it are the window's.
 
 use heimdall_app::TabId;
 use heimdall_app::split::{Axis, Placement};
 use iced::advanced::widget::Id;
-use iced::{Point, Rectangle, event, mouse, window};
+use iced::{Point, Rectangle, Size, Vector, event, mouse, window};
 
 use crate::shell::Message;
 
 /// The middle of the content, as a share of its width or height.
 const HALF: f32 = 0.5;
+
+/// How far beyond the window's drawn area, in logical pixels, a tab is let go to go to a
+/// window of its own: past the window's own frame, its title bar above, about 31 pixels
+/// high on Windows 11, and its borders, so that a tab let go on its own window's frame
+/// stays where it was.
+pub const DETACH_MARGIN: f32 = 40.0;
+
+/// Where the pointer is on the window a tab detached by a drag opens in, from the window's
+/// top left corner, in logical pixels: on its title bar, a little in from its left edge,
+/// as if the tab had been carried there by it.
+pub const DETACH_GRAB: Vector = Vector::new(120.0, 16.0);
 
 /// A press on a tab, a drag once the pointer moves.
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -139,6 +156,18 @@ pub fn drop_half(bounds: Rectangle, zone: (Axis, Placement)) -> Rectangle {
     }
 }
 
+/// Whether a tab let go at `at` is out of a window whose drawn area is `window` large, by
+/// more than [`DETACH_MARGIN`] past any edge. Both are in the window's logical pixels, as
+/// iced reports the pointer and the window's size, each the physical one divided by the
+/// screen's scale: the margin is so as wide to the eye on any screen.
+#[must_use]
+pub fn beyond_window(window: Size, at: Point) -> bool {
+    at.x < -DETACH_MARGIN
+        || at.y < -DETACH_MARGIN
+        || at.x > window.width + DETACH_MARGIN
+        || at.y > window.height + DETACH_MARGIN
+}
+
 /// While a press on a tab is held: where the pointer goes, and its release.
 #[must_use]
 #[expect(
@@ -212,6 +241,67 @@ mod tests {
             ..CONTENT
         };
         assert_eq!(drop_zone(flat, Point::new(400.0, 40.0)), None);
+    }
+
+    /// A window 1100 wide and 700 high, in logical pixels.
+    const WINDOW: Size = Size::new(1100.0, 700.0);
+
+    #[test]
+    fn inside_the_window_or_on_its_frame_a_tab_stays() {
+        assert!(!beyond_window(WINDOW, Point::new(550.0, 350.0)));
+        assert!(!beyond_window(WINDOW, Point::ORIGIN));
+        assert!(!beyond_window(WINDOW, Point::new(1100.0, 700.0)));
+        // Just out, within the margin: on the title bar or a border.
+        let just = DETACH_MARGIN - 1.0;
+        assert!(!beyond_window(WINDOW, Point::new(-just, 350.0)), "left");
+        assert!(
+            !beyond_window(WINDOW, Point::new(550.0, -just)),
+            "title bar"
+        );
+        assert!(
+            !beyond_window(WINDOW, Point::new(1100.0 + just, 350.0)),
+            "right"
+        );
+        assert!(
+            !beyond_window(WINDOW, Point::new(550.0, 700.0 + just)),
+            "bottom"
+        );
+        // On the margin itself, still the window's.
+        assert!(!beyond_window(WINDOW, Point::new(-DETACH_MARGIN, 350.0)));
+    }
+
+    #[test]
+    fn beyond_the_margin_on_any_side_a_tab_detaches() {
+        let past = DETACH_MARGIN + 1.0;
+        assert!(beyond_window(WINDOW, Point::new(-past, 350.0)), "left");
+        assert!(beyond_window(WINDOW, Point::new(550.0, -past)), "above");
+        assert!(
+            beyond_window(WINDOW, Point::new(1100.0 + past, 350.0)),
+            "right"
+        );
+        assert!(
+            beyond_window(WINDOW, Point::new(550.0, 700.0 + past)),
+            "below"
+        );
+        assert!(beyond_window(WINDOW, Point::new(-past, -past)), "a corner");
+    }
+
+    #[test]
+    fn the_margin_is_in_logical_pixels_whatever_the_screen_scale() {
+        // At 150%, a window 1650 by 1050 physical pixels is reported 1100 by 700, and the
+        // pointer 45 physical pixels past its right edge 30: within the margin.
+        let scale = 1.5;
+        let window = Size::new(1650.0 / scale, 1050.0 / scale);
+        assert_eq!(window, WINDOW);
+        let near = Point::new((1650.0 + 45.0) / scale, 350.0);
+        assert!(!beyond_window(window, near));
+        // 90 physical pixels past it, 60 logical: beyond.
+        let far = Point::new((1650.0 + 90.0) / scale, 350.0);
+        assert!(beyond_window(window, far));
+        // At 100%, the same 45 physical pixels are beyond: the margin grows with the
+        // screen's scale.
+        let unscaled = Size::new(1650.0, 1050.0);
+        assert!(beyond_window(unscaled, Point::new(1650.0 + 45.0, 350.0)));
     }
 
     #[test]
