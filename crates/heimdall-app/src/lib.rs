@@ -48,6 +48,7 @@ mod paste_guard;
 mod post_connect;
 pub mod profile_draft;
 pub mod putty;
+pub mod putty_driver;
 pub mod putty_store;
 pub mod rdp_driver;
 pub mod rdp_external;

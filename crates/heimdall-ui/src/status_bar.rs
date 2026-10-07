@@ -265,9 +265,20 @@ fn putty_notice(notice: &Notice) -> String {
         Notice::PuttyLaunched(name) => {
             fl!("ui-status-putty-launched", name = server_text(name))
         }
+        Notice::PuttyLaunchedThrough { name, gateway } => fl!(
+            "ui-status-putty-launched-through",
+            name = server_text(name),
+            gateway = server_text(gateway)
+        ),
         Notice::X11ServerNotFound => fl!("ui-status-x11-server-not-found"),
         Notice::PuttyRefused(refusal) => match refusal {
-            PuttyRefusal::SshGateway => fl!("ui-status-putty-ssh-gateway"),
+            PuttyRefusal::Gateway(error) => fl!(
+                "ui-status-putty-gateway",
+                reason = crate::texts::error(error)
+            ),
+            PuttyRefusal::Forward(reason) => {
+                fl!("ui-status-putty-forward", reason = server_text(reason))
+            }
             PuttyRefusal::InvalidHost => fl!("ui-status-putty-invalid-host"),
             PuttyRefusal::InvalidUsername => fl!("ui-status-putty-invalid-username"),
             PuttyRefusal::KeyFile(path) => fl!(
@@ -509,6 +520,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 rdp_external_notice(notice)
             }
             notice @ (Notice::PuttyLaunched(_)
+            | Notice::PuttyLaunchedThrough { .. }
             | Notice::PuttyRefused(_)
             | Notice::X11ServerNotFound) => putty_notice(notice),
             Notice::BroadcastScope(scope) => {
@@ -653,6 +665,27 @@ mod tests {
             "External client launched: web opened in PuTTY."
         );
         assert_eq!(
+            said(Notice::PuttyLaunchedThrough {
+                name: named("web"),
+                gateway: named("bastion"),
+            }),
+            "External client launched: web opened in PuTTY through the SSH gateway bastion."
+        );
+        assert_eq!(
+            said(Notice::PuttyRefused(PuttyRefusal::Gateway(
+                heimdall_app::UiError::Cancelled
+            )))
+            .split_once(':')
+            .map(|(head, _)| head),
+            Some("PuTTY was not opened, its SSH gateway not reached")
+        );
+        assert!(
+            said(Notice::PuttyRefused(PuttyRefusal::Forward(named(
+                "address in use"
+            ))))
+            .ends_with("address in use")
+        );
+        assert_eq!(
             said(Notice::X11ServerNotFound),
             "No X11 server found. Install VcXsrv or Xming for X11 forwarding support."
         );
@@ -667,7 +700,6 @@ mod tests {
             .ends_with("denied")
         );
         for refusal in [
-            PuttyRefusal::SshGateway,
             PuttyRefusal::InvalidHost,
             PuttyRefusal::KeyFile(std::path::PathBuf::from("keys/id")),
             PuttyRefusal::HostKey(heimdall_app::UiError::Cancelled),

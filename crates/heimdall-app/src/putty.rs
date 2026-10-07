@@ -21,9 +21,15 @@
 //!
 //! With X11 forwarding, an X server is counted on first; `PuTTY` alone is given its display.
 //! Without one, it starts without `-X`, as the C# does.
+//!
+//! Behind an SSH gateway, `PuTTY` is pointed at a forward of this computer's loopback address
+//! instead, as the C# points it at its tunnel: see [`crate::putty_driver`].
 
 use std::ffi::{OsStr, OsString};
+use std::future::Future;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
+use std::pin::Pin;
 use std::process::{Command, Stdio};
 use std::sync::Arc;
 
@@ -57,8 +63,11 @@ const HOST_KEY_ARGUMENT: &str = "-hostkey";
 /// Why an SSH profile was not opened in `PuTTY`.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PuttyRefusal {
-    /// The profile goes through an SSH gateway, which `PuTTY` is not taken through yet.
-    SshGateway,
+    /// The SSH gateway the profile goes through was not reached, or refused the user: why.
+    Gateway(UiError),
+    /// No port of this computer's loopback address could be opened for the gateway's
+    /// forward: why.
+    Forward(String),
     /// The host would be read as an option, or holds a space or a control character, as
     /// the C# input validation refuses it.
     InvalidHost,
@@ -118,11 +127,40 @@ pub struct PuttyLaunch {
     pub x11: Option<X11Settings>,
 }
 
+impl PuttyLaunch {
+    /// The same launch pointed at `local`, a forward to the server through its gateway: the
+    /// host key stays the server's own.
+    #[must_use]
+    pub fn through(self, local: SocketAddr) -> Self {
+        Self {
+            host: local.ip().to_string(),
+            port: local.port(),
+            ..self
+        }
+    }
+}
+
 /// How `PuTTY` started: the X server counted on, when X11 forwarding was asked.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PuttyStarted {
     /// The X server, when X11 forwarding was asked.
     pub x11: Option<X11Outcome>,
+}
+
+/// A `PuTTY` started, and its end to wait for.
+pub struct Running {
+    /// How it started.
+    pub started: PuttyStarted,
+    /// Completes once the program has exited.
+    pub exited: Pin<Box<dyn Future<Output = ()> + Send>>,
+}
+
+impl std::fmt::Debug for Running {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Running")
+            .field("started", &self.started)
+            .finish_non_exhaustive()
+    }
 }
 
 /// Whether `value` would be read as an option, or holds a space or a control character.
@@ -131,16 +169,13 @@ fn unsafe_argument(value: &str) -> bool {
 }
 
 /// Refuses what `PuTTY` cannot be started on for `profile`, before anything is dialled, as
-/// the C# checks it: a gateway, a host or a user name that is not one, a key file named
-/// by a relative path.
+/// the C# checks it: a host or a user name that is not one, a key file named by a relative
+/// path.
 ///
 /// # Errors
 ///
 /// The first [`PuttyRefusal`] found.
 pub fn check(profile: &SshProfile) -> Result<(), PuttyRefusal> {
-    if profile.gateway.is_some() {
-        return Err(PuttyRefusal::SshGateway);
-    }
     if profile.host.is_empty() || unsafe_argument(&profile.host) {
         return Err(PuttyRefusal::InvalidHost);
     }
@@ -247,6 +282,48 @@ pub fn command(program: &Path, launch: &PuttyLaunch, x11: bool) -> Command {
 ///
 /// [`PuttyRefusal`] when `PuTTY` was not started.
 pub fn launch(launch: &PuttyLaunch) -> Result<PuttyStarted, PuttyRefusal> {
+    let (mut command, x11, target) = prepare(launch)?;
+    let mut child = command
+        .spawn()
+        .map_err(|error| PuttyRefusal::NotStarted(error.to_string()))?;
+    log::info!("PuTTY started, process {}, for {target}", child.id());
+    std::thread::spawn(move || match child.wait() {
+        Ok(status) => log::info!("PuTTY for {target} ended: {status}"),
+        Err(error) => log::warn!("PuTTY for {target} could not be waited for: {error}"),
+    });
+    Ok(PuttyStarted { x11 })
+}
+
+/// Starts `PuTTY` for `launch` as [`launch`] does, its end handed back to wait for: a task
+/// waits on it, nothing polls. Called within a tokio runtime.
+///
+/// # Errors
+///
+/// [`PuttyRefusal`] when `PuTTY` was not started.
+pub fn start(launch: &PuttyLaunch) -> Result<Running, PuttyRefusal> {
+    let (command, x11, target) = prepare(launch)?;
+    let mut child = tokio::process::Command::from(command)
+        .spawn()
+        .map_err(|error| PuttyRefusal::NotStarted(error.to_string()))?;
+    log::info!(
+        "PuTTY started, process {}, for {target}",
+        child.id().unwrap_or_default()
+    );
+    let exited = Box::pin(async move {
+        match child.wait().await {
+            Ok(status) => log::info!("PuTTY for {target} ended: {status}"),
+            Err(error) => log::warn!("PuTTY for {target} could not be waited for: {error}"),
+        }
+    });
+    Ok(Running {
+        started: PuttyStarted { x11 },
+        exited,
+    })
+}
+
+/// What starts `PuTTY` for `launch`: the program found, the key file there, the X server
+/// counted on when X11 is forwarded; the command, the X server, and the target it names.
+fn prepare(launch: &PuttyLaunch) -> Result<(Command, Option<X11Outcome>, String), PuttyRefusal> {
     let path = std::env::var_os("PATH");
     let program = find_putty(&launch.putty_path, path.as_deref(), Path::is_file)
         .ok_or(PuttyRefusal::NotFound)?;
@@ -263,22 +340,23 @@ pub fn launch(launch: &PuttyLaunch) -> Result<PuttyStarted, PuttyRefusal> {
     }
     let target = heimdall_core::profile::display_address(&launch.host, launch.port);
     log::info!("launching PuTTY {} for {target}", program.display());
-    let mut child = command(&program, launch, forwarded)
-        .spawn()
-        .map_err(|error| PuttyRefusal::NotStarted(error.to_string()))?;
-    log::info!("PuTTY started, process {}, for {target}", child.id());
-    std::thread::spawn(move || match child.wait() {
-        Ok(status) => log::info!("PuTTY for {target} ended: {status}"),
-        Err(error) => log::warn!("PuTTY for {target} could not be waited for: {error}"),
-    });
-    Ok(PuttyStarted { x11 })
+    Ok((command(&program, launch, forwarded), x11, target))
 }
 
 /// Probes `profile`'s server for its host key, checked against the application's own
 /// `known_hosts`, with `options`; nobody signs in.
 pub async fn probe_host_key(profile: SshProfile, options: ConnectOptions) -> HostKeyProbe {
+    let probed = trusted_host_key(&profile, &options, &CancellationToken::new()).await;
+    host_key_probe(&profile, probed)
+}
+
+/// What the probe of `profile`'s server found, said as [`HostKeyProbe`].
+pub(crate) fn host_key_probe(
+    profile: &SshProfile,
+    probed: Result<PublicKey, ConnectError>,
+) -> HostKeyProbe {
     let target = heimdall_core::profile::display_address(&profile.host, profile.port);
-    match trusted_host_key(&profile, &options, &CancellationToken::new()).await {
+    match probed {
         Ok(key) => HostKeyProbe::Trusted(fingerprint(&key)),
         Err(ConnectError::UnknownHostKey { host, port, key }) => {
             let fingerprint = fingerprint(&key);
@@ -458,10 +536,33 @@ mod tests {
     }
 
     #[test]
-    fn a_profile_behind_a_gateway_or_with_a_relative_key_is_refused() {
+    fn behind_a_gateway_putty_goes_to_the_forward_with_the_server_s_own_key() {
         let mut routed = profile();
         routed.gateway = Some(ProfileId::new("bastion"));
-        assert_eq!(check(&routed), Err(PuttyRefusal::SshGateway));
+        assert_eq!(check(&routed), Ok(()), "a gateway is gone through");
+        let local = SocketAddr::from(([127, 0, 0, 1], 50123));
+        let launch = launch_of(&routed).through(local);
+        assert_eq!(
+            strings(&arguments(&launch, false)),
+            [
+                "-ssh",
+                "-P",
+                "50123",
+                "-hostkey",
+                FINGERPRINT,
+                "ops@127.0.0.1"
+            ]
+        );
+        let mut anonymous = routed;
+        anonymous.username = None;
+        assert_eq!(
+            strings(&arguments(&launch_of(&anonymous).through(local), false)).last(),
+            Some(&"127.0.0.1".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_profile_with_a_relative_key_is_refused() {
         let mut relative = profile();
         relative.key_path = Some(PathBuf::from("keys/id"));
         assert_eq!(

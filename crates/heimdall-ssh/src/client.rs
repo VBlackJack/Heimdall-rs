@@ -777,8 +777,36 @@ pub async fn trusted_host_key(
     options: &ConnectOptions,
     cancel: &CancellationToken,
 ) -> Result<PublicKey, ConnectError> {
+    probe(profile, None, options, cancel).await
+}
+
+/// As [`trusted_host_key`], the server reached through `gateway`, which connects onward to
+/// it. The key is checked against what is trusted for the server's own host and port, never
+/// for the gateway's.
+///
+/// # Errors
+///
+/// As [`trusted_host_key`]; [`ConnectError::JumpRefused`] when the gateway will not reach
+/// the server.
+pub async fn trusted_host_key_via(
+    gateway: &Connection,
+    profile: &SshProfile,
+    options: &ConnectOptions,
+    cancel: &CancellationToken,
+) -> Result<PublicKey, ConnectError> {
+    probe(profile, Some(gateway.handle()), options, cancel).await
+}
+
+/// Exchanges keys with `profile`'s server, over TCP or, when `carrier` is given, over a
+/// connection it opens onward; the key trusted, then the connection ended.
+async fn probe(
+    profile: &SshProfile,
+    carrier: Option<&client::Handle<ClientHandler>>,
+    options: &ConnectOptions,
+    cancel: &CancellationToken,
+) -> Result<PublicKey, ConnectError> {
     let dial = Dial::new(profile, options)?;
-    let handle = dial.exchange(profile, None, options, cancel).await?;
+    let handle = dial.exchange(profile, carrier, options, cancel).await?;
     dial.record(Pinning::Record);
     let key = dial.presented.lock().ok().and_then(|mut slot| slot.take());
     let _ = handle

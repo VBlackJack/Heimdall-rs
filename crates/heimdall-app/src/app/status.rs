@@ -333,6 +333,13 @@ pub enum Notice {
     RdpExternalRefused(crate::rdp_external::ExternalRefusal),
     /// The SSH profile of this name opened in `PuTTY`.
     PuttyLaunched(String),
+    /// An SSH profile opened in `PuTTY` through its SSH gateway.
+    PuttyLaunchedThrough {
+        /// The profile's name.
+        name: String,
+        /// The gateway's name.
+        gateway: String,
+    },
     /// An SSH profile did not open in `PuTTY`, for this reason.
     PuttyRefused(crate::putty::PuttyRefusal),
     /// X11 forwarding was asked and no X server could be found or started: `PuTTY` started

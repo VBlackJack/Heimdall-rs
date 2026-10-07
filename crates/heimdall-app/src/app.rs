@@ -307,6 +307,13 @@ pub enum Message {
         /// Started, or why not.
         result: Result<crate::putty::PuttyStarted, crate::putty::PuttyRefusal>,
     },
+    /// What a launch of `PuTTY` through a gateway reports.
+    PuttyRoute {
+        /// The launch.
+        id: crate::putty_driver::PuttyRouteId,
+        /// What happened.
+        event: crate::putty_driver::PuttyRouteEvent,
+    },
     /// The size a tab shows its remote desktop at, in pixels.
     DesktopResize {
         /// Tab.
@@ -839,6 +846,7 @@ impl fmt::Debug for Message {
             Self::PuttyLaunched { result, .. } => {
                 write!(f, "PuttyLaunched({})", result.is_ok())
             }
+            Self::PuttyRoute { id, .. } => write!(f, "PuttyRoute({})", id.value()),
             // What was typed is never shown, as for a terminal.
             Self::DesktopResize { tab, width, height } => {
                 write!(f, "DesktopResize({}, {width}x{height})", tab.value())
@@ -1213,6 +1221,15 @@ pub enum Effect {
         name: String,
         /// How it starts.
         launch: Box<crate::putty::PuttyLaunch>,
+    },
+    /// Start `PuTTY` through a gateway, as
+    /// [`putty_route_events`](crate::putty_driver::putty_route_events) does; answered with
+    /// [`Message::PuttyRoute`].
+    OpenPuttyRoute {
+        /// The launch.
+        id: crate::putty_driver::PuttyRouteId,
+        /// What it needs.
+        request: Box<crate::putty_driver::PuttyRouteRequest>,
     },
     /// Put an image on the clipboard, a device-independent bitmap: what an RDP server
     /// copied.
@@ -1627,6 +1644,7 @@ impl fmt::Debug for Effect {
                 write!(f, "ProbePuttyHostKey({})", profile.id)
             }
             Self::LaunchPutty { .. } => f.write_str("LaunchPutty(..)"),
+            Self::OpenPuttyRoute { id, .. } => write!(f, "OpenPuttyRoute({})", id.value()),
             Self::WriteClipboardImage(image) => write!(f, "WriteClipboardImage({})", image.len()),
             Self::SaveExport { count, .. } => write!(f, "SaveExport({count})"),
             Self::PickOpenSshConfig => f.write_str("PickOpenSshConfig"),
@@ -2822,6 +2840,10 @@ pub struct App {
     next_tunnel: crate::tunnel::TunnelId,
     /// The gateway key the user is asked about for a tunnel.
     pending_tunnel_key: Option<tunnels::PendingTunnelKey>,
+    /// Launches of `PuTTY` through gateways, until their forwards are released.
+    putty_routes: Vec<putty_launch::PuttyRoute>,
+    /// The identifier of the next launch of `PuTTY` through a gateway.
+    next_putty_route: crate::putty_driver::PuttyRouteId,
     /// The profile selected in the tree, the last one clicked: where a Shift+click range
     /// starts.
     pub selected_profile: Option<ProfileId>,
@@ -2967,6 +2989,8 @@ impl App {
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
             pending_tunnel_key: None,
+            putty_routes: Vec::new(),
+            next_putty_route: crate::putty_driver::PuttyRouteId::default(),
             selected_profile: None,
             selected_folder: None,
             selection: std::collections::BTreeSet::new(),
@@ -3087,6 +3111,7 @@ impl App {
         self.follow_desktop_sessions();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
             self.close_session_logs();
+            self.release_putty_routes();
         }
         debug_assert!(
             self.floating_invariant_holds(),
@@ -3115,6 +3140,7 @@ impl App {
             | Message::RdpExternalLaunched { .. }
             | Message::PuttyHostKey { .. }
             | Message::PuttyLaunched { .. }
+            | Message::PuttyRoute { .. }
             | Message::ReconnectTab(_)
             | Message::ConnectAs { .. }
             | Message::QuickConnect(_)
@@ -3407,6 +3433,7 @@ impl App {
             } => self.rdp_external_launched(name, gateway, result),
             Message::PuttyHostKey { profile, probe } => self.putty_host_key(*profile, probe),
             Message::PuttyLaunched { name, result } => self.putty_launched(name, result),
+            Message::PuttyRoute { id, event } => self.putty_route_event(id, event),
             Message::ReconnectTab(tab) => self.reconnect_tab(tab),
             Message::ForgetServer(tab) => self.forget_server(tab),
             Message::ConnectAs { id, protocol } => self.connect_as(&id, protocol),

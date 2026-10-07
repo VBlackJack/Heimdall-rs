@@ -3569,6 +3569,20 @@ impl Shell {
                         });
                 Message::App(AppMessage::PuttyLaunched { name, result })
             }),
+            Effect::OpenPuttyRoute { id, request } => {
+                // Its end is PuTTY's: the stream ends once the forward is released.
+                let registry = self.registry.clone();
+                let events = stream::once(async move {
+                    heimdall_app::putty_driver::putty_route_events(
+                        *request,
+                        registry,
+                        heimdall_app::putty::start,
+                    )
+                })
+                .flatten();
+                Task::stream(events)
+                    .map(move |event| Message::App(AppMessage::PuttyRoute { id, event }))
+            }
             Effect::WriteClipboardImage(image) => Task::future(async move {
                 let _ = tokio::task::spawn_blocking(move || write_clipboard_image(&image)).await;
             })
