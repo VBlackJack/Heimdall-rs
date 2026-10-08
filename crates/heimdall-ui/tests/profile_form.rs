@@ -25,7 +25,7 @@ use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{App, AppConfig, Message as AppMessage};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, Shell, tree_add_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
@@ -124,7 +124,8 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
     let mut shell = shell(dir.path());
     {
         let mut ui = simulator(&shell);
-        ui.click("+").expect("add button");
+        // A glyph alone, as the C#'s Add button: found by its identifier.
+        ui.click(tree_add_id()).expect("add button");
         assert!(
             ui.into_messages()
                 .any(|message| matches!(message, Message::OpenTreeMenu(TreeMenu::Add)))

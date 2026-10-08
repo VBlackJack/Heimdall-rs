@@ -63,6 +63,7 @@ fn command(argument: &str) -> LocalCommand {
         program: Some(PROGRAM.to_owned()),
         arguments: LocalArguments::List(vec![argument.to_owned()]),
         working_directory: None,
+        run_as_administrator: false,
     }
 }
 

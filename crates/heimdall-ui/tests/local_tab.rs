@@ -74,6 +74,7 @@ fn tool() -> LocalProfile {
             program: Some(PROGRAM.to_owned()),
             arguments: LocalArguments::List(vec!["run\u{202E}txt.exe".to_owned()]),
             working_directory: None,
+            run_as_administrator: false,
         },
         approved: None,
         session_logging: None,

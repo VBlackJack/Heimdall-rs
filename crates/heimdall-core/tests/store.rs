@@ -402,6 +402,7 @@ fn local(id: &str, line: &str) -> LocalProfile {
             program: Some("pwsh.exe".to_owned()),
             arguments: LocalArguments::WindowsLine(line.to_owned()),
             working_directory: Some(PathBuf::from(r"C:\work")),
+            run_as_administrator: false,
         },
         approved: None,
         session_logging: None,

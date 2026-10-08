@@ -41,6 +41,8 @@ zeroize.workspace = true
 [target.'cfg(windows)'.dependencies]
 # PuTTY's saved sessions, read from the registry.
 windows-registry.workspace = true
+# advapi, shell: a local shell run as administrator, started through ShellExecuteEx.
+winsafe = { workspace = true, features = ["advapi", "shell"] }
 
 [dev-dependencies]
 # An FTP server, and its certificate, the FTP driver's tests run against.

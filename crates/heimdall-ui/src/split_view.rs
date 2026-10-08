@@ -34,7 +34,7 @@ use iced::advanced::mouse::click::Kind;
 use iced::advanced::widget::{Id, Operation, Tree, tree};
 use iced::advanced::{Clipboard, Shell, Widget, overlay, renderer};
 use iced::keyboard::key::Named;
-use iced::widget::{button, column, container, mouse_area, row, text};
+use iced::widget::{button, column, container, mouse_area, row, text, tooltip};
 use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector, keyboard, mouse};
 
 use crate::i18n::fl;
@@ -62,8 +62,17 @@ pub const FOCUS_EDGE: f32 = 2.0;
 /// panes.
 pub const OUTER_DIVIDER: usize = 0;
 
-/// Room inside a pane header.
-const HEADER_PADDING: f32 = 2.0;
+/// Room around a pane header's content, as the C# `SessionHeaderPadding`'s `8,4`.
+const HEADER_PADDING: [f32; 2] = [4.0, 8.0];
+
+/// Room inside a pane header's Disconnect button, as the C#'s `8,2`.
+const DISCONNECT_PADDING: [f32; 2] = [2.0, 8.0];
+
+/// Space between a pane's name and what follows it, as the C# header's margins.
+const HEADER_GAP: f32 = 8.0;
+
+/// Between a pane's name and its state, as the C# header writes it.
+const STATE_SEPARATOR: &str = " - ";
 
 /// A split as drawn: its panes numbered first to last, its dividers in the order of a walk
 /// from the outer split, each side before the other.
@@ -654,36 +663,105 @@ impl<'a, M: 'a> From<SplitView<'a, M>> for Element<'a, M, Theme, iced::Renderer>
     }
 }
 
-/// A pane of a split tab: a slim header with `marks` before `label`, its close button at
-/// its end and the tab's menu, as a pane's, on a right click, over `content`; an accent border round it
-/// while it has the keyboard, as the C# pane's.
-pub fn pane<'a>(
-    tab: TabId,
-    marks: Vec<Element<'a, Message>>,
-    label: iced::widget::Row<'a, Message>,
-    content: Element<'a, Message>,
-    focused: bool,
-) -> Element<'a, Message> {
-    let close = button(text(fl!("ui-tab-close-button")).size(font_size::CAPTION))
-        .style(styles::subtle)
-        .padding([0.0, HEADER_PADDING])
-        .on_press(Message::App(AppMessage::Split(
-            heimdall_app::split::SplitMessage::ClosePane(tab),
-        )));
-    let header = mouse_area(
+/// What a pane's header says, as the C# session header: its marks, its name, what it
+/// connects to, its state, and its badges.
+pub struct Heading<'a> {
+    /// The pane's tab.
+    pub tab: TabId,
+    /// The tab of the strip split into it.
+    pub host: TabId,
+    /// What goes before its name: its broadcast marker, its post-connect steps.
+    pub marks: Vec<Element<'a, Message>>,
+    /// Its name.
+    pub name: String,
+    /// What it connects to, a server's address or a local shell's program; `None` when
+    /// there is nothing to say.
+    pub detail: Option<String>,
+    /// The gateways it goes through, said; `None` when it goes straight.
+    pub route: Option<String>,
+    /// Its state, in words.
+    pub state: String,
+    /// What follows its state: it is recorded, a macro, a bell.
+    pub badges: Vec<Element<'a, Message>>,
+}
+
+/// A pane's header, as the C# session header: `heading`'s marks, name, address and state
+/// at the left; at the right the split button, which puts the split back into tabs as the
+/// C#'s does in a split, and Disconnect, which closes that pane alone. A right click opens
+/// the pane's menu.
+fn header(heading: Heading<'_>) -> Element<'_, Message> {
+    let Heading {
+        tab,
+        host,
+        marks,
+        name,
+        detail,
+        route,
+        state,
+        badges,
+    } = heading;
+    let secondary = |said: String| text(said).size(font_size::CAPTION).style(text::secondary);
+    let named = row(marks)
+        .push(text(name).size(font_size::BODY).font(styles::SEMIBOLD))
+        // The separator against what precedes it, as the C# runs: its own spaces apart.
+        .push(row![
+            row![detail.map(secondary), route.map(secondary)].spacing(HEADER_GAP),
+            secondary(STATE_SEPARATOR.to_owned()),
+            text(state).size(font_size::CAPTION),
+        ])
+        .extend(badges)
+        .spacing(HEADER_GAP)
+        .align_y(iced::Alignment::Center);
+    let tip = |content: Element<'static, Message>, said: String| {
+        tooltip(
+            content,
+            text(said).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+    };
+    let split = tip(
+        crate::icons::button(crate::icons::Icon::Split)
+            .style(styles::subtle)
+            .on_press(Message::App(AppMessage::Split(
+                heimdall_app::split::SplitMessage::Unsplit(host),
+            )))
+            .into(),
+        fl!("ui-split-session-tooltip"),
+    );
+    let disconnect = tip(
+        button(text(fl!("ui-tab-menu-disconnect")).size(font_size::CAPTION))
+            .style(styles::secondary)
+            .padding(DISCONNECT_PADDING)
+            .on_press(Message::App(AppMessage::Split(
+                heimdall_app::split::SplitMessage::ClosePane(tab),
+            )))
+            .into(),
+        fl!("ui-desktop-disconnect-tooltip"),
+    );
+    mouse_area(
         container(
-            row(marks)
-                .push(label)
-                .push(iced::widget::space::horizontal())
-                .push(close)
+            row![named, iced::widget::space::horizontal(), split, disconnect]
                 .spacing(spacing::XS)
                 .align_y(iced::Alignment::Center),
         )
         .padding(HEADER_PADDING)
         .width(Length::Fill)
-        .style(container::rounded_box),
+        .style(styles::strip),
     )
-    .on_right_press(Message::OpenTreeMenu(TreeMenu::Pane(tab)));
+    .on_right_press(Message::OpenTreeMenu(TreeMenu::Pane(tab)))
+    .into()
+}
+
+/// A pane of a split tab: its header, as the C# session header, over `content`; an accent
+/// border round it while it has the keyboard, as the C# pane's.
+#[must_use]
+pub fn pane<'a>(
+    heading: Heading<'a>,
+    content: Element<'a, Message>,
+    focused: bool,
+) -> Element<'a, Message> {
+    let header = header(heading);
     container(column![header, container(content).height(Length::Fill)])
         .padding(FOCUS_EDGE)
         .width(Length::Fill)

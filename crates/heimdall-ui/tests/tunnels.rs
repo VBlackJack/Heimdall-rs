@@ -29,7 +29,7 @@ use heimdall_core::profile::{ProfileId, SshGateway};
 use heimdall_core::store::ProfileStore;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, Shell, tunnels_toggle_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
@@ -176,7 +176,9 @@ fn the_status_bar_counts_the_tunnels_and_opens_the_panel_which_says_when_there_i
     {
         let mut ui = simulator(&shell);
         assert!(ui.find("Tunnels (0)").is_err(), "closed to begin with");
-        ui.click("0 tunnels").expect("the bar's button");
+        // As the C# bar: the count said at its right, the button a bolt and a number.
+        ui.find("0 tunnels").expect("the bar's count");
+        ui.click(tunnels_toggle_id()).expect("the bar's button");
     }
     let _ = shell.update(tunnel(TunnelMessage::TogglePanel));
     {

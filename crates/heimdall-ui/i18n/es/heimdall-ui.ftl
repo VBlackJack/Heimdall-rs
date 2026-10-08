@@ -447,13 +447,21 @@ ui-session-vnc-quality-low-bandwidth = Bajo ancho de banda
 ui-sidebar-local-shell-button = Shell local
 ui-local-shell-name = Shell local
 ui-local-starting = Iniciando { $name }...
+ui-local-admin-badge = ADMIN
+ui-local-elevated-starting = { $name }: Windows pide permisos de administrador.
+ui-local-elevated-started = { $name } se ejecuta como administrador en su propia ventana.
+ui-local-elevated-cancelled = El usuario canceló la elevación de privilegios.
+ui-local-elevated-failed = No se pudo iniciar el proceso elevado: { $detail }
+ui-local-elevated-unsupported = Ejecutar como administrador solo está disponible en Windows. No se inició nada.
+ui-local-elevated-program = Programa: { $program }
+ui-local-elevated-open-again-button = Abrirlo de nuevo
 ui-error-local-shell = No se pudo iniciar el shell local: { $detail }
-ui-import-skip-elevation = se ejecuta con privilegios elevados, aún no compatible
 ui-import-skip-unsafe-local = su programa, sus argumentos o su carpeta no se pueden ejecutar tal cual (ruta relativa, comilla, carácter NUL o carpeta en otra máquina)
 ui-dialog-local-title = ¿Ejecutar este programa?
 ui-dialog-local-body = El perfil { $name } ejecuta el comando siguiente. Heimdall solo lo ejecuta con tu acuerdo, y vuelve a preguntar si cambia.
 ui-dialog-local-folder = Se inicia en: { $folder }
 ui-dialog-local-rereads = Este programa vuelve a leer su línea de comandos con sus propias reglas: & | ^ < > y % son comandos, no texto.
+ui-dialog-local-elevated = Se ejecuta como administrador, en su propia ventana, cuando Windows pide permisos de administrador.
 ui-dialog-local-confirm = Ejecutar
 ui-dialog-run-script-title = ¿Ejecutar este script?
 ui-dialog-run-script-body = { $name } se ejecuta en una nueva pestaña con el comando siguiente, con tus permisos. Heimdall vuelve a preguntar cada vez que se ejecuta.
@@ -735,6 +743,9 @@ ui-profile-local-arguments = Argumentos
 ui-profile-local-advanced-title = Opciones avanzadas del shell
 ui-profile-local-advanced-desc = La carpeta en la que se inicia el shell.
 ui-profile-local-working-directory = Directorio de trabajo
+ui-profile-local-run-as-admin = Ejecutar como administrador (abre su propia ventana)
+ui-profile-local-run-as-admin-hint = Windows pide permisos de administrador y después inicia el shell en una ventana separada, no en una pestaña.
+ui-profile-local-run-as-admin-windows-only = Ejecutar como administrador solo está disponible en Windows: aquí este perfil no abre nada.
 ui-profile-error-local-arguments = Los argumentos dejan una comilla abierta.
 ui-profile-protocol-vnc-name = VNC
 ui-profile-protocol-vnc-desc = Compartición de pantalla remota
@@ -935,6 +946,7 @@ ui-split-detach-secondary = Separar panel secundario
 ui-split-max-panes-reached = Se alcanzó el número máximo de paneles ({ $max }).
 ui-status-detach-split-refused = Una pestaña dividida no se puede mover a su propia ventana. Deshaga primero la división.
 ui-split-menu = Dividir...
+ui-split-session-tooltip = Dividir vista de sesión
 ui-split-palette-hint = Buscar servidor con el que dividir...
 ui-split-drop-to-split = Soltar para dividir
 ui-tab-drag-detach-hint = Soltar para separar a una ventana
@@ -1042,6 +1054,7 @@ ui-status-sessions-filtered = { $shown } de { $count ->
     [one] { $count } sesión
    *[other] { $count } sesiones
 }
+ui-status-separator = {" | "}
 
 ui-find-placeholder = Buscar...
 ui-find-previous = ▲
@@ -2096,6 +2109,11 @@ ui-import-dropped-command-library-links = { $count ->
     [one] { $count } paso posterior a la conexión vinculado a la biblioteca de comandos, importado sin su vínculo
    *[other] { $count } pasos posteriores a la conexión vinculados a la biblioteca de comandos, importados sin sus vínculos
 }
+ui-import-dropped-elevation = elevación "{ $mode }", ahora se ejecuta como administrador en su propia ventana
+ui-import-elevation-auto = Automática (gsudo, después recurre a ventana externa)
+ui-import-elevation-gsudo = Solo gsudo (terminal incrustada)
+ui-import-elevation-runas = Ventana externa (compatible con AdminByRequest)
+ui-import-elevation-unknown = desconocida
 ui-citrix-import-title = Aplicaciones de Citrix
 ui-citrix-import-none = No se encontraron aplicaciones de Citrix en la caché local. Abre Citrix Workspace y conecta primero a una tienda.
 ui-citrix-import-confirm = { $count ->

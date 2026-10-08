@@ -21,15 +21,42 @@
 //! Colours are read from the theme, under the names the C# brushes take: the accent is the
 //! primary colour, a card the weak background, the secondary text the secondary colour.
 
+use iced::border::Radius;
 use iced::overlay::menu::Style as MenuStyle;
 use iced::theme::palette::{self, Extended};
 use iced::widget::button::{Status as ButtonStatus, Style as ButtonStyle};
 use iced::widget::checkbox::{Status as CheckStatus, Style as CheckStyle};
+use iced::widget::container::Style as BoxStyle;
 use iced::widget::pick_list::{Status as ListStatus, Style as ListStyle};
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
-use iced::{Background, Border, Color, Shadow, Theme};
+use iced::{Background, Border, Color, Font, Shadow, Theme, font};
 
 use crate::tokens::{ACCENT_SHIFT, BORDER_WIDTH, OPACITY_DISABLED, radius};
+
+/// The window's font, semi-bold, as the C#'s `FontWeight="SemiBold"`: a selected tab's
+/// name, a session's title above it.
+pub const SEMIBOLD: Font = Font {
+    weight: font::Weight::Semibold,
+    ..crate::UI_FONT
+};
+
+/// Opacity of the C# `BroadcastActiveBrush`: the red behind broadcast input while it is on.
+const BROADCAST_ALPHA: f32 = 0.27;
+
+/// Opacity of a tab's close button at rest, as the C# tab's: full on the tab selected or
+/// under the pointer.
+pub const CLOSE_REST_OPACITY: f32 = 0.3;
+
+/// Radius of a tab's top corners, as the C# `ThemedTabItemStyle`'s `8,8,0,0`.
+const TAB_RADIUS: Radius = Radius {
+    top_left: radius::MD,
+    top_right: radius::MD,
+    bottom_right: 0.0,
+    bottom_left: 0.0,
+};
+
+/// Radius of the bar under a selected tab, as the C#'s.
+const UNDERLINE_RADIUS: f32 = 1.0;
 
 /// The C# brushes a control is drawn with, read from the theme.
 struct Brushes {
@@ -94,13 +121,18 @@ fn button_style(background: Option<Color>, text: Color, edge: Color) -> ButtonSt
 
 /// `style` faded, as a disabled C# control is.
 fn faded(style: &ButtonStyle) -> ButtonStyle {
+    faded_to(style, OPACITY_DISABLED)
+}
+
+/// `style` at `opacity`.
+fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
     ButtonStyle {
         background: style
             .background
-            .map(|background| background.scale_alpha(OPACITY_DISABLED)),
-        text_color: style.text_color.scale_alpha(OPACITY_DISABLED),
+            .map(|background| background.scale_alpha(opacity)),
+        text_color: style.text_color.scale_alpha(opacity),
         border: Border {
-            color: style.border.color.scale_alpha(OPACITY_DISABLED),
+            color: style.border.color.scale_alpha(opacity),
             ..style.border
         },
         ..*style
@@ -175,6 +207,91 @@ pub fn subtle(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
             ..rest
         },
         ButtonStatus::Disabled => faded(&rest),
+    }
+}
+
+/// A tab's close button, as the C# tab's: a secondary button, faded while `quiet`, on a
+/// tab neither selected nor under the pointer.
+pub fn close_mark(quiet: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let style = secondary(theme, status);
+        if quiet && status == ButtonStatus::Active {
+            faded_to(&style, CLOSE_REST_OPACITY)
+        } else {
+            style
+        }
+    }
+}
+
+/// Broadcast input's button while it is on, as the C# status bar's: the red faint behind
+/// it, its text red.
+pub fn broadcasting(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
+    let brushes = Brushes::of(theme);
+    let rest = button_style(
+        Some(brushes.danger.scale_alpha(BROADCAST_ALPHA)),
+        brushes.danger,
+        Color::TRANSPARENT,
+    );
+    match status {
+        ButtonStatus::Active | ButtonStatus::Hovered => rest,
+        ButtonStatus::Pressed => ButtonStyle {
+            border: outline(brushes.danger, radius::MD),
+            ..rest
+        },
+        ButtonStatus::Disabled => faded(&rest),
+    }
+}
+
+/// A session's tab, as the C# `ThemedTabItemStyle`: nothing behind it but under the
+/// pointer, a card once `selected`, rounded at the top; its text secondary until then.
+pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        let lit = selected || matches!(status, ButtonStatus::Hovered | ButtonStatus::Pressed);
+        ButtonStyle {
+            background: lit.then_some(Background::Color(brushes.card)),
+            text_color: if lit { brushes.text } else { brushes.secondary },
+            border: Border {
+                radius: TAB_RADIUS,
+                ..Border::default()
+            },
+            shadow: Shadow::default(),
+            snap: true,
+        }
+    }
+}
+
+/// The bar under a selected tab, in the accent, as the C#'s; `lit` false, it keeps its
+/// place unseen.
+pub fn underline(lit: bool) -> impl Fn(&Theme) -> BoxStyle {
+    move |theme| BoxStyle {
+        background: lit.then(|| Background::Color(Brushes::of(theme).accent)),
+        border: Border {
+            radius: UNDERLINE_RADIUS.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
+    }
+}
+
+/// A strip of a session's chrome, as the C# pane header: a card from edge to edge.
+pub fn strip(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).card)),
+        ..BoxStyle::default()
+    }
+}
+
+/// A small round mark in the accent, as the C# dot on the filter button while a filter
+/// leaves sessions out.
+pub fn accent_dot(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).accent)),
+        border: Border {
+            radius: radius::LG.into(),
+            ..Border::default()
+        },
+        ..BoxStyle::default()
     }
 }
 

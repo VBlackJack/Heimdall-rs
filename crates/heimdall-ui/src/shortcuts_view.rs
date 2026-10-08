@@ -31,6 +31,9 @@ const KEYS_WIDTH: f32 = 220.0;
 /// Height of the list before it scrolls.
 const LIST_HEIGHT: f32 = 460.0;
 
+/// Room around the status bar's hint: the bar's own height, and a little to its sides.
+const HINT_PADDING: [f32; 2] = [0.0, 4.0];
+
 /// Where a group of keys acts.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Group {
@@ -246,14 +249,20 @@ pub fn view<'a>(ok: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     .into()
 }
 
-/// The status bar's hint, which opens the help wherever the keyboard is.
+/// The status bar's hint, which opens the help wherever the keyboard is: quiet, in the
+/// secondary text, as the C#'s.
 pub fn hint<'a>(size: f32) -> Element<'a, Message> {
-    button(text(fl!("ui-shortcuts-hint")).size(size))
-        .style(styles::subtle)
-        .on_press(Message::Shortcut(
-            crate::terminal_view::keys::WindowShortcut::Help,
-        ))
-        .into()
+    button(
+        text(fl!("ui-shortcuts-hint"))
+            .size(size)
+            .style(text::secondary),
+    )
+    .style(styles::subtle)
+    .padding(HINT_PADDING)
+    .on_press(Message::Shortcut(
+        crate::terminal_view::keys::WindowShortcut::Help,
+    ))
+    .into()
 }
 
 #[cfg(test)]

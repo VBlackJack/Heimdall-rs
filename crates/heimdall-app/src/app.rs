@@ -161,7 +161,7 @@ pub use gateway_overview::{
 };
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use idle_lock::{IDLE_POLL, should_auto_lock};
-pub use local_tab::LocalConfirmation;
+pub use local_tab::{ElevatedPane, ElevatedState, LocalConfirmation};
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
 pub use pin::{PinDialog, PinFailure, PinMessage, PinMode};
@@ -273,6 +273,13 @@ pub enum Message {
     OpenLocal(LocalShell),
     /// Open a saved local profile, asking first unless what it runs is approved.
     OpenLocalProfile(ProfileId),
+    /// A local shell run as administrator was started in a window of its own, or why not.
+    ElevatedLaunched {
+        /// The tab that says so.
+        tab: TabId,
+        /// How the start went.
+        outcome: crate::elevated_shell::ElevatedOutcome,
+    },
     /// Open a `WinRM` tab for a saved `WinRM` profile.
     OpenWinRm(ProfileId),
     /// Launch a saved Citrix profile's application, outside Heimdall, and open its status
@@ -844,6 +851,9 @@ impl fmt::Debug for Message {
             // The arguments may carry anything: only the program is shown.
             Self::OpenLocal(shell) => write!(f, "OpenLocal({:?})", shell.program),
             Self::OpenLocalProfile(id) => write!(f, "OpenLocalProfile({id})"),
+            Self::ElevatedLaunched { tab, outcome } => {
+                write!(f, "ElevatedLaunched({}, {outcome:?})", tab.value())
+            }
             Self::OpenWinRm(id) => write!(f, "OpenWinRm({id})"),
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             Self::OpenFtp(id) => write!(f, "OpenFtp({id})"),
@@ -1118,6 +1128,14 @@ pub enum Effect {
         attempt: AttemptId,
         /// What to run.
         request: Box<LocalRequest>,
+    },
+    /// Start a local shell as administrator in a window of its own, off the UI thread, as
+    /// [`crate::elevated_shell::launch`] does; answered with [`Message::ElevatedLaunched`].
+    LaunchElevated {
+        /// The tab that says how it went.
+        tab: TabId,
+        /// What Windows is asked to start.
+        request: Box<crate::elevated_shell::ElevatedLaunch>,
     },
     /// Test a gateway route, and say each step as [`Message::RouteStep`], then
     /// [`Message::RouteTestDone`].
@@ -1647,6 +1665,7 @@ impl fmt::Debug for Effect {
             Self::ConnectLocal { tab, attempt, .. } => {
                 write!(f, "ConnectLocal({}, {})", tab.value(), attempt.value())
             }
+            Self::LaunchElevated { tab, .. } => write!(f, "LaunchElevated({})", tab.value()),
             Self::OpenTunnel { id, .. } => write!(f, "OpenTunnel({})", id.value()),
             Self::TestAddress { test, .. } => write!(f, "TestAddress({test})"),
             Self::TestRoute { run, .. } => write!(f, "TestRoute({run})"),
@@ -1958,6 +1977,9 @@ pub struct Tab {
     /// the split: none is docked again when the shell starts again. Carried across a
     /// reconnect; a shell opened anew docks one as usual.
     pub local_browser_closed: bool,
+    /// A local shell run as administrator in a window of its own: what the tab shows in
+    /// place of a terminal.
+    pub elevated: Option<ElevatedPane>,
 }
 
 impl fmt::Debug for Tab {
@@ -2111,6 +2133,7 @@ impl Tab {
             layout: None,
             working_directory: None,
             local_browser_closed: false,
+            elevated: None,
             dropped: false,
             connected_at: None,
             lasted: None,
@@ -3190,6 +3213,7 @@ impl App {
             | Message::OpenFtp(_)
             | Message::OpenLocal(_)
             | Message::OpenLocalProfile(_)
+            | Message::ElevatedLaunched { .. }
             | Message::OpenWinRm(_)
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
@@ -3484,6 +3508,7 @@ impl App {
             Message::OpenFtp(id) => self.open_ftp(&id),
             Message::OpenLocal(shell) => self.open_local(shell),
             Message::OpenLocalProfile(id) => self.open_local_profile(&id),
+            Message::ElevatedLaunched { tab, outcome } => self.elevated_launched(tab, &outcome),
             Message::OpenWinRm(id) => self.open_winrm(&id),
             Message::OpenCitrix(id) => self.open_citrix(&id),
             Message::CitrixLaunched { tab, name, result } => {
