@@ -18,14 +18,20 @@
 //! with it.
 //!
 //! Heimdall writes the command from the profile's checked fields, so nothing typed by the
-//! user runs as such and no approval is asked. The password never passes through Heimdall:
-//! `PowerShell` asks for it in the terminal. A failed sign-in, a remote `exit` or a dropped
+//! user runs as such and no approval is asked. A failed sign-in, a remote `exit` or a dropped
 //! connection ends the tab's `PowerShell` rather than leaving a prompt that runs on this
 //! machine under the remote host's name; see [`winrm::session_command`].
+//!
+//! The password, for a profile naming an account: the one stored for its own host, port and
+//! account, never a gateway's forward, given once an attempt, in `PowerShell`'s environment.
+//! A session given it that is never entered takes it as refused, as the vault's rules do for
+//! any saved password: until a new one is saved, `PowerShell` asks for it, so a stored
+//! password cannot lock the account out. With none stored, `PowerShell` asks.
 
 use heimdall_core::profile::{ProfileId, SshGateway, WinRmProfile};
-use heimdall_core::winrm;
+use heimdall_core::winrm::{self, PasswordSource};
 use heimdall_core::winrm_diagnostic::EarlyOutput;
+use heimdall_ssh::Secret;
 use heimdall_term::local::{self, LocalArguments};
 use tokio_util::sync::CancellationToken;
 
@@ -57,7 +63,7 @@ impl App {
     /// server is known to answer, through the profile's SSH gateway when it names one.
     pub(super) fn open_winrm_profile(&mut self, profile: WinRmProfile) -> Vec<Effect> {
         // Checked before anything connects, HTTPS through a gateway included.
-        if let Err(error) = winrm::session_command(&profile) {
+        if let Err(error) = winrm::session_command(&profile, PasswordSource::Prompt) {
             self.open_refused(profile.name, UiError::from(&error));
             return Vec::new();
         }
@@ -73,6 +79,7 @@ impl App {
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
         let request = self.winrm_request(&profile, cancel.clone());
+        let given = stored_password_given(request.as_ref(), attempt);
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -82,6 +89,7 @@ impl App {
             attempt,
             cancel,
         );
+        tab.winrm_password_given = given;
         let effects = match request {
             Ok(request) => vec![Effect::ConnectWinRm {
                 tab: tab_id,
@@ -113,6 +121,7 @@ impl App {
         };
         tab.attempt = attempt;
         tab.cancel = cancel;
+        tab.winrm_password_given = stored_password_given(request.as_ref(), attempt);
         // Read afresh: what the last attempt said is not this one's.
         tab.early_output = None;
         tab.winrm_diagnostic = None;
@@ -152,7 +161,16 @@ impl App {
             size: terminal_size(self.viewport, None),
             fallback_directory: self.config.files_start.clone(),
             cancel,
+            password: self.winrm_stored_password(profile),
         })
+    }
+
+    /// The password stored for `profile`'s own host, port and account, unless a server
+    /// refused it in this run; `None` for the current Windows identity.
+    fn winrm_stored_password(&self, profile: &WinRmProfile) -> Option<Secret> {
+        let endpoint = winrm::password_endpoint(profile)?;
+        self.saved_password_for(&profile.id, &endpoint)
+            .filter(|password| !password.expose().is_empty())
     }
 
     /// Once the session of `tab_id` is launched, the C# warning it gets: certificate checks
@@ -191,18 +209,29 @@ impl App {
     }
 
     /// `tab_id`'s session ended with `exit_status`: a `WinRM` session never entered, and
-    /// nothing named why, says to read `PowerShell`'s message, as the C# does.
+    /// nothing named why, says to read `PowerShell`'s message, as the C# does. Given its
+    /// stored password in this attempt, never entered, the password is taken as refused.
     pub(super) fn winrm_ended(&mut self, tab_id: TabId, exit_status: Option<u32>) {
         let Some(tab) = self.tab_mut(tab_id) else {
             return;
         };
-        if matches!(tab.profile, TabProfile::WinRm(_))
-            && tab.winrm_diagnostic.is_none()
-            && exit_status.and_then(|status| i32::try_from(status).ok())
-                == Some(winrm::REMOTE_SESSION_NOT_ENTERED_EXIT_CODE)
-        {
+        let TabProfile::WinRm(profile) = &tab.profile else {
+            return;
+        };
+        let not_entered = exit_status.and_then(|status| i32::try_from(status).ok())
+            == Some(winrm::REMOTE_SESSION_NOT_ENTERED_EXIT_CODE);
+        if !not_entered {
+            return;
+        }
+        let refused = (tab.winrm_password_given == Some(tab.attempt))
+            .then(|| (profile.id.clone(), profile.name.clone()));
+        if tab.winrm_diagnostic.is_none() {
             tab.winrm_diagnostic =
                 Some(heimdall_core::winrm_diagnostic::Diagnostic::SessionNotEntered);
+        }
+        if let Some((id, name)) = refused {
+            log::info!("WinRM session {name}: stored password refused");
+            self.refuse_saved(vec![id]);
         }
     }
 
@@ -228,6 +257,17 @@ impl App {
         self.tabs.push(tab);
         self.active = Some(tab_id);
     }
+}
+
+/// The attempt `request` gives a stored password in, when it gives one.
+fn stored_password_given(
+    request: Result<&WinRmRequest, &UiError>,
+    attempt: AttemptId,
+) -> Option<AttemptId> {
+    request
+        .ok()
+        .and_then(|request| request.password.as_ref())
+        .map(|_| attempt)
 }
 
 /// The `PowerShell` a `WinRM` tab runs: `pwsh` from `PATH`, else on Windows the one Windows

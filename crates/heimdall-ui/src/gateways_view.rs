@@ -31,13 +31,11 @@ use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-const PADDING: f32 = 12.0;
 /// Widest a card grows, as the other Settings cards.
 const CARD_WIDTH: f32 = 720.0;
-const BODY_SIZE: f32 = 16.0;
-const SMALL_SIZE: f32 = 12.0;
 
 /// A configured gateway in the reassignment list: its name and address.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,26 +74,28 @@ pub fn view<'a>(
         })
         .collect();
     let mut page = column![
-        text(fl!("ui-gateways-title")).size(BODY_SIZE),
-        text(fl!("ui-gateways-description")).size(SMALL_SIZE),
+        text(fl!("ui-gateways-title")).size(font_size::SUBTITLE),
+        text(fl!("ui-gateways-description")).size(font_size::CAPTION),
         text(fl!(
             "ui-gateways-summary",
             gateways = overview.gateways.len(),
             routed = overview.routed(),
             unresolved = overview.unresolved()
         ))
-        .size(SMALL_SIZE),
+        .size(font_size::CAPTION),
         container(
             row![
-                text(fl!("ui-gateways-configured")).size(BODY_SIZE),
+                text(fl!("ui-gateways-configured")).size(font_size::SUBTITLE),
                 iced::widget::space::horizontal(),
-                button(text(fl!("ui-gateway-add"))).on_press(Message::App(AppMessage::NewGateway)),
+                button(text(fl!("ui-gateway-add")))
+                    .style(styles::primary)
+                    .on_press(Message::App(AppMessage::NewGateway)),
             ]
             .align_y(Alignment::Center)
         )
         .max_width(CARD_WIDTH),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if overview.gateways.is_empty() {
         page = page.push(text(fl!("ui-gateways-empty")));
     }
@@ -104,8 +104,8 @@ pub fn view<'a>(
     }
     if !overview.missing.is_empty() {
         page = page
-            .push(text(fl!("ui-gateways-unresolved")).size(BODY_SIZE))
-            .push(text(fl!("ui-gateways-missing-description")).size(SMALL_SIZE));
+            .push(text(fl!("ui-gateways-unresolved")).size(font_size::SUBTITLE))
+            .push(text(fl!("ui-gateways-missing-description")).size(font_size::CAPTION));
         for missing in overview.missing {
             let chosen = picked
                 .get(&missing.id)
@@ -118,8 +118,8 @@ pub fn view<'a>(
 
 /// A card of the tab.
 fn card(content: Column<'_, Message>) -> Element<'_, Message> {
-    container(content.spacing(SPACING / 2.0))
-        .padding(PADDING)
+    container(content.spacing(spacing::XS))
+        .padding(spacing::MD)
         .max_width(CARD_WIDTH)
         .width(Length::Fill)
         .style(container::bordered_box)
@@ -138,7 +138,7 @@ fn sessions<'a>(
                 session.kind.label(),
                 server_text(&session.name)
             ))
-            .size(SMALL_SIZE),
+            .size(font_size::CAPTION),
         );
     }
     content
@@ -148,28 +148,30 @@ fn sessions<'a>(
 fn gateway_card<'a>(entry: &GatewayEntry) -> Element<'a, Message> {
     let mut content = column![
         row![
-            text(server_text(&entry.name)).size(BODY_SIZE),
-            text(address(&entry.host, entry.port)).size(SMALL_SIZE),
+            text(server_text(&entry.name)).size(font_size::BODY),
+            text(address(&entry.host, entry.port)).size(font_size::CAPTION),
             iced::widget::space::horizontal(),
-            text(fl!("ui-gateways-sessions", count = entry.sessions.len())).size(SMALL_SIZE),
+            text(fl!("ui-gateways-sessions", count = entry.sessions.len()))
+                .size(font_size::CAPTION),
             button(text(fl!("ui-gateways-edit")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::EditGateway(entry.id.clone()))),
             button(text(fl!("ui-gateways-delete")))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::Gateways(
                     GatewaysMessage::AskDelete(entry.id.clone())
                 ))),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center),
     ];
     if let Some(parent) = &entry.parent {
-        content = content
-            .push(text(fl!("ui-gateways-parent", name = server_text(parent))).size(SMALL_SIZE));
+        content = content.push(
+            text(fl!("ui-gateways-parent", name = server_text(parent))).size(font_size::CAPTION),
+        );
     }
     if entry.sessions.is_empty() {
-        content = content.push(text(fl!("ui-gateways-no-sessions")).size(SMALL_SIZE));
+        content = content.push(text(fl!("ui-gateways-no-sessions")).size(font_size::CAPTION));
     }
     card(sessions(content, &entry.sessions))
 }
@@ -187,23 +189,24 @@ fn missing_card<'a>(
             "ui-gateways-missing-header",
             id = server_text(missing.id.as_str())
         ))
-        .size(BODY_SIZE),
+        .size(font_size::SUBTITLE),
     ];
     if !missing.sessions.is_empty() {
         content = content.push(
-            text(fl!("ui-gateways-sessions", count = missing.sessions.len())).size(SMALL_SIZE),
+            text(fl!("ui-gateways-sessions", count = missing.sessions.len()))
+                .size(font_size::CAPTION),
         );
     }
     content = sessions(content, &missing.sessions);
     for (child, name) in missing.gateways {
         content = content.push(
             row![
-                text(fl!("ui-gateways-child", name = server_text(&name))).size(SMALL_SIZE),
-                button(text(fl!("ui-gateways-edit")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                text(fl!("ui-gateways-child", name = server_text(&name))).size(font_size::CAPTION),
+                button(text(fl!("ui-gateways-edit")).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::EditGateway(child))),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
         );
     }
@@ -215,7 +218,7 @@ fn missing_card<'a>(
             }))
         });
         let picking = id.clone();
-        let mut actions = row![].spacing(SPACING).align_y(Alignment::Center);
+        let mut actions = row![].spacing(spacing::SM).align_y(Alignment::Center);
         if !choices.is_empty() {
             actions = actions
                 .push(
@@ -225,13 +228,19 @@ fn missing_card<'a>(
                             to: choice.id,
                         }
                     })
+                    .style(styles::pick_list)
+                    .menu_style(styles::menu)
                     .placeholder(fl!("ui-gateways-reassign-to")),
                 )
-                .push(button(text(fl!("ui-gateways-reassign"))).on_press_maybe(reassign));
+                .push(
+                    button(text(fl!("ui-gateways-reassign")))
+                        .style(styles::primary)
+                        .on_press_maybe(reassign),
+                );
         }
         actions = actions.push(
             button(text(fl!("ui-gateways-clear")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::Gateways(GatewaysMessage::Clear(
                     id,
                 )))),

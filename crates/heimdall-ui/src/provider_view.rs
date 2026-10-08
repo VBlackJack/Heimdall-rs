@@ -32,15 +32,9 @@ use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-/// Space between elements.
-const SPACING: f32 = 8.0;
-/// Inner margin of a card.
-const PADDING: f32 = 12.0;
-/// Size of hints.
-const SMALL_SIZE: f32 = 12.0;
-/// Size of a card's title.
-const TITLE_SIZE: f32 = 16.0;
 /// Width of a label before its field.
 const LABEL_WIDTH: f32 = 200.0;
 
@@ -76,13 +70,15 @@ fn timeout_choice<'a>(timeout: Duration) -> Element<'a, Message> {
                 |Seconds(seconds)| {
                     provider(ProviderMessage::Timeout(Duration::from_secs(seconds)))
                 }
-            ),
+            )
+            .style(styles::pick_list)
+            .menu_style(styles::menu),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
-        text(fl!("ui-settings-provider-timeout-hint")).size(SMALL_SIZE),
+        text(fl!("ui-settings-provider-timeout-hint")).size(font_size::CAPTION),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -103,13 +99,13 @@ fn field<'a>(
     input: impl Into<Element<'a, Message>>,
     hint: Option<String>,
 ) -> Element<'a, Message> {
-    let mut block = Column::new().spacing(SPACING / 2.0).push(
+    let mut block = Column::new().spacing(spacing::XS).push(
         row![text(label).width(LABEL_WIDTH), input.into()]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
     );
     if let Some(hint) = hint {
-        block = block.push(text(hint).size(SMALL_SIZE));
+        block = block.push(text(hint).size(font_size::CAPTION));
     }
     block.into()
 }
@@ -118,14 +114,15 @@ fn field<'a>(
 pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
     let settings = &app.settings().credential_provider;
     let mut card = column![
-        text(fl!("ui-settings-provider-title")).size(TITLE_SIZE),
+        text(fl!("ui-settings-provider-title")).size(font_size::SUBTITLE),
         checkbox(settings.enabled)
+            .style(styles::checkbox)
             .label(fl!("ui-settings-provider-enabled"))
             .on_toggle(|on| provider(ProviderMessage::Enabled(on))),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if !settings.enabled {
-        card = card.push(text(fl!("ui-settings-provider-disabled-hint")).size(SMALL_SIZE));
+        card = card.push(text(fl!("ui-settings-provider-disabled-hint")).size(font_size::CAPTION));
         return boxed(card);
     }
     // Windows Credential Manager is offered on Windows, as the C# one; chosen elsewhere
@@ -136,7 +133,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
     }
     if credential_manager {
         // As in C#: nothing to set, the entry's name comes from the profile.
-        card = card.push(text(fl!("ui-settings-provider-credman-help")).size(SMALL_SIZE));
+        card = card.push(text(fl!("ui-settings-provider-credman-help")).size(font_size::CAPTION));
         return boxed(card);
     }
     let presets: Vec<Preset> = (0..PRESETS.len()).map(Preset).collect();
@@ -146,6 +143,8 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
             pick_list(presets, None::<Preset>, |preset| {
                 provider(ProviderMessage::Preset(preset.0))
             })
+            .style(styles::pick_list)
+            .menu_style(styles::menu)
             .placeholder(fl!("ui-settings-provider-preset-custom"))
             .width(Length::Fill),
             None,
@@ -156,6 +155,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
                 &fl!("ui-settings-provider-command-placeholder"),
                 &settings.command,
             )
+            .style(styles::text_input)
             .on_input(|value| provider(ProviderMessage::Command(value))),
             Some(fl!("ui-settings-provider-placeholders")),
         ))
@@ -165,6 +165,7 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
                 &fl!("ui-settings-provider-username-placeholder"),
                 &settings.username_command,
             )
+            .style(styles::text_input)
             .on_input(|value| provider(ProviderMessage::UsernameCommand(value))),
             Some(fl!("ui-settings-provider-username-help")),
         ))
@@ -172,37 +173,40 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         .push(field(
             fl!("ui-settings-provider-database"),
             text_input("", &settings.database)
+                .style(styles::text_input)
                 .on_input(|value| provider(ProviderMessage::Database(value))),
             None,
         ))
         .push(field(
             fl!("ui-settings-provider-key-file"),
             text_input("", &settings.key_file)
+                .style(styles::text_input)
                 .on_input(|value| provider(ProviderMessage::KeyFile(value))),
             Some(fl!("ui-settings-provider-key-file-hint")),
         ));
     let running = app.provider_test() == Some(&ProviderTest::Running);
     let mut test = row![
         button(text(fl!("ui-settings-provider-test")))
-            .style(button::secondary)
+            .style(styles::secondary)
             .on_press_maybe((!running).then(|| provider(ProviderMessage::Test))),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     if let Some(outcome) = app.provider_test() {
         let seconds = settings.timeout.as_secs();
-        test = test.push(text(test_text(outcome, seconds)).size(SMALL_SIZE));
+        test = test.push(text(test_text(outcome, seconds)).size(font_size::CAPTION));
     }
     card = card
         .push(test)
         .push(
             checkbox(settings.first_line_only)
+                .style(styles::checkbox)
                 .label(fl!("ui-settings-provider-first-line"))
                 .on_toggle(|on| provider(ProviderMessage::FirstLineOnly(on))),
         )
-        .push(text(fl!("ui-settings-provider-first-line-help")).size(SMALL_SIZE))
+        .push(text(fl!("ui-settings-provider-first-line-help")).size(font_size::CAPTION))
         .push(timeout_choice(settings.timeout))
-        .push(text(fl!("ui-settings-provider-keepass2-hint")).size(SMALL_SIZE));
+        .push(text(fl!("ui-settings-provider-keepass2-hint")).size(font_size::CAPTION));
     boxed(card)
 }
 
@@ -224,7 +228,7 @@ fn kind_choice<'a>(kind: ProviderKind) -> Element<'a, Message> {
                 |kind| provider(ProviderMessage::Kind(kind)),
             ),
         ]
-        .spacing(SPACING * 2.0),
+        .spacing(spacing::SM * 2.0),
         None,
     )
 }
@@ -232,7 +236,7 @@ fn kind_choice<'a>(kind: ProviderKind) -> Element<'a, Message> {
 fn boxed(card: Column<'_, Message>) -> Element<'_, Message> {
     container(card)
         .width(Length::Fill)
-        .padding(PADDING)
+        .padding(spacing::MD)
         .style(container::bordered_box)
         .into()
 }
@@ -245,22 +249,25 @@ fn unlock_field<'a>(app: &App, unlock: &'a str) -> Element<'a, Message> {
             text(fl!("ui-settings-provider-unlock-saved")),
             iced::widget::space::horizontal(),
             button(text(fl!("ui-settings-provider-unlock-forget")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(provider(ProviderMessage::ForgetUnlockSecret)),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center)
         .into()
     } else {
         let save = (!unlock.is_empty()).then_some(Message::SaveProviderUnlock);
         row![
             text_input(&fl!("ui-settings-provider-unlock-placeholder"), unlock)
+                .style(styles::text_input)
                 .secure(true)
                 .on_input(Message::ProviderUnlock)
                 .on_submit_maybe(save.clone()),
-            button(text(fl!("ui-settings-provider-unlock-save"))).on_press_maybe(save),
+            button(text(fl!("ui-settings-provider-unlock-save")))
+                .style(styles::primary)
+                .on_press_maybe(save),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center)
         .into()
     };

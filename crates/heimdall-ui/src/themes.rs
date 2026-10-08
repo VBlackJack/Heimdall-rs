@@ -190,7 +190,8 @@ pub const fn colors(theme: AppTheme) -> ThemeColors {
 
 /// The window's theme `theme`, tinted with `accent`: the accent is the primary colour,
 /// green success, orange a warning and red danger, as the C# semantic colours; the weak
-/// background is the theme's current line.
+/// background is the theme's current line, and the secondary colour its comment, as the C#
+/// `TextSecondaryBrush` that captions, placeholders and field outlines take.
 fn build(theme: AppTheme, accent: Accent) -> Theme {
     let colors = colors(theme);
     let palette = Palette {
@@ -204,6 +205,7 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
     Theme::custom_with_fn(theme.name(), palette, move |palette| {
         let mut extended = Extended::generate(palette);
         extended.background.weak = Pair::new(colors.current_line, colors.foreground);
+        extended.secondary.base = Pair::new(colors.comment, colors.foreground);
         extended.is_dark = !colors.light;
         extended
     })
@@ -346,6 +348,11 @@ mod tests {
                 extended.background.weak.color,
                 colors(each).current_line,
                 "{each:?}"
+            );
+            assert_eq!(
+                extended.secondary.base.color,
+                colors(each).comment,
+                "{each:?}: the secondary text"
             );
         }
     }

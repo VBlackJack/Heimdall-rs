@@ -22,11 +22,12 @@ use std::time::Duration;
 
 use heimdall_app::winrm_driver::{WinRmRequest, shell};
 use heimdall_app::{App, AppConfig, Effect, Message, Phase, UiError};
+use heimdall_core::credentials::{SavedPassword, encode, password_entry};
 use heimdall_core::profile::{DEFAULT_WINRM_HTTP_PORT, ProfileId, WinRmProfile};
 use heimdall_core::store::ProfileStore;
 use heimdall_core::winrm::{
-    POWERSHELL_ARGUMENTS, REMOTE_SESSION_ENDED_EXIT_CODE, REMOTE_SESSION_NOT_ENTERED_EXIT_CODE,
-    session_command,
+    PASSWORD_VARIABLE, POWERSHELL_ARGUMENTS, PasswordSource, REMOTE_SESSION_ENDED_EXIT_CODE,
+    REMOTE_SESSION_NOT_ENTERED_EXIT_CODE, password_endpoint, session_command,
 };
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
@@ -86,9 +87,14 @@ fn a_profile_runs_powershell_entering_its_session() {
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
     assert!(request.route.is_empty(), "reached directly");
     assert_eq!(request.profile, saved);
-    let shell = shell(request.profile.name.clone(), request.program.clone(), {
-        session_command(&request.profile).expect("valid")
-    });
+    assert!(request.password.is_none(), "none stored");
+    let shell = shell(
+        request.profile.name.clone(),
+        request.program.clone(),
+        session_command(&request.profile, PasswordSource::Prompt).expect("valid"),
+        None,
+    );
+    assert!(shell.environment.is_empty(), "{:?}", shell.environment);
     assert_eq!(shell.name, "DC");
     let program = PathBuf::from(shell.program.expect("a program"));
     let stem = program
@@ -101,7 +107,7 @@ fn a_profile_runs_powershell_entering_its_session() {
         program.display()
     );
     let mut expected: Vec<String> = POWERSHELL_ARGUMENTS.map(str::to_owned).to_vec();
-    expected.push(session_command(&saved).expect("valid"));
+    expected.push(session_command(&saved, PasswordSource::Prompt).expect("valid"));
     assert_eq!(shell.arguments, LocalArguments::List(expected));
     assert_eq!(app.tabs.len(), 1);
     assert_eq!(app.tabs[0].phase, Phase::Connecting);
@@ -186,12 +192,13 @@ fn powershells(picked: &str) -> Vec<String> {
     programs
 }
 
-/// Runs `program` with the arguments the app gave, the double defined ahead of the command;
-/// the output and the exit code.
+/// Runs `program` with the arguments and the variables the app gave, the double defined ahead
+/// of the command; the output and the exit code.
 async fn run_with_double(
     program: &str,
     arguments: &[String],
     double: &str,
+    environment: Vec<(String, String)>,
 ) -> (String, Option<i32>) {
     let mut arguments = arguments.to_vec();
     let command = arguments.pop().expect("the command is last");
@@ -200,7 +207,7 @@ async fn run_with_double(
         program: Some(program.to_owned()),
         arguments: LocalArguments::List(arguments),
         working_directory: None,
-        environment: Vec::new(),
+        environment,
         columns: 80,
         rows: 24,
     })
@@ -235,8 +242,8 @@ async fn powershell_ends_at_its_first_local_prompt() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &profile("dc01.lab", Some("LAB\\o'neil")));
     let request = started(&open(&mut app)).expect("an attempt is started");
-    let command = session_command(&request.profile).expect("valid");
-    let shell = shell(request.profile.name, request.program, command);
+    let command = session_command(&request.profile, PasswordSource::Prompt).expect("valid");
+    let shell = shell(request.profile.name, request.program, command, None);
     let LocalArguments::List(arguments) = shell.arguments else {
         panic!("arguments one by one");
     };
@@ -246,7 +253,8 @@ async fn powershell_ends_at_its_first_local_prompt() {
         return;
     }
     for program in programs {
-        let (output, code) = run_with_double(&program, &arguments, &failing_double()).await;
+        let (output, code) =
+            run_with_double(&program, &arguments, &failing_double(), Vec::new()).await;
         assert_eq!(
             code,
             Some(REMOTE_SESSION_NOT_ENTERED_EXIT_CODE),
@@ -254,12 +262,125 @@ async fn powershell_ends_at_its_first_local_prompt() {
         );
         assert!(!output.contains(ENTERED_MARKER), "{program}: {output:?}");
 
-        let (output, code) = run_with_double(&program, &arguments, &returning_double()).await;
+        let (output, code) =
+            run_with_double(&program, &arguments, &returning_double(), Vec::new()).await;
         assert_eq!(
             code,
             Some(REMOTE_SESSION_ENDED_EXIT_CODE),
             "{program}, entered then ended: {output:?}"
         );
         assert!(output.contains(ENTERED_MARKER), "{program}: {output:?}");
+    }
+}
+
+/// The stored password of the profile with an account, in these tests.
+const STORED_PASSWORD: &str = "st0red 'p4ss' $(calc)";
+
+/// Variables the checking double compares the credential it is given with.
+const EXPECTED_USER_VARIABLE: &str = "HEIMDALL_TEST_EXPECTED_USER";
+const EXPECTED_PASSWORD_VARIABLE: &str = "HEIMDALL_TEST_EXPECTED_PASSWORD";
+
+/// Stands for a session entered when it is given the credential expected and the password
+/// variable is gone; else a refused connection.
+fn checking_double() -> String {
+    format!(
+        "function Enter-PSSession {{ {DOUBLE_PARAMETERS} if ((Test-Path Env:{PASSWORD_VARIABLE}) \
+         -or $Credential.UserName -ne $env:{EXPECTED_USER_VARIABLE} -or \
+         $Credential.GetNetworkCredential().Password -ne $env:{EXPECTED_PASSWORD_VARIABLE}) {{ \
+         $PSCmdlet.WriteError([System.Management.Automation.ErrorRecord]::new(\
+         [System.Exception]::new('unexpected credential'), 'Simulated', 'AuthenticationError', \
+         $null)) }} else {{ $Host.UI.WriteLine('{ENTERED_MARKER}') }} }}"
+    )
+}
+
+/// An app whose profile has a password stored for its own host, port and account.
+fn app_with_stored_password(dir: &Path, profile: &WinRmProfile) -> App {
+    let system = heimdall_app::SystemCredentials::memory();
+    let heimdall_app::SystemCredentials::Memory(entries) = &system else {
+        unreachable!()
+    };
+    let saved = SavedPassword {
+        endpoint: password_endpoint(profile).expect("an account"),
+        password: zeroize::Zeroizing::new(STORED_PASSWORD.to_owned()),
+    };
+    entries
+        .lock()
+        .expect("entries")
+        .insert(password_entry(&profile.id), encode(&saved));
+    let mut store = ProfileStore::open(profiles_file(dir)).expect("store");
+    store.merge_winrm([profile.clone()]);
+    store.save().expect("save");
+    App::new(AppConfig {
+        profiles_file: profiles_file(dir),
+        known_hosts: dir.join("known_hosts"),
+        legacy_dir: None,
+        agent: AgentSource::Disabled,
+        initial_grid: GridSize { cols: 80, rows: 24 },
+        files_start: dir.to_owned(),
+        system_credentials: system,
+    })
+}
+
+#[tokio::test]
+async fn a_stored_password_reaches_powershell_through_its_environment_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let profile = profile("dc01.lab", Some("LAB\\o'neil"));
+    let mut app = app_with_stored_password(dir.path(), &profile);
+    let request = started(&open(&mut app)).expect("an attempt is started");
+    let password = request.password.clone().expect("the stored password");
+    assert_eq!(password.expose(), STORED_PASSWORD);
+    assert!(
+        !format!("{request:?}").contains(STORED_PASSWORD),
+        "never in debug output"
+    );
+    let command = session_command(&request.profile, PasswordSource::Environment).expect("valid");
+    let shell = shell(
+        request.profile.name,
+        request.program,
+        command,
+        Some(&password),
+    );
+    assert_eq!(
+        shell.environment,
+        [(PASSWORD_VARIABLE.to_owned(), STORED_PASSWORD.to_owned())]
+    );
+    let LocalArguments::List(arguments) = &shell.arguments else {
+        panic!("arguments one by one");
+    };
+    assert!(
+        arguments
+            .iter()
+            .all(|argument| !argument.contains(STORED_PASSWORD)),
+        "{arguments:?}"
+    );
+    let program = shell.program.clone().expect("a program");
+    let line = local::command_text(Path::new(&program), &shell.arguments);
+    assert!(!line.contains(STORED_PASSWORD), "{line}");
+    assert!(
+        line.contains("Remove-Item Env:HEIMDALL_WINRM_PASSWORD"),
+        "{line}"
+    );
+
+    let programs = powershells(&program);
+    if programs.is_empty() {
+        eprintln!("no PowerShell here: the stored password is not handed over");
+        return;
+    }
+    let mut environment = shell.environment.clone();
+    environment.push((EXPECTED_USER_VARIABLE.to_owned(), "LAB\\o'neil".to_owned()));
+    environment.push((
+        EXPECTED_PASSWORD_VARIABLE.to_owned(),
+        STORED_PASSWORD.to_owned(),
+    ));
+    for program in programs {
+        let (output, code) =
+            run_with_double(&program, arguments, &checking_double(), environment.clone()).await;
+        assert_eq!(
+            code,
+            Some(REMOTE_SESSION_ENDED_EXIT_CODE),
+            "{program}, given the credential: {output:?}"
+        );
+        assert!(output.contains(ENTERED_MARKER), "{program}: {output:?}");
+        assert!(!output.contains(STORED_PASSWORD), "{program}: {output:?}");
     }
 }

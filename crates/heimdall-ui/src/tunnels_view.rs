@@ -32,20 +32,13 @@ use iced::{Alignment, Border, Element, Font, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
 use crate::texts;
+use crate::tokens::{font_size, spacing};
 use crate::tree_view::TreeMenu;
-
-/// Room between a dialog's parts.
-const SPACING: f32 = 8.0;
-
-/// Size of a dialog's title.
-const HEADING_SIZE: f32 = 20.0;
 
 /// Height of the tunnels panel, within the C# panel's 120 to 300.
 const PANEL_HEIGHT: f32 = 160.0;
-
-/// Size of the panel's text, the C# caption font.
-const PANEL_TEXT_SIZE: f32 = 12.0;
 
 /// Room around the panel's content.
 const PANEL_PADDING: [f32; 2] = [4.0, 8.0];
@@ -114,6 +107,7 @@ fn field(label: String, value: &str, which: TunnelField) -> Element<'_, Message>
     column![
         text(label),
         text_input("", value)
+            .style(styles::text_input)
             .on_input(move |value| {
                 Message::App(AppMessage::Tunnel(TunnelMessage::Field {
                     field: which,
@@ -122,7 +116,7 @@ fn field(label: String, value: &str, which: TunnelField) -> Element<'_, Message>
             })
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -136,17 +130,17 @@ pub fn new_tunnel<'a>(
     problem: Option<TunnelProblem>,
 ) -> Element<'a, Message> {
     let mut content = column![
-        text(fl!("ui-tunnel-new-title")).size(HEADING_SIZE),
+        text(fl!("ui-tunnel-new-title")).size(font_size::TITLE),
         text(fl!("ui-tunnel-new-description")),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     let cancel = button(text(fl!("ui-dialog-cancel-button")))
-        .style(button::secondary)
+        .style(styles::secondary)
         .on_press(Message::App(AppMessage::DismissDialog));
     if gateways.is_empty() {
         return content
             .push(text(fl!("ui-tunnel-no-gateways")).style(text::warning))
-            .push(row![cancel].spacing(SPACING))
+            .push(row![cancel].spacing(spacing::SM))
             .into();
     }
     let choices: Vec<GatewayChoice> = gateways.iter().map(choice).collect();
@@ -160,9 +154,11 @@ pub fn new_tunnel<'a>(
                 text(fl!("ui-tunnel-gateway-label")),
                 pick_list(choices, selected, |chosen: GatewayChoice| {
                     Message::App(AppMessage::Tunnel(TunnelMessage::Gateway(chosen.id)))
-                }),
+                })
+                .style(styles::pick_list)
+                .menu_style(styles::menu),
             ]
-            .spacing(SPACING / 2.0),
+            .spacing(spacing::XS),
         )
         .push(field(
             fl!("ui-tunnel-remote-host-label"),
@@ -187,12 +183,14 @@ pub fn new_tunnel<'a>(
     if let Some(problem) = problem {
         content = content.push(text(problem_text(problem)).style(text::danger));
     }
-    let open = button(text(fl!("ui-tunnel-open-button"))).on_press_maybe(
-        problem
-            .is_none()
-            .then_some(Message::App(AppMessage::ConfirmDialog)),
-    );
-    content.push(row![cancel, open].spacing(SPACING)).into()
+    let open = button(text(fl!("ui-tunnel-open-button")))
+        .style(styles::primary)
+        .on_press_maybe(
+            problem
+                .is_none()
+                .then_some(Message::App(AppMessage::ConfirmDialog)),
+        );
+    content.push(row![cancel, open].spacing(spacing::SM)).into()
 }
 
 /// The question about a gateway's unknown key on a tunnel's way, in the words and with the
@@ -206,32 +204,33 @@ pub fn host_key<'a>(
 ) -> Element<'a, Message> {
     let port = port.to_string();
     column![
-        text(fl!("ui-hostkey-title")).size(HEADING_SIZE),
+        text(fl!("ui-hostkey-title")).size(font_size::TITLE),
         text(fl!("ui-hostkey-body", host = host, port = port.as_str())),
         text(fl!("ui-hostkey-algorithm", algorithm = algorithm)).font(Font::MONOSPACE),
         row![
             text(fl!("ui-hostkey-fingerprint", fingerprint = fingerprint))
                 .font(Font::MONOSPACE)
                 .width(Length::Fill),
-            button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(PANEL_TEXT_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(tunnel(TunnelMessage::CopyKeyFingerprint)),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center),
         row![
             button(text(fl!("ui-hostkey-reject-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-hostkey-trust-once-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(tunnel(TunnelMessage::TrustKeyOnce)),
             button(text(fl!("ui-hostkey-accept-button")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -243,7 +242,7 @@ fn tunnel(message: TunnelMessage) -> Message {
 fn danger_text(theme: &Theme, status: button::Status) -> button::Style {
     button::Style {
         text_color: theme.extended_palette().danger.base.color,
-        ..button::text(theme, status)
+        ..styles::subtle(theme, status)
     }
 }
 
@@ -252,31 +251,31 @@ fn danger_text(theme: &Theme, status: button::Status) -> button::Style {
 #[must_use]
 pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, Message> {
     let header = row![
-        text(fl!("ui-tunnels-header", count = tunnels.len())).size(PANEL_TEXT_SIZE),
+        text(fl!("ui-tunnels-header", count = tunnels.len())).size(font_size::CAPTION),
         space::horizontal(),
         close_all(
-            button(text(fl!("ui-tunnels-close-all")).size(PANEL_TEXT_SIZE))
+            button(text(fl!("ui-tunnels-close-all")).size(font_size::CAPTION))
                 .style(danger_text)
                 .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll)))
         ),
-        button(text(fl!("ui-tunnels-new")).size(PANEL_TEXT_SIZE))
-            .style(button::text)
+        button(text(fl!("ui-tunnels-new")).size(font_size::CAPTION))
+            .style(styles::subtle)
             .on_press(tunnel(TunnelMessage::New)),
         tooltip(
-            button(text(fl!("ui-tunnels-collapse-button")).size(PANEL_TEXT_SIZE))
-                .style(button::text)
+            button(text(fl!("ui-tunnels-collapse-button")).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .on_press(tunnel(TunnelMessage::TogglePanel)),
-            text(fl!("ui-tunnels-collapse-tooltip")).size(PANEL_TEXT_SIZE),
+            text(fl!("ui-tunnels-collapse-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
         .style(container::rounded_box),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     let body = rows(tunnels, routes, false);
     container(
         column![header, columns(false), rule::horizontal(1), body]
-            .spacing(SPACING / 2.0)
+            .spacing(spacing::XS)
             .width(Length::Fill),
     )
     .padding(PANEL_PADDING)
@@ -290,25 +289,27 @@ pub fn panel<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, 
 /// All, then every tunnel, the whole height.
 pub fn page<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute]) -> Element<'a, Message> {
     let header = row![
-        text(fl!("ui-tunnels-page-title")).size(HEADING_SIZE),
+        text(fl!("ui-tunnels-page-title")).size(font_size::TITLE),
         space::horizontal(),
-        button(text(fl!("ui-tunnels-new"))).on_press(tunnel(TunnelMessage::New)),
+        button(text(fl!("ui-tunnels-new")))
+            .style(styles::primary)
+            .on_press(tunnel(TunnelMessage::New)),
         close_all(
             button(text(fl!("ui-tunnels-close-all")))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press_maybe((!tunnels.is_empty()).then(|| tunnel(TunnelMessage::CloseAll)))
         ),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     let body = rows(tunnels, routes, true);
     // As the C# page's link under the grid.
     let manage = button(text(fl!("ui-tunnels-manage-gateways")))
-        .style(button::text)
+        .style(styles::subtle)
         .on_press(Message::ManageGateways);
     container(
         column![header, columns(true), rule::horizontal(1), body, manage]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .width(Length::Fill)
             .height(Length::Fill),
     )
@@ -329,7 +330,7 @@ const PAGE_PADDING: f32 = 16.0;
 fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> {
     tooltip(
         button,
-        text(fl!("ui-tunnels-close-all-tooltip")).size(PANEL_TEXT_SIZE),
+        text(fl!("ui-tunnels-close-all-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
     .style(container::rounded_box)
@@ -339,7 +340,11 @@ fn close_all(button: iced::widget::Button<'_, Message>) -> Element<'_, Message> 
 /// The tunnels opened by hand, then the sessions' routes under their own title: what Close
 /// All closes kept apart from what it leaves.
 fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> Element<'a, Message> {
-    let size = if started { None } else { Some(PANEL_TEXT_SIZE) };
+    let size = if started {
+        None
+    } else {
+        Some(font_size::CAPTION)
+    };
     let note = |label: String| {
         let line = text(label).style(text::secondary);
         match size {
@@ -347,7 +352,7 @@ fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> El
             None => line,
         }
     };
-    let mut list = Column::new().spacing(SPACING / 2.0);
+    let mut list = Column::new().spacing(spacing::XS);
     if tunnels.is_empty() {
         list = list.push(note(fl!("ui-tunnels-empty")));
     }
@@ -362,7 +367,7 @@ fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> El
 /// A session's route: its health, its gateways, its tab, no local port, the server it
 /// reaches; nothing to close but its tab, which a click shows.
 fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
-    let cell = |value: String| text(value).size(PANEL_TEXT_SIZE);
+    let cell = |value: String| text(value).size(font_size::CAPTION);
     let gateways = route
         .route
         .iter()
@@ -375,7 +380,7 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
         cell(server_text(&route.title)).width(LABEL_WIDTH),
         tooltip(
             cell(fl!("ui-tunnels-session-route-local")).width(LOCAL_WIDTH),
-            text(fl!("ui-tunnels-session-route-local-tooltip")).size(PANEL_TEXT_SIZE),
+            text(fl!("ui-tunnels-session-route-local-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
         .style(container::rounded_box),
@@ -384,7 +389,7 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
     ]
     .push(started.then(|| cell(route.started_clock()).width(STARTED_WIDTH)))
     .push(space().width(CLOSE_WIDTH))
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     mouse_area(line)
         .on_press(Message::App(AppMessage::SelectTab(route.tab)))
@@ -394,7 +399,7 @@ fn route_row(route: &SessionRoute, started: bool) -> Element<'static, Message> {
 
 /// The column titles, as the C# grid's; `started` on the page, which has the room.
 fn columns<'a>(started: bool) -> Element<'a, Message> {
-    let title = |label: String| text(label).size(PANEL_TEXT_SIZE).style(text::secondary);
+    let title = |label: String| text(label).size(font_size::CAPTION).style(text::secondary);
     row![
         space().width(DOT_SIDE),
         title(fl!("ui-tunnels-column-gateway")).width(Length::Fill),
@@ -405,14 +410,14 @@ fn columns<'a>(started: bool) -> Element<'a, Message> {
     ]
     .push(started.then(|| title(fl!("ui-tunnels-column-started")).width(STARTED_WIDTH)))
     .push(space().width(CLOSE_WIDTH))
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 /// A tunnel's row: its health dot, gateway, label, local port, remote host and port, and the
 /// button closing it; a right click opens its menu.
 fn tunnel_row(open: &Tunnel, started: bool) -> Element<'_, Message> {
-    let cell = |value: String| text(value).size(PANEL_TEXT_SIZE);
+    let cell = |value: String| text(value).size(font_size::CAPTION);
     let interrupted = open.interrupted;
     let line = row![
         status_dot(interrupted),
@@ -432,16 +437,16 @@ fn tunnel_row(open: &Tunnel, started: bool) -> Element<'_, Message> {
     .push(started.then(|| cell(open.started_clock()).width(STARTED_WIDTH)))
     .push(
         tooltip(
-            button(text(fl!("ui-tab-close-button")).size(PANEL_TEXT_SIZE))
-                .style(button::text)
+            button(text(fl!("ui-tab-close-button")).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .width(CLOSE_WIDTH)
                 .on_press(tunnel(TunnelMessage::Close(open.id))),
-            text(fl!("ui-tunnels-close-tooltip")).size(PANEL_TEXT_SIZE),
+            text(fl!("ui-tunnels-close-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Left,
         )
         .style(container::rounded_box),
     )
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     mouse_area(line)
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Tunnel(open.id)))
@@ -481,7 +486,7 @@ fn status_dot<'a>(interrupted: bool) -> Element<'a, Message> {
     };
     tooltip(
         dot,
-        text(label).size(PANEL_TEXT_SIZE),
+        text(label).size(font_size::CAPTION),
         tooltip::Position::Right,
     )
     .style(container::rounded_box)

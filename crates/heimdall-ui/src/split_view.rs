@@ -39,6 +39,8 @@ use iced::{Color, Element, Event, Length, Point, Rectangle, Size, Theme, Vector,
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 use crate::tree_view::TreeMenu;
 
 /// Thickness of the divider between two sides, in logical pixels.
@@ -60,14 +62,8 @@ pub const FOCUS_EDGE: f32 = 2.0;
 /// panes.
 pub const OUTER_DIVIDER: usize = 0;
 
-/// Size of a pane header's text.
-const HEADER_TEXT_SIZE: f32 = 12.0;
-
 /// Room inside a pane header.
 const HEADER_PADDING: f32 = 2.0;
-
-/// Gap between the marks of a pane header.
-const HEADER_SPACING: f32 = 4.0;
 
 /// A split as drawn: its panes numbered first to last, its dividers in the order of a walk
 /// from the outer split, each side before the other.
@@ -668,8 +664,8 @@ pub fn pane<'a>(
     content: Element<'a, Message>,
     focused: bool,
 ) -> Element<'a, Message> {
-    let close = button(text(fl!("ui-tab-close-button")).size(HEADER_TEXT_SIZE))
-        .style(button::text)
+    let close = button(text(fl!("ui-tab-close-button")).size(font_size::CAPTION))
+        .style(styles::subtle)
         .padding([0.0, HEADER_PADDING])
         .on_press(Message::App(AppMessage::Split(
             heimdall_app::split::SplitMessage::ClosePane(tab),
@@ -680,7 +676,7 @@ pub fn pane<'a>(
                 .push(label)
                 .push(iced::widget::space::horizontal())
                 .push(close)
-                .spacing(HEADER_SPACING)
+                .spacing(spacing::XS)
                 .align_y(iced::Alignment::Center),
         )
         .padding(HEADER_PADDING)

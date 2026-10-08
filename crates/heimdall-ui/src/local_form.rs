@@ -27,11 +27,8 @@ use iced::widget::{column, pick_list, text};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Space between a card's parts.
-const SPACING: f32 = 8.0;
-/// Size of a card's description.
-const DESCRIPTION_SIZE: f32 = 12.0;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// The two cards; `field` draws a field of the form as the other cards do.
 pub fn view<'a>(
@@ -44,7 +41,7 @@ pub fn view<'a>(
         .copied();
     column![
         text(fl!("ui-profile-local-title")),
-        text(fl!("ui-profile-local-desc")).size(DESCRIPTION_SIZE),
+        text(fl!("ui-profile-local-desc")).size(font_size::CAPTION),
         field(ProfileField::LocalProgram),
         pick_list(SHELL_PRESETS, chosen, |preset: &str| {
             Message::App(AppMessage::ProfileField {
@@ -52,12 +49,14 @@ pub fn view<'a>(
                 value: preset.to_owned(),
             })
         })
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
         .placeholder(fl!("ui-profile-local-presets")),
         field(ProfileField::LocalArguments),
         text(fl!("ui-profile-local-advanced-title")),
-        text(fl!("ui-profile-local-advanced-desc")).size(DESCRIPTION_SIZE),
+        text(fl!("ui-profile-local-advanced-desc")).size(font_size::CAPTION),
         field(ProfileField::WorkingDirectory),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }

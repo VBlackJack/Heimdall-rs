@@ -39,17 +39,18 @@ use iced::widget::{
 use iced::{Element, Task, Theme};
 
 use super::{
-    AgentChoice, BODY_SIZE, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH,
-    FontChoice, HEADING_SIZE, LanguageChoice, Message, PADDING, PolicyChoice, SETTINGS_WIDTH,
-    SMALL_SIZE, SPACING, SchemeChoice, SessionField, SessionsChoice, SettingsMessage, SettingsTab,
-    Shell, TimeoutChoice, settings_tabs,
+    AgentChoice, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice,
+    LanguageChoice, Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField,
+    SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
 };
 use crate::i18n::fl;
 use crate::search_keys::SearchKeys;
 use crate::settings_rows::{
     PostureKey, PostureLine, PostureState, SettingRow, SettingsCard, posture,
 };
+use crate::styles;
 use crate::themes::{AccentChoice, ThemeChoice};
+use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
 
 /// Width of the search box, as the C# one.
 const SEARCH_WIDTH: f32 = 220.0;
@@ -58,20 +59,11 @@ const SEARCH_WIDTH: f32 = 220.0;
 /// marker's.
 const MODIFIED_DOT: &str = "\u{2022}";
 
-/// Width of the "Modified" badge's border, as the C# badge's.
-const BADGE_EDGE: f32 = 1.0;
-
-/// Rounding of the "Modified" badge.
-const BADGE_RADIUS: f32 = 4.0;
-
 /// Space inside the "Modified" badge, above and below then beside, as the C# badge's.
 const BADGE_PADDING: [f32; 2] = [0.0, 6.0];
 
 /// Width of the outline of the row a "Go to setting" showed.
 const HIGHLIGHT_EDGE: f32 = 2.0;
-
-/// Rounding of that outline.
-const HIGHLIGHT_RADIUS: f32 = 4.0;
 
 /// The mark of a line of the security overview that is as it should be, as the C# check.
 const POSTURE_SAFE_MARK: &str = "\u{2713}";
@@ -111,6 +103,21 @@ fn scroll_id() -> iced::widget::Id {
     iced::widget::Id::new("settings-page")
 }
 
+/// A list of `options` with `selected` chosen, in the application's list style.
+fn choices<'a, T>(
+    options: Vec<T>,
+    selected: Option<T>,
+    on_select: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message>
+where
+    T: ToString + PartialEq + Clone + 'a,
+{
+    pick_list(options, selected, on_select)
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .into()
+}
+
 /// `label` before `control`, on one line, as the page's lists and fields are laid out.
 fn labelled<'a>(
     label: String,
@@ -121,7 +128,7 @@ fn labelled<'a>(
         iced::widget::space::horizontal(),
         control.into()
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(iced::Alignment::Center)
 }
 
@@ -459,15 +466,15 @@ fn posture_line<'a>(line: PostureLine) -> Element<'a, Message> {
     let warning = posture_warning(line.key).filter(|_| line.risky);
     let risky = warning.is_some();
     if let Some(warning) = warning {
-        said = said.push(text(warning).size(SMALL_SIZE).style(text::warning));
+        said = said.push(text(warning).size(font_size::CAPTION).style(text::warning));
     }
     let mut shown = row![posture_mark(risky), said]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
     if risky {
         shown = shown.push(iced::widget::space::horizontal()).push(
-            button(text(fl!("ui-settings-posture-go-to")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-settings-posture-go-to")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(Message::GoToSetting(line.target)),
         );
     }
@@ -488,10 +495,10 @@ impl Shell {
             column![
                 self.settings_header(),
                 settings_tabs(self.settings_tab),
-                body.spacing(SPACING),
+                body.spacing(spacing::SM),
             ]
-            .spacing(SPACING)
-            .padding(PADDING),
+            .spacing(spacing::SM)
+            .padding(spacing::MD),
         )
         .id(scroll_id())
         .into()
@@ -505,6 +512,7 @@ impl Shell {
                 &fl!("ui-settings-search-placeholder"),
                 &self.settings_search,
             )
+            .style(styles::text_input)
             .id(search_field_id())
             .on_input(Message::SettingsSearch)
             .width(SEARCH_WIDTH),
@@ -512,32 +520,32 @@ impl Shell {
             (!self.settings_search.is_empty()).then(|| Message::SettingsSearch(String::new())),
         );
         let mut header = row![
-            text(fl!("ui-settings-title")).size(HEADING_SIZE),
+            text(fl!("ui-settings-title")).size(font_size::TITLE),
             iced::widget::space::horizontal(),
             tooltip(
                 button(text(fl!("ui-settings-find-modified")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::FindModifiedSettings),
-                text(fl!("ui-settings-find-modified-hint")).size(SMALL_SIZE),
+                text(fl!("ui-settings-find-modified-hint")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
             tooltip(
                 field,
-                text(fl!("ui-settings-search-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-settings-search-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
         if !self.settings_search.is_empty() {
             header = header.push(
                 tooltip(
                     button(text(fl!("ui-tree-search-clear-button")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::SettingsSearch(String::new())),
-                    text(fl!("ui-settings-search-clear")).size(SMALL_SIZE),
+                    text(fl!("ui-settings-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -570,9 +578,9 @@ impl Shell {
         } else {
             fl!("ui-settings-search-results", count = found.len())
         };
-        let mut results = column![text(count).size(SMALL_SIZE).style(text::secondary)];
+        let mut results = column![text(count).size(font_size::CAPTION).style(text::secondary)];
         for tab in SettingsTab::ALL {
-            let mut cards = Column::new().spacing(SPACING);
+            let mut cards = Column::new().spacing(spacing::SM);
             let mut any = false;
             for card in SettingsCard::ALL
                 .into_iter()
@@ -590,7 +598,7 @@ impl Shell {
             }
             if any {
                 results = results
-                    .push(text(tab.label()).size(HEADING_SIZE))
+                    .push(text(tab.label()).size(font_size::TITLE))
                     .push(cards);
             }
         }
@@ -624,9 +632,9 @@ impl Shell {
 
     /// `rows` of `card` under its heading, in its frame.
     fn card_view(&self, card: SettingsCard, rows: &[SettingRow]) -> Element<'_, Message> {
-        let mut body = Column::new().spacing(SPACING);
+        let mut body = Column::new().spacing(spacing::SM);
         if let Some(description) = card_description(card) {
-            body = body.push(text(description).size(SMALL_SIZE));
+            body = body.push(text(description).size(font_size::CAPTION));
         }
         for &row in rows {
             body = body.push(self.setting_row(row));
@@ -639,7 +647,7 @@ impl Shell {
         }
         let framed: Element<'_, Message> = if card_framed(card) {
             container(body)
-                .padding(PADDING)
+                .padding(spacing::MD)
                 .max_width(SETTINGS_WIDTH)
                 .style(container::bordered_box)
                 .into()
@@ -647,8 +655,8 @@ impl Shell {
             body.into()
         };
         match card_heading(card) {
-            Some(heading) => column![text(heading).size(BODY_SIZE), framed]
-                .spacing(SPACING)
+            Some(heading) => column![text(heading).size(font_size::SUBTITLE), framed]
+                .spacing(spacing::SM)
                 .into(),
             None => framed,
         }
@@ -657,7 +665,7 @@ impl Shell {
     /// `row`, with its "Modified" marker when its value is not the default, outlined when a
     /// "Go to setting" showed it.
     fn setting_row(&self, row: SettingRow) -> Element<'_, Message> {
-        let mut shown = column![self.row_body(row)].spacing(SPACING);
+        let mut shown = column![self.row_body(row)].spacing(spacing::SM);
         if row.is_modified(self.app.settings()) {
             shown = shown.push(self.marker(row));
         }
@@ -665,12 +673,12 @@ impl Shell {
             return shown.into();
         }
         container(shown)
-            .padding(SPACING)
+            .padding(spacing::SM)
             .style(|theme: &Theme| container::Style {
                 border: iced::Border {
                     color: theme.extended_palette().primary.strong.color,
                     width: HIGHLIGHT_EDGE,
-                    radius: HIGHLIGHT_RADIUS.into(),
+                    radius: radius::SM.into(),
                 },
                 ..container::Style::default()
             })
@@ -683,12 +691,14 @@ impl Shell {
         let value = self.default_text(row);
         let badge = container(
             row![
-                text(MODIFIED_DOT).size(SMALL_SIZE).style(text::primary),
+                text(MODIFIED_DOT)
+                    .size(font_size::CAPTION)
+                    .style(text::primary),
                 text(fl!("ui-settings-modified-badge"))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::secondary),
             ]
-            .spacing(SPACING / 2.0)
+            .spacing(spacing::XS)
             .align_y(iced::Alignment::Center),
         )
         .padding(BADGE_PADDING)
@@ -698,8 +708,8 @@ impl Shell {
                 background: Some(palette.background.weak.color.into()),
                 border: iced::Border {
                     color: palette.primary.base.color,
-                    width: BADGE_EDGE,
-                    radius: BADGE_RADIUS.into(),
+                    width: BORDER_WIDTH,
+                    radius: radius::SM.into(),
                 },
                 ..container::Style::default()
             }
@@ -711,24 +721,24 @@ impl Shell {
                     "ui-settings-modified-from-default",
                     value = value.as_str()
                 ))
-                .size(SMALL_SIZE),
+                .size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
             tooltip(
-                button(text(fl!("ui-settings-reset-to-default")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                button(text(fl!("ui-settings-reset-to-default")).size(font_size::CAPTION))
+                    .style(styles::subtle)
                     .on_press(Message::ResetSetting(row)),
                 text(fl!(
                     "ui-settings-reset-to-default-tooltip",
                     value = value.as_str()
                 ))
-                .size(SMALL_SIZE),
+                .size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
         .into()
     }
@@ -805,10 +815,10 @@ impl Shell {
             // says the lock exists nor what turns it on.
             if row == SettingRow::AutoLock && !self.vault_set() {
                 return column![
-                    text(fl!("ui-settings-auto-lock-requires-vault")).size(SMALL_SIZE),
+                    text(fl!("ui-settings-auto-lock-requires-vault")).size(font_size::CAPTION),
                     number
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .into();
             }
             return number;
@@ -840,7 +850,9 @@ impl Shell {
     /// greyed while that box is off, a workspace lock one while no master password is set.
     fn toggle_row(&self, row: SettingRow) -> Element<'_, Message> {
         let settings = self.app.settings();
-        let mut tick = checkbox(row.flag(settings).unwrap_or_default()).label(row_label(row));
+        let mut tick = checkbox(row.flag(settings).unwrap_or_default())
+            .style(styles::checkbox)
+            .label(row_label(row));
         if row.toggle_enabled(settings)
             && self.row_available(row)
             && let (Some(ticked), Some(unticked)) =
@@ -849,9 +861,9 @@ impl Shell {
             tick =
                 tick.on_toggle(move |on| send(if on { ticked.clone() } else { unticked.clone() }));
         }
-        let mut body = column![tick].spacing(SPACING);
+        let mut body = column![tick].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
-            body = body.push(text(hint).size(SMALL_SIZE));
+            body = body.push(text(hint).size(font_size::CAPTION));
         }
         body.into()
     }
@@ -863,7 +875,7 @@ impl Shell {
         let line = match row {
             SettingRow::Language => labelled(
                 label,
-                pick_list(
+                choices(
                     Language::ALL.map(LanguageChoice).to_vec(),
                     Some(LanguageChoice(
                         settings.language.unwrap_or_else(crate::i18n::current),
@@ -873,7 +885,7 @@ impl Shell {
             ),
             SettingRow::Theme => labelled(
                 label,
-                pick_list(
+                choices(
                     AppTheme::ALL.map(ThemeChoice).to_vec(),
                     Some(ThemeChoice(settings.theme)),
                     |ThemeChoice(theme)| send(SettingsMessage::Theme(theme)),
@@ -881,7 +893,7 @@ impl Shell {
             ),
             SettingRow::Accent => labelled(
                 label,
-                pick_list(
+                choices(
                     Accent::ALL.map(AccentChoice).to_vec(),
                     Some(AccentChoice(settings.accent)),
                     |AccentChoice(accent)| send(SettingsMessage::Accent(accent)),
@@ -889,7 +901,7 @@ impl Shell {
             ),
             SettingRow::MaxSessions => labelled(
                 label,
-                pick_list(
+                choices(
                     (0..=MAX_SESSIONS_MAX)
                         .map(SessionsChoice)
                         .collect::<Vec<_>>(),
@@ -899,7 +911,7 @@ impl Shell {
             ),
             SettingRow::ColorScheme => labelled(
                 label,
-                pick_list(
+                choices(
                     ColorScheme::ALL.map(SchemeChoice).to_vec(),
                     Some(SchemeChoice(settings.color_scheme)),
                     |SchemeChoice(scheme)| send(SettingsMessage::ColorScheme(scheme)),
@@ -907,7 +919,7 @@ impl Shell {
             ),
             SettingRow::CtrlVPaste => labelled(
                 label,
-                pick_list(
+                choices(
                     CtrlVPaste::ALL.map(CtrlVChoice).to_vec(),
                     Some(CtrlVChoice(settings.ctrl_v_paste)),
                     |CtrlVChoice(choice)| send(SettingsMessage::CtrlVPaste(choice)),
@@ -915,7 +927,7 @@ impl Shell {
             ),
             SettingRow::CtrlKTerminal => labelled(
                 label,
-                pick_list(
+                choices(
                     CtrlKTerminal::ALL.map(CtrlKChoice).to_vec(),
                     Some(CtrlKChoice(settings.ctrl_k_terminal)),
                     |CtrlKChoice(choice)| send(SettingsMessage::CtrlKTerminal(choice)),
@@ -923,7 +935,7 @@ impl Shell {
             ),
             SettingRow::PowerShellPolicy => labelled(
                 label,
-                pick_list(
+                choices(
                     ExecutionPolicy::ALL.map(PolicyChoice).to_vec(),
                     Some(PolicyChoice(settings.powershell_execution_policy)),
                     |PolicyChoice(policy)| send(SettingsMessage::PowerShellExecutionPolicy(policy)),
@@ -931,7 +943,7 @@ impl Shell {
             ),
             SettingRow::SshAgentPreference => labelled(
                 label,
-                pick_list(
+                choices(
                     AgentPreference::ALL.map(AgentChoice).to_vec(),
                     Some(AgentChoice(settings.ssh_agent_preference)),
                     |AgentChoice(preference)| send(SettingsMessage::SshAgentPreference(preference)),
@@ -939,9 +951,9 @@ impl Shell {
             ),
             _ => return self.attempts_row(row),
         };
-        let mut body = column![line].spacing(SPACING);
+        let mut body = column![line].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
-            body = body.push(text(hint).size(SMALL_SIZE));
+            body = body.push(text(hint).size(font_size::CAPTION));
         }
         body.into()
     }
@@ -959,7 +971,9 @@ impl Shell {
                         .collect::<Vec<u32>>(),
                     Some(settings.ssh_auto_reconnect_attempts),
                     |attempts| send(SettingsMessage::SshAutoReconnectAttempts(attempts)),
-                ),
+                )
+                .style(styles::pick_list)
+                .menu_style(styles::menu),
             ),
             SettingRow::RdpAutoReconnectAttempts => labelled(
                 label,
@@ -968,7 +982,9 @@ impl Shell {
                         .collect::<Vec<u32>>(),
                     Some(settings.rdp_auto_reconnect_attempts),
                     |attempts| send(SettingsMessage::RdpAutoReconnectAttempts(attempts)),
-                ),
+                )
+                .style(styles::pick_list)
+                .menu_style(styles::menu),
             ),
             // As the C# watchdog: off, or a choice of the seconds its range allows.
             _ => labelled(
@@ -980,7 +996,9 @@ impl Shell {
                         .collect::<Vec<_>>(),
                     Some(TimeoutChoice(settings.rdp_connect_timeout)),
                     |TimeoutChoice(seconds)| send(SettingsMessage::RdpConnectTimeout(seconds)),
-                ),
+                )
+                .style(styles::pick_list)
+                .menu_style(styles::menu),
             ),
         };
         line.into()
@@ -995,7 +1013,9 @@ impl Shell {
             && !self
                 .typed_session(field)
                 .is_some_and(|value| field.accepted(value));
-        let mut input = text_input("", &typed).width(FONT_SIZE_FIELD_WIDTH);
+        let mut input = text_input("", &typed)
+            .style(styles::text_input)
+            .width(FONT_SIZE_FIELD_WIDTH);
         if enabled {
             input = input
                 .on_input(move |typed| Message::SessionFieldEdited(field, typed))
@@ -1005,12 +1025,16 @@ impl Shell {
         if let Some(unit) = field.unit() {
             line = line.push(text(unit));
         }
-        let mut body = column![line].spacing(SPACING);
+        let mut body = column![line].spacing(spacing::SM);
         if let Some(hint) = field.hint() {
-            body = body.push(text(hint).size(SMALL_SIZE));
+            body = body.push(text(hint).size(font_size::CAPTION));
         }
         if refused {
-            body = body.push(text(field.refusal()).size(SMALL_SIZE).style(text::danger));
+            body = body.push(
+                text(field.refusal())
+                    .size(font_size::CAPTION)
+                    .style(text::danger),
+            );
         }
         body.into()
     }
@@ -1028,13 +1052,14 @@ impl Shell {
             labelled(
                 row_label(SettingRow::FontSize),
                 text_input("", &typed)
+                    .style(styles::text_input)
                     .width(FONT_SIZE_FIELD_WIDTH)
                     .on_input(Message::FontSizeEdited)
                     .on_submit(Message::FontSizeApply),
             )
             .push(text(fl!("ui-settings-font-size-unit"))),
         ]
-        .spacing(SPACING);
+        .spacing(spacing::SM);
         if refused {
             body = body.push(
                 text(fl!(
@@ -1042,7 +1067,7 @@ impl Shell {
                     min = heimdall_core::settings::TERMINAL_FONT_SIZE_MIN,
                     max = heimdall_core::settings::TERMINAL_FONT_SIZE_MAX
                 ))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::danger),
             );
         }
@@ -1071,9 +1096,11 @@ impl Shell {
             row_label(SettingRow::FontFamily),
             pick_list(offered, Some(selected), |FontChoice(family)| {
                 send(SettingsMessage::TerminalFontFamily(family))
-            }),
+            })
+            .style(styles::pick_list)
+            .menu_style(styles::menu),
         )]
-        .spacing(SPACING);
+        .spacing(spacing::SM);
         if !self.terminal_font().is(chosen) {
             body = body.push(
                 text(fl!(
@@ -1081,7 +1108,7 @@ impl Shell {
                     family = chosen.as_str(),
                     fallback = crate::terminal_view::FONT_FAMILY
                 ))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::danger),
             );
         }
@@ -1101,6 +1128,7 @@ impl Shell {
                 heimdall_core::settings::DEFAULT_SESSION_LOG_DIRECTORY,
                 typed,
             )
+            .style(styles::text_input)
             .on_input(Message::LogDirectoryEdited)
             .on_submit(Message::LogDirectoryApply)
         } else {
@@ -1109,17 +1137,18 @@ impl Shell {
                 .as_deref()
                 .unwrap_or(&settings.external_editor);
             text_input("", typed)
+                .style(styles::text_input)
                 .on_input(Message::EditorEdited)
                 .on_submit(Message::EditorApply)
         };
         let mut body = column![
             row![text(row_label(row)), field]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center)
         ]
-        .spacing(SPACING);
+        .spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
-            body = body.push(text(hint).size(SMALL_SIZE));
+            body = body.push(text(hint).size(font_size::CAPTION));
         }
         body.into()
     }
@@ -1134,16 +1163,17 @@ impl Shell {
             .as_deref()
             .unwrap_or_else(|| path.value(self.app.settings()));
         let field = text_input("", typed)
+            .style(styles::text_input)
             .on_input(move |typed| Message::ToolPathEdited(path, typed))
             .on_submit(Message::ToolPathApply(path));
         let mut body = column![
             row![text(row_label(row)), field]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center)
         ]
-        .spacing(SPACING);
+        .spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
-            body = body.push(text(hint).size(SMALL_SIZE));
+            body = body.push(text(hint).size(font_size::CAPTION));
         }
         body.into()
     }
@@ -1155,12 +1185,14 @@ impl Shell {
             SshMode::ALL.map(DefaultSshModeChoice).to_vec(),
             Some(DefaultSshModeChoice(self.app.settings().ssh_default_mode)),
             |DefaultSshModeChoice(mode)| send(SettingsMessage::SshDefaultMode(mode)),
-        );
+        )
+        .style(styles::pick_list)
+        .menu_style(styles::menu);
         let apply = tooltip(
-            button(text(fl!("ui-settings-apply-mode-to-all")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-settings-apply-mode-to-all")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(send(SettingsMessage::ApplySshModeToAll)),
-            text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(SMALL_SIZE),
+            text(fl!("ui-settings-apply-mode-to-all-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box);
@@ -1168,12 +1200,12 @@ impl Shell {
             labelled(
                 row_label(SettingRow::SshDefaultMode),
                 row![modes, apply]
-                    .spacing(SPACING)
+                    .spacing(spacing::SM)
                     .align_y(iced::Alignment::Center),
             ),
-            text(fl!("ui-settings-ssh-default-mode-hint")).size(SMALL_SIZE),
+            text(fl!("ui-settings-ssh-default-mode-hint")).size(font_size::CAPTION),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .into()
     }
 
@@ -1234,9 +1266,9 @@ impl Shell {
             SettingRow::RdpResolutionPresets => self.presets.view(),
             _ => tooltip(
                 button(text(fl!("ui-settings-rdp-reset-defaults")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(send(SettingsMessage::ResetRdpDefaults)),
-                text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-settings-rdp-reset-defaults-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
@@ -1249,7 +1281,7 @@ impl Shell {
     fn security_row(&self, row: SettingRow) -> Element<'_, Message> {
         match row {
             SettingRow::Pin => column![
-                text(row_label(row)).size(BODY_SIZE),
+                text(row_label(row)).size(font_size::SUBTITLE),
                 labelled(
                     if self.app.settings().pin.is_some() {
                         fl!("ui-settings-pin-enabled")
@@ -1257,11 +1289,11 @@ impl Shell {
                         fl!("ui-settings-pin-disabled")
                     },
                     button(text(fl!("ui-settings-pin-configure")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::Pin(PinMessage::Configure))),
                 ),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .into(),
             SettingRow::Vault => self.vault_row(),
             _ => container(crate::provider_view::card(&self.app, &self.provider_unlock))
@@ -1281,32 +1313,33 @@ impl Shell {
             }),
             iced::widget::space::horizontal(),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
         if enabled {
             actions = actions
                 .push(
                     button(text(fl!("ui-settings-vault-change")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::ChangeMasterPassword)),
                 )
                 .push(
                     button(text(fl!("ui-settings-vault-disable")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::DisableMasterPassword)),
                 );
         } else {
             actions = actions.push(
                 button(text(fl!("ui-settings-vault-enable")))
+                    .style(styles::primary)
                     .on_press(Message::App(AppMessage::ShowVault)),
             );
         }
         column![
-            text(row_label(SettingRow::Vault)).size(BODY_SIZE),
-            text(fl!("ui-settings-vault-explanation")).size(SMALL_SIZE),
+            text(row_label(SettingRow::Vault)).size(font_size::SUBTITLE),
+            text(fl!("ui-settings-vault-explanation")).size(font_size::CAPTION),
             actions,
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .into()
     }
 
@@ -1324,18 +1357,18 @@ impl Shell {
             fl!("ui-settings-posture-summary", count = risky)
         };
         let mut card = column![
-            text(fl!("ui-settings-posture-title")).size(BODY_SIZE),
-            text(fl!("ui-settings-posture-description")).size(SMALL_SIZE),
+            text(fl!("ui-settings-posture-title")).size(font_size::SUBTITLE),
+            text(fl!("ui-settings-posture-description")).size(font_size::CAPTION),
             row![posture_mark(risky > 0), text(summary)]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
         ]
-        .spacing(SPACING);
+        .spacing(spacing::SM);
         for line in lines {
             card = card.push(posture_line(line));
         }
         container(card)
-            .padding(PADDING)
+            .padding(spacing::MD)
             .max_width(SETTINGS_WIDTH)
             .style(container::bordered_box)
             .into()

@@ -26,15 +26,11 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// Width of the field.
 const FIELD_WIDTH: f32 = 220.0;
-
-/// Room around the bar and between its parts.
-const SPACING: f32 = 4.0;
-
-/// Size of "No match" and of the count.
-const NOTE_SIZE: f32 = 12.0;
 
 /// The search bar of one tab's terminal.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,12 +71,13 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
     };
     let mut bar = row![
         text_input(&fl!("ui-find-placeholder"), &finder.query)
+            .style(styles::text_input)
             .id(field_id(tab))
             .width(FIELD_WIDTH)
             .on_input(move |query| Message::FinderQuery { tab, query })
             .on_submit(Message::FinderFind { tab, direction }),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
     // Said only of what was looked for: typing more is a new search.
     if finder.searched.as_deref() == Some(finder.query.as_str()) {
@@ -89,13 +86,13 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
                 Some(found) => fl!("ui-find-count", index = found.index, total = found.total),
                 None => fl!("ui-find-nothing"),
             })
-            .size(NOTE_SIZE),
+            .size(font_size::CAPTION),
         );
     }
     bar = bar
         .push(
             button(text(fl!("ui-find-previous")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::FinderFind {
                     tab,
                     direction: FindDirection::Up,
@@ -103,7 +100,7 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
         )
         .push(
             button(text(fl!("ui-find-next")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::FinderFind {
                     tab,
                     direction: FindDirection::Down,
@@ -111,15 +108,15 @@ pub fn view<'a>(finder: &Finder, found: Option<Found>, shift: bool) -> Element<'
         )
         .push(
             button(text(fl!("ui-find-close")))
-                .style(button::text)
+                .style(styles::subtle)
                 .on_press(Message::FinderClose(tab)),
         );
     container(
         container(bar)
-            .padding(SPACING)
+            .padding(spacing::XS)
             .style(container::bordered_box),
     )
     .align_right(Length::Fill)
-    .padding(SPACING)
+    .padding(spacing::XS)
     .into()
 }

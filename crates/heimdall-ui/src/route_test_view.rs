@@ -30,12 +30,8 @@ use iced::{Element, Font, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Room between the card's parts.
-const SPACING: f32 = 8.0;
-
-/// Size of the card's hints and report.
-const SMALL_SIZE: f32 = 12.0;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// Width of the destination port field.
 const PORT_WIDTH: f32 = 90.0;
@@ -159,38 +155,40 @@ pub fn card<'a>(draft: &'a GatewayDraft, gateways: &'a [SshGateway]) -> Element<
     let target =
         |field: TargetField| move |value| Message::App(AppMessage::RouteTarget { field, value });
     let host = text_input(&fl!("ui-route-test-target-host"), &draft.target_host)
+        .style(styles::text_input)
         .on_input_maybe((!running).then_some(target(TargetField::Host)));
     let port = text_input(&fl!("ui-route-test-target-port"), &draft.target_port)
+        .style(styles::text_input)
         .on_input_maybe((!running).then_some(target(TargetField::Port)))
         .width(PORT_WIDTH);
     let mut buttons = row![
-        button(text(fl!("ui-route-test-test")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-route-test-test")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press_maybe((!running).then_some(Message::TestRouteForm))
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if running {
         buttons = buttons.push(
-            button(text(fl!("ui-route-test-stop")).size(SMALL_SIZE))
-                .style(button::text)
+            button(text(fl!("ui-route-test-stop")).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .on_press(Message::App(AppMessage::StopRouteTest)),
         );
     }
     if matches!(draft.route_test, RouteTest::Done { .. }) {
         buttons = buttons.push(
-            button(text(fl!("ui-route-test-copy")).size(SMALL_SIZE))
-                .style(button::text)
+            button(text(fl!("ui-route-test-copy")).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .on_press(Message::CopyRouteReport),
         );
     }
     let mut content: Column<'a, Message> = column![
         text(fl!("ui-route-test-title")),
-        text(fl!("ui-route-test-hint")).size(SMALL_SIZE),
-        text(route_line(draft, gateways)).size(SMALL_SIZE),
-        row![host, port].spacing(SPACING),
+        text(fl!("ui-route-test-hint")).size(font_size::CAPTION),
+        text(route_line(draft, gateways)).size(font_size::CAPTION),
+        row![host, port].spacing(spacing::SM),
         buttons,
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     match &draft.route_test {
         RouteTest::Idle => {}
         RouteTest::Refused(problem) => {
@@ -199,7 +197,7 @@ pub fn card<'a>(draft: &'a GatewayDraft, gateways: &'a [SshGateway]) -> Element<
                     RouteProblem::Route => fl!("ui-route-test-invalid-route"),
                     RouteProblem::Target => fl!("ui-route-test-invalid-target"),
                 })
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::danger),
             );
         }
@@ -208,18 +206,18 @@ pub fn card<'a>(draft: &'a GatewayDraft, gateways: &'a [SshGateway]) -> Element<
             lines.extend(steps.iter().map(step_line));
             content = content.push(
                 text(lines.join("\n"))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .font(Font::MONOSPACE),
             );
         }
         RouteTest::Done { .. } => {
             if let Some(report) = finished_report(draft) {
-                content = content.push(text(report).size(SMALL_SIZE).font(Font::MONOSPACE));
+                content = content.push(text(report).size(font_size::CAPTION).font(Font::MONOSPACE));
             }
         }
     }
     container(content)
-        .padding(SPACING)
+        .padding(spacing::SM)
         .width(Length::Fill)
         .style(container::bordered_box)
         .into()

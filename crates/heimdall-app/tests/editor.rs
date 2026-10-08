@@ -352,8 +352,29 @@ fn a_new_vnc_session_saves_its_password_without_an_account() {
     );
 }
 
+/// The password a new `WinRM` session of `id` is started with.
+fn winrm_password(app: &mut App, id: &ProfileId) -> Option<String> {
+    let effects = app.update(Message::OpenWinRm(id.clone()));
+    let [Effect::ConnectWinRm { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    request
+        .password
+        .as_ref()
+        .map(|password| password.expose().to_owned())
+}
+
+/// Whether the form of `id` says a password is saved.
+fn form_says_saved(app: &mut App, id: &ProfileId) -> bool {
+    app.update(Message::EditProfile(id.clone()));
+    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
+        panic!("{:?}", app.dialog);
+    };
+    draft.password_saved
+}
+
 #[test]
-fn a_new_winrm_session_saves_no_password_and_https_moves_the_port() {
+fn a_winrm_stored_credential_saves_its_password_and_https_moves_the_port() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     app.update(Message::NewProfile);
@@ -364,17 +385,36 @@ fn a_new_winrm_session_saves_no_password_and_https_moves_the_port() {
         app.update(Message::ProfileToggle { toggle, on: true });
     }
     field(&mut app, ProfileField::Username, "LAB\\admin");
-    save(&mut app, Some("not saved: PowerShell asks for it"));
+    save(&mut app, Some("winrm password"));
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
     let ps = app.winrm_profiles()[0].clone();
     assert_eq!(ps.port, 5986);
     assert!(ps.use_ssl);
     assert_eq!(ps.username.as_deref(), Some("LAB\\admin"));
-    app.update(Message::EditProfile(ps.id));
-    let Some(Dialog::EditProfile { draft, .. }) = &app.dialog else {
-        panic!("{:?}", app.dialog);
-    };
-    assert!(!draft.password_saved, "nothing saved for WinRM");
+    assert!(form_says_saved(&mut app, &ps.id), "read back in the form");
+    // Saved again with the field empty: the password stays.
+    save(&mut app, None);
+    assert_eq!(
+        winrm_password(&mut app, &ps.id).as_deref(),
+        Some("winrm password")
+    );
+    let profiles = std::fs::read_to_string(dir.path().join("profiles.toml")).expect("read");
+    assert!(
+        !profiles.contains("winrm password"),
+        "never in the profiles file"
+    );
+
+    // The current Windows identity has none: the stored one goes.
+    assert!(form_says_saved(&mut app, &ps.id));
+    app.update(Message::ProfileToggle {
+        toggle: ProfileToggle::StoredCredential,
+        on: false,
+    });
+    save(&mut app, None);
+    assert!(app.dialog.is_none(), "{:?}", app.dialog);
+    assert!(!form_says_saved(&mut app, &ps.id));
+    app.update(Message::DismissDialog);
+    assert_eq!(winrm_password(&mut app, &ps.id), None);
 }
 
 #[test]

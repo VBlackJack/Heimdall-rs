@@ -25,12 +25,9 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-/// Size of the dialog's title.
-const TITLE_SIZE: f32 = 20.0;
-/// Size of a protocol, beside a session's name.
-const DETAIL_SIZE: f32 = 12.0;
 /// Height of the list before it scrolls.
 const LIST_HEIGHT: f32 = 320.0;
 
@@ -59,38 +56,42 @@ pub fn view(dialog: &RestoreDialog) -> Element<'_, Message> {
                 String::new(),
             ),
         };
-        let mut line = checkbox(row.chosen).label(label);
+        let mut line = checkbox(row.chosen).style(styles::checkbox).label(label);
         if row.found.is_some() {
             line = line.on_toggle(move |on| choose(Some(index), on));
         }
         row![
             line.width(Length::Fill),
-            text(protocol).size(DETAIL_SIZE).style(text::secondary),
+            text(protocol)
+                .size(font_size::CAPTION)
+                .style(text::secondary),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .into()
     });
     column![
-        text(fl!("ui-restore-title")).size(TITLE_SIZE),
+        text(fl!("ui-restore-title")).size(font_size::TITLE),
         text(fl!("ui-restore-message")),
         text(fl!("ui-restore-saved-at", time = saved_at))
-            .size(DETAIL_SIZE)
+            .size(font_size::CAPTION)
             .style(text::secondary),
         checkbox(all)
+            .style(styles::checkbox)
             .label(fl!("ui-restore-select-all"))
             .on_toggle(|on| choose(None, on)),
-        scrollable(Column::with_children(rows).spacing(SPACING / 2.0))
+        scrollable(Column::with_children(rows).spacing(spacing::XS))
             .height(Length::Fixed(LIST_HEIGHT)),
         row![
             iced::widget::space::horizontal(),
             button(text(fl!("ui-restore-dont")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-restore-selected")))
+                .style(styles::primary)
                 .on_press_maybe(chosen.then_some(Message::App(AppMessage::ConfirmDialog))),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }

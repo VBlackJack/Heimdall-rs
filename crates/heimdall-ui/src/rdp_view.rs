@@ -32,15 +32,8 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Room between the parts of the preview.
-const SPACING: f32 = 8.0;
-
-/// Size of the preview's text.
-const TEXT_SIZE: f32 = 13.0;
-
-/// Size of its title.
-const TITLE_SIZE: f32 = 20.0;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// Tallest the list of files grows before it scrolls.
 const ROWS_HEIGHT: f32 = 320.0;
@@ -136,7 +129,7 @@ fn app(message: RdpMessage) -> Message {
 fn cell<'a>(value: impl Into<String>, width: f32) -> Element<'a, Message> {
     container(
         text(value.into())
-            .size(TEXT_SIZE)
+            .size(font_size::BODY)
             .wrapping(text::Wrapping::None),
     )
     .width(width)
@@ -165,7 +158,7 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(fl!("ui-rdp-title")).size(TITLE_SIZE),
+        text(fl!("ui-rdp-title")).size(font_size::TITLE),
         text(fl!(
             "ui-rdp-summary",
             chosen = chosen,
@@ -173,29 +166,30 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
             conflicts = conflicts,
             passwords = passwords
         ))
-        .size(TEXT_SIZE),
+        .size(font_size::BODY),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if !preview.unreadable.is_empty() {
-        content = content
-            .push(text(fl!("ui-rdp-unreadable", count = preview.unreadable.len())).size(TEXT_SIZE));
+        content = content.push(
+            text(fl!("ui-rdp-unreadable", count = preview.unreadable.len())).size(font_size::BODY),
+        );
     }
     let mut choices = row![
-        button(text(fl!("ui-rdp-select-all")).size(TEXT_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-rdp-select-all")).size(font_size::BODY))
+            .style(styles::secondary)
             .on_press(app(RdpMessage::ChooseAll(true))),
-        button(text(fl!("ui-rdp-select-none")).size(TEXT_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-rdp-select-none")).size(font_size::BODY))
+            .style(styles::secondary)
             .on_press(app(RdpMessage::ChooseAll(false))),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(iced::Alignment::Center);
     if conflicts > 0 {
-        choices = choices.push(text(fl!("ui-rdp-apply-all")).size(TEXT_SIZE));
+        choices = choices.push(text(fl!("ui-rdp-apply-all")).size(font_size::BODY));
         for choice in CONFLICTS {
             choices = choices.push(
-                button(text(choice.to_string()).size(TEXT_SIZE))
-                    .style(button::secondary)
+                button(text(choice.to_string()).size(font_size::BODY))
+                    .style(styles::secondary)
                     .on_press(app(RdpMessage::ConflictAll(choice.0))),
             );
         }
@@ -207,15 +201,17 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
         .push(
             row![
                 button(text(fl!("ui-dialog-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(fl!("ui-rdp-import-button"))).on_press_maybe(
-                    preview
-                        .can_import()
-                        .then_some(Message::App(AppMessage::ConfirmDialog))
-                ),
+                button(text(fl!("ui-rdp-import-button")))
+                    .style(styles::primary)
+                    .on_press_maybe(
+                        preview
+                            .can_import()
+                            .then_some(Message::App(AppMessage::ConfirmDialog))
+                    ),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
         .width(Length::Shrink)
         .into()
@@ -234,10 +230,11 @@ fn file_row(index: usize, row: &RdpRow) -> Element<'_, Message> {
         .unwrap_or_default();
     let tick: Element<'_, Message> = if row.patch.is_ok() {
         checkbox(row.chosen)
+            .style(styles::checkbox)
             .on_toggle(move |_| app(RdpMessage::Choose(index)))
             .into()
     } else {
-        checkbox(false).into()
+        checkbox(false).style(styles::checkbox).into()
     };
     let conflict: Element<'_, Message> = if row.conflict_with.is_some() {
         pick_list(
@@ -245,7 +242,9 @@ fn file_row(index: usize, row: &RdpRow) -> Element<'_, Message> {
             Some(ConflictChoice(row.conflict)),
             move |choice| app(RdpMessage::Conflict(index, choice.0)),
         )
-        .text_size(TEXT_SIZE)
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .text_size(font_size::BODY)
         .into()
     } else {
         text("").into()
@@ -256,7 +255,7 @@ fn file_row(index: usize, row: &RdpRow) -> Element<'_, Message> {
         cell(row.name.clone(), COLUMNS[2]),
         cell(host, COLUMNS[3]),
         // Several things can be said of a file: they wrap rather than be cut.
-        container(text(status(row)).size(TEXT_SIZE)).width(COLUMNS[4]),
+        container(text(status(row)).size(font_size::BODY)).width(COLUMNS[4]),
         container(conflict).width(COLUMNS[5]),
     ]
     .align_y(iced::Alignment::Center)

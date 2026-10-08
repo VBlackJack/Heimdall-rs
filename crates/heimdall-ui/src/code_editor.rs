@@ -39,8 +39,8 @@
 //
 // What changed from it: the lines are numbered in a gutter, never wrapped, and scrolled
 // across, with a horizontal scrollbar, the scroll kept in the `Content` beside the text; a
-// press in the gutter selects lines. Removed: the placeholder, the wrapping, sizing,
-// padding and styling options, the widget id, and the key bindings, `Binding`, `KeyPress`
+// press in the gutter selects lines. Removed: the placeholder, the wrapping, the line
+// height, padding and styling options, the widget id, and the key bindings, `Binding`, `KeyPress`
 // and `Status`, which are iced's own, used as they are.
 
 //! The integrated editor's text widget: iced's text editor, its lines numbered in a gutter
@@ -76,6 +76,7 @@ use iced::{
     Vector, alignment, theme, window,
 };
 
+use crate::tokens::radius;
 use geometry::Regions;
 
 /// Highest an editor can be and still scroll: iced's limit, `i32::MAX`, as a float.
@@ -89,12 +90,6 @@ const WHEEL_PIXELS: f32 = 60.0;
 
 /// Pixels of a trackpad's movement per line scrolled, as iced's.
 const PIXELS_PER_LINE: f32 = 4.0;
-
-/// Radius of the scrollbar's corners, as iced's scrollables.
-const SCROLLBAR_RADIUS: f32 = 2.0;
-
-/// Radius of the editor's corners, as iced's text editor.
-const BORDER_RADIUS: f32 = 2.0;
 
 /// Width of the editor's border, as iced's text editor.
 const BORDER_WIDTH: f32 = 1.0;
@@ -113,6 +108,8 @@ where
     content: &'a Content<Renderer>,
     /// The font of the text and of its line numbers; the renderer's when `None`.
     font: Option<Renderer::Font>,
+    /// The size of the text and of its line numbers; the renderer's when `None`.
+    size: Option<Pixels>,
     /// The style class.
     class: Theme::Class<'a>,
     /// What turns a key press into a binding; iced's default bindings when `None`.
@@ -144,6 +141,7 @@ where
         Self {
             content,
             font: None,
+            size: None,
             class: <Theme as Catalog>::default(),
             key_binding: None,
             on_edit: None,
@@ -180,6 +178,18 @@ where
         self
     }
 
+    /// Sets the size of the [`TextEditor`]'s text, its line numbers' too.
+    #[must_use]
+    pub fn size(mut self, size: impl Into<Pixels>) -> Self {
+        self.size = Some(size.into());
+        self
+    }
+
+    /// The size of the text: the one set, else the renderer's.
+    fn text_size(&self, renderer: &Renderer) -> Pixels {
+        self.size.unwrap_or_else(|| renderer.default_size())
+    }
+
     /// Highlights the [`TextEditor`] using the given syntax and theme.
     #[must_use]
     pub fn highlight(
@@ -193,6 +203,7 @@ where
         TextEditor {
             content: self.content,
             font: self.font,
+            size: self.size,
             class: self.class,
             key_binding: self.key_binding,
             on_edit: self.on_edit,
@@ -244,7 +255,7 @@ where
             Selection::Range(ranges) => ranges.first().copied().unwrap_or_default().position(),
         };
 
-        let line_height = LineHeight::default().to_absolute(renderer.default_size());
+        let line_height = LineHeight::default().to_absolute(self.text_size(renderer));
 
         let position = cursor + translation;
 
@@ -566,7 +577,7 @@ where
         let limits = limits.width(Length::Fill).height(Length::Fill);
 
         let font = self.font.unwrap_or_else(|| renderer.default_font());
-        let size = renderer.default_size();
+        let size = self.text_size(renderer);
         let digit_width = state.digit_width::<Renderer>(font, size);
         state.gutter_width = geometry::gutter_width(internal.editor.line_count(), digit_width);
 
@@ -699,7 +710,14 @@ where
         let regions = geometry::regions(bounds, state.gutter_width, internal.bar);
         let digit_width = state.digit.map_or(0.0, |(_, _, width)| width);
 
-        draw_gutter(renderer, &internal, &regions, &style, (font, digit_width));
+        let size = self.text_size(renderer);
+        draw_gutter(
+            renderer,
+            &internal,
+            &regions,
+            &style,
+            (font, size, digit_width),
+        );
 
         let translation =
             regions.text.position() - Point::ORIGIN - Vector::new(internal.scroll_x, 0.0);
@@ -719,6 +737,7 @@ where
                 regions.text,
                 translation,
                 &style,
+                size,
             );
         }
 
@@ -1249,11 +1268,10 @@ fn draw_gutter<R>(
     internal: &Internal<R>,
     regions: &Regions,
     style: &Style,
-    (font, digit_width): (Font, f32),
+    (font, size, digit_width): (Font, Pixels, f32),
 ) where
     R: text::Renderer<Font = Font, Editor = Laid>,
 {
-    let size = renderer.default_size();
     let right = regions.text.x - geometry::GUTTER_GAP;
     let clip = Rectangle {
         height: regions.text.height,
@@ -1296,6 +1314,7 @@ fn draw_selection<R>(
     area: Rectangle,
     translation: Vector,
     style: &Style,
+    size: Pixels,
 ) where
     R: text::Renderer<Font = Font, Editor = Laid>,
 {
@@ -1305,9 +1324,7 @@ fn draw_selection<R>(
                 position + translation,
                 Size::new(
                     geometry::CARET_WIDTH,
-                    LineHeight::default()
-                        .to_absolute(renderer.default_size())
-                        .into(),
+                    LineHeight::default().to_absolute(size).into(),
                 ),
             );
 
@@ -1355,7 +1372,7 @@ where
         renderer.fill_quad(
             renderer::Quad {
                 bounds,
-                border: Border::default().rounded(SCROLLBAR_RADIUS),
+                border: Border::default().rounded(radius::XS),
                 ..renderer::Quad::default()
             },
             background,
@@ -1624,7 +1641,7 @@ fn default(theme: &Theme, status: Status) -> Style {
     let active = Style {
         background: Background::Color(palette.background.base.color),
         border: Border {
-            radius: BORDER_RADIUS.into(),
+            radius: radius::XS.into(),
             width: BORDER_WIDTH,
             color: palette.background.strong.color,
         },

@@ -32,13 +32,11 @@ use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-const PADDING: f32 = 12.0;
 /// Widest the card grows, as the other Settings cards.
 const CARD_WIDTH: f32 = 720.0;
-const SMALL_SIZE: f32 = 12.0;
-const HEADING_SIZE: f32 = 18.0;
 /// Width of a number field of the editor.
 const NUMBER_WIDTH: f32 = 90.0;
 /// Tallest the editor's list of inputs grows before it scrolls.
@@ -46,9 +44,9 @@ const ENTRIES_HEIGHT: f32 = 420.0;
 
 /// The macros kept, each with how many inputs it types, Edit and Delete.
 pub fn card(macros: &[TerminalMacro]) -> Element<'_, Message> {
-    let mut content = Column::new().spacing(SPACING);
+    let mut content = Column::new().spacing(spacing::SM);
     if macros.is_empty() {
-        content = content.push(text(fl!("ui-macros-empty")).size(SMALL_SIZE));
+        content = content.push(text(fl!("ui-macros-empty")).size(font_size::CAPTION));
     }
     for kept in macros {
         let named = |message: fn(String) -> MacroMessage| {
@@ -57,21 +55,21 @@ pub fn card(macros: &[TerminalMacro]) -> Element<'_, Message> {
         content = content.push(
             row![
                 text(server_text(&kept.name)),
-                text(fl!("ui-macros-inputs", count = kept.entries.len())).size(SMALL_SIZE),
+                text(fl!("ui-macros-inputs", count = kept.entries.len())).size(font_size::CAPTION),
                 iced::widget::space::horizontal(),
-                button(text(fl!("ui-macros-edit")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                button(text(fl!("ui-macros-edit")).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(named(MacroMessage::Edit)),
-                button(text(fl!("ui-macros-delete")).size(SMALL_SIZE))
-                    .style(button::danger)
+                button(text(fl!("ui-macros-delete")).size(font_size::CAPTION))
+                    .style(styles::danger)
                     .on_press(named(MacroMessage::AskDelete)),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
         );
     }
     container(content)
-        .padding(PADDING)
+        .padding(spacing::MD)
         .max_width(CARD_WIDTH)
         .width(Length::Fill)
         .style(container::bordered_box)
@@ -139,53 +137,59 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
     // The texts each on a line of their own: beside the buttons, they would have no room.
     let mut content = column![
         row![
-            text(fl!("ui-macro-editor-input")).size(SMALL_SIZE),
+            text(fl!("ui-macro-editor-input")).size(font_size::CAPTION),
             text_input("", &entry.input)
+                .style(styles::text_input)
                 .on_input(move |typed| field(index, EntryField::Input(typed)))
                 .width(Length::Fill),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center),
         row![
-            text(fl!("ui-macro-editor-delay")).size(SMALL_SIZE),
+            text(fl!("ui-macro-editor-delay")).size(font_size::CAPTION),
             text_input("", &entry.delay)
+                .style(styles::text_input)
                 .on_input(move |typed| field(index, EntryField::Delay(typed)))
                 .width(NUMBER_WIDTH),
-            button(text(fl!("ui-macro-editor-move-up")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-macro-editor-move-up")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press_maybe((index > 0).then(|| draft(MacroEdit::MoveUp(index)))),
-            button(text(fl!("ui-macro-editor-move-down")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-macro-editor-move-down")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press_maybe((index + 1 < count).then(|| draft(MacroEdit::MoveDown(index)))),
-            button(text(fl!("ui-macro-editor-delete-entry")).size(SMALL_SIZE))
-                .style(button::danger)
+            button(text(fl!("ui-macro-editor-delete-entry")).size(font_size::CAPTION))
+                .style(styles::danger)
                 .on_press(draft(MacroEdit::Remove(index))),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center),
         checkbox(entry.expects)
+            .style(styles::checkbox)
             .label(fl!("ui-macro-editor-expects"))
             .on_toggle(move |on| field(index, EntryField::Expects(on))),
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     if entry.expects {
         content = content.push(
             row![
-                text(fl!("ui-macro-editor-pattern")).size(SMALL_SIZE),
+                text(fl!("ui-macro-editor-pattern")).size(font_size::CAPTION),
                 text_input("", &entry.pattern)
+                    .style(styles::text_input)
                     .on_input(move |typed| field(index, EntryField::Pattern(typed)))
                     .width(Length::Fill),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
         );
         content = content.push(
             row![
                 checkbox(entry.regex)
+                    .style(styles::checkbox)
                     .label(fl!("ui-macro-editor-regex"))
                     .on_toggle(move |on| field(index, EntryField::Regex(on))),
-                text(fl!("ui-macro-editor-timeout")).size(SMALL_SIZE),
+                text(fl!("ui-macro-editor-timeout")).size(font_size::CAPTION),
                 text_input("", &entry.timeout)
+                    .style(styles::text_input)
                     .on_input(move |typed| field(index, EntryField::Timeout(typed)))
                     .width(NUMBER_WIDTH),
                 pick_list(
@@ -195,14 +199,16 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
                     ],
                     Some(TimeoutChoice(entry.on_timeout)),
                     move |choice: TimeoutChoice| field(index, EntryField::OnTimeout(choice.0)),
-                ),
+                )
+                .style(styles::pick_list)
+                .menu_style(styles::menu),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
         );
     }
     container(content)
-        .padding(PADDING / 2.0)
+        .padding(spacing::MD / 2.0)
         .width(Length::Fill)
         .style(container::bordered_box)
         .into()
@@ -212,41 +218,42 @@ fn entry_card(index: usize, count: usize, entry: &EntryDraft) -> Element<'_, Mes
 /// not, what is wrong when it cannot be kept; Delete macro, Cancel and Save.
 pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
     let count = edited.entries.len();
-    let mut entries = Column::new().spacing(SPACING);
+    let mut entries = Column::new().spacing(spacing::SM);
     for (index, entry) in edited.entries.iter().enumerate() {
         entries = entries.push(entry_card(index, count, entry));
     }
     let mut page = column![
-        text(fl!("ui-macro-editor-title")).size(HEADING_SIZE),
+        text(fl!("ui-macro-editor-title")).size(font_size::TITLE),
         row![
             text(fl!("ui-macro-editor-name")),
             text_input("", &edited.name)
+                .style(styles::text_input)
                 .on_input(|typed| draft(MacroEdit::Name(typed)))
                 .width(Length::Fill),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(Alignment::Center),
-        text(fl!("ui-macro-editor-input-hint")).size(SMALL_SIZE),
+        text(fl!("ui-macro-editor-input-hint")).size(font_size::CAPTION),
         scrollable(entries).height(ENTRIES_HEIGHT),
         row![
             button(text(fl!("ui-macro-editor-add-expect")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(draft(MacroEdit::Add { expects: true })),
             button(text(fl!("ui-macro-editor-add-send")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(draft(MacroEdit::Add { expects: false })),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if let Some(problem) = &edited.problem {
         page = page.push(text(problem_text(problem)).style(text::danger));
     }
-    let mut actions = row![].spacing(SPACING);
+    let mut actions = row![].spacing(spacing::SM);
     if let Some(original) = &edited.original {
         actions = actions.push(
             button(text(fl!("ui-macro-editor-delete-macro")))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::Macro(MacroMessage::AskDelete(
                     original.clone(),
                 )))),
@@ -257,11 +264,12 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
             .push(iced::widget::space::horizontal())
             .push(
                 button(text(fl!("ui-dialog-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::DismissDialog)),
             )
             .push(
                 button(text(fl!("ui-dialog-save-macro-confirm")))
+                    .style(styles::primary)
                     .on_press(Message::App(AppMessage::ConfirmDialog)),
             ),
     )

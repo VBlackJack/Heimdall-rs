@@ -24,21 +24,17 @@ use iced::widget::{column, text};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Space between a card's parts.
-const SPACING: f32 = 8.0;
-/// Size of a card's description and hint.
-const DESCRIPTION_SIZE: f32 = 12.0;
+use crate::tokens::{font_size, spacing};
 
 /// The "Citrix Workspace" card; `field` draws a field of the form as the other cards do.
 pub fn basics<'a>(field: impl Fn(ProfileField) -> Element<'a, Message>) -> Element<'a, Message> {
     column![
         text(fl!("ui-profile-citrix-title")),
-        text(fl!("ui-profile-citrix-desc")).size(DESCRIPTION_SIZE),
+        text(fl!("ui-profile-citrix-desc")).size(font_size::CAPTION),
         field(ProfileField::StoreFrontUrl),
         field(ProfileField::AppName),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -46,10 +42,10 @@ pub fn basics<'a>(field: impl Fn(ProfileField) -> Element<'a, Message>) -> Eleme
 pub fn advanced<'a>(field: impl Fn(ProfileField) -> Element<'a, Message>) -> Element<'a, Message> {
     column![
         text(fl!("ui-profile-citrix-advanced-title")),
-        text(fl!("ui-profile-citrix-advanced-desc")).size(DESCRIPTION_SIZE),
+        text(fl!("ui-profile-citrix-advanced-desc")).size(font_size::CAPTION),
         field(ProfileField::IcaFile),
-        text(fl!("ui-profile-citrix-hint")).size(DESCRIPTION_SIZE),
+        text(fl!("ui-profile-citrix-hint")).size(font_size::CAPTION),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }

@@ -29,10 +29,9 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-/// Size of the hint and of the error under the box.
-const CAPTION_SIZE: f32 = 12.0;
 /// Height of the box: the ten built-in presets in sight.
 const BOX_HEIGHT: f32 = 200.0;
 /// Between the bad lines the error quotes, as the C# `ResolutionPresetsErrorSeparator`.
@@ -109,9 +108,9 @@ impl PresetsEditor {
             text_editor(&self.content)
                 .on_action(Message::PresetsEdited)
                 .height(Length::Fixed(BOX_HEIGHT)),
-            text(fl!("ui-settings-rdp-resolution-presets-hint")).size(CAPTION_SIZE),
+            text(fl!("ui-settings-rdp-resolution-presets-hint")).size(font_size::CAPTION),
         ]
-        .spacing(SPACING);
+        .spacing(spacing::SM);
         if !self.invalid.is_empty() {
             card = card.push(
                 text(fl!(
@@ -121,13 +120,13 @@ impl PresetsEditor {
                     width = FIXED_WIDTH_MAX,
                     height = FIXED_HEIGHT_MAX
                 ))
-                .size(CAPTION_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::danger),
             );
         }
         card.push(row![
             button(text(fl!("ui-settings-rdp-resolution-presets-reset")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::Settings(
                     SettingsMessage::RdpResolutionPresets(RESOLUTION_PRESETS.to_vec()),
                 ))),

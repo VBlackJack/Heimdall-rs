@@ -34,12 +34,12 @@ use iced::{Element, Font, Length, Task};
 use crate::code_editor::{Content, code_editor};
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-/// Size of the editor's notes and status.
-const SMALL_SIZE: f32 = 12.0;
-
-/// Space between parts.
-const SPACING: f32 = 8.0;
+/// Size of the edited text, in its monospace font: iced's default, which it had before the
+/// window's text took the C# body size; the editor has no setting of its own.
+const TEXT_SIZE: f32 = 16.0;
 
 /// What the integrated editor's keys and the window ask of it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -411,23 +411,24 @@ pub fn view<'a>(
     let header = row![
         text(title),
         Space::new().width(Length::Fill),
-        button(text(fl!("ui-editor-save")).size(SMALL_SIZE))
+        button(text(fl!("ui-editor-save")).size(font_size::CAPTION))
+            .style(styles::primary)
             .on_press_maybe(can_save.then(|| key(EditorKey::Save))),
-        button(text(fl!("ui-editor-close")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-editor-close")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(key(EditorKey::Close)),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(iced::Alignment::Center);
-    let mut page = column![header].spacing(SPACING);
+    let mut page = column![header].spacing(spacing::SM);
     if let Some(note) = notice(edit, connected) {
-        let mut line = row![text(note).size(SMALL_SIZE).style(text::warning)]
-            .spacing(SPACING)
+        let mut line = row![text(note).size(font_size::CAPTION).style(text::warning)]
+            .spacing(spacing::SM)
             .align_y(iced::Alignment::Center);
         if edit.notice == Some(EditorNotice::ChangedOnServer) && can_save {
             line = line.push(
-                button(text(fl!("ui-editor-overwrite")).size(SMALL_SIZE))
-                    .style(button::danger)
+                button(text(fl!("ui-editor-overwrite")).size(font_size::CAPTION))
+                    .style(styles::danger)
                     .on_press(key(EditorKey::Overwrite)),
             );
         }
@@ -450,10 +451,11 @@ pub fn view<'a>(
             })
         })
         .font(Font::MONOSPACE)
+        .size(TEXT_SIZE)
         .highlight(&buffer.syntax.token, syntax);
     page.push(body)
         .push(status(edit, buffer))
-        .padding(SPACING)
+        .padding(spacing::SM)
         .into()
 }
 
@@ -505,8 +507,8 @@ fn status<'a>(edit: &IntegratedEdit, buffer: &EditorBuffer) -> Element<'a, Messa
             line = (cursor.line + 1),
             column = (column + 1)
         ))
-        .size(SMALL_SIZE),
-        text(fl!("ui-editor-lines", count = buffer.content.line_count())).size(SMALL_SIZE),
+        .size(font_size::CAPTION),
+        text(fl!("ui-editor-lines", count = buffer.content.line_count())).size(font_size::CAPTION),
         text(
             buffer
                 .syntax
@@ -514,13 +516,13 @@ fn status<'a>(edit: &IntegratedEdit, buffer: &EditorBuffer) -> Element<'a, Messa
                 .clone()
                 .unwrap_or_else(|| fl!("ui-editor-plain-text"))
         )
-        .size(SMALL_SIZE),
+        .size(font_size::CAPTION),
     ]
-    .spacing(SPACING * 2.0);
+    .spacing(spacing::SM * 2.0);
     if let Some(encoding) = encoding {
-        parts = parts.push(text(encoding).size(SMALL_SIZE));
+        parts = parts.push(text(encoding).size(font_size::CAPTION));
     }
-    parts.push(text(ending).size(SMALL_SIZE)).into()
+    parts.push(text(ending).size(font_size::CAPTION)).into()
 }
 
 fn encoding_label(encoding: TextEncoding) -> String {

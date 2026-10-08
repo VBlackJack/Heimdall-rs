@@ -32,21 +32,14 @@ use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// The file OpenSSH reads, offered first.
 const CONFIG_FILE_NAME: &str = "config";
 
 /// The folder OpenSSH keeps its files in, under the home folder.
 pub const SSH_FOLDER: &str = ".ssh";
-
-/// Room between the parts of the preview.
-const SPACING: f32 = 8.0;
-
-/// Size of the preview's text.
-const TEXT_SIZE: f32 = 13.0;
-
-/// Size of its title.
-const TITLE_SIZE: f32 = 20.0;
 
 /// Tallest the list of servers grows before it scrolls.
 const ROWS_HEIGHT: f32 = 300.0;
@@ -104,7 +97,7 @@ fn app(message: SessionsMessage) -> Message {
 fn cell<'a>(value: impl Into<String>, width: f32) -> Element<'a, Message> {
     container(
         text(value.into())
-            .size(TEXT_SIZE)
+            .size(font_size::BODY)
             .wrapping(text::Wrapping::None),
     )
     .width(width)
@@ -151,24 +144,25 @@ pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(title(preview.source)).size(TITLE_SIZE),
-        text(summary).size(TEXT_SIZE),
+        text(title(preview.source)).size(font_size::TITLE),
+        text(summary).size(font_size::BODY),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     // The C# hint is about ProxyJump, which only an OpenSSH file has.
     if preview.source == SessionsSource::OpenSsh {
-        content = content.push(text(fl!("ui-openssh-hint")).size(TEXT_SIZE));
+        content = content.push(text(fl!("ui-openssh-hint")).size(font_size::BODY));
     }
     let mut content = content.push(
         column![
             checkbox(preview.all_chosen())
+                .style(styles::checkbox)
                 .label(fl!("ui-openssh-choose-all"))
-                .text_size(TEXT_SIZE)
+                .text_size(font_size::BODY)
                 .on_toggle(|on| app(SessionsMessage::ChooseAll(on))),
             header,
             scrollable(rows).height(Length::Shrink).height(ROWS_HEIGHT),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     );
     let said: Vec<Element<'_, Message>> = preview
         .diagnostics
@@ -178,22 +172,24 @@ pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
         .collect();
     if !said.is_empty() {
         content = content
-            .push(text(fl!("ui-openssh-diagnostics", count = said.len())).size(TEXT_SIZE))
+            .push(text(fl!("ui-openssh-diagnostics", count = said.len())).size(font_size::BODY))
             .push(scrollable(Column::with_children(said)).height(DIAGNOSTICS_HEIGHT));
     }
     content
         .push(
             row![
                 button(text(fl!("ui-dialog-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(fl!("ui-openssh-import-button"))).on_press_maybe(
-                    preview
-                        .can_import()
-                        .then_some(Message::App(AppMessage::ConfirmDialog))
-                ),
+                button(text(fl!("ui-openssh-import-button")))
+                    .style(styles::primary)
+                    .on_press_maybe(
+                        preview
+                            .can_import()
+                            .then_some(Message::App(AppMessage::ConfirmDialog))
+                    ),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
         .into()
 }
@@ -206,10 +202,12 @@ fn server_row(index: usize, row: &SessionsRow) -> Element<'_, Message> {
         Status::Invalid => fl!("ui-sessions-status-invalid"),
     };
     // As the C# preview: an invalid server has no tick to give.
-    let tick = checkbox(row.chosen).on_toggle_maybe(
-        row.choosable()
-            .then_some(move |_| app(SessionsMessage::Choose(index))),
-    );
+    let tick = checkbox(row.chosen)
+        .style(styles::checkbox)
+        .on_toggle_maybe(
+            row.choosable()
+                .then_some(move |_| app(SessionsMessage::Choose(index))),
+        );
     let host = if candidate.host_name.is_empty() {
         fl!("ui-sessions-no-host")
     } else {
@@ -279,7 +277,7 @@ fn diagnostic_line(diagnostic: &Diagnostic) -> Element<'_, Message> {
         line = diagnostic.line,
         said = said
     ))
-    .size(TEXT_SIZE)
+    .size(font_size::BODY)
     .style(move |theme: &Theme| text::Style {
         color: warning.then(|| theme.extended_palette().danger.base.color),
     })
@@ -308,7 +306,7 @@ fn putty_line(diagnostic: &putty::Diagnostic) -> Element<'_, Message> {
     };
     let warning = diagnostic.level == putty::Level::Warning;
     text(said)
-        .size(TEXT_SIZE)
+        .size(font_size::BODY)
         .style(move |theme: &Theme| text::Style {
             color: warning.then(|| theme.extended_palette().danger.base.color),
         })

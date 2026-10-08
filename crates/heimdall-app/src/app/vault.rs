@@ -1096,6 +1096,21 @@ impl App {
         }
     }
 
+    /// Forgets `profile`'s saved password alone: a `WinRM` profile now signing in as the
+    /// current Windows identity, which has none.
+    pub(super) fn drop_password(&mut self, profile: &ProfileId) {
+        let entry = password_entry(profile);
+        if self.vault.read(&entry).is_none() {
+            return;
+        }
+        match self.vault.write(&entry, None) {
+            Ok(()) => {
+                self.vault.refused.remove(profile);
+            }
+            Err(error) => self.password_save_failed(&error),
+        }
+    }
+
     /// Saves `password` for each of `profiles`, at the server and account each one names
     /// now, as its editor would; a profile whose password is not saved is passed over. In
     /// the vault, all are saved at once or none; in the system's store, each on its own.
