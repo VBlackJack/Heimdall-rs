@@ -435,6 +435,46 @@ impl CtrlVPaste {
     }
 }
 
+/// What Ctrl+K does in a terminal. The C# opens Quick Connect, wherever the keyboard is;
+/// readline and emacs take ^K as "delete to the end of the line".
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CtrlKTerminal {
+    /// Ctrl+K opens Quick Connect, as the C#.
+    #[default]
+    QuickConnect,
+    /// Ctrl+K is ^K for the session; Ctrl+Shift+K opens Quick Connect.
+    SendToSession,
+}
+
+impl CtrlKTerminal {
+    /// Every choice, in the order the list shows them.
+    pub const ALL: [Self; 2] = [Self::QuickConnect, Self::SendToSession];
+
+    /// Its name in the settings file.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::QuickConnect => "quick-connect",
+            Self::SendToSession => "send-to-session",
+        }
+    }
+
+    /// The choice named `name`; the default for a name not known.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|choice| choice.name() == name.trim())
+            .unwrap_or_default()
+    }
+
+    /// Whether Ctrl+K in a terminal opens Quick Connect rather than reaching the session.
+    #[must_use]
+    pub const fn opens_quick_connect(self) -> bool {
+        matches!(self, Self::QuickConnect)
+    }
+}
+
 /// Where transcripts go when no folder is chosen, beside the settings, as the C# one.
 pub const DEFAULT_SESSION_LOG_DIRECTORY: &str = "logs/sessions";
 
@@ -553,6 +593,8 @@ pub struct Settings {
     pub powershell_execution_policy: ExecutionPolicy,
     /// What Ctrl+V does in a terminal.
     pub ctrl_v_paste: CtrlVPaste,
+    /// What Ctrl+K does in a terminal.
+    pub ctrl_k_terminal: CtrlKTerminal,
     /// The tunnels panel starts collapsed, as the C# `CollapseTunnelsPanelByDefault`: on.
     pub collapse_tunnels_panel: bool,
     /// The computer kept from sleeping while a session is open, as the C#
@@ -918,6 +960,7 @@ impl Default for Settings {
             ssh_agent_preference: AgentPreference::default(),
             powershell_execution_policy: ExecutionPolicy::default(),
             ctrl_v_paste: CtrlVPaste::default(),
+            ctrl_k_terminal: CtrlKTerminal::default(),
             collapse_tunnels_panel: true,
             prevent_sleep: true,
             max_sessions: MAX_SESSIONS_DEFAULT,
@@ -1200,6 +1243,9 @@ struct TerminalSection {
     /// What Ctrl+V does, by its name.
     #[serde(default)]
     ctrl_v_paste: Option<String>,
+    /// What Ctrl+K does, by its name.
+    #[serde(default)]
+    ctrl_k: Option<String>,
 }
 
 /// The instant `seconds` after 1970, UTC.
@@ -1403,6 +1449,12 @@ impl Settings {
                 .as_deref()
                 .map(CtrlVPaste::named)
                 .unwrap_or_default(),
+            ctrl_k_terminal: file
+                .terminal
+                .ctrl_k
+                .as_deref()
+                .map(CtrlKTerminal::named)
+                .unwrap_or_default(),
             rdp_defaults: file.rdp,
             sftp_browser: file.files.sftp_browser(),
             external_editor: file.files.external_editor.trim().to_owned(),
@@ -1502,6 +1554,7 @@ impl Settings {
                     self.powershell_execution_policy.name().to_owned(),
                 ),
                 ctrl_v_paste: Some(self.ctrl_v_paste.name().to_owned()),
+                ctrl_k: Some(self.ctrl_k_terminal.name().to_owned()),
             },
             session_log: SessionLogSection {
                 enabled: self.session_logging,

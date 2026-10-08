@@ -2141,6 +2141,9 @@ ui-settings-ctrl-v = Ctrl+V dans un terminal
 ui-settings-ctrl-v-always = Colle
 ui-settings-ctrl-v-outside = Colle, sauf dans les programmes plein écran (vim, less...)
 ui-settings-ctrl-v-never = Est envoyé à la session (Ctrl+Maj+V colle)
+ui-settings-ctrl-k = Ctrl+K dans un terminal
+ui-settings-ctrl-k-quick-connect = Ouvre la connexion rapide
+ui-settings-ctrl-k-send = Est envoyé à la session (Ctrl+Maj+K ouvre la connexion rapide)
 ui-connect-via = via { $route }
 
 ## Translations of text written in English first.

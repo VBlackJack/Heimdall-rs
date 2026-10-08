@@ -27,8 +27,8 @@
 use heimdall_app::{Effect, Message as AppMessage, PinMessage, VaultStatus, search_folded};
 use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
-    Accent, AgentPreference, AppTheme, ColorScheme, CtrlVPaste, ExecutionPolicy, Language,
-    MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
+    Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
+    Language, MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
     SSH_AUTO_RECONNECT_ATTEMPTS_MAX, SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings,
 };
 use iced::widget::scrollable::RelativeOffset;
@@ -39,10 +39,10 @@ use iced::widget::{
 use iced::{Element, Task, Theme};
 
 use super::{
-    AgentChoice, BODY_SIZE, CONNECT_TIMEOUTS, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice,
-    HEADING_SIZE, LanguageChoice, Message, PADDING, PolicyChoice, SETTINGS_WIDTH, SMALL_SIZE,
-    SPACING, SchemeChoice, SessionField, SessionsChoice, SettingsMessage, SettingsTab, Shell,
-    TimeoutChoice, settings_tabs,
+    AgentChoice, BODY_SIZE, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH,
+    FontChoice, HEADING_SIZE, LanguageChoice, Message, PADDING, PolicyChoice, SETTINGS_WIDTH,
+    SMALL_SIZE, SPACING, SchemeChoice, SessionField, SessionsChoice, SettingsMessage, SettingsTab,
+    Shell, TimeoutChoice, settings_tabs,
 };
 use crate::i18n::fl;
 use crate::search_keys::SearchKeys;
@@ -184,6 +184,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
         SettingRow::ColorScheme => fl!("ui-settings-color-scheme"),
         SettingRow::CtrlVPaste => fl!("ui-settings-ctrl-v"),
+        SettingRow::CtrlKTerminal => fl!("ui-settings-ctrl-k"),
         SettingRow::PowerShellPolicy => fl!("ui-settings-powershell-policy"),
         SettingRow::SessionLogging => fl!("ui-settings-session-logging-record"),
         SettingRow::SessionLogDirectory => fl!("ui-settings-session-log-directory"),
@@ -264,6 +265,9 @@ fn row_choices(row: SettingRow) -> Vec<String> {
             .map(|s| SchemeChoice(s).to_string())
             .to_vec(),
         SettingRow::CtrlVPaste => CtrlVPaste::ALL.map(|c| CtrlVChoice(c).to_string()).to_vec(),
+        SettingRow::CtrlKTerminal => CtrlKTerminal::ALL
+            .map(|c| CtrlKChoice(c).to_string())
+            .to_vec(),
         SettingRow::PowerShellPolicy => ExecutionPolicy::ALL
             .map(|p| PolicyChoice(p).to_string())
             .to_vec(),
@@ -746,6 +750,7 @@ impl Shell {
             SettingRow::FontFamily => defaults.terminal_font_family,
             SettingRow::ColorScheme => SchemeChoice(defaults.color_scheme).to_string(),
             SettingRow::CtrlVPaste => CtrlVChoice(defaults.ctrl_v_paste).to_string(),
+            SettingRow::CtrlKTerminal => CtrlKChoice(defaults.ctrl_k_terminal).to_string(),
             SettingRow::PowerShellPolicy => {
                 PolicyChoice(defaults.powershell_execution_policy).to_string()
             }
@@ -906,6 +911,14 @@ impl Shell {
                     CtrlVPaste::ALL.map(CtrlVChoice).to_vec(),
                     Some(CtrlVChoice(settings.ctrl_v_paste)),
                     |CtrlVChoice(choice)| send(SettingsMessage::CtrlVPaste(choice)),
+                ),
+            ),
+            SettingRow::CtrlKTerminal => labelled(
+                label,
+                pick_list(
+                    CtrlKTerminal::ALL.map(CtrlKChoice).to_vec(),
+                    Some(CtrlKChoice(settings.ctrl_k_terminal)),
+                    |CtrlKChoice(choice)| send(SettingsMessage::CtrlKTerminal(choice)),
                 ),
             ),
             SettingRow::PowerShellPolicy => labelled(

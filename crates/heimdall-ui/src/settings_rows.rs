@@ -170,6 +170,8 @@ pub enum SettingRow {
     ColorScheme,
     /// What Ctrl+V does in a terminal.
     CtrlVPaste,
+    /// What Ctrl+K does in a terminal.
+    CtrlKTerminal,
     /// The execution policy a local `PowerShell` is started with.
     PowerShellPolicy,
     /// Every session keeps a transcript.
@@ -246,7 +248,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 51] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -261,6 +263,7 @@ impl SettingRow {
         Self::FontFamily,
         Self::ColorScheme,
         Self::CtrlVPaste,
+        Self::CtrlKTerminal,
         Self::PowerShellPolicy,
         Self::SessionLogging,
         Self::SessionLogDirectory,
@@ -315,6 +318,7 @@ impl SettingRow {
             | Self::FontFamily
             | Self::ColorScheme
             | Self::CtrlVPaste
+            | Self::CtrlKTerminal
             | Self::PowerShellPolicy => SettingsCard::Terminal,
             Self::SessionLogging | Self::SessionLogDirectory | Self::TranscriptRetention => {
                 SettingsCard::SessionLogging
@@ -432,6 +436,7 @@ impl SettingRow {
             Self::FontFamily => settings.terminal_font_family != defaults.terminal_font_family,
             Self::ColorScheme => settings.color_scheme != defaults.color_scheme,
             Self::CtrlVPaste => settings.ctrl_v_paste != defaults.ctrl_v_paste,
+            Self::CtrlKTerminal => settings.ctrl_k_terminal != defaults.ctrl_k_terminal,
             Self::PowerShellPolicy => {
                 settings.powershell_execution_policy != defaults.powershell_execution_policy
             }
@@ -481,6 +486,7 @@ impl SettingRow {
             Self::FontFamily => SettingsMessage::TerminalFontFamily(defaults.terminal_font_family),
             Self::ColorScheme => SettingsMessage::ColorScheme(defaults.color_scheme),
             Self::CtrlVPaste => SettingsMessage::CtrlVPaste(defaults.ctrl_v_paste),
+            Self::CtrlKTerminal => SettingsMessage::CtrlKTerminal(defaults.ctrl_k_terminal),
             Self::PowerShellPolicy => {
                 SettingsMessage::PowerShellExecutionPolicy(defaults.powershell_execution_policy)
             }
