@@ -18,7 +18,7 @@
 //! where it acts. Only the keys bound here are listed, so the list never promises one that
 //! does nothing.
 
-use iced::widget::{Column, button, column, row, scrollable, text};
+use iced::widget::{Column, button, column, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -241,7 +241,7 @@ pub fn view<'a>(ok: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     }
     column![
         text(fl!("ui-shortcuts-title")).size(font_size::TITLE),
-        scrollable(list).height(Length::Fixed(LIST_HEIGHT)),
+        styles::scroll(list).height(Length::Fixed(LIST_HEIGHT)),
         text(fl!("ui-shortcuts-session-keys")).style(text::secondary),
         row![iced::widget::space::horizontal(), ok.into()],
     ]

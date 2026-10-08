@@ -38,10 +38,10 @@ use iced::keyboard::key::Named;
 use iced::widget::{button, center, column, container, opaque, row, text};
 use iced::{Element, Length, Size, event, keyboard, mouse, window};
 
-/// The widget identifiers of a Files tab's fields and lists, made of its tab: the pane drawn
-/// in a tab's own window never answers to an operation meant for the main window's. And the
-/// widths of its columns, which its headers send resized.
-pub use crate::files_view::{ColumnWidths, PaneField, field_id, list_id};
+/// The widget identifiers of a Files tab's fields, lists and glyph buttons, made of its tab:
+/// the pane drawn in a tab's own window never answers to an operation meant for the main
+/// window's. And the widths of its columns, which its headers send resized.
+pub use crate::files_view::{ColumnWidths, PaneField, PaneTool, field_id, list_id, tool_id};
 /// The integrated editor's messages, which a tab's own window lets through for its tab.
 pub use crate::integrated_editor::{EditorKey, EditorMessage};
 

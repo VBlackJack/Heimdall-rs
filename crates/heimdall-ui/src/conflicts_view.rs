@@ -22,7 +22,7 @@ use std::fmt;
 
 use heimdall_app::{ConflictRow, FilesMessage, Message as AppMessage};
 use heimdall_files::conflict::Choice;
-use iced::widget::{Column, button, column, container, pick_list, row, scrollable, text};
+use iced::widget::{Column, button, column, container, pick_list, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -137,7 +137,7 @@ pub fn view(rows: &[ConflictRow]) -> Element<'_, Message> {
             .size(font_size::CAPTION)
             .style(text::secondary),
         all,
-        container(column![header, scrollable(list).height(ROWS_HEIGHT)].spacing(spacing::SM))
+        container(column![header, styles::scroll(list).height(ROWS_HEIGHT)].spacing(spacing::SM))
             .padding(spacing::SM)
             .style(container::bordered_box),
         row![
