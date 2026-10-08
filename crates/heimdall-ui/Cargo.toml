@@ -33,7 +33,7 @@ i18n-embed-fl.workspace = true
 # advanced: custom widgets; tokio: one runtime shared with the SSH client; fira-sans: the
 # window's text font embedded, so it does not depend on the fonts of the machine.
 # image-without-codecs: the RDP desktop is drawn from raw pixels, nothing is decoded.
-iced = { workspace = true, features = ["advanced", "tokio", "fira-sans", "image-without-codecs", "highlighter"] }
+iced = { workspace = true, features = ["advanced", "canvas", "tokio", "fira-sans", "image-without-codecs", "highlighter"] }
 iced_renderer = { workspace = true, features = ["wgpu"] }
 log.workspace = true
 rfd.workspace = true

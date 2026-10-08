@@ -42,22 +42,17 @@ use iced::widget::{
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
+use crate::tree_row::{EDGE_WIDTH, Mark, RowChrome};
 
 /// Tallest a "Move to folder" list grows before it scrolls.
 const MOVE_MENU_HEIGHT: f32 = 360.0;
 
-/// What an open folder shows before its name, and a closed one.
-const OPEN_MARKER: &str = "\u{25BE}";
-const CLOSED_MARKER: &str = "\u{25B8}";
-
 /// Width of a menu.
 const MENU_WIDTH: f32 = 270.0;
-
-/// Width of the accent edge of a selected row.
-const SELECTED_EDGE: f32 = 3.0;
 
 /// A menu open in the tree.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,12 +127,40 @@ pub enum TreeMenu {
     },
 }
 
-/// Width of the protocol column: every name starts at the same place, as beside the C#
-/// tree's icons.
-const PROTOCOL_WIDTH: f32 = 38.0;
+/// Side of a session's protocol icon, as the C# `GeoIconSmall`.
+const PROTOCOL_ICON_SIDE: f32 = 14.0;
 
-/// Widest a gateway badge grows beside a name.
-const BADGE_MAX_WIDTH: f32 = 110.0;
+/// Side of a folder's icon, as the C# `SessionTreeFolderIconSize`.
+const FOLDER_ICON_SIDE: f32 = 13.0;
+
+/// Side of the expander's arrow box, as the C# `TreeExpanderGlyphBoxSize`.
+const EXPANDER_SIDE: f32 = 12.0;
+
+/// Space between the expander and its row, as the C# expander's right margin.
+const EXPANDER_GAP: f32 = 2.0;
+
+/// Space after a folder's icon, as the C# margin.
+const FOLDER_ICON_GAP: f32 = 7.0;
+
+/// Height of a row's content: the C# `SessionTreeServerRowMinHeight` (24) and
+/// `SessionTreeFolderRowMinHeight` (26) less their padding.
+const ROW_CONTENT_HEIGHT: f32 = 20.0;
+
+/// The space around a state dot the pointer reaches it in, as the C#
+/// `SessionTreeStatusHitPadding`.
+const DOT_HIT_PADDING: f32 = 3.0;
+
+/// The window's font, semi-bold, as a C# folder's name.
+const SEMIBOLD: iced::Font = iced::Font {
+    weight: iced::font::Weight::Semibold,
+    ..crate::UI_FONT
+};
+
+/// Widest a gateway badge grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
+const BADGE_MAX_WIDTH: f32 = 140.0;
+
+/// Corner radius of a badge, as the C# `SessionTreeBadgeCornerRadius`.
+const BADGE_RADIUS: f32 = 3.0;
 
 /// Size of a session's state dot, as the C# tree's and tabs'.
 const DOT_SIZE: f32 = 7.0;
@@ -146,9 +169,15 @@ const DOT_SIZE: f32 = 7.0;
 /// red failed, grey when none is open.
 #[must_use]
 pub fn state_dot<'a>(state: Option<SessionState>) -> Element<'a, Message> {
+    sized_state_dot(state, DOT_SIZE)
+}
+
+/// [`state_dot`] of diameter `side`, as the C# detail panel's larger one.
+#[must_use]
+pub fn sized_state_dot<'a>(state: Option<SessionState>, side: f32) -> Element<'a, Message> {
     container(iced::widget::space())
-        .width(DOT_SIZE)
-        .height(DOT_SIZE)
+        .width(side)
+        .height(side)
         .style(move |theme: &Theme| {
             let palette = theme.extended_palette();
             let colour = match state {
@@ -162,7 +191,7 @@ pub fn state_dot<'a>(state: Option<SessionState>) -> Element<'a, Message> {
             container::Style {
                 background: Some(colour.into()),
                 border: iced::Border {
-                    radius: (DOT_SIZE / 2.0).into(),
+                    radius: (side / 2.0).into(),
                     ..iced::Border::default()
                 },
                 ..container::Style::default()
@@ -171,23 +200,22 @@ pub fn state_dot<'a>(state: Option<SessionState>) -> Element<'a, Message> {
         .into()
 }
 
-/// Width of the ring that says what the background check found, in logical pixels.
-const RING_WIDTH: f32 = 2.0;
+/// Width of the ring that says what the background check found, in logical pixels, as the
+/// C# `SessionTreeStatusRingThickness`.
+const RING_WIDTH: f32 = 1.5;
 
 /// A server's dot in the tree, as the C# one: its session's state while one is open or
 /// failed; else what the background check found, as a ring, so that it is never taken for
-/// a session.
+/// a session; a grey ring when nothing was found, as the C# unknown verdict.
 fn profile_dot<'a>(state: Option<SessionState>, reach: Option<&Verdict>) -> Element<'a, Message> {
     if state.is_some_and(|state| state != SessionState::Ended) {
         return state_dot(state);
     }
-    let Some(reach) = reach.filter(|reach| !matches!(reach, Verdict::Unchecked(_))) else {
-        return state_dot(None);
-    };
     let tone = match reach {
-        Verdict::Up(_) => Tone::Success,
-        Verdict::Down(_) => Tone::Danger,
-        _ => Tone::Warning,
+        Some(Verdict::Up(_)) => Tone::Success,
+        Some(Verdict::Down(_)) => Tone::Danger,
+        Some(Verdict::Checking) => Tone::Warning,
+        Some(Verdict::Unchecked(_)) | None => Tone::Unknown,
     };
     container(iced::widget::space())
         .width(DOT_SIZE)
@@ -198,6 +226,7 @@ fn profile_dot<'a>(state: Option<SessionState>, reach: Option<&Verdict>) -> Elem
                 Tone::Success => palette.success.base.color,
                 Tone::Danger => palette.danger.base.color,
                 Tone::Warning => palette.warning.base.color,
+                Tone::Unknown => palette.secondary.base.color,
             };
             container::Style {
                 border: iced::Border {
@@ -217,6 +246,7 @@ enum Tone {
     Success,
     Danger,
     Warning,
+    Unknown,
 }
 
 /// What the background check found of a server, as the C# dot's tooltip says it.
@@ -245,8 +275,9 @@ fn reach_text(reach: &Verdict) -> String {
     }
 }
 
-/// How far a row moves right for each folder it is in.
-const INDENT: f32 = 14.0;
+/// How far a row moves right for each folder it is in, as the C# tree's expander column
+/// and the margin of the items under it.
+const INDENT: f32 = 16.0;
 
 /// `row` moved right for `depth` folders.
 #[must_use]
@@ -265,8 +296,9 @@ pub fn indented(row: Element<'_, Message>, depth: usize) -> Element<'_, Message>
 }
 
 /// A folder: open or closed at a click, as the C# tree's; "(No Folder)" for [`NO_FOLDER`].
-/// The profiles it holds counted at its right, as the C# tree's; its colour, its own or
-/// inherited, in a swatch before its name, as the C# folder icon takes it.
+/// The expander's arrow before it, its icon in its colour, its own or inherited, else the
+/// theme's, and the profiles it holds counted at its right, as the C# tree's; the edge of
+/// the focus colour while the keyboard is on it.
 pub fn folder_row<'a>(
     path: String,
     name: String,
@@ -281,25 +313,48 @@ pub fn folder_row<'a>(
     } else {
         name
     };
-    let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
+    let (arrow, arrow_tint) = if open {
+        (Icon::ChevronDown, Tint::Text)
+    } else {
+        (Icon::ChevronRight, Tint::Secondary)
+    };
+    let tint = color.map_or(Tint::Info, |color| {
+        let (red, green, blue) = color.rgb();
+        Tint::Own(iced::Color::from_rgb8(red, green, blue))
+    });
+    let chrome = RowChrome::new(
+        container(
+            row![
+                container(icons::icon(Icon::Folder, tint, FOLDER_ICON_SIDE))
+                    .center_y(ROW_CONTENT_HEIGHT),
+                text(label).size(font_size::BODY).font(SEMIBOLD),
+                iced::widget::space::horizontal(),
+                text(count.to_string())
+                    .size(font_size::SMALL_CAPTION)
+                    .style(text::secondary),
+            ]
+            .spacing(FOLDER_ICON_GAP)
+            .align_y(iced::Alignment::Center),
+        )
+        .width(Length::Fill)
+        .padding(iced::Padding {
+            top: 3.0,
+            right: 8.0,
+            bottom: 3.0,
+            left: EDGE_WIDTH + 1.0,
+        }),
+        if selected { Mark::Cursor } else { Mark::None },
+    );
     let body = container(
-        row![
-            text(marker)
-                .size(font_size::SMALL_CAPTION)
-                .style(text::secondary),
-            color.map(swatch),
-            text(label).size(font_size::BODY),
-            iced::widget::space::horizontal(),
-            text(count.to_string())
-                .size(font_size::SMALL_CAPTION)
-                .style(text::secondary),
-        ]
-        .spacing(6.0)
-        .align_y(iced::Alignment::Center),
+        row![icons::icon(arrow, arrow_tint, EXPANDER_SIDE), chrome]
+            .spacing(EXPANDER_GAP)
+            .align_y(iced::Alignment::Center),
     )
-    .width(Length::Fill)
-    .padding([2.0, 4.0])
-    .style(move |theme: &Theme| row_style(theme, selected));
+    .padding(iced::Padding {
+        top: 3.0,
+        bottom: 1.0,
+        ..iced::Padding::ZERO
+    });
     indented(
         mouse_area(body)
             .on_press(Message::App(AppMessage::ToggleFolder(path.clone())))
@@ -313,7 +368,7 @@ pub fn folder_row<'a>(
 /// Side of a folder colour's swatch, as the C# menu's.
 const SWATCH_SIDE: f32 = 10.0;
 
-/// A square of `color`, before a folder's name and in its menu.
+/// A square of `color`, in a folder's colour menu.
 fn swatch<'a>(color: FolderColor) -> Element<'a, Message> {
     let (red, green, blue) = color.rgb();
     container(iced::widget::space().width(SWATCH_SIDE).height(SWATCH_SIDE))
@@ -397,9 +452,9 @@ pub fn search_context(profile: &ProfileSummary) -> Option<String> {
     (!parts.is_empty()).then(|| parts.join("  "))
 }
 
-/// One profile: protocol, the state of its sessions and name, as the C# tree's row, with
-/// where it is under the name while searching; the host, account and protocol in its
-/// tooltip.
+/// One profile: its protocol's icon in its colour, the state of its sessions and name, as
+/// the C# tree's row, with where it is under the name while searching; the host, account and
+/// protocol in its tooltip. It starts after the expander's column, as a C# leaf does.
 pub fn owned_row(
     profile: &ProfileSummary,
     selected: bool,
@@ -407,14 +462,15 @@ pub fn owned_row(
     context: Option<String>,
 ) -> Element<'static, Message> {
     let id = profile.id.clone();
+    let kind = profile.kind;
     let mut label = row![
-        container(
-            text(profile.kind.label())
-                .size(font_size::SMALL_CAPTION)
-                .style(text::secondary)
-        )
-        .width(PROTOCOL_WIDTH),
-        profile_dot(state, reach.as_ref()),
+        container(icons::icon(
+            Icon::of(kind),
+            Tint::Protocol(kind),
+            PROTOCOL_ICON_SIDE
+        ))
+        .center_y(ROW_CONTENT_HEIGHT),
+        container(profile_dot(state, reach.as_ref())).padding(DOT_HIT_PADDING),
         column![text(profile.name.clone()).wrapping(text::Wrapping::Glyph)].push(context.map(
             |context| {
                 text(context)
@@ -424,7 +480,7 @@ pub fn owned_row(
             }
         )),
     ]
-    .spacing(6.0)
+    .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
     if profile.favorite {
         label = label.push(
@@ -439,21 +495,29 @@ pub fn owned_row(
     if let Some(origin) = profile.metadata.origin {
         label = label.push(origin_badge(origin));
     }
-    let body = container(label)
-        .width(Length::Fill)
-        .padding([4.0, 8.0])
-        .style(move |theme: &Theme| row_style(theme, selected));
+    let body = RowChrome::new(
+        container(label).width(Length::Fill).padding(iced::Padding {
+            top: 2.0,
+            right: 4.0,
+            bottom: 2.0,
+            left: EDGE_WIDTH + 3.0,
+        }),
+        if selected { Mark::Selected } else { Mark::None },
+    );
     let area = mouse_area(body)
         .on_press(Message::TreeClick(id.clone()))
         .on_double_click(Message::App(AppMessage::ConnectProfile(id.clone())))
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Profile(id)))
         .interaction(mouse::Interaction::Pointer);
-    tooltip(
-        area,
-        text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
-        tooltip::Position::Right,
-    )
-    .style(container::rounded_box)
+    row![
+        iced::widget::space().width(EXPANDER_SIDE + EXPANDER_GAP),
+        tooltip(
+            area,
+            text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
+            tooltip::Position::Right,
+        )
+        .style(container::rounded_box),
+    ]
     .into()
 }
 
@@ -475,18 +539,24 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
     .clip(true)
     .padding([0.0, 4.0])
     .style(move |theme: &Theme| {
+        // As the C# badge: the card's background, the info colour's border and the
+        // secondary text; the warning colour when the gateway is missing.
         let palette = theme.extended_palette();
-        let colour = if missing {
-            palette.danger.base.color
+        let (border, text_colour) = if missing {
+            (palette.warning.base.color, palette.warning.base.color)
         } else {
-            palette.primary.base.color
+            (
+                crate::themes::colors_of(theme).cyan,
+                palette.secondary.base.color,
+            )
         };
         container::Style {
-            text_color: Some(colour),
+            text_color: Some(text_colour),
+            background: Some(palette.background.weak.color.into()),
             border: iced::Border {
-                color: colour,
+                color: border,
                 width: BORDER_WIDTH,
-                radius: 6.0.into(),
+                radius: BADGE_RADIUS.into(),
             },
             ..container::Style::default()
         }
@@ -505,31 +575,15 @@ fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'stat
     )
     .padding([0.0, 4.0])
     .style(|theme: &Theme| container::Style {
+        background: Some(theme.extended_palette().background.weak.color.into()),
         border: iced::Border {
             color: theme.extended_palette().background.strong.color,
             width: BORDER_WIDTH,
-            radius: 6.0.into(),
+            radius: BADGE_RADIUS.into(),
         },
         ..container::Style::default()
     })
     .into()
-}
-
-fn row_style(theme: &Theme, selected: bool) -> container::Style {
-    let palette = theme.extended_palette();
-    if selected {
-        container::Style {
-            background: Some(palette.background.strong.color.into()),
-            border: iced::Border {
-                color: palette.primary.strong.color,
-                width: SELECTED_EDGE,
-                radius: radius::XS.into(),
-            },
-            ..container::Style::default()
-        }
-    } else {
-        container::Style::default()
-    }
 }
 
 fn row_tooltip(profile: &ProfileSummary, reach: Option<&Verdict>) -> String {

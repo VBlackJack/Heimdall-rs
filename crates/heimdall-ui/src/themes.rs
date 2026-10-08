@@ -231,6 +231,40 @@ pub fn theme(theme: AppTheme, accent: Accent) -> Theme {
         .unwrap_or_else(|| build(theme, accent))
 }
 
+/// The colours of the window's theme `theme`, found by the name [`build`] gives it: a view
+/// drawing in a colour the palette does not hold, a protocol's, reads it here. A theme of
+/// iced's own takes its palette's.
+#[must_use]
+pub fn colors_of(theme: &Theme) -> ThemeColors {
+    let name = theme.to_string();
+    AppTheme::ALL
+        .into_iter()
+        .find(|each| each.name() == name)
+        .map_or_else(|| palette_colors(theme), colors)
+}
+
+/// The colours of a theme not of `ThemeForge`, taken from its palette.
+fn palette_colors(theme: &Theme) -> ThemeColors {
+    let palette = theme.palette();
+    let extended = theme.extended_palette();
+    ThemeColors {
+        background: palette.background,
+        current_line: extended.background.weak.color,
+        foreground: palette.text,
+        comment: extended.secondary.base.color,
+        accent: palette.primary,
+        blue: palette.primary,
+        cyan: palette.primary,
+        green: palette.success,
+        orange: palette.warning,
+        pink: palette.danger,
+        purple: palette.primary,
+        red: palette.danger,
+        yellow: palette.warning,
+        light: !extended.is_dark,
+    }
+}
+
 /// The colours the integrated editor highlights code with: dark ones on a dark theme,
 /// light ones on a light theme.
 #[must_use]
@@ -377,6 +411,19 @@ mod tests {
             },
             "Drakul is Dracula with its comment lifted"
         );
+    }
+
+    #[test]
+    fn a_window_theme_gives_back_its_colours() {
+        for each in AppTheme::ALL {
+            assert_eq!(
+                colors_of(&theme(each, Accent::Red)),
+                colors(each),
+                "{each:?}"
+            );
+        }
+        let other = colors_of(&Theme::Light);
+        assert_eq!(other.blue, Theme::Light.palette().primary, "its palette's");
     }
 
     #[test]

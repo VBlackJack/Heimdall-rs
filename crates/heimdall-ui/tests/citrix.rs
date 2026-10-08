@@ -80,10 +80,9 @@ fn outlook() -> CitrixProfile {
 #[test]
 fn a_saved_citrix_profile_is_listed_with_its_protocol_and_connects_by_its_id() {
     let dir = tempfile::tempdir().expect("dir");
-    let shell = Shell::with_app(app(dir.path(), Some(outlook())));
+    let mut shell = Shell::with_app(app(dir.path(), Some(outlook())));
     let mut ui = common::simulator(settings(), WINDOW, shell.view());
     ui.find("Outlook").expect("name");
-    ui.find("Citrix").expect("protocol");
     drop(ui);
     let messages = common::double_click_messages(
         || common::simulator(settings(), WINDOW, shell.view()),
@@ -96,6 +95,11 @@ fn a_saved_citrix_profile_is_listed_with_its_protocol_and_connects_by_its_id() {
         )),
         "a double click connects"
     );
+    // The tree shows the protocol as its icon; the details of the session selected name it.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("outlook")));
+    common::simulator(settings(), WINDOW, shell.view())
+        .find("Citrix")
+        .expect("protocol");
 }
 
 #[test]
