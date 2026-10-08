@@ -21,6 +21,10 @@
 //! The data is WPF's path mini-language: SVG path data (M, L, H, V, C, S, Q, A, Z and their
 //! relative forms here), with an optional fill rule first, `F0` even-odd, WPF's default, or
 //! `F1` non-zero. The C#'s geometries use M, L, C, A and Z only.
+//!
+//! The C# draws its window's chrome, a toolbar's or the status bar's buttons, in Segoe MDL2
+//! Assets glyphs rather than geometries; those are drawn here as lines on the same 16-unit
+//! grid, each named after the glyph it stands for.
 
 use std::cell::Cell;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
@@ -31,6 +35,15 @@ use iced::{Color, Element, Point, Rectangle, Renderer, Size, Theme, mouse};
 
 /// Width of a stroked icon's line, as the C# tree expander's arrow.
 const STROKE_WIDTH: f32 = 1.5;
+
+/// Width of a glyph's line, as Segoe MDL2 Assets draws its glyphs at the C#'s sizes.
+const GLYPH_STROKE_WIDTH: f32 = 1.0;
+
+/// Side of a square icon button, as the C#'s 32 by 32 toolbar buttons.
+pub const BUTTON_SIDE: f32 = 32.0;
+
+/// Side of the icon in it, as the C#'s glyphs at `FontSizeBody` and `GeoIconSmall`.
+pub const GLYPH_SIDE: f32 = 14.0;
 
 /// Points taken on a curve to find how far it reaches.
 const CURVE_SAMPLES: u8 = 16;
@@ -65,11 +78,32 @@ pub enum Icon {
     ChevronRight,
     /// The expander open: the same arrow turned down.
     ChevronDown,
+    /// `Geo.Status.QuickConnect`, outlined as the status bar's `LightningBolt` glyph: the
+    /// tunnels.
+    Lightning,
+    /// The `Filter` glyph: a funnel.
+    Filter,
+    /// The `Add` glyph: a plus.
+    Add,
+    /// The `More` glyph: three dots.
+    More,
+    /// The `ClosePane` glyph: a pane put away, the sidebar hidden.
+    ClosePane,
+    /// The `ViewAll` glyph: a square in four, a session's view split.
+    Split,
+    /// The `Cancel` glyph: a cross, a tab closed.
+    Close,
+    /// The `Pinned` glyph: a pushpin.
+    Pin,
+    /// The status bar's broadcast glyph: a point sending waves both ways.
+    Broadcast,
+    /// The `AllApps` glyph: a list, broadcast input's scope.
+    List,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 12] = [
+    pub const ALL: [Self; 22] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -82,6 +116,16 @@ impl Icon {
         Self::Folder,
         Self::ChevronRight,
         Self::ChevronDown,
+        Self::Lightning,
+        Self::Filter,
+        Self::Add,
+        Self::More,
+        Self::ClosePane,
+        Self::Split,
+        Self::Close,
+        Self::Pin,
+        Self::Broadcast,
+        Self::List,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -140,14 +184,48 @@ impl Icon {
             }
             Self::ChevronRight => "M 0 0 L 6 6 L 0 12",
             Self::ChevronDown => "M 0 0 L 6 6 L 12 0",
+            Self::Lightning => "M9,1 L4,9 L7.5,9 L6,15 L12,7 L8.5,7 Z",
+            Self::Filter => "M1.5,2.5 L14.5,2.5 L9.5,8.5 L9.5,14 L6.5,12.5 L6.5,8.5 Z",
+            Self::Add => "M8,1.5 L8,14.5 M1.5,8 L14.5,8",
+            Self::More => {
+                "M1,8 A1,1 0 1 1 3,8 A1,1 0 1 1 1,8 Z M7,8 A1,1 0 1 1 9,8 A1,1 0 1 1 7,8 Z \
+                 M13,8 A1,1 0 1 1 15,8 A1,1 0 1 1 13,8 Z"
+            }
+            Self::ClosePane => {
+                "M1.5,3.5 L14.5,3.5 L14.5,12.5 L1.5,12.5 Z M4,8 L10,8 M8,6 L10,8 L8,10 \
+                 M12,5.5 L12,10.5"
+            }
+            Self::Split => {
+                "M2.5,2.5 L13.5,2.5 L13.5,13.5 L2.5,13.5 Z M8,2.5 L8,13.5 M2.5,8 L13.5,8"
+            }
+            Self::Close => "M3,3 L13,13 M13,3 L3,13",
+            Self::Pin => "M5.5,1.5 L10.5,1.5 M7,1.5 L7,6 L4.5,9 L11.5,9 L9,6 L9,1.5 M8,9 L8,14.5",
+            Self::Broadcast => {
+                "M7,7 A1,1 0 1 1 9,7 A1,1 0 1 1 7,7 Z M8,8 L8,14 M5,4.5 A3.5,3.5 0 0 0 5,9.5 \
+                 M11,4.5 A3.5,3.5 0 0 1 11,9.5 M3,2.5 A6,6 0 0 0 3,11.5 \
+                 M13,2.5 A6,6 0 0 1 13,11.5"
+            }
+            Self::List => {
+                "M2,3.5 L3,3.5 M5,3.5 L14,3.5 M2,8 L3,8 M5,8 L14,8 M2,12.5 L3,12.5 \
+                 M5,12.5 L14,12.5"
+            }
         }
     }
 
-    /// Width of its line when it is stroked, as the expander's arrow; `None` when it is
-    /// filled, as every geometry of the C#.
+    /// Width of its line when it is stroked, as the expander's arrow and the chrome's
+    /// glyphs; `None` when it is filled, as every geometry of the C# and the dots of More.
     const fn stroke(self) -> Option<f32> {
         match self {
             Self::ChevronRight | Self::ChevronDown => Some(STROKE_WIDTH),
+            Self::Lightning
+            | Self::Filter
+            | Self::Add
+            | Self::ClosePane
+            | Self::Split
+            | Self::Close
+            | Self::Pin
+            | Self::Broadcast
+            | Self::List => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }
@@ -162,8 +240,12 @@ pub enum Tint {
     Info,
     /// The secondary text: a closed expander's arrow.
     Secondary,
-    /// The text: an open expander's arrow.
+    /// The text: an open expander's arrow, a button's glyph.
     Text,
+    /// The C# `ErrorTextBrush`: broadcast input's glyph while it is on.
+    Danger,
+    /// The C# `AccentBrush`: a pinned tab's pin.
+    Accent,
     /// A colour of its own: a folder's.
     Own(Color),
 }
@@ -176,6 +258,8 @@ impl Tint {
             Self::Info => crate::themes::colors_of(theme).cyan,
             Self::Secondary => theme.extended_palette().secondary.base.color,
             Self::Text => theme.palette().text,
+            Self::Danger => theme.extended_palette().danger.base.color,
+            Self::Accent => theme.palette().primary,
             Self::Own(color) => color,
         }
     }
@@ -201,17 +285,47 @@ pub fn protocol_color(theme: &Theme, kind: ProfileKind) -> Color {
 /// `icon` in a square of `side`, in the colour `tint` gives it.
 #[must_use]
 pub fn icon<'a, Message: 'a>(icon: Icon, tint: Tint, side: f32) -> Element<'a, Message> {
-    iced::widget::canvas(Drawing { icon, tint })
-        .width(side)
-        .height(side)
-        .into()
+    faded(icon, tint, side, 1.0)
 }
 
-/// What a canvas draws: an icon in a colour.
+/// [`icon`] at `opacity`, as a C# glyph whose button is faded.
+#[must_use]
+pub fn faded<'a, Message: 'a>(
+    icon: Icon,
+    tint: Tint,
+    side: f32,
+    opacity: f32,
+) -> Element<'a, Message> {
+    iced::widget::canvas(Drawing {
+        icon,
+        tint,
+        opacity,
+    })
+    .width(side)
+    .height(side)
+    .into()
+}
+
+/// A square button holding `icon` in the text's colour, as the C#'s 32 by 32 toolbar
+/// buttons; its style and action are its caller's.
+#[must_use]
+pub fn button<'a, Message: 'a>(icon: Icon) -> iced::widget::Button<'a, Message> {
+    iced::widget::button(iced::widget::center(self::icon(
+        icon,
+        Tint::Text,
+        GLYPH_SIDE,
+    )))
+    .width(BUTTON_SIDE)
+    .height(BUTTON_SIDE)
+    .padding(0.0)
+}
+
+/// What a canvas draws: an icon in a colour, at an opacity.
 #[derive(Debug, Clone, Copy)]
 struct Drawing {
     icon: Icon,
     tint: Tint,
+    opacity: f32,
 }
 
 /// What a canvas keeps between frames: the icon drawn, and which icon in which colour, so
@@ -233,7 +347,7 @@ impl<Message> canvas::Program<Message> for Drawing {
         bounds: Rectangle,
         _cursor: mouse::Cursor,
     ) -> Vec<Geometry> {
-        let color = self.tint.color(theme);
+        let color = self.tint.color(theme).scale_alpha(self.opacity);
         let key = Some((self.icon, color));
         if drawn.key.get() != key {
             drawn.cache.clear();

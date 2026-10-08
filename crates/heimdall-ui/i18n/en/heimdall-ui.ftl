@@ -1055,6 +1055,7 @@ ui-split-detach-secondary = Detach Secondary Pane
 ui-split-max-panes-reached = Maximum number of panes reached ({ $max }).
 ui-status-detach-split-refused = A split tab cannot be moved to its own window. Unsplit it first.
 ui-split-menu = Split...
+ui-split-session-tooltip = Split session view
 ui-split-palette-hint = Search server to split with...
 ui-split-drop-to-split = Drop to split
 ui-tab-drag-detach-hint = Release to detach to a window
@@ -1173,6 +1174,7 @@ ui-status-sessions-filtered = { $shown } of { $count ->
     [one] { $count } session
    *[other] { $count } sessions
 }
+ui-status-separator = {" | "}
 
 ## The terminal's search bar, as the C# one.
 ui-find-placeholder = Search...

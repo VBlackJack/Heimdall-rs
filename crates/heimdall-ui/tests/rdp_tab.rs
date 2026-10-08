@@ -240,6 +240,10 @@ fn a_click_on_the_desktop_moves_and_presses_there() {
     assert!(pressed.0 < 700 && pressed.1 < 400, "{pressed:?}");
 }
 
+/// Height of a point near the desktop's top left corner, below the tab strip as tall as the
+/// C#'s.
+const DESKTOP_CORNER_Y: u32 = 150;
+
 /// The RGBA pixel at logical `(x, y)` of a snapshot of `shell`, and the renderer that drew it.
 fn pixel_at(shell: &Shell, x: u32, y: u32) -> ([u8; 4], String) {
     let dir = tempfile::tempdir().expect("dir");
@@ -673,7 +677,7 @@ fn a_desktop_smaller_than_its_tab_is_drawn_in_its_middle() {
     );
     // Matching the window, as an RDP server does by default: from the tab's corner, and the
     // middle of the area right of the sidebar is the window's background.
-    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    let (corner, renderer) = pixel_at(&shell, 300, DESKTOP_CORNER_Y);
     assert_eq!(corner, [0, 0, 0, 255], "drawn by {renderer}");
     let (middle, renderer) = pixel_at(&shell, 730, 420);
     assert_ne!(middle, [0, 0, 0, 255], "drawn by {renderer}");
@@ -682,7 +686,7 @@ fn a_desktop_smaller_than_its_tab_is_drawn_in_its_middle() {
     // Fitted: never enlarged, centred; the corner is the window's background now.
     let (middle, renderer) = pixel_at(&shell, 730, 420);
     assert_eq!(middle, [0, 0, 0, 255], "drawn by {renderer}");
-    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    let (corner, renderer) = pixel_at(&shell, 300, DESKTOP_CORNER_Y);
     assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
 }
 
@@ -727,7 +731,7 @@ fn without_dynamic_resolution_the_desktop_is_scaled_and_asks_the_tab_size_once()
         },
     );
     // Fitted, as the C# session scales it: centred, the tab's corner is background.
-    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    let (corner, renderer) = pixel_at(&shell, 300, DESKTOP_CORNER_Y);
     assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
     let (middle, renderer) = pixel_at(&shell, 730, 420);
     assert_eq!(middle, [0, 0, 0, 255], "drawn by {renderer}");
@@ -757,7 +761,7 @@ fn a_fixed_desktop_shown_pixel_for_pixel_is_centred_and_asks_no_size() {
         },
     );
     assert_eq!(sizes_reported(&shell), [], "its own size");
-    let (corner, renderer) = pixel_at(&shell, 300, 130);
+    let (corner, renderer) = pixel_at(&shell, 300, DESKTOP_CORNER_Y);
     assert_ne!(corner, [0, 0, 0, 255], "drawn by {renderer}");
     let (middle, renderer) = pixel_at(&shell, 730, 420);
     assert_eq!(middle, [0, 0, 0, 255], "centred: drawn by {renderer}");

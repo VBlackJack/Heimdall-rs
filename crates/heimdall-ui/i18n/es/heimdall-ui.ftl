@@ -946,6 +946,7 @@ ui-split-detach-secondary = Separar panel secundario
 ui-split-max-panes-reached = Se alcanzó el número máximo de paneles ({ $max }).
 ui-status-detach-split-refused = Una pestaña dividida no se puede mover a su propia ventana. Deshaga primero la división.
 ui-split-menu = Dividir...
+ui-split-session-tooltip = Dividir vista de sesión
 ui-split-palette-hint = Buscar servidor con el que dividir...
 ui-split-drop-to-split = Soltar para dividir
 ui-tab-drag-detach-hint = Soltar para separar a una ventana
@@ -1053,6 +1054,7 @@ ui-status-sessions-filtered = { $shown } de { $count ->
     [one] { $count } sesión
    *[other] { $count } sesiones
 }
+ui-status-separator = {" | "}
 
 ui-find-placeholder = Buscar...
 ui-find-previous = ▲
