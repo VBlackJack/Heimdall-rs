@@ -36,6 +36,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use heimdall_core::folder_acl::{self, RestrictError};
 use heimdall_files::server_copy::random_token;
 use heimdall_files::{Fingerprint, RemotePath, RemoteSession};
 use tokio_util::sync::CancellationToken;
@@ -240,13 +241,28 @@ pub fn sweep(base: &Path, keep: &[PathBuf]) {
 
 /// A new folder of the user's own under `base` for one edit: `base` made, or found, the
 /// user's only (unix: mode 0700, never a link; Windows: never a reparse point, and under
-/// the user's profile), the folder created anew, never taken over.
+/// the user's profile), the folder created anew, never taken over, and on Windows
+/// restricted to the user, the Administrators and SYSTEM, as the C# `EditorTempPaths`.
 ///
 /// # Errors
 ///
-/// [`io::ErrorKind::PermissionDenied`] when `base` cannot be kept the user's only; what the
-/// file system said otherwise.
+/// [`io::ErrorKind::PermissionDenied`] when `base` cannot be kept the user's only, or the
+/// folder restricted; what the file system said otherwise.
 pub fn edit_folder(base: &Path) -> io::Result<PathBuf> {
+    edit_folder_restricted_by(base, folder_acl::restrict)
+}
+
+/// [`edit_folder`], the new folder restricted by `restrict`. A folder it fails on is
+/// removed, said in the log, and refused, as the C#: what is copied into it would be
+/// readable by whoever reads its parent.
+///
+/// # Errors
+///
+/// As [`edit_folder`].
+pub fn edit_folder_restricted_by(
+    base: &Path,
+    restrict: impl FnOnce(&Path) -> Result<(), RestrictError>,
+) -> io::Result<PathBuf> {
     std::fs::create_dir_all(base)?;
     private_base(base)?;
     let token = random_token().ok_or_else(|| io::Error::other("no random source"))?;
@@ -265,6 +281,18 @@ pub fn edit_folder(base: &Path) -> io::Result<PathBuf> {
     #[cfg(not(unix))]
     let builder = std::fs::DirBuilder::new();
     builder.create(&folder)?;
+    if let Err(error) = restrict(&folder) {
+        log::warn!(
+            "an edit folder is not restricted to the user, Administrators and SYSTEM, the edit refused: {}: {error}",
+            folder.display()
+        );
+        // Empty, as nothing is copied before: one left behind goes with the next sweep.
+        let _ = std::fs::remove_dir(&folder);
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            error.to_string(),
+        ));
+    }
     Ok(folder)
 }
 

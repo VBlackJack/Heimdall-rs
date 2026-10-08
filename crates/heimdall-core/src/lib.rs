@@ -22,6 +22,7 @@ pub mod credentials;
 pub mod export;
 pub mod files_state;
 pub mod folder;
+pub mod folder_acl;
 pub mod import;
 pub mod instance;
 pub mod lockout;
