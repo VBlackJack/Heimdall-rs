@@ -367,6 +367,7 @@ fn vnc_profiles_read_back_with_their_options_and_are_removed_like_the_others() {
         port: 5901,
         view_only: true,
         allow_no_password: false,
+        require_tls: false,
         username: None,
         vault_entry: None,
     };
@@ -750,6 +751,7 @@ fn a_renamed_profile_keeps_its_old_name_as_its_vault_entry_as_the_csharp_rename_
         port: 5901,
         view_only: false,
         allow_no_password: false,
+        require_tls: false,
         username: None,
         vault_entry: None,
     }]);

@@ -140,6 +140,12 @@ pub enum UiError {
         /// The security codes offered, as the server sent them: untrusted.
         offered: String,
     },
+    /// The VNC profile requires TLS, and the server offers none: refused rather than
+    /// answered in clear.
+    VncTlsRequiredByProfile {
+        /// The security codes offered, as the server sent them: untrusted.
+        offered: String,
+    },
     /// A local shell could not be started.
     LocalShell {
         /// Operating system message.

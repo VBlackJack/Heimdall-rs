@@ -269,6 +269,8 @@ pub enum ProfileToggle {
     ViewOnly,
     /// VNC: connect to a server asking no password.
     AllowNoPassword,
+    /// VNC: refuse a server that offers no TLS.
+    RequireTls,
     /// SSH, RDP: connect directly, not through the gateway chosen, as the C# "Connect
     /// directly without an SSH gateway" box.
     DirectConnection,
@@ -332,7 +334,12 @@ impl ProfileToggle {
                 Self::SkipCertificateCheck,
                 Self::Favorite,
             ],
-            DraftProtocol::Vnc => &[Self::ViewOnly, Self::AllowNoPassword, Self::Favorite],
+            DraftProtocol::Vnc => &[
+                Self::ViewOnly,
+                Self::AllowNoPassword,
+                Self::RequireTls,
+                Self::Favorite,
+            ],
             DraftProtocol::Ssh => &[
                 Self::Compression,
                 Self::ForwardAgent,
@@ -833,6 +840,9 @@ impl ProfileDraft {
         }
         if profile.allow_no_password {
             toggles.push(ProfileToggle::AllowNoPassword);
+        }
+        if profile.require_tls {
+            toggles.push(ProfileToggle::RequireTls);
         }
         Self {
             editing: Some(profile.id.clone()),
@@ -1443,6 +1453,7 @@ impl ProfileDraft {
                 port,
                 view_only: self.is_on(ProfileToggle::ViewOnly),
                 allow_no_password: self.is_on(ProfileToggle::AllowNoPassword),
+                require_tls: self.is_on(ProfileToggle::RequireTls),
                 username: optional(username),
                 vault_entry: optional(vault_entry),
             }),
@@ -2503,6 +2514,8 @@ mod tests {
             port: 5901,
             view_only: true,
             allow_no_password: true,
+            // Its box, kept both ways.
+            require_tls: true,
             username: None,
             vault_entry: None,
         };

@@ -182,6 +182,12 @@ pub fn error(error: &UiError) -> String {
         UiError::VncTlsRequired { offered } => {
             fl!("ui-error-vnc-tls-required", offered = server_text(offered))
         }
+        UiError::VncTlsRequiredByProfile { offered } => {
+            fl!(
+                "ui-error-vnc-tls-required-by-profile",
+                offered = server_text(offered)
+            )
+        }
         UiError::SecurityRefused { detail } => {
             fl!("ui-error-security-refused", detail = server_text(detail))
         }

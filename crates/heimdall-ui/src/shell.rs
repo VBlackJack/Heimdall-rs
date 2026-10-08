@@ -7973,6 +7973,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::SkipCertificateCheck => fl!("ui-profile-toggle-skip-cert"),
         ProfileToggle::ViewOnly => fl!("ui-profile-toggle-view-only"),
         ProfileToggle::AllowNoPassword => fl!("ui-profile-toggle-no-password"),
+        ProfileToggle::RequireTls => fl!("ui-profile-toggle-require-tls"),
         ProfileToggle::DirectConnection => fl!("ui-profile-direct-connect"),
         ProfileToggle::AdminSession => fl!("ui-profile-toggle-admin"),
         ProfileToggle::ForwardAgent => fl!("ui-profile-toggle-forward-agent"),
@@ -10746,6 +10747,7 @@ mod tests {
             port: 5900,
             view_only: false,
             allow_no_password: false,
+            require_tls: false,
             username: None,
             vault_entry: None,
         };

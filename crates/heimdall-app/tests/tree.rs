@@ -103,6 +103,7 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         port: 5900,
         view_only: false,
         allow_no_password: true,
+        require_tls: false,
         username: None,
         vault_entry: None,
     }]);

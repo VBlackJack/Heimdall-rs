@@ -79,6 +79,11 @@ fn server_tls() -> (TlsAcceptor, Fingerprint) {
 }
 
 fn app(dir: &Path, port: u16) -> App {
+    app_with(dir, port, false)
+}
+
+/// The app with the profile asking for TLS, or not.
+fn app_with(dir: &Path, port: u16, require_tls: bool) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
     store.merge_vnc([VncProfile {
@@ -89,6 +94,7 @@ fn app(dir: &Path, port: u16) -> App {
         port,
         view_only: false,
         allow_no_password: false,
+        require_tls,
         username: None,
         vault_entry: None,
     }]);
@@ -335,6 +341,35 @@ async fn a_pinned_server_offering_no_tls_is_refused_never_answered_in_clear() {
     );
 }
 
+#[tokio::test]
+async fn a_profile_requiring_tls_refuses_a_server_offering_none_with_no_certificate_pinned() {
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        offer_types(&mut stream, &[2]).await;
+        let mut rest = Vec::new();
+        let _ = tokio::time::timeout(WAIT, stream.read_to_end(&mut rest)).await;
+        rest
+    });
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), port, true);
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let events = run(&mut app, attempt).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::Failed(UiError::VncTlsRequiredByProfile { offered })]
+                if offered == "2"
+        ),
+        "the profile's reason, no password asked: {events:?}"
+    );
+    assert!(
+        server.await.expect("server").is_empty(),
+        "no security type answered"
+    );
+}
+
 /// `TLSVnc`: anonymous TLS, never taken.
 const TLS_VNC: u32 = 258;
 /// VNC Authentication.
@@ -416,6 +451,31 @@ async fn a_pinned_server_with_nothing_accepted_inside_vencrypt_is_refused_not_tr
     let (first, again) = server.await.expect("server");
     assert!(first.is_empty());
     assert!(!again, "never in clear once pinned");
+}
+
+#[tokio::test]
+async fn a_profile_requiring_tls_is_not_tried_again_without_vencrypt() {
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        let first = serve_nothing_inside(&listener, &[VENCRYPT, VNC_AUTH]).await;
+        (first, connects_again(&listener).await)
+    });
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app_with(dir.path(), port, true);
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let events = run(&mut app, attempt).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::Failed(UiError::VncTlsRequiredByProfile { offered })]
+                if offered == "258"
+        ),
+        "{events:?}"
+    );
+    let (first, again) = server.await.expect("server");
+    assert!(first.is_empty());
+    assert!(!again, "never in clear when the profile requires TLS");
 }
 
 #[tokio::test]

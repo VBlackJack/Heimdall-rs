@@ -417,6 +417,9 @@ struct LegacyServer {
     vnc_allow_no_password: Option<bool>,
     /// Heimdall-rs's own key, written by its export: the user name of `VeNCrypt` Plain.
     vnc_username: Option<String>,
+    /// Heimdall-rs's own key, written by its export: TLS required.
+    #[serde(default)]
+    vnc_require_tls: bool,
     /// The entry in the external password manager, for the provider's `{Title}`.
     vault_entry_name: Option<String>,
     /// "Session logging": absent or null inherits the settings', else on or off.
@@ -1432,6 +1435,7 @@ fn convert_vnc(server: &LegacyServer) -> Result<VncProfile, SkipReason> {
         allow_no_password: server
             .vnc_allow_no_password
             .unwrap_or_else(|| is_null_or_empty(server.vnc_password.as_ref())),
+        require_tls: server.vnc_require_tls,
         username: non_empty(server.vnc_username.as_ref()),
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
     })
