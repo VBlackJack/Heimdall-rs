@@ -22,13 +22,20 @@
 //!
 //! The command is text `PowerShell` parses, so nothing from the profile reaches it unchecked:
 //! the host is a DNS name or an IP address and nothing else, and the account name is a
-//! single-quoted literal, every quote `PowerShell` would end it on doubled. Heimdall never
-//! holds the password: `-Credential` with a name makes `PowerShell` ask for it.
+//! single-quoted literal, every quote `PowerShell` would end it on doubled.
+//!
+//! The password, as the C# `WinRmCredentialBootstrap` hands it over: a stored one goes to the
+//! local `PowerShell` in an environment variable only, [`PASSWORD_VARIABLE`], never on its
+//! command line and never on disk. The command reads it into a `SecureString`, removes the
+//! variable from the process, then builds the `PSCredential` `Enter-PSSession` is given. With
+//! no stored password, or one the server refused, `-Credential` with the account's name makes
+//! `PowerShell` ask for it.
 
 use std::net::{IpAddr, SocketAddr};
 
 use thiserror::Error;
 
+use crate::credentials::{CredentialProtocol, Endpoint};
 use crate::profile::WinRmProfile;
 
 /// Arguments that run [`session_command`] in a `PowerShell` left open once it is done, without
@@ -44,12 +51,42 @@ pub const REMOTE_SESSION_NOT_ENTERED_EXIT_CODE: i32 = 1;
 /// Global variable set once `Enter-PSSession` has returned without an error.
 const ENTERED_VARIABLE: &str = "$global:HeimdallWinRmEntered";
 
+/// Environment variable of the local `PowerShell` carrying a stored password, removed by the
+/// command once read.
+pub const PASSWORD_VARIABLE: &str = "HEIMDALL_WINRM_PASSWORD";
+
+/// Name of the variable holding the stored password as a `SecureString`, until the session is
+/// entered.
+const SECRET_NAME: &str = "HeimdallWinRmSecret";
+
 /// Longest DNS name, in characters.
 const MAX_HOST_NAME_LENGTH: usize = 253;
 
 /// Characters `PowerShell` ends a single-quoted string on: the ASCII quote and the four
 /// typographic single quotes, as its own `EscapeSingleQuotedStringContent` lists them.
 const SINGLE_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+
+/// Where `Enter-PSSession` takes the account's password from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PasswordSource {
+    /// `PowerShell` asks for it in the terminal.
+    Prompt,
+    /// The stored password, in [`PASSWORD_VARIABLE`]. A profile naming no account has none.
+    Environment,
+}
+
+/// The server and account a stored password of `profile` is for: its own host and port,
+/// never a gateway's forward, and its account. `None` for the current Windows identity,
+/// which has no password to store.
+#[must_use]
+pub fn password_endpoint(profile: &WinRmProfile) -> Option<Endpoint> {
+    Some(Endpoint {
+        protocol: CredentialProtocol::WinRm,
+        host: profile.host.clone(),
+        port: profile.port,
+        username: Some(profile.username.clone()?),
+    })
+}
 
 /// Why a profile cannot be turned into a command.
 #[derive(Debug, Clone, PartialEq, Eq, Error)]
@@ -84,15 +121,23 @@ pub enum CommandError {
 /// `-ErrorAction Stop` makes a refused connection, a non-terminating error of the cmdlet, end
 /// the command before the mark.
 ///
+/// With [`PasswordSource::Environment`] and an account, the stored password is read from
+/// [`PASSWORD_VARIABLE`] and the variable removed before `Enter-PSSession` runs, whatever it
+/// does; the `SecureString` is dropped once the session is entered. One try: refused, the
+/// session is not entered and the tab ends with [`REMOTE_SESSION_NOT_ENTERED_EXIT_CODE`].
+///
 /// # Errors
 ///
 /// The host or the account name is refused; see [`CommandError`].
-pub fn session_command(profile: &WinRmProfile) -> Result<String, CommandError> {
+pub fn session_command(
+    profile: &WinRmProfile,
+    password: PasswordSource,
+) -> Result<String, CommandError> {
     if profile.gateway.is_some() && profile.use_ssl {
         return Err(CommandError::HttpsThroughGateway);
     }
     let host = checked_host(&profile.host)?;
-    command(profile, host, profile.port)
+    command(profile, host, profile.port, password)
 }
 
 /// [`session_command`] for a profile reached through its SSH gateway: `Enter-PSSession` dials
@@ -105,19 +150,39 @@ pub fn session_command(profile: &WinRmProfile) -> Result<String, CommandError> {
 pub fn session_command_through(
     profile: &WinRmProfile,
     forward: SocketAddr,
+    password: PasswordSource,
 ) -> Result<String, CommandError> {
     // The profile's own checks first: its host is still the one the forward reaches.
-    session_command(profile)?;
-    command(profile, &forward.ip().to_string(), forward.port())
+    session_command(profile, password)?;
+    command(profile, &forward.ip().to_string(), forward.port(), password)
 }
 
-/// The guard, `Enter-PSSession` to `host`:`port`, then the mark.
-fn command(profile: &WinRmProfile, host: &str, port: u16) -> Result<String, CommandError> {
-    let enter = enter_session(profile, host, port)?;
-    Ok(format!(
-        "{}; {enter} -ErrorAction Stop; {ENTERED_VARIABLE} = $true",
-        local_prompt_guard()
-    ))
+/// The guard, the stored password read when there is one, `Enter-PSSession` to `host`:`port`,
+/// then the mark.
+fn command(
+    profile: &WinRmProfile,
+    host: &str,
+    port: u16,
+    password: PasswordSource,
+) -> Result<String, CommandError> {
+    // The current Windows identity has no password to give.
+    let password = if profile.username.is_some() {
+        password
+    } else {
+        PasswordSource::Prompt
+    };
+    let enter = enter_session(profile, host, port, password)?;
+    let guard = local_prompt_guard();
+    Ok(match password {
+        PasswordSource::Prompt => {
+            format!("{guard}; {enter} -ErrorAction Stop; {ENTERED_VARIABLE} = $true")
+        }
+        PasswordSource::Environment => format!(
+            "{guard}; ${SECRET_NAME} = ConvertTo-SecureString $env:{PASSWORD_VARIABLE} \
+             -AsPlainText -Force; Remove-Item Env:{PASSWORD_VARIABLE}; {enter} -ErrorAction \
+             Stop; {ENTERED_VARIABLE} = $true; Remove-Variable {SECRET_NAME}"
+        ),
+    })
 }
 
 /// Ends the local `PowerShell` the first time it would show a prompt of its own: with
@@ -132,7 +197,12 @@ fn local_prompt_guard() -> String {
 }
 
 /// The `Enter-PSSession` command for `profile`, to `host`:`port`, a host already checked.
-fn enter_session(profile: &WinRmProfile, host: &str, port: u16) -> Result<String, CommandError> {
+fn enter_session(
+    profile: &WinRmProfile,
+    host: &str,
+    port: u16,
+    password: PasswordSource,
+) -> Result<String, CommandError> {
     let mut command =
         format!("Enter-PSSession -ComputerName '{host}' -Port {port} -Authentication Negotiate");
     if profile.use_ssl {
@@ -145,9 +215,14 @@ fn enter_session(profile: &WinRmProfile, host: &str, port: u16) -> Result<String
         }
     }
     if let Some(username) = &profile.username {
-        command.push_str(" -Credential '");
-        command.push_str(&quoted_content(checked_username(username)?));
-        command.push('\'');
+        let name = quoted_content(checked_username(username)?);
+        let credential = match password {
+            PasswordSource::Prompt => format!(" -Credential '{name}'"),
+            PasswordSource::Environment => {
+                format!(" -Credential ([pscredential]::new('{name}', ${SECRET_NAME}))")
+            }
+        };
+        command.push_str(&credential);
     }
     Ok(command)
 }
@@ -210,7 +285,12 @@ mod tests {
 
     /// `Enter-PSSession` for `profile`, to its own host and port.
     fn enter(profile: &WinRmProfile) -> Result<String, CommandError> {
-        enter_session(profile, checked_host(&profile.host)?, profile.port)
+        enter_session(
+            profile,
+            checked_host(&profile.host)?,
+            profile.port,
+            PasswordSource::Prompt,
+        )
     }
 
     #[test]
@@ -221,7 +301,8 @@ mod tests {
             ..profile("dc01.lab.local")
         };
         let forward: SocketAddr = "127.0.0.1:50123".parse().expect("address");
-        let command = session_command_through(&routed, forward).expect("valid");
+        let command =
+            session_command_through(&routed, forward, PasswordSource::Prompt).expect("valid");
         assert!(
             command.contains(
                 "Enter-PSSession -ComputerName '127.0.0.1' -Port 50123 -Authentication Negotiate \
@@ -239,11 +320,11 @@ mod tests {
             ..routed.clone()
         };
         assert_eq!(
-            session_command_through(&https, forward),
+            session_command_through(&https, forward, PasswordSource::Prompt),
             Err(CommandError::HttpsThroughGateway)
         );
         assert_eq!(
-            session_command(&https),
+            session_command(&https, PasswordSource::Prompt),
             Err(CommandError::HttpsThroughGateway),
             "refused before any forward is opened"
         );
@@ -253,7 +334,7 @@ mod tests {
             ..routed
         };
         assert_eq!(
-            session_command_through(&bad, forward),
+            session_command_through(&bad, forward, PasswordSource::Prompt),
             Err(CommandError::InvalidHost)
         );
     }
@@ -274,7 +355,7 @@ mod tests {
             ..profile("dc01.lab.local")
         };
         assert_eq!(
-            session_command(&profile),
+            session_command(&profile, PasswordSource::Prompt),
             Ok(format!(
                 "{}; {} -ErrorAction Stop; $global:HeimdallWinRmEntered = $true",
                 local_prompt_guard(),
@@ -284,9 +365,79 @@ mod tests {
     }
 
     #[test]
+    fn a_stored_password_is_read_from_the_environment_then_removed() {
+        let profile = WinRmProfile {
+            username: Some(" LAB\\o'neil ".to_owned()),
+            ..profile("dc01.lab.local")
+        };
+        let command = session_command(&profile, PasswordSource::Environment).expect("valid");
+        assert_eq!(
+            command,
+            format!(
+                "{}; $HeimdallWinRmSecret = ConvertTo-SecureString $env:HEIMDALL_WINRM_PASSWORD \
+                 -AsPlainText -Force; Remove-Item Env:HEIMDALL_WINRM_PASSWORD; Enter-PSSession \
+                 -ComputerName 'dc01.lab.local' -Port 5985 -Authentication Negotiate \
+                 -Credential ([pscredential]::new('LAB\\o''neil', $HeimdallWinRmSecret)) \
+                 -ErrorAction Stop; $global:HeimdallWinRmEntered = $true; Remove-Variable \
+                 HeimdallWinRmSecret",
+                local_prompt_guard()
+            )
+        );
+        // Read, then the variable removed, before the session is tried.
+        let read = command.find("$env:HEIMDALL_WINRM_PASSWORD").expect("read");
+        let removed = command
+            .find("Remove-Item Env:HEIMDALL_WINRM_PASSWORD")
+            .expect("removed");
+        let entered = command.find("Enter-PSSession").expect("entered");
+        assert!(read < removed && removed < entered, "{command}");
+    }
+
+    #[test]
+    fn the_current_identity_reads_no_password_whatever_is_asked() {
+        let current = profile("dc01.lab.local");
+        assert_eq!(
+            session_command(&current, PasswordSource::Environment),
+            session_command(&current, PasswordSource::Prompt)
+        );
+        let command = session_command(&current, PasswordSource::Environment).expect("valid");
+        assert!(!command.contains(PASSWORD_VARIABLE), "{command}");
+        assert!(!command.contains("-Credential"), "{command}");
+    }
+
+    #[test]
+    fn through_a_gateway_the_stored_password_is_still_the_servers() {
+        let routed = WinRmProfile {
+            gateway: Some(ProfileId::new("bastion")),
+            username: Some("LAB\\admin".to_owned()),
+            ..profile("dc01.lab.local")
+        };
+        let forward: SocketAddr = "127.0.0.1:50123".parse().expect("address");
+        let command =
+            session_command_through(&routed, forward, PasswordSource::Environment).expect("valid");
+        assert!(
+            command.contains(
+                "Enter-PSSession -ComputerName '127.0.0.1' -Port 50123 -Authentication Negotiate \
+                 -Credential ([pscredential]::new('LAB\\admin', $HeimdallWinRmSecret))"
+            ),
+            "{command}"
+        );
+        // The password is the server's, not the forward's.
+        assert_eq!(
+            password_endpoint(&routed),
+            Some(Endpoint {
+                protocol: CredentialProtocol::WinRm,
+                host: "dc01.lab.local".to_owned(),
+                port: DEFAULT_WINRM_HTTP_PORT,
+                username: Some("LAB\\admin".to_owned()),
+            })
+        );
+        assert_eq!(password_endpoint(&profile("dc01.lab.local")), None);
+    }
+
+    #[test]
     fn a_refused_profile_gives_no_command_at_all() {
         assert_eq!(
-            session_command(&profile("h$(calc)")),
+            session_command(&profile("h$(calc)"), PasswordSource::Prompt),
             Err(CommandError::InvalidHost)
         );
         let profile = WinRmProfile {
@@ -294,7 +445,7 @@ mod tests {
             ..profile("h")
         };
         assert_eq!(
-            session_command(&profile),
+            session_command(&profile, PasswordSource::Prompt),
             Err(CommandError::InvalidUsername)
         );
     }

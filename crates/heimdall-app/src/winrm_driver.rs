@@ -21,13 +21,16 @@
 //!
 //! The forward lives as long as the attempt: it closes when `PowerShell` exits, when the tab
 //! closes, or when the attempt is cancelled.
+//!
+//! A stored password goes to `PowerShell` in its environment only, as
+//! [`winrm::PASSWORD_VARIABLE`]; its command line never holds it.
 
 use std::path::PathBuf;
 use std::sync::Arc;
 
 use heimdall_core::profile::{SshProfile, WinRmProfile};
-use heimdall_core::winrm::{self, POWERSHELL_ARGUMENTS};
-use heimdall_ssh::{ConnectOptions, TerminalSize, establish_via, local_forward};
+use heimdall_core::winrm::{self, POWERSHELL_ARGUMENTS, PasswordSource};
+use heimdall_ssh::{ConnectOptions, Secret, TerminalSize, establish_via, local_forward};
 use heimdall_term::local::LocalArguments;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
@@ -60,6 +63,9 @@ pub struct WinRmRequest {
     pub fallback_directory: PathBuf,
     /// Stops the attempt and the session.
     pub cancel: CancellationToken,
+    /// The account's stored password, for the profile's own host, port and account; `None`
+    /// has `PowerShell` ask for it.
+    pub password: Option<Secret>,
 }
 
 /// Starts an attempt on the current tokio runtime. The stream ends after
@@ -88,14 +94,18 @@ async fn run(
         size,
         fallback_directory,
         cancel,
+        password,
     } = request;
     let target = format!("{}:{}", profile.host, profile.port);
+    // The current Windows identity has no password to give.
+    let password = password.filter(|_| profile.username.is_some());
     let launch = Launch {
         name: profile.name.clone(),
         program,
         size,
         fallback_directory,
         cancel: cancel.clone(),
+        password,
     };
     let Some((last, before)) = route.split_last() else {
         return run_direct(&profile, launch, &events).await;
@@ -125,7 +135,7 @@ async fn run(
         forward.address()
     );
     // No preflight through a gateway, as the C#: it would only reach the forward.
-    let command = winrm::session_command_through(&profile, forward.address());
+    let command = winrm::session_command_through(&profile, forward.address(), launch.source());
     launch.start(command, events).await;
     // Held until PowerShell has gone: the session's connections ride on it.
     drop(forward);
@@ -150,9 +160,8 @@ async fn run_direct(
         let _ = events.send(ConnectionEvent::Failed(failed)).await;
         return;
     }
-    launch
-        .start(winrm::session_command(profile), events.clone())
-        .await;
+    let command = winrm::session_command(profile, launch.source());
+    launch.start(command, events.clone()).await;
 }
 
 /// What starting `PowerShell` needs, once the server is known to be there.
@@ -162,9 +171,19 @@ struct Launch {
     size: TerminalSize,
     fallback_directory: PathBuf,
     cancel: CancellationToken,
+    password: Option<Secret>,
 }
 
 impl Launch {
+    /// Where the command takes the password from: the environment when one is stored.
+    fn source(&self) -> PasswordSource {
+        if self.password.is_some() {
+            PasswordSource::Environment
+        } else {
+            PasswordSource::Prompt
+        }
+    }
+
     /// Runs `PowerShell` with `command`, until it ends; a command that cannot be written
     /// fails the attempt.
     async fn start(
@@ -186,8 +205,11 @@ impl Launch {
         if self.cancel.is_cancelled() {
             return;
         }
+        if self.password.is_some() {
+            log::info!("WinRM session {}: stored password used", self.name);
+        }
         let shell = LocalRequest {
-            shell: shell(self.name, self.program, command),
+            shell: shell(self.name, self.program, command, self.password.as_ref()),
             size: self.size,
             fallback_directory: self.fallback_directory,
             cancel: self.cancel,
@@ -196,9 +218,15 @@ impl Launch {
     }
 }
 
-/// The local `PowerShell` running `command`, left open as [`POWERSHELL_ARGUMENTS`] ask.
+/// The local `PowerShell` running `command`, left open as [`POWERSHELL_ARGUMENTS`] ask, with
+/// `password`, when one is stored, in its environment as [`winrm::PASSWORD_VARIABLE`].
 #[must_use]
-pub fn shell(name: String, program: String, command: String) -> LocalShell {
+pub fn shell(
+    name: String,
+    program: String,
+    command: String,
+    password: Option<&Secret>,
+) -> LocalShell {
     let mut arguments: Vec<String> = POWERSHELL_ARGUMENTS
         .iter()
         .map(|argument| (*argument).to_owned())
@@ -209,6 +237,14 @@ pub fn shell(name: String, program: String, command: String) -> LocalShell {
         program: Some(program),
         arguments: LocalArguments::List(arguments),
         working_directory: None,
-        environment: Vec::new(),
+        environment: password
+            .map(|password| {
+                (
+                    winrm::PASSWORD_VARIABLE.to_owned(),
+                    password.expose().to_owned(),
+                )
+            })
+            .into_iter()
+            .collect(),
     }
 }

@@ -8562,8 +8562,12 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
     if draft.protocol == DraftProtocol::Rdp {
         form = form.push(text(fl!("ui-profile-domain-hint")).size(SMALL_SIZE));
     }
-    if draft.protocol.saves_password() {
+    if draft.shows_password() {
         form = form.push(password_field(draft, forms));
+        if draft.protocol == DraftProtocol::WinRm {
+            // Optional here, unlike the C# dialog: without one, PowerShell asks.
+            form = form.push(text(fl!("ui-profile-winrm-password-hint")).size(SMALL_SIZE));
+        }
     }
 
     form

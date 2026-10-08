@@ -1850,6 +1850,9 @@ pub struct Tab {
     early_output: Option<EarlyOutput>,
     /// What a `WinRM` session's first output said went wrong, as the C# says it.
     pub winrm_diagnostic: Option<Diagnostic>,
+    /// The attempt a `WinRM` session was given its stored password in: that session never
+    /// entered, the password is taken as refused.
+    winrm_password_given: Option<AttemptId>,
     /// The last search in its history found nothing.
     pub find_missed: bool,
     /// Where the last search's match is among all of them, as the C# bar counts them.
@@ -2059,6 +2062,7 @@ impl Tab {
             last_input: std::sync::Mutex::new(None),
             early_output: None,
             winrm_diagnostic: None,
+            winrm_password_given: None,
             find_missed: false,
             find_found: None,
             transcript: None,

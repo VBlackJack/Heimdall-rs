@@ -37,7 +37,7 @@ pub enum BulkPasswordRefusal {
 /// The profiles selected that a bulk password leaves alone, counted by why.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct BulkPasswordSkips {
-    /// `WinRM` profiles: their password is not saved.
+    /// `WinRM` profiles naming no account: the current Windows identity has no password.
     pub winrm: usize,
     /// SSH, SFTP and RDP profiles naming no account: a password saved for them needs one,
     /// as the profile editor says.
@@ -59,7 +59,7 @@ impl BulkPasswordSkips {
 enum Eligibility {
     /// Its password is saved.
     Takes,
-    /// Left alone, a `WinRM` profile.
+    /// Left alone, a `WinRM` profile naming no account.
     WinRm,
     /// Left alone, without the account its password needs.
     NoAccount,
@@ -69,20 +69,20 @@ enum Eligibility {
 
 /// Where a profile of `kind`, naming an account or not, stands for a bulk password.
 ///
-/// The C# `CanBulkEditPasswordTarget` takes RDP, SSH, SFTP, FTP and VNC, and `WinRM` when
-/// it names an account. A `WinRM` profile has no saved password here yet: it is left alone
-/// and counted whatever its account. Once its password is saved, take it as the C# does.
+/// As the C# `CanBulkEditPasswordTarget`: RDP, SSH, SFTP, FTP and VNC, and `WinRM` when it
+/// names an account; a `WinRM` profile naming none is left alone and counted apart.
 fn eligibility(kind: ProfileKind, has_account: bool) -> Eligibility {
     match kind {
         ProfileKind::Ssh | ProfileKind::Sftp | ProfileKind::Rdp if !has_account => {
             Eligibility::NoAccount
         }
+        ProfileKind::WinRm if !has_account => Eligibility::WinRm,
         ProfileKind::Ssh
         | ProfileKind::Sftp
         | ProfileKind::Rdp
         | ProfileKind::Ftp
-        | ProfileKind::Vnc => Eligibility::Takes,
-        ProfileKind::WinRm => Eligibility::WinRm,
+        | ProfileKind::Vnc
+        | ProfileKind::WinRm => Eligibility::Takes,
         ProfileKind::Telnet | ProfileKind::Local | ProfileKind::Citrix => Eligibility::Other,
     }
 }
@@ -199,13 +199,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_winrm_profile_is_left_alone_with_or_without_an_account() {
-        for has_account in [true, false] {
-            assert_eq!(
-                eligibility(ProfileKind::WinRm, has_account),
-                Eligibility::WinRm
-            );
-        }
+    fn a_winrm_profile_takes_one_only_with_an_account() {
+        assert_eq!(eligibility(ProfileKind::WinRm, true), Eligibility::Takes);
+        assert_eq!(eligibility(ProfileKind::WinRm, false), Eligibility::WinRm);
     }
 
     #[test]

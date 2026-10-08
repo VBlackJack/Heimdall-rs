@@ -42,6 +42,8 @@ pub enum CredentialProtocol {
     Vnc,
     /// An FTP account.
     Ftp,
+    /// A `WinRM` account, handed to `PowerShell` for `Enter-PSSession`.
+    WinRm,
 }
 
 impl CredentialProtocol {
@@ -51,6 +53,7 @@ impl CredentialProtocol {
             Self::Rdp => 2,
             Self::Vnc => 3,
             Self::Ftp => 4,
+            Self::WinRm => 5,
         }
     }
 
@@ -60,6 +63,9 @@ impl CredentialProtocol {
             2 => Some(Self::Rdp),
             3 => Some(Self::Vnc),
             4 => Some(Self::Ftp),
+            5 => Some(Self::WinRm),
+            // A protocol of a later build: the entry reads as nothing, as an older build
+            // reads this one's `WinRM` entries.
             _ => None,
         }
     }
@@ -335,6 +341,28 @@ mod tests {
         let mut protocol = bytes.to_vec();
         protocol[1] = 9;
         assert_eq!(decode(&protocol), None, "unknown protocol");
+    }
+
+    #[test]
+    fn a_winrm_entry_reads_back_and_an_unknown_protocol_reads_as_nothing() {
+        let winrm = SavedPassword {
+            endpoint: Endpoint {
+                protocol: CredentialProtocol::WinRm,
+                host: "dc01.lab".to_owned(),
+                port: 5985,
+                username: Some("LAB\\admin".to_owned()),
+            },
+            password: Zeroizing::new("s3cret".to_owned()),
+        };
+        let bytes = encode(&winrm);
+        assert_eq!(bytes[1], 5, "the next free code");
+        assert_eq!(decode(&bytes), Some(winrm));
+        // What an older build does with it: a code it does not know reads as nothing.
+        for unknown in [0, 6, u8::MAX] {
+            let mut later = bytes.to_vec();
+            later[1] = unknown;
+            assert_eq!(decode(&later), None, "code {unknown}");
+        }
     }
 
     #[test]
