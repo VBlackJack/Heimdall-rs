@@ -36,7 +36,7 @@ use heimdall_ssh::{
     SessionClosed, TerminalSize,
 };
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell};
+use heimdall_ui::shell::{Message, Shell, sidebar_toggle_id, tab_close_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::WindowShortcut;
 use iced::keyboard::key::Named;
@@ -2553,7 +2553,8 @@ fn the_close_button_inside_a_tab_closes_it_without_selecting_it() {
     let (tab, _) = open(&mut core, "a");
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);
-    ui.click("\u{2715}").expect("the tab's close button");
+    // A circled cross, as the C# tab's: found by its identifier.
+    ui.click(tab_close_id(tab)).expect("the tab's close button");
     let messages: Vec<Message> = ui.into_messages().collect();
     assert!(
         messages.iter().any(|message| matches!(
@@ -3792,7 +3793,9 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
     }
     {
         let mut ui = simulator(&shell);
-        ui.click("\u{2190}").expect("the sidebar's hide button");
+        // Glyphs alone, as the C#'s: found by their identifier.
+        ui.click(sidebar_toggle_id())
+            .expect("the sidebar's hide button");
         assert!(
             ui.into_messages().any(|message| matches!(
                 message,
@@ -3803,7 +3806,8 @@ fn the_tree_folds_at_once_hides_and_shows_its_sidebar_and_quick_connect_is_a_but
     let _ = shell.update(Message::TreeShortcut(TreeShortcut::ToggleSidebar));
     let mut ui = simulator(&shell);
     assert!(ui.find("Local shell").is_err(), "hidden");
-    ui.click("\u{2192}").expect("a way to show it again");
+    ui.click(sidebar_toggle_id())
+        .expect("a way to show it again");
     assert!(
         ui.into_messages()
             .any(|message| matches!(message, Message::TreeShortcut(TreeShortcut::ToggleSidebar)))

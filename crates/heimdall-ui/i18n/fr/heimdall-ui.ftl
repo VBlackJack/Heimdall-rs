@@ -935,6 +935,7 @@ ui-split-detach-secondary = Détacher le panneau secondaire
 ui-split-max-panes-reached = Nombre maximum de panneaux atteint ({ $max }).
 ui-status-detach-split-refused = Un onglet divisé ne peut pas être déplacé dans sa propre fenêtre. Annulez d'abord la division.
 ui-split-menu = Diviser...
+ui-split-session-tooltip = Diviser la vue de session
 ui-split-palette-hint = Rechercher un serveur avec lequel diviser...
 ui-split-drop-to-split = Déposer pour diviser
 ui-tab-drag-detach-hint = Relâcher pour détacher dans une fenêtre
@@ -1045,6 +1046,7 @@ ui-status-sessions-filtered = { $shown } sur { $count ->
     [one] { $count } session
    *[other] { $count } sessions
 }
+ui-status-separator = {" | "}
 
 ui-find-placeholder = Rechercher...
 ui-find-previous = ▲
