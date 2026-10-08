@@ -82,7 +82,8 @@ impl Shell {
             | FloatEvent::Focused(_)
             | FloatEvent::Rescaled(_)
             | FloatEvent::Modifiers(_)
-            | FloatEvent::TerminalFind => Task::none(),
+            | FloatEvent::TerminalFind
+            | FloatEvent::QuickConnect => Task::none(),
         }
     }
 

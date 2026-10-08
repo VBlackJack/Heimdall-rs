@@ -103,7 +103,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
         &[
             ("Ctrl+N", Action::NewSession),
             ("Ctrl+E", Action::EditSession),
-            ("Ctrl+K", Action::QuickConnect),
+            ("Ctrl+K, Ctrl+Shift+K", Action::QuickConnect),
             ("Ctrl+F", Action::Search),
             ("Ctrl+Z", Action::UndoMove),
             ("Ctrl+A", Action::SelectAllSessions),

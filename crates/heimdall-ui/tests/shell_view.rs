@@ -4197,6 +4197,83 @@ fn ctrl_v_pastes_except_in_a_full_screen_program_as_chosen() {
 }
 
 #[test]
+fn ctrl_k_in_a_terminal_opens_quick_connect_unless_the_settings_send_it_to_the_session() {
+    use heimdall_core::settings::CtrlKTerminal;
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    let pressed = |typed: &str, modifiers: Modifiers| {
+        iced::Event::Keyboard(Event::KeyPressed {
+            key: Key::Character(typed.into()),
+            modified_key: Key::Character(typed.into()),
+            physical_key: Physical::Code(Code::KeyK),
+            location: Location::Standard,
+            modifiers,
+            text: None,
+            repeat: false,
+        })
+    };
+    let ctrl_k = pressed("k", Modifiers::CTRL);
+    let ctrl_shift_k = pressed("K", Modifiers::CTRL | Modifiers::SHIFT);
+    // Whether the terminal took the key, and how many keys reached the session.
+    let typed = |shell: &Shell, event: &iced::Event| -> (Vec<event::Status>, usize) {
+        let mut ui = simulator(shell);
+        let statuses = ui.simulate([event.clone()]);
+        let keys = ui
+            .into_messages()
+            .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+            .count();
+        (statuses, keys)
+    };
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    assert_eq!(
+        shell.app().settings().ctrl_k_terminal,
+        CtrlKTerminal::QuickConnect
+    );
+    assert_eq!(
+        typed(&shell, &ctrl_k),
+        (vec![event::Status::Ignored], 0),
+        "left to the window, nothing sent to the session"
+    );
+    // The window makes it Quick Connect, over the session.
+    let _ = shell.update(Message::Shortcut(WindowShortcut::QuickConnect));
+    simulator(&shell).find(FIELD).expect("Quick Connect open");
+    let typed_over = {
+        let mut ui = simulator(&shell);
+        let _ = ui.simulate([pressed("a", Modifiers::empty())]);
+        ui.into_messages()
+            .filter(|message| matches!(message, Message::App(AppMessage::Key { .. })))
+            .count()
+    };
+    assert_eq!(typed_over, 0, "what is typed then is Quick Connect's");
+    let _ = shell.update(Message::PaletteClose);
+    assert!(simulator(&shell).find(FIELD).is_err());
+
+    // Sent to the session: ^K, kill to the end of the line.
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        heimdall_app::SettingsMessage::CtrlKTerminal(CtrlKTerminal::SendToSession),
+    )));
+    assert_eq!(
+        typed(&shell, &ctrl_k),
+        (vec![event::Status::Captured], 1),
+        "the session's"
+    );
+    // Ctrl+Shift+K opens Quick Connect whatever the setting.
+    for choice in CtrlKTerminal::ALL {
+        let _ = shell.update(Message::App(AppMessage::Settings(
+            heimdall_app::SettingsMessage::CtrlKTerminal(choice),
+        )));
+        assert_eq!(
+            typed(&shell, &ctrl_shift_k),
+            (vec![event::Status::Ignored], 0),
+            "{choice:?}"
+        );
+    }
+}
+
+#[test]
 fn ctrl_w_closes_the_session_shown_unless_a_field_has_the_keyboard() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, _) = connected_shell(dir.path());

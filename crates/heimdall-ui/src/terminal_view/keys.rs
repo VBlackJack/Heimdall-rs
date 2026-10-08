@@ -53,6 +53,7 @@ pub fn letter(key: &keyboard::Key, physical: Physical) -> Option<char> {
         Physical::Code(Code::KeyC) => Some('c'),
         Physical::Code(Code::KeyD) => Some('d'),
         Physical::Code(Code::KeyF) => Some('f'),
+        Physical::Code(Code::KeyK) => Some('k'),
         Physical::Code(Code::KeyL) => Some('l'),
         Physical::Code(Code::KeyS) => Some('s'),
         Physical::Code(Code::KeyU) => Some('u'),
@@ -108,6 +109,18 @@ pub fn is_ctrl_w(key: &keyboard::Key, physical: Physical, modifiers: keyboard::M
         && letter(key, physical) == Some('w')
 }
 
+/// Whether `key` is Ctrl+K alone, whatever the keyboard's layout: Quick Connect, as the C#,
+/// unless the settings leave it to the terminal, where it is readline's kill to the end of
+/// the line. Ctrl+Shift+K opens Quick Connect either way.
+#[must_use]
+pub fn is_ctrl_k(key: &keyboard::Key, physical: Physical, modifiers: keyboard::Modifiers) -> bool {
+    modifiers.control()
+        && !modifiers.shift()
+        && !modifiers.alt()
+        && !modifiers.logo()
+        && letter(key, physical) == Some('k')
+}
+
 /// A shortcut of the window, left uncaptured by the terminal so the window sees it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowShortcut {
@@ -135,6 +148,9 @@ pub enum WindowShortcut {
     Settings,
     /// Copy an image of the session shown to the clipboard: Ctrl+Shift+S, as the C# one.
     Screenshot,
+    /// Open Quick Connect: Ctrl+K, as the C# one, wherever the keyboard is, and
+    /// Ctrl+Shift+K, which a terminal never keeps.
+    QuickConnect,
     /// Show the keyboard shortcuts: F1, as the C# one, when no session has the keyboard; a
     /// terminal keeps F1 for its programs. Never a key a terminal leaves to the window.
     Help,
@@ -254,6 +270,9 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('o') => {
             Some(WindowShortcut::ToggleSplit)
+        }
+        keyboard::Key::Character(_) if letter(key, physical) == Some('k') => {
+            Some(WindowShortcut::QuickConnect)
         }
         // The character, wherever the layout puts it: the C# reads the comma key.
         keyboard::Key::Character(c) if !shift && c.as_str() == "," => {
@@ -391,8 +410,8 @@ mod tests {
     const ANY_PLACE: Physical = Physical::Code(Code::F24);
 
     use super::{
-        Shortcut, WindowShortcut, Zoom, is_ctrl_w, is_lock_key, is_search_key, key_input, shortcut,
-        window_shortcut,
+        Shortcut, WindowShortcut, Zoom, is_ctrl_k, is_ctrl_w, is_lock_key, is_search_key,
+        key_input, shortcut, window_shortcut,
     };
 
     #[test]
@@ -409,6 +428,39 @@ mod tests {
             Modifiers::CTRL | Modifiers::SHIFT
         ));
         assert!(!is_ctrl_w(&character("w"), w, Modifiers::empty()));
+    }
+
+    #[test]
+    fn ctrl_k_and_ctrl_shift_k_open_quick_connect_whatever_the_layout() {
+        let k = Physical::Code(Code::KeyK);
+        for modifiers in [Modifiers::CTRL, Modifiers::CTRL | Modifiers::SHIFT] {
+            for typed in ["k", "K"] {
+                assert_eq!(
+                    window_shortcut(&character(typed), k, modifiers),
+                    Some(WindowShortcut::QuickConnect),
+                    "{typed} {modifiers:?}"
+                );
+            }
+            // A Cyrillic layout types another letter there: the key's place decides.
+            assert_eq!(
+                window_shortcut(&character("\u{43b}"), k, modifiers),
+                Some(WindowShortcut::QuickConnect),
+                "{modifiers:?}"
+            );
+        }
+        assert!(is_ctrl_k(&character("k"), k, Modifiers::CTRL));
+        assert!(
+            !is_ctrl_k(&character("K"), k, Modifiers::CTRL | Modifiers::SHIFT),
+            "the alias, never the session's"
+        );
+        for modifiers in [Modifiers::empty(), Modifiers::CTRL | Modifiers::ALT] {
+            assert_eq!(
+                window_shortcut(&character("k"), k, modifiers),
+                None,
+                "AltGr+K types: {modifiers:?}"
+            );
+            assert!(!is_ctrl_k(&character("k"), k, modifiers), "{modifiers:?}");
+        }
     }
 
     #[test]

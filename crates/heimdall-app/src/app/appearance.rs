@@ -85,6 +85,8 @@ pub enum SettingsMessage {
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
     /// What Ctrl+V does in a terminal.
     CtrlVPaste(heimdall_core::settings::CtrlVPaste),
+    /// What Ctrl+K does in a terminal.
+    CtrlKTerminal(heimdall_core::settings::CtrlKTerminal),
     /// Seconds between two anti-idle keys, 0 for none; refused out of the C# range.
     AntiIdleInterval(u32),
     /// Seconds between two SSH keep-alives; refused out of the C# range.
@@ -350,6 +352,7 @@ impl App {
                 self.settings.powershell_execution_policy = *policy;
             }
             SettingsMessage::CtrlVPaste(choice) => self.settings.ctrl_v_paste = *choice,
+            SettingsMessage::CtrlKTerminal(choice) => self.settings.ctrl_k_terminal = *choice,
             SettingsMessage::SshAgentPreference(preference) => {
                 self.settings.ssh_agent_preference = *preference;
                 // The agent chip says what the next connection reaches.
