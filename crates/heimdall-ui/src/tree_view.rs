@@ -139,9 +139,6 @@ const EXPANDER_SIDE: f32 = 12.0;
 /// Space between the expander and its row, as the C# expander's right margin.
 const EXPANDER_GAP: f32 = 2.0;
 
-/// Space between a session row's icon, dot, name and badges, as the C# margins.
-const ROW_GAP: f32 = 4.0;
-
 /// Space after a folder's icon, as the C# margin.
 const FOLDER_ICON_GAP: f32 = 7.0;
 
@@ -156,7 +153,7 @@ const DOT_HIT_PADDING: f32 = 3.0;
 /// The window's font, semi-bold, as a C# folder's name.
 const SEMIBOLD: iced::Font = iced::Font {
     weight: iced::font::Weight::Semibold,
-    ..iced::Font::with_name(crate::UI_FONT_FAMILY)
+    ..crate::UI_FONT
 };
 
 /// Widest a gateway badge grows beside a name, as the C# `SessionTreeGatewayBadgeMaxWidth`.
@@ -371,7 +368,7 @@ pub fn folder_row<'a>(
 /// Side of a folder colour's swatch, as the C# menu's.
 const SWATCH_SIDE: f32 = 10.0;
 
-/// A square of `color`, before a folder's name and in its menu.
+/// A square of `color`, in a folder's colour menu.
 fn swatch<'a>(color: FolderColor) -> Element<'a, Message> {
     let (red, green, blue) = color.rgb();
     container(iced::widget::space().width(SWATCH_SIDE).height(SWATCH_SIDE))
@@ -483,7 +480,7 @@ pub fn owned_row(
             }
         )),
     ]
-    .spacing(ROW_GAP)
+    .spacing(spacing::XS)
     .align_y(iced::Alignment::Center);
     if profile.favorite {
         label = label.push(

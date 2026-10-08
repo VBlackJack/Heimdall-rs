@@ -28,38 +28,31 @@ use iced::{Alignment, Element, Font, Length, Theme, font};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
 
-/// Space around the panel, as the C# `SpacingXl`.
-const PADDING: f32 = 24.0;
-/// Space between parts of a line, and between the buttons.
-const SPACING: f32 = 8.0;
-/// Size of the session's name, as the C# `FontSizeDisplay`.
-const TITLE_SIZE: f32 = 22.0;
-/// Size of where it connects, as the C# `FontSizeBodyLarge`.
-const ADDRESS_SIZE: f32 = 14.0;
-/// Size of the folder's line, as the C# `FontSizeBody`.
-const BODY_SIZE: f32 = 13.0;
-/// Size of the protocol, the state and the card's lines, as the C# `FontSizeCaption`.
-const CAPTION_SIZE: f32 = 12.0;
-/// Size of the shortcut hint, as the C# `FontSizeSmallCaption`.
-const HINT_SIZE: f32 = 11.0;
-/// Corner radius of the protocol's pill and of the card, as the C# `CornerRadiusSm`.
-const RADIUS: f32 = 4.0;
 /// Diameter of the state's dot, as the C# panel's.
 const DOT_SIDE: f32 = 8.0;
 /// Width of Connect, as the C# `MinWidth`.
 const CONNECT_WIDTH: f32 = 120.0;
+/// Space the C# panel leaves of 6 pixels: after the state's dot, above and below Edit's and
+/// Delete's labels, and on each side of the protocol's name.
+const SMALL_GAP: f32 = 6.0;
+/// Space above and below the protocol's name, as the C# pill's padding.
+const PILL_PADDING_Y: f32 = 2.0;
+/// Space on each side of Connect's label, as the C# primary button's padding.
+const CONNECT_PADDING_X: f32 = 16.0;
 
 /// The window's font, bold, as the C# panel's title.
 const BOLD: Font = Font {
     weight: font::Weight::Bold,
-    ..Font::with_name(crate::UI_FONT_FAMILY)
+    ..crate::UI_FONT
 };
 
 /// The window's font, semi-bold, as the C# protocol pill's.
 const SEMIBOLD: Font = Font {
     weight: font::Weight::Semibold,
-    ..Font::with_name(crate::UI_FONT_FAMILY)
+    ..crate::UI_FONT
 };
 
 /// Space of `height` between two parts of the panel, as the C# margins.
@@ -85,14 +78,14 @@ fn credentials(saved: &SavedCredentials) -> String {
 /// The protocol of `profile`, its name on its colour, as the C# badge.
 fn pill<'a>(profile: &ProfileSummary) -> Element<'a, Message> {
     let kind = profile.kind;
-    container(text(kind.label()).size(CAPTION_SIZE).font(SEMIBOLD))
-        .padding([2.0, 6.0])
+    container(text(kind.label()).size(font_size::CAPTION).font(SEMIBOLD))
+        .padding([PILL_PADDING_Y, SMALL_GAP])
         .style(move |theme: &Theme| container::Style {
             // The C# `BadgeTextBrush`: the background's colour on the protocol's.
             text_color: Some(theme.palette().background),
             background: Some(crate::icons::protocol_color(theme, kind).into()),
             border: iced::Border {
-                radius: RADIUS.into(),
+                radius: radius::SM.into(),
                 ..iced::Border::default()
             },
             ..container::Style::default()
@@ -109,9 +102,9 @@ fn status<'a>(state: Option<SessionState>) -> Element<'a, Message> {
     );
     row![
         crate::tree_view::sized_state_dot(state, DOT_SIDE),
-        text(said).size(CAPTION_SIZE).style(text::secondary),
+        text(said).size(font_size::CAPTION).style(text::secondary),
     ]
-    .spacing(SPACING * 0.75)
+    .spacing(SMALL_GAP)
     .align_y(Alignment::Center)
     .into()
 }
@@ -119,10 +112,10 @@ fn status<'a>(state: Option<SessionState>) -> Element<'a, Message> {
 /// A line under the address: its label, then what it says, in the secondary colour.
 fn line<'a>(label: String, value: String) -> Element<'a, Message> {
     row![
-        text(label).size(BODY_SIZE).style(text::secondary),
-        text(value).size(BODY_SIZE).style(text::secondary),
+        text(label).size(font_size::BODY).style(text::secondary),
+        text(value).size(font_size::BODY).style(text::secondary),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -160,19 +153,19 @@ fn card<'a>(
         return None;
     }
     // Two columns, as the C# grid: the labels as wide as the widest.
-    let mut labels = Column::new().spacing(SPACING / 2.0);
-    let mut values = Column::new().spacing(SPACING / 2.0).width(Length::Fill);
+    let mut labels = Column::new().spacing(spacing::XS);
+    let mut values = Column::new().spacing(spacing::XS).width(Length::Fill);
     for (label, value, warning) in fields {
-        labels = labels.push(text(label).size(CAPTION_SIZE).style(text::secondary));
-        values = values.push(text(value).size(CAPTION_SIZE).style(if warning {
+        labels = labels.push(text(label).size(font_size::CAPTION).style(text::secondary));
+        values = values.push(text(value).size(font_size::CAPTION).style(if warning {
             text::warning
         } else {
             text::default
         }));
     }
     Some(
-        container(row![labels, values].spacing(SPACING * 1.5))
-            .padding([SPACING, SPACING * 1.5])
+        container(row![labels, values].spacing(spacing::MD))
+            .padding([spacing::SM, spacing::MD])
             .width(Length::Fill)
             .style(|theme: &Theme| {
                 let palette = theme.extended_palette();
@@ -180,8 +173,8 @@ fn card<'a>(
                     background: Some(palette.background.weak.color.into()),
                     border: iced::Border {
                         color: palette.background.strong.color,
-                        width: 1.0,
-                        radius: RADIUS.into(),
+                        width: BORDER_WIDTH,
+                        radius: radius::SM.into(),
                     },
                     ..container::Style::default()
                 }
@@ -200,71 +193,74 @@ pub fn view<'a>(
 ) -> Element<'a, Message> {
     let id = profile.id.clone();
     let mut panel = column![
-        text(server_text(&profile.name)).size(TITLE_SIZE).font(BOLD),
-        gap(SPACING),
+        text(server_text(&profile.name))
+            .size(font_size::DISPLAY)
+            .font(BOLD),
+        gap(spacing::SM),
         row![pill(profile), status(state)]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
     ];
     if let Some((host, port)) = &profile.endpoint {
-        panel = panel.push(gap(SPACING * 1.5)).push(
+        panel = panel.push(gap(spacing::MD)).push(
             text(format!("{}:{port}", server_text(host)))
-                .size(ADDRESS_SIZE)
+                .size(font_size::BODY_LARGE)
                 .style(text::secondary),
         );
     }
     if let Some(group) = &profile.group {
         panel = panel
-            .push(gap(SPACING / 2.0))
+            .push(gap(spacing::XS))
             .push(line(fl!("ui-detail-folder"), server_text(group)));
     }
     if let Some(environment) = profile.metadata.environment {
-        panel = panel.push(gap(SPACING / 2.0)).push(line(
+        panel = panel.push(gap(spacing::XS)).push(line(
             fl!("ui-detail-environment"),
             crate::texts::environment_name(Some(environment)),
         ));
     }
     if let Some(card) = card(profile, saved) {
-        panel = panel.push(gap(SPACING * 1.5)).push(card);
+        panel = panel.push(gap(spacing::MD)).push(card);
     }
     panel = panel
-        .push(gap(SPACING * 2.5))
+        .push(gap(spacing::LG))
         .push(
             // Never narrower than the C# minimum, wider when its label is.
             button(
                 column![
                     text(fl!("ui-detail-connect")).wrapping(text::Wrapping::None),
-                    space().width(CONNECT_WIDTH - SPACING * 4.0),
+                    space().width(CONNECT_WIDTH - CONNECT_PADDING_X * 2.0),
                 ]
                 .align_x(Alignment::Center),
             )
-            .padding([SPACING, SPACING * 2.0])
+            .style(styles::primary)
+            .padding([spacing::SM, CONNECT_PADDING_X])
             .on_press(Message::App(AppMessage::ConnectProfile(id.clone()))),
         )
-        .push(gap(SPACING))
+        .push(gap(spacing::SM))
         .push(
             row![
                 button(text(fl!("ui-detail-edit")))
-                    .style(button::secondary)
-                    .padding([SPACING * 0.75, SPACING * 1.5])
+                    .style(styles::secondary)
+                    .padding([SMALL_GAP, spacing::MD])
                     .on_press_maybe(
                         editable.then(|| Message::App(AppMessage::EditProfile(id.clone())))
                     ),
                 button(text(fl!("ui-tree-delete")))
-                    .style(button::danger)
-                    .padding([SPACING * 0.75, SPACING * 1.5])
+                    .style(styles::danger)
+                    .padding([SMALL_GAP, spacing::MD])
                     .on_press(Message::App(AppMessage::RequestDeleteProfile(id))),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
-        .push(gap(SPACING))
+        .push(gap(spacing::SM))
         .push(
             text(fl!("ui-detail-hints"))
-                .size(HINT_SIZE)
+                .size(font_size::SMALL_CAPTION)
                 .style(text::secondary),
         );
     container(panel)
-        .padding(PADDING)
+        .padding(spacing::XL)
         .width(Length::Fill)
         .height(Length::Fill)
         .into()
