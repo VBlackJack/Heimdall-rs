@@ -28,11 +28,9 @@ use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-/// Space between the parts of a row, and between the rows.
-const SPACING: f32 = 8.0;
-/// Size of the captions and hints.
-const CAPTION_SIZE: f32 = 12.0;
 /// Width of the delay field.
 const DELAY_WIDTH: f32 = 90.0;
 /// Padding inside a row.
@@ -60,51 +58,55 @@ fn edit(edit: StepEdit) -> Message {
 pub fn view(draft: &StepsDraft) -> Element<'_, Message> {
     let mut card = column![
         text(fl!("ui-post-connect-title")),
-        text(fl!("ui-post-connect-hint")).size(CAPTION_SIZE),
+        text(fl!("ui-post-connect-hint")).size(font_size::CAPTION),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if draft.steps.is_empty() {
-        card = card.push(text(fl!("ui-post-connect-empty")).size(CAPTION_SIZE));
+        card = card.push(text(fl!("ui-post-connect-empty")).size(font_size::CAPTION));
     }
     for (index, step) in draft.steps.iter().enumerate() {
         card = card.push(step_row(index, step, draft.selected == Some(index)));
     }
     let selected = draft.selected.is_some();
-    card.push(text(fl!("ui-post-connect-order-hint")).size(CAPTION_SIZE))
+    card.push(text(fl!("ui-post-connect-order-hint")).size(font_size::CAPTION))
         .push(
             row![
                 button(text(fl!("ui-post-connect-add")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(edit(StepEdit::Add)),
                 button(text(fl!("ui-post-connect-remove")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press_maybe(selected.then(|| edit(StepEdit::Remove))),
                 button(text(fl!("ui-post-connect-move-up")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press_maybe(draft.can_move_up().then(|| edit(StepEdit::MoveUp))),
                 button(text(fl!("ui-post-connect-move-down")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press_maybe(draft.can_move_down().then(|| edit(StepEdit::MoveDown))),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
         .into()
 }
 
 /// One step: on or off, its command, its delay, what a failure does; framed when selected.
 fn step_row(index: usize, step: &PostConnectStep, selected: bool) -> Element<'_, Message> {
-    let caption = |label: String| text(label).size(CAPTION_SIZE);
+    let caption = |label: String| text(label).size(font_size::CAPTION);
     let fields = row![
-        checkbox(step.enabled).on_toggle(move |on| edit(StepEdit::Enabled(index, on))),
+        checkbox(step.enabled)
+            .style(styles::checkbox)
+            .on_toggle(move |on| edit(StepEdit::Enabled(index, on))),
         column![
             caption(fl!("ui-post-connect-command")),
             text_input(&fl!("ui-post-connect-command-placeholder"), &step.input)
+                .style(styles::text_input)
                 .on_input(move |input| edit(StepEdit::Input(index, input))),
         ]
         .width(Length::Fill),
         column![
             caption(fl!("ui-post-connect-delay")),
             text_input("", &step.delay_ms.to_string())
+                .style(styles::text_input)
                 .on_input(move |typed| edit(StepEdit::Delay(index, typed)))
                 .width(DELAY_WIDTH),
         ],
@@ -117,10 +119,12 @@ fn step_row(index: usize, step: &PostConnectStep, selected: bool) -> Element<'_,
                 ],
                 Some(FailureChoice(step.on_failure)),
                 move |choice: FailureChoice| edit(StepEdit::OnFailure(index, choice.0)),
-            ),
+            )
+            .style(styles::pick_list)
+            .menu_style(styles::menu),
         ],
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::End);
     let framed = container(fields).padding(ROW_PADDING).width(Length::Fill);
     let framed = if selected {

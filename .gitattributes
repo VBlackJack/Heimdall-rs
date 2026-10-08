@@ -10,6 +10,7 @@
 *.icns binary
 *.otf binary
 *.ttf binary
+*.rgba binary
 
 # Every change appends its texts at the end of the language files: merged by union, two
 # branches adding keys keep both instead of conflicting. A key added twice is refused by

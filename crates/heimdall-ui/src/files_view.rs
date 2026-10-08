@@ -46,20 +46,10 @@ use iced::{Alignment, Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
 use crate::texts;
+use crate::tokens::{font_size, spacing};
 use crate::tree_view::TreeMenu;
-
-/// Gap between elements, in logical pixels.
-const SPACING: f32 = 8.0;
-
-/// Padding inside panes, in logical pixels.
-const PADDING: f32 = 8.0;
-
-/// Size of secondary text, in logical pixels.
-const SMALL_SIZE: f32 = 12.0;
-
-/// Size of pane titles, in logical pixels.
-const TITLE_SIZE: f32 = 16.0;
 
 /// Width of the size column until resized, in logical pixels.
 const SIZE_WIDTH: f32 = 90.0;
@@ -127,9 +117,6 @@ const SEGMENT_SEPARATOR: &str = ">";
 
 /// Room around the breadcrumb's folders, the path bar's own, so neither moves the other.
 const BREADCRUMB_PADDING: f32 = 5.0;
-
-/// Room between two folders of the breadcrumb and their separator, in logical pixels.
-const SEGMENT_SPACING: f32 = 4.0;
 
 /// A field of a pane the keyboard can be given to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -331,7 +318,7 @@ fn fitting_columns(columns: &[SortColumn], widths: ColumnWidths, width: f32) -> 
             .map(|column| {
                 widths
                     .of(*column)
-                    .map_or(NAME_MIN_WIDTH, |fixed| fixed + SPACING)
+                    .map_or(NAME_MIN_WIDTH, |fixed| fixed + spacing::SM)
             })
             .sum::<f32>()
     };
@@ -344,7 +331,7 @@ fn fitting_columns(columns: &[SortColumn], widths: ColumnWidths, width: f32) -> 
 /// The widths `shown` are laid out at in `room`: each its own, the name the rest.
 fn laid_widths(shown: &[SortColumn], widths: ColumnWidths, room: f32) -> Vec<f32> {
     let fixed: f32 = shown.iter().filter_map(|column| widths.of(*column)).sum();
-    let gaps: f32 = shown.iter().skip(1).map(|_| SPACING).sum();
+    let gaps: f32 = shown.iter().skip(1).map(|_| spacing::SM).sum();
     let name = (room - fixed - gaps).max(0.0);
     shown
         .iter()
@@ -354,7 +341,7 @@ fn laid_widths(shown: &[SortColumn], widths: ColumnWidths, room: f32) -> Vec<f32
 
 /// The size of `column`'s cells; none for the name's, at the window's size.
 fn cell_size(column: SortColumn) -> Option<f32> {
-    (column != SortColumn::Name).then_some(SMALL_SIZE)
+    (column != SortColumn::Name).then_some(font_size::CAPTION)
 }
 
 /// What `kind` of entry it is, as the C# Properties dialog names it.
@@ -394,7 +381,7 @@ fn row_tooltip<'a, E: Listed>(
     }
     tooltip(
         line,
-        text(lines.join("\n")).size(SMALL_SIZE),
+        text(lines.join("\n")).size(font_size::CAPTION),
         tooltip::Position::FollowCursor,
     )
     .delay(ROW_TOOLTIP_DELAY)
@@ -499,15 +486,18 @@ fn property_lines<'a>(
     lines: impl IntoIterator<Item = (String, String)>,
     ok: iced::widget::Button<'a, Message>,
 ) -> Element<'a, Message> {
-    let mut content = column![text(fl!("ui-files-properties-title", name = name)).size(TITLE_SIZE)]
-        .spacing(SPACING);
+    let mut content =
+        column![text(fl!("ui-files-properties-title", name = name)).size(font_size::SUBTITLE)]
+            .spacing(spacing::SM);
     for (label, value) in lines {
         content = content.push(
             row![
-                text(label).size(SMALL_SIZE).width(PROPERTY_LABEL_WIDTH),
+                text(label)
+                    .size(font_size::CAPTION)
+                    .width(PROPERTY_LABEL_WIDTH),
                 text(value)
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         );
     }
     content.push(ok).into()
@@ -571,7 +561,7 @@ fn column_texts<E: Listed>(
     column: SortColumn,
     sort: Sort,
 ) -> Vec<(String, Option<f32>)> {
-    std::iter::once((column_title(column, sort), Some(SMALL_SIZE)))
+    std::iter::once((column_title(column, sort), Some(font_size::CAPTION)))
         .chain(
             entries
                 .iter()
@@ -596,10 +586,10 @@ fn headers<'a, E: Listed>(
         .map(|(column, width)| {
             button(
                 text(column_title(*column, sort))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .wrapping(text::Wrapping::None),
             )
-            .style(button::text)
+            .style(styles::subtle)
             .padding(0)
             .width(width)
             .clip(true)
@@ -616,7 +606,7 @@ fn headers<'a, E: Listed>(
     crate::column_header::ColumnHeader::new(cells, laid.to_vec())
         .least(least)
         .inset(ROW_PADDING_X)
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .contents(move |index| {
             fitted
                 .get(index)
@@ -640,7 +630,7 @@ fn entry_row<'a, E: Listed>(
     (tab, side, index): (TabId, Side, usize),
 ) -> Element<'a, Message> {
     let on_press = files(FilesMessage::Select { tab, side, index });
-    let mut cells = row![].spacing(SPACING);
+    let mut cells = row![].spacing(spacing::SM);
     for (column, width) in columns.iter().zip(laid.iter().copied()) {
         let cell = text(cell_text(entry, *column)).wrapping(text::Wrapping::None);
         let cell = match cell_size(*column) {
@@ -656,9 +646,9 @@ fn entry_row<'a, E: Listed>(
             // A drag over this folder: where the entries would go.
             button::success
         } else if selected {
-            button::primary
+            styles::primary
         } else {
-            button::text
+            styles::subtle
         })
         .on_press(on_press);
     // A right click opens its menu, as in the C# Files tab.
@@ -689,29 +679,29 @@ fn pane_tools<'a>(
     toggles: PaneToggles,
 ) -> Element<'a, Message> {
     let mut tools = row![
-        button(text(fl!("ui-files-new-folder-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-new-folder-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(FilesMessage::AskNewFolder { tab, side })),
-        button(text(fl!("ui-files-rename-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-rename-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             // One entry at a time, as in the C# tab.
             .on_press_maybe((chosen == 1).then(|| files(FilesMessage::AskRename { tab, side })),),
-        button(text(fl!("ui-files-delete-button")).size(SMALL_SIZE))
-            .style(button::danger)
+        button(text(fl!("ui-files-delete-button")).size(font_size::CAPTION))
+            .style(styles::danger)
             .on_press_maybe(selected.map(|_| files(FilesMessage::AskDelete { tab, side }))),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     // The server's folders only, as in the C# tab.
     if side == Side::Remote {
         tools = tools
             .push(
-                button(text(fl!("ui-files-bookmark-button")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                button(text(fl!("ui-files-bookmark-button")).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(files(FilesMessage::Bookmark { tab })),
             )
             .push(
-                button(text(fl!("ui-files-bookmarks-button")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                button(text(fl!("ui-files-bookmarks-button")).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(Message::OpenTreeMenu(TreeMenu::FilesBookmarks(tab))),
             );
     }
@@ -721,7 +711,7 @@ fn pane_tools<'a>(
     if let Some(on) = toggles.follow {
         tools = tools.push(follow_toggle(tab, side, on));
     }
-    tools.wrap().vertical_spacing(SPACING).into()
+    tools.wrap().vertical_spacing(spacing::SM).into()
 }
 
 /// The C# "cwd" toggle of an SFTP server pane, lit while the pane follows the working
@@ -734,14 +724,14 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
         Side::Local => fl!("ui-files-follow-local-tooltip"),
     };
     tooltip(
-        button(text(fl!("ui-files-follow-toggle")).size(SMALL_SIZE))
+        button(text(fl!("ui-files-follow-toggle")).size(font_size::CAPTION))
             .style(if on {
-                button::primary
+                styles::primary
             } else {
-                button::secondary
+                styles::secondary
             })
             .on_press(files(FilesMessage::ToggleFollow { tab })),
-        text(tip).size(SMALL_SIZE),
+        text(tip).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
     .style(container::rounded_box)
@@ -752,14 +742,14 @@ fn follow_toggle<'a>(tab: TabId, side: Side, on: bool) -> Element<'a, Message> {
 /// listed as root.
 fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
     tooltip(
-        button(text(fl!("ui-files-sudo-toggle")).size(SMALL_SIZE))
+        button(text(fl!("ui-files-sudo-toggle")).size(font_size::CAPTION))
             .style(if on {
                 button::warning
             } else {
-                button::secondary
+                styles::secondary
             })
             .on_press(files(FilesMessage::ToggleSudo { tab })),
-        text(fl!("ui-files-sudo-tooltip")).size(SMALL_SIZE),
+        text(fl!("ui-files-sudo-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
     .style(container::rounded_box)
@@ -771,27 +761,27 @@ fn sudo_toggle<'a>(tab: TabId, on: bool) -> Element<'a, Message> {
 pub fn sudo_delete_question<'a>(names: &[String], more: usize) -> Element<'a, Message> {
     let mut listed = Column::new().spacing(2.0);
     for name in names {
-        listed = listed.push(text(name.clone()).size(SMALL_SIZE));
+        listed = listed.push(text(name.clone()).size(font_size::CAPTION));
     }
     if more > 0 {
-        listed =
-            listed.push(text(fl!("ui-dialog-sudo-delete-more", count = more)).size(SMALL_SIZE));
+        listed = listed
+            .push(text(fl!("ui-dialog-sudo-delete-more", count = more)).size(font_size::CAPTION));
     }
     column![
-        text(fl!("ui-dialog-sudo-delete-title")).size(TITLE_SIZE),
+        text(fl!("ui-dialog-sudo-delete-title")).size(font_size::SUBTITLE),
         text(fl!("ui-dialog-sudo-delete-body")),
         scrollable(listed).height(Length::Shrink),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-sudo-delete-confirm")))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -813,26 +803,27 @@ fn pane_narrowing<'a>(
     row![
         crate::search_keys::SearchKeys::escape_only(
             text_input(&fl!("ui-files-filter-placeholder"), filter)
+                .style(styles::text_input)
                 .id(field_id(tab, side, PaneField::Filter))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .on_input(move |text| files(FilesMessage::Filter { tab, side, text }))
                 .width(Length::Fill),
             emptied,
         ),
         tooltip(
-            button(text(fl!("ui-files-hidden-toggle")).size(SMALL_SIZE))
+            button(text(fl!("ui-files-hidden-toggle")).size(font_size::CAPTION))
                 .style(if show_hidden {
-                    button::primary
+                    styles::primary
                 } else {
-                    button::secondary
+                    styles::secondary
                 })
                 .on_press(files(FilesMessage::ToggleHidden { tab, side })),
-            text(fl!("ui-files-hidden-tooltip")).size(SMALL_SIZE),
+            text(fl!("ui-files-hidden-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center)
 }
 
@@ -849,9 +840,12 @@ fn pane_heading<'a>(
     } else {
         fl!("ui-files-item-count-filtered", shown = shown, count = total)
     };
-    let mut heading = row![text(title).size(TITLE_SIZE), text(count).size(SMALL_SIZE)]
-        .spacing(SPACING)
-        .align_y(Alignment::Center);
+    let mut heading = row![
+        text(title).size(font_size::SUBTITLE),
+        text(count).size(font_size::CAPTION)
+    ]
+    .spacing(spacing::SM)
+    .align_y(Alignment::Center);
     if chosen > 1 {
         let selection = fl!("ui-files-selected-count", count = chosen);
         // The files' size beside it, as the C# selection line; folders are not counted.
@@ -864,7 +858,7 @@ fn pane_heading<'a>(
         } else {
             selection
         };
-        heading = heading.push(text(selection).size(SMALL_SIZE));
+        heading = heading.push(text(selection).size(font_size::CAPTION));
     }
     heading
 }
@@ -959,16 +953,14 @@ struct Moves {
 /// click beside them gives the path back to be typed in. The deepest stays in sight.
 fn breadcrumb_bar<'a>(tab: TabId, side: Side, segments: Vec<String>) -> Element<'a, Message> {
     let last = segments.len().saturating_sub(1);
-    let mut trail = Row::new()
-        .spacing(SEGMENT_SPACING)
-        .align_y(Alignment::Center);
+    let mut trail = Row::new().spacing(spacing::XS).align_y(Alignment::Center);
     for (index, name) in segments.into_iter().enumerate() {
         if index > 0 {
-            trail = trail.push(text(SEGMENT_SEPARATOR).size(SMALL_SIZE));
+            trail = trail.push(text(SEGMENT_SEPARATOR).size(font_size::CAPTION));
         }
         trail = trail.push(
-            button(text(name).size(SMALL_SIZE))
-                .style(button::text)
+            button(text(name).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .padding(0)
                 .on_press(files(FilesMessage::Ascend {
                     tab,
@@ -1002,10 +994,10 @@ fn empty_state<'a>(
     filter: &str,
     (total, unhidden): (usize, usize),
 ) -> Element<'a, Message> {
-    let said = |words: String| text(words).size(SMALL_SIZE);
+    let said = |words: String| text(words).size(font_size::CAPTION);
     let way = |label: String, message: FilesMessage| {
-        button(text(label).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(label).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(message))
     };
     if total == 0 {
@@ -1020,7 +1012,7 @@ fn empty_state<'a>(
                 FilesMessage::ToggleHidden { tab, side }
             ),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .into();
     }
     if !filter.trim().is_empty() {
@@ -1035,7 +1027,7 @@ fn empty_state<'a>(
                 }
             ),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .into();
     }
     said(fl!("ui-files-empty")).into()
@@ -1062,17 +1054,17 @@ fn batch_row<'a>(tab: TabId, batch: &heimdall_app::files::Batch) -> Element<'a, 
     };
     let stop: Element<'a, Message> = if batch.stopping {
         text(fl!("ui-files-batch-stopping"))
-            .size(SMALL_SIZE)
+            .size(font_size::CAPTION)
             .style(text::secondary)
             .into()
     } else {
-        button(text(fl!("ui-files-batch-stop")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-batch-stop")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(FilesMessage::StopBatch { tab }))
             .into()
     };
-    row![text(at).size(SMALL_SIZE).width(Length::Fill), stop]
-        .spacing(SPACING)
+    row![text(at).size(font_size::CAPTION).width(Length::Fill), stop]
+        .spacing(spacing::SM)
         .align_y(Alignment::Center)
         .into()
 }
@@ -1106,35 +1098,36 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     let tools = pane_tools(tab, side, (selected, chosen), toggles);
     let header = row![
         // As the C# Files tab: Back, Up, Home.
-        button(text(fl!("ui-files-back-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-back-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press_maybe(moves.back.then(|| files(FilesMessage::Back { tab, side }))),
-        button(text(fl!("ui-files-up-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-up-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(FilesMessage::Up { tab, side })),
-        button(text(fl!("ui-files-home-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-home-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press_maybe(moves.home.then(|| files(FilesMessage::Home { tab, side }))),
         // The folder shown, typed over to go elsewhere, as the C# path bar; its folders to
         // click while it is not typed in.
         match breadcrumb.filter(|_| typed.is_none()) {
             Some(segments) => breadcrumb_bar(tab, side, segments),
             None => text_input(&location, typed.unwrap_or(&location))
+                .style(styles::text_input)
                 .id(field_id(tab, side, PaneField::Path))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .on_input(move |text| files(FilesMessage::PathEdited { tab, side, text }))
                 .on_submit(files(FilesMessage::GoTo { tab, side }))
                 .width(Length::Fill)
                 .into(),
         },
-        button(text(fl!("ui-files-go-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-go-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press_maybe(typed.map(|_| files(FilesMessage::GoTo { tab, side }))),
-        button(text(fl!("ui-files-refresh-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-refresh-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(FilesMessage::Refresh { tab, side })),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     let narrowing = pane_narrowing(tab, side, filter, show_hidden);
     let failed = error.is_some();
@@ -1144,7 +1137,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         let laid = laid_widths(&shown, widths, size.width - 2.0 * ROW_PADDING_X);
         let mut list = Column::new().spacing(2.0);
         if loading {
-            list = list.push(text(fl!("ui-files-loading")).size(SMALL_SIZE));
+            list = list.push(text(fl!("ui-files-loading")).size(font_size::CAPTION));
         } else if entries.is_empty() && !failed {
             list = list.push(empty_state(tab, side, filter, (total, unhidden)));
         }
@@ -1162,7 +1155,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
                 index: None,
             }));
         let header = headers((tab, side), entries, (&shown, &laid), (sort, widths));
-        column![header, list].spacing(SPACING).into()
+        column![header, list].spacing(spacing::SM).into()
     });
     let heading = pane_heading(
         title,
@@ -1170,7 +1163,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         total,
         (chosen, chosen_size(entries, selected, marked)),
     );
-    let content = column![heading, header, tools, narrowing].spacing(SPACING);
+    let content = column![heading, header, tools, narrowing].spacing(spacing::SM);
     pane_frame(
         pane_notes(content, tab, (toggles.sudo, error, batch)).push(listing),
         (tab, side),
@@ -1194,12 +1187,12 @@ fn pane_notes<'a>(
     if sudo == Some(true) {
         content = content.push(
             text(fl!("ui-files-sudo-on"))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::warning),
         );
     }
     if let Some(error) = error {
-        content = content.push(text(texts::files_error(error)).size(SMALL_SIZE));
+        content = content.push(text(texts::files_error(error)).size(font_size::CAPTION));
     }
     if let Some(batch) = batch {
         content = content.push(batch_row(tab, batch));
@@ -1238,7 +1231,7 @@ fn pane_frame(
     whole_target: bool,
 ) -> Element<'_, Message> {
     let pane = container(content)
-        .padding(PADDING)
+        .padding(spacing::SM)
         .width(Length::FillPortion(1))
         .height(Length::Fill)
         .style(move |theme: &Theme| {
@@ -1269,15 +1262,15 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
     let local = || edit.local.clone();
     let state = match &edit.refused {
         Some(error) => text(texts::files_error(error))
-            .size(SMALL_SIZE)
+            .size(font_size::CAPTION)
             .style(text::danger),
-        None => text(fl!("ui-files-edit-watching")).size(SMALL_SIZE),
+        None => text(fl!("ui-files-edit-watching")).size(font_size::CAPTION),
     };
     let mut line = row![
         text(edit.name.as_str()).width(Length::FillPortion(2)),
         state.width(Length::FillPortion(3)),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     // Refused by the server's permissions, or by sudo for its password: sudo is offered,
     // where there is an SSH connection to run it: never over FTP.
@@ -1294,35 +1287,35 @@ fn edit_row(tab: TabId, edit: &EditSession, over_ssh: bool) -> Element<'_, Messa
         );
     if sudo_helps {
         line = line.push(
-            button(text(fl!("ui-files-edit-save-sudo")).size(SMALL_SIZE)).on_press(files(
-                FilesMessage::EditSaveWithSudo {
+            button(text(fl!("ui-files-edit-save-sudo")).size(font_size::CAPTION))
+                .style(styles::primary)
+                .on_press(files(FilesMessage::EditSaveWithSudo {
                     tab,
                     local: local(),
-                },
-            )),
+                })),
         );
     }
     if edit.refused.is_some() && !edit.privileged {
         line = line.push(
-            button(text(fl!("ui-files-edit-send-anyway")).size(SMALL_SIZE)).on_press(files(
-                FilesMessage::EditSendAnyway {
+            button(text(fl!("ui-files-edit-send-anyway")).size(font_size::CAPTION))
+                .style(styles::primary)
+                .on_press(files(FilesMessage::EditSendAnyway {
                     tab,
                     local: local(),
-                },
-            )),
+                })),
         );
     }
     line.push(
-        button(text(fl!("ui-files-edit-open-folder")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-edit-open-folder")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(FilesMessage::EditOpenFolder {
                 tab,
                 local: local(),
             })),
     )
     .push(
-        button(text(fl!("ui-files-edit-stop")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-files-edit-stop")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(FilesMessage::EditStop {
                 tab,
                 local: local(),
@@ -1418,13 +1411,15 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
     };
     let mut line = row![
         text(what).width(Length::FillPortion(2)),
-        text(state).size(SMALL_SIZE).width(Length::FillPortion(3)),
+        text(state)
+            .size(font_size::CAPTION)
+            .width(Length::FillPortion(3)),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     let small = |label: String, message: FilesMessage| {
-        button(text(label).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(label).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press(files(message))
     };
     if matches!(
@@ -1545,17 +1540,17 @@ pub fn view(
         toggles: PaneToggles::server(files_pane),
     });
     let mut content = column![panes(tab, files_pane, local, remote)]
-        .spacing(SPACING)
-        .padding(PADDING);
+        .spacing(spacing::SM)
+        .padding(spacing::SM);
     if !files_pane.edits.is_empty() {
         let list = files_pane
             .edits
             .iter()
-            .fold(Column::new().spacing(4.0), |list, edit| {
+            .fold(Column::new().spacing(spacing::XS), |list, edit| {
                 list.push(edit_row(tab, edit, files_pane.shell.is_some()))
             });
         content = content
-            .push(text(fl!("ui-files-edits-title")).size(TITLE_SIZE))
+            .push(text(fl!("ui-files-edits-title")).size(font_size::SUBTITLE))
             .push(list);
     }
     if !files_pane.transfers.is_empty() {
@@ -1579,13 +1574,13 @@ fn panes<'a>(
     }
     if files_pane.local_hidden {
         return column![row![local_toggle(tab, false)], remote]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .height(Length::Fill)
             .into();
     }
     let actions = send_buttons(tab, files_pane).push(local_toggle(tab, true));
     row![local, container(actions).center_y(Length::Fill), remote]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .height(Length::Fill)
         .into()
 }
@@ -1593,14 +1588,14 @@ fn panes<'a>(
 /// The toggle showing this computer's pane beside the server's, lit while it shows.
 fn local_toggle<'a>(tab: TabId, shown: bool) -> Element<'a, Message> {
     tooltip(
-        button(text(fl!("ui-files-local-toggle")).size(SMALL_SIZE))
+        button(text(fl!("ui-files-local-toggle")).size(font_size::CAPTION))
             .style(if shown {
-                button::primary
+                styles::primary
             } else {
-                button::secondary
+                styles::secondary
             })
             .on_press(files(FilesMessage::ToggleLocal { tab })),
-        text(fl!("ui-files-local-toggle-tooltip")).size(SMALL_SIZE),
+        text(fl!("ui-files-local-toggle-tooltip")).size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
     .style(container::rounded_box)
@@ -1612,20 +1607,20 @@ fn send_buttons(tab: TabId, files_pane: &FilesPane) -> Column<'_, Message> {
     let can_upload = files_pane.local.selected.is_some();
     let can_download = files_pane.remote.selected.is_some();
     column![
-        button(text(fl!("ui-files-upload-button"))).on_press_maybe(can_upload.then(|| files(
-            FilesMessage::Transfer {
+        button(text(fl!("ui-files-upload-button")))
+            .style(styles::primary)
+            .on_press_maybe(can_upload.then(|| files(FilesMessage::Transfer {
                 tab,
                 direction: Direction::Upload,
-            }
-        ))),
-        button(text(fl!("ui-files-download-button"))).on_press_maybe(can_download.then(|| files(
-            FilesMessage::Transfer {
+            }))),
+        button(text(fl!("ui-files-download-button")))
+            .style(styles::primary)
+            .on_press_maybe(can_download.then(|| files(FilesMessage::Transfer {
                 tab,
                 direction: Direction::Download,
-            }
-        ))),
+            }))),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_x(Alignment::Center)
 }
 
@@ -1635,11 +1630,11 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
         .transfers
         .iter()
         .rev()
-        .fold(Column::new().spacing(4.0), |list, transfer| {
+        .fold(Column::new().spacing(spacing::XS), |list, transfer| {
             list.push(transfer_row(tab, transfer, live))
         });
-    let mut title = row![text(fl!("ui-files-transfers-title")).size(TITLE_SIZE)]
-        .spacing(SPACING)
+    let mut title = row![text(fl!("ui-files-transfers-title")).size(font_size::SUBTITLE)]
+        .spacing(spacing::SM)
         .align_y(Alignment::Center);
     if files_pane
         .transfers
@@ -1647,8 +1642,8 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
         .any(|transfer| transfer.state.ended())
     {
         title = title.push(
-            button(text(fl!("ui-files-clear-finished-button")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-files-clear-finished-button")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(files(FilesMessage::ClearFinished { tab })),
         );
     }
@@ -1656,7 +1651,7 @@ fn transfers(tab: TabId, files_pane: &FilesPane, live: bool) -> Column<'_, Messa
         title,
         container(scrollable(list)).max_height(TRANSFERS_HEIGHT)
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
 }
 
 #[cfg(test)]
@@ -1749,10 +1744,10 @@ mod tests {
         let sort = Sort::default();
         let names = column_texts(&entries, SortColumn::Name, sort);
         assert_eq!(names.len(), 3, "the header, then each entry");
-        assert_eq!(names[0].1, Some(SMALL_SIZE), "the header's size");
+        assert_eq!(names[0].1, Some(font_size::CAPTION), "the header's size");
         assert_eq!(names[2], (format!("docs{FOLDER_MARK}"), None), "as listed");
         let sizes = column_texts(&entries, SortColumn::Size, sort);
-        assert_eq!(sizes[1].1, Some(SMALL_SIZE));
+        assert_eq!(sizes[1].1, Some(font_size::CAPTION));
         assert_eq!(sizes[2].0, "", "a folder shows no size");
     }
 

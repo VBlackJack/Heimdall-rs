@@ -23,12 +23,9 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-/// Size of the dialog's title.
-const TITLE_SIZE: f32 = 20.0;
-/// Size of a group's title.
-const GROUP_SIZE: f32 = 15.0;
 /// Width of the keys' column.
 const KEYS_WIDTH: f32 = 220.0;
 /// Height of the list before it scrolls.
@@ -224,9 +221,9 @@ pub fn action_text(action: Action) -> String {
 
 /// The dialog: its title, the keys by group, what a session keeps for itself, and `ok`.
 pub fn view<'a>(ok: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
-    let mut list = Column::new().spacing(SPACING);
+    let mut list = Column::new().spacing(spacing::SM);
     for (group, keys) in SHORTCUTS {
-        list = list.push(text(group_title(group)).size(GROUP_SIZE));
+        list = list.push(text(group_title(group)).size(font_size::SUBTITLE));
         for &(keys, action) in keys {
             list = list.push(
                 row![
@@ -235,24 +232,24 @@ pub fn view<'a>(ok: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
                         .width(Length::Fixed(KEYS_WIDTH)),
                     text(action_text(action)).width(Length::Fill),
                 ]
-                .spacing(SPACING),
+                .spacing(spacing::SM),
             );
         }
     }
     column![
-        text(fl!("ui-shortcuts-title")).size(TITLE_SIZE),
+        text(fl!("ui-shortcuts-title")).size(font_size::TITLE),
         scrollable(list).height(Length::Fixed(LIST_HEIGHT)),
         text(fl!("ui-shortcuts-session-keys")).style(text::secondary),
         row![iced::widget::space::horizontal(), ok.into()],
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 /// The status bar's hint, which opens the help wherever the keyboard is.
 pub fn hint<'a>(size: f32) -> Element<'a, Message> {
     button(text(fl!("ui-shortcuts-hint")).size(size))
-        .style(button::text)
+        .style(styles::subtle)
         .on_press(Message::Shortcut(
             crate::terminal_view::keys::WindowShortcut::Help,
         ))

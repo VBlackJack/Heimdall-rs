@@ -26,18 +26,11 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-/// Room inside a card.
-const PADDING: f32 = 12.0;
 /// Widest a card grows, as the other Settings cards.
 const CARD_WIDTH: f32 = 720.0;
-/// Size of the application's name.
-const NAME_SIZE: f32 = 22.0;
-/// Size of a section's title.
-const SECTION_SIZE: f32 = 15.0;
-/// Size of a hint.
-const SMALL_SIZE: f32 = 12.0;
 /// Width of a label before its value.
 const LABEL_WIDTH: f32 = 140.0;
 
@@ -53,16 +46,22 @@ fn line<'a>(label: String, value: String) -> Element<'a, Message> {
         text(label).width(Length::Fixed(LABEL_WIDTH)),
         text(value).style(text::secondary),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 fn card(title: String, content: Column<'_, Message>) -> Element<'_, Message> {
-    container(column![text(title).size(SECTION_SIZE), content.spacing(SPACING)].spacing(SPACING))
-        .padding(PADDING)
-        .max_width(CARD_WIDTH)
-        .style(container::bordered_box)
-        .into()
+    container(
+        column![
+            text(title).size(font_size::SUBTITLE),
+            content.spacing(spacing::SM)
+        ]
+        .spacing(spacing::SM),
+    )
+    .padding(spacing::MD)
+    .max_width(CARD_WIDTH)
+    .style(container::bordered_box)
+    .into()
 }
 
 /// A path as shown: the folder, or nothing known.
@@ -74,7 +73,7 @@ fn shown(path: Option<&Path>) -> String {
 /// A button opening `target` with the system, offered only when it is known.
 fn open_button<'a>(label: String, target: Option<PathBuf>) -> Element<'a, Message> {
     button(text(label))
-        .style(button::secondary)
+        .style(styles::secondary)
         .on_press_maybe(target.map(Message::OpenWithSystem))
         .into()
 }
@@ -86,11 +85,11 @@ pub fn view(app: &App) -> Column<'_, Message> {
     let settings = app.settings();
     column![
         column![
-            text(fl!("ui-window-title")).size(NAME_SIZE),
+            text(fl!("ui-window-title")).size(font_size::DISPLAY),
             text(fl!("ui-about-version", version = VERSION)),
             text(fl!("ui-about-tagline")).style(text::secondary),
         ]
-        .spacing(SPACING / 2.0),
+        .spacing(spacing::XS),
         card(
             fl!("ui-about-section-system"),
             column![
@@ -123,7 +122,7 @@ pub fn view(app: &App) -> Column<'_, Message> {
                     open_button(fl!("ui-about-open-notes"), Some(app.notes_dir())),
                     open_button(fl!("ui-about-repository"), Some(PathBuf::from(REPOSITORY))),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .wrap(),
             ],
         ),
@@ -132,31 +131,32 @@ pub fn view(app: &App) -> Column<'_, Message> {
             column![
                 row![
                     button(text(fl!("ui-about-export-settings")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::SettingsTransfer(
                             SettingsTransferMessage::Export
                         ))),
                     button(text(fl!("ui-about-import-settings")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::SettingsTransfer(
                             SettingsTransferMessage::Import
                         ))),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .wrap(),
-                text(fl!("ui-about-settings-file-hint")).size(SMALL_SIZE),
+                text(fl!("ui-about-settings-file-hint")).size(font_size::CAPTION),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         ),
         card(
             fl!("ui-about-section-diagnostics"),
             column![
                 checkbox(settings.diagnostics_log)
+                    .style(styles::checkbox)
                     .label(fl!("ui-about-diagnostics-log"))
                     .on_toggle(|on| {
                         Message::App(AppMessage::Settings(SettingsMessage::DiagnosticsLog(on)))
                     }),
-                text(fl!("ui-about-diagnostics-log-hint")).size(SMALL_SIZE),
+                text(fl!("ui-about-diagnostics-log-hint")).size(font_size::CAPTION),
             ],
         ),
     ]

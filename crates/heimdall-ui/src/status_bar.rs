@@ -24,9 +24,7 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Size of the bar's text.
-const TEXT_SIZE: f32 = 12.0;
+use crate::tokens::font_size;
 
 /// Room around the bar's text.
 const PADDING: [f32; 2] = [2.0, 8.0];
@@ -559,10 +557,10 @@ pub fn count_text(shown: usize, total: usize, filtering: bool) -> String {
 pub fn view(left: String, right: String, controls: Element<'_, Message>) -> Element<'_, Message> {
     container(
         row![
-            text(left).size(TEXT_SIZE),
+            text(left).size(font_size::CAPTION),
             space::horizontal(),
             controls,
-            text(right).size(TEXT_SIZE),
+            text(right).size(font_size::CAPTION),
         ]
         .spacing(PADDING[1])
         .align_y(iced::Alignment::Center)

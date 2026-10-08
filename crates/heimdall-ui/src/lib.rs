@@ -67,10 +67,12 @@ mod single_instance;
 mod sleep_guard;
 pub mod split_view;
 pub mod status_bar;
+mod styles;
 pub mod tab_drag;
 pub mod terminal_view;
 mod texts;
 pub mod themes;
+pub mod tokens;
 pub mod transcript_lines;
 mod tree_drag;
 pub mod tree_view;
@@ -78,13 +80,28 @@ pub mod trusted_keys_view;
 pub mod tunnels_view;
 
 use heimdall_core::paths;
-use iced::{Font, Size, window};
+use iced::{Font, Pixels, Size, window};
 
 use crate::shell::Shell;
 use crate::terminal_view::FONTS;
 
-/// Font of the window's text, embedded by iced's `fira-sans` feature.
+/// Family of the window's text on Windows: Segoe UI, as the C# Heimdall (WPF's default),
+/// read from the system's fonts.
+#[cfg(windows)]
+const UI_FONT_FAMILY: &str = "Segoe UI";
+
+/// Family of the window's text elsewhere: Fira Sans, embedded by iced's `fira-sans` feature.
+#[cfg(not(windows))]
 const UI_FONT_FAMILY: &str = "Fira Sans";
+
+/// Font of the window's text.
+pub(crate) const UI_FONT: Font = Font::with_name(UI_FONT_FAMILY);
+
+/// The application's icon, the C# `app.ico`: its 32-pixel image, as rows of RGBA pixels.
+const ICON_RGBA: &[u8] = include_bytes!("../assets/icon/heimdall-32.rgba");
+
+/// Side of the icon's square image, in pixels.
+const ICON_SIDE: u32 = 32;
 
 /// Window size at first start, in logical pixels.
 const WINDOW_SIZE: Size = Size::new(1280.0, 800.0);
@@ -94,6 +111,11 @@ const MIN_WINDOW_SIZE: Size = Size::new(640.0, 400.0);
 
 /// Largest side a window kept is opened at, in logical pixels: no screen is larger.
 const MAX_WINDOW_SIDE: f32 = 16_384.0;
+
+/// The icon of every window, in its title bar and the taskbar.
+pub(crate) fn window_icon() -> Option<window::Icon> {
+    window::icon::from_rgba(ICON_RGBA.to_vec(), ICON_SIDE, ICON_SIDE).ok()
+}
 
 /// Runs the application until it exits: its main window opened first, put back where it
 /// was left.
@@ -140,6 +162,7 @@ pub fn run() -> iced::Result {
         min_size: Some(MIN_WINDOW_SIZE),
         // Quitting with live sessions asks first; their sessions are then cancelled.
         exit_on_close_request: false,
+        icon: window_icon(),
         ..window::Settings::default()
     };
     // The main window asked to open, named to the shell, then put back where it was left
@@ -158,7 +181,12 @@ pub fn run() -> iced::Result {
         .title(Shell::window_title)
         .theme(|shell: &Shell, _window| shell.theme())
         .subscription(Shell::subscription)
-        .default_font(Font::with_name(UI_FONT_FAMILY));
+        // The window's text at the C# body size, which a view sizes from.
+        .settings(iced::Settings {
+            default_text_size: Pixels(tokens::font_size::BODY),
+            ..iced::Settings::default()
+        })
+        .default_font(UI_FONT);
     let ran = FONTS
         .iter()
         .fold(daemon, |daemon, face| daemon.font(*face))

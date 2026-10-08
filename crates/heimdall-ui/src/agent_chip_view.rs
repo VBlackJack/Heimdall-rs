@@ -24,9 +24,8 @@ use iced::widget::{button, container, text, tooltip};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Size of the chip's text.
-const SMALL_SIZE: f32 = 12.0;
+use crate::styles;
+use crate::tokens::font_size;
 
 /// How the chip reads, as the C# chip's states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,7 +70,7 @@ pub fn view(chip: &AgentChip) -> Option<Element<'_, Message>> {
         return None;
     };
     let (text_said, tone) = said(found);
-    let label = text(text_said).size(SMALL_SIZE);
+    let label = text(text_said).size(font_size::CAPTION);
     let label = match tone {
         AgentTone::Off => label.style(text::secondary),
         AgentTone::Warn => label.style(text::warning),
@@ -80,10 +79,10 @@ pub fn view(chip: &AgentChip) -> Option<Element<'_, Message>> {
     Some(
         tooltip(
             button(label)
-                .style(button::text)
+                .style(styles::subtle)
                 .padding(0)
                 .on_press(Message::App(AppMessage::RefreshAgents)),
-            text(fl!("ui-agent-chip-tooltip")).size(SMALL_SIZE),
+            text(fl!("ui-agent-chip-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
         .style(container::rounded_box)

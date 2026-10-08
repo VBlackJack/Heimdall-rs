@@ -26,23 +26,21 @@ use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-const SPACING: f32 = 8.0;
-const PADDING: f32 = 20.0;
 /// Widest the panel grows.
 const PANEL_WIDTH: f32 = 560.0;
 /// Width of a line's label.
 const LABEL_WIDTH: f32 = 180.0;
-const HEADING_SIZE: f32 = 22.0;
-const SMALL_SIZE: f32 = 12.0;
 
 /// A line of the panel: its label, then what it says.
 fn line<'a>(label: String, value: String) -> Element<'a, Message> {
     row![
-        text(label).size(SMALL_SIZE).width(LABEL_WIDTH),
+        text(label).size(font_size::CAPTION).width(LABEL_WIDTH),
         text(value).width(Length::Fill),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center)
     .into()
 }
@@ -70,7 +68,7 @@ pub fn view<'a>(
     editable: bool,
 ) -> Element<'a, Message> {
     let id = profile.id.clone();
-    let mut lines = Column::new().spacing(SPACING / 2.0);
+    let mut lines = Column::new().spacing(spacing::XS);
     if let Some((host, port)) = &profile.endpoint {
         lines = lines.push(text(format!("{}:{port}", server_text(host))));
     }
@@ -109,34 +107,35 @@ pub fn view<'a>(
     }
     let actions = row![
         button(text(fl!("ui-detail-connect")))
+            .style(styles::primary)
             .on_press(Message::App(AppMessage::ConnectProfile(id.clone()))),
         button(text(fl!("ui-detail-edit")))
-            .style(button::secondary)
+            .style(styles::secondary)
             .on_press_maybe(editable.then(|| Message::App(AppMessage::EditProfile(id.clone())))),
         button(text(fl!("ui-tree-delete")))
-            .style(button::danger)
+            .style(styles::danger)
             .on_press(Message::App(AppMessage::RequestDeleteProfile(id))),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     container(
         column![
             row![
-                text(server_text(&profile.name)).size(HEADING_SIZE),
+                text(server_text(&profile.name)).size(font_size::DISPLAY),
                 text(profile.kind.label())
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::secondary),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(Alignment::Center),
             lines,
             actions,
             text(fl!("ui-detail-hints"))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::secondary),
         ]
-        .spacing(SPACING * 2.0),
+        .spacing(spacing::SM * 2.0),
     )
-    .padding(PADDING)
+    .padding(spacing::LG)
     .max_width(PANEL_WIDTH)
     .style(container::bordered_box)
     .into()

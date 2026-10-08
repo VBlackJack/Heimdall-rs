@@ -26,17 +26,9 @@ use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-/// Space between elements.
-const SPACING: f32 = 8.0;
-/// Inner margin of a card.
-const PADDING: f32 = 12.0;
-/// Size of hints and cells.
-const SMALL_SIZE: f32 = 12.0;
-/// Size of a card's title.
-const TITLE_SIZE: f32 = 16.0;
-/// Size of a question's title.
-const HEADING_SIZE: f32 = 20.0;
 /// Characters of an SSH fingerprint shown before the ellipsis, as the C# list shows it.
 const SSH_FINGERPRINT_SHOWN: usize = 16;
 /// Characters of an RDP fingerprint shown before the ellipsis.
@@ -111,9 +103,9 @@ fn fingerprint_cell<'a>(fingerprint: &str, shown: usize) -> Element<'a, Message>
         fingerprint.to_owned()
     };
     tooltip(
-        text(cut).size(SMALL_SIZE),
-        container(text(fingerprint.to_owned()).size(SMALL_SIZE))
-            .padding(SPACING / 2.0)
+        text(cut).size(font_size::CAPTION),
+        container(text(fingerprint.to_owned()).size(font_size::CAPTION))
+            .padding(spacing::XS)
             .style(container::rounded_box),
         tooltip::Position::Top,
     )
@@ -130,23 +122,24 @@ fn card<'a>(
     let (list, typed, placeholder) = search;
     container(
         column![
-            text(title).size(TITLE_SIZE),
-            text(hint).size(SMALL_SIZE),
+            text(title).size(font_size::SUBTITLE),
+            text(hint).size(font_size::CAPTION),
             text_input(&placeholder, typed)
+                .style(styles::text_input)
                 .on_input(move |typed| Message::TrustedSearch(list, typed)),
             body,
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     )
-    .padding(PADDING)
+    .padding(spacing::MD)
     .style(container::bordered_box)
     .into()
 }
 
 /// What stands in an empty list: its title and what to do.
 fn empty<'a>(title: String, body: String) -> Element<'a, Message> {
-    column![text(title), text(body).size(SMALL_SIZE)]
-        .spacing(SPACING / 2.0)
+    column![text(title), text(body).size(font_size::CAPTION)]
+        .spacing(spacing::XS)
         .into()
 }
 
@@ -166,7 +159,7 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
             fl!("ui-trusted-host-keys-empty-body"),
         )
     } else {
-        let mut rows = Column::new().spacing(SPACING / 2.0).push(
+        let mut rows = Column::new().spacing(spacing::XS).push(
             row![
                 header(fl!("ui-trusted-host-keys-host"), 3),
                 header(fl!("ui-trusted-host-keys-algorithm"), 2),
@@ -174,7 +167,7 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
                 // Room for both buttons, whatever the language: "Copier l'empreinte" is long.
                 header(String::new(), ACTIONS_PORTION),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         );
         for entry in &keys.ssh {
             let address = display_address(&entry.host, entry.port);
@@ -184,8 +177,13 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
             let key = TrustedKey::Ssh(entry.clone());
             rows = rows.push(
                 row![
-                    cell(text(address).size(SMALL_SIZE).into(), 3),
-                    cell(text(entry.algorithm.clone()).size(SMALL_SIZE).into(), 2),
+                    cell(text(address).size(font_size::CAPTION).into(), 3),
+                    cell(
+                        text(entry.algorithm.clone())
+                            .size(font_size::CAPTION)
+                            .into(),
+                        2
+                    ),
                     cell(
                         fingerprint_cell(&entry.fingerprint, SSH_FINGERPRINT_SHOWN),
                         3
@@ -195,20 +193,20 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
                             small_button(
                                 fl!("ui-trusted-host-keys-copy"),
                                 trusted(TrustedKeysMessage::CopyFingerprint(key.clone())),
-                                button::secondary,
+                                styles::secondary,
                             ),
                             small_button(
                                 fl!("ui-trusted-host-keys-remove"),
                                 trusted(TrustedKeysMessage::RequestForget(key)),
-                                button::danger,
+                                styles::danger,
                             ),
                         ]
-                        .spacing(SPACING / 2.0)
+                        .spacing(spacing::XS)
                         .into(),
                         ACTIONS_PORTION,
                     ),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(Alignment::Center),
             );
         }
@@ -220,18 +218,18 @@ pub fn host_keys<'a>(keys: &'a heimdall_app::TrustedKeys, search: &'a str) -> El
             small_button(
                 fl!("ui-trusted-host-keys-import"),
                 crate::hostkeys_view::app(heimdall_app::HostKeysMessage::Start),
-                button::secondary,
+                styles::secondary,
             ),
             small_button(
                 fl!("ui-trusted-host-keys-export"),
                 trusted(TrustedKeysMessage::Export),
-                button::secondary,
+                styles::secondary,
             ),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
         body,
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into();
     card(
         fl!("ui-trusted-host-keys-title"),
@@ -324,7 +322,7 @@ fn certificate_card<'a>(
     let body: Element<'a, Message> = if entries.is_empty() {
         empty(texts.empty_title, texts.empty_body)
     } else {
-        let mut rows = Column::new().spacing(SPACING / 2.0).push(
+        let mut rows = Column::new().spacing(spacing::XS).push(
             row![
                 header(fl!("ui-trusted-certificates-server"), SERVER_PORTION),
                 header(
@@ -336,7 +334,7 @@ fn certificate_card<'a>(
                 header(fl!("ui-trusted-certificates-trusted"), TRUSTED_PORTION),
                 header(String::new(), FORGET_PORTION),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         );
         for entry in entries {
             let address = display_address(&entry.host, entry.port);
@@ -382,24 +380,29 @@ fn certificate_row<'a>(
 ) -> Element<'a, Message> {
     let (address, fingerprint) = shown;
     let detail = |value: Option<String>| -> Element<'a, Message> {
-        text(value.unwrap_or_default()).size(SMALL_SIZE).into()
+        text(value.unwrap_or_default())
+            .size(font_size::CAPTION)
+            .into()
     };
     let since = key.trusted_since();
-    let mut forget = Column::new().spacing(SPACING / 2.0);
+    let mut forget = Column::new().spacing(spacing::XS);
     if shared {
         forget = forget.push(small_button(
             fl!("ui-trusted-certificates-forget-server"),
             trusted(TrustedKeysMessage::RequestForgetServer(key.clone())),
-            button::danger,
+            styles::danger,
         ));
     }
     forget = forget.push(small_button(
         fl!("ui-trusted-certificates-forget"),
         trusted(TrustedKeysMessage::RequestForget(key)),
-        button::danger,
+        styles::danger,
     ));
     row![
-        cell(text(address).size(SMALL_SIZE).into(), SERVER_PORTION),
+        cell(
+            text(address).size(font_size::CAPTION).into(),
+            SERVER_PORTION
+        ),
         cell(
             fingerprint_cell(fingerprint, RDP_FINGERPRINT_SHOWN),
             FINGERPRINT_PORTION
@@ -409,7 +412,7 @@ fn certificate_row<'a>(
         cell(detail(since), TRUSTED_PORTION),
         cell(forget.into(), FORGET_PORTION),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center)
     .into()
 }
@@ -419,14 +422,14 @@ pub fn unreadable<'a>(keys: &heimdall_app::TrustedKeys) -> Option<Element<'a, Me
     let detail = keys.unreadable.as_deref()?;
     Some(
         text(fl!("ui-trusted-keys-unreadable", detail = detail))
-            .size(SMALL_SIZE)
+            .size(font_size::CAPTION)
             .style(text::danger)
             .into(),
     )
 }
 
 fn header<'a>(label: String, portion: u16) -> Element<'a, Message> {
-    container(text(label).size(SMALL_SIZE))
+    container(text(label).size(font_size::CAPTION))
         .width(Length::FillPortion(portion))
         .into()
 }
@@ -442,7 +445,7 @@ fn small_button<'a>(
     message: Message,
     style: impl Fn(&iced::Theme, button::Status) -> button::Style + 'a,
 ) -> Element<'a, Message> {
-    button(text(label).size(SMALL_SIZE))
+    button(text(label).size(font_size::CAPTION))
         .style(style)
         .on_press(message)
         .into()
@@ -503,18 +506,18 @@ pub fn forget_server_question<'a>(key: &TrustedKey, count: usize) -> Element<'a,
 /// `forget`.
 fn question<'a>(title: String, body: String, keep: String, forget: String) -> Element<'a, Message> {
     column![
-        text(title).size(HEADING_SIZE),
+        text(title).size(font_size::TITLE),
         text(body),
         row![
             button(text(keep))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(forget))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
