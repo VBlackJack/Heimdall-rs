@@ -24,6 +24,7 @@
 mod app;
 mod certificate_pins;
 pub mod citrix;
+pub mod citrix_session;
 pub mod credential_provider;
 mod desktop;
 mod driver;

@@ -222,3 +222,87 @@ fn an_empty_cache_says_so_in_the_csharp_words() {
     )
     .expect("the C# words");
 }
+
+/// A launcher standing as it was made.
+struct Watch(heimdall_app::citrix_session::LauncherStatus);
+
+impl heimdall_app::citrix_session::LauncherWatch for Watch {
+    fn status(&self) -> heimdall_app::citrix_session::LauncherStatus {
+        self.0
+    }
+}
+
+#[test]
+fn a_citrix_tab_shows_its_launch_and_its_client_as_the_csharp_info_panel() {
+    use heimdall_app::Effect;
+    use heimdall_app::citrix_session::{Launched, LauncherStatus, Probe};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), Some(outlook()));
+    // The launch asked is not run: the tab is drawn from what it would answer.
+    let effects = app.update(AppMessage::OpenCitrix(ProfileId::new("outlook")));
+    let [Effect::LaunchCitrix { tab, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    let tab = *tab;
+    app.update(AppMessage::CitrixLaunched {
+        tab,
+        name: "Outlook".to_owned(),
+        result: Ok(Launched {
+            baseline: Ok([5].into_iter().collect()),
+            launcher: std::sync::Arc::new(Watch(LauncherStatus::Running)),
+            at: std::time::SystemTime::now(),
+        }),
+    });
+    app.update(AppMessage::CitrixProbed {
+        tab,
+        probe: Probe {
+            launcher: LauncherStatus::Exited(Some(0)),
+            clients: Ok([5, 4242].into_iter().collect()),
+        },
+    });
+    let shell = Shell::with_app(app);
+    let mut ui = common::simulator(settings(), WINDOW, shell.view());
+    for shown in [
+        "StoreFront: https://store.lab/Citrix/Store",
+        "Application: Outlook 365",
+        "Mode: StoreFront",
+        "Launcher exit code: 0",
+        "Connected. Citrix client PID: 4242",
+    ] {
+        ui.find(shown).expect(shown);
+    }
+}
+
+#[test]
+fn each_client_state_is_said() {
+    use heimdall_app::citrix_session::{ClientState, Untracked};
+    use heimdall_ui::citrix_view::client_text;
+
+    assert_eq!(
+        client_text(&ClientState::Launching),
+        "Launching Citrix session..."
+    );
+    assert_eq!(
+        client_text(&ClientState::Ended(12)),
+        "Disconnected. The Citrix client (PID: 12) ended."
+    );
+    assert_eq!(
+        client_text(&ClientState::LauncherFailed(3)),
+        "The Citrix launcher failed with exit code 3."
+    );
+    assert!(client_text(&ClientState::Shared).contains("already running"));
+    assert!(client_text(&ClientState::NotFoundYet).contains("not found yet"));
+    assert_eq!(
+        client_text(&ClientState::Untracked(Untracked::WindowsOnly)),
+        "Citrix client tracking is available on Windows only."
+    );
+    assert!(client_text(&ClientState::Untracked(Untracked::Unavailable)).contains("not tracked"));
+    assert!(
+        client_text(&ClientState::Untracked(Untracked::TimedOut)).contains("not listed in time")
+    );
+    assert_eq!(
+        client_text(&ClientState::NotStarted(CitrixRefusal::WorkspaceNotFound)),
+        "Citrix Workspace not found. Install Citrix Workspace App."
+    );
+}

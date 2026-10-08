@@ -183,6 +183,8 @@ pub enum Purpose {
     Rdp,
     /// A remote desktop over VNC.
     Vnc,
+    /// A Citrix application's status: nothing is connected.
+    Citrix,
 }
 
 /// What an attempt needs.

@@ -57,6 +57,7 @@ impl Reopen {
             TabProfile::Ftp(profile) => Self::Profile(profile.id.clone()),
             TabProfile::Local(shell) => Self::Shell(shell.clone()),
             TabProfile::WinRm(profile) => Self::Profile(profile.id.clone()),
+            TabProfile::Citrix(profile) => Self::Profile(profile.id.clone()),
         }
     }
 }

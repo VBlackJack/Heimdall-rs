@@ -21,6 +21,7 @@ pub mod address_test_view;
 pub mod agent_chip_view;
 pub mod citrix_form;
 pub mod citrix_import_view;
+pub mod citrix_view;
 pub mod code_editor;
 pub mod column_header;
 mod conflicts_view;

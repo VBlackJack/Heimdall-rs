@@ -103,3 +103,15 @@ pub fn home_dir() -> Option<PathBuf> {
 pub fn legacy_data_dir() -> Option<PathBuf> {
     BaseDirs::new().map(|dirs| dirs.data_local_dir().join(LEGACY_APPLICATION_DIR))
 }
+
+/// Windows' system folder, as Windows says where it is: never read from the environment,
+/// which whoever starts Heimdall sets. `None` when Windows does not say, or says a relative
+/// path.
+#[cfg(windows)]
+#[must_use]
+pub fn system_dir() -> Option<PathBuf> {
+    winsafe::GetSystemDirectory()
+        .ok()
+        .map(PathBuf::from)
+        .filter(|folder| folder.is_absolute())
+}
