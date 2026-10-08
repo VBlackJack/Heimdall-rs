@@ -27,6 +27,7 @@ pub mod citrix;
 pub mod credential_provider;
 mod desktop;
 mod driver;
+pub mod elevated_shell;
 mod error;
 mod event;
 pub mod external_edit;
@@ -80,10 +81,10 @@ pub use app::split;
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkPasswordRefusal, BulkPasswordSkips,
     BulkRefusal, CertificateContext, CitrixImportOutcome, ConflictRow, ConnectAs, Dialog,
-    DropTarget, Effect, ExportOutcome, FileKind, FilesMessage, FilterMessage, FloatMessage,
-    Floating, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow, HostKeysMessage,
-    HostKeysOutcome, HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary, KeyInput,
-    LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
+    DropTarget, Effect, ElevatedPane, ElevatedState, ExportOutcome, FileKind, FilesMessage,
+    FilterMessage, FloatMessage, Floating, FolderMessage, FolderNaming, GatewayBadge, HostKeyRow,
+    HostKeysMessage, HostKeysOutcome, HostKeysPreview, IDLE_POLL, ImportFile, ImportSummary,
+    KeyInput, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation, MIN_MASTER_PASSWORD_CHARS,
     MIN_MASTER_PASSWORD_CLASSES, Message, NO_FOLDER, NameAction, Notice, OpenedVault,
     OrganizationChange, PendingImport, Phase, PinDialog, PinFailure, PinMessage, PinMode,
     PointerInput, PostConnectConfirmation, ProfileCopy, ProfileKind, ProfileMenuMessage,

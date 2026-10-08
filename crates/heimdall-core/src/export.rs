@@ -65,6 +65,10 @@ const STOP_POLICY: i64 = 1;
 const WINRM_CURRENT_USER: &str = "CurrentUser";
 const WINRM_CREDENTIAL: &str = "Credential";
 
+/// The C# `ElevationMode` "External window", by value, as the C# writes it: a local shell run
+/// as administrator in a window of its own.
+const RUNAS_ELEVATION: i64 = 3;
+
 /// The whole document.
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +175,8 @@ struct Entry {
     local_shell_arguments: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     local_shell_working_directory: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    elevation_mode: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     win_rm_port: Option<u16>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -555,6 +561,7 @@ fn local(profile: &LocalProfile, windows_line: &dyn Fn(&LocalArguments) -> Strin
             .working_directory
             .as_ref()
             .map(|folder| folder.to_string_lossy().into_owned()),
+        elevation_mode: command.run_as_administrator.then_some(RUNAS_ELEVATION),
         session_logging_override: profile.session_logging,
         ..server(
             &profile.id,

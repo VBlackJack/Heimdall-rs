@@ -61,6 +61,7 @@ fn app(dir: &Path) -> App {
             program: Some("tool".to_owned()),
             arguments: LocalArguments::List(Vec::new()),
             working_directory: None,
+            run_as_administrator: false,
         },
         approved: None,
         session_logging: None,

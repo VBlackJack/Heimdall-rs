@@ -57,6 +57,7 @@ fn app(dir: &Path) -> App {
             program: Some(r"C:\Tools\tool.exe".to_owned()),
             arguments: LocalArguments::List(vec!["-a".to_owned(), "two words".to_owned()]),
             working_directory: None,
+            run_as_administrator: false,
         },
         approved: None,
         session_logging: None,
