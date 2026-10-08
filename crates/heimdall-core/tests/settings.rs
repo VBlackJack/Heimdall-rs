@@ -1152,6 +1152,39 @@ fn ctrl_v_pastes_outside_full_screen_programs_by_default_and_is_kept() {
 }
 
 #[test]
+fn ctrl_k_opens_quick_connect_by_default_and_is_kept_and_carried() {
+    use heimdall_core::settings::CtrlKTerminal;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(settings.ctrl_k_terminal, CtrlKTerminal::QuickConnect);
+    assert!(settings.ctrl_k_terminal.opens_quick_connect(), "as the C#");
+    assert!(!CtrlKTerminal::SendToSession.opens_quick_connect());
+
+    settings.ctrl_k_terminal = CtrlKTerminal::SendToSession;
+    settings.save(&path).expect("save");
+    assert_eq!(
+        Settings::load(&path).expect("load").ctrl_k_terminal,
+        CtrlKTerminal::SendToSession
+    );
+    assert_eq!(CtrlKTerminal::named("bogus"), CtrlKTerminal::QuickConnect);
+
+    // Carried by an export, as every preference.
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("ctrl_k = \"send-to-session\""), "{text}");
+    let read = Settings::default().import(&text).expect("read");
+    assert_eq!(read.settings.ctrl_k_terminal, CtrlKTerminal::SendToSession);
+    assert!(
+        read.changes
+            .iter()
+            .any(|change| change.key == "terminal.ctrl_k"),
+        "{:?}",
+        read.changes
+    );
+}
+
+#[test]
 fn the_sftp_browser_opens_beside_ssh_by_default_and_an_older_file_keeps_the_csharp_defaults() {
     use heimdall_core::settings::SftpBrowser;
 

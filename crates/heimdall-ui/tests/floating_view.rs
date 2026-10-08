@@ -613,6 +613,49 @@ fn session_messages(tab: TabId) -> Vec<Message> {
 }
 
 #[test]
+fn ctrl_k_in_the_window_opens_quick_connect_in_the_main_window_and_sends_nothing() {
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers as Held};
+
+    const FIELD: &str = "Search host or IP... (Ctrl+K)";
+    let dir = tempfile::tempdir().expect("dir");
+    let Connected {
+        mut shell,
+        window,
+        sink_b,
+        ..
+    } = connected_pair(dir.path());
+    let ctrl_k = iced::Event::Keyboard(Event::KeyPressed {
+        key: Key::Character("k".into()),
+        modified_key: Key::Character("k".into()),
+        physical_key: Physical::Code(Code::KeyK),
+        location: Location::Standard,
+        modifiers: Held::CTRL,
+        text: None,
+        repeat: false,
+    });
+    {
+        let mut ui = simulator(shell.window_view(window));
+        let statuses = ui.simulate([ctrl_k]);
+        assert_eq!(statuses, [iced::event::Status::Ignored], "the window's");
+        assert!(
+            !ui.into_messages().any(|message| matches!(
+                &message,
+                Message::InFloating(_, inner)
+                    if matches!(**inner, Message::App(AppMessage::Key { .. }))
+            )),
+            "nothing for its session"
+        );
+    }
+    // Its window reports it: Quick Connect opens in the main window.
+    let _ = shell.update(Message::Float(window, FloatEvent::QuickConnect));
+    simulator(shell.view())
+        .find(FIELD)
+        .expect("Quick Connect open");
+    assert!(sink_b.taken().is_empty(), "its session got nothing");
+}
+
+#[test]
 fn what_the_window_lets_through_names_its_tab_and_leaves_the_main_window_alone() {
     let dir = tempfile::tempdir().expect("dir");
     let Connected {

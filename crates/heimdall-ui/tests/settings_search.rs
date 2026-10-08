@@ -654,6 +654,51 @@ fn the_lock_settings_are_marked_reset_and_shown_in_the_security_overview() {
 }
 
 #[test]
+fn ctrl_k_in_a_terminal_is_chosen_found_marked_and_reset_on_the_terminal_tab() {
+    use heimdall_core::settings::CtrlKTerminal;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(shell.settings_found("ctrl+k"), [SettingRow::CtrlKTerminal]);
+    assert!(
+        shell
+            .settings_found("quick connect")
+            .contains(&SettingRow::CtrlKTerminal),
+        "a choice of its list"
+    );
+    assert_eq!(SettingRow::CtrlKTerminal.card(), SettingsCard::Terminal);
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Terminal));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Ctrl+K in a terminal").expect("its row");
+    }
+    change(
+        &mut shell,
+        SettingsMessage::CtrlKTerminal(CtrlKTerminal::SendToSession),
+    );
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert_eq!(saved.ctrl_k_terminal, CtrlKTerminal::SendToSession);
+    assert_eq!(
+        shell.settings_found("modified"),
+        [SettingRow::CtrlKTerminal]
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Modified").expect("its marker");
+    }
+
+    let _ = shell.update(Message::ResetSetting(SettingRow::CtrlKTerminal));
+    assert_eq!(
+        shell.app().settings().ctrl_k_terminal,
+        CtrlKTerminal::QuickConnect
+    );
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert_eq!(saved.ctrl_k_terminal, CtrlKTerminal::QuickConnect);
+    assert!(!SettingRow::CtrlKTerminal.is_modified(shell.app().settings()));
+}
+
+#[test]
 fn putty_and_the_x_server_are_typed_applied_found_and_reset_on_the_ssh_tab() {
     use heimdall_ui::settings_rows::ToolPath;
 

@@ -2138,6 +2138,9 @@ ui-settings-ctrl-v = Ctrl+V en un terminal
 ui-settings-ctrl-v-always = Pega
 ui-settings-ctrl-v-outside = Pega, salvo en programas a pantalla completa (vim, less...)
 ui-settings-ctrl-v-never = Se envía a la sesión (Ctrl+Mayús+V pega)
+ui-settings-ctrl-k = Ctrl+K en un terminal
+ui-settings-ctrl-k-quick-connect = Abre la conexión rápida
+ui-settings-ctrl-k-send = Se envía a la sesión (Ctrl+Mayús+K abre la conexión rápida)
 ui-connect-via = vía { $route }
 
 ## Translations of text written in English first.

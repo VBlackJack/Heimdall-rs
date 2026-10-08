@@ -327,6 +327,89 @@ fn key_event(typed: &str, code: iced::keyboard::key::Code, pressed: bool) -> ice
 }
 
 #[test]
+fn ctrl_k_on_a_desktop_is_left_to_the_window_and_never_reaches_the_server() {
+    use iced::event::Status;
+    use iced::keyboard::key::{Code, Named, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let ctrl = |pressed: bool, modifiers: Modifiers| {
+        let key = Key::Named(Named::Control);
+        let physical_key = Physical::Code(Code::ControlLeft);
+        iced::Event::Keyboard(if pressed {
+            Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Left,
+                modifiers,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Left,
+                modifiers,
+            }
+        })
+    };
+    let k = |pressed: bool, modifiers: Modifiers| {
+        let key = Key::Character("k".into());
+        let physical_key = Physical::Code(Code::KeyK);
+        iced::Event::Keyboard(if pressed {
+            Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers,
+            }
+        })
+    };
+    for modifiers in [Modifiers::CTRL, Modifiers::CTRL | Modifiers::SHIFT] {
+        let mut ui = simulator(&shell);
+        let statuses = ui.simulate([
+            ctrl(true, modifiers),
+            k(true, modifiers),
+            k(false, modifiers),
+            ctrl(false, Modifiers::empty()),
+        ]);
+        assert_eq!(statuses[1], Status::Ignored, "the window's: {modifiers:?}");
+        let sent: Vec<bool> = ui
+            .into_messages()
+            .filter_map(|message| match message {
+                Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|input| match input {
+                DesktopInput::Key { pressed, .. } => Some(pressed),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            sent,
+            [true, false],
+            "Ctrl alone, down and up: {modifiers:?}"
+        );
+    }
+}
+
+#[test]
 fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = opened(dir.path());

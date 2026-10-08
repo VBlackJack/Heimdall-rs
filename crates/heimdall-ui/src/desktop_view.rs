@@ -41,6 +41,7 @@ use iced_renderer::wgpu::primitive::Renderer as _;
 
 use crate::desktop_texture::Desktop;
 use crate::keysym::keysym;
+use crate::terminal_view::keys::{WindowShortcut, window_shortcut};
 
 pub use scancodes::scancode;
 
@@ -351,6 +352,73 @@ fn mouse_button(button: mouse::Button) -> Option<PointerButton> {
 }
 
 impl<M: Clone> DesktopView<'_, M> {
+    /// A key pressed or let go while the desktop takes the keyboard: the server's, but for
+    /// the window's own keys.
+    fn keyboard(
+        &self,
+        held: &mut Vec<(Physical, u32)>,
+        shell: &mut Shell<'_, M>,
+        event: &keyboard::Event,
+    ) {
+        match event {
+            // F11 is the window's: full screen, as in the C# Heimdall.
+            keyboard::Event::KeyPressed { physical_key, .. }
+            | keyboard::Event::KeyReleased { physical_key, .. }
+                if *physical_key == Physical::Code(Code::F11) => {}
+            // Quick Connect is the window's, as the C# keyboard hook takes Ctrl+K from its
+            // RDP control: left uncaptured, and its K never sent, down or up.
+            keyboard::Event::KeyPressed {
+                key,
+                physical_key,
+                modifiers,
+                ..
+            }
+            | keyboard::Event::KeyReleased {
+                key,
+                physical_key,
+                modifiers,
+                ..
+            } if window_shortcut(key, *physical_key, *modifiers)
+                == Some(WindowShortcut::QuickConnect) => {}
+            keyboard::Event::KeyPressed {
+                modified_key,
+                physical_key,
+                location,
+                modifiers,
+                ..
+            } => {
+                if self.gives_back(held, shell, *modifiers, *physical_key) {
+                    return;
+                }
+                self.key(held, shell, modified_key, *location, *physical_key, true);
+            }
+            keyboard::Event::KeyReleased {
+                modified_key,
+                physical_key,
+                location,
+                ..
+            } => {
+                self.key(held, shell, modified_key, *location, *physical_key, false);
+            }
+            keyboard::Event::ModifiersChanged(_) => {}
+        }
+    }
+
+    /// Every key `held` let go on the server, so none stays down there.
+    fn release_held(&self, held: &mut Vec<(Physical, u32)>, shell: &mut Shell<'_, M>) {
+        let releases: Vec<DesktopInput> = held
+            .drain(..)
+            .map(|(physical, keysym)| DesktopInput::Key {
+                scancode: scancode(physical),
+                keysym: Some(keysym),
+                pressed: false,
+            })
+            .collect();
+        if !releases.is_empty() {
+            self.send(shell, releases);
+        }
+    }
+
     /// Ctrl+Alt+Home: every key the server holds down is let go, or Ctrl and Alt would stay,
     /// then the keyboard goes back to the window. Whether it was that.
     fn gives_back(
@@ -366,17 +434,7 @@ impl<M: Clone> DesktopView<'_, M> {
         if !(modifiers.control() && modifiers.alt() && physical_key == Physical::Code(Code::Home)) {
             return false;
         }
-        let releases: Vec<DesktopInput> = held
-            .drain(..)
-            .map(|(physical, keysym)| DesktopInput::Key {
-                scancode: scancode(physical),
-                keysym: Some(keysym),
-                pressed: false,
-            })
-            .collect();
-        if !releases.is_empty() {
-            self.send(shell, releases);
-        }
+        self.release_held(held, shell);
         shell.publish(release.clone());
         shell.capture_event();
         true
@@ -429,6 +487,9 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
         let ask = self.pane.asks_tab_size() && (!self.fit || self.pane.wants_first_size());
         self.report_size(state, shell, bounds, ask);
         if !self.interactive {
+            // Keys held when a dialog or Quick Connect came over it are let go on the server:
+            // their releases go to the dialog.
+            self.release_held(&mut state.held, shell);
             return;
         }
         match event {
@@ -479,45 +540,7 @@ impl<M: Clone> Widget<M, Theme, iced::Renderer> for DesktopView<'_, M> {
                     shell.capture_event();
                 }
             }
-            // F11 is the window's: full screen, as in the C# Heimdall.
-            Event::Keyboard(
-                keyboard::Event::KeyPressed { physical_key, .. }
-                | keyboard::Event::KeyReleased { physical_key, .. },
-            ) if *physical_key == Physical::Code(Code::F11) => {}
-            Event::Keyboard(keyboard::Event::KeyPressed {
-                modified_key,
-                physical_key,
-                location,
-                modifiers,
-                ..
-            }) => {
-                if self.gives_back(&mut state.held, shell, *modifiers, *physical_key) {
-                    return;
-                }
-                self.key(
-                    &mut state.held,
-                    shell,
-                    modified_key,
-                    *location,
-                    *physical_key,
-                    true,
-                );
-            }
-            Event::Keyboard(keyboard::Event::KeyReleased {
-                modified_key,
-                physical_key,
-                location,
-                ..
-            }) => {
-                self.key(
-                    &mut state.held,
-                    shell,
-                    modified_key,
-                    *location,
-                    *physical_key,
-                    false,
-                );
-            }
+            Event::Keyboard(event) => self.keyboard(&mut state.held, shell, event),
             _ => {}
         }
     }

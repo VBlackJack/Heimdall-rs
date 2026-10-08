@@ -106,6 +106,8 @@ pub enum FloatEvent {
     FindKey,
     /// Ctrl+Shift+F no widget took: the search bar over its terminal, opened or closed.
     TerminalFind,
+    /// Ctrl+K or Ctrl+Shift+K no widget took: Quick Connect, in the main window.
+    QuickConnect,
     /// Escape, taken by a widget or not: a Files tab's menu, its path bar typed in, then
     /// its listing on its way, as the main window's.
     Escape,
@@ -118,7 +120,8 @@ pub enum FloatEvent {
     FileDropped(PathBuf),
 }
 
-/// The event of a tab's own window it reports; none of the main window's shortcuts.
+/// The event of a tab's own window it reports; none of the main window's shortcuts but
+/// Quick Connect.
 pub(crate) fn window_event(
     event: iced::Event,
     status: event::Status,
@@ -179,6 +182,11 @@ fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<Floa
             == Some(WindowShortcut::Find) =>
         {
             Some(FloatEvent::TerminalFind)
+        }
+        _ if crate::terminal_view::keys::window_shortcut(&key, physical_key, modifiers)
+            == Some(WindowShortcut::QuickConnect) =>
+        {
+            (!repeat).then_some(FloatEvent::QuickConnect)
         }
         _ => crate::files_view::files_key(&key, physical_key, modifiers).map(FloatEvent::FilesKey),
     }
@@ -540,6 +548,39 @@ mod tests {
             Modifiers::CTRL,
         );
         assert_eq!(window_event(lock, untaken, window::Id::unique()), None);
+    }
+
+    #[test]
+    fn ctrl_k_left_by_its_session_is_quick_connect_of_the_main_window() {
+        let (untaken, taken) = (event::Status::Ignored, event::Status::Captured);
+        let k = Physical::Code(Code::KeyK);
+        for modifiers in [Modifiers::CTRL, Modifiers::CTRL | Modifiers::SHIFT] {
+            let quick = pressed(Key::Character("k".into()), k, modifiers);
+            assert_eq!(
+                window_event(quick.clone(), untaken, window::Id::unique()),
+                Some(FloatEvent::QuickConnect),
+                "{modifiers:?}"
+            );
+            assert_eq!(
+                window_event(quick, taken, window::Id::unique()),
+                None,
+                "a shell's ^K, when the settings send it there"
+            );
+        }
+        let held = iced::Event::Keyboard(keyboard::Event::KeyPressed {
+            key: Key::Character("k".into()),
+            modified_key: Key::Character("k".into()),
+            physical_key: k,
+            location: Location::Standard,
+            modifiers: Modifiers::CTRL,
+            text: None,
+            repeat: true,
+        });
+        assert_eq!(
+            window_event(held, untaken, window::Id::unique()),
+            None,
+            "once, held or not"
+        );
     }
 
     #[test]

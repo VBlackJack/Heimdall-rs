@@ -27,8 +27,8 @@
 use heimdall_app::{Effect, Message as AppMessage, PinMessage, VaultStatus, search_folded};
 use heimdall_core::profile::{RdpDefaults, SshMode};
 use heimdall_core::settings::{
-    Accent, AgentPreference, AppTheme, ColorScheme, CtrlVPaste, ExecutionPolicy, Language,
-    MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
+    Accent, AgentPreference, AppTheme, ColorScheme, CtrlKTerminal, CtrlVPaste, ExecutionPolicy,
+    Language, MAX_SESSIONS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MAX, RDP_AUTO_RECONNECT_ATTEMPTS_MIN,
     SSH_AUTO_RECONNECT_ATTEMPTS_MAX, SSH_AUTO_RECONNECT_ATTEMPTS_MIN, Settings,
 };
 use iced::widget::scrollable::RelativeOffset;
@@ -39,9 +39,9 @@ use iced::widget::{
 use iced::{Element, Task, Theme};
 
 use super::{
-    AgentChoice, CONNECT_TIMEOUTS, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice, LanguageChoice,
-    Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField, SessionsChoice,
-    SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
+    AgentChoice, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice,
+    LanguageChoice, Message, PolicyChoice, SETTINGS_WIDTH, SchemeChoice, SessionField,
+    SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
 };
 use crate::i18n::fl;
 use crate::search_keys::SearchKeys;
@@ -101,6 +101,21 @@ pub fn search_field_id() -> iced::widget::Id {
 /// Widget identifier of the Settings page's scrolled content.
 fn scroll_id() -> iced::widget::Id {
     iced::widget::Id::new("settings-page")
+}
+
+/// A list of `options` with `selected` chosen, in the application's list style.
+fn choices<'a, T>(
+    options: Vec<T>,
+    selected: Option<T>,
+    on_select: impl Fn(T) -> Message + 'a,
+) -> Element<'a, Message>
+where
+    T: ToString + PartialEq + Clone + 'a,
+{
+    pick_list(options, selected, on_select)
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .into()
 }
 
 /// `label` before `control`, on one line, as the page's lists and fields are laid out.
@@ -176,6 +191,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::FontFamily => fl!("ui-settings-font-family"),
         SettingRow::ColorScheme => fl!("ui-settings-color-scheme"),
         SettingRow::CtrlVPaste => fl!("ui-settings-ctrl-v"),
+        SettingRow::CtrlKTerminal => fl!("ui-settings-ctrl-k"),
         SettingRow::PowerShellPolicy => fl!("ui-settings-powershell-policy"),
         SettingRow::SessionLogging => fl!("ui-settings-session-logging-record"),
         SettingRow::SessionLogDirectory => fl!("ui-settings-session-log-directory"),
@@ -256,6 +272,9 @@ fn row_choices(row: SettingRow) -> Vec<String> {
             .map(|s| SchemeChoice(s).to_string())
             .to_vec(),
         SettingRow::CtrlVPaste => CtrlVPaste::ALL.map(|c| CtrlVChoice(c).to_string()).to_vec(),
+        SettingRow::CtrlKTerminal => CtrlKTerminal::ALL
+            .map(|c| CtrlKChoice(c).to_string())
+            .to_vec(),
         SettingRow::PowerShellPolicy => ExecutionPolicy::ALL
             .map(|p| PolicyChoice(p).to_string())
             .to_vec(),
@@ -741,6 +760,7 @@ impl Shell {
             SettingRow::FontFamily => defaults.terminal_font_family,
             SettingRow::ColorScheme => SchemeChoice(defaults.color_scheme).to_string(),
             SettingRow::CtrlVPaste => CtrlVChoice(defaults.ctrl_v_paste).to_string(),
+            SettingRow::CtrlKTerminal => CtrlKChoice(defaults.ctrl_k_terminal).to_string(),
             SettingRow::PowerShellPolicy => {
                 PolicyChoice(defaults.powershell_execution_policy).to_string()
             }
@@ -855,87 +875,79 @@ impl Shell {
         let line = match row {
             SettingRow::Language => labelled(
                 label,
-                pick_list(
+                choices(
                     Language::ALL.map(LanguageChoice).to_vec(),
                     Some(LanguageChoice(
                         settings.language.unwrap_or_else(crate::i18n::current),
                     )),
                     |LanguageChoice(language)| Message::LanguageChosen(language),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             SettingRow::Theme => labelled(
                 label,
-                pick_list(
+                choices(
                     AppTheme::ALL.map(ThemeChoice).to_vec(),
                     Some(ThemeChoice(settings.theme)),
                     |ThemeChoice(theme)| send(SettingsMessage::Theme(theme)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             SettingRow::Accent => labelled(
                 label,
-                pick_list(
+                choices(
                     Accent::ALL.map(AccentChoice).to_vec(),
                     Some(AccentChoice(settings.accent)),
                     |AccentChoice(accent)| send(SettingsMessage::Accent(accent)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             SettingRow::MaxSessions => labelled(
                 label,
-                pick_list(
+                choices(
                     (0..=MAX_SESSIONS_MAX)
                         .map(SessionsChoice)
                         .collect::<Vec<_>>(),
                     Some(SessionsChoice(settings.max_sessions)),
                     |SessionsChoice(max)| send(SettingsMessage::MaxSessions(max)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             SettingRow::ColorScheme => labelled(
                 label,
-                pick_list(
+                choices(
                     ColorScheme::ALL.map(SchemeChoice).to_vec(),
                     Some(SchemeChoice(settings.color_scheme)),
                     |SchemeChoice(scheme)| send(SettingsMessage::ColorScheme(scheme)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             SettingRow::CtrlVPaste => labelled(
                 label,
-                pick_list(
+                choices(
                     CtrlVPaste::ALL.map(CtrlVChoice).to_vec(),
                     Some(CtrlVChoice(settings.ctrl_v_paste)),
                     |CtrlVChoice(choice)| send(SettingsMessage::CtrlVPaste(choice)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
+            ),
+            SettingRow::CtrlKTerminal => labelled(
+                label,
+                choices(
+                    CtrlKTerminal::ALL.map(CtrlKChoice).to_vec(),
+                    Some(CtrlKChoice(settings.ctrl_k_terminal)),
+                    |CtrlKChoice(choice)| send(SettingsMessage::CtrlKTerminal(choice)),
+                ),
             ),
             SettingRow::PowerShellPolicy => labelled(
                 label,
-                pick_list(
+                choices(
                     ExecutionPolicy::ALL.map(PolicyChoice).to_vec(),
                     Some(PolicyChoice(settings.powershell_execution_policy)),
                     |PolicyChoice(policy)| send(SettingsMessage::PowerShellExecutionPolicy(policy)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             SettingRow::SshAgentPreference => labelled(
                 label,
-                pick_list(
+                choices(
                     AgentPreference::ALL.map(AgentChoice).to_vec(),
                     Some(AgentChoice(settings.ssh_agent_preference)),
                     |AgentChoice(preference)| send(SettingsMessage::SshAgentPreference(preference)),
-                )
-                .style(styles::pick_list)
-                .menu_style(styles::menu),
+                ),
             ),
             _ => return self.attempts_row(row),
         };
