@@ -31,6 +31,10 @@ const DACL_START: &str = "D:";
 /// The flag of a protected access list, among those before its first entry.
 const PROTECTED_FLAG: char = 'P';
 
+/// The accounts SDDL writes by an alias rather than by their SID: the built-in
+/// Administrator (RID 500, the account the Windows CI runs as) and Guest (RID 501).
+const ACCOUNT_ALIASES: [(&str, &str); 2] = [("-500", "LA"), ("-501", "LG")];
+
 /// A folder's access list: whether it is protected, and its entries.
 #[derive(Debug)]
 pub struct Dacl {
@@ -77,9 +81,17 @@ pub fn read(path: &Path) -> Dacl {
 /// The three entries a restricted folder has, each with `flags`: full control to the
 /// current user, the Administrators and SYSTEM.
 pub fn restricted(flags: &str) -> BTreeSet<String> {
-    let user = current_user_sid().expect("user");
+    let user = sddl_account(&current_user_sid().expect("user"));
     [user.as_str(), "BA", "SY"]
         .into_iter()
         .map(|account| format!("A;{flags};FA;;;{account}"))
         .collect()
+}
+
+/// How SDDL writes the account `sid`: its alias when it has one, else the SID itself.
+fn sddl_account(sid: &str) -> String {
+    ACCOUNT_ALIASES
+        .iter()
+        .find(|(rid, _)| sid.ends_with(rid))
+        .map_or_else(|| sid.to_owned(), |(_, alias)| (*alias).to_owned())
 }
