@@ -25,5 +25,9 @@ thiserror.workspace = true
 toml.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The current user's SID and the system folder, for the folders' access.
+winsafe.workspace = true
+
 [lints]
 workspace = true
