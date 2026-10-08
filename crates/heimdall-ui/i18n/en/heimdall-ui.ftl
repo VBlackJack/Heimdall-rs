@@ -836,6 +836,7 @@ ui-profile-domain-hint = The NetBIOS name (CORP) or the DNS domain (corp.example
 ui-profile-winrm-identity = Identity
 ui-profile-winrm-identity-current = Current Windows identity
 ui-profile-winrm-identity-stored = Stored credential
+ui-profile-winrm-password-hint = Leave the password empty to type it in PowerShell when connecting. A stored password the host refuses is not tried again until a new one is saved.
 ui-profile-options-rdp = RDP session options
 ui-profile-options-vnc = VNC Options
 ui-profile-options-telnet = Telnet Options
@@ -1778,8 +1779,8 @@ ui-bulk-password-confirm-label = Confirm password:
 ui-bulk-password-control = Password cannot contain control characters.
 ui-bulk-password-mismatch = Passwords do not match.
 ui-bulk-password-skipped-winrm = { $count ->
-    [one] Skipped { $count } WinRM profile because its password is not saved.
-   *[other] Skipped { $count } WinRM profiles because their passwords are not saved.
+    [one] Skipped { $count } WinRM profile because no username is configured.
+   *[other] Skipped { $count } WinRM profiles because no username is configured.
 }
 ui-bulk-password-skipped-no-account = { $count ->
     [one] Skipped { $count } profile because no username is configured.

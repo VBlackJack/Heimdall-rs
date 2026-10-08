@@ -4616,7 +4616,7 @@ fn the_bulk_password_dialog_names_its_count_and_saves_the_password_typed_twice()
     snapshot(&shell, "bulk-password.png");
     let mut ui = simulator(&shell);
     ui.find("Setting password on 1 server").expect("one");
-    ui.find("Skipped 1 WinRM profile because its password is not saved.")
+    ui.find("Skipped 1 WinRM profile because no username is configured.")
         .expect("WinRM");
     ui.find("Skipped 2 profiles because no username is configured.")
         .expect("without an account");
