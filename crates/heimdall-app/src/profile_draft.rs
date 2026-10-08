@@ -201,8 +201,9 @@ impl DraftProtocol {
             | ProfileField::FixedHeight
             | ProfileField::RdGateway => self == Self::Rdp,
             ProfileField::KeyPath => self.is_ssh_family(),
-            // The protocols whose password the external credential provider gives.
-            ProfileField::VaultEntry => self.saves_password(),
+            // The protocols whose password the external credential provider gives: not
+            // `WinRM`'s, which no server question asks for.
+            ProfileField::VaultEntry => self.saves_password() && self != Self::WinRm,
             // A WinRM session has the gateway carry it, and no ports of its own to open there.
             ProfileField::SocksPort
             | ProfileField::RemoteBindPort
@@ -217,13 +218,13 @@ impl DraftProtocol {
         matches!(self, Self::Local | Self::Citrix)
     }
 
-    /// Whether a password can be saved with this protocol's profiles. A `WinRM` password is
-    /// typed into `PowerShell`, which asks for it.
+    /// Whether a password can be saved with this protocol's profiles. A `WinRM` profile's,
+    /// only with a stored credential: see [`ProfileDraft::shows_password`].
     #[must_use]
     pub fn saves_password(self) -> bool {
         matches!(
             self,
-            Self::Ssh | Self::Sftp | Self::Rdp | Self::Vnc | Self::Ftp
+            Self::Ssh | Self::Sftp | Self::Rdp | Self::Vnc | Self::Ftp | Self::WinRm
         )
     }
 
@@ -1131,6 +1132,15 @@ impl ProfileDraft {
                 && !self.is_on(ProfileToggle::StoredCredential))
             && !(fixed_size && self.rdp_options.resolution != Resolution::Fixed)
             && !(Self::FORWARD_FIELDS.contains(&field) && self.routed_gateway().is_none())
+    }
+
+    /// Whether the form shows a password field: a `WinRM` profile's only with a stored
+    /// credential, as the C# dialog shows it, the current Windows identity having none.
+    #[must_use]
+    pub fn shows_password(&self) -> bool {
+        self.protocol.saves_password()
+            && (self.protocol != DraftProtocol::WinRm
+                || self.is_on(ProfileToggle::StoredCredential))
     }
 
     /// The fields of the ports opened through the gateway, shown only through one.
@@ -2635,6 +2645,19 @@ mod tests {
             panic!("winrm");
         };
         assert!(!http.skip_certificate_check);
+    }
+
+    #[test]
+    fn a_winrm_password_shows_only_for_a_stored_credential() {
+        let mut form = ProfileDraft::new_for(DraftProtocol::WinRm);
+        assert!(form.protocol.saves_password());
+        assert!(!form.shows_password(), "the current Windows identity");
+        form.toggle(ProfileToggle::StoredCredential, true);
+        assert!(form.shows_password());
+        // No question asks a password manager for it.
+        assert!(!form.shows(ProfileField::VaultEntry));
+        assert!(ProfileDraft::new_for(DraftProtocol::Ssh).shows_password());
+        assert!(!ProfileDraft::new_for(DraftProtocol::Telnet).shows_password());
     }
 
     #[test]

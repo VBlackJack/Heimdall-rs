@@ -15,8 +15,8 @@
  */
 
 //! The password of several profiles set at once, as the C# bulk edit does: typed twice,
-//! saved for each profile at its own server and account, in one write of the vault, and
-//! never for a `WinRM` profile, whose password is not saved.
+//! saved for each profile at its own server and account, in one write of the vault; for a
+//! `WinRM` profile only when it names an account, as the C# does.
 
 #[path = "support/log_capture.rs"]
 mod log_capture;
@@ -67,7 +67,8 @@ fn ssh(name: &str, host: &str, port: u16, username: Option<&str>) -> SshProfile 
 }
 
 /// Two SSH profiles on different servers, one naming no account, an RDP profile in a
-/// domain, an FTP, a VNC, a `WinRM` with an account and a Telnet profile.
+/// domain, an FTP, a VNC, a `WinRM` with an account, one as the current Windows identity and
+/// a Telnet profile.
 fn app(dir: &Path, system: &SystemCredentials) -> App {
     let profiles_file = dir.join("profiles.toml");
     let mut store = ProfileStore::open(&profiles_file).expect("store");
@@ -129,6 +130,17 @@ fn app(dir: &Path, system: &SystemCredentials) -> App {
         use_ssl: false,
         skip_certificate_check: false,
         username: Some("admin".to_owned()),
+        gateway: None,
+    }]);
+    store.merge_winrm([WinRmProfile {
+        id: id("winrm-current"),
+        name: "ps-current".to_owned(),
+        group: None,
+        host: "ps2.lab".to_owned(),
+        port: 5985,
+        use_ssl: false,
+        skip_certificate_check: false,
+        username: None,
         gateway: None,
     }]);
     store.merge_telnet([TelnetProfile {
@@ -254,15 +266,37 @@ fn ftp_answer(app: &mut App) -> Option<String> {
     answer(app, tab, attempt, asked("f.lab", 21, "ops", 1))
 }
 
-const ALL: [&str; 8] = ["web", "db", "bare", "rdp", "ftp", "vnc", "winrm", "telnet"];
+/// The password a new `WinRM` session of the profile with an account is started with.
+fn winrm_password(app: &mut App) -> Option<String> {
+    let effects = app.update(Message::OpenWinRm(id("winrm")));
+    let [Effect::ConnectWinRm { request, .. }] = effects.as_slice() else {
+        panic!("expected ConnectWinRm, got {effects:?}");
+    };
+    request
+        .password
+        .as_ref()
+        .map(|password| password.expose().to_owned())
+}
+
+const ALL: [&str; 9] = [
+    "web",
+    "db",
+    "bare",
+    "rdp",
+    "ftp",
+    "vnc",
+    "winrm",
+    "winrm-current",
+    "telnet",
+];
 
 #[test]
-fn winrm_and_the_profiles_without_a_saved_password_are_left_alone_and_counted() {
+fn the_profiles_without_a_saved_password_are_left_alone_and_counted() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &SystemCredentials::memory());
     select(&mut app, &ALL);
     let selected = app.selected_profiles();
-    assert_eq!(app.bulk_password_targets(&selected), 5);
+    assert_eq!(app.bulk_password_targets(&selected), 6);
     app.update(Message::Selection(SelectionMessage::EditPassword));
     let Some(Dialog::BulkPassword {
         ids,
@@ -274,7 +308,17 @@ fn winrm_and_the_profiles_without_a_saved_password_are_left_alone_and_counted() 
     };
     let mut ids = ids.clone();
     ids.sort();
-    assert_eq!(ids, [id("db"), id("ftp"), id("rdp"), id("vnc"), id("web")]);
+    assert_eq!(
+        ids,
+        [
+            id("db"),
+            id("ftp"),
+            id("rdp"),
+            id("vnc"),
+            id("web"),
+            id("winrm")
+        ]
+    );
     assert_eq!(
         *skipped,
         BulkPasswordSkips {
@@ -282,14 +326,14 @@ fn winrm_and_the_profiles_without_a_saved_password_are_left_alone_and_counted() 
             no_account: 1,
             other: 1,
         },
-        "WinRM is counted though it names an account"
+        "WinRM is counted only as the current Windows identity"
     );
     assert_eq!(*refused, None);
 
-    // The WinRM profile alone with one that takes none: nothing to set, and said.
+    // The current identity's WinRM profile with one that takes none: nothing to set, said.
     app.update(Message::DismissDialog);
     assert!(app.dialog.is_none());
-    open_dialog(&mut app, &["winrm", "telnet"]);
+    open_dialog(&mut app, &["winrm-current", "telnet"]);
     assert!(app.dialog.is_none(), "{:?}", app.dialog);
     assert_eq!(app.notice(), Some(&Notice::BulkPasswordWinRmSkipped(1)));
 
@@ -337,11 +381,11 @@ fn each_profile_gets_the_password_for_its_own_server_and_account() {
     assert_eq!(
         app.notice(),
         Some(&Notice::BulkPasswordUpdated {
-            count: 5,
+            count: 6,
             winrm_skipped: 1,
         })
     );
-    assert!(log_capture::has("INFO", &["5 of 5 profile(s)"]));
+    assert!(log_capture::has("INFO", &["6 of 6 profile(s)"]));
     for secret in [PASSWORD, "web.lab", "dc.lab", "kiosk.lab"] {
         assert!(log_capture::never(secret), "{secret} logged");
     }
@@ -361,6 +405,7 @@ fn each_profile_gets_the_password_for_its_own_server_and_account() {
     );
     assert_eq!(rdp_answer(&mut app).as_deref(), Some(PASSWORD));
     assert_eq!(ftp_answer(&mut app).as_deref(), Some(PASSWORD));
+    assert_eq!(winrm_password(&mut app).as_deref(), Some(PASSWORD));
 
     let SystemCredentials::Memory(entries) = &system else {
         unreachable!()
@@ -378,7 +423,13 @@ fn each_profile_gets_the_password_for_its_own_server_and_account() {
         (vnc.protocol, vnc.host.as_str(), vnc.port, vnc.username),
         (CredentialProtocol::Vnc, "kiosk.lab", 5901, None)
     );
-    for left in ["bare", "winrm", "telnet"] {
+    let winrm = saved("winrm").expect("winrm saved").endpoint;
+    assert_eq!(
+        (winrm.protocol, winrm.host.as_str(), winrm.port),
+        (CredentialProtocol::WinRm, "ps.lab", 5985)
+    );
+    assert_eq!(winrm.username.as_deref(), Some("admin"));
+    for left in ["bare", "winrm-current", "telnet"] {
         assert!(saved(left).is_none(), "{left}");
     }
     let profiles = std::fs::read_to_string(dir.path().join("profiles.toml")).expect("read");

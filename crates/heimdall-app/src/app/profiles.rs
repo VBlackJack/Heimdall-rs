@@ -21,6 +21,7 @@
 
 use heimdall_core::credentials::{CredentialProtocol, Endpoint, rdp_account};
 use heimdall_core::profile::{LocalApproval, ProfileId};
+use heimdall_core::winrm;
 use heimdall_ssh::Secret;
 use heimdall_term::local;
 
@@ -202,6 +203,9 @@ impl App {
             }
         };
         let id = saved_id(&profile).clone();
+        // The current Windows identity has no password: one stored before goes.
+        let drops_password =
+            matches!(&profile, DraftProfile::WinRm(winrm) if winrm.username.is_none());
         let favorite = draft.is_on(ProfileToggle::Favorite);
         // The key whose passphrase the form saves: an SSH profile's, which may have none.
         let key_file = match &profile {
@@ -264,6 +268,8 @@ impl App {
             && self.can_save_passwords()
         {
             self.save_edited_password(&id, endpoint, typed, draft.clear_password);
+        } else if drops_password && self.can_save_passwords() {
+            self.drop_password(&id);
         }
         if let Some(key_path) = key_file
             && self.can_save_passwords()
@@ -288,6 +294,8 @@ impl App {
             DraftProfile::Rdp(found.clone())
         } else if let Some(found) = store.vnc_profiles().iter().find(|p| p.id == *id) {
             DraftProfile::Vnc(found.clone())
+        } else if let Some(found) = store.winrm_profiles().iter().find(|p| p.id == *id) {
+            DraftProfile::WinRm(found.clone())
         } else {
             DraftProfile::Ftp(store.ftp_profiles().iter().find(|p| p.id == *id)?.clone())
         };
@@ -349,9 +357,8 @@ fn password_endpoint(profile: &DraftProfile) -> Option<Endpoint> {
             port: profile.port,
             username: profile.username.clone(),
         }),
-        DraftProfile::WinRm(_)
-        | DraftProfile::Telnet(_)
-        | DraftProfile::Local(_)
-        | DraftProfile::Citrix(_) => None,
+        // The current Windows identity has none: only an account's is saved.
+        DraftProfile::WinRm(profile) => winrm::password_endpoint(profile),
+        DraftProfile::Telnet(_) | DraftProfile::Local(_) | DraftProfile::Citrix(_) => None,
     }
 }
