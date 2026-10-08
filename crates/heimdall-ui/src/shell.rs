@@ -20,7 +20,7 @@
 //! Every decision stays in [`heimdall_app::App`]; this layer only draws its state, holds
 //! what the user is typing into a question, and runs effects.
 
-use heimdall_core::settings::{AgentPreference, CtrlVPaste, ExecutionPolicy};
+use heimdall_core::settings::{AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy};
 use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
@@ -218,7 +218,6 @@ fn tree_shortcut(
     match ctrl_letter(key, physical, modifiers)? {
         'e' => Some(TreeShortcut::Edit),
         'n' => Some(TreeShortcut::New),
-        'k' => Some(TreeShortcut::QuickConnect),
         'z' => Some(TreeShortcut::Undo),
         'b' => Some(TreeShortcut::ToggleSidebar),
         _ => None,
@@ -660,7 +659,7 @@ pub enum Message {
     TreeClick(ProfileId),
     /// A click in the session shown: the keyboard goes back to it from the tree.
     ContentFocus,
-    /// Ctrl+E, Ctrl+N or Ctrl+K, uncaptured by any widget.
+    /// Ctrl+E or Ctrl+N uncaptured by any widget, or the Quick Connect button.
     TreeShortcut(TreeShortcut),
     /// The gateway picked, in the Gateways tab, for the references to a missing one.
     GatewayReassignPicked {
@@ -829,7 +828,8 @@ pub enum TreeShortcut {
     Edit,
     /// Ctrl+N: a new session.
     New,
-    /// Ctrl+K: Quick Connect.
+    /// Quick Connect, from its button. Ctrl+K is a window shortcut, which a terminal and
+    /// a desktop leave to the window.
     QuickConnect,
     /// Ctrl+Z: the last move made by a drop in the tree undone.
     Undo,
@@ -1983,6 +1983,16 @@ impl Shell {
                 return Task::none();
             }
             FloatEvent::TerminalFind => return self.toggle_floating_finder(window),
+            // Quick Connect is the main window's, brought forward for it.
+            FloatEvent::QuickConnect => {
+                let task = self.update(Message::Shortcut(WindowShortcut::QuickConnect));
+                if self.palette.is_none() {
+                    return task;
+                }
+                let main = main_window_task(self.main_window)
+                    .then(|main| main.map_or_else(Task::none, focus_window));
+                return Task::batch([task, main]);
+            }
             FloatEvent::Escape if self.close_floating_finder(window) => return Task::none(),
             event @ (FloatEvent::FilesKey(_)
             | FloatEvent::FindKey
@@ -2742,6 +2752,10 @@ impl Shell {
             self.menu = None;
             return self.app.update(AppMessage::ShowShortcuts);
         }
+        if shortcut == WindowShortcut::QuickConnect {
+            self.quick_connect_key();
+            return Vec::new();
+        }
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
             if self.app.dialog.is_none() {
@@ -2788,7 +2802,13 @@ impl Shell {
             }
             // Settings and the help: shown above, tab or no tab; a screenshot is taken by
             // the window.
-            (WindowShortcut::Settings | WindowShortcut::Help | WindowShortcut::Screenshot, _)
+            (
+                WindowShortcut::Settings
+                | WindowShortcut::Help
+                | WindowShortcut::Screenshot
+                | WindowShortcut::QuickConnect,
+                _,
+            )
             | (_, None) => {
                 return Vec::new();
             }
@@ -2848,10 +2868,13 @@ impl Shell {
         Vec::new()
     }
 
-    /// Whether `tab`'s session takes the keyboard: its pane has it, no dialog is open, and,
-    /// in the main window, the tree does not have it.
+    /// Whether `tab`'s session takes the keyboard: its pane has it, no dialog and no Quick
+    /// Connect is open, and, in the main window, the tree does not have it.
     fn takes_keys(&self, tab: &Tab, focused: bool) -> bool {
-        focused && self.app.dialog.is_none() && (!self.tree_focused || self.app.is_floating(tab.id))
+        focused
+            && self.app.dialog.is_none()
+            && self.palette.is_none()
+            && (!self.tree_focused || self.app.is_floating(tab.id))
     }
 
     /// The search bar over the terminal of `tab`, when open there: its own window's when the
@@ -2905,6 +2928,7 @@ impl Shell {
     pub fn terminal_view<'a>(&self, tab: &'a Tab, interactive: bool) -> TerminalView<'a, Message> {
         TerminalView::new(&tab.terminal, tab.id, Message::App)
             .ctrl_v(self.app.settings().ctrl_v_paste)
+            .ctrl_k(self.app.settings().ctrl_k_terminal)
             .interactive(interactive)
             .font(self.terminal_font())
             .font_size(self.font_size(tab.id))
@@ -5001,6 +5025,17 @@ impl Shell {
                 self.palette = None;
                 Vec::new()
             }
+        }
+    }
+
+    /// Ctrl+K or Ctrl+Shift+K, as the C# palette's: Quick Connect opened over whatever has
+    /// the keyboard, a session included; not over a dialog. Open already, it keeps what was
+    /// typed and takes the keyboard back.
+    fn quick_connect_key(&mut self) {
+        if self.palette.is_some() {
+            self.focus_next = Some(crate::palette::field_id());
+        } else {
+            let _ = self.tree_shortcut(TreeShortcut::QuickConnect);
         }
     }
 
@@ -10098,6 +10133,19 @@ impl std::fmt::Display for CtrlVChoice {
     }
 }
 
+/// What Ctrl+K does in a terminal, as the list names it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CtrlKChoice(CtrlKTerminal);
+
+impl std::fmt::Display for CtrlKChoice {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&match self.0 {
+            CtrlKTerminal::QuickConnect => fl!("ui-settings-ctrl-k-quick-connect"),
+            CtrlKTerminal::SendToSession => fl!("ui-settings-ctrl-k-send"),
+        })
+    }
+}
+
 /// An execution policy as the list names it, as the C# does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct PolicyChoice(ExecutionPolicy);
@@ -10873,7 +10921,7 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_e_n_and_k_reach_the_tree_only_when_no_widget_took_them() {
+    fn ctrl_e_n_and_k_reach_the_window_only_when_no_widget_took_them() {
         let ctrl = |letter: &str, modifiers: Modifiers| {
             let key = Key::Character(letter.into());
             iced::Event::Keyboard(keyboard::Event::KeyPressed {
@@ -10897,10 +10945,24 @@ mod tests {
             routed("n", Modifiers::CTRL, event::Status::Ignored),
             Some(Message::TreeShortcut(TreeShortcut::New))
         ));
-        assert!(matches!(
-            routed("k", Modifiers::CTRL, event::Status::Ignored),
-            Some(Message::TreeShortcut(TreeShortcut::QuickConnect))
-        ));
+        // Ctrl+K, and Ctrl+Shift+K, open Quick Connect: a window shortcut a terminal and a
+        // desktop leave uncaptured, unless the settings keep Ctrl+K for the terminal.
+        for (letter, modifiers) in [
+            ("k", Modifiers::CTRL),
+            ("K", Modifiers::CTRL | Modifiers::SHIFT),
+        ] {
+            assert!(
+                matches!(
+                    routed(letter, modifiers, event::Status::Ignored),
+                    Some(Message::Shortcut(WindowShortcut::QuickConnect))
+                ),
+                "{modifiers:?}"
+            );
+            assert!(
+                routed(letter, modifiers, event::Status::Captured).is_none(),
+                "a shell's ^K, when the settings send it there, stays its own"
+            );
+        }
         assert!(
             routed("e", Modifiers::CTRL, event::Status::Captured).is_none(),
             "a shell's Ctrl+E, end of line, stays its own"

@@ -110,6 +110,7 @@ pub struct TerminalView<'a, M> {
     interactive: bool,
     on_zoom: Option<fn(Zoom) -> M>,
     ctrl_v: heimdall_core::settings::CtrlVPaste,
+    ctrl_k: heimdall_core::settings::CtrlKTerminal,
 }
 
 impl<'a, M> TerminalView<'a, M> {
@@ -125,6 +126,7 @@ impl<'a, M> TerminalView<'a, M> {
             interactive: true,
             on_zoom: None,
             ctrl_v: heimdall_core::settings::CtrlVPaste::default(),
+            ctrl_k: heimdall_core::settings::CtrlKTerminal::default(),
         }
     }
 
@@ -132,6 +134,13 @@ impl<'a, M> TerminalView<'a, M> {
     #[must_use]
     pub fn ctrl_v(mut self, choice: heimdall_core::settings::CtrlVPaste) -> Self {
         self.ctrl_v = choice;
+        self
+    }
+
+    /// What Ctrl+K does: open Quick Connect, or ^K for the session.
+    #[must_use]
+    pub fn ctrl_k(mut self, choice: heimdall_core::settings::CtrlKTerminal) -> Self {
+        self.ctrl_k = choice;
         self
     }
 
@@ -367,8 +376,11 @@ impl<M> Widget<M, Theme, iced::Renderer> for TerminalView<'_, M> {
                 repeat,
                 ..
             }) if state.focused => {
-                if window_shortcut(key, *physical_key, *modifiers).is_some() {
-                    // Left uncaptured: the window acts on it.
+                // Left uncaptured: the window acts on it. Ctrl+K alone stays the session's
+                // when the settings say so.
+                let kept = keys::is_ctrl_k(key, *physical_key, *modifiers)
+                    && !self.ctrl_k.opens_quick_connect();
+                if !kept && window_shortcut(key, *physical_key, *modifiers).is_some() {
                     return;
                 }
                 if state.preedit.is_some() {
