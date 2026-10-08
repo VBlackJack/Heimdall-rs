@@ -24,18 +24,14 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// Widest the palette grows, as the C# one.
 const PALETTE_WIDTH: f32 = 600.0;
 
 /// Tallest its list grows before it scrolls.
 const LIST_HEIGHT: f32 = 420.0;
-
-/// Size of a result's second line.
-const DETAIL_SIZE: f32 = 12.0;
-
-/// Room around the palette and between its parts.
-const SPACING: f32 = 8.0;
 
 /// The search typed so far, and which result is chosen.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -98,12 +94,12 @@ pub fn view<'a>(palette: &Palette, results: &[QuickResult]) -> Element<'a, Messa
     };
     let list = column(results.iter().enumerate().map(|(index, result)| {
         let (title, detail) = label(result);
-        button(column![text(title), text(detail).size(DETAIL_SIZE)].spacing(2.0))
+        button(column![text(title), text(detail).size(font_size::CAPTION)].spacing(2.0))
             .width(Length::Fill)
             .style(if index == palette.chosen {
-                button::primary
+                styles::primary
             } else {
-                button::text
+                styles::subtle
             })
             .on_press(Message::PaletteChoose(index))
             .into()
@@ -111,20 +107,21 @@ pub fn view<'a>(palette: &Palette, results: &[QuickResult]) -> Element<'a, Messa
     .spacing(2.0);
     let mut content = column![
         text_input(&placeholder, &palette.query)
+            .style(styles::text_input)
             .id(field_id())
             .on_input(Message::PaletteQuery)
             .on_submit(Message::PaletteChoose(palette.chosen)),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if results.is_empty() {
-        content = content.push(text(fl!("ui-palette-nothing")).size(DETAIL_SIZE));
+        content = content.push(text(fl!("ui-palette-nothing")).size(font_size::CAPTION));
     } else {
         content = content.push(scrollable(list).height(Length::Shrink));
     }
     container(
         container(row![content].height(Length::Shrink))
             .max_height(LIST_HEIGHT)
-            .padding(SPACING)
+            .padding(spacing::SM)
             .width(Length::Fill)
             .style(container::bordered_box),
     )

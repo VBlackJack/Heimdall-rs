@@ -27,18 +27,8 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Room between the parts of the question.
-const SPACING: f32 = 8.0;
-
-/// Size of its text.
-const TEXT_SIZE: f32 = 13.0;
-
-/// Size of the notes under a destination and of the count.
-const CAPTION_SIZE: f32 = 12.0;
-
-/// Size of its title.
-const TITLE_SIZE: f32 = 20.0;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// Tallest the list grows before it scrolls.
 const ROWS_HEIGHT: f32 = 300.0;
@@ -88,7 +78,7 @@ fn stamp_text(stamp: &heimdall_files::Stamp) -> (String, String) {
 
 /// What a file in the way is told by: both copies' size and time, and which is newer.
 fn details<'a>(row: &ConflictRow) -> Column<'a, Message> {
-    let note = |line: String| text(line).size(CAPTION_SIZE).style(text::secondary);
+    let note = |line: String| text(line).size(font_size::CAPTION).style(text::secondary);
     let (size, modified) = stamp_text(&row.incoming);
     let mut lines = column![note(fl!(
         "ui-files-conflict-incoming",
@@ -122,13 +112,13 @@ fn files(message: FilesMessage) -> Message {
 /// The question, for `rows`.
 #[must_use]
 pub fn view(rows: &[ConflictRow]) -> Element<'_, Message> {
-    let mut all = row![text(fl!("ui-files-conflict-apply-all")).size(TEXT_SIZE)]
-        .spacing(SPACING)
+    let mut all = row![text(fl!("ui-files-conflict-apply-all")).size(font_size::BODY)]
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
     for choice in CHOICES {
         all = all.push(
-            button(text(choice_name(choice)).size(TEXT_SIZE))
-                .style(button::text)
+            button(text(choice_name(choice)).size(font_size::BODY))
+                .style(styles::subtle)
                 .on_press(files(FilesMessage::ConflictAll(choice))),
         );
     }
@@ -137,35 +127,36 @@ pub fn view(rows: &[ConflictRow]) -> Element<'_, Message> {
         heading(fl!("ui-files-conflict-action"), COLUMNS[1]),
     ];
     let list = Column::with_children(rows.iter().enumerate().map(|(index, row)| line(index, row)))
-        .spacing(SPACING);
+        .spacing(spacing::SM);
     column![
-        text(fl!("ui-files-conflict-title")).size(TITLE_SIZE),
+        text(fl!("ui-files-conflict-title")).size(font_size::TITLE),
         text(fl!("ui-files-conflict-hint"))
-            .size(TEXT_SIZE)
+            .size(font_size::BODY)
             .style(text::secondary),
         text(fl!("ui-files-conflict-summary", count = rows.len()))
-            .size(CAPTION_SIZE)
+            .size(font_size::CAPTION)
             .style(text::secondary),
         all,
-        container(column![header, scrollable(list).height(ROWS_HEIGHT)].spacing(SPACING))
-            .padding(SPACING)
+        container(column![header, scrollable(list).height(ROWS_HEIGHT)].spacing(spacing::SM))
+            .padding(spacing::SM)
             .style(container::bordered_box),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-files-conflict-apply")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .width(Length::Shrink)
     .into()
 }
 
 fn heading<'a>(label: String, width: f32) -> Element<'a, Message> {
-    container(text(label).size(TEXT_SIZE).style(text::secondary))
+    container(text(label).size(font_size::BODY).style(text::secondary))
         .width(width)
         .into()
 }
@@ -174,7 +165,7 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
     let mut target = column![
         container(
             text(row.target.as_str())
-                .size(TEXT_SIZE)
+                .size(font_size::BODY)
                 .wrapping(text::Wrapping::None)
         )
         .clip(true)
@@ -186,7 +177,7 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
     if row.folder && !row.allowed.replace && !row.allowed.rename {
         target = target.push(
             text(fl!("ui-files-conflict-folder-skip"))
-                .size(CAPTION_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::warning),
         );
     }
@@ -206,7 +197,9 @@ fn line(index: usize, row: &ConflictRow) -> Element<'_, Message> {
                     choice: choice.0,
                 })
             })
-            .text_size(TEXT_SIZE)
+            .style(styles::pick_list)
+            .menu_style(styles::menu)
+            .text_size(font_size::BODY)
         )
         .width(COLUMNS[1]),
     ]

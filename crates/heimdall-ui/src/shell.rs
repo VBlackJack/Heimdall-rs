@@ -95,12 +95,14 @@ use crate::search_keys::SearchKeys;
 pub use crate::session_settings::SessionField;
 use crate::settings_rows::{SettingRow, ToolPath};
 use crate::split_view::{self, Shape, SplitView};
+use crate::styles;
 use crate::terminal_view::TerminalView;
 use crate::terminal_view::font::TerminalFont;
 use crate::terminal_view::keys::{
     WindowShortcut, Zoom, ctrl_letter, is_lock_key, is_search_key, window_shortcut,
 };
 use crate::texts;
+use crate::tokens::{font_size, radius, spacing};
 use crate::tree_view::{
     self, CursorSpot, CursorTracker, SplitEntries, TabMenuState, TranscriptEntry, TreeMenu,
 };
@@ -122,12 +124,6 @@ const SPLITTER_WIDTH: f32 = 4.0;
 /// tree's type-ahead.
 const TYPE_AHEAD_RESET: std::time::Duration = std::time::Duration::from_secs(1);
 
-/// Gap between stacked elements, in logical pixels.
-const SPACING: f32 = 8.0;
-
-/// Padding inside panels, in logical pixels.
-const PADDING: f32 = 12.0;
-
 /// Space between the terminal and the panels around it, in logical pixels.
 const TERMINAL_MARGIN: f32 = 6.0;
 
@@ -139,15 +135,6 @@ const WIDE_CARD_WIDTH: f32 = 1000.0;
 
 /// The filter button's mark, a funnel as the C# one's icon.
 const FILTER_GLYPH: &str = "\u{25BD}";
-
-/// Size of headings, in logical pixels.
-const HEADING_SIZE: f32 = 20.0;
-
-/// Size of secondary text, in logical pixels.
-const SMALL_SIZE: f32 = 12.0;
-
-/// Size of a form section's title.
-const BODY_SIZE: f32 = 16.0;
 
 /// Width of the port column beside the server field, as in the C# dialog.
 const PORT_FIELD_WIDTH: f32 = 150.0;
@@ -175,9 +162,6 @@ const TAB_DROP_EDGE: f32 = 2.0;
 
 /// Width of the border of the "Drop to split" overlay, as the C# `ContentDropZone`'s.
 const SPLIT_DROP_EDGE: f32 = 2.0;
-
-/// Rounding of the "Drop to split" overlay's corners, as the C# one's.
-const SPLIT_DROP_RADIUS: f32 = 4.0;
 
 /// How much of the session under the "Drop to split" overlay it hides.
 const SPLIT_DROP_SHADE: f32 = 0.8;
@@ -291,8 +275,8 @@ fn takes_drops(tab: &Tab) -> bool {
 fn drop_layer<'a>() -> Element<'a, Message> {
     opaque(
         container(
-            container(text(fl!("ui-files-drop-overlay")).size(HEADING_SIZE))
-                .padding(PADDING)
+            container(text(fl!("ui-files-drop-overlay")).size(font_size::TITLE))
+                .padding(spacing::MD)
                 .style(container::bordered_box),
         )
         .center(Length::Fill),
@@ -314,7 +298,7 @@ fn focus_window(window: window::Id) -> Task<Message> {
 /// as the C# `ContentDropZone`: the window shaded under an outline, `label` in the middle.
 fn drop_zone_overlay(label: String, zone: Rectangle) -> Element<'static, Message> {
     let label = text(label)
-        .size(HEADING_SIZE)
+        .size(font_size::TITLE)
         .style(|theme: &Theme| text::Style {
             color: Some(theme.extended_palette().primary.strong.color),
         });
@@ -336,7 +320,7 @@ fn drop_zone_overlay(label: String, zone: Rectangle) -> Element<'static, Message
                 border: iced::Border {
                     color: palette.primary.strong.color,
                     width: SPLIT_DROP_EDGE,
-                    radius: SPLIT_DROP_RADIUS.into(),
+                    radius: radius::SM.into(),
                 },
                 ..container::Style::default()
             }
@@ -1360,8 +1344,8 @@ fn redirection_badges<'a>(profile: &RdpProfile) -> Vec<Element<'a, Message>> {
     .filter(|(on, _, _)| *on)
     .map(|(_, label, tip)| {
         tooltip(
-            text(label).size(SMALL_SIZE).style(text::secondary),
-            text(tip).size(SMALL_SIZE),
+            text(label).size(font_size::CAPTION).style(text::secondary),
+            text(tip).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box)
@@ -1372,9 +1356,6 @@ fn redirection_badges<'a>(profile: &RdpProfile) -> Vec<Element<'a, Message>> {
 
 /// The application's name, at the head of the navigation: a name, not translated.
 const APP_NAME: &str = "Heimdall";
-
-/// Size of the application's name in the navigation.
-const NAV_TITLE_SIZE: f32 = 18.0;
 
 /// Room after the application's name.
 const NAV_TITLE_PADDING: [f32; 2] = [0.0, 16.0];
@@ -3839,15 +3820,15 @@ impl Shell {
             layers = layers.push(
                 container(
                     tooltip(
-                        button(text(fl!("ui-fullscreen-exit")).size(SMALL_SIZE))
-                            .style(button::secondary)
+                        button(text(fl!("ui-fullscreen-exit")).size(font_size::CAPTION))
+                            .style(styles::secondary)
                             .on_press(Message::ToggleFullscreen),
-                        text(fl!("ui-fullscreen-exit-tooltip")).size(SMALL_SIZE),
+                        text(fl!("ui-fullscreen-exit-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Left,
                     )
                     .style(container::rounded_box),
                 )
-                .padding(PADDING)
+                .padding(spacing::MD)
                 .width(Length::Fill)
                 .align_x(iced::alignment::Horizontal::Right),
             );
@@ -4148,23 +4129,24 @@ impl Shell {
         }
         center(
             column![
-                text(fl!("ui-home-welcome")).size(HEADING_SIZE),
+                text(fl!("ui-home-welcome")).size(font_size::TITLE),
                 text(fl!("ui-home-subtitle")),
                 row![
                     button(text(fl!("ui-home-add-button")))
+                        .style(styles::primary)
                         .on_press(Message::App(AppMessage::NewProfile)),
                     button(text(fl!("ui-home-import-button")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press_maybe(
                             self.app
                                 .can_import()
                                 .then_some(Message::App(AppMessage::ImportLegacy)),
                         ),
                 ]
-                .spacing(SPACING),
-                text(fl!("ui-home-shortcuts")).size(SMALL_SIZE),
+                .spacing(spacing::SM),
+                text(fl!("ui-home-shortcuts")).size(font_size::CAPTION),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_x(iced::Alignment::Center),
         )
         .into()
@@ -4192,7 +4174,7 @@ impl Shell {
             }
             Page::About => scrollable(
                 container(crate::about_view::view(&self.app))
-                    .padding(PADDING)
+                    .padding(spacing::MD)
                     .width(Length::Fill),
             )
             .height(Length::Fill)
@@ -4215,21 +4197,21 @@ impl Shell {
         let mut bar = row![
             container(
                 text(APP_NAME)
-                    .size(NAV_TITLE_SIZE)
+                    .size(font_size::LARGE)
                     .style(|theme: &Theme| text::Style {
                         color: Some(theme.extended_palette().primary.base.color),
                     })
             )
             .padding(NAV_TITLE_PADDING),
         ]
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
         for destination in Destination::ALL {
             let active = destination == shown;
             // The page shown in the accent colour, a line under it, as the C# tabs.
             let entry = button(text(destination.label()))
                 .style(move |theme: &Theme, status| {
-                    let mut style = button::text(theme, status);
+                    let mut style = styles::subtle(theme, status);
                     if active {
                         style.text_color = theme.extended_palette().primary.base.color;
                     }
@@ -4249,15 +4231,15 @@ impl Shell {
         let bar = bar.push(iced::widget::space::horizontal()).push(
             tooltip(
                 button(text(fl!("ui-nav-quick-connect")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::TreeShortcut(TreeShortcut::QuickConnect)),
-                text(fl!("ui-nav-quick-connect-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-nav-quick-connect-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
         );
         container(bar)
-            .padding([SPACING / 2.0, PADDING])
+            .padding([spacing::XS, spacing::MD])
             .width(Length::Fill)
             .style(container::bordered_box)
             .into()
@@ -4286,13 +4268,13 @@ impl Shell {
                             .collect::<Vec<_>>()
                             .join(&fl!("ui-route-test-separator"))
                     ))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::secondary)),
                 button(text(fl!("ui-connect-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         ))
         .into()
     }
@@ -4309,7 +4291,7 @@ impl Shell {
             crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
             row![
-                crate::shortcuts_view::hint(SMALL_SIZE),
+                crate::shortcuts_view::hint(font_size::CAPTION),
                 self.tunnels_toggle(),
                 self.broadcast_controls(targets)
             ]
@@ -4321,14 +4303,17 @@ impl Shell {
     /// The tunnels panel's button, with how many tunnels are open, as the C# bar's.
     fn tunnels_toggle(&self) -> Element<'_, Message> {
         tooltip(
-            button(text(fl!("ui-tunnels-count", count = self.app.live_tunnels())).size(SMALL_SIZE))
-                .style(if self.app.tunnels_panel() {
-                    button::primary
-                } else {
-                    button::text
-                })
-                .on_press(Message::App(AppMessage::Tunnel(TunnelMessage::TogglePanel))),
-            text(fl!("ui-tunnels-toggle-tooltip")).size(SMALL_SIZE),
+            button(
+                text(fl!("ui-tunnels-count", count = self.app.live_tunnels()))
+                    .size(font_size::CAPTION),
+            )
+            .style(if self.app.tunnels_panel() {
+                styles::primary
+            } else {
+                styles::subtle
+            })
+            .on_press(Message::App(AppMessage::Tunnel(TunnelMessage::TogglePanel))),
+            text(fl!("ui-tunnels-toggle-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
         .style(container::rounded_box)
@@ -4342,23 +4327,23 @@ impl Shell {
         let broadcast = |message| Message::App(AppMessage::Broadcast(message));
         row![
             tooltip(
-                button(text(fl!("ui-broadcast-button")).size(SMALL_SIZE))
-                    .style(if on { button::primary } else { button::text })
+                button(text(fl!("ui-broadcast-button")).size(font_size::CAPTION))
+                    .style(if on { styles::primary } else { styles::subtle })
                     .on_press(broadcast(BroadcastMessage::Toggle)),
                 text(if on {
                     fl!("ui-broadcast-on", scope = scope.as_str())
                 } else {
                     fl!("ui-broadcast-toggle-tooltip")
                 })
-                .size(SMALL_SIZE),
+                .size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
             .style(container::rounded_box),
             tooltip(
-                button(text(scope.clone()).size(SMALL_SIZE))
-                    .style(button::text)
+                button(text(scope.clone()).size(font_size::CAPTION))
+                    .style(styles::subtle)
                     .on_press(broadcast(BroadcastMessage::Scope)),
-                text(fl!("ui-broadcast-scope-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-broadcast-scope-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
             .style(container::rounded_box),
@@ -4373,43 +4358,43 @@ impl Shell {
         let tool = |label: &'static str, tip: String, menu: TreeMenu| {
             tooltip(
                 button(text(label))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::OpenTreeMenu(menu)),
-                text(tip).size(SMALL_SIZE),
+                text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
         };
         let header = row![
-            text(fl!("ui-sidebar-title")).size(HEADING_SIZE),
+            text(fl!("ui-sidebar-title")).size(font_size::TITLE),
             iced::widget::space::horizontal(),
             tool("+", fl!("ui-tree-add-tooltip"), TreeMenu::Add),
             tool("...", fl!("ui-tree-more-tooltip"), TreeMenu::More),
             tooltip(
                 button(text(HIDE_SIDEBAR_GLYPH))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
-                text(fl!("ui-sidebar-hide-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-sidebar-hide-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
         ]
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
         let mut actions = row![
             button(text(fl!("ui-sidebar-local-shell-button")))
                 .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
-                .style(button::secondary),
+                .style(styles::secondary),
         ]
-        .spacing(SPACING / 2.0);
+        .spacing(spacing::XS);
         // As the C# toolbar's lock: there only while a master password is set.
         if self.app.vault_status() == VaultStatus::Open {
             actions = actions.push(
                 tooltip(
                     button(text(fl!("ui-sidebar-lock-button")))
                         .on_press(Message::App(AppMessage::LockVault))
-                        .style(button::secondary),
-                    text(fl!("ui-sidebar-lock-tooltip")).size(SMALL_SIZE),
+                        .style(styles::secondary),
+                    text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -4431,8 +4416,8 @@ impl Shell {
                 .push(self.no_folder_zone())
                 .push(self.selection_bar())
                 .push(self.undo_bar())
-                .spacing(SPACING)
-                .padding(PADDING),
+                .spacing(spacing::SM)
+                .padding(spacing::MD),
         )
         .width(self.sidebar_width)
         .height(Length::Fill)
@@ -4445,7 +4430,7 @@ impl Shell {
     /// nothing moves under the pointer when it appears.
     fn no_folder_zone(&self) -> Option<Element<'_, Message>> {
         let drag = self.tree_drag.as_ref().filter(|drag| drag.active)?;
-        let zone = container(text(fl!("ui-tree-no-folder-zone")).size(SMALL_SIZE))
+        let zone = container(text(fl!("ui-tree-no-folder-zone")).size(font_size::CAPTION))
             .width(Length::Fill)
             .padding([4.0, 6.0])
             .style(container::bordered_box);
@@ -4456,7 +4441,7 @@ impl Shell {
                     heimdall_app::DropTarget::Folder(heimdall_app::NO_FOLDER.to_owned()),
                     Some(drag),
                 ),
-                text(fl!("ui-tree-no-folder-zone-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-tree-no-folder-zone-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
             .style(container::rounded_box)
@@ -4478,12 +4463,12 @@ impl Shell {
         };
         Some(
             row![
-                text(said).size(SMALL_SIZE).style(text::secondary),
-                button(text(fl!("ui-tree-undo")).size(SMALL_SIZE))
-                    .style(button::text)
+                text(said).size(font_size::CAPTION).style(text::secondary),
+                button(text(fl!("ui-tree-undo")).size(font_size::CAPTION))
+                    .style(styles::subtle)
                     .on_press(Message::App(AppMessage::UndoMove)),
             ]
-            .spacing(SPACING / 2.0)
+            .spacing(spacing::XS)
             .align_y(iced::Alignment::Center)
             .wrap()
             .into(),
@@ -4534,13 +4519,14 @@ impl Shell {
             };
         let editor = column![
             text_input(&fl!("ui-dialog-name-placeholder"), value)
+                .style(styles::text_input)
                 .id(name_field_id())
-                .size(SMALL_SIZE + 1.0)
+                .size(font_size::CAPTION + 1.0)
                 .padding([2.0, 4.0])
                 .on_input(on_input)
                 .on_submit(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .push(error.map(|error| text(error).size(SMALL_SIZE).style(text::danger)))
+        .push(error.map(|error| text(error).size(font_size::CAPTION).style(text::danger)))
         .spacing(2.0);
         Some(tree_view::indented(editor.into(), depth))
     }
@@ -4592,21 +4578,23 @@ impl Shell {
             tooltip(
                 button(
                     row![
-                        text(label).size(SMALL_SIZE).wrapping(text::Wrapping::None),
-                        text(fl!("ui-tree-filter-chip-remove")).size(SMALL_SIZE),
+                        text(label)
+                            .size(font_size::CAPTION)
+                            .wrapping(text::Wrapping::None),
+                        text(fl!("ui-tree-filter-chip-remove")).size(font_size::CAPTION),
                     ]
-                    .spacing(SPACING / 2.0),
+                    .spacing(spacing::XS),
                 )
-                .style(button::secondary)
+                .style(styles::secondary)
                 .padding([2.0, 6.0])
                 .on_press(message),
-                text(remove).size(SMALL_SIZE),
+                text(remove).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
             .into()
         }))
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .wrap();
         let shown = self
             .app
@@ -4618,8 +4606,8 @@ impl Shell {
         Some(
             column![
                 chips,
-                button(text(fl!("ui-tree-filter-reset")).size(SMALL_SIZE))
-                    .style(button::text)
+                button(text(fl!("ui-tree-filter-reset")).size(font_size::CAPTION))
+                    .style(styles::subtle)
                     .padding(0.0)
                     .on_press(Message::ResetTreeFilters),
                 text(fl!(
@@ -4627,10 +4615,10 @@ impl Shell {
                     shown = shown,
                     total = total
                 ))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::secondary),
             ]
-            .spacing(SPACING / 2.0)
+            .spacing(spacing::XS)
             .into(),
         )
     }
@@ -4647,14 +4635,14 @@ impl Shell {
             .filter(|id| self.app.connects_in_bulk(id))
             .count();
         let action = |label: String, message: Option<Message>| {
-            button(text(label).size(SMALL_SIZE))
-                .style(button::text)
+            button(text(label).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .on_press_maybe(message)
         };
         Some(
             column![
                 text(fl!("ui-tree-selection-count", count = selected.len()))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::secondary),
                 row![
                     action(
@@ -4674,7 +4662,7 @@ impl Shell {
                 ]
                 .wrap(),
             ]
-            .spacing(SPACING / 2.0)
+            .spacing(spacing::XS)
             .into(),
         )
     }
@@ -4703,9 +4691,9 @@ impl Shell {
                     Message::Search(String::new()),
                 )
             };
-            list = list.push(text(said).size(SMALL_SIZE)).push(
-                button(text(way_back).size(SMALL_SIZE))
-                    .style(button::secondary)
+            list = list.push(text(said).size(font_size::CAPTION)).push(
+                button(text(way_back).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(message),
             );
         }
@@ -4787,26 +4775,27 @@ impl Shell {
             tooltip(
                 SearchKeys::new(
                     text_input(&fl!("ui-tree-search-placeholder"), &self.search)
+                        .style(styles::text_input)
                         .id(search_field_id())
                         .on_input(Message::Search)
                         .on_submit(Message::SearchSubmit),
                     (!self.search.is_empty()).then(|| Message::Search(String::new())),
                     Message::SearchDown,
                 ),
-                text(fl!("ui-tree-search-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-tree-search-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
         ]
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
         if !self.search.is_empty() {
             search = search.push(
                 tooltip(
                     button(text(fl!("ui-tree-search-clear-button")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::Search(String::new())),
-                    text(fl!("ui-tree-search-clear")).size(SMALL_SIZE),
+                    text(fl!("ui-tree-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -4818,12 +4807,12 @@ impl Shell {
             tooltip(
                 button(text(FILTER_GLYPH))
                     .style(if active {
-                        button::primary
+                        styles::primary
                     } else {
-                        button::secondary
+                        styles::secondary
                     })
                     .on_press(Message::OpenTreeMenu(TreeMenu::Filter)),
-                text(fl!("ui-tree-filter-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-tree-filter-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box),
@@ -5932,9 +5921,9 @@ impl Shell {
         let mut area = mouse_area(
             button(label)
                 .style(if active {
-                    button::primary
+                    styles::primary
                 } else {
-                    button::secondary
+                    styles::secondary
                 })
                 .on_press(Message::App(AppMessage::SelectTab(tab))),
         )
@@ -5955,7 +5944,7 @@ impl Shell {
                         Color::TRANSPARENT
                     },
                     width: TAB_DROP_EDGE,
-                    radius: 4.0.into(),
+                    radius: radius::SM.into(),
                 },
                 ..container::Style::default()
             })
@@ -5976,8 +5965,8 @@ impl Shell {
             .join(&fl!("ui-route-test-separator"));
         Some(
             tooltip(
-                text(fl!("ui-tab-route-badge")).size(SMALL_SIZE),
-                text(fl!("ui-connect-via", route = names)).size(SMALL_SIZE),
+                text(fl!("ui-tab-route-badge")).size(font_size::CAPTION),
+                text(fl!("ui-connect-via", route = names)).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
@@ -5997,13 +5986,13 @@ impl Shell {
         // both the active and the other tabs.
         let mut label = row![
             tree_view::state_dot(Some(SessionState::of(tab))),
-            text(self.app.tab_kind(tab).label()).size(SMALL_SIZE),
+            text(self.app.tab_kind(tab).label()).size(font_size::CAPTION),
             text(title),
         ]
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
         if tab.pinned {
-            label = label.push(text(fl!("ui-tab-pinned-badge")).size(SMALL_SIZE));
+            label = label.push(text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION));
         }
         // Through gateways, said on the tab while the tunnels panel that lists it is
         // closed, as the C# tab's tunnel badge; its health is the tab's own dot.
@@ -6014,14 +6003,14 @@ impl Shell {
         if tab.macro_recording.is_some() {
             label = label.push(
                 text(fl!("ui-tab-recording-badge"))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::danger),
             );
         } else if tab.macro_playing.is_some() {
-            label = label.push(text(fl!("ui-tab-macro-badge")).size(SMALL_SIZE));
+            label = label.push(text(fl!("ui-tab-macro-badge")).size(font_size::CAPTION));
         }
         if tab.bell && !active {
-            label = label.push(text(fl!("ui-tab-bell-badge")).size(SMALL_SIZE));
+            label = label.push(text(fl!("ui-tab-bell-badge")).size(font_size::CAPTION));
         }
         label
     }
@@ -6044,13 +6033,13 @@ impl Shell {
                         } else {
                             fl!("ui-broadcast-target-off")
                         })
-                        .size(SMALL_SIZE),
+                        .size(font_size::CAPTION),
                     )
-                    .style(button::text)
+                    .style(styles::subtle)
                     .on_press(Message::App(AppMessage::Broadcast(
                         BroadcastMessage::Target(tab.id),
                     ))),
-                    text(fl!("ui-broadcast-target-tooltip")).size(SMALL_SIZE),
+                    text(fl!("ui-broadcast-target-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box)
@@ -6070,8 +6059,8 @@ impl Shell {
         if tab.transcript.is_some() {
             label = label.push(
                 tooltip(
-                    text(fl!("ui-tab-recording")).size(SMALL_SIZE),
-                    text(fl!("ui-tab-recording-tooltip")).size(SMALL_SIZE),
+                    text(fl!("ui-tab-recording")).size(font_size::CAPTION),
+                    text(fl!("ui-tab-recording-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -6081,15 +6070,15 @@ impl Shell {
     }
 
     fn tab_bar(&self) -> Element<'_, Message> {
-        let mut tabs = row![].spacing(SPACING).padding(PADDING);
+        let mut tabs = row![].spacing(spacing::SM).padding(spacing::MD);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
         if self.sidebar_hidden {
             tabs = tabs.push(
                 tooltip(
                     button(text(SHOW_SIDEBAR_GLYPH))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
-                    text(fl!("ui-sidebar-show-tooltip")).size(SMALL_SIZE),
+                    text(fl!("ui-sidebar-show-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -6104,8 +6093,8 @@ impl Shell {
             // The close button inside the tab, at its right, as the C# tab's: it takes the
             // press, which selecting the tab then does not see.
             let label = self.tab_heading(tab, active).push(
-                button(text(fl!("ui-tab-close-button")).size(SMALL_SIZE))
-                    .style(button::text)
+                button(text(fl!("ui-tab-close-button")).size(font_size::CAPTION))
+                    .style(styles::subtle)
                     .padding([0.0, 2.0])
                     .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
             );
@@ -6288,7 +6277,7 @@ impl Shell {
                     ),
                     self.session_actions(tab),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .into()
             }
             // A remote desktop that ended leaves nothing to look at.
@@ -6299,7 +6288,7 @@ impl Shell {
                 } else {
                     fl!("ui-session-closed")
                 };
-                let mut ended = column![text(said)].spacing(SPACING);
+                let mut ended = column![text(said)].spacing(spacing::SM);
                 if let Some(reason) = tab.end_reason.as_ref().and_then(texts::rdp_ending) {
                     ended = ended.push(text(reason));
                 }
@@ -6313,15 +6302,15 @@ impl Shell {
                 let mut ended = column![
                     self.searchable_terminal(tab, self.app.dialog.is_none() && focused),
                     row![text(status), self.session_actions(tab)]
-                        .spacing(SPACING)
-                        .padding(PADDING)
+                        .spacing(spacing::SM)
+                        .padding(spacing::MD)
                         .align_y(iced::Alignment::Center),
                 ];
                 // What PowerShell's error meant, as the C# says it under the session.
                 if let Some(found) = tab.winrm_diagnostic {
                     ended = ended.push(
                         container(text(texts::winrm_diagnostic(found)).style(text::danger))
-                            .padding(PADDING),
+                            .padding(spacing::MD),
                     );
                 }
                 ended.into()
@@ -6334,7 +6323,7 @@ impl Shell {
                     texts::error(error)
                 };
                 center(card(
-                    column![text(said), self.session_actions(tab).wrap()].spacing(SPACING),
+                    column![text(said), self.session_actions(tab).wrap()].spacing(spacing::SM),
                 ))
                 .into()
             }
@@ -6370,10 +6359,10 @@ impl Shell {
                 text(texts::error(error)).style(text::danger),
                 self.failure_actions(tab, error)
                     .wrap()
-                    .vertical_spacing(SPACING),
+                    .vertical_spacing(spacing::SM),
             ]
-            .spacing(SPACING)
-            .padding(PADDING)
+            .spacing(spacing::SM)
+            .padding(spacing::MD)
             .into(),
         };
         column![container(kept).height(Length::Fill), bar].into()
@@ -6393,14 +6382,14 @@ impl Shell {
     fn failure_card<'a>(&'a self, tab: &'a Tab, error: &'a UiError) -> Element<'a, Message> {
         center(card(
             column![
-                text(fl!("ui-session-failed-title")).size(HEADING_SIZE),
+                text(fl!("ui-session-failed-title")).size(font_size::TITLE),
                 text(texts::error(error)),
                 // Buttons go to the next line whole when a translation is long, never cut.
                 self.failure_actions(tab, error)
                     .wrap()
-                    .vertical_spacing(SPACING),
+                    .vertical_spacing(spacing::SM),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         ))
         .into()
     }
@@ -6431,7 +6420,7 @@ impl Shell {
         if let Some(label) = forget {
             actions = actions.push(
                 button(text(label))
-                    .style(button::danger)
+                    .style(styles::danger)
                     .on_press(Message::App(AppMessage::ForgetServer(tab.id))),
             );
         }
@@ -6442,10 +6431,11 @@ impl Shell {
     /// can open again, Copy error for a failure, Edit profile, the way out of a failure
     /// that would only repeat, then Close.
     fn session_actions(&self, tab: &Tab) -> iced::widget::Row<'_, Message> {
-        let mut actions = row![].spacing(SPACING).align_y(iced::Alignment::Center);
+        let mut actions = row![].spacing(spacing::SM).align_y(iced::Alignment::Center);
         if self.app.can_reconnect(tab) {
             actions = actions.push(
                 button(action_label(fl!("ui-session-reconnect-button")))
+                    .style(styles::primary)
                     .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
             );
         }
@@ -6456,15 +6446,15 @@ impl Shell {
             actions = actions
                 .push(
                     button(action_label(fl!("ui-session-copy-error-button")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::CopyError(tab.id)),
                 )
                 .push(
                     tooltip(
                         button(action_label(fl!("ui-session-copy-anonymous-button")))
-                            .style(button::secondary)
+                            .style(styles::secondary)
                             .on_press(Message::CopyAnonymousError(tab.id)),
-                        text(fl!("ui-error-report-anonymous-hint")).size(SMALL_SIZE),
+                        text(fl!("ui-error-report-anonymous-hint")).size(font_size::CAPTION),
                         tooltip::Position::Bottom,
                     )
                     .style(container::rounded_box),
@@ -6477,13 +6467,13 @@ impl Shell {
         {
             actions = actions.push(
                 button(action_label(fl!("ui-session-edit-profile-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::EditProfile(profile.id))),
             );
         }
         actions.push(
             button(action_label(fl!("ui-session-close-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
         )
     }
@@ -6502,6 +6492,7 @@ impl Shell {
             .and_then(|fields| fields.get(index))
             .map_or("", |typed| typed.as_str());
         text_input("", value)
+            .style(styles::text_input)
             .id(field_id(question, index))
             .secure(secure)
             .on_input(move |value| Message::Field {
@@ -6574,29 +6565,33 @@ impl Shell {
                 fit: mode == DesktopMode::Fit,
             },
         )
-        .text_size(SMALL_SIZE);
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
+        .text_size(font_size::CAPTION);
         let send_keys = pick_list(
             SpecialKeys::ALL.map(KeysChoice).to_vec(),
             None::<KeysChoice>,
             move |KeysChoice(keys)| Message::App(AppMessage::SendKeys { tab: tab_id, keys }),
         )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
         .placeholder(fl!("ui-desktop-send-keys"))
-        .text_size(SMALL_SIZE);
+        .text_size(font_size::CAPTION);
         let fullscreen = button(
             text(if self.fullscreen {
                 fl!("ui-desktop-exit-fullscreen")
             } else {
                 fl!("ui-desktop-fullscreen")
             })
-            .size(SMALL_SIZE),
+            .size(font_size::CAPTION),
         )
-        .style(button::secondary)
+        .style(styles::secondary)
         .on_press(Message::ToggleFullscreen);
         let disconnect = tooltip(
-            button(text(fl!("ui-desktop-disconnect")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-desktop-disconnect")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DisconnectDesktop(tab_id))),
-            text(fl!("ui-desktop-disconnect-tooltip")).size(SMALL_SIZE),
+            text(fl!("ui-desktop-disconnect-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box);
@@ -6604,23 +6599,23 @@ impl Shell {
             // Beside it: below, it would cover the menu's first entry.
             tooltip(
                 send_keys,
-                text(fl!("ui-desktop-send-keys-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-desktop-send-keys-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Right,
             )
             .style(container::rounded_box),
             // The C# Send keys menu's "Keyboard shortcuts...".
-            button(text(fl!("ui-desktop-shortcuts")).size(SMALL_SIZE))
-                .style(button::text)
+            button(text(fl!("ui-desktop-shortcuts")).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .on_press(Message::App(AppMessage::ShowShortcuts)),
             mode,
         ]
         // In a tab's own window, the main window's full screen is not the desktop's.
         .push((!self.app.is_floating(tab_id)).then_some(fullscreen))
         .push(disconnect)
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center);
         let bar = self.desktop_bar_end(tab, pane, bar);
-        column![bar, view].spacing(SPACING / 2.0).into()
+        column![bar, view].spacing(spacing::XS).into()
     }
 
     /// The end of a desktop's session bar: the resolution menu, the anti-idle badge, saving
@@ -6640,16 +6635,16 @@ impl Shell {
             .filter(|_| !self.app.is_floating(tab_id))
         {
             let style = if state.fixed.is_some() {
-                button::primary
+                styles::primary
             } else {
-                button::secondary
+                styles::secondary
             };
             bar = bar.push(
                 tooltip(
-                    button(text(fl!("ui-resolution-menu")).size(SMALL_SIZE))
+                    button(text(fl!("ui-resolution-menu")).size(font_size::CAPTION))
                         .style(style)
                         .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab_id))),
-                    text(state.tooltip()).size(SMALL_SIZE),
+                    text(state.tooltip()).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -6659,10 +6654,10 @@ impl Shell {
         if self.app.anti_idle_on(tab_id) {
             bar = bar.push(
                 tooltip(
-                    button(text(fl!("ui-desktop-anti-idle")).size(SMALL_SIZE))
-                        .style(button::text)
+                    button(text(fl!("ui-desktop-anti-idle")).size(font_size::CAPTION))
+                        .style(styles::subtle)
                         .on_press(Message::App(AppMessage::StopAntiIdle(tab_id))),
-                    text(fl!("ui-desktop-anti-idle-tooltip")).size(SMALL_SIZE),
+                    text(fl!("ui-desktop-anti-idle-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -6676,10 +6671,10 @@ impl Shell {
         if tab.purpose == Purpose::Vnc && pane.accepts_clipboard() {
             bar = bar.push(
                 tooltip(
-                    button(text(fl!("ui-desktop-send-clipboard")).size(SMALL_SIZE))
-                        .style(button::secondary)
+                    button(text(fl!("ui-desktop-send-clipboard")).size(font_size::CAPTION))
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::SendClipboard(tab_id))),
-                    text(fl!("ui-desktop-send-clipboard-tooltip")).size(SMALL_SIZE),
+                    text(fl!("ui-desktop-send-clipboard-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Right,
                 )
                 .style(container::rounded_box),
@@ -6692,17 +6687,21 @@ impl Shell {
             bar = bar.extend(redirection_badges(profile));
         }
         if let Some(name) = &pane.desktop_name {
-            bar = bar.push(text(name.as_str()).size(SMALL_SIZE).style(text::secondary));
+            bar = bar.push(
+                text(name.as_str())
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            );
         }
         if tab.purpose == Purpose::Vnc {
             // Always in sight: whether the connection is encrypted, its server's certificate
             // trusted, or crosses the network in clear.
             bar = bar.push(match pane.tls {
                 Some(version) => text(fl!("ui-session-vnc-encrypted", version = version))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::success),
                 None => text(fl!("ui-session-vnc-unencrypted"))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::danger),
             });
         }
@@ -6711,7 +6710,7 @@ impl Shell {
 
     fn question<'a>(&'a self, tab: &'a Tab, prompt: &'a Prompt) -> Element<'a, Message> {
         let id = prompt.question;
-        let mut form = Column::new().spacing(SPACING);
+        let mut form = Column::new().spacing(spacing::SM);
         match &prompt.kind {
             QuestionKind::Username(asked) => {
                 form = form
@@ -6763,7 +6762,7 @@ impl Shell {
                     if !said.is_empty() {
                         form = form.push(
                             text(fl!("ui-prompt-server-text", text = said.as_str()))
-                                .size(SMALL_SIZE),
+                                .size(font_size::CAPTION),
                         );
                     }
                 }
@@ -6782,11 +6781,13 @@ impl Shell {
         form.push(
             row![
                 button(text(fl!("ui-prompt-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::Decline(tab.id)),
-                button(text(fl!("ui-prompt-submit-button"))).on_press(Message::Submit(tab.id)),
+                button(text(fl!("ui-prompt-submit-button")))
+                    .style(styles::primary)
+                    .on_press(Message::Submit(tab.id)),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
         .into()
     }
@@ -6850,35 +6851,37 @@ fn host_key_card<'a>(
     };
     center(card(
         column![
-            text(heading).size(HEADING_SIZE),
+            text(heading).size(font_size::TITLE),
             body,
             row![
                 text(label).font(iced::Font::MONOSPACE).width(Length::Fill),
-                button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                button(text(fl!("ui-hostkey-copy-fingerprint-button")).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::CopyHostKeyFingerprint(tab))),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .align_y(iced::alignment::Vertical::Center),
             row![
                 button(text(reject))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::HostKeyDecision {
                         tab,
                         accept: false
                     })),
                 button(text(once))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::HostKeyTrustOnce(tab))),
-                button(text(accept)).on_press(Message::App(AppMessage::HostKeyDecision {
-                    tab,
-                    accept: true
-                })),
+                button(text(accept))
+                    .style(styles::primary)
+                    .on_press(Message::App(AppMessage::HostKeyDecision {
+                        tab,
+                        accept: true
+                    })),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .wrap(),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ))
     .into()
 }
@@ -6900,7 +6903,7 @@ fn certificate_body<'a>(
         )),
         text(fl!("ui-certificate-caution")),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     let Some(context) = context else {
         return body;
     };
@@ -6958,12 +6961,12 @@ fn certificate_details<'a>(
             issue = texts::validation_issue(details.issue)
         )),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
 }
 
 fn card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
-        .padding(PADDING)
+        .padding(spacing::MD)
         .max_width(CARD_WIDTH)
         .style(container::bordered_box)
         .into()
@@ -6977,7 +6980,7 @@ fn action_label<'a>(label: String) -> iced::widget::Text<'a> {
 /// A card for a table, wider than a form's.
 fn wide_card<'a>(content: impl Into<Element<'a, Message>>) -> Element<'a, Message> {
     container(content)
-        .padding(PADDING)
+        .padding(spacing::MD)
         .max_width(WIDE_CARD_WIDTH)
         .style(container::bordered_box)
         .into()
@@ -7031,13 +7034,13 @@ fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
 fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
     SettingsTab::ALL
         .into_iter()
-        .fold(row![].spacing(SPACING / 2.0), |tabs, tab| {
+        .fold(row![].spacing(spacing::XS), |tabs, tab| {
             tabs.push(
                 button(text(tab.label()))
                     .style(if tab == shown {
-                        button::primary
+                        styles::primary
                     } else {
-                        button::secondary
+                        styles::secondary
                     })
                     .on_press(Message::SettingsTab(tab)),
             )
@@ -7116,10 +7119,10 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
     if pane.can_save_files() {
         return Some(
             tooltip(
-                button(text(fl!("ui-desktop-save-files")).size(SMALL_SIZE))
-                    .style(button::secondary)
+                button(text(fl!("ui-desktop-save-files")).size(font_size::CAPTION))
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::SaveRemoteFiles(tab_id))),
-                text(fl!("ui-desktop-save-files-tooltip")).size(SMALL_SIZE),
+                text(fl!("ui-desktop-save-files-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
@@ -7131,12 +7134,13 @@ fn save_files_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, M
     };
     Some(
         row![
-            text(fl!("ui-desktop-saving-files", saved = saved, total = total)).size(SMALL_SIZE),
-            button(text(fl!("ui-desktop-save-files-cancel")).size(SMALL_SIZE))
-                .style(button::secondary)
+            text(fl!("ui-desktop-saving-files", saved = saved, total = total))
+                .size(font_size::CAPTION),
+            button(text(fl!("ui-desktop-save-files-cancel")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::CancelSave(tab_id))),
         ]
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .align_y(iced::Alignment::Center)
         .into(),
     )
@@ -7156,11 +7160,13 @@ fn vnc_quality_control(pane: &DesktopPane, tab_id: TabId) -> Option<Element<'_, 
             })
         },
     )
-    .text_size(SMALL_SIZE);
+    .style(styles::pick_list)
+    .menu_style(styles::menu)
+    .text_size(font_size::CAPTION);
     Some(
         tooltip(
             choices,
-            text(fl!("ui-session-vnc-quality")).size(SMALL_SIZE),
+            text(fl!("ui-session-vnc-quality")).size(font_size::CAPTION),
             tooltip::Position::Bottom,
         )
         .style(container::rounded_box)
@@ -7461,7 +7467,8 @@ fn save_export(document: String, count: usize, main: Option<window::Id>) -> Task
 /// A report under its title, closed by OK: how the export went, as the C# message box
 /// says it, or why the import or a password save failed, with the technical detail.
 fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element<'a, Message> {
-    let detail = |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(SMALL_SIZE);
+    let detail =
+        |detail: &str| text(fl!("ui-dialog-detail", detail = detail)).size(font_size::CAPTION);
     let (title, lines) = match dialog {
         Dialog::ExportDone { count } => (
             fl!("ui-dialog-export-title"),
@@ -7520,10 +7527,10 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
             (title, lines.into_iter().map(text).collect())
         }
     };
-    column![text(title).size(HEADING_SIZE)]
+    column![text(title).size(font_size::TITLE)]
         .extend(lines.into_iter().map(Element::from))
         .push(ok)
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .into()
 }
 
@@ -7540,17 +7547,19 @@ fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
                 _ => return column![].into(),
             };
             column![
-                text(title).size(HEADING_SIZE),
+                text(title).size(font_size::TITLE),
                 text(body),
                 row![
                     button(text(fl!("ui-dialog-cancel-button")))
-                        .style(button::secondary)
+                        .style(styles::secondary)
                         .on_press(Message::App(AppMessage::DismissDialog)),
-                    button(text(action)).on_press(Message::App(AppMessage::ConfirmDialog)),
+                    button(text(action))
+                        .style(styles::primary)
+                        .on_press(Message::App(AppMessage::ConfirmDialog)),
                 ]
-                .spacing(SPACING),
+                .spacing(spacing::SM),
             ]
-            .spacing(SPACING)
+            .spacing(spacing::SM)
             .into()
         }
         _ => column![].into(),
@@ -7562,7 +7571,7 @@ fn import_report<'a>(
     ok: iced::widget::Button<'a, Message>,
 ) -> Element<'a, Message> {
     let mut content = column![
-        text(fl!("ui-dialog-import-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-import-title")).size(font_size::TITLE),
         text(fl!(
             "ui-dialog-import-counts",
             added = summary.merged.added,
@@ -7570,7 +7579,7 @@ fn import_report<'a>(
             unchanged = summary.merged.unchanged
         )),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     // The file's gateways on a line of their own, as the C# summary says them.
     let gateways = summary.gateways;
     if gateways.created + gateways.merged > 0 {
@@ -7582,7 +7591,7 @@ fn import_report<'a>(
     }
     if !summary.skipped.is_empty() {
         let skipped = summary.skipped.iter().fold(
-            Column::new().spacing(SPACING / 2.0),
+            Column::new().spacing(spacing::XS),
             |list, (name, reason)| {
                 list.push(
                     text(fl!(
@@ -7590,7 +7599,7 @@ fn import_report<'a>(
                         name = server_text(name),
                         reason = texts::skip_reason(reason)
                     ))
-                    .size(SMALL_SIZE),
+                    .size(font_size::CAPTION),
                 )
             },
         );
@@ -7600,7 +7609,7 @@ fn import_report<'a>(
     }
     if !summary.dropped.is_empty() {
         let dropped = summary.dropped.iter().fold(
-            Column::new().spacing(SPACING / 2.0),
+            Column::new().spacing(spacing::XS),
             |list, (name, settings)| {
                 let settings: Vec<String> = settings
                     .iter()
@@ -7612,7 +7621,7 @@ fn import_report<'a>(
                         name = name.as_str(),
                         settings = settings.join(&fl!("ui-dialog-import-dropped-separator"))
                     ))
-                    .size(SMALL_SIZE),
+                    .size(font_size::CAPTION),
                 )
             },
         );
@@ -7628,7 +7637,7 @@ fn import_report<'a>(
                     keys = carried.keys,
                     pins = carried.pins
                 ))
-                .size(SMALL_SIZE),
+                .size(font_size::CAPTION),
             );
         }
         Some(Err(detail)) => {
@@ -7637,7 +7646,7 @@ fn import_report<'a>(
                     "ui-dialog-import-host-keys-failed",
                     detail = detail.as_str()
                 ))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::danger),
             );
         }
@@ -7650,7 +7659,7 @@ fn import_report<'a>(
             summary.stored_credentials,
         ))
     {
-        content = content.push(text(line).size(SMALL_SIZE));
+        content = content.push(text(line).size(font_size::CAPTION));
     }
     content.push(ok).into()
 }
@@ -7711,6 +7720,7 @@ impl PasswordStore {
 /// "Password saved" and a button to clear it when one is.
 fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Message> {
     let mut input = text_input("", forms.profile_password)
+        .style(styles::text_input)
         .id(password_field_id())
         .secure(true);
     if forms.passwords == PasswordStore::Ready {
@@ -7719,34 +7729,34 @@ fn password_field<'a>(draft: &ProfileDraft, forms: &Forms<'a>) -> Element<'a, Me
             .on_submit(Message::SaveProfileForm);
     }
     let mut field = column![
-        text(fl!("ui-profile-field-password")).size(SMALL_SIZE),
+        text(fl!("ui-profile-field-password")).size(font_size::CAPTION),
         input
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     match forms.passwords {
         PasswordStore::Ready if draft.password_saved => {
             field = field.push(
                 row![
-                    text(fl!("ui-profile-password-saved")).size(SMALL_SIZE),
+                    text(fl!("ui-profile-password-saved")).size(font_size::CAPTION),
                     tooltip(
-                        button(text(fl!("ui-profile-password-clear")).size(SMALL_SIZE))
-                            .style(button::text)
+                        button(text(fl!("ui-profile-password-clear")).size(font_size::CAPTION))
+                            .style(styles::subtle)
                             .on_press(Message::App(AppMessage::ClearPassword)),
-                        text(fl!("ui-profile-password-clear-tooltip")).size(SMALL_SIZE),
+                        text(fl!("ui-profile-password-clear-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Top,
                     )
                     .style(container::rounded_box),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
             );
         }
         PasswordStore::Ready => {}
         PasswordStore::VaultLocked => {
-            field = field.push(text(fl!("ui-profile-password-locked")).size(SMALL_SIZE));
+            field = field.push(text(fl!("ui-profile-password-locked")).size(font_size::CAPTION));
         }
         PasswordStore::None => {
-            field = field.push(text(fl!("ui-profile-password-no-store")).size(SMALL_SIZE));
+            field = field.push(text(fl!("ui-profile-password-no-store")).size(font_size::CAPTION));
         }
     }
     field.into()
@@ -7787,38 +7797,38 @@ fn protocol_description(protocol: DraftProtocol) -> String {
 
 /// The first step of a new session, as in the C# dialog: a card per protocol.
 fn protocol_picker<'a>() -> Element<'a, Message> {
-    let mut cards = Column::new().spacing(SPACING / 2.0);
+    let mut cards = Column::new().spacing(spacing::XS);
     for protocol in DraftProtocol::ALL {
         cards = cards.push(
             button(column![
                 text(protocol_name(protocol)),
-                text(protocol_description(protocol)).size(SMALL_SIZE),
+                text(protocol_description(protocol)).size(font_size::CAPTION),
             ])
             .width(Length::Fill)
-            .style(button::secondary)
+            .style(styles::secondary)
             .on_press(Message::App(AppMessage::ChooseProtocol(protocol))),
         );
     }
     column![
-        text(fl!("ui-profile-new-title")).size(HEADING_SIZE),
+        text(fl!("ui-profile-new-title")).size(font_size::TITLE),
         text(fl!("ui-profile-protocol-picker-title")),
-        text(fl!("ui-profile-protocol-picker-desc")).size(SMALL_SIZE),
+        text(fl!("ui-profile-protocol-picker-desc")).size(font_size::CAPTION),
         cards,
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
         ],
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 /// A section of the form: its title, and its description when it has one.
 fn section<'a>(title: String, description: Option<String>) -> Element<'a, Message> {
-    let mut heading = column![text(title).size(BODY_SIZE)].spacing(2.0);
+    let mut heading = column![text(title).size(font_size::SUBTITLE)].spacing(2.0);
     if let Some(description) = description {
-        heading = heading.push(text(description).size(SMALL_SIZE));
+        heading = heading.push(text(description).size(font_size::CAPTION));
     }
     heading.into()
 }
@@ -7900,13 +7910,14 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ),
     };
     column![
-        text(label).size(SMALL_SIZE),
+        text(label).size(font_size::CAPTION),
         text_input(&placeholder, draft.value(field))
+            .style(styles::text_input)
             .id(profile_field_id(field))
             .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
             .on_submit(Message::SaveProfileForm),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -7914,20 +7925,21 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
 fn key_field(draft: &ProfileDraft) -> Element<'_, Message> {
     let field = ProfileField::KeyPath;
     column![
-        text(fl!("ui-profile-field-key")).size(SMALL_SIZE),
+        text(fl!("ui-profile-field-key")).size(font_size::CAPTION),
         row![
             text_input(&fl!("ui-profile-optional"), draft.value(field))
+                .style(styles::text_input)
                 .id(profile_field_id(field))
                 .on_input(move |value| Message::App(AppMessage::ProfileField { field, value }))
                 .on_submit(Message::SaveProfileForm),
             button(text(fl!("ui-profile-browse-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::BrowseKeyFile),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -7977,6 +7989,7 @@ fn toggle_box<'a>(
     label: String,
 ) -> Element<'a, Message> {
     checkbox(draft.is_on(toggle))
+        .style(styles::checkbox)
         .label(label)
         .on_toggle(move |on| Message::App(AppMessage::ProfileToggle { toggle, on }))
         .into()
@@ -8146,16 +8159,16 @@ fn network_section<'a>(
             fl!("ui-profile-direct-connect")
         ),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if gateways.is_empty() {
         section_column = section_column
-            .push(text(fl!("ui-gateway-list-empty")).size(SMALL_SIZE))
-            .push(text(fl!("ui-gateway-empty-hint")).size(SMALL_SIZE));
+            .push(text(fl!("ui-gateway-list-empty")).size(font_size::CAPTION))
+            .push(text(fl!("ui-gateway-empty-hint")).size(font_size::CAPTION));
     }
     let routed = draft.routed_gateway();
     if direct {
-        section_column =
-            section_column.push(text(fl!("ui-profile-gateway-direct-hint")).size(SMALL_SIZE));
+        section_column = section_column
+            .push(text(fl!("ui-profile-gateway-direct-hint")).size(font_size::CAPTION));
     } else {
         let choices: Vec<GatewayChoice> = gateways.iter().map(gateway_choice).collect();
         let selected = draft
@@ -8167,12 +8180,14 @@ fn network_section<'a>(
                 pick_list(choices, selected, |choice: GatewayChoice| {
                     Message::App(AppMessage::ChooseGateway(choice.id))
                 })
+                .style(styles::pick_list)
+                .menu_style(styles::menu)
                 .width(Length::Fill),
                 button(text(fl!("ui-gateway-add")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::NewGateway)),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         );
         section_column = section_column.push(
             text(if routed.is_some() {
@@ -8180,25 +8195,25 @@ fn network_section<'a>(
             } else {
                 fl!("ui-profile-gateway-explain-direct")
             })
-            .size(SMALL_SIZE),
+            .size(font_size::CAPTION),
         );
     }
     if let Some(id) = routed.filter(|id| gateways.iter().any(|known| known.id == *id)) {
         section_column = section_column.push(
-            button(text(fl!("ui-profile-edit-gateway")).size(SMALL_SIZE))
-                .style(button::secondary)
+            button(text(fl!("ui-profile-edit-gateway")).size(font_size::CAPTION))
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::EditGateway(id))),
         );
     }
     // Said where the SSL box was, as the C# dialog says it; HTTPS asked for, then a gateway
     // chosen, is said to be off.
     if draft.protocol == DraftProtocol::WinRm && draft.routed_gateway().is_some() {
-        section_column =
-            section_column.push(text(fl!("ui-profile-winrm-gateway-http")).size(SMALL_SIZE));
+        section_column = section_column
+            .push(text(fl!("ui-profile-winrm-gateway-http")).size(font_size::CAPTION));
         if draft.is_on(ProfileToggle::UseSsl) {
             section_column = section_column.push(
                 text(fl!("ui-profile-winrm-https-off-by-gateway"))
-                    .size(SMALL_SIZE)
+                    .size(font_size::CAPTION)
                     .style(text::warning),
             );
         }
@@ -8247,7 +8262,7 @@ fn forward_cards<'a>(draft: &'a ProfileDraft, column: Column<'a, Message>) -> Co
             Some(fl!("ui-profile-socks-desc")),
         ))
         .push(port_field(ProfileField::SocksPort))
-        .push(text(listening).size(SMALL_SIZE))
+        .push(text(listening).size(font_size::CAPTION))
         .push(section(
             fl!("ui-profile-remote-title"),
             Some(fl!("ui-profile-remote-desc")),
@@ -8257,10 +8272,10 @@ fn forward_cards<'a>(draft: &'a ProfileDraft, column: Column<'a, Message>) -> Co
                 port_field(ProfileField::RemoteBindPort),
                 port_field(ProfileField::RemoteLocalPort),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
-        .push(text(fl!("ui-profile-remote-local-hint")).size(SMALL_SIZE))
-        .push(text(route).size(SMALL_SIZE))
+        .push(text(fl!("ui-profile-remote-local-hint")).size(font_size::CAPTION))
+        .push(text(route).size(font_size::CAPTION))
 }
 
 /// The C# gateway dialog: name, host, port, username, key, password, parent gateway.
@@ -8274,7 +8289,7 @@ fn gateway_dialog<'a>(
     } else {
         fl!("ui-gateway-add-title")
     };
-    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    let mut form = column![text(title).size(font_size::TITLE)].spacing(spacing::SM);
     for field in GATEWAY_FIELDS {
         let label = match field {
             ProfileField::Name => fl!("ui-gateway-field-name"),
@@ -8285,13 +8300,14 @@ fn gateway_dialog<'a>(
         };
         form = form.push(
             column![
-                text(label).size(SMALL_SIZE),
+                text(label).size(font_size::CAPTION),
                 text_input("", draft.value(field))
+                    .style(styles::text_input)
                     .id(gateway_field_id(field))
                     .on_input(move |value| Message::App(AppMessage::GatewayField { field, value }))
                     .on_submit(Message::SaveGatewayForm),
             ]
-            .spacing(SPACING / 2.0),
+            .spacing(spacing::XS),
         );
     }
     form = form
@@ -8321,12 +8337,13 @@ fn gateway_dialog<'a>(
         row![
             iced::widget::space::horizontal(),
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-profile-save-button")))
+                .style(styles::primary)
                 .on_press_maybe((!testing).then_some(Message::SaveGatewayForm)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     )
     .into()
 }
@@ -8334,8 +8351,9 @@ fn gateway_dialog<'a>(
 /// The gateway's password, as the session form's: an empty field, "Password saved" and
 /// Clear, then the C# hint.
 fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, Message> {
-    let mut form = Column::new().spacing(SPACING);
+    let mut form = Column::new().spacing(spacing::SM);
     let mut password = text_input("", forms.gateway_password)
+        .style(styles::text_input)
         .id(gateway_field_id(ProfileField::Domain))
         .secure(true);
     if forms.passwords == PasswordStore::Ready {
@@ -8345,33 +8363,33 @@ fn gateway_password<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Column<'a, M
     }
     form = form.push(
         column![
-            text(fl!("ui-gateway-field-password")).size(SMALL_SIZE),
+            text(fl!("ui-gateway-field-password")).size(font_size::CAPTION),
             password
         ]
-        .spacing(SPACING / 2.0),
+        .spacing(spacing::XS),
     );
     match forms.passwords {
         PasswordStore::Ready if draft.password_saved => {
             form = form.push(
                 row![
-                    text(fl!("ui-profile-password-saved")).size(SMALL_SIZE),
-                    button(text(fl!("ui-profile-password-clear")).size(SMALL_SIZE))
-                        .style(button::text)
+                    text(fl!("ui-profile-password-saved")).size(font_size::CAPTION),
+                    button(text(fl!("ui-profile-password-clear")).size(font_size::CAPTION))
+                        .style(styles::subtle)
                         .on_press(Message::App(AppMessage::ClearGatewayPassword)),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
             );
         }
         PasswordStore::Ready => {}
         PasswordStore::VaultLocked => {
-            form = form.push(text(fl!("ui-profile-password-locked")).size(SMALL_SIZE));
+            form = form.push(text(fl!("ui-profile-password-locked")).size(font_size::CAPTION));
         }
         PasswordStore::None => {
-            form = form.push(text(fl!("ui-profile-password-no-store")).size(SMALL_SIZE));
+            form = form.push(text(fl!("ui-profile-password-no-store")).size(font_size::CAPTION));
         }
     }
-    form = form.push(text(fl!("ui-gateway-password-hint")).size(SMALL_SIZE));
+    form = form.push(text(fl!("ui-gateway-password-hint")).size(font_size::CAPTION));
     form
 }
 
@@ -8395,6 +8413,7 @@ struct Passphrase<'a> {
 /// saved, "Passphrase saved" and a button to remove it when one is, then the C# hint.
 fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Column<'a, Message> {
     let mut input = text_input("", passphrase.typed)
+        .style(styles::text_input)
         .id(iced::widget::Id::new(passphrase.id))
         .secure(true);
     if forms.passwords == PasswordStore::Ready {
@@ -8403,37 +8422,37 @@ fn passphrase_field<'a>(passphrase: &Passphrase<'a>, forms: &Forms<'a>) -> Colum
             .on_submit(passphrase.submit.clone());
     }
     let mut field = column![
-        text(fl!("ui-profile-field-passphrase")).size(SMALL_SIZE),
+        text(fl!("ui-profile-field-passphrase")).size(font_size::CAPTION),
         input
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     match forms.passwords {
         PasswordStore::Ready if passphrase.saved => {
             field = field.push(
                 row![
-                    text(fl!("ui-profile-passphrase-saved")).size(SMALL_SIZE),
+                    text(fl!("ui-profile-passphrase-saved")).size(font_size::CAPTION),
                     tooltip(
-                        button(text(fl!("ui-profile-password-clear")).size(SMALL_SIZE))
-                            .style(button::text)
+                        button(text(fl!("ui-profile-password-clear")).size(font_size::CAPTION))
+                            .style(styles::subtle)
                             .on_press(Message::App(passphrase.clear.clone())),
-                        text(fl!("ui-profile-passphrase-clear-tooltip")).size(SMALL_SIZE),
+                        text(fl!("ui-profile-passphrase-clear-tooltip")).size(font_size::CAPTION),
                         tooltip::Position::Top,
                     )
                     .style(container::rounded_box),
                 ]
-                .spacing(SPACING)
+                .spacing(spacing::SM)
                 .align_y(iced::Alignment::Center),
             );
         }
         PasswordStore::Ready => {}
         PasswordStore::VaultLocked => {
-            field = field.push(text(fl!("ui-profile-password-locked")).size(SMALL_SIZE));
+            field = field.push(text(fl!("ui-profile-password-locked")).size(font_size::CAPTION));
         }
         PasswordStore::None => {
-            field = field.push(text(fl!("ui-profile-password-no-store")).size(SMALL_SIZE));
+            field = field.push(text(fl!("ui-profile-password-no-store")).size(font_size::CAPTION));
         }
     }
-    field.push(text(fl!("ui-profile-passphrase-hint")).size(SMALL_SIZE))
+    field.push(text(fl!("ui-profile-passphrase-hint")).size(font_size::CAPTION))
 }
 
 /// What is typed into a secret field, taken out of the window; `None` when nothing is.
@@ -8463,16 +8482,18 @@ fn parent_gateway<'a>(draft: &GatewayDraft, forms: &Forms<'a>) -> Element<'a, Me
         .cloned();
     form = form.push(
         column![
-            text(fl!("ui-gateway-field-parent")).size(SMALL_SIZE),
+            text(fl!("ui-gateway-field-parent")).size(font_size::CAPTION),
             pick_list(parents, selected, |choice| {
                 Message::App(AppMessage::ChooseParentGateway(match choice {
                     ParentChoice::None => None,
                     ParentChoice::Gateway(gateway) => Some(gateway.id),
                 }))
             })
+            .style(styles::pick_list)
+            .menu_style(styles::menu)
             .width(Length::Fill),
         ]
-        .spacing(SPACING / 2.0),
+        .spacing(spacing::XS),
     );
     form.into()
 }
@@ -8517,7 +8538,7 @@ impl std::fmt::Display for WinRmIdentity {
 
 /// The protocol's credentials, as its C# card: title, account fields, password.
 fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column<'a, Message> {
-    let mut form = Column::new().spacing(SPACING);
+    let mut form = Column::new().spacing(spacing::SM);
     let credentials = match draft.protocol {
         DraftProtocol::Rdp => Some((
             fl!("ui-profile-credentials-rdp"),
@@ -8550,7 +8571,7 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
         };
         form = form.push(
             column![
-                text(fl!("ui-profile-winrm-identity")).size(SMALL_SIZE),
+                text(fl!("ui-profile-winrm-identity")).size(font_size::CAPTION),
                 pick_list(
                     [WinRmIdentity::Current, WinRmIdentity::Stored],
                     Some(selected),
@@ -8559,13 +8580,15 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
                         on: identity == WinRmIdentity::Stored,
                     }),
                 )
+                .style(styles::pick_list)
+                .menu_style(styles::menu)
                 .width(Length::Fill),
                 // How the identity is proven, and what HTTP outside a domain needs, as the
                 // C# dialog's hints.
-                text(fl!("ui-profile-winrm-identity-hint")).size(SMALL_SIZE),
-                text(fl!("ui-profile-winrm-trusted-hosts-hint")).size(SMALL_SIZE),
+                text(fl!("ui-profile-winrm-identity-hint")).size(font_size::CAPTION),
+                text(fl!("ui-profile-winrm-trusted-hosts-hint")).size(font_size::CAPTION),
             ]
-            .spacing(SPACING / 2.0),
+            .spacing(spacing::XS),
         );
     }
     for field in [ProfileField::Username, ProfileField::Domain] {
@@ -8595,13 +8618,13 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
         }
     }
     if draft.protocol == DraftProtocol::Rdp {
-        form = form.push(text(fl!("ui-profile-domain-hint")).size(SMALL_SIZE));
+        form = form.push(text(fl!("ui-profile-domain-hint")).size(font_size::CAPTION));
     }
     if draft.shows_password() {
         form = form.push(password_field(draft, forms));
         if draft.protocol == DraftProtocol::WinRm {
             // Optional here, unlike the C# dialog: without one, PowerShell asks.
-            form = form.push(text(fl!("ui-profile-winrm-password-hint")).size(SMALL_SIZE));
+            form = form.push(text(fl!("ui-profile-winrm-password-hint")).size(font_size::CAPTION));
         }
     }
 
@@ -8613,7 +8636,7 @@ fn options_section<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
 ) -> Column<'a, Message> {
-    let mut form = Column::new().spacing(SPACING);
+    let mut form = Column::new().spacing(spacing::SM);
     let options = match draft.protocol {
         DraftProtocol::Rdp => Some(fl!("ui-profile-options-rdp")),
         DraftProtocol::Vnc => Some(fl!("ui-profile-options-vnc")),
@@ -8636,8 +8659,8 @@ fn options_section<'a>(
         ));
         if draft.is_on(ProfileToggle::FollowDefaults) {
             form = form
-                .push(text(fl!("ui-profile-rdp-defaults-banner")).size(SMALL_SIZE))
-                .push(text(fl!("ui-profile-rdp-defaults-not-in-effect")).size(SMALL_SIZE));
+                .push(text(fl!("ui-profile-rdp-defaults-banner")).size(font_size::CAPTION))
+                .push(text(fl!("ui-profile-rdp-defaults-not-in-effect")).size(font_size::CAPTION));
         }
         form = form
             .push(crate::rdp_options::display_audio(
@@ -8664,7 +8687,7 @@ fn options_section<'a>(
             form = form.push(toggle_box(draft, *toggle, toggle_label(*toggle)));
             // What the box does, under it, as the C# dialog's hint.
             if let Some(hint) = toggle_hint(*toggle) {
-                form = form.push(text(hint).size(SMALL_SIZE));
+                form = form.push(text(hint).size(font_size::CAPTION));
             }
         }
     }
@@ -8682,12 +8705,12 @@ fn options_section<'a>(
                 http = heimdall_core::profile::DEFAULT_WINRM_HTTP_PORT,
                 https = heimdall_core::profile::DEFAULT_WINRM_HTTPS_PORT
             ))
-            .size(SMALL_SIZE)
+            .size(font_size::CAPTION)
             .style(text::danger),
         );
     }
     for warning in option_warnings(draft) {
-        form = form.push(text(warning).size(SMALL_SIZE).style(text::danger));
+        form = form.push(text(warning).size(font_size::CAPTION).style(text::danger));
     }
     if draft.protocol == DraftProtocol::Ssh {
         form = form.push(crate::post_connect_form::view(&draft.post_connect));
@@ -8700,7 +8723,7 @@ fn options_section<'a>(
     if draft.protocol == DraftProtocol::Telnet {
         form = form.push(
             text(fl!("ui-profile-telnet-warning"))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::danger),
         );
     }
@@ -8744,16 +8767,16 @@ fn profile_form<'a>(
         fl!("ui-profile-edit-title")
     };
     // The protocol chip: in a new session it goes back to the picker, as in C#.
-    let chip = button(text(protocol_name(draft.protocol)).size(SMALL_SIZE))
-        .style(button::secondary)
+    let chip = button(text(protocol_name(draft.protocol)).size(font_size::CAPTION))
+        .style(styles::secondary)
         .on_press_maybe(adding.then_some(Message::App(AppMessage::NewProfile)));
     let mut form = column![
-        text(title).size(HEADING_SIZE),
+        text(title).size(font_size::TITLE),
         row![
-            text(fl!("ui-profile-protocol-badge")).size(SMALL_SIZE),
+            text(fl!("ui-profile-protocol-badge")).size(font_size::CAPTION),
             chip
         ]
-        .spacing(SPACING / 2.0)
+        .spacing(spacing::XS)
         .align_y(iced::Alignment::Center),
         section(
             fl!("ui-profile-section-basics"),
@@ -8765,7 +8788,7 @@ fn profile_form<'a>(
         ),
         form_field(draft, ProfileField::Name),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     // A local shell has no server.
     if draft.shows(ProfileField::Host) {
         form = form
@@ -8774,7 +8797,7 @@ fn profile_form<'a>(
                     container(form_field(draft, ProfileField::Host)).width(Length::Fill),
                     container(form_field(draft, ProfileField::Port)).width(PORT_FIELD_WIDTH),
                 ]
-                .spacing(SPACING),
+                .spacing(spacing::SM),
             )
             .push(crate::address_test_view::view(draft, forms.gateways));
     }
@@ -8795,26 +8818,26 @@ fn profile_form<'a>(
         .push(section(fl!("ui-profile-section-organization"), None))
         .push(form_field(draft, ProfileField::Group))
         // As the C#: the separator is taught by the example and by a sentence that stays.
-        .push(text(fl!("ui-profile-folder-hint")).size(SMALL_SIZE));
+        .push(text(fl!("ui-profile-folder-hint")).size(font_size::CAPTION));
     form = form.push(metadata_fields(draft));
     // With the C# metadata: the password manager's entry, for the protocols it serves.
     if draft.shows(ProfileField::VaultEntry) {
         form = form
             .push(form_field(draft, ProfileField::VaultEntry))
-            .push(text(fl!("ui-profile-vault-entry-help")).size(SMALL_SIZE));
+            .push(text(fl!("ui-profile-vault-entry-help")).size(font_size::CAPTION));
     }
     // The fields scroll; the error and the buttons stay in view under them, as the C#
     // dialog's footer does.
-    let mut footer = Column::new().spacing(SPACING);
+    let mut footer = Column::new().spacing(spacing::SM);
     // Above the error, as the C# dialog's footer: where an imported profile came from.
     if let Some(origin) = draft.metadata_kept.origin {
         footer = footer.push(
             text(texts::origin_name(origin))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::secondary)
                 .font(iced::Font {
                     style: iced::font::Style::Italic,
-                    ..iced::Font::DEFAULT
+                    ..crate::UI_FONT
                 }),
         );
     }
@@ -8826,20 +8849,22 @@ fn profile_form<'a>(
         row![
             iced::widget::space::horizontal(),
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-profile-save-button"))).on_press(Message::SaveProfileForm),
+            button(text(fl!("ui-profile-save-button")))
+                .style(styles::primary)
+                .on_press(Message::SaveProfileForm),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     );
     column![
         container(
-            scrollable(form.padding(iced::Padding::ZERO.right(PADDING))).height(Length::Shrink)
+            scrollable(form.padding(iced::Padding::ZERO.right(spacing::MD))).height(Length::Shrink)
         )
         .max_height(forms.fields_height),
         footer,
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -8869,21 +8894,24 @@ fn name_dialog(action: NameAction, value: &str) -> Element<'_, Message> {
         (None, fl!("ui-dialog-name-placeholder"))
     };
     column![
-        text(title).size(HEADING_SIZE),
+        text(title).size(font_size::TITLE),
         column![].push(label),
         text_input(&placeholder, value)
+            .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| Message::App(AppMessage::Files(FilesMessage::NameEdited(value))))
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(confirm)).on_press(Message::App(AppMessage::ConfirmDialog)),
+            button(text(confirm))
+                .style(styles::primary)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -8913,16 +8941,17 @@ fn bulk_edit_dialog(
     };
     let placeholder = if mixed { mixed_hint } else { String::new() };
     let mut body = column![
-        text(header).size(HEADING_SIZE),
+        text(header).size(font_size::TITLE),
         text(label),
         text_input(&placeholder, value)
+            .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| {
                 Message::App(AppMessage::Selection(SelectionMessage::BulkEdited(value)))
             })
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if let Some(refused) = refused {
         body = body.push(
             text(match refused {
@@ -8935,12 +8964,13 @@ fn bulk_edit_dialog(
     body.push(
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-ok-button")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     )
     .into()
 }
@@ -8956,8 +8986,9 @@ fn bulk_password_dialog(
 ) -> Element<'_, Message> {
     use heimdall_app::BulkPasswordRefusal;
 
-    let mut body = column![text(fl!("ui-bulk-password-header", count = count)).size(HEADING_SIZE)]
-        .spacing(SPACING);
+    let mut body =
+        column![text(fl!("ui-bulk-password-header", count = count)).size(font_size::TITLE)]
+            .spacing(spacing::SM);
     let lines = [
         (
             skipped.winrm,
@@ -8977,7 +9008,7 @@ fn bulk_password_dialog(
     ];
     for (skipped, line) in lines {
         if skipped > 0 {
-            body = body.push(text(line).size(SMALL_SIZE));
+            body = body.push(text(line).size(font_size::CAPTION));
         }
     }
     let labels = [
@@ -8987,6 +9018,7 @@ fn bulk_password_dialog(
     let last = labels.len() - 1;
     for (index, label) in labels.into_iter().enumerate() {
         let input = text_input("", fields[index].as_str())
+            .style(styles::text_input)
             .id(bulk_password_field_id(index))
             .secure(true)
             .on_input(move |value| Message::BulkPasswordField { index, value })
@@ -8995,7 +9027,7 @@ fn bulk_password_dialog(
             } else {
                 Message::SubmitBulkPassword
             });
-        body = body.push(column![text(label).size(SMALL_SIZE), input].spacing(SPACING / 2.0));
+        body = body.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
     }
     if let Some(refused) = refused {
         body = body.push(
@@ -9009,12 +9041,13 @@ fn bulk_password_dialog(
     body.push(
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-ok-button")))
+                .style(styles::primary)
                 .on_press_maybe((!fields[0].is_empty()).then_some(Message::SubmitBulkPassword)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     )
     .into()
 }
@@ -9025,8 +9058,9 @@ fn bulk_password_field_id(index: usize) -> iced::widget::Id {
 
 fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
     column![
-        text(fl!("ui-tree-rename-title")).size(HEADING_SIZE),
+        text(fl!("ui-tree-rename-title")).size(font_size::TITLE),
         text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| {
                 Message::App(AppMessage::ProfileMenu(ProfileMenuMessage::NameEdited(
@@ -9036,14 +9070,15 @@ fn rename_profile_dialog(value: &str) -> Element<'_, Message> {
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-rename-confirm")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -9053,11 +9088,13 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
     let buttons = |action: String| {
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(action)).on_press(Message::App(AppMessage::ConfirmDialog)),
+            button(text(action))
+                .style(styles::primary)
+                .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
     };
     let (title, body, action) = match dialog {
         Dialog::FolderName {
@@ -9076,16 +9113,17 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
                 ),
             };
             let mut content = column![
-                text(title).size(HEADING_SIZE),
+                text(title).size(font_size::TITLE),
                 text(fl!("ui-folder-name-field")),
                 text_input(&fl!("ui-dialog-name-placeholder"), value)
+                    .style(styles::text_input)
                     .id(name_field_id())
                     .on_input(
                         |value| Message::App(AppMessage::Folder(FolderMessage::NameEdited(value)))
                     )
                     .on_submit(Message::App(AppMessage::ConfirmDialog)),
             ]
-            .spacing(SPACING);
+            .spacing(spacing::SM);
             if let Some(error) = error {
                 content = content.push(
                     text(match error {
@@ -9129,9 +9167,13 @@ fn folder_dialog(dialog: &Dialog) -> Element<'_, Message> {
         ),
         _ => return column![].into(),
     };
-    column![text(title).size(HEADING_SIZE), text(body), buttons(action)]
-        .spacing(SPACING)
-        .into()
+    column![
+        text(title).size(font_size::TITLE),
+        text(body),
+        buttons(action)
+    ]
+    .spacing(spacing::SM)
+    .into()
 }
 
 /// The dialogs about a tab: closing it or others, naming it, pasting several lines in it.
@@ -9211,19 +9253,19 @@ fn tab_dialog(dialog: &Dialog) -> Element<'_, Message> {
         ),
     };
     column![
-        text(title).size(HEADING_SIZE),
+        text(title).size(font_size::TITLE),
         text(body),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(action))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -9239,7 +9281,7 @@ fn paste_dialog<'a>(
     let (title, body, action) = match command {
         Some(command) => (
             text(fl!("ui-dialog-paste-dangerous-title"))
-                .size(HEADING_SIZE)
+                .size(font_size::TITLE)
                 .style(text::danger),
             fl!(
                 "ui-dialog-paste-dangerous-body",
@@ -9248,7 +9290,7 @@ fn paste_dialog<'a>(
             fl!("ui-dialog-paste-dangerous-confirm"),
         ),
         None => (
-            text(fl!("ui-dialog-paste-title")).size(HEADING_SIZE),
+            text(fl!("ui-dialog-paste-title")).size(font_size::TITLE),
             fl!("ui-dialog-paste-body", count = lines),
             fl!("ui-dialog-paste-confirm"),
         ),
@@ -9269,14 +9311,14 @@ fn paste_dialog<'a>(
         text(body),
         container(shown)
             .max_height(PASTE_PREVIEW_HEIGHT)
-            .padding(PADDING)
+            .padding(spacing::MD)
             .style(container::rounded_box),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if preview.truncated {
         content = content.push(
             text(fl!("ui-dialog-paste-truncated"))
-                .size(SMALL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::secondary),
         );
     }
@@ -9284,13 +9326,13 @@ fn paste_dialog<'a>(
         .push(
             row![
                 button(text(fl!("ui-dialog-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::DismissDialog)),
                 button(text(action))
-                    .style(button::danger)
+                    .style(styles::danger)
                     .on_press(Message::App(AppMessage::ConfirmDialog)),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
         .into()
 }
@@ -9316,7 +9358,7 @@ fn seconds_left(retry: Retry) -> u64 {
 /// The button that stops the attempts of `tab`.
 fn cancel_retry_button<'a>(tab: TabId) -> iced::widget::Button<'a, Message> {
     button(text(fl!("ui-session-reconnecting-cancel")))
-        .style(button::secondary)
+        .style(styles::secondary)
         .on_press(Message::App(AppMessage::CancelAutoReconnect(tab)))
 }
 
@@ -9324,14 +9366,14 @@ fn cancel_retry_button<'a>(tab: TabId) -> iced::widget::Button<'a, Message> {
 fn countdown_card<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
     center(card(
         column![
-            text(reconnecting(retry)).size(HEADING_SIZE),
+            text(reconnecting(retry)).size(font_size::TITLE),
             text(fl!(
                 "ui-session-reconnecting-in",
                 seconds = seconds_left(retry)
             )),
             cancel_retry_button(tab),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ))
     .into()
 }
@@ -9346,8 +9388,8 @@ fn countdown_bar<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
         )),
         cancel_retry_button(tab),
     ]
-    .spacing(SPACING)
-    .padding(PADDING)
+    .spacing(spacing::SM)
+    .padding(spacing::MD)
     .align_y(iced::Alignment::Center)
     .into()
 }
@@ -9358,30 +9400,34 @@ fn countdown_bar<'a>(tab: TabId, retry: Retry) -> Element<'a, Message> {
 /// sudo's question: its password, typed hidden, kept for the tab once sudo takes it.
 fn sudo_password_dialog<'a>(name: &str, typed: &'a str) -> Element<'a, Message> {
     column![
-        text(fl!("ui-dialog-sudo-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-sudo-title")).size(font_size::TITLE),
         text(fl!("ui-dialog-sudo-body", name = name)),
         text_input("", typed)
+            .style(styles::text_input)
             .id(name_field_id())
             .secure(true)
             .on_input(Message::SudoPasswordEdited)
             .on_submit(Message::SudoPasswordConfirm),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-dialog-ok-button"))).on_press(Message::SudoPasswordConfirm),
+            button(text(fl!("ui-dialog-ok-button")))
+                .style(styles::primary)
+                .on_press(Message::SudoPasswordConfirm),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
     column![
-        text(fl!("ui-resolution-custom-title")).size(HEADING_SIZE),
+        text(fl!("ui-resolution-custom-title")).size(font_size::TITLE),
         text(fl!("ui-resolution-custom-prompt")),
         text_input("", value)
+            .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| {
                 Message::App(AppMessage::TabMenu(TabMenuMessage::ResolutionEdited(value)))
@@ -9389,24 +9435,26 @@ fn custom_resolution_dialog(value: &str) -> Element<'_, Message> {
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-ok-button")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 /// The name of the macro just recorded, of `count` inputs, asked before it is kept.
 fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
     column![
-        text(fl!("ui-dialog-save-macro-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-save-macro-title")).size(font_size::TITLE),
         text(fl!("ui-dialog-save-macro-prompt", count = count)),
-        text(fl!("ui-dialog-save-macro-warning")).size(SMALL_SIZE),
+        text(fl!("ui-dialog-save-macro-warning")).size(font_size::CAPTION),
         text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| Message::App(AppMessage::Macro(
                 heimdall_app::MacroMessage::NameEdited(value)
@@ -9414,35 +9462,38 @@ fn save_macro_dialog(value: &str, count: usize) -> Element<'_, Message> {
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-save-macro-confirm")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
 fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
     column![
-        text(fl!("ui-dialog-rename-tab-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-rename-tab-title")).size(font_size::TITLE),
         text(fl!("ui-dialog-rename-tab-prompt")),
         text_input(&fl!("ui-dialog-name-placeholder"), value)
+            .style(styles::text_input)
             .id(name_field_id())
             .on_input(|value| Message::App(AppMessage::TabMenu(TabMenuMessage::NameEdited(value))))
             .on_submit(Message::App(AppMessage::ConfirmDialog)),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-rename-confirm")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -9484,7 +9535,7 @@ fn command_question<'a>(
     rereads: bool,
 ) -> Element<'a, Message> {
     let mut body = column![
-        text(title).size(HEADING_SIZE),
+        text(title).size(font_size::TITLE),
         text(intro),
         container(
             scrollable(
@@ -9495,10 +9546,10 @@ fn command_question<'a>(
             .height(Length::Shrink)
         )
         .max_height(LOCAL_COMMAND_HEIGHT)
-        .padding(PADDING)
+        .padding(spacing::MD)
         .style(container::rounded_box),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if let Some(folder) = folder {
         body = body.push(text(fl!("ui-dialog-local-folder", folder = folder)));
     }
@@ -9508,13 +9559,13 @@ fn command_question<'a>(
     body.push(
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-local-confirm")))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     )
     .into()
 }
@@ -9524,7 +9575,7 @@ fn command_question<'a>(
 fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Message> {
     let count = confirmation.commands.len();
     column![
-        text(fl!("ui-dialog-post-connect-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-post-connect-title")).size(font_size::TITLE),
         text(fl!(
             "ui-dialog-post-connect-body",
             name = confirmation.name.as_str(),
@@ -9539,19 +9590,19 @@ fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Me
             .height(Length::Shrink)
         )
         .max_height(LOCAL_COMMAND_HEIGHT)
-        .padding(PADDING)
+        .padding(spacing::MD)
         .style(container::rounded_box),
         row![
             button(text(fl!("ui-dialog-post-connect-skip")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::SkipPostConnect)),
             button(text(fl!("ui-dialog-post-connect-run")))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -9561,8 +9612,8 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
     let count = format!("{}/{}", progress.step, progress.total);
     let status = texts::step_status(progress.status);
     tooltip(
-        button(text(count.clone()).size(SMALL_SIZE))
-            .style(button::text)
+        button(text(count.clone()).size(font_size::CAPTION))
+            .style(styles::subtle)
             .on_press(Message::App(AppMessage::StopPostConnect(tab))),
         text(fl!(
             "ui-post-connect-tooltip",
@@ -9570,7 +9621,7 @@ fn post_connect_badge(tab: TabId, progress: &PostConnectProgress) -> Element<'_,
             status = status,
             command = progress.command.as_str()
         ))
-        .size(SMALL_SIZE),
+        .size(font_size::CAPTION),
         tooltip::Position::Bottom,
     )
     .style(container::rounded_box)
@@ -9980,14 +10031,16 @@ fn metadata_fields(draft: &ProfileDraft) -> Element<'_, Message> {
                 |EnvironmentChoice(environment)| Message::App(AppMessage::ProfileChoice(
                     ProfileChoice::Environment(environment)
                 )),
-            ),
+            )
+            .style(styles::pick_list)
+            .menu_style(styles::menu),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
         form_field(draft, ProfileField::Tags),
         form_field(draft, ProfileField::MacAddress),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -10041,14 +10094,16 @@ fn ssh_mode_choice(draft: &ProfileDraft) -> Element<'_, Message> {
                 |SshModeChoice(mode)| Message::App(AppMessage::ProfileChoice(
                     ProfileChoice::SshMode(mode)
                 )),
-            ),
+            )
+            .style(styles::pick_list)
+            .menu_style(styles::menu),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     if draft.ssh_mode == SshMode::External {
-        mode = mode.push(text(fl!("ui-profile-ssh-mode-external-desc")).size(SMALL_SIZE));
+        mode = mode.push(text(fl!("ui-profile-ssh-mode-external-desc")).size(font_size::CAPTION));
     }
     mode.into()
 }
@@ -10065,13 +10120,15 @@ fn session_logging_choice(draft: &ProfileDraft) -> Element<'_, Message> {
                 |LoggingChoice(logging)| Message::App(AppMessage::ProfileChoice(
                     ProfileChoice::SessionLogging(logging)
                 )),
-            ),
+            )
+            .style(styles::pick_list)
+            .menu_style(styles::menu),
         ]
-        .spacing(SPACING)
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center),
-        text(fl!("ui-profile-session-logging-hint")).size(SMALL_SIZE),
+        text(fl!("ui-profile-session-logging-hint")).size(font_size::CAPTION),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .into()
 }
 
@@ -10272,12 +10329,13 @@ fn vault_dialog<'a>(
         VaultMode::Unlock | VaultMode::Locked | VaultMode::Disable => None,
     };
     let count = labels.len();
-    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    let mut form = column![text(title).size(font_size::TITLE)].spacing(spacing::SM);
     if let Some(body) = body {
         form = form.push(text(body));
     }
     for (index, label) in labels.into_iter().enumerate() {
         let mut input = text_input("", fields[index].as_str())
+            .style(styles::text_input)
             .id(vault_field_id(index))
             .secure(true);
         if !dialog.busy {
@@ -10289,28 +10347,28 @@ fn vault_dialog<'a>(
                     Message::SubmitVault
                 });
         }
-        form = form.push(column![text(label).size(SMALL_SIZE), input].spacing(SPACING / 2.0));
+        form = form.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
         if new_field == Some(index) {
-            form = form.push(text(policy_line(fields[index].as_str())).size(SMALL_SIZE));
+            form = form.push(text(policy_line(fields[index].as_str())).size(font_size::CAPTION));
         }
     }
     if let Some(problem) = &dialog.problem {
         form = form.push(text(vault_problem(problem)).style(text::danger));
     }
     if dialog.busy {
-        form = form.push(text(busy).size(SMALL_SIZE));
+        form = form.push(text(busy).size(font_size::CAPTION));
     }
     // As in C#: a new password is taken once it follows the rules and is typed twice alike.
     let ready = new_field.is_none_or(|index| {
         master_password_problem(fields[index].as_str()).is_none()
             && fields[index].as_str() == fields[index + 1].as_str()
     });
-    let mut buttons = row![iced::widget::space::horizontal()].spacing(SPACING);
+    let mut buttons = row![iced::widget::space::horizontal()].spacing(spacing::SM);
     // The lock screen has no Cancel; the one asked at start quits.
     if dialog.mode != VaultMode::Locked {
         buttons = buttons.push(
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
         );
     }
@@ -10319,8 +10377,8 @@ fn vault_dialog<'a>(
         dialog.problem,
         Some(VaultProblem::LockedOut { until }) if until > std::time::SystemTime::now()
     );
-    buttons = buttons
-        .push(button(text(action)).on_press_maybe(
+    buttons =
+        buttons.push(button(text(action)).style(styles::primary).on_press_maybe(
             (!dialog.busy && ready && !locked_out).then_some(Message::SubmitVault),
         ));
     form.push(buttons).into()
@@ -10349,9 +10407,10 @@ fn pin_dialog<'a>(
         }
     };
     let count = labels.len();
-    let mut form = column![text(title).size(HEADING_SIZE)].spacing(SPACING);
+    let mut form = column![text(title).size(font_size::TITLE)].spacing(spacing::SM);
     for (index, label) in labels.into_iter().enumerate() {
         let input = text_input("", fields[index].as_str())
+            .style(styles::text_input)
             .id(vault_field_id(index))
             .secure(true)
             .on_input(move |value| Message::VaultField { index, value })
@@ -10360,7 +10419,7 @@ fn pin_dialog<'a>(
             } else {
                 Message::SubmitPin
             });
-        form = form.push(column![text(label).size(SMALL_SIZE), input].spacing(SPACING / 2.0));
+        form = form.push(column![text(label).size(font_size::CAPTION), input].spacing(spacing::XS));
     }
     if let Some(problem) = &dialog.problem {
         form = form.push(text(pin_problem_text(problem)).style(text::danger));
@@ -10370,21 +10429,25 @@ fn pin_dialog<'a>(
         dialog.problem,
         Some(PinFailure::LockedOut { until }) if until > std::time::SystemTime::now()
     );
-    let mut buttons = row![iced::widget::space::horizontal()].spacing(SPACING);
+    let mut buttons = row![iced::widget::space::horizontal()].spacing(spacing::SM);
     if dialog.mode == (PinMode::Setup { current: true }) {
         buttons = buttons.push(
             button(text(fl!("ui-pin-remove-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press_maybe(open.then_some(Message::RemovePin)),
         );
     }
     buttons = buttons
         .push(
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
         )
-        .push(button(text(action)).on_press_maybe(open.then_some(Message::SubmitPin)));
+        .push(
+            button(text(action))
+                .style(styles::primary)
+                .on_press_maybe(open.then_some(Message::SubmitPin)),
+        );
     form.push(buttons).into()
 }
 
@@ -10556,26 +10619,30 @@ fn plain_question(dialog: &Dialog) -> (String, String, String) {
 fn plain_question_view<'a>(dialog: &Dialog) -> Element<'a, Message> {
     let (title, body, action) = plain_question(dialog);
     column![
-        text(title).size(HEADING_SIZE),
+        text(title).size(font_size::TITLE),
         text(body),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(action))
-                .style(button::danger)
+                .style(styles::danger)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
+/// The OK that closes a dialog which only informs.
+fn ok_button<'a>() -> iced::widget::Button<'a, Message> {
+    button(text(fl!("ui-dialog-ok-button")))
+        .style(styles::primary)
+        .on_press(Message::App(AppMessage::DismissDialog))
+}
+
 fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message> {
-    let ok = || {
-        button(text(fl!("ui-dialog-ok-button"))).on_press(Message::App(AppMessage::DismissDialog))
-    };
     match dialog {
         Dialog::SudoPassword { name, .. } => sudo_password_dialog(name, forms.sudo_password),
         Dialog::ConfirmSudoDelete { names, more, .. } => {
@@ -10634,12 +10701,14 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         Dialog::ForgetTrustedServer { key, count } => {
             crate::trusted_keys_view::forget_server_question(key, *count)
         }
-        Dialog::ImportDone(summary) => import_report(summary, ok()),
+        Dialog::ImportDone(summary) => import_report(summary, ok_button()),
         Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
-        Dialog::Shortcuts => crate::shortcuts_view::view(ok()),
-        Dialog::FileProperties(properties) => crate::files_view::properties(properties, ok()),
+        Dialog::Shortcuts => crate::shortcuts_view::view(ok_button()),
+        Dialog::FileProperties(properties) => {
+            crate::files_view::properties(properties, ok_button())
+        }
         Dialog::LocalFileProperties(properties) => {
-            crate::files_view::local_properties(properties, ok())
+            crate::files_view::local_properties(properties, ok_button())
         }
         Dialog::ExportDone { .. }
         | Dialog::ExportFailed { .. }
@@ -10658,7 +10727,7 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
         | Dialog::PasswordSaveFailed { .. }
         | Dialog::StoreUnreadable { .. }
         | Dialog::StoreError { .. }
-        | Dialog::StoreChanged { .. } => report(dialog, ok()),
+        | Dialog::StoreChanged { .. } => report(dialog, ok_button()),
         Dialog::SessionsPreview(_)
         | Dialog::RdpPreview(_)
         | Dialog::HostKeysPreview(_)

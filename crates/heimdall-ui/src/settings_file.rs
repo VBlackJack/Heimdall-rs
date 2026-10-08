@@ -28,6 +28,8 @@ use iced::{Element, Task, window};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// Extension of a settings file.
 const EXTENSION: &str = "toml";
@@ -37,10 +39,6 @@ const MAX_FILE_BYTES: u64 = 1024 * 1024;
 
 /// Tallest the list of changes grows before it scrolls, in logical pixels.
 const CHANGES_HEIGHT: f32 = 280.0;
-
-const SPACING: f32 = 8.0;
-const HEADING_SIZE: f32 = 18.0;
-const SMALL_SIZE: f32 = 12.0;
 
 /// The file picked in a dialog, once it closes; `None` when cancelled.
 type Pick = Pin<Box<dyn Future<Output = Option<rfd::FileHandle>> + Send>>;
@@ -158,11 +156,11 @@ pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
                 before = shown(change.before.as_ref()),
                 after = shown(change.after.as_ref())
             ))
-            .size(SMALL_SIZE),
+            .size(font_size::CAPTION),
         );
     }
     column![
-        text(fl!("ui-dialog-settings-import-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-settings-import-title")).size(font_size::TITLE),
         text(fl!(
             "ui-dialog-settings-import-body",
             count = read.changes.len()
@@ -170,14 +168,15 @@ pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
         scrollable(lines).height(CHANGES_HEIGHT),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-settings-import-confirm")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -185,17 +184,18 @@ pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
 /// as the C# asks: left out, or included.
 pub fn export_question<'a>(count: usize) -> Element<'a, Message> {
     column![
-        text(fl!("ui-dialog-settings-export-title")).size(HEADING_SIZE),
+        text(fl!("ui-dialog-settings-export-title")).size(font_size::TITLE),
         text(fl!("ui-dialog-settings-export-paths", count = count)),
         row![
             button(text(fl!("ui-dialog-settings-export-without")))
-                .style(button::secondary)
+                .style(styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
             button(text(fl!("ui-dialog-settings-export-with")))
+                .style(styles::primary)
                 .on_press(Message::App(AppMessage::ConfirmDialog)),
         ]
-        .spacing(SPACING),
+        .spacing(spacing::SM),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }

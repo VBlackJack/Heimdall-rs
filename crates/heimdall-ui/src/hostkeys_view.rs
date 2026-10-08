@@ -34,18 +34,11 @@ use iced::{Element, Length, Theme};
 use crate::i18n::fl;
 use crate::sessions_view::{Pick, SSH_FOLDER};
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// The file OpenSSH trusts its servers' keys in, offered first.
 const KNOWN_HOSTS_FILE_NAME: &str = "known_hosts";
-
-/// Room between the parts of the preview.
-const SPACING: f32 = 8.0;
-
-/// Size of the preview's text.
-const TEXT_SIZE: f32 = 13.0;
-
-/// Size of its title.
-const TITLE_SIZE: f32 = 20.0;
 
 /// Tallest the list of keys grows before it scrolls.
 const ROWS_HEIGHT: f32 = 300.0;
@@ -117,7 +110,7 @@ pub async fn read_file(path: &Path) -> Result<String, String> {
 fn cell<'a>(value: impl Into<String>, width: f32) -> Element<'a, Message> {
     container(
         text(value.into())
-            .size(TEXT_SIZE)
+            .size(font_size::BODY)
             .wrapping(text::Wrapping::None),
     )
     .width(width)
@@ -135,7 +128,7 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
         cell(fl!("ui-hostkeys-column-type"), COLUMNS[2]),
         cell(fl!("ui-hostkeys-column-fingerprint"), COLUMNS[3]),
         cell(fl!("ui-openssh-column-status"), COLUMNS[4]),
-        text(fl!("ui-hostkeys-column-notes")).size(TEXT_SIZE),
+        text(fl!("ui-hostkeys-column-notes")).size(font_size::BODY),
     ];
     let rows = Column::with_children(
         preview
@@ -146,7 +139,7 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(fl!("ui-hostkeys-title")).size(TITLE_SIZE),
+        text(fl!("ui-hostkeys-title")).size(font_size::TITLE),
         text(fl!(
             "ui-hostkeys-summary",
             total = total,
@@ -154,15 +147,16 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
             existing = existing,
             conflicts = conflicts
         ))
-        .size(TEXT_SIZE),
+        .size(font_size::BODY),
         checkbox(preview.all_chosen())
+            .style(styles::checkbox)
             .label(fl!("ui-openssh-choose-all"))
-            .text_size(TEXT_SIZE)
+            .text_size(font_size::BODY)
             .on_toggle(|on| app(HostKeysMessage::ChooseAll(on))),
         header,
         scrollable(rows).height(Length::Shrink).height(ROWS_HEIGHT),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     if !preview.diagnostics.is_empty() {
         content = content
             .push(
@@ -170,7 +164,7 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
                     "ui-openssh-diagnostics",
                     count = preview.diagnostics.len()
                 ))
-                .size(TEXT_SIZE),
+                .size(font_size::BODY),
             )
             .push(
                 scrollable(Column::with_children(
@@ -183,15 +177,17 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
         .push(
             row![
                 button(text(fl!("ui-dialog-cancel-button")))
-                    .style(button::secondary)
+                    .style(styles::secondary)
                     .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(fl!("ui-openssh-import-button"))).on_press_maybe(
-                    preview
-                        .can_import()
-                        .then_some(Message::App(AppMessage::ConfirmDialog))
-                ),
+                button(text(fl!("ui-openssh-import-button")))
+                    .style(styles::primary)
+                    .on_press_maybe(
+                        preview
+                            .can_import()
+                            .then_some(Message::App(AppMessage::ConfirmDialog))
+                    ),
             ]
-            .spacing(SPACING),
+            .spacing(spacing::SM),
         )
         .into()
 }
@@ -218,9 +214,12 @@ fn key_row<'a>(
         ),
     };
     // As the C# preview: only a new key can be ticked.
-    let tick = checkbox(row.chosen).on_toggle_maybe(
-        (row.status == HostKeyStatus::New).then_some(move |_| app(HostKeysMessage::Choose(index))),
-    );
+    let tick = checkbox(row.chosen)
+        .style(styles::checkbox)
+        .on_toggle_maybe(
+            (row.status == HostKeyStatus::New)
+                .then_some(move |_| app(HostKeysMessage::Choose(index))),
+        );
     row![
         container(tick).width(COLUMNS[0]),
         cell(display_address(&candidate.host, candidate.port), COLUMNS[1]),
@@ -228,7 +227,7 @@ fn key_row<'a>(
         cell(row.fingerprint.clone(), COLUMNS[3]),
         cell(status, COLUMNS[4]),
         // The notes wrap rather than being cut: they are the reason a key is left out.
-        text(note).size(TEXT_SIZE).width(Length::Fill),
+        text(note).size(font_size::BODY).width(Length::Fill),
     ]
     .align_y(iced::Alignment::Center)
     .into()
@@ -282,7 +281,7 @@ fn diagnostic_line(diagnostic: &HostKeyDiagnostic) -> Element<'_, Message> {
     };
     let warning = diagnostic.note.is_warning();
     text(said)
-        .size(TEXT_SIZE)
+        .size(font_size::BODY)
         .style(move |theme: &Theme| text::Style {
             color: warning.then(|| theme.extended_palette().danger.base.color),
         })

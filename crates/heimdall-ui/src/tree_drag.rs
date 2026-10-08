@@ -23,6 +23,7 @@ use iced::widget::{column, container, mouse_area, space, stack};
 use iced::{Element, Length, Point, Theme, event, mouse, window};
 
 use crate::shell::Message;
+use crate::tokens::radius;
 
 /// How far the pointer moves, held down, before a press becomes a drag, in logical pixels,
 /// as the system's drag threshold.
@@ -133,7 +134,7 @@ pub fn drop_zone<'a>(
             border: iced::Border {
                 color: theme.extended_palette().primary.base.color,
                 width: TARGET_BORDER,
-                radius: 4.0.into(),
+                radius: radius::SM.into(),
             },
             ..container::Style::default()
         })

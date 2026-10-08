@@ -43,18 +43,11 @@ use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Size of a menu entry's text.
-const MENU_TEXT_SIZE: f32 = 14.0;
-
-/// Size of the line under a menu entry saying why it is disabled.
-const MENU_NOTE_SIZE: f32 = 12.0;
+use crate::styles;
+use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
 
 /// Tallest a "Move to folder" list grows before it scrolls.
 const MOVE_MENU_HEIGHT: f32 = 360.0;
-
-/// Size of a folder's name.
-const FOLDER_SIZE: f32 = 13.0;
 
 /// What an open folder shows before its name, and a closed one.
 const OPEN_MARKER: &str = "\u{25BE}";
@@ -62,12 +55,6 @@ const CLOSED_MARKER: &str = "\u{25B8}";
 
 /// Width of a menu.
 const MENU_WIDTH: f32 = 270.0;
-
-/// Space between a menu's card and its entries.
-const MENU_PADDING: f32 = 4.0;
-
-/// Size of the protocol label before a profile's name.
-const PROTOCOL_SIZE: f32 = 11.0;
 
 /// Width of the accent edge of a selected row.
 const SELECTED_EDGE: f32 = 3.0;
@@ -297,12 +284,14 @@ pub fn folder_row<'a>(
     let marker = if open { OPEN_MARKER } else { CLOSED_MARKER };
     let body = container(
         row![
-            text(marker).size(PROTOCOL_SIZE).style(text::secondary),
+            text(marker)
+                .size(font_size::SMALL_CAPTION)
+                .style(text::secondary),
             color.map(swatch),
-            text(label).size(FOLDER_SIZE),
+            text(label).size(font_size::BODY),
             iced::widget::space::horizontal(),
             text(count.to_string())
-                .size(PROTOCOL_SIZE)
+                .size(font_size::SMALL_CAPTION)
                 .style(text::secondary),
         ]
         .spacing(6.0)
@@ -323,8 +312,6 @@ pub fn folder_row<'a>(
 
 /// Side of a folder colour's swatch, as the C# menu's.
 const SWATCH_SIDE: f32 = 10.0;
-/// Corner radius of the swatch.
-const SWATCH_RADIUS: f32 = 2.0;
 
 /// A square of `color`, before a folder's name and in its menu.
 fn swatch<'a>(color: FolderColor) -> Element<'a, Message> {
@@ -333,7 +320,7 @@ fn swatch<'a>(color: FolderColor) -> Element<'a, Message> {
         .style(move |_: &iced::Theme| container::Style {
             background: Some(iced::Color::from_rgb8(red, green, blue).into()),
             border: iced::Border {
-                radius: SWATCH_RADIUS.into(),
+                radius: radius::XS.into(),
                 ..iced::Border::default()
             },
             ..container::Style::default()
@@ -369,10 +356,10 @@ pub fn folder_color_entries<'a>(path: &str, current: Option<FolderColor>) -> Ele
         button(
             row![
                 text(if checked { CHECKED } else { "" })
-                    .size(MENU_TEXT_SIZE)
+                    .size(font_size::BODY_LARGE)
                     .width(CHECK_WIDTH),
                 color.map(swatch),
-                text(label).size(MENU_TEXT_SIZE),
+                text(label).size(font_size::BODY_LARGE),
             ]
             .spacing(6.0)
             .align_y(iced::Alignment::Center),
@@ -394,9 +381,6 @@ pub fn folder_color_entries<'a>(path: &str, current: Option<FolderColor>) -> Ele
         .push(item(fl!("ui-folder-color-none"), current.is_none(), None));
     menu_card(entries).into()
 }
-
-/// Size of the line under a found profile's name.
-const CONTEXT_SIZE: f32 = 11.0;
 
 /// Where a found profile is: its folder and host, as the C# tree says under the name while
 /// searching; `None` when it has neither.
@@ -426,7 +410,7 @@ pub fn owned_row(
     let mut label = row![
         container(
             text(profile.kind.label())
-                .size(PROTOCOL_SIZE)
+                .size(font_size::SMALL_CAPTION)
                 .style(text::secondary)
         )
         .width(PROTOCOL_WIDTH),
@@ -434,7 +418,7 @@ pub fn owned_row(
         column![text(profile.name.clone()).wrapping(text::Wrapping::Glyph)].push(context.map(
             |context| {
                 text(context)
-                    .size(CONTEXT_SIZE)
+                    .size(font_size::SMALL_CAPTION)
                     .style(text::secondary)
                     .wrapping(text::Wrapping::Glyph)
             }
@@ -443,7 +427,11 @@ pub fn owned_row(
     .spacing(6.0)
     .align_y(iced::Alignment::Center);
     if profile.favorite {
-        label = label.push(text(FAVORITE_MARK).size(PROTOCOL_SIZE).style(text::warning));
+        label = label.push(
+            text(FAVORITE_MARK)
+                .size(font_size::SMALL_CAPTION)
+                .style(text::warning),
+        );
     }
     if let Some(badge) = &profile.gateway {
         label = label.push(gateway_badge(badge));
@@ -462,7 +450,7 @@ pub fn owned_row(
         .interaction(mouse::Interaction::Pointer);
     tooltip(
         area,
-        text(row_tooltip(profile, reach.as_ref())).size(12.0),
+        text(row_tooltip(profile, reach.as_ref())).size(font_size::CAPTION),
         tooltip::Position::Right,
     )
     .style(container::rounded_box)
@@ -480,7 +468,7 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
     // On one line, cut at its edge: a long gateway name must not fold the row.
     container(
         text(label)
-            .size(PROTOCOL_SIZE)
+            .size(font_size::SMALL_CAPTION)
             .wrapping(text::Wrapping::None),
     )
     .max_width(BADGE_MAX_WIDTH)
@@ -497,7 +485,7 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
             text_color: Some(colour),
             border: iced::Border {
                 color: colour,
-                width: 1.0,
+                width: BORDER_WIDTH,
                 radius: 6.0.into(),
             },
             ..container::Style::default()
@@ -511,7 +499,7 @@ fn gateway_badge(badge: &GatewayBadge) -> Element<'static, Message> {
 fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'static, Message> {
     container(
         text(origin.badge())
-            .size(PROTOCOL_SIZE)
+            .size(font_size::SMALL_CAPTION)
             .style(text::secondary)
             .wrapping(text::Wrapping::None),
     )
@@ -519,7 +507,7 @@ fn origin_badge(origin: heimdall_core::metadata::ProfileOrigin) -> Element<'stat
     .style(|theme: &Theme| container::Style {
         border: iced::Border {
             color: theme.extended_palette().background.strong.color,
-            width: 1.0,
+            width: BORDER_WIDTH,
             radius: 6.0.into(),
         },
         ..container::Style::default()
@@ -535,7 +523,7 @@ fn row_style(theme: &Theme, selected: bool) -> container::Style {
             border: iced::Border {
                 color: palette.primary.strong.color,
                 width: SELECTED_EDGE,
-                radius: 2.0.into(),
+                radius: radius::XS.into(),
             },
             ..container::Style::default()
         }
@@ -592,7 +580,7 @@ fn menu_style(theme: &Theme, status: button::Status) -> button::Style {
     let plain = button::Style {
         text_color: palette.background.base.text,
         border: iced::Border {
-            radius: 2.0.into(),
+            radius: radius::XS.into(),
             ..iced::Border::default()
         },
         ..button::Style::default()
@@ -629,7 +617,7 @@ fn danger_style(theme: &Theme, status: button::Status) -> button::Style {
 
 /// One entry: a label, active when it has a message.
 fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message> {
-    button(text(label).size(MENU_TEXT_SIZE))
+    button(text(label).size(font_size::BODY_LARGE))
         .width(Length::Fill)
         .style(menu_style)
         .on_press_maybe(message.map(Message::MenuChoice))
@@ -639,7 +627,7 @@ fn entry<'a>(label: String, message: Option<AppMessage>) -> Element<'a, Message>
 /// The card every menu is drawn on, so what is under it never shows through.
 fn menu_card<'a>(entries: impl Into<Element<'a, Message>>) -> Container<'a, Message> {
     container(entries)
-        .padding(MENU_PADDING)
+        .padding(spacing::XS)
         .style(container::rounded_box)
 }
 
@@ -725,15 +713,17 @@ pub fn filter_entries<'a>(filter: &TreeFilter, badge: bool) -> Element<'a, Messa
     let filter_box = |label: String, on: bool, message: FilterMessage| -> Element<'a, Message> {
         container(
             checkbox(on)
+                .style(styles::checkbox)
                 .label(label)
-                .text_size(MENU_TEXT_SIZE)
+                .text_size(font_size::BODY_LARGE)
                 .on_toggle(move |_| Message::App(AppMessage::Filter(message))),
         )
-        .padding(MENU_PADDING)
+        .padding(spacing::XS)
         .into()
     };
     let mut entries = column![
-        container(text(fl!("ui-tree-filter-protocols")).size(MENU_TEXT_SIZE)).padding(MENU_PADDING)
+        container(text(fl!("ui-tree-filter-protocols")).size(font_size::BODY_LARGE))
+            .padding(spacing::XS)
     ]
     .width(MENU_WIDTH);
     for kind in ProfileKind::ALL {
@@ -834,10 +824,10 @@ fn open_in_split_entry<'a>(id: &ProfileId, splittable: bool) -> Element<'a, Mess
         return submenu(label, TreeMenu::OpenInSplit(id.clone()));
     }
     tooltip(
-        button(text(label).size(MENU_TEXT_SIZE))
+        button(text(label).size(font_size::BODY_LARGE))
             .width(Length::Fill)
             .style(menu_style),
-        text(fl!("ui-split-open-in-split-disabled")).size(MENU_TEXT_SIZE),
+        text(fl!("ui-split-open-in-split-disabled")).size(font_size::BODY_LARGE),
         tooltip::Position::Right,
     )
     .style(container::rounded_box)
@@ -907,7 +897,7 @@ fn profile_entries<'a>(
         ))
         .push(separator())
         .push(
-            button(text(fl!("ui-tree-move-to-folder")).size(MENU_TEXT_SIZE))
+            button(text(fl!("ui-tree-move-to-folder")).size(font_size::BODY_LARGE))
                 .width(Length::Fill)
                 .style(menu_style)
                 .on_press_maybe(
@@ -919,7 +909,7 @@ fn profile_entries<'a>(
         .push(separator())
         .push(submenu(fl!("ui-tree-notes"), TreeMenu::Notes(id.clone())));
     entries = entries.push(separator()).push(
-        button(text(fl!("ui-tree-delete")).size(MENU_TEXT_SIZE))
+        button(text(fl!("ui-tree-delete")).size(font_size::BODY_LARGE))
             .width(Length::Fill)
             .style(danger_style)
             .on_press(Message::MenuChoice(AppMessage::RequestDeleteProfile(id))),
@@ -940,7 +930,7 @@ pub fn notes_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
             NoteTemplate::Procedure => fl!("ui-notes-procedure"),
         };
         entries = entries.push(
-            button(text(label).size(MENU_TEXT_SIZE))
+            button(text(label).size(font_size::BODY_LARGE))
                 .width(Length::Fill)
                 .style(menu_style)
                 .on_press(Message::NewNote {
@@ -1318,10 +1308,10 @@ pub fn macro_entries<'a>(tab: TabId, menu: &heimdall_app::MacroMenu) -> Element<
     let mut entries = column![
         container(
             text(fl!("ui-macros-menu"))
-                .size(MENU_TEXT_SIZE)
+                .size(font_size::BODY_LARGE)
                 .style(text::secondary)
         )
-        .padding(MENU_PADDING),
+        .padding(spacing::XS),
         separator(),
     ]
     .spacing(0.0)
@@ -1458,9 +1448,9 @@ fn checked_entry<'a>(label: String, checked: bool, message: AppMessage) -> Eleme
     button(
         row![
             text(if checked { CHECKED } else { "" })
-                .size(MENU_TEXT_SIZE)
+                .size(font_size::BODY_LARGE)
                 .width(CHECK_WIDTH),
-            text(label).size(MENU_TEXT_SIZE),
+            text(label).size(font_size::BODY_LARGE),
         ]
         .align_y(iced::Alignment::Center),
     )
@@ -1480,7 +1470,12 @@ pub fn resolution_entries<'a>(
     let choose = |choice| AppMessage::TabMenu(TabMenuMessage::Resolution { tab, choice });
     let header = state.header();
     let mut entries = column![
-        container(text(header).size(MENU_TEXT_SIZE).style(text::secondary)).padding(MENU_PADDING),
+        container(
+            text(header)
+                .size(font_size::BODY_LARGE)
+                .style(text::secondary)
+        )
+        .padding(spacing::XS),
         separator(),
         checked_entry(
             fl!("ui-resolution-match-window"),
@@ -1512,7 +1507,7 @@ pub fn resolution_entries<'a>(
         entries = entries.push(if state.larger_than_tab(size) {
             tooltip(
                 preset,
-                text(fl!("ui-resolution-larger-than-window")).size(MENU_TEXT_SIZE),
+                text(fl!("ui-resolution-larger-than-window")).size(font_size::BODY_LARGE),
                 tooltip::Position::Left,
             )
             .style(container::rounded_box)
@@ -1576,7 +1571,7 @@ fn profile_tab_entries<'a>(
 
 /// An entry that opens the menu `menu` beside the one shown.
 fn submenu<'a>(label: String, menu: TreeMenu) -> Element<'a, Message> {
-    button(text(label).size(MENU_TEXT_SIZE))
+    button(text(label).size(font_size::BODY_LARGE))
         .width(Length::Fill)
         .style(menu_style)
         .on_press(Message::OpenTreeMenu(menu))
@@ -1636,7 +1631,7 @@ pub fn tab_menu_entries<'a>(state: &TabMenuState) -> Element<'a, Message> {
     entries = entries
         .push(separator())
         .push(
-            button(text(fl!("ui-tab-menu-fullscreen")).size(MENU_TEXT_SIZE))
+            button(text(fl!("ui-tab-menu-fullscreen")).size(font_size::BODY_LARGE))
                 .width(Length::Fill)
                 .style(menu_style)
                 .on_press(Message::MenuFullscreen(tab)),
@@ -1771,7 +1766,7 @@ fn split_entries(
 #[must_use]
 pub fn split_axis_entries<'a>(host: TabId) -> Element<'a, Message> {
     let split = |label: String, axis| -> Element<'a, Message> {
-        button(text(label).size(MENU_TEXT_SIZE))
+        button(text(label).size(font_size::BODY_LARGE))
             .width(Length::Fill)
             .style(menu_style)
             .on_press(Message::SplitPalette { host, axis })
@@ -1818,7 +1813,8 @@ pub fn merge_axis_entries<'a>(host: TabId, tab: TabId) -> Element<'a, Message> {
 /// How tall a tunnel row's menu is, about: it opens above the cursor, the panel being at the
 /// window's foot. Three entries of a menu's text and the button's room, a separator, the
 /// card's padding.
-pub const TUNNEL_MENU_HEIGHT: f32 = 3.0 * (MENU_TEXT_SIZE * 1.3 + 10.0) + 1.0 + 2.0 * MENU_PADDING;
+pub const TUNNEL_MENU_HEIGHT: f32 =
+    3.0 * (font_size::BODY_LARGE * 1.3 + 10.0) + 1.0 + 2.0 * spacing::XS;
 
 /// A tunnel row's menu, as the C# one: Close Tunnel, Copy Local Port, then Close All Tunnels.
 pub fn tunnel_menu_entries<'a>(
@@ -1893,7 +1889,7 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                 TreeMenu::MoveFolder(path.to_owned()),
             ))
             .push(
-                button(text(fl!("ui-folder-color")).size(MENU_TEXT_SIZE))
+                button(text(fl!("ui-folder-color")).size(font_size::BODY_LARGE))
                     .width(Length::Fill)
                     .style(menu_style)
                     .on_press(Message::OpenTreeMenu(TreeMenu::FolderColor(
@@ -1901,7 +1897,7 @@ pub fn folder_menu_entries<'a>(path: &str, connectable: usize) -> Element<'a, Me
                     ))),
             )
             .push(
-                button(text(fl!("ui-folder-delete")).size(MENU_TEXT_SIZE))
+                button(text(fl!("ui-folder-delete")).size(font_size::BODY_LARGE))
                     .width(Length::Fill)
                     .style(danger_style)
                     .on_press(Message::MenuChoice(AppMessage::Folder(
@@ -1986,7 +1982,7 @@ pub fn selection_menu_entries<'a>(
         ))
         .push(separator())
         .push(
-            button(text(fl!("ui-selection-delete", count = count)).size(MENU_TEXT_SIZE))
+            button(text(fl!("ui-selection-delete", count = count)).size(font_size::BODY_LARGE))
                 .width(Length::Fill)
                 .style(danger_style)
                 .on_press(Message::MenuChoice(AppMessage::Selection(
@@ -2021,13 +2017,13 @@ pub fn edit_selection_entries<'a>(
         ));
     if let Some(blocked) = blocked {
         entries = entries.push(
-            container(text(blocked).size(MENU_NOTE_SIZE))
-                .padding(MENU_PADDING)
+            container(text(blocked).size(font_size::CAPTION))
+                .padding(spacing::XS)
                 .width(Length::Fill),
         );
     }
     let entries = entries.push(
-        button(text(fl!("ui-selection-set-gateway", count = routed)).size(MENU_TEXT_SIZE))
+        button(text(fl!("ui-selection-set-gateway", count = routed)).size(font_size::BODY_LARGE))
             .width(Length::Fill)
             .style(menu_style)
             .on_press_maybe(

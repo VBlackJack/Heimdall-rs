@@ -23,20 +23,15 @@ use iced::{Element, Length};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::tokens::{font_size, spacing};
 
 /// Width of the panel, as the C#'s.
 const PANEL_WIDTH: f32 = 180.0;
 
-/// Size of its text.
-const SMALL_SIZE: f32 = 12.0;
-
-/// Space between its parts.
-const SPACING: f32 = 4.0;
-
 /// The panel, from what the server last said.
 pub fn view<'a>(health: &HealthPane) -> Element<'a, Message> {
     let figures = figures(health.last.as_ref());
-    let mut panel = column![].spacing(SPACING);
+    let mut panel = column![].spacing(spacing::XS);
     for (label, (share, figure)) in [
         fl!("ui-health-cpu"),
         fl!("ui-health-memory"),
@@ -46,10 +41,10 @@ pub fn view<'a>(health: &HealthPane) -> Element<'a, Message> {
     .zip(figures)
     {
         panel = panel
-            .push(text(label).size(SMALL_SIZE).style(text::secondary))
+            .push(text(label).size(font_size::CAPTION).style(text::secondary))
             .push(progress_bar(0.0..=100.0, share).girth(14.0))
             .push(
-                container(text(figure).size(SMALL_SIZE))
+                container(text(figure).size(font_size::CAPTION))
                     .align_right(Length::Fill)
                     .padding(iced::Padding::ZERO.bottom(8.0)),
             );
@@ -57,7 +52,7 @@ pub fn view<'a>(health: &HealthPane) -> Element<'a, Message> {
     container(panel)
         .width(PANEL_WIDTH)
         .height(Length::Fill)
-        .padding(8.0)
+        .padding(spacing::SM)
         .style(container::bordered_box)
         .into()
 }

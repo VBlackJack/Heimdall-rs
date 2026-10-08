@@ -34,11 +34,9 @@ use iced::{Alignment, Color, Element, Length, Theme};
 
 use crate::i18n::fl;
 use crate::shell::Message;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
-/// Space between the two lists, and between a label and its list.
-const SPACING: f32 = 8.0;
-/// Size of a list's label.
-const LABEL_SIZE: f32 = 12.0;
 /// How much of the form's background veils a list the global defaults decide, as a
 /// disabled C# control is greyed.
 const VEIL_OPACITY: f32 = 0.5;
@@ -144,7 +142,7 @@ fn group<'a>(title: String) -> Element<'a, Message> {
 
 /// A part of a group, named as the C# labels it.
 fn part<'a>(title: String) -> Element<'a, Message> {
-    text(title).size(LABEL_SIZE).into()
+    text(title).size(font_size::CAPTION).into()
 }
 
 /// `element`, and beside it, while the profile opens in a tab, that only Remote Desktop
@@ -156,10 +154,10 @@ fn external_only<'a>(draft: &ProfileDraft, element: Element<'a, Message>) -> Ele
     row![
         element,
         text(fl!("ui-profile-rdp-mstsc-only"))
-            .size(LABEL_SIZE)
+            .size(font_size::CAPTION)
             .style(text::secondary),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center)
     .into()
 }
@@ -172,6 +170,7 @@ fn toggle_box<'a>(
     locked: bool,
 ) -> Element<'a, Message> {
     checkbox(draft.is_on(toggle))
+        .style(styles::checkbox)
         .label(label)
         .on_toggle_maybe(
             (!locked).then_some(move |on| Message::App(AppMessage::ProfileToggle { toggle, on })),
@@ -186,6 +185,7 @@ fn switch_box<'a>(draft: &ProfileDraft, switch: RdpSwitch) -> Element<'a, Messag
     external_only(
         draft,
         checkbox(switch.is_on(&draft.rdp_extras))
+            .style(styles::checkbox)
             .label(switch_label(switch))
             .on_toggle_maybe(
                 (!locked).then_some(move |on| choice(ProfileChoice::Extra(switch, on))),
@@ -239,7 +239,7 @@ pub fn display_audio<'a>(
         view(draft.rdp_options, following(draft)),
         resolution(draft, monitors, field),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -262,7 +262,7 @@ pub fn devices<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
             locked
         ),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     for switch in [
         RdpSwitch::Printers,
         RdpSwitch::ComPorts,
@@ -301,7 +301,7 @@ pub fn performance<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
         experience(draft.rdp_options),
         switch_box(draft, RdpSwitch::DisableUdp),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -333,7 +333,7 @@ pub fn behavior<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
         ),
         switch_box(draft, RdpSwitch::FullScreen),
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .into()
 }
 
@@ -342,13 +342,13 @@ pub fn behavior<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
 pub fn rd_gateway<'a>(draft: &ProfileDraft, field: Element<'a, Message>) -> Element<'a, Message> {
     let mut card = column![
         field,
-        text(fl!("ui-profile-rd-gateway-hint")).size(LABEL_SIZE),
+        text(fl!("ui-profile-rd-gateway-hint")).size(font_size::CAPTION),
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     if !draft.rdp_extras.external {
         card = card.push(
             text(fl!("ui-profile-rd-gateway-mstsc"))
-                .size(LABEL_SIZE)
+                .size(font_size::CAPTION)
                 .style(text::secondary),
         );
     }
@@ -361,23 +361,25 @@ fn spanned<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Option<Element<'a,
     if !draft.spans_monitors() {
         return None;
     }
-    let mut card =
-        column![text(fl!("ui-profile-rdp-multi-monitor-note")).size(LABEL_SIZE)].spacing(SPACING);
+    let mut card = column![text(fl!("ui-profile-rdp-multi-monitor-note")).size(font_size::CAPTION)]
+        .spacing(spacing::SM);
     let saved = &draft.rdp_extras.monitors;
     if saved
         .iter()
         .any(|index| !monitors.iter().any(|monitor| monitor.index == *index))
     {
-        card = card.push(text(fl!("ui-profile-rdp-monitors-offline-kept")).size(LABEL_SIZE));
+        card =
+            card.push(text(fl!("ui-profile-rdp-monitors-offline-kept")).size(font_size::CAPTION));
     }
     if monitors.len() >= MULTI_MONITOR_SCREENS {
         card = card
-            .push(text(fl!("ui-profile-rdp-monitors-title")).size(LABEL_SIZE))
-            .push(text(fl!("ui-profile-rdp-monitors-caption")).size(LABEL_SIZE));
+            .push(text(fl!("ui-profile-rdp-monitors-title")).size(font_size::CAPTION))
+            .push(text(fl!("ui-profile-rdp-monitors-caption")).size(font_size::CAPTION));
         for monitor in monitors {
             let index = monitor.index;
             card = card.push(
                 checkbox(saved.contains(&index))
+                    .style(styles::checkbox)
                     .label(monitor_label(monitor))
                     .on_toggle(move |on| choice(ProfileChoice::Monitor(index, on))),
             );
@@ -412,6 +414,7 @@ fn multi_monitor<'a>(draft: &ProfileDraft, monitors: &[Monitor]) -> Element<'a, 
     external_only(
         draft,
         checkbox(spans)
+            .style(styles::checkbox)
             .label(fl!("ui-profile-rdp-multi-monitor"))
             .on_toggle_maybe(offered.then_some(|on| choice(ProfileChoice::MultiMonitor(on))))
             .into(),
@@ -426,38 +429,44 @@ fn lists<'a>(
     on_depth: impl Fn(ColorDepth) -> Message + 'a,
 ) -> Element<'a, Message> {
     let audio = column![
-        text(fl!("ui-profile-audio")).size(LABEL_SIZE),
+        text(fl!("ui-profile-audio")).size(font_size::CAPTION),
         pick_list(
             AudioPlayback::ALL.map(AudioChoice),
             Some(AudioChoice(audio)),
             move |choice: AudioChoice| on_audio(choice.0),
         )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
         .width(Length::Fill),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .width(Length::Fill);
     let depth = column![
-        text(fl!("ui-profile-color-depth")).size(LABEL_SIZE),
+        text(fl!("ui-profile-color-depth")).size(font_size::CAPTION),
         pick_list(
             ColorDepth::ALL.map(DepthChoice),
             Some(DepthChoice(depth)),
             move |choice: DepthChoice| on_depth(choice.0),
         )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
         .width(Length::Fill),
     ]
-    .spacing(SPACING / 2.0)
+    .spacing(spacing::XS)
     .width(Length::Fill);
-    row![audio, depth].spacing(SPACING).into()
+    row![audio, depth].spacing(spacing::SM).into()
 }
 
 /// The C# "Visual experience" card of `options`: one box per performance flag, each change
 /// taken at once.
 #[must_use]
 pub fn experience<'a>(options: RdpOptions) -> Element<'a, Message> {
-    let mut card = column![text(fl!("ui-profile-experience")).size(LABEL_SIZE)].spacing(SPACING);
+    let mut card =
+        column![text(fl!("ui-profile-experience")).size(font_size::CAPTION)].spacing(spacing::SM);
     for experience in Experience::ALL {
         card = card.push(
             checkbox(options.has(experience))
+                .style(styles::checkbox)
                 .label(experience_label(experience))
                 .on_toggle(move |on| choice(ProfileChoice::Experience(experience, on))),
         );
@@ -596,7 +605,7 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
         Message::App(AppMessage::Settings(SettingsMessage::RdpDefaults(defaults)))
     };
     let mut page = column![
-        text(fl!("ui-settings-rdp-defaults-hint")).size(LABEL_SIZE),
+        text(fl!("ui-settings-rdp-defaults-hint")).size(font_size::CAPTION),
         lists(
             defaults.audio,
             defaults.color_depth,
@@ -607,9 +616,11 @@ pub fn defaults<'a>(defaults: RdpDefaults) -> Element<'a, Message> {
             }),
         ),
     ]
-    .spacing(SPACING);
+    .spacing(spacing::SM);
     for switch in switches() {
-        let mut tick = checkbox((switch.get)(&defaults)).label(switch.label);
+        let mut tick = checkbox((switch.get)(&defaults))
+            .style(styles::checkbox)
+            .label(switch.label);
         if !switch.needs_nla || defaults.nla {
             let set = switch.set;
             tick = tick.on_toggle(move |on| {
@@ -671,17 +682,19 @@ impl std::fmt::Display for ModeChoice {
 fn session_mode<'a>(draft: &ProfileDraft) -> Element<'a, Message> {
     let external = draft.rdp_extras.external;
     let mut mode = column![
-        text(fl!("ui-profile-rdp-session-mode")).size(LABEL_SIZE),
+        text(fl!("ui-profile-rdp-session-mode")).size(font_size::CAPTION),
         pick_list(
             [ModeChoice(false), ModeChoice(true)],
             Some(ModeChoice(external)),
             |picked: ModeChoice| choice(ProfileChoice::External(picked.0)),
         )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
         .width(Length::Fill),
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     if external {
-        mode = mode.push(text(fl!("ui-profile-rdp-mode-external-desc")).size(LABEL_SIZE));
+        mode = mode.push(text(fl!("ui-profile-rdp-mode-external-desc")).size(font_size::CAPTION));
     }
     mode.into()
 }
@@ -726,28 +739,32 @@ pub fn resolution<'a>(
     let locked = following(draft);
     let mut card = column![
         text(fl!("ui-profile-resolution-title")),
-        text(fl!("ui-profile-resolution-desc")).size(LABEL_SIZE),
-        text(fl!("ui-profile-resolution-mode")).size(LABEL_SIZE),
+        text(fl!("ui-profile-resolution-desc")).size(font_size::CAPTION),
+        text(fl!("ui-profile-resolution-mode")).size(font_size::CAPTION),
         pick_list(
             Resolution::ALL.map(ResolutionChoice),
             Some(ResolutionChoice(options.resolution)),
             |picked: ResolutionChoice| choice(ProfileChoice::Resolution(picked.0)),
         )
+        .style(styles::pick_list)
+        .menu_style(styles::menu)
         .width(Length::Fill),
     ]
-    .spacing(SPACING / 2.0);
+    .spacing(spacing::XS);
     if options.resolution == Resolution::Auto {
-        card = card.push(text(fl!("ui-profile-resolution-auto-desc")).size(LABEL_SIZE));
+        card = card.push(text(fl!("ui-profile-resolution-auto-desc")).size(font_size::CAPTION));
     }
     card = card
         .push(session_mode(draft))
-        .push(text(fl!("ui-profile-aspect-ratio")).size(LABEL_SIZE))
+        .push(text(fl!("ui-profile-aspect-ratio")).size(font_size::CAPTION))
         .push(
             pick_list(
                 Aspect::ALL.map(AspectChoice),
                 Some(AspectChoice(options.aspect)),
                 |picked: AspectChoice| choice(ProfileChoice::Aspect(picked.0)),
             )
+            .style(styles::pick_list)
+            .menu_style(styles::menu)
             .width(Length::Fill),
         );
     if draft.shows(ProfileField::FixedWidth) {
@@ -763,13 +780,15 @@ pub fn resolution<'a>(
             _ => None,
         };
         card = card
-            .push(text(fl!("ui-profile-resolution-presets")).size(LABEL_SIZE))
+            .push(text(fl!("ui-profile-resolution-presets")).size(font_size::CAPTION))
             .push(
                 pick_list(
                     PRESETS.map(|(width, height)| PresetChoice(width, height)),
                     current,
                     |PresetChoice(width, height)| choice(ProfileChoice::Preset(width, height)),
                 )
+                .style(styles::pick_list)
+                .menu_style(styles::menu)
                 .placeholder(fl!("ui-profile-resolution-custom"))
                 .width(Length::Fill),
             )
@@ -778,10 +797,11 @@ pub fn resolution<'a>(
                     field(ProfileField::FixedWidth),
                     field(ProfileField::FixedHeight)
                 ]
-                .spacing(SPACING),
+                .spacing(spacing::SM),
             )
             .push(
                 checkbox(options.scale_fixed)
+                    .style(styles::checkbox)
                     .label(fl!("ui-profile-resolution-scale-fixed"))
                     .on_toggle(|on| choice(ProfileChoice::ScaleFixed(on))),
             );
@@ -793,6 +813,7 @@ pub fn resolution<'a>(
         .push(part(fl!("ui-profile-rdp-display-section")))
         .push(
             checkbox(options.dynamic_resolution)
+                .style(styles::checkbox)
                 .label(fl!("ui-profile-resolution-dynamic"))
                 .on_toggle_maybe(
                     (!locked).then_some(|on| choice(ProfileChoice::DynamicResolution(on))),

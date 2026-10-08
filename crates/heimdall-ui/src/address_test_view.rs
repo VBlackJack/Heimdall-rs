@@ -26,12 +26,8 @@ use iced::{Alignment, Element};
 
 use crate::i18n::fl;
 use crate::shell::Message;
-
-/// Room between the controls.
-const SPACING: f32 = 8.0;
-
-/// Size of the hint and of the chip.
-const SMALL_SIZE: f32 = 12.0;
+use crate::styles;
+use crate::tokens::{font_size, spacing};
 
 /// How the chip reads: what it found, coloured as the C# chip's states.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -108,19 +104,19 @@ pub(crate) fn reason(failure: &Unreached) -> String {
 pub fn view<'a>(draft: &'a ProfileDraft, gateways: &'a [SshGateway]) -> Element<'a, Message> {
     let running = draft.address_test == AddressTest::Running;
     let mut controls = row![
-        button(text(fl!("ui-address-test-button")).size(SMALL_SIZE))
-            .style(button::secondary)
+        button(text(fl!("ui-address-test-button")).size(font_size::CAPTION))
+            .style(styles::secondary)
             .on_press_maybe(
                 (!running && draft.test_target().is_some())
                     .then_some(Message::App(AppMessage::TestAddress))
             )
     ]
-    .spacing(SPACING)
+    .spacing(spacing::SM)
     .align_y(Alignment::Center);
     if running {
         controls = controls.push(
-            button(text(fl!("ui-address-test-cancel")).size(SMALL_SIZE))
-                .style(button::text)
+            button(text(fl!("ui-address-test-cancel")).size(font_size::CAPTION))
+                .style(styles::subtle)
                 .on_press(Message::App(AppMessage::CancelAddressTest)),
         );
     }
@@ -131,10 +127,10 @@ pub fn view<'a>(draft: &'a ProfileDraft, gateways: &'a [SshGateway]) -> Element<
             .map(|gateway| gateway.name.as_str())
     });
     // The hint beside the button, as one line: the form stays as short as it can.
-    controls = controls.push(text(fl!("ui-address-test-hint")).size(SMALL_SIZE));
-    let mut content = column![controls].spacing(SPACING / 2.0);
+    controls = controls.push(text(fl!("ui-address-test-hint")).size(font_size::CAPTION));
+    let mut content = column![controls].spacing(spacing::XS);
     if let Some((said, tone)) = chip(&draft.address_test, gateway) {
-        let said = text(said).size(SMALL_SIZE);
+        let said = text(said).size(font_size::CAPTION);
         content = content.push(match tone {
             Tone::Neutral => said.style(text::secondary),
             Tone::Answered => said.style(text::success),
