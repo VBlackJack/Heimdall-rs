@@ -66,11 +66,18 @@ pub fn known_hosts_file() -> Option<PathBuf> {
     config_dir().map(|dir| dir.join(KNOWN_HOSTS_FILE_NAME))
 }
 
+/// Local data directory of Heimdall-rs: local to the machine, never roamed. The logs and
+/// the files being edited are in it.
+#[must_use]
+pub fn data_dir() -> Option<PathBuf> {
+    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
+        .map(|dirs| dirs.data_local_dir().to_owned())
+}
+
 /// Directory of the log file and crash reports: local to the machine, never roamed.
 #[must_use]
 pub fn log_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_local_dir().join(LOG_DIR_NAME))
+    data_dir().map(|dir| dir.join(LOG_DIR_NAME))
 }
 
 /// Name of the folder a server's files are edited in, inside the local data directory.
@@ -79,8 +86,7 @@ const EDIT_DIR_NAME: &str = "edit";
 /// Folder a server's file is copied to while edited: local to the machine, the user's own.
 #[must_use]
 pub fn edit_dir() -> Option<PathBuf> {
-    ProjectDirs::from(QUALIFIER, ORGANIZATION, APPLICATION)
-        .map(|dirs| dirs.data_local_dir().join(EDIT_DIR_NAME))
+    data_dir().map(|dir| dir.join(EDIT_DIR_NAME))
 }
 
 /// The user's home folder, where a Files tab starts; `None` when the platform reports none.

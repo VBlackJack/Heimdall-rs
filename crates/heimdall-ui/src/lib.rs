@@ -129,7 +129,15 @@ pub(crate) fn window_icon() -> Option<window::Icon> {
 ///
 /// When the window or the graphics backend cannot start.
 pub fn run() -> iced::Result {
+    // The folders restricted to the user, the Administrators and SYSTEM before anything is
+    // written in them, as the C# `AclEnforcer`; here, not beside the start, so that no file
+    // is made with the wider access first. A folder left as it was is said once the log is
+    // open, and the application runs on.
+    let unrestricted = heimdall_core::folder_acl::restrict_app_folders();
     logging::init(paths::log_dir());
+    for folder in &unrestricted {
+        log::warn!("{folder}");
+    }
     let single_instance::Start::Run(instance) =
         single_instance::claim(paths::config_dir().as_deref())
     else {
