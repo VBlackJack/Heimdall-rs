@@ -190,12 +190,14 @@ async fn open(
     };
     let presented = PresentedSlot::default();
     let accepted = AcceptedSlot::default();
+    let pinned = pins.pinned()?;
     let mut config = VncConfig {
         host: profile.host.clone(),
         port: profile.port,
         policy: SecurityPolicy {
             allow_no_authentication: profile.allow_no_password,
-            require_tls: pins.pinned()?,
+            // A certificate trusted for the server, or the profile, asks for TLS.
+            require_tls: pinned || profile.require_tls,
             exclude_vencrypt: false,
             username: profile.username.clone(),
         },
@@ -225,6 +227,12 @@ async fn open(
             .refused(&presented, events, UiError::VncProtocol { detail })
             .await
             .map(|()| None),
+        // Required by the profile alone: said so, the certificate being no part of it.
+        Err(VncError::Rfb(RfbError::TlsRequired(offered))) if !pinned => {
+            Err(UiError::VncTlsRequiredByProfile {
+                offered: codes(offered),
+            })
+        }
         Err(error @ VncError::Rfb(RfbError::AuthenticationFailed(_))) => {
             // The certificate went through: trusted, whatever the password.
             pins.record_accepted(&accepted)?;

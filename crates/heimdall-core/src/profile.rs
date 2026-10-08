@@ -1305,6 +1305,11 @@ pub struct VncProfile {
     /// that expects a password, an impostor offering none would otherwise be let in.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub allow_no_password: bool,
+    /// Whether the connection must be encrypted: a server offering no TLS (`VeNCrypt` X509)
+    /// is refused, never answered in clear. Off by default, as most VNC servers offer none;
+    /// a server whose certificate is pinned requires it anyway.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub require_tls: bool,
     /// The user name a server asking for one gets, with the password: `VeNCrypt` Plain,
     /// sent only inside TLS once the server's certificate is trusted. `None` for the usual
     /// VNC server, which asks for a password alone.

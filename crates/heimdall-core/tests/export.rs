@@ -226,6 +226,8 @@ fn store(dir: &std::path::Path) -> ProfileStore {
         port: 5901,
         view_only: true,
         allow_no_password: false,
+        // Heimdall-rs's own: carried both ways.
+        require_tls: true,
         // For Plain inside TLS: carried both ways.
         username: Some("viewer".to_owned()),
         vault_entry: None,
