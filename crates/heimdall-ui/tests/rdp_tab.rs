@@ -133,11 +133,8 @@ fn connection(shell: &mut Shell, tab: TabId, attempt: AttemptId, event: Connecti
 #[test]
 fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
     let dir = tempfile::tempdir().expect("dir");
-    let shell = Shell::with_app(app(dir.path()));
-    let mut ui = simulator(&shell);
-    ui.find("RDP").expect("protocol");
+    let mut shell = Shell::with_app(app(dir.path()));
     // As in the C# tree: a click selects, a double click connects.
-    drop(ui);
     let messages = {
         let _turn = common::render_turn();
         common::double_click_messages(|| simulator(&shell), "Domain controller")
@@ -153,6 +150,9 @@ fn an_rdp_profile_is_listed_and_opens_an_rdp_tab() {
         )),
         "a double click connects"
     );
+    // The tree shows the protocol as its icon; the details of the session selected name it.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("dc")));
+    simulator(&shell).find("RDP").expect("protocol");
 }
 
 #[test]
