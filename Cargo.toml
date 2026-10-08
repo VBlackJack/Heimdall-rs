@@ -92,9 +92,10 @@ rfd = { version = "0.17.2", default-features = false, features = ["xdg-portal"] 
 clipboard-win = "5.4.1"
 # windows-registry: PuTTY's saved sessions, read-only, on Windows; already in the tree.
 windows-registry = "0.100.0"
-# winsafe: the screens' working areas, listed on Windows for the window's place; safe
-# wrappers, no dependency of its own.
-winsafe = { version = "0.0.29", features = ["user"] }
+# winsafe: the screens' working areas, listed on Windows for the window's place; the
+# current user's SID, read for the folders' access (advapi); safe wrappers, no dependency
+# of its own.
+winsafe = { version = "0.0.29", features = ["advapi", "user"] }
 # keepawake: the computer kept from sleeping during sessions, on Windows; its unsafe call
 # stays in it, as winsafe has no wrapper for SetThreadExecutionState.
 keepawake = { version = "0.6.1", default-features = false }

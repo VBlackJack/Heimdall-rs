@@ -17,7 +17,11 @@
 //! "Edit with external editor": the editor chosen, the folder of the user's own, and each
 //! save sent only while the server's file is the one opened.
 
-use heimdall_app::external_edit::{EditorRefused, editor};
+#[path = "support/log_capture.rs"]
+mod log_capture;
+
+use heimdall_app::external_edit::{EditorRefused, edit_folder_restricted_by, editor};
+use heimdall_core::folder_acl::RestrictError;
 
 #[test]
 fn an_empty_setting_takes_the_system_s_own_editor_and_a_missing_one_is_said() {
@@ -105,6 +109,40 @@ mod unix {
             "nothing made where it led"
         );
     }
+}
+
+#[test]
+fn a_folder_that_cannot_be_restricted_is_removed_said_and_refused() {
+    log_capture::start();
+    let dir = tempfile::tempdir().expect("dir");
+    let base = dir.path().join("edit");
+    let refused = edit_folder_restricted_by(&base, |_| Err(RestrictError::Refused(Some(5))))
+        .expect_err("refused");
+    assert_eq!(refused.kind(), std::io::ErrorKind::PermissionDenied);
+    assert_eq!(
+        std::fs::read_dir(&base).expect("listed").count(),
+        0,
+        "nothing left to copy into"
+    );
+    assert!(log_capture::has(
+        "WARN",
+        &["edit folder is not restricted", "exit code 5"]
+    ));
+}
+
+#[cfg(windows)]
+#[path = "../../heimdall-core/tests/support/dacl.rs"]
+mod dacl;
+
+#[cfg(windows)]
+#[test]
+fn on_windows_an_edit_folder_keeps_only_the_user_the_administrators_and_system() {
+    let dir = tempfile::tempdir().expect("dir");
+    let folder =
+        heimdall_app::external_edit::edit_folder(&dir.path().join("edit")).expect("folder");
+    let found = dacl::read(&folder);
+    assert!(found.protected, "{found:?}");
+    assert_eq!(found.entries, dacl::restricted("OICI"));
 }
 
 #[cfg(unix)]
