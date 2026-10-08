@@ -4130,19 +4130,19 @@ impl Shell {
     /// to add one; otherwise, how to open one.
     fn home(&self) -> Element<'_, Message> {
         if !self.app.profile_summaries().is_empty() {
-            // The session selected, as the C# detail panel shows it.
+            // The session selected, as the C# detail panel shows it: at the top left.
             let selected = self
                 .app
                 .selected_profile
                 .as_ref()
                 .and_then(|id| self.app.profile_summary(id));
             return match selected {
-                Some(profile) => center(crate::detail_view::view(
+                Some(profile) => crate::detail_view::view(
                     &profile,
                     self.app.selected_credentials(),
                     self.app.can_edit(&profile.id),
-                ))
-                .into(),
+                    self.app.profile_state(&profile.id),
+                ),
                 None => center(text(fl!("ui-home-select"))).into(),
             };
         }

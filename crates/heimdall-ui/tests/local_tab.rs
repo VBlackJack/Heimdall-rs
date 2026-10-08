@@ -98,11 +98,8 @@ fn the_sidebar_opens_the_default_local_shell() {
 #[test]
 fn a_saved_local_profile_is_listed_and_opens_by_its_id() {
     let dir = tempfile::tempdir().expect("dir");
-    let shell = Shell::with_app(app(dir.path(), Some(tool())));
-    let mut ui = common::simulator(settings(), WINDOW, shell.view());
-    ui.find("Local").expect("protocol");
+    let mut shell = Shell::with_app(app(dir.path(), Some(tool())));
     // As in the C# tree: a click selects, a double click connects.
-    drop(ui);
     let messages = common::double_click_messages(
         || common::simulator(settings(), WINDOW, shell.view()),
         "Build tool",
@@ -118,6 +115,11 @@ fn a_saved_local_profile_is_listed_and_opens_by_its_id() {
         )),
         "a double click connects"
     );
+    // The tree shows the protocol as its icon; the details of the session selected name it.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("tool")));
+    common::simulator(settings(), WINDOW, shell.view())
+        .find("Local")
+        .expect("protocol");
 }
 
 #[test]

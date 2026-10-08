@@ -83,15 +83,12 @@ fn app_of(dir: &Path, profile: VncProfile) -> App {
 #[test]
 fn a_vnc_profile_is_listed_and_opens_a_vnc_tab() {
     let dir = tempfile::tempdir().expect("dir");
-    let shell = Shell::with_app(app(dir.path()));
+    let mut shell = Shell::with_app(app(dir.path()));
     let settings = Settings {
         fonts: FONTS.iter().map(|face| (*face).into()).collect(),
         ..Settings::default()
     };
-    let mut ui = common::simulator(settings.clone(), WINDOW, shell.view());
-    ui.find("VNC").expect("protocol");
     // As in the C# tree: a click selects, a double click connects.
-    drop(ui);
     let messages = common::double_click_messages(
         || common::simulator(settings.clone(), WINDOW, shell.view()),
         "Lobby kiosk",
@@ -107,6 +104,11 @@ fn a_vnc_profile_is_listed_and_opens_a_vnc_tab() {
         )),
         "a double click connects"
     );
+    // The tree shows the protocol as its icon; the details of the session selected name it.
+    let _ = shell.update(Message::TreeClick(ProfileId::new("kiosk")));
+    common::simulator(settings, WINDOW, shell.view())
+        .find("VNC")
+        .expect("protocol");
 }
 
 /// Vertical padding of a pick list, iced's button padding: a line of its menu is as tall as
