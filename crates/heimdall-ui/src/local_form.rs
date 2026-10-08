@@ -16,14 +16,15 @@
 
 //! A local shell profile's form, as the C# cards: "Local shell", the executable (typed, or
 //! taken from the common shells) and its arguments, then "Advanced shell options", the
-//! folder it starts in. The C# elevation choice is left out: Heimdall-rs never runs a shell
-//! elevated.
+//! folder it starts in and "Run as administrator". The C# elevation modes come down to that
+//! one box: a shell run as administrator opens in a window of its own, never in a tab.
 
 use heimdall_app::Message as AppMessage;
+use heimdall_app::elevated_shell;
 use heimdall_app::local_draft::SHELL_PRESETS;
-use heimdall_app::profile_draft::{ProfileDraft, ProfileField};
+use heimdall_app::profile_draft::{ProfileDraft, ProfileField, ProfileToggle};
 use iced::Element;
-use iced::widget::{column, pick_list, text};
+use iced::widget::{checkbox, column, pick_list, text};
 
 use crate::i18n::fl;
 use crate::shell::Message;
@@ -57,6 +58,34 @@ pub fn view<'a>(
         text(fl!("ui-profile-local-advanced-desc")).size(font_size::CAPTION),
         field(ProfileField::WorkingDirectory),
     ]
+    .push(run_as_administrator(draft))
     .spacing(spacing::SM)
     .into()
+}
+
+/// The "Run as administrator" box and what it does, on Windows; elsewhere only while ticked,
+/// to be cleared, with why it opens nothing there.
+fn run_as_administrator<'a>(draft: &ProfileDraft) -> Option<Element<'a, Message>> {
+    let toggle = ProfileToggle::RunAsAdministrator;
+    if !draft.shows_toggle(toggle) {
+        return None;
+    }
+    let hint = if elevated_shell::SUPPORTED {
+        text(fl!("ui-profile-local-run-as-admin-hint")).size(font_size::CAPTION)
+    } else {
+        text(fl!("ui-profile-local-run-as-admin-windows-only"))
+            .size(font_size::CAPTION)
+            .style(text::danger)
+    };
+    Some(
+        column![
+            checkbox(draft.is_on(toggle))
+                .style(styles::checkbox)
+                .label(fl!("ui-profile-local-run-as-admin"))
+                .on_toggle(move |on| Message::App(AppMessage::ProfileToggle { toggle, on })),
+            hint,
+        ]
+        .spacing(spacing::XS)
+        .into(),
+    )
 }

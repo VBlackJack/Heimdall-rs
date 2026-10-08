@@ -597,6 +597,7 @@ fn a_profile_running_another_program_still_opens_the_default_shell_and_stays_as_
         program: Some(PROGRAM.to_owned()),
         arguments: ProfileArguments::List(Vec::new()),
         working_directory: None,
+        run_as_administrator: false,
     };
     let mut store = ProfileStore::open(&profiles).expect("store");
     store.merge_local([LocalProfile {
