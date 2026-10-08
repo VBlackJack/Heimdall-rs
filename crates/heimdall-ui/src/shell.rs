@@ -89,6 +89,7 @@ use crate::files_view;
 use crate::finder::Finder;
 use crate::floating_view::{FloatEvent, FloatingWindow};
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::palette::Palette;
 use crate::report;
 use crate::search_keys::SearchKeys;
@@ -133,8 +134,62 @@ const CARD_WIDTH: f32 = 520.0;
 /// Widest a dialog holding a table grows.
 const WIDE_CARD_WIDTH: f32 = 1000.0;
 
-/// The filter button's mark, a funnel as the C# one's icon.
-const FILTER_GLYPH: &str = "\u{25BD}";
+/// Height of the sidebar's heading, as the C# `SidebarTabStyle`'s, its underline in.
+const SIDEBAR_TAB_HEIGHT: f32 = 32.0;
+
+/// Thickness of the underline of the sidebar's heading, as the C# `SidebarTabStyle`'s.
+const SIDEBAR_TAB_UNDERLINE: f32 = 2.0;
+
+/// Room around the sidebar's text field, as the C# search box's `10,6`, more at its right
+/// where its clear button sits.
+const SEARCH_PADDING: iced::Padding = iced::Padding {
+    top: 6.0,
+    right: 28.0,
+    bottom: 6.0,
+    left: 10.0,
+};
+
+/// Room around the search box's clear button, as the C#'s.
+const SEARCH_CLEAR_PADDING: f32 = 4.0;
+
+/// Side of the search box's clear button, as the C#'s glyph in its padding.
+const SEARCH_CLEAR_SIDE: f32 = 20.0;
+
+/// Space between the search box and the filter button, as the C#'s margin.
+const SEARCH_GAP: f32 = 6.0;
+
+/// Space between the sidebar's icon buttons, as the C#'s margins.
+const TOOL_GAP: f32 = 2.0;
+
+/// Side of the dot on the filter button while a filter is on, as the C#'s.
+const FILTER_DOT_SIDE: f32 = 6.0;
+
+/// Room around the tab strip, as the C#'s: none below, where the tabs meet the session.
+const TAB_STRIP_PADDING: iced::Padding = iced::Padding {
+    top: 8.0,
+    right: 8.0,
+    bottom: 0.0,
+    left: 8.0,
+};
+
+/// Space between two tabs, as the C# `ThemedTabItemStyle`'s right margin.
+const TAB_GAP: f32 = 4.0;
+
+/// Room inside a tab, around its heading and underline, as the C# `ThemedTabItemStyle`'s
+/// `16,10`.
+const TAB_PADDING: [f32; 2] = [10.0, 16.0];
+
+/// Room around a tab's heading, as the C# tab header's `10,6`.
+const TAB_HEADING_PADDING: [f32; 2] = [6.0, 10.0];
+
+/// Thickness of a selected tab's underline, as the C#'s.
+const TAB_UNDERLINE: f32 = 3.0;
+
+/// Side of a tab's close button, as the C#'s 20 by 20.
+const TAB_CLOSE_SIDE: f32 = 20.0;
+
+/// Side of the pin before a pinned tab's title, as the C#'s glyph.
+const TAB_PIN_SIDE: f32 = 10.0;
 
 /// Width of the port column beside the server field, as in the C# dialog.
 const PORT_FIELD_WIDTH: f32 = 150.0;
@@ -1043,6 +1098,82 @@ fn tab_label(title: &str) -> String {
     format!("{kept}{ELLIPSIS}")
 }
 
+/// The sidebar's heading, as the C# Sessions tab selected: its name in the text's colour
+/// and semi-bold, over the accent's line.
+fn sidebar_heading<'a>() -> Element<'a, Message> {
+    column![
+        container(
+            text(fl!("ui-sidebar-title"))
+                .size(font_size::BODY)
+                .font(styles::SEMIBOLD),
+        )
+        .center_x(Length::Fill)
+        .center_y(SIDEBAR_TAB_HEIGHT - SIDEBAR_TAB_UNDERLINE),
+        container(iced::widget::space())
+            .width(Length::Fill)
+            .height(SIDEBAR_TAB_UNDERLINE)
+            .style(styles::underline(true)),
+    ]
+    .width(Length::FillPortion(1))
+    .into()
+}
+
+/// The marks a tab carries after its title, on the strip or in its pane's header: a macro
+/// recorded from it or typed into it, a bell rung in it while it is not `active`.
+fn tab_badges<'a>(tab: &Tab, active: bool) -> Vec<Element<'a, Message>> {
+    let mut badges = Vec::new();
+    if tab.macro_recording.is_some() {
+        badges.push(
+            text(fl!("ui-tab-recording-badge"))
+                .size(font_size::CAPTION)
+                .style(text::danger)
+                .into(),
+        );
+    } else if tab.macro_playing.is_some() {
+        badges.push(
+            text(fl!("ui-tab-macro-badge"))
+                .size(font_size::CAPTION)
+                .into(),
+        );
+    }
+    if tab.bell && !active {
+        badges.push(
+            text(fl!("ui-tab-bell-badge"))
+                .size(font_size::CAPTION)
+                .into(),
+        );
+    }
+    badges
+}
+
+/// The mark of a tab whose output is recorded, as the C#'s; `None` when it is not.
+fn transcript_mark<'a>(tab: &Tab) -> Option<Element<'a, Message>> {
+    tab.transcript.is_some().then(|| {
+        tooltip(
+            text(fl!("ui-tab-recording")).size(font_size::CAPTION),
+            text(fl!("ui-tab-recording-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box)
+        .into()
+    })
+}
+
+/// What `tab` connects to, as the C# session header says it after the name: a server's
+/// address, or a local shell's program; `None` for the default shell.
+fn tab_endpoint(tab: &Tab) -> Option<String> {
+    if let TabProfile::Local(shell) = &tab.profile {
+        return shell
+            .program
+            .as_deref()
+            .and_then(|program| std::path::Path::new(program).file_name())
+            .map(|name| name.to_string_lossy().into_owned());
+    }
+    tab.profile
+        .endpoint()
+        .map(|(host, port)| server_text(&target(host, port, tab.profile.username())))
+}
+
 /// Where the application keeps its files; the working directory when the platform has
 /// no home.
 /// Heimdall-rs's name in the system's credential store, apart from the C# Heimdall's.
@@ -1313,12 +1444,6 @@ impl Destination {
         }
     }
 }
-
-/// The button hiding the sidebar: an arrow toward where it goes.
-const HIDE_SIDEBAR_GLYPH: &str = "\u{2190}";
-
-/// The button showing the sidebar again: an arrow toward where it comes from.
-const SHOW_SIDEBAR_GLYPH: &str = "\u{2192}";
 
 /// What an RDP session shares, as the C# session bar's indicators: the clipboard, the
 /// drives, the sound played here; each says what it is when pointed at.
@@ -4287,32 +4412,34 @@ impl Shell {
             .filter(|profile| profile.matches(&self.search))
             .count();
         let targets = self.app.broadcast_target_count();
+        let tunnels = self.app.live_tunnels();
         crate::status_bar::view(
             crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets),
+            row![self.tunnels_toggle(), self.broadcast_controls(targets)]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center)
+                .into(),
             crate::status_bar::count_text(shown, summaries.len(), !self.search.trim().is_empty()),
-            row![
-                crate::shortcuts_view::hint(font_size::CAPTION),
-                self.tunnels_toggle(),
-                self.broadcast_controls(targets)
-            ]
-            .align_y(iced::Alignment::Center)
-            .into(),
+            fl!("ui-tunnels-count", count = tunnels),
         )
     }
 
-    /// The tunnels panel's button, with how many tunnels are open, as the C# bar's.
+    /// The tunnels panel's button, as the C# bar's: a lightning bolt and how many tunnels
+    /// are open.
     fn tunnels_toggle(&self) -> Element<'_, Message> {
         tooltip(
-            button(
-                text(fl!("ui-tunnels-count", count = self.app.live_tunnels()))
-                    .size(font_size::CAPTION),
+            container(
+                crate::status_bar::glyph_button(
+                    Icon::Lightning,
+                    Tint::Text,
+                    text(self.app.live_tunnels().to_string())
+                        .size(font_size::CAPTION)
+                        .into(),
+                )
+                .style(styles::subtle)
+                .on_press(Message::App(AppMessage::Tunnel(TunnelMessage::TogglePanel))),
             )
-            .style(if self.app.tunnels_panel() {
-                styles::primary
-            } else {
-                styles::subtle
-            })
-            .on_press(Message::App(AppMessage::Tunnel(TunnelMessage::TogglePanel))),
+            .id(tunnels_toggle_id()),
             text(fl!("ui-tunnels-toggle-tooltip")).size(font_size::CAPTION),
             tooltip::Position::Top,
         )
@@ -4320,16 +4447,28 @@ impl Shell {
         .into()
     }
 
-    /// Broadcast input's toggle and scope, as the C# bar's: lit while on.
+    /// Broadcast input's toggle and scope, as the C# bar's: each its glyph before its words,
+    /// the toggle red while on.
     fn broadcast_controls(&self, targets: usize) -> Element<'_, Message> {
         let on = self.app.broadcasting();
         let scope = crate::status_bar::scope_label(self.app.settings().broadcast_scope, targets);
         let broadcast = |message| Message::App(AppMessage::Broadcast(message));
         row![
             tooltip(
-                button(text(fl!("ui-broadcast-button")).size(font_size::CAPTION))
-                    .style(if on { styles::primary } else { styles::subtle })
-                    .on_press(broadcast(BroadcastMessage::Toggle)),
+                crate::status_bar::glyph_button(
+                    Icon::Broadcast,
+                    if on { Tint::Danger } else { Tint::Text },
+                    text(fl!("ui-broadcast-button"))
+                        .size(font_size::CAPTION)
+                        .font(styles::SEMIBOLD)
+                        .into(),
+                )
+                .style(if on {
+                    styles::broadcasting
+                } else {
+                    styles::subtle
+                })
+                .on_press(broadcast(BroadcastMessage::Toggle)),
                 text(if on {
                     fl!("ui-broadcast-on", scope = scope.as_str())
                 } else {
@@ -4340,40 +4479,47 @@ impl Shell {
             )
             .style(container::rounded_box),
             tooltip(
-                button(text(scope.clone()).size(font_size::CAPTION))
-                    .style(styles::subtle)
-                    .on_press(broadcast(BroadcastMessage::Scope)),
+                crate::status_bar::glyph_button(
+                    Icon::List,
+                    Tint::Text,
+                    text(scope.clone()).size(font_size::CAPTION).into(),
+                )
+                .style(styles::subtle)
+                .on_press(broadcast(BroadcastMessage::Scope)),
                 text(fl!("ui-broadcast-scope-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Top,
             )
             .style(container::rounded_box),
         ]
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
         .into()
     }
 
     fn sidebar(&self) -> Element<'_, Message> {
-        // As in the C# Heimdall: "+" adds, "..." holds the rest; the vault and the local shell
-        // keep their buttons until they find their C# place.
-        let tool = |label: &'static str, tip: String, menu: TreeMenu| {
-            tooltip(
-                button(text(label))
-                    .style(styles::secondary)
-                    .on_press(Message::OpenTreeMenu(menu)),
-                text(tip).size(font_size::CAPTION),
-                tooltip::Position::Bottom,
-            )
-            .style(container::rounded_box)
-        };
+        // As the C# sidebar's top: its tabs, then the button hiding it. Without a Tools tab,
+        // "Sessions" is the selected tab alone, and the local shell, the one tool opened from
+        // here, takes the Tools tab's place as a secondary button, its name kept: its icon
+        // alone would read as any terminal.
         let header = row![
-            text(fl!("ui-sidebar-title")).size(font_size::TITLE),
-            iced::widget::space::horizontal(),
-            tool("+", fl!("ui-tree-add-tooltip"), TreeMenu::Add),
-            tool("...", fl!("ui-tree-more-tooltip"), TreeMenu::More),
+            sidebar_heading(),
+            container(
+                button(
+                    container(text(fl!("ui-sidebar-local-shell-button")))
+                        .center_y(icons::BUTTON_SIDE)
+                )
+                .padding([0.0, spacing::SM])
+                .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
+                .style(styles::secondary),
+            )
+            .center_x(Length::FillPortion(1)),
             tooltip(
-                button(text(HIDE_SIDEBAR_GLYPH))
-                    .style(styles::secondary)
-                    .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
+                container(
+                    icons::button(Icon::ClosePane)
+                        .style(styles::secondary)
+                        .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
+                )
+                .id(sidebar_toggle_id()),
                 text(fl!("ui-sidebar-hide-tooltip")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
@@ -4381,26 +4527,17 @@ impl Shell {
         ]
         .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
-        let mut actions = row![
-            button(text(fl!("ui-sidebar-local-shell-button")))
-                .on_press(Message::App(AppMessage::OpenLocal(default_local_shell())))
-                .style(styles::secondary),
-        ]
-        .spacing(spacing::XS);
         // As the C# toolbar's lock: there only while a master password is set.
-        if self.app.vault_status() == VaultStatus::Open {
-            actions = actions.push(
-                tooltip(
-                    button(text(fl!("ui-sidebar-lock-button")))
-                        .on_press(Message::App(AppMessage::LockVault))
-                        .style(styles::secondary),
-                    text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .style(container::rounded_box),
-            );
-        }
-        let actions = actions.wrap();
+        let actions = (self.app.vault_status() == VaultStatus::Open).then(|| {
+            tooltip(
+                button(text(fl!("ui-sidebar-lock-button")))
+                    .on_press(Message::App(AppMessage::LockVault))
+                    .style(styles::secondary),
+                text(fl!("ui-sidebar-lock-tooltip")).size(font_size::CAPTION),
+                tooltip::Position::Bottom,
+            )
+            .style(container::rounded_box)
+        });
         let list = self.tree_list();
         // A right click beside the rows is the tree's own menu.
         let tree = mouse_area(
@@ -4410,7 +4547,8 @@ impl Shell {
         )
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Add));
         container(
-            column![header, actions, self.search_box()]
+            column![header, self.search_box()]
+                .push(actions)
                 .push(self.filter_feedback())
                 .push(tree)
                 .push(self.no_folder_zone())
@@ -4769,55 +4907,100 @@ impl Shell {
 
     /// The tree's search, as the C# sidebar's: typing filters the profiles, Ctrl+F comes
     /// here, and the clear button empties it; Escape, Down and Enter as the C# filter box
-    /// ([`SearchKeys`], [`Shell::search_key`]).
+    /// ([`SearchKeys`], [`Shell::search_key`]). As the C#'s row: the clear button inside the
+    /// box once something is typed, then the filters, Add and More as quiet icon buttons.
     fn search_box(&self) -> Element<'_, Message> {
-        let mut search = row![
-            tooltip(
-                SearchKeys::new(
-                    text_input(&fl!("ui-tree-search-placeholder"), &self.search)
-                        .style(styles::text_input)
-                        .id(search_field_id())
-                        .on_input(Message::Search)
-                        .on_submit(Message::SearchSubmit),
-                    (!self.search.is_empty()).then(|| Message::Search(String::new())),
-                    Message::SearchDown,
-                ),
-                text(fl!("ui-tree-search-tooltip")).size(font_size::CAPTION),
-                tooltip::Position::Bottom,
-            )
-            .style(container::rounded_box)
-        ]
-        .spacing(spacing::XS)
-        .align_y(iced::Alignment::Center);
-        if !self.search.is_empty() {
-            search = search.push(
+        let field = tooltip(
+            SearchKeys::new(
+                text_input(&fl!("ui-tree-search-placeholder"), &self.search)
+                    .style(styles::text_input)
+                    .id(search_field_id())
+                    .size(font_size::BODY)
+                    .padding(SEARCH_PADDING)
+                    .on_input(Message::Search)
+                    .on_submit(Message::SearchSubmit),
+                (!self.search.is_empty()).then(|| Message::Search(String::new())),
+                Message::SearchDown,
+            ),
+            text(fl!("ui-tree-search-tooltip")).size(font_size::CAPTION),
+            tooltip::Position::Bottom,
+        )
+        .style(container::rounded_box);
+        let clear = (!self.search.is_empty()).then(|| {
+            container(
                 tooltip(
-                    button(text(fl!("ui-tree-search-clear-button")))
-                        .style(styles::secondary)
-                        .on_press(Message::Search(String::new())),
+                    button(center(icons::icon(
+                        Icon::Close,
+                        Tint::Text,
+                        font_size::SMALL_CAPTION,
+                    )))
+                    .width(SEARCH_CLEAR_SIDE)
+                    .height(SEARCH_CLEAR_SIDE)
+                    .padding(0.0)
+                    .style(styles::subtle)
+                    .on_press(Message::Search(String::new())),
                     text(fl!("ui-tree-search-clear")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
-            );
-        }
-        // The filters, as the C# button beside the search: lit while one leaves profiles out.
-        let active = self.app.tree_filter().is_active();
-        search = search.push(
+            )
+            .align_right(Length::Fill)
+            .center_y(Length::Fill)
+            .padding(SEARCH_CLEAR_PADDING)
+        });
+        let tool = |glyph: Element<'static, Message>, tip: String, menu: TreeMenu| {
             tooltip(
-                button(text(FILTER_GLYPH))
-                    .style(if active {
-                        styles::primary
-                    } else {
-                        styles::secondary
-                    })
-                    .on_press(Message::OpenTreeMenu(TreeMenu::Filter)),
-                text(fl!("ui-tree-filter-tooltip")).size(font_size::CAPTION),
+                button(glyph)
+                    .width(icons::BUTTON_SIDE)
+                    .height(icons::BUTTON_SIDE)
+                    .padding(0.0)
+                    .style(styles::subtle)
+                    .on_press(Message::OpenTreeMenu(menu)),
+                text(tip).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
-            .style(container::rounded_box),
-        );
-        search.into()
+            .style(container::rounded_box)
+        };
+        let glyph = |icon| center(icons::icon(icon, Tint::Text, icons::GLYPH_SIDE)).into();
+        // The filters: a dot in the accent while one leaves sessions out, as the C#'s.
+        let filter = if self.app.tree_filter().is_active() {
+            center(stack![
+                container(icons::icon(Icon::Filter, Tint::Text, icons::GLYPH_SIDE))
+                    .padding(FILTER_DOT_SIDE / 2.0),
+                container(
+                    container(iced::widget::space())
+                        .width(FILTER_DOT_SIDE)
+                        .height(FILTER_DOT_SIDE)
+                        .style(styles::accent_dot),
+                )
+                .align_right(Length::Fill)
+                .align_top(Length::Fill),
+            ])
+            .into()
+        } else {
+            glyph(Icon::Filter)
+        };
+        row![
+            stack![field].push(clear).width(Length::Fill),
+            row![
+                tool(filter, fl!("ui-tree-filter-tooltip"), TreeMenu::Filter),
+                container(tool(
+                    glyph(Icon::Add),
+                    fl!("ui-tree-add-tooltip"),
+                    TreeMenu::Add
+                ))
+                .id(tree_add_id()),
+                tool(
+                    glyph(Icon::More),
+                    fl!("ui-tree-more-tooltip"),
+                    TreeMenu::More
+                ),
+            ]
+            .spacing(TOOL_GAP),
+        ]
+        .spacing(SEARCH_GAP)
+        .align_y(iced::Alignment::Center)
+        .into()
     }
 
     /// The Files tab shown with its session open, the one files dropped on the window go to.
@@ -5918,13 +6101,19 @@ impl Shell {
         active: bool,
     ) -> Element<'a, Message> {
         let dragging = self.tab_drag.filter(|drag| drag.active);
+        // As the C# tab: its heading, and under it the accent's line once selected.
+        let content = column![
+            container(label.align_y(iced::Alignment::Center)).padding(TAB_HEADING_PADDING),
+            container(iced::widget::space())
+                .width(Length::Fill)
+                .height(TAB_UNDERLINE)
+                .style(styles::underline(active)),
+        ]
+        .width(Length::Shrink);
         let mut area = mouse_area(
-            button(label)
-                .style(if active {
-                    styles::primary
-                } else {
-                    styles::secondary
-                })
+            button(content)
+                .padding(TAB_PADDING)
+                .style(styles::tab(active))
                 .on_press(Message::App(AppMessage::SelectTab(tab))),
         )
         .on_right_press(Message::OpenTreeMenu(TreeMenu::Tab(tab)))
@@ -5951,9 +6140,9 @@ impl Shell {
             .into()
     }
 
-    /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
-    /// goes straight.
-    fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
+    /// The gateways `tab` goes through, as the C# says them: "via" and their names; `None`
+    /// when it goes straight.
+    fn route_text(&self, tab: &Tab) -> Option<String> {
         let route = self.app.tab_route(tab);
         if route.is_empty() {
             return None;
@@ -5963,10 +6152,17 @@ impl Shell {
             .map(|name| server_text(name))
             .collect::<Vec<_>>()
             .join(&fl!("ui-route-test-separator"));
+        Some(fl!("ui-connect-via", route = names))
+    }
+
+    /// "via" when `tab` goes through gateways, naming them when pointed at; nothing when it
+    /// goes straight.
+    fn route_badge(&self, tab: &Tab) -> Option<Element<'static, Message>> {
+        let route = self.route_text(tab)?;
         Some(
             tooltip(
                 text(fl!("ui-tab-route-badge")).size(font_size::CAPTION),
-                text(fl!("ui-connect-via", route = names)).size(font_size::CAPTION),
+                text(route).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
             )
             .style(container::rounded_box)
@@ -5974,43 +6170,54 @@ impl Shell {
         )
     }
 
-    /// What a tab says of itself: its state, protocol and title, then its marks.
-    fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
-        let title = if tab.files.is_some() && tab.custom_title.is_none() {
+    /// The title of `tab`, as its tab and its pane's header name it: a Files tab says so.
+    fn tab_name(tab: &Tab) -> String {
+        if tab.files.is_some() && tab.custom_title.is_none() {
             fl!("ui-tab-files-title", name = tab_label(tab.display_title()))
         } else {
             tab_label(tab.display_title())
-        };
-        // The session's state and protocol before the name, as the C# tab's dot and icon;
-        // the protocol in the button's own colour, which a secondary one would lose on
-        // both the active and the other tabs.
-        let mut label = row![
-            tree_view::state_dot(Some(SessionState::of(tab))),
-            text(self.app.tab_kind(tab).label()).size(font_size::CAPTION),
-            text(title),
-        ]
+        }
+    }
+
+    /// What a tab says of itself, as the C# tab: its protocol's icon, its pin, its title
+    /// and a dot while it connects, then its marks.
+    fn tab_title(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
+        let kind = self.app.tab_kind(tab);
+        let mut label = row![icons::icon(
+            Icon::of(kind),
+            Tint::Protocol(kind),
+            icons::GLYPH_SIDE
+        )]
         .spacing(spacing::XS)
         .align_y(iced::Alignment::Center);
         if tab.pinned {
-            label = label.push(text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION));
+            label = label.push(
+                tooltip(
+                    icons::icon(Icon::Pin, Tint::Accent, TAB_PIN_SIDE),
+                    text(fl!("ui-tab-pinned-badge")).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
+        label = label.push(
+            text(Self::tab_name(tab))
+                .size(font_size::BODY)
+                .font(styles::SEMIBOLD)
+                .style(text::base),
+        );
+        // While it connects, as the C# tab's busy dot.
+        let state = SessionState::of(tab);
+        if matches!(state, SessionState::Connecting | SessionState::Reconnecting) {
+            label = label.push(tree_view::state_dot(Some(state)));
         }
         // Through gateways, said on the tab while the tunnels panel that lists it is
-        // closed, as the C# tab's tunnel badge; its health is the tab's own dot.
+        // closed, as the C# tab's tunnel badge.
         if !self.app.tunnels_panel() {
             label = label.push(self.route_badge(tab));
         }
-        // A macro recorded from it, or typed into it.
-        if tab.macro_recording.is_some() {
-            label = label.push(
-                text(fl!("ui-tab-recording-badge"))
-                    .size(font_size::CAPTION)
-                    .style(text::danger),
-            );
-        } else if tab.macro_playing.is_some() {
-            label = label.push(text(fl!("ui-tab-macro-badge")).size(font_size::CAPTION));
-        }
-        if tab.bell && !active {
-            label = label.push(text(fl!("ui-tab-bell-badge")).size(font_size::CAPTION));
+        for badge in tab_badges(tab, active) {
+            label = label.push(badge);
         }
         label
     }
@@ -6052,32 +6259,27 @@ impl Shell {
         marks
     }
 
-    /// What a tab says of itself, on the strip or in a pane's header: its title and marks,
-    /// the transcript it keeps among them.
+    /// What a tab says of itself on the strip: its title and marks, the transcript it keeps
+    /// among them.
     fn tab_heading(&self, tab: &Tab, active: bool) -> iced::widget::Row<'static, Message> {
-        let mut label = self.tab_title(tab, active);
-        if tab.transcript.is_some() {
-            label = label.push(
-                tooltip(
-                    text(fl!("ui-tab-recording")).size(font_size::CAPTION),
-                    text(fl!("ui-tab-recording-tooltip")).size(font_size::CAPTION),
-                    tooltip::Position::Bottom,
-                )
-                .style(container::rounded_box),
-            );
-        }
-        label
+        self.tab_title(tab, active).push(transcript_mark(tab))
     }
 
     fn tab_bar(&self) -> Element<'_, Message> {
-        let mut tabs = row![].spacing(spacing::SM).padding(spacing::MD);
+        let mut tabs = row![]
+            .spacing(TAB_GAP)
+            .padding(TAB_STRIP_PADDING)
+            .align_y(iced::Alignment::Center);
         // The sidebar hidden, a way to show it again, as the C# button where it was.
         if self.sidebar_hidden {
             tabs = tabs.push(
                 tooltip(
-                    button(text(SHOW_SIDEBAR_GLYPH))
-                        .style(styles::secondary)
-                        .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
+                    container(
+                        icons::button(Icon::ChevronRight)
+                            .style(styles::secondary)
+                            .on_press(Message::TreeShortcut(TreeShortcut::ToggleSidebar)),
+                    )
+                    .id(sidebar_toggle_id()),
                     text(fl!("ui-sidebar-show-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
@@ -6090,14 +6292,29 @@ impl Shell {
             for mark in self.tab_marks(tab) {
                 tabs = tabs.push(mark);
             }
-            // The close button inside the tab, at its right, as the C# tab's: it takes the
-            // press, which selecting the tab then does not see.
-            let label = self.tab_heading(tab, active).push(
-                button(text(fl!("ui-tab-close-button")).size(font_size::CAPTION))
-                    .style(styles::subtle)
-                    .padding([0.0, 2.0])
-                    .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
-            );
+            // The close button inside the tab, at its right, as the C# tab's: a circled cross,
+            // faded but on the tab selected or pointed at. It takes the press, which selecting
+            // the tab then does not see.
+            let quiet = !active && self.tab_hover != Some(tab.id);
+            let close = container(
+                button(center(icons::faded(
+                    Icon::Close,
+                    Tint::Text,
+                    font_size::SMALL_CAPTION,
+                    if quiet {
+                        styles::CLOSE_REST_OPACITY
+                    } else {
+                        1.0
+                    },
+                )))
+                .width(TAB_CLOSE_SIDE)
+                .height(TAB_CLOSE_SIDE)
+                .padding(0.0)
+                .style(styles::close_mark(quiet))
+                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+            )
+            .id(tab_close_id(tab.id));
+            let label = self.tab_heading(tab, active).push(close);
             tabs = tabs.push(self.tab_button(tab.id, label, active));
         }
         tabs.wrap().into()
@@ -6172,10 +6389,19 @@ impl Shell {
             .into_iter()
             .map(|tab| {
                 let focused = active == Some(tab.id);
+                let mut badges = tab_badges(tab, focused);
+                badges.extend(transcript_mark(tab));
                 split_view::pane(
-                    tab.id,
-                    self.tab_marks(tab),
-                    self.tab_heading(tab, focused),
+                    split_view::Heading {
+                        tab: tab.id,
+                        host,
+                        marks: self.tab_marks(tab),
+                        name: Self::tab_name(tab),
+                        detail: tab_endpoint(tab),
+                        route: self.route_text(tab),
+                        state: crate::floating_view::state_text(SessionState::of(tab)),
+                        badges,
+                    },
                     self.tab_page(tab, focused),
                     focused,
                 )
@@ -10263,6 +10489,31 @@ impl fmt::Display for KeysChoice {
 
 fn search_field_id() -> iced::widget::Id {
     iced::widget::Id::new("tree-search")
+}
+
+/// Widget identifier of the status bar's tunnels button, which shows a glyph and a number.
+#[must_use]
+pub fn tunnels_toggle_id() -> iced::widget::Id {
+    iced::widget::Id::new("status-tunnels")
+}
+
+/// Widget identifier of the button hiding the sidebar, or showing it again: a glyph alone.
+#[must_use]
+pub fn sidebar_toggle_id() -> iced::widget::Id {
+    iced::widget::Id::new("sidebar-toggle")
+}
+
+/// Widget identifier of the sidebar's Add button, which shows a glyph alone.
+#[must_use]
+pub fn tree_add_id() -> iced::widget::Id {
+    iced::widget::Id::new("tree-add")
+}
+
+/// Widget identifier of the close button of tab `tab` on the strip, which shows a glyph
+/// alone.
+#[must_use]
+pub fn tab_close_id(tab: TabId) -> iced::widget::Id {
+    iced::widget::Id::from(format!("tab-close-{}", tab.value()))
 }
 
 /// Widget identifier of the main window's whole content: the fields Tab goes through under

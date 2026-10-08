@@ -15,19 +15,27 @@
  */
 
 //! The status bar along the window's foot, as the C# Heimdall's: on the left the state of
-//! the session shown, or what was just done; on the right how many sessions the tree holds.
+//! the session shown, or what was just done, and the shortcuts' hint; on the right the
+//! tunnels' and broadcast input's buttons, then how many sessions and tunnels there are.
 
 use heimdall_app::{Notice, SessionStatus, server_text};
 use heimdall_core::settings::BroadcastScope;
-use iced::widget::{container, row, space, text};
+use iced::widget::{Button, button, container, row, space, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::shell::Message;
-use crate::tokens::font_size;
+use crate::tokens::{font_size, spacing};
 
 /// Room around the bar's text.
 const PADDING: [f32; 2] = [2.0, 8.0];
+
+/// Room inside a button of the bar, as the C#'s `4,2`.
+const BUTTON_PADDING: [f32; 2] = [2.0, 4.0];
+
+/// Space between a button's glyph and its words, as the C#'s.
+const GLYPH_GAP: f32 = 3.0;
 
 /// The name of broadcast input's `scope`, `targets` the tabs marked.
 #[must_use]
@@ -553,16 +561,47 @@ pub fn count_text(shown: usize, total: usize, filtering: bool) -> String {
     }
 }
 
-/// The bar; `controls` beside the count, broadcast input's.
-pub fn view(left: String, right: String, controls: Element<'_, Message>) -> Element<'_, Message> {
+/// A button of the bar's right, as the C#'s: `icon` in `tint` before `label`, its style
+/// and action its caller's.
+#[must_use]
+pub fn glyph_button(icon: Icon, tint: Tint, label: Element<'_, Message>) -> Button<'_, Message> {
+    button(
+        row![icons::icon(icon, tint, font_size::CAPTION), label]
+            .spacing(GLYPH_GAP)
+            .align_y(iced::Alignment::Center),
+    )
+    .padding(BUTTON_PADDING)
+}
+
+/// The bar: `left` and the shortcuts' hint, then at the right `controls`, the tunnels' and
+/// broadcast input's, and `sessions` and `tunnels` counted, as the C# runs say them.
+#[must_use]
+pub fn view(
+    left: String,
+    controls: Element<'_, Message>,
+    sessions: String,
+    tunnels: String,
+) -> Element<'_, Message> {
+    let counts = row![
+        text(sessions)
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        text(fl!("ui-status-separator"))
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+        text(tunnels)
+            .size(font_size::CAPTION)
+            .style(text::secondary),
+    ];
     container(
         row![
-            text(left).size(font_size::CAPTION),
+            text(left).size(font_size::CAPTION).style(text::secondary),
+            crate::shortcuts_view::hint(font_size::SMALL_CAPTION),
             space::horizontal(),
             controls,
-            text(right).size(font_size::CAPTION),
+            counts,
         ]
-        .spacing(PADDING[1])
+        .spacing(spacing::SM)
         .align_y(iced::Alignment::Center)
         .width(Length::Fill),
     )

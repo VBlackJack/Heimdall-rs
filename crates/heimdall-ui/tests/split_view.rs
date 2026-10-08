@@ -397,6 +397,25 @@ fn chosen(shell: &Shell, label: &str) -> Vec<Message> {
         .collect()
 }
 
+/// What a click on the `nth` text reading `label`, counted from 0 in the order the view
+/// holds them, asks of a menu: each pane's header says Disconnect before its menu does.
+fn chosen_nth(shell: &Shell, label: &'static str, nth: usize) -> Vec<Message> {
+    use iced_test::selector::{Candidate, Selector as _, Text};
+
+    let mut seen = 0;
+    let mut ui = sized(shell, TALL_WINDOW);
+    ui.click(move |candidate: Candidate<'_>| -> Option<Text> {
+        let mut said = label;
+        let found = said.select(candidate)?;
+        seen += 1;
+        (seen > nth).then_some(found)
+    })
+    .expect(label);
+    ui.into_messages()
+        .filter(|message| matches!(message, Message::MenuChoice(_) | Message::OpenTreeMenu(_)))
+        .collect()
+}
+
 fn same(message: &Message, expected: &Message) -> bool {
     format!("{message:?}") == format!("{expected:?}")
 }
@@ -453,10 +472,18 @@ fn the_tab_menu_offers_the_split_entries_as_the_csharp_one() {
 fn disconnect_from_a_pane_header_closes_that_pane_and_from_the_strip_the_whole_tab() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, left, right) = split_shell(dir.path());
-    // The host pane's header: that pane alone, asked as its close button asks.
+    // The host pane's header, as the C#'s: its Disconnect button, that pane alone.
+    {
+        let mut ui = sized(&shell, TALL_WINDOW);
+        ui.click("Disconnect").expect("the header's button");
+        let close = Message::App(AppMessage::Split(SplitMessage::ClosePane(left)));
+        let got: Vec<Message> = ui.into_messages().collect();
+        assert!(got.iter().any(|message| same(message, &close)), "{got:?}");
+    }
+    // Its menu: the same, after both headers' buttons.
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Pane(left)));
     let expected = Message::MenuChoice(AppMessage::Split(SplitMessage::ClosePane(left)));
-    let got = chosen(&shell, "Disconnect");
+    let got = chosen_nth(&shell, "Disconnect", 2);
     assert!(
         matches!(got.as_slice(), [message] if same(message, &expected)),
         "{got:?}"
@@ -479,7 +506,7 @@ fn disconnect_from_a_pane_header_closes_that_pane_and_from_the_strip_the_whole_t
     let (mut shell, left, right) = split_shell(dir.path());
     let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Tab(left)));
     let expected = Message::MenuChoice(AppMessage::RequestCloseTab(left));
-    let got = chosen(&shell, "Disconnect");
+    let got = chosen_nth(&shell, "Disconnect", 2);
     assert!(
         matches!(got.as_slice(), [message] if same(message, &expected)),
         "{got:?}"
