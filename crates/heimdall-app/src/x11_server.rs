@@ -292,13 +292,16 @@ mod tests {
         format!("{name}{}", std::env::consts::EXE_SUFFIX)
     }
 
+    /// A port nothing can listen on. A port freed by a test is not one: another test running
+    /// at the same time can be given it and listen there.
+    const NO_LISTENER: u16 = 0;
+
     #[test]
     fn a_server_listening_on_the_port_is_detected_and_none_otherwise() {
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bound");
         let port = listener.local_addr().expect("address").port();
         assert!(answers(port, DETECT_TIMEOUT));
-        drop(listener);
-        assert!(!answers(port, DETECT_TIMEOUT), "nothing listens any more");
+        assert!(!answers(NO_LISTENER, DETECT_TIMEOUT), "nothing listens");
     }
 
     #[test]
@@ -316,14 +319,11 @@ mod tests {
 
     #[test]
     fn with_starting_turned_off_and_none_running_none_is_counted_on() {
-        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("bound");
-        let port = listener.local_addr().expect("address").port();
-        drop(listener);
         let settings = X11Settings {
             server_path: "/nowhere/vcxsrv".to_owned(),
             auto_start: false,
         };
-        let outcome = X11Server::new().ensure(&settings, port);
+        let outcome = X11Server::new().ensure(&settings, NO_LISTENER);
         assert_eq!(outcome, X11Outcome::Unavailable);
         assert!(!outcome.available());
     }
