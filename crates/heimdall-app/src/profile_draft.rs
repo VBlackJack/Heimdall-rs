@@ -311,6 +311,9 @@ pub enum ProfileToggle {
     /// Every protocol: marked as a favorite, as the C# "Mark as favorite"; kept by the
     /// store beside the profile.
     Favorite,
+    /// Local shell: run as administrator, in a window of its own that Windows opens through
+    /// its elevation prompt, never in a tab. Drawn by the local shell's own card.
+    RunAsAdministrator,
 }
 
 impl ProfileToggle {
@@ -743,6 +746,11 @@ impl ProfileDraft {
             protocol: DraftProtocol::Local,
             protocol_chosen: true,
             session_logging: profile.session_logging,
+            toggles: if profile.command.run_as_administrator {
+                vec![ProfileToggle::RunAsAdministrator]
+            } else {
+                Vec::new()
+            },
             ..Self::default()
         }
     }
@@ -770,6 +778,7 @@ impl ProfileDraft {
                 program: optional(&self.local_program),
                 arguments,
                 working_directory: optional(&self.working_directory).map(PathBuf::from),
+                run_as_administrator: self.is_on(ProfileToggle::RunAsAdministrator),
             },
             approved: None,
             session_logging: self.session_logging,
@@ -1248,6 +1257,10 @@ impl ProfileDraft {
             // Through a gateway, HTTP only, as the C# dialog forces it.
             ProfileToggle::UseSsl => !self.winrm_routed(),
             ProfileToggle::SkipCertificateCheck => self.uses_ssl(),
+            // Windows only; elsewhere shown only when ticked already, to be cleared.
+            ProfileToggle::RunAsAdministrator => {
+                crate::elevated_shell::SUPPORTED || self.is_on(ProfileToggle::RunAsAdministrator)
+            }
             _ => true,
         }
     }
@@ -2027,6 +2040,43 @@ mod tests {
             DraftError::ArgumentsInvalid.field(),
             ProfileField::LocalArguments
         );
+    }
+
+    #[test]
+    fn run_as_administrator_is_saved_and_read_back_by_the_local_form() {
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Local);
+        assert!(
+            !draft.is_on(ProfileToggle::RunAsAdministrator),
+            "off for a new one"
+        );
+        draft.set(ProfileField::Name, "Admin shell".to_owned());
+        draft.set(ProfileField::LocalProgram, "pwsh.exe".to_owned());
+        draft.toggle(ProfileToggle::RunAsAdministrator, true);
+        let Ok(DraftProfile::Local(profile)) = draft.to_saved(id()) else {
+            panic!("a local profile");
+        };
+        assert!(profile.command.run_as_administrator);
+        let reread = ProfileDraft::from_local(&profile);
+        assert!(reread.is_on(ProfileToggle::RunAsAdministrator));
+        assert_eq!(reread.to_saved(id()), Ok(DraftProfile::Local(profile)));
+
+        draft.toggle(ProfileToggle::RunAsAdministrator, false);
+        let Ok(DraftProfile::Local(plain)) = draft.to_saved(id()) else {
+            panic!("a local profile");
+        };
+        assert!(!plain.command.run_as_administrator);
+        assert!(!ProfileDraft::from_local(&plain).is_on(ProfileToggle::RunAsAdministrator));
+    }
+
+    #[test]
+    fn run_as_administrator_is_offered_on_windows_and_elsewhere_only_to_be_cleared() {
+        let mut draft = ProfileDraft::new_for(DraftProtocol::Local);
+        assert_eq!(
+            draft.shows_toggle(ProfileToggle::RunAsAdministrator),
+            cfg!(windows)
+        );
+        draft.toggle(ProfileToggle::RunAsAdministrator, true);
+        assert!(draft.shows_toggle(ProfileToggle::RunAsAdministrator));
     }
 
     #[cfg(not(windows))]

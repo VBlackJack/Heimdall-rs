@@ -23,7 +23,7 @@ use heimdall_app::citrix::CitrixRefusal;
 use heimdall_app::files::FilesError;
 use heimdall_app::profile_draft::DraftError;
 use heimdall_app::{KeyProblem, NetworkFailure, StepStatus, UiError, server_text};
-use heimdall_core::import::csharp::{Dropped, SkipReason};
+use heimdall_core::import::csharp::{Dropped, LegacyElevation, SkipReason};
 use heimdall_core::profile::{FIXED_HEIGHT_MAX, FIXED_SIDE_MIN, FIXED_WIDTH_MAX, display_address};
 use heimdall_core::store::RouteError;
 use heimdall_files::{LocalNameError, Refusal};
@@ -327,6 +327,15 @@ pub fn dropped_setting(dropped: Dropped) -> String {
         Dropped::CommandLibraryLinks(count) => {
             fl!("ui-import-dropped-command-library-links", count = count)
         }
+        Dropped::Elevation(mode) => fl!(
+            "ui-import-dropped-elevation",
+            mode = match mode {
+                LegacyElevation::Auto => fl!("ui-import-elevation-auto"),
+                LegacyElevation::Gsudo => fl!("ui-import-elevation-gsudo"),
+                LegacyElevation::Runas => fl!("ui-import-elevation-runas"),
+                LegacyElevation::Unknown => fl!("ui-import-elevation-unknown"),
+            }
+        ),
     }
 }
 
@@ -376,7 +385,6 @@ pub fn skip_reason(reason: &SkipReason) -> String {
         }
         SkipReason::MissingGateway => fl!("ui-import-skip-missing-gateway"),
         SkipReason::GatewayLoop => fl!("ui-import-skip-gateway-loop"),
-        SkipReason::NeedsElevation => fl!("ui-import-skip-elevation"),
         SkipReason::UnsafeLocalCommand => fl!("ui-import-skip-unsafe-local"),
         SkipReason::MissingUsername => fl!("ui-import-skip-missing-username"),
         SkipReason::UnknownIdentityMode => fl!("ui-import-skip-unknown-identity"),

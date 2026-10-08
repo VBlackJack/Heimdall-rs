@@ -82,6 +82,19 @@ const WINRM_CURRENT_USER_VALUE: i64 = 0;
 
 /// The C# `ElevationMode` that asks for no elevation, by name and by value.
 const NO_ELEVATION: &str = "None";
+const NO_ELEVATION_VALUE: i64 = 0;
+
+/// The C# `ElevationMode` "Auto", by name and by value.
+const AUTO_ELEVATION: &str = "Auto";
+const AUTO_ELEVATION_VALUE: i64 = 1;
+
+/// The C# `ElevationMode` "gsudo only", by name and by value.
+const GSUDO_ELEVATION: &str = "Gsudo";
+const GSUDO_ELEVATION_VALUE: i64 = 2;
+
+/// The C# `ElevationMode` "External window", by name and by value.
+const RUNAS_ELEVATION: &str = "Runas";
+const RUNAS_ELEVATION_VALUE: i64 = 3;
 
 /// `connectionType` the C# Heimdall assumes when the field is absent.
 const DEFAULT_CONNECTION_TYPE: &str = "RDP";
@@ -104,8 +117,6 @@ pub enum SkipReason {
     MissingId,
     /// Its port is outside 1 to 65535; carries the value found.
     InvalidPort(i64),
-    /// A local shell run elevated, not supported yet.
-    NeedsElevation,
     /// A `WinRM` profile logging in with an account it does not name.
     MissingUsername,
     /// A `WinRM` identity mode the C# Heimdall does not define.
@@ -229,6 +240,23 @@ pub enum Dropped {
     /// imported with its own text only, without the link, which Heimdall-rs has nowhere to
     /// resolve.
     CommandLibraryLinks(usize),
+    /// A local shell's elevation mode, this one: imported as "Run as administrator", which
+    /// opens the shell in a window of its own, never elevated in a tab.
+    Elevation(LegacyElevation),
+}
+
+/// The elevation a C# local shell asked for: each now runs as administrator in a window of
+/// its own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LegacyElevation {
+    /// "Auto": gsudo in the tab, else a separate window. Also the old `localShellElevated`.
+    Auto,
+    /// "gsudo only": elevated in the tab.
+    Gsudo,
+    /// "External window": a separate window, through the Windows elevation prompt.
+    Runas,
+    /// A value the C# does not define: taken as a request, never as none.
+    Unknown,
 }
 
 /// A profile imported without some of its settings.
@@ -666,10 +694,11 @@ fn dropped_settings(server: &LegacyServer, defaults: &LegacyRdpDefaults) -> Vec<
     if kind == RDP_CONNECTION_TYPE {
         RdpChoices::of(server, defaults).dropped(server)
     } else if kind.eq_ignore_ascii_case(LOCAL_CONNECTION_TYPE) {
-        match dead_local_steps(server) {
-            0 => Vec::new(),
-            steps => vec![Dropped::LocalPostConnect(steps)],
-        }
+        let elevation = legacy_elevation(server).map(Dropped::Elevation);
+        let steps = Some(dead_local_steps(server))
+            .filter(|steps| *steps > 0)
+            .map(Dropped::LocalPostConnect);
+        elevation.into_iter().chain(steps).collect()
     } else if [
         WINRM_CONNECTION_TYPE,
         TELNET_CONNECTION_TYPE,
@@ -1505,13 +1534,11 @@ fn convert_citrix(server: &LegacyServer) -> Result<CitrixProfile, SkipReason> {
 /// A local shell profile as `LocalShellHandler` runs it, never approved: whatever the C# file
 /// says was confirmed there, the user has not seen it here. The arguments stay the string the
 /// C# handed to the program. Its post-connect sequence, which the C# never ran on a local
-/// shell, is left out, and said by [`dropped_settings`].
+/// shell, is left out, and said by [`dropped_settings`]. Any elevation it asked for is run
+/// as administrator in a window of its own, also said there.
 fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
     if server.id.is_empty() {
         return Err(SkipReason::MissingId);
-    }
-    if is_elevated(server) {
-        return Err(SkipReason::NeedsElevation);
     }
     // Blank is absent, as `string.IsNullOrWhiteSpace` makes it in the C#.
     let program = trimmed(server.local_shell_executable.as_deref());
@@ -1535,6 +1562,7 @@ fn convert_local(server: &LegacyServer) -> Result<LocalProfile, SkipReason> {
             program,
             arguments,
             working_directory: working_directory.map(PathBuf::from),
+            run_as_administrator: legacy_elevation(server).is_some(),
         },
         approved: None,
         session_logging: server.session_logging_override,
@@ -1567,16 +1595,31 @@ fn dead_local_steps(server: &LegacyServer) -> usize {
         .count()
 }
 
-/// Whether the profile asks to run elevated, as `EffectiveElevationMode` reads it.
-fn is_elevated(server: &LegacyServer) -> bool {
+/// The elevation the profile asks for, as `EffectiveElevationMode` reads it: its mode, else
+/// "Auto" for the old `localShellElevated`; `None` for none.
+fn legacy_elevation(server: &LegacyServer) -> Option<LegacyElevation> {
     let by_mode = match &server.elevation_mode {
-        None | Some(serde_json::Value::Null) => false,
-        Some(serde_json::Value::Number(number)) => number.as_i64() != Some(0),
-        Some(serde_json::Value::String(name)) => !name.eq_ignore_ascii_case(NO_ELEVATION),
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::Number(number)) => match number.as_i64() {
+            Some(NO_ELEVATION_VALUE) => None,
+            Some(AUTO_ELEVATION_VALUE) => Some(LegacyElevation::Auto),
+            Some(GSUDO_ELEVATION_VALUE) => Some(LegacyElevation::Gsudo),
+            Some(RUNAS_ELEVATION_VALUE) => Some(LegacyElevation::Runas),
+            _ => Some(LegacyElevation::Unknown),
+        },
+        Some(serde_json::Value::String(name)) => [
+            (NO_ELEVATION, None),
+            (AUTO_ELEVATION, Some(LegacyElevation::Auto)),
+            (GSUDO_ELEVATION, Some(LegacyElevation::Gsudo)),
+            (RUNAS_ELEVATION, Some(LegacyElevation::Runas)),
+        ]
+        .into_iter()
+        .find(|(known, _)| name.trim().eq_ignore_ascii_case(known))
+        .map_or(Some(LegacyElevation::Unknown), |(_, mode)| mode),
         // Anything else is not a mode the C# wrote: taken as a request, never as none.
-        Some(_) => true,
+        Some(_) => Some(LegacyElevation::Unknown),
     };
-    by_mode || server.local_shell_elevated
+    by_mode.or_else(|| server.local_shell_elevated.then_some(LegacyElevation::Auto))
 }
 
 /// Whether the command can be run as written, without a folder that depends on how the

@@ -199,6 +199,7 @@ fn local(arguments: LocalArguments) -> LocalProfile {
             program: Some(r"C:\Tools\tool.exe".to_owned()),
             arguments,
             working_directory: Some(PathBuf::from(r"C:\Work")),
+            run_as_administrator: false,
         },
         approved: None,
         session_logging: Some(true),
@@ -373,6 +374,26 @@ fn listed_arguments_are_written_as_the_given_windows_line() {
         report.local[0].command.arguments,
         LocalArguments::WindowsLine("quoted:/c|echo hi".to_owned())
     );
+}
+
+#[test]
+fn a_shell_run_as_administrator_is_written_as_the_csharp_external_window_and_read_back() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    let mut elevated = local(LocalArguments::WindowsLine("-NoExit".to_owned()));
+    elevated.command.run_as_administrator = true;
+    store.merge_local([elevated]);
+    let text = export::csharp(&store, &line, &RdpDefaults::default());
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    assert_eq!(document["servers"][0]["elevationMode"], 3, "the C# Runas");
+    let report = import(&text, None).expect("reads");
+    assert_eq!(report.local, store.local_profiles());
+
+    let mut plain = ProfileStore::open(dir.path().join("plain.toml")).expect("store");
+    plain.merge_local([local(LocalArguments::default())]);
+    let text = export::csharp(&plain, &line, &RdpDefaults::default());
+    let document: serde_json::Value = serde_json::from_str(&text).expect("JSON");
+    assert!(document["servers"][0].get("elevationMode").is_none());
 }
 
 #[test]
