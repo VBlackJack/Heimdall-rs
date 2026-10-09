@@ -2080,14 +2080,18 @@ mod tests {
             winrm.to_saved(id()).err(),
             Some(DraftError::UsernameMissing)
         );
-        let mut local = ProfileDraft::new_for(DraftProtocol::Local);
-        local.name = "shell".to_owned();
-        local.local_arguments = "\"open".to_owned();
-        assert_eq!(local.errors(), vec![DraftError::ArgumentsInvalid]);
-        assert_eq!(
-            local.to_saved(id()).err(),
-            Some(DraftError::ArgumentsInvalid)
-        );
+        // Windows takes an argument line as written: only a POSIX shell's quoting can be
+        // left open.
+        if cfg!(not(windows)) {
+            let mut local = ProfileDraft::new_for(DraftProtocol::Local);
+            local.name = "shell".to_owned();
+            local.local_arguments = "\"open".to_owned();
+            assert_eq!(local.errors(), vec![DraftError::ArgumentsInvalid]);
+            assert_eq!(
+                local.to_saved(id()).err(),
+                Some(DraftError::ArgumentsInvalid)
+            );
+        }
     }
 
     #[test]
