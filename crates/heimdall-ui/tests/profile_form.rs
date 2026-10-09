@@ -25,7 +25,7 @@ use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{App, AppConfig, Message as AppMessage};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use heimdall_ui::shell::{Message, Shell, tree_add_id};
+use heimdall_ui::shell::{Message, ProfileTab, Shell, tree_add_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::tree_view::TreeMenu;
 use iced::{Settings, Size};
@@ -94,6 +94,11 @@ fn app(message: AppMessage) -> Message {
     Message::App(message)
 }
 
+/// Shows a tab of the profile form, as a click on its header does.
+fn show(shell: &mut Shell, tab: ProfileTab) {
+    let _ = shell.update(Message::ProfileTab(tab));
+}
+
 #[test]
 fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
     let dir = tempfile::tempdir().expect("dir");
@@ -158,29 +163,65 @@ fn the_add_menu_opens_an_empty_form_and_typing_reaches_its_field() {
     }
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     snapshot(&shell, "profile-new.png");
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Add Session",
+            "General",
+            "Options",
+            "Network",
+            "Info",
+            "Connection basics",
+            "Display name *",
+            "Server *",
+            "Remote SSH port",
+            "SSH credentials",
+            "Username",
+            "SSH key",
+            "Password",
+            "Save",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("22").is_ok(), "the default port is written in");
+        ui.click("server.example.org").expect("host field");
+        ui.typewrite("w");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::ProfileField { field: ProfileField::Host, value }) if value == "w"
+        )));
+    }
+}
+
+#[test]
+fn the_info_tab_holds_the_folder_and_the_metadata_as_the_csharp_dialog() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(app(AppMessage::NewProfile));
+    let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    {
+        let mut ui = simulator(&shell);
+        assert!(ui.find("Folder").is_err(), "not on the General tab");
+        ui.click("Info").expect("the Info tab");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::ProfileTab(ProfileTab::Info)))
+        );
+    }
+    show(&mut shell, ProfileTab::Info);
     let mut ui = simulator(&shell);
     for label in [
-        "Add Session",
-        "Connection basics",
-        "Display name *",
-        "Server *",
-        "Remote SSH port",
-        "SSH credentials",
-        "Username",
-        "SSH key",
-        "Password",
+        "Organization",
+        "Use grouping metadata to keep the session list organized.",
         "Folder",
-        "Save",
+        "Environment",
+        "Metadata",
+        "Tags",
+        "MAC address",
     ] {
         ui.find(label).expect(label);
     }
-    assert!(ui.find("22").is_ok(), "the default port is written in");
-    ui.click("server.example.org").expect("host field");
-    ui.typewrite("w");
-    assert!(ui.into_messages().any(|message| matches!(
-        message,
-        Message::App(AppMessage::ProfileField { field: ProfileField::Host, value }) if value == "w"
-    )));
+    assert!(ui.find("Server *").is_err(), "the General tab hidden");
 }
 
 #[test]
@@ -241,13 +282,21 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
             "RDP credentials",
             "Windows domain",
             "Password",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("SSH key").is_err(), "an SSH field");
+    }
+    show(&mut shell, ProfileTab::Options);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
             "RDP session options",
             "Redirect clipboard",
             "Enable Network Level Authentication",
         ] {
             ui.find(label).expect(label);
         }
-        assert!(ui.find("SSH key").is_err(), "an SSH field");
     }
     // The box is the global defaults' while the new form follows them.
     let _ = shell.update(app(AppMessage::ProfileToggle {
@@ -256,6 +305,7 @@ fn the_rdp_and_winrm_forms_show_the_csharp_cards() {
     }));
     {
         let mut ui = tall_simulator(&shell);
+        common::reveal(&mut ui, "Enable Network Level Authentication");
         ui.click("Enable Network Level Authentication")
             .expect("nla box");
         assert!(ui.into_messages().any(|message| matches!(
@@ -325,6 +375,7 @@ fn the_rdp_form_offers_the_sound_colours_and_administrative_session() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
     let mut ui = tall_simulator(&shell);
     // The lists themselves are tested in `rdp_options`: their value is not a text to find.
     for label in [
@@ -334,6 +385,7 @@ fn the_rdp_form_offers_the_sound_colours_and_administrative_session() {
     ] {
         ui.find(label).expect(label);
     }
+    common::reveal(&mut ui, "Run as administrator session (/admin)");
     ui.click("Run as administrator session (/admin)")
         .expect("admin box");
     assert!(ui.into_messages().any(|message| matches!(
@@ -354,6 +406,7 @@ fn the_rdp_form_shows_the_resolution_card_and_the_fixed_size_fields_in_its_mode(
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
         for label in [
@@ -380,9 +433,9 @@ fn a_gateway_is_added_from_the_form_and_the_tree_says_via_it() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    show(&mut shell, ProfileTab::Network);
     snapshot(&shell, "profile-network.png");
     {
-        // Under the post-connect steps: a window tall enough to click it.
         let mut ui = tall_simulator(&shell);
         for label in [
             "Gateway routing",
@@ -471,11 +524,11 @@ fn a_form_taller_than_the_window_scrolls_above_buttons_that_stay_in_view() {
         ..Settings::default()
     };
     let mut ui = common::simulator(settings, SHORT_WINDOW, shell.view());
-    let folder = ui.find("Folder").expect("the last field");
+    let password = ui.find("Password").expect("the General tab's last field");
     assert!(
-        folder.bounds().y + folder.bounds().height > SHORT_WINDOW.height,
+        password.bounds().y + password.bounds().height > SHORT_WINDOW.height,
         "the form is taller than the window: {:?}",
-        folder.bounds()
+        password.bounds()
     );
     for button in ["Cancel", "Save"] {
         let found = ui.find(button).expect(button);
@@ -498,6 +551,7 @@ fn the_socks_card_shows_only_through_a_gateway_and_says_where_it_listens() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    show(&mut shell, ProfileTab::Network);
     assert!(
         tall_simulator(&shell).find("SOCKS5 Proxy").is_err(),
         "no gateway"
@@ -561,6 +615,7 @@ fn an_ssh_form_lists_its_post_connect_steps_as_the_csharp_card() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
         for label in [
@@ -570,6 +625,7 @@ fn an_ssh_form_lists_its_post_connect_steps_as_the_csharp_card() {
             ui.find(label).expect(label);
         }
         // Nothing selected: Remove does nothing.
+        common::reveal(&mut ui, "Remove");
         ui.click("Remove").expect("remove");
         ui.click("Add").expect("add");
         let messages: Vec<_> = ui.into_messages().collect();
@@ -597,6 +653,7 @@ fn an_ssh_form_lists_its_post_connect_steps_as_the_csharp_card() {
         ui.find("No steps yet. Add a step to send commands automatically once this session is connected.")
             .is_err()
     );
+    common::reveal(&mut ui, "Remove");
     ui.click("Remove").expect("remove");
     assert!(ui.into_messages().any(|m| matches!(
         m,
@@ -611,6 +668,7 @@ fn only_an_ssh_form_has_post_connect_steps() {
     for protocol in [DraftProtocol::Rdp, DraftProtocol::Telnet] {
         let _ = shell.update(app(AppMessage::NewProfile));
         let _ = shell.update(app(AppMessage::ChooseProtocol(protocol)));
+        show(&mut shell, ProfileTab::Options);
         assert!(
             tall_simulator(&shell)
                 .find("Post-connect sequence")
@@ -626,6 +684,7 @@ fn an_ssh_form_offers_to_forward_the_agent_as_the_csharp_box() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
+    show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
         for label in ["SSH options", "Enable compression", "Forward SSH agent"] {
@@ -634,6 +693,7 @@ fn an_ssh_form_offers_to_forward_the_agent_as_the_csharp_box() {
     }
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
     let mut ui = tall_simulator(&shell);
     assert!(ui.find("Forward SSH agent").is_err());
     assert!(ui.find("Enable compression").is_err());
@@ -645,21 +705,26 @@ fn an_sftp_form_is_the_ssh_one_without_what_a_shell_needs() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Sftp)));
-    let mut ui = tall_simulator(&shell);
-    for label in [
-        "SFTP",
-        "Remote SSH port",
-        "SSH credentials",
-        "SSH key",
-        "SSH options",
-        "Enable compression",
-        "Gateway routing",
-    ] {
-        ui.find(label).expect(label);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in ["SFTP", "Remote SSH port", "SSH credentials", "SSH key"] {
+            ui.find(label).expect(label);
+        }
     }
-    for absent in ["Forward SSH agent", "Post-connect sequence"] {
-        assert!(ui.find(absent).is_err(), "{absent}");
+    show(&mut shell, ProfileTab::Options);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in ["SSH options", "Enable compression"] {
+            ui.find(label).expect(label);
+        }
+        for absent in ["Forward SSH agent", "Post-connect sequence"] {
+            assert!(ui.find(absent).is_err(), "{absent}");
+        }
     }
+    show(&mut shell, ProfileTab::Network);
+    tall_simulator(&shell)
+        .find("Gateway routing")
+        .expect("Gateway routing");
 }
 
 #[test]
@@ -669,27 +734,32 @@ fn a_local_form_asks_for_a_program_and_its_folder_not_a_server() {
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Local)));
     snapshot(&shell, "profile-local.png");
-    let mut ui = tall_simulator(&shell);
-    for label in [
-        "Local Shell",
-        "Local shell",
-        "Executable",
-        "The default shell",
-        "Arguments",
-        "Advanced shell options",
-        "Working directory",
-    ] {
-        ui.find(label).expect(label);
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "Local Shell",
+            "Local shell",
+            "Executable",
+            "The default shell",
+            "Arguments",
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.find("Name the session as the tree lists it.")
+            .expect("its own basics");
+        for absent in [
+            "Server *",
+            "Password",
+            "Network",
+            "Set the destination host and the service port Heimdall should open.",
+        ] {
+            assert!(ui.find(absent).is_err(), "{absent}");
+        }
     }
-    ui.find("Name the session as the tree lists it.")
-        .expect("its own basics");
-    for absent in [
-        "Server *",
-        "Password",
-        "Gateway routing",
-        "Set the destination host and the service port Heimdall should open.",
-    ] {
-        assert!(ui.find(absent).is_err(), "{absent}");
+    show(&mut shell, ProfileTab::Options);
+    let mut ui = tall_simulator(&shell);
+    for label in ["Advanced shell options", "Working directory"] {
+        ui.find(label).expect(label);
     }
 }
 
@@ -699,18 +769,27 @@ fn an_ftp_form_asks_for_an_account_and_its_options_as_the_csharp_cards() {
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ftp)));
+    {
+        let mut ui = tall_simulator(&shell);
+        for label in [
+            "FTP port",
+            "FTP Authentication",
+            "Enter the FTP username and password. Leave blank for anonymous access.",
+        ] {
+            ui.find(label).expect(label);
+        }
+        assert!(ui.find("Network").is_err(), "FTP goes directly");
+    }
+    show(&mut shell, ProfileTab::Options);
     let mut ui = tall_simulator(&shell);
     for label in [
-        "FTP port",
-        "FTP Authentication",
-        "Enter the FTP username and password. Leave blank for anonymous access.",
         "FTP Options",
+        "Configure FTP connection behavior.",
         "Passive mode (recommended for firewalled networks)",
         "Enable SSL/TLS (FTPS)",
     ] {
         ui.find(label).expect(label);
     }
-    assert!(ui.find("Gateway routing").is_err(), "FTP goes directly");
 }
 
 #[test]
@@ -721,10 +800,6 @@ fn the_ssh_key_is_browsed_for_and_the_folder_separator_is_taught_as_the_csharp_f
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     {
         let mut ui = tall_simulator(&shell);
-        ui.find(
-            "Use / to nest folders: Production/Databases puts this session in Databases, inside Production.",
-        )
-        .expect("the folder hint");
         ui.click("Browse...").expect("the button beside the key");
         assert!(
             ui.into_messages()
@@ -740,6 +815,13 @@ fn the_ssh_key_is_browsed_for_and_the_folder_separator_is_taught_as_the_csharp_f
     ui.find("/home/me/.ssh/id_ed25519")
         .expect("the key path shown");
     drop(ui);
+    show(&mut shell, ProfileTab::Info);
+    tall_simulator(&shell)
+        .find(
+            "Use / to nest folders: Production/Databases puts this session in Databases, inside Production.",
+        )
+        .expect("the folder hint");
+    show(&mut shell, ProfileTab::General);
 
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
     let mut ui = tall_simulator(&shell);
@@ -752,14 +834,16 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
+    show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
         ui.find("This server is using your global RDP defaults. Uncheck \"Use global RDP defaults\" to set per-server options.")
             .expect("the banner");
         ui.find("The greyed options below come from the global defaults: the values shown for them are this server's own, not the ones in effect.")
             .expect("what the options below are");
-        ui.click("Redirect printers").expect("shown");
         ui.click("Use global RDP defaults").expect("its box");
+        common::reveal(&mut ui, "Redirect printers");
+        ui.click("Redirect printers").expect("shown");
         let messages: Vec<Message> = ui.into_messages().collect();
         assert!(messages.iter().any(|message| matches!(
             message,
@@ -781,6 +865,7 @@ fn a_new_rdp_form_follows_the_global_defaults_and_says_its_own_options_are_not_i
     }));
     {
         let mut ui = tall_simulator(&shell);
+        common::reveal(&mut ui, "Redirect printers");
         ui.click("Redirect printers").expect("shown");
         assert!(
             ui.into_messages().any(|message| matches!(
@@ -809,54 +894,67 @@ fn the_rdp_form_groups_its_options_as_the_csharp_tabs_and_asks_the_rd_gateway_la
     let mut shell = shell(dir.path());
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Rdp)));
-    let mut ui = tall_simulator(&shell);
-    let mut above = f32::MIN;
-    for label in [
-        "Use global RDP defaults",
-        "Display & Audio",
-        "Audio mode",
-        "Resolution profile",
-        "Session mode",
-        "Enable multi-monitor mode",
-        "Display",
-        "Allow dynamic resolution updates",
-        "Audio",
-        "Capture local microphone",
-        "Devices",
-        "Redirect clipboard",
-        "Redirect drives",
-        "Redirect printers",
-        "Redirect COM ports",
-        "Redirect smart cards",
-        "Redirect webcam",
-        "Redirect USB devices",
-        "Performance",
-        "Connection",
-        "Enable anti-idle keepalive",
-        "Keep bitmap cache on disk between sessions",
-        "Enable RDP compression",
-        "Use hardware-accelerated rendering",
-        "Automatically reconnect",
-        "Visual experience",
-        "Avoid UDP transport probing",
-        "Behavior",
-        "Security",
-        "Enable Network Level Authentication",
-        "Require server identity validation",
-        "Run as administrator session (/admin)",
-        "Open in fullscreen",
-        "Gateway routing",
-        "RD Gateway server",
-        "Microsoft Remote Desktop Gateway used to reach this host over HTTPS. Not the same as the SSH jump host configured above.",
-        "Organization",
-    ] {
-        let top = ui.find(label).expect(label).bounds().y;
-        assert!(
-            top > above,
-            "{label} below the one before, as in the C# dialog"
-        );
-        above = top;
-    }
+    let in_order = |shell: &Shell, labels: &[&str]| {
+        let mut ui = tall_simulator(shell);
+        let mut above = f32::MIN;
+        for label in labels {
+            let top = ui.find(*label).expect(label).bounds().y;
+            assert!(
+                top > above,
+                "{label} below the one before, as in the C# dialog"
+            );
+            above = top;
+        }
+    };
+    show(&mut shell, ProfileTab::Options);
+    in_order(
+        &shell,
+        &[
+            "Use global RDP defaults",
+            "Display & Audio",
+            "Audio mode",
+            "Resolution profile",
+            "Session mode",
+            "Enable multi-monitor mode",
+            "Display",
+            "Allow dynamic resolution updates",
+            "Audio",
+            "Capture local microphone",
+            "Devices",
+            "Redirect clipboard",
+            "Redirect drives",
+            "Redirect printers",
+            "Redirect COM ports",
+            "Redirect smart cards",
+            "Redirect webcam",
+            "Redirect USB devices",
+            "Performance",
+            "Connection",
+            "Enable anti-idle keepalive",
+            "Keep bitmap cache on disk between sessions",
+            "Enable RDP compression",
+            "Use hardware-accelerated rendering",
+            "Automatically reconnect",
+            "Visual experience",
+            "Avoid UDP transport probing",
+            "Behavior",
+            "Security",
+            "Enable Network Level Authentication",
+            "Require server identity validation",
+            "Run as administrator session (/admin)",
+            "Open in fullscreen",
+        ],
+    );
+    // The RD Gateway after the SSH gateway, on the Network tab.
+    show(&mut shell, ProfileTab::Network);
+    in_order(
+        &shell,
+        &[
+            "Gateway routing",
+            "RD Gateway server",
+            "Microsoft Remote Desktop Gateway used to reach this host over HTTPS. Not the same as the SSH jump host configured above.",
+        ],
+    );
 }
 
 #[test]
@@ -933,6 +1031,7 @@ fn every_rdp_extra_is_saved_from_the_form_and_read_back_from_the_store() {
     assert_eq!(saved.options.resolution, Resolution::MultiMonitor);
     // Edited again: the form reads every one back.
     let _ = shell.update(app(AppMessage::EditProfile(saved.id.clone())));
+    show(&mut shell, ProfileTab::Network);
     let mut ui = tall_simulator(&shell);
     ui.find("rdg.lab.example").expect("the gateway typed");
 }
@@ -968,10 +1067,12 @@ fn the_multi_monitor_picker_shows_the_screens_as_listed_not_as_drawn() {
     let _ = shell.update(app(AppMessage::ProfileChoice(ProfileChoice::MultiMonitor(
         true,
     ))));
+    show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
         ui.find("Monitor 1: 2560x1440 (primary)")
             .expect("the first screen kept");
+        common::reveal(&mut ui, "Monitor 2: 1200x1920 (vertical)");
         ui.click("Monitor 2: 1200x1920 (vertical)")
             .expect("the second screen kept");
         assert!(ui.into_messages().any(|message| matches!(
@@ -1092,6 +1193,7 @@ fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Ssh)));
     let warning = "X11 forwarding lets the remote host see";
+    show(&mut shell, ProfileTab::Options);
     {
         let mut ui = tall_simulator(&shell);
         for label in ["SSH mode", "Enable X11 forwarding"] {
@@ -1121,6 +1223,7 @@ fn an_ssh_form_chooses_putty_and_x11_forwarding_with_its_warning() {
     // Neither in an SFTP form, which opens its files in a tab.
     let _ = shell.update(app(AppMessage::NewProfile));
     let _ = shell.update(app(AppMessage::ChooseProtocol(DraftProtocol::Sftp)));
+    show(&mut shell, ProfileTab::Options);
     let mut ui = tall_simulator(&shell);
     for absent in ["SSH mode", "Enable X11 forwarding"] {
         assert!(ui.find(absent).is_err(), "{absent}");

@@ -785,6 +785,7 @@ fn the_profile_form_saves_a_password_and_then_says_it_is_saved() {
     snapshot(&shell, "profile-password-saved.png");
     let mut ui = simulator(&shell);
     ui.find("Password saved").expect("says so");
+    common::reveal(&mut ui, "Clear");
     ui.click("Clear").expect("a clear button");
     assert!(
         ui.into_messages()
@@ -3575,6 +3576,7 @@ fn the_profile_form_saves_a_key_passphrase_and_then_says_it_is_saved() {
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);
     ui.find("Passphrase saved").expect("says so");
+    common::reveal(&mut ui, "Clear");
     ui.click("Clear").expect("a clear button");
     assert!(
         ui.into_messages()

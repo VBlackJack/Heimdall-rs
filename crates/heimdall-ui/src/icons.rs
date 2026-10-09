@@ -123,11 +123,15 @@ pub enum Icon {
     Admin,
     /// The `UpdateRestore` glyph: an arrow turning back, a setting reset.
     Restore,
+    /// The `Warning` glyph: a triangle with an exclamation mark, a question that warns.
+    Warning,
+    /// The `ErrorBadge` glyph: a circle with a cross, a report of a failure.
+    ErrorBadge,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 34] = [
+    pub const ALL: [Self; 36] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -162,6 +166,8 @@ impl Icon {
         Self::FavoriteStar,
         Self::Admin,
         Self::Restore,
+        Self::Warning,
+        Self::ErrorBadge,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -274,6 +280,10 @@ impl Icon {
                  L2.5,3.5 Z"
             }
             Self::Restore => "M2.5,8 A5.5,5.5 0 1 0 4.1,4.1 M4,1 L4,4.5 L7.5,4.5",
+            Self::Warning => "M8,1.5 L14.5,13.5 L1.5,13.5 Z M8,5.5 L8,9.5 M8,11 L8,12",
+            Self::ErrorBadge => {
+                "M8,1.5 A6.5,6.5 0 1 1 8,14.5 A6.5,6.5 0 1 1 8,1.5 Z M5.5,5.5 L10.5,10.5                  M10.5,5.5 L5.5,10.5"
+            }
         }
     }
 
@@ -302,7 +312,9 @@ impl Icon {
             | Self::NewFolder
             | Self::FavoriteStar
             | Self::Admin
-            | Self::Restore => Some(GLYPH_STROKE_WIDTH),
+            | Self::Restore
+            | Self::Warning
+            | Self::ErrorBadge => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
     }
@@ -323,6 +335,8 @@ pub enum Tint {
     Danger,
     /// The C# `AccentBrush`: a pinned tab's pin.
     Accent,
+    /// The C# `WarningBrush`: a question that warns.
+    Warning,
     /// A colour of its own: a folder's.
     Own(Color),
 }
@@ -337,6 +351,7 @@ impl Tint {
             Self::Text => theme.palette().text,
             Self::Danger => theme.extended_palette().danger.base.color,
             Self::Accent => theme.palette().primary,
+            Self::Warning => theme.extended_palette().warning.base.color,
             Self::Own(color) => color,
         }
     }

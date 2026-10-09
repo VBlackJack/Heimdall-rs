@@ -56,10 +56,10 @@ fn edit(edit: StepEdit) -> Message {
 /// The card: its title and hint, the rows or the empty text, then the buttons.
 #[must_use]
 pub fn view(draft: &StepsDraft) -> Element<'_, Message> {
-    let mut card = column![
-        text(fl!("ui-post-connect-title")),
-        text(fl!("ui-post-connect-hint")).size(font_size::CAPTION),
-    ]
+    let mut card = column![crate::dialog_parts::section(
+        fl!("ui-post-connect-title"),
+        Some(fl!("ui-post-connect-hint"))
+    )]
     .spacing(spacing::SM);
     if draft.steps.is_empty() {
         card = card.push(text(fl!("ui-post-connect-empty")).size(font_size::CAPTION));
