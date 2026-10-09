@@ -181,6 +181,10 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
                 ]
             ),
             (
+                ToolGroup::Category(ToolCategory::Security),
+                vec![ToolId::Hash, ToolId::Hmac, ToolId::Jwt, ToolId::Totp]
+            ),
+            (
                 ToolGroup::Category(ToolCategory::Encoding),
                 vec![
                     ToolId::Base64,
@@ -266,9 +270,10 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("Pin your favorite tools for quick access")
             .expect("no tool pinned");
         ui.find("All Tools").expect("section");
+        ui.find("SECURITY").expect("category");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("15 tools").expect("count");
+        ui.find("19 tools").expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");
@@ -440,6 +445,158 @@ fn every_tool_has_a_name_a_description_and_texts_in_every_language() {
     // The help keeps its blank lines, as the C# help text.
     let help = heimdall_ui::i18n::LOADER.get("ui-tool-base64-help");
     assert!(help.contains("\n\n"), "{help:?}");
+}
+
+#[test]
+fn the_hash_tool_hashes_as_it_is_typed_checks_a_hash_and_takes_a_file_dropped() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::Hash));
+    let tab = shell.app().tabs[0].id;
+    let hash = |message| Message::Tool(tab, ToolMessage::Hash(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Enter text or browse a file to compute hashes.")
+            .expect("empty state");
+        ui.find("Drop a file here or click Browse to hash a file")
+            .expect("drop zone");
+        ui.click("Browse File").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(id, ToolMessage::Hash(tools::HashMessage::Browse)) if id == tab
+        )));
+    }
+    let _ = shell.update(hash(tools::HashMessage::Input(paste("abc"))));
+    let _ = shell.update(hash(tools::HashMessage::Verify(
+        "BA7816BF8F01CFEA414140DE5DAE2223B00361A396177A9CB410FF61F20015AD".to_owned(),
+    )));
+    snapshot(&shell, "tools-hash.png");
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Hash results").expect("results");
+        ui.find("SHA3-256").expect("a row");
+        ui.find("3 bytes").expect("length");
+        ui.find("\u{2713} Match (SHA256)").expect("checked");
+    }
+    // A file dropped on the window is the tab's, as the C# view takes it.
+    let file = dir.path().join("dropped.bin");
+    std::fs::write(&file, b"abc").expect("written");
+    // The drop's gathering waits on the runtime's timer.
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let _inside = runtime.enter();
+    let _ = shell.update(Message::FileDropped(file));
+    let _ = shell.update(Message::DropGathered(
+        heimdall_ui::drop_batch::DropPlace::Main,
+    ));
+    let mut ui = simulator(&shell);
+    ui.find("Hashing file...").expect("the file read");
+    ui.find("Clear file").expect("file mode");
+}
+
+#[test]
+fn the_hmac_tool_computes_as_the_key_and_message_are_typed_and_checks_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::Hmac));
+    let tab = shell.app().tabs[0].id;
+    let hmac = |message| Message::Tool(tab, ToolMessage::Hmac(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Enter a key and a message to compute HMAC.")
+            .expect("empty state");
+        ui.find("Output format").expect("format");
+    }
+    let _ = shell.update(hmac(tools::HmacMessage::Key("Jefe".to_owned())));
+    let _ = shell.update(hmac(tools::HmacMessage::Input(paste(
+        "what do ya want for nothing?",
+    ))));
+    let _ = shell.update(hmac(tools::HmacMessage::Verify(
+        "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843".to_owned(),
+    )));
+    snapshot(&shell, "tools-hmac.png");
+    let mut ui = simulator(&shell);
+    ui.find("32 bytes (256 bits)").expect("length");
+    ui.find("Match").expect("checked");
+    assert!(ui.find("Jefe").is_err(), "the key is hidden");
+}
+
+#[test]
+fn the_jwt_tool_shows_a_token_pasted_and_checks_its_signature() {
+    let token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.\
+        eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.\
+        SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c";
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::Jwt));
+    let tab = shell.app().tabs[0].id;
+    let jwt = |message| Message::Tool(tab, ToolMessage::Jwt(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Paste a JWT token to decode its header, payload, and signature.")
+            .expect("empty state");
+    }
+    let _ = shell.update(jwt(tools::JwtMessage::Input(paste(token))));
+    let _ = shell.update(jwt(tools::JwtMessage::Secret(
+        "your-256-bit-secret".to_owned(),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("No expiration claim (exp) found").expect("expiry");
+        ui.find("Signature Verification").expect("card");
+        ui.find("HMAC Secret").expect("its secret");
+    }
+    let _ = shell.update(jwt(tools::JwtMessage::Verify));
+    snapshot(&shell, "tools-jwt.png");
+    let mut ui = simulator(&shell);
+    ui.find("\u{2714} Signature is valid").expect("checked");
+    ui.find("Header").expect("part");
+    ui.find("Payload").expect("part");
+}
+
+#[test]
+fn the_totp_tool_refuses_a_bad_secret_and_shows_the_code_of_a_good_one() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::OpenTool(ToolId::Totp));
+    let tab = shell.app().tabs[0].id;
+    let totp = |message| Message::Tool(tab, ToolMessage::Totp(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Secret Key (Base32)").expect("label");
+        ui.click("Start").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(id, ToolMessage::Totp(tools::TotpMessage::Start)) if id == tab
+        )));
+    }
+    let _ = shell.update(totp(tools::TotpMessage::Start));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Please enter a secret key.").expect("refused");
+    }
+    let _ = shell.update(totp(tools::TotpMessage::Secret("ABC1".to_owned())));
+    let _ = shell.update(totp(tools::TotpMessage::Start));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Invalid Base32 encoding. Use characters A-Z and 2-7 only.")
+            .expect("refused");
+    }
+    let _ = shell.update(totp(tools::TotpMessage::Secret(
+        "GEZDGNBVGY3TQOJQGEZDGNBVGY3TQOJQ".to_owned(),
+    )));
+    let _ = shell.update(totp(tools::TotpMessage::Start));
+    snapshot(&shell, "tools-totp.png");
+    let mut ui = simulator(&shell);
+    ui.find("Current Code").expect("the code's card");
+    assert!(
+        ui.find("Invalid Base32 encoding. Use characters A-Z and 2-7 only.")
+            .is_err()
+    );
+    ui.click("Copy").expect("button");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::Tool(id, ToolMessage::Totp(tools::TotpMessage::Copy)) if id == tab
+    )));
 }
 
 /// `text` pasted in a box.

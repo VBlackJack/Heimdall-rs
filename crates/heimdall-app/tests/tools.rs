@@ -54,6 +54,10 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
             ToolId::SubnetCalculator,
             ToolId::IpConverter,
             ToolId::NetworkCalculator,
+            ToolId::Hash,
+            ToolId::Hmac,
+            ToolId::Jwt,
+            ToolId::Totp,
             ToolId::Base64,
             ToolId::UrlEncoder,
             ToolId::JsonFormatter,
@@ -77,6 +81,13 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(ToolId::SshConfig.prefixes(), ["sshconfig", "ssh-config"]);
     assert_eq!(ToolId::Crontab.category(), ToolCategory::System);
     assert_eq!(ToolId::from_code("tool:datetime"), Some(ToolId::DateTime));
+    assert_eq!(ToolId::Totp.prefixes(), ["totp", "otp", "2fa"]);
+    assert_eq!(ToolId::Jwt.code(), "JWT");
+    assert!(
+        [ToolId::Hash, ToolId::Hmac, ToolId::Jwt, ToolId::Totp]
+            .iter()
+            .all(|tool| tool.category() == ToolCategory::Security)
+    );
     assert_eq!(ToolId::Base64.code(), "BASE64");
     assert_eq!(ToolId::UrlEncoder.prefixes(), ["url", "urlencode"]);
     assert_eq!(ToolId::Uuid.prefixes(), ["uuid", "guid"]);
@@ -91,6 +102,7 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     // Looked up as the C# registry looks up, case aside and its prefix taken off.
     assert_eq!(ToolId::from_code("urlenc"), Some(ToolId::UrlEncoder));
     assert_eq!(ToolId::from_code("TOOL:uuid"), Some(ToolId::Uuid));
+    assert_eq!(ToolId::from_code("hmac"), Some(ToolId::Hmac));
     assert_eq!(ToolId::from_code("PING"), None, "not ported");
 }
 

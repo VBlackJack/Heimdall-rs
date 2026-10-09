@@ -2496,6 +2496,128 @@ ui-tool-uuid-help =
 
     Usage:
     Click Generate to create UUIDs. Supports v4 (random) with multiple format options (standard, uppercase, no dashes, URN).
+ui-tool-hash-name = Hash Generator
+ui-tool-hash-description = File and text hash generator (MD5, SHA-1, SHA-256, SHA-512)
+ui-tool-hash-title = Hash Generator
+ui-tool-hash-input = Input text
+ui-tool-hash-placeholder = text to hash
+ui-tool-hash-drop-zone = Drop a file here or click Browse to hash a file
+ui-tool-hash-browse = Browse File
+ui-tool-hash-clear-file = Clear file
+ui-tool-hash-hashing = Hashing file...
+ui-tool-hash-empty = Enter text or browse a file to compute hashes.
+ui-tool-hash-results = Hash results
+ui-tool-hash-copy = Copy
+ui-tool-hash-save = Save
+ui-tool-hash-verify = Expected hash (verify)
+ui-tool-hash-verify-placeholder = paste hash to verify
+ui-tool-hash-byte-length = { $count } bytes
+ui-tool-hash-file-status = { $name } - { $size }
+ui-tool-hash-too-large = File exceeds maximum size ({ $size }).
+ui-tool-hash-not-found = File not found.
+ui-tool-hash-access-denied = Access denied to file.
+ui-tool-hash-error = Could not hash the file.
+ui-tool-hash-match = ✓ Match ({ $algorithm })
+ui-tool-hash-no-match = ✗ No match
+ui-tool-hash-all-files = All files (*.*)
+ui-tool-hash-help =
+    Hash Generator
+
+    Computes cryptographic hashes for text input or files.
+
+    Usage:
+    1. Type or paste text in the input field, OR
+    2. Drag and drop a file (or click Browse)
+    3. All hash values are computed simultaneously
+
+    Supported algorithms:
+    - MD5 (128-bit)
+    - SHA-1 (160-bit)
+    - SHA-256 (256-bit)
+    - SHA-384 (384-bit)
+    - SHA-512 (512-bit)
+    - SHA3-256 (256-bit, if supported)
+
+    Verify mode:
+    Paste a known hash in the Verify field to check if it matches. The matching algorithm is auto-detected by hash length.
+
+    Examples:
+    - Type "hello" - SHA-256: 2cf24dba...
+    - Drop a file - Verify against known checksum
+ui-tool-hmac-name = HMAC Generator
+ui-tool-hmac-description = HMAC message authentication code generator
+ui-tool-hmac-title = HMAC Generator
+ui-tool-hmac-algorithm = Algorithm
+ui-tool-hmac-key = Secret key
+ui-tool-hmac-key-placeholder = secret key
+ui-tool-hmac-toggle-key = Show/hide key
+ui-tool-hmac-input = Message text
+ui-tool-hmac-input-placeholder = message
+ui-tool-hmac-format = Output format
+ui-tool-hmac-format-hex = Hex
+ui-tool-hmac-format-base64 = Base64
+ui-tool-hmac-empty = Enter a key and a message to compute HMAC.
+ui-tool-hmac-output = HMAC output
+ui-tool-hmac-copy = Copy
+ui-tool-hmac-byte-length = { $bytes } bytes ({ $bits } bits)
+ui-tool-hmac-verify = Expected HMAC (verify)
+ui-tool-hmac-verify-placeholder = paste HMAC to verify
+ui-tool-hmac-match = Match
+ui-tool-hmac-no-match = No match
+ui-tool-hmac-help =
+    HMAC Generator
+
+    Computes keyed-hash message authentication codes.
+
+    Usage:
+    Enter a message and secret key, then select an algorithm (SHA-256, SHA-512, etc.) to compute the HMAC.
+ui-tool-jwt-name = JWT Parser
+ui-tool-jwt-description = JSON Web Token decoder and validator
+ui-tool-jwt-title = JWT Parser
+ui-tool-jwt-input = Paste JWT token
+ui-tool-jwt-placeholder = paste JWT token (header.payload.signature)
+ui-tool-jwt-empty = Paste a JWT token to decode its header, payload, and signature.
+ui-tool-jwt-error-format = Invalid JWT format. A JWT must contain exactly 3 parts separated by dots.
+ui-tool-jwt-error-decode = Failed to decode JWT. Check that the token is valid Base64Url.
+ui-tool-jwt-expired = Expired: { $date }
+ui-tool-jwt-valid = Valid until: { $date }
+ui-tool-jwt-no-expiry = No expiration claim (exp) found
+ui-tool-jwt-header = Header
+ui-tool-jwt-payload = Payload
+ui-tool-jwt-signature = Signature
+ui-tool-jwt-copy = Copy
+ui-tool-jwt-verify-title = Signature Verification
+ui-tool-jwt-unsupported = RSA/ECDSA verification requires a public key (not supported)
+ui-tool-jwt-secret = HMAC Secret
+ui-tool-jwt-verify = Verify
+ui-tool-jwt-signature-valid = Signature is valid
+ui-tool-jwt-signature-invalid = Signature is invalid
+ui-tool-jwt-help =
+    JWT Parser
+
+    Decodes and inspects JSON Web Tokens.
+
+    Usage:
+    Paste a JWT to view its header, payload, and signature. Expiry and claims are displayed in a readable format.
+ui-tool-totp-name = TOTP Generator
+ui-tool-totp-description = Time-based one-time password generator (2FA/MFA)
+ui-tool-totp-title = TOTP Generator
+ui-tool-totp-secret = Secret Key (Base32)
+ui-tool-totp-secret-placeholder = Base32 secret key
+ui-tool-totp-start = Start
+ui-tool-totp-code = Current Code
+ui-tool-totp-copy = Copy
+ui-tool-totp-remaining = { $seconds }s remaining
+ui-tool-totp-info = Enter a Base32-encoded secret key (as provided by Google Authenticator, Authy, etc.) to generate time-based one-time passwords (TOTP). Codes refresh every 30 seconds.
+ui-tool-totp-error-required = Please enter a secret key.
+ui-tool-totp-error-base32 = Invalid Base32 encoding. Use characters A-Z and 2-7 only.
+ui-tool-totp-help =
+    TOTP Generator
+
+    Generates time-based one-time passwords (RFC 6238).
+
+    Usage:
+    Enter a Base32 secret key to generate TOTP codes that refresh every 30 seconds.
 ui-tool-copy-value = Copy
 ui-tool-number-group-separator = {","}
 ui-tool-number-decimal-separator = {"."}

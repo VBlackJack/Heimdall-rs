@@ -92,6 +92,14 @@ shlex = "2.0.1"
 # suppaftp: FTP and explicit FTPS for the Files tab; tokio and rustls on ring, as the workspace.
 # subtle: the X11 cookie compared in constant time; already in the tree through russh.
 subtle = { version = "2.6.1", default-features = false }
+# md-5, sha1, sha2, sha3, hmac: the Hash, HMAC, TOTP and JWT tools' digests and MACs, as the
+# C# computes them with .NET's; all already in the tree through russh, ssh-key and sspi, at
+# these versions.
+md-5 = { version = "0.11.0", default-features = false }
+sha1 = { version = "0.11.0", default-features = false }
+sha2 = { version = "0.11.0", default-features = false }
+sha3 = { version = "0.12.0", default-features = false }
+hmac = "0.13.0"
 suppaftp = { version = "12.1.1", default-features = false, features = ["tokio-rustls-ring"] }
 # rfd: the system's save dialog for "Export Sessions", as the C# SaveFileDialog; on Linux
 # through the desktop portal (zbus, already in the tree), no GTK.
