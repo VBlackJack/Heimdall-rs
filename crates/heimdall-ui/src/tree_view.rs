@@ -1511,6 +1511,8 @@ pub struct ResolutionMenuState {
     pub shown: Option<(u16, u16)>,
     /// The proportions kept under "Match window".
     pub aspect: heimdall_app::Aspect,
+    /// The desktop settles after connecting: "Skip stabilization" is offered.
+    pub stabilizing: bool,
 }
 
 impl ResolutionMenuState {
@@ -1607,14 +1609,23 @@ pub fn resolution_entries<'a>(
         )
         .padding(spacing::XS),
         separator(),
-        checked_entry(
-            fl!("ui-resolution-match-window"),
-            state.fixed.is_none() && state.aspect == heimdall_app::Aspect::Stretch,
-            choose(ResolutionChoice::MatchWindow),
-        ),
     ]
     .spacing(0.0)
     .width(MENU_WIDTH);
+    // Under the header while the session settles, as the C# menu's.
+    if state.stabilizing {
+        entries = entries
+            .push(entry(
+                fl!("ui-resolution-skip-stabilization"),
+                Some(AppMessage::SkipStabilization(tab)),
+            ))
+            .push(separator());
+    }
+    entries = entries.push(checked_entry(
+        fl!("ui-resolution-match-window"),
+        state.fixed.is_none() && state.aspect == heimdall_app::Aspect::Stretch,
+        choose(ResolutionChoice::MatchWindow),
+    ));
     // Under it, as the C# sub-menu: the window followed, fitted to a ratio.
     for aspect in heimdall_app::Aspect::RATIOS {
         let Some((wide, high)) = aspect.ratio() else {

@@ -44,6 +44,7 @@ use crate::profile::{
     LocalCommand, LocalProfile, ProfileId, RdpExtras, RdpOptions, RdpProfile, Resolution,
     SshGateway, SshMode, SshProfile, TelnetProfile, VncProfile, WinRmProfile, fixed_desktop,
 };
+use crate::settings::rdp_resize_enable_delay_accepted;
 
 /// `connectionType` of an SSH profile.
 const SSH_CONNECTION_TYPE: &str = "SSH";
@@ -228,6 +229,9 @@ pub enum Dropped {
     RdpMicrophone,
     /// RDP across several monitors.
     RdpMultiMonitor,
+    /// The profile's wait before following the tab's size after connecting, this many
+    /// milliseconds: neither 0 nor within the C# range, so the global setting applies.
+    RdpResizeDelayOutOfRange(i64),
     /// A Citrix application's launch from the Workspace cache: a secret, never carried by a
     /// file, as the C# import drops it too.
     CitrixCacheLaunch,
@@ -482,6 +486,9 @@ struct LegacyServer {
     rdp_full_screen: bool,
     /// `Stretch` (the C# default), `Preserve`, `Auto`, `Dynamic`, `16:9`, `4:3` or `21:9`.
     rdp_aspect_ratio: Option<String>,
+    /// Milliseconds the C# embedded session holds its size after connecting; absent takes
+    /// the global setting.
+    rdp_resize_enable_delay_ms: Option<i64>,
     #[serde(default)]
     rdp_anti_idle: bool,
     /// Absent means the C# default: on.
@@ -733,6 +740,14 @@ impl RdpChoices {
             (self.microphone, Dropped::RdpMicrophone),
             (self.multi_monitor, Dropped::RdpMultiMonitor),
         ])
+        .into_iter()
+        .chain(
+            server
+                .rdp_resize_enable_delay_ms
+                .filter(|ms| resize_delay_of(*ms).is_none())
+                .map(Dropped::RdpResizeDelayOutOfRange),
+        )
+        .collect()
     }
 
     /// The C# audio mode: not played, played here, or played on the server.
@@ -848,6 +863,15 @@ const EXTERNAL_MODE: &str = "External";
 const CSHARP_AUDIO_LOCAL: i64 = 1;
 /// The C# audio mode "Remote playback".
 const CSHARP_AUDIO_ON_SERVER: i64 = 2;
+
+/// A C# profile's wait after connecting, in milliseconds, when the range takes it: 0, or
+/// within the C# range. Out of it, `None`: left out with a note rather than brought within
+/// the range, which would make it a wait the user never chose.
+fn resize_delay_of(ms: i64) -> Option<u32> {
+    u32::try_from(ms)
+        .ok()
+        .filter(|ms| rdp_resize_enable_delay_accepted(*ms))
+}
 
 /// How the C# embedded session sizes the desktop of `server`: its resolution settings are
 /// always the profile's own, never global defaults.
@@ -1418,6 +1442,9 @@ fn convert_rdp(
                 .rdp_aspect_ratio
                 .as_deref()
                 .map_or_else(Aspect::default, Aspect::csharp),
+            // Always the profile's own; out of the range, the global setting, said in the
+            // import's summary.
+            resize_enable_delay_ms: server.rdp_resize_enable_delay_ms.and_then(resize_delay_of),
         },
         vault_entry: non_empty(server.vault_entry_name.as_ref()),
         forwards: forwards_of(server)?,

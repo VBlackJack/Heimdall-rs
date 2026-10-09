@@ -1491,3 +1491,50 @@ fn a_session_that_failed_before_it_connected_reports_no_duration() {
         );
     }
 }
+
+#[test]
+fn a_desktop_settling_counts_down_on_its_bar_and_its_resolution_menu_skips_the_wait() {
+    use heimdall_ui::tree_view::TreeMenu;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, _received) = connected(dir.path());
+    let left = shell.app().tabs[0]
+        .desktop
+        .as_ref()
+        .expect("desktop")
+        .stabilization_seconds_left(std::time::Instant::now())
+        .expect("settling after connecting");
+    {
+        let mut ui = simulator(&shell);
+        // Drawn a moment later: the countdown may have passed a second.
+        let shown = [left, left.saturating_sub(1)].into_iter().any(|seconds| {
+            ui.find(format!("Stabilizing session... {seconds}s").as_str())
+                .is_ok()
+        });
+        assert!(shown, "the C# status line's countdown");
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Skip stabilization")
+            .expect("offered while it settles");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::MenuChoice(AppMessage::SkipStabilization(skipped)) if skipped == tab
+        )));
+    }
+    let _ = shell.update(Message::MenuChoice(AppMessage::SkipStabilization(tab)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Stabilization skipped - dynamic resolution is now active.")
+            .expect("the C# notice");
+        assert!(ui.find("Stabilizing session... 10s").is_err());
+    }
+    let _ = shell.update(Message::OpenTreeMenu(TreeMenu::Resolution(tab)));
+    let mut ui = simulator(&shell);
+    ui.find("Match window").expect("the menu");
+    assert!(
+        ui.find("Skip stabilization").is_err(),
+        "no longer offered once over"
+    );
+}

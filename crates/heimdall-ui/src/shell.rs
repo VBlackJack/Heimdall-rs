@@ -2010,6 +2010,14 @@ impl Shell {
         if let Some(interval) = self.app.anti_idle_interval() {
             ticks.push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
         }
+        // The RDP desktops settling after connecting, while one does: the end of the wait
+        // and the session bar's countdown.
+        if let Some(interval) = self.app.stabilization_interval() {
+            ticks.push(
+                iced::time::every(interval)
+                    .map(|at| Message::App(AppMessage::StabilizationTick(at))),
+            );
+        }
         // Windows high contrast turned on or off while the window is open.
         if heimdall_app::high_contrast::WATCHED {
             ticks.push(
@@ -2984,6 +2992,7 @@ impl Shell {
     /// The dialogs' inputs, for a window `height` high.
     fn forms(&self) -> Forms<'_> {
         Forms {
+            rdp_resize_delay: self.app.settings().rdp_resize_enable_delay_ms,
             monitors: self.monitors.as_deref().unwrap_or_default(),
             vault: &self.vault_fields,
             profile_password: &self.profile_password,
@@ -7303,6 +7312,7 @@ impl Shell {
             mode: tab.resolution_mode()?,
             shown: pane.tab_size(),
             aspect: pane.aspect,
+            stabilizing: pane.stabilizing_until().is_some(),
         })
     }
 
@@ -7426,6 +7436,24 @@ impl Shell {
                         .style(style)
                         .on_press(Message::OpenTreeMenu(TreeMenu::Resolution(tab_id))),
                     text(state.tooltip()).size(font_size::CAPTION),
+                    tooltip::Position::Bottom,
+                )
+                .style(container::rounded_box),
+            );
+        }
+        // The C# status line's countdown while the session settles after connecting, its
+        // tip saying how to stop waiting.
+        if let Some(seconds) = pane.stabilization_seconds_left(std::time::Instant::now()) {
+            bar = bar.push(
+                tooltip(
+                    text(fl!("ui-desktop-stabilizing", seconds = seconds))
+                        .size(font_size::CAPTION)
+                        .font(iced::Font {
+                            style: iced::font::Style::Italic,
+                            ..crate::UI_FONT
+                        })
+                        .style(text::secondary),
+                    text(fl!("ui-desktop-stabilizing-tooltip")).size(font_size::CAPTION),
                     tooltip::Position::Bottom,
                 )
                 .style(container::rounded_box),
@@ -8559,6 +8587,9 @@ struct Forms<'a> {
     profile_tab: ProfileTab,
     /// Whether a save of the profile form was refused, its tabs counting what to fix.
     profile_refused: bool,
+    /// The settings' wait after connecting, in milliseconds: what an RDP profile leaving
+    /// its own empty takes, said in the field.
+    rdp_resize_delay: u32,
 }
 
 /// Whether a password typed now can be saved.
@@ -8741,6 +8772,16 @@ fn section<'a>(title: String, description: Option<String>) -> Element<'a, Messag
 
 /// A text field of the form: its label, then the box. Enter saves.
 fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message> {
+    labelled_field(draft, field, None)
+}
+
+/// A text field of the form, with `shown` in its empty box in place of its own placeholder
+/// when given.
+fn labelled_field(
+    draft: &ProfileDraft,
+    field: ProfileField,
+    shown: Option<String>,
+) -> Element<'_, Message> {
     let (label, placeholder) = match field {
         ProfileField::Name => (fl!("ui-profile-field-name"), String::new()),
         ProfileField::Group => (
@@ -8784,6 +8825,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
         ProfileField::KeyPath => (fl!("ui-profile-field-key"), fl!("ui-profile-optional")),
         ProfileField::FixedWidth => (fl!("ui-profile-resolution-width"), String::new()),
         ProfileField::FixedHeight => (fl!("ui-profile-resolution-height"), String::new()),
+        ProfileField::ResizeDelay => (fl!("ui-profile-resize-delay"), String::new()),
         ProfileField::VaultEntry => (
             fl!("ui-profile-field-vault-entry"),
             fl!("ui-profile-vault-entry-placeholder"),
@@ -8815,6 +8857,7 @@ fn form_field(draft: &ProfileDraft, field: ProfileField) -> Element<'_, Message>
             fl!("ui-profile-mac-address-placeholder"),
         ),
     };
+    let placeholder = shown.unwrap_or(placeholder);
     column![
         dialog_parts::label(label),
         text_input(&placeholder, draft.value(field))
@@ -9549,12 +9592,13 @@ fn credentials_section<'a>(draft: &'a ProfileDraft, forms: &Forms<'a>) -> Column
 fn options_section<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
+    resize_delay: u32,
 ) -> Column<'a, Message> {
     let mut tab = Column::new().spacing(SECTION_GAP);
     if draft.shows_session_logging() {
         tab = tab.push(session_logging_choice(draft));
     }
-    tab = tab.push(protocol_options(draft, monitors));
+    tab = tab.push(protocol_options(draft, monitors, resize_delay));
     // A card of its own after the options, as the C# one.
     if draft.protocol == DraftProtocol::Ssh {
         tab = tab.push(crate::post_connect_form::view(&draft.post_connect));
@@ -9562,10 +9606,12 @@ fn options_section<'a>(
     tab
 }
 
-/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`.
+/// The protocol's options, as its C# card; an RDP form's monitors among `monitors`, its
+/// wait after connecting left empty taking the settings' `resize_delay`.
 fn protocol_options<'a>(
     draft: &'a ProfileDraft,
     monitors: &[crate::rdp_options::Monitor],
+    resize_delay: u32,
 ) -> Column<'a, Message> {
     let mut form = Column::new().spacing(spacing::MD);
     let options = match draft.protocol {
@@ -9614,7 +9660,15 @@ fn protocol_options<'a>(
             .push(crate::rdp_options::display_audio(
                 draft,
                 monitors,
-                |field| form_field(draft, field),
+                move |field| {
+                    if field == ProfileField::ResizeDelay {
+                        // The C# watermark: the settings' value, which empty takes.
+                        let global = fl!("ui-profile-resize-delay-global", ms = resize_delay);
+                        labelled_field(draft, field, Some(global))
+                    } else {
+                        form_field(draft, field)
+                    }
+                },
             ))
             .push(crate::rdp_options::devices(draft))
             .push(crate::rdp_options::performance(draft))
@@ -9707,7 +9761,9 @@ fn profile_form<'a>(
     };
     let page: Element<'a, Message> = match shown {
         ProfileTab::General => general_tab(draft, forms).into(),
-        ProfileTab::Options => options_section(draft, forms.monitors).into(),
+        ProfileTab::Options => {
+            options_section(draft, forms.monitors, forms.rdp_resize_delay).into()
+        }
         ProfileTab::Network => network_section(draft, forms.gateways),
         ProfileTab::Info => info_tab(draft).into(),
     };

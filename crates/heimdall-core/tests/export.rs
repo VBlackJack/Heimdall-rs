@@ -139,6 +139,7 @@ fn rdp() -> Vec<RdpProfile> {
                 dynamic_resolution: false,
                 // Wallpaper off, font smoothing on.
                 performance_flags: 0x81,
+                resize_enable_delay_ms: None,
             },
             vault_entry: Some("Win/DC".to_owned()),
             forwards: Forwards::default(),
@@ -178,6 +179,8 @@ fn rdp() -> Vec<RdpProfile> {
                 audio: AudioPlayback::Local,
                 resolution: Resolution::Auto,
                 aspect: heimdall_core::profile::Aspect::Standard,
+                // Its own wait after connecting: carried both ways, as the C# key.
+                resize_enable_delay_ms: Some(5_000),
                 ..RdpOptions::default()
             },
             vault_entry: None,
@@ -433,6 +436,11 @@ fn the_document_has_the_csharp_shape_and_no_secret() {
     assert_eq!(dc["rdpColorDepth"], 16);
     assert_eq!(dc["useDirectConnection"], false);
     assert_eq!(by_id("desk")["useDirectConnection"], true);
+    assert_eq!(by_id("desk")["rdpResizeEnableDelayMs"], 5_000);
+    assert!(
+        dc.get("rdpResizeEnableDelayMs").is_none(),
+        "none of its own: the global setting, as the C# null"
+    );
     assert_eq!(by_id("screen")["vncUsername"], "viewer");
     assert_eq!(by_id("ps")["winRmIdentityMode"], "Credential");
     assert_eq!(by_id("ps-me")["winRmIdentityMode"], "CurrentUser");

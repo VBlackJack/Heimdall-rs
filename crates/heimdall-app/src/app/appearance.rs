@@ -23,11 +23,11 @@ use heimdall_core::profile::{RdpDefaults, RdpMode, SshMode};
 use heimdall_core::settings::{
     Accent, AppTheme, ColorScheme, Language, Settings, anti_idle_interval_accepted,
     auto_lock_idle_minutes_accepted, max_sessions_accepted, rdp_auto_reconnect_attempts_accepted,
-    rdp_connect_timeout_accepted, reachability_interval_accepted, reachability_probes_accepted,
-    reachability_timeout_accepted, session_log_retention_days_accepted, settings_path,
-    ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
-    ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
-    update_interval_accepted, windows_hello_grace_minutes_accepted,
+    rdp_connect_timeout_accepted, rdp_resize_enable_delay_accepted, reachability_interval_accepted,
+    reachability_probes_accepted, reachability_timeout_accepted,
+    session_log_retention_days_accepted, settings_path, ssh_auto_reconnect_attempts_accepted,
+    ssh_keep_alive_interval_accepted, ssh_tmout_reset_interval_accepted, terminal_font_family,
+    terminal_font_size_accepted, update_interval_accepted, windows_hello_grace_minutes_accepted,
     windows_hello_vault_max_days_accepted,
 };
 use heimdall_term::Palette;
@@ -83,6 +83,8 @@ pub enum SettingsMessage {
     MaxSessions(u32),
     /// Seconds an RDP connection may take to log on, 0 for no limit.
     RdpConnectTimeout(u32),
+    /// Milliseconds a desktop following its tab waits after connecting, 0 for none.
+    RdpResizeEnableDelay(u32),
     /// The execution policy a local `PowerShell` is started with.
     PowerShellExecutionPolicy(heimdall_core::settings::ExecutionPolicy),
     /// What Ctrl+V does in a terminal.
@@ -309,6 +311,9 @@ impl App {
             {
                 self.settings.rdp_connect_timeout = seconds;
             }
+            SettingsMessage::RdpResizeEnableDelay(ms) if rdp_resize_enable_delay_accepted(ms) => {
+                self.settings.rdp_resize_enable_delay_ms = ms;
+            }
             SettingsMessage::RdpAutoReconnectAttempts(attempts)
                 if rdp_auto_reconnect_attempts_accepted(attempts) =>
             {
@@ -448,6 +453,7 @@ impl App {
             }
             SettingsMessage::RdpDefaults(defaults) => self.settings.rdp_defaults = *defaults,
             message @ (SettingsMessage::RdpConnectTimeout(_)
+            | SettingsMessage::RdpResizeEnableDelay(_)
             | SettingsMessage::RdpAutoReconnectAttempts(_)
             | SettingsMessage::MaxSessions(_)
             | SettingsMessage::SessionLogRetentionDays(_)

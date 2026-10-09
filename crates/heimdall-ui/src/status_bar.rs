@@ -310,6 +310,7 @@ fn desktop_notice(notice: &Notice) -> String {
     match notice {
         Notice::ResolutionReconnected => fl!("ui-status-resolution-reconnected"),
         Notice::ResolutionScaled => fl!("ui-resolution-larger-than-window"),
+        Notice::StabilizationSkipped => fl!("ui-status-stabilization-skipped"),
         Notice::RdpFilesTooMany => fl!(
             "ui-status-rdp-files-too-many",
             count = heimdall_rdp::MAX_COPY_ENTRIES
@@ -523,6 +524,7 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
             Notice::ExplorerHoldsNoFiles => fl!("ui-status-explorer-no-files"),
             notice @ (Notice::ResolutionReconnected
             | Notice::ResolutionScaled
+            | Notice::StabilizationSkipped
             | Notice::RdpFilesTooMany
             | Notice::RdpFilesTooLarge
             | Notice::RdpFilesSaveEnded(_)) => desktop_notice(notice),

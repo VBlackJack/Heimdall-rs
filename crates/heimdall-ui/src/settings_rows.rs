@@ -245,6 +245,8 @@ pub enum SettingRow {
     RdpAutoReconnectAttempts,
     /// Seconds an RDP connection may take to log on.
     RdpConnectTimeout,
+    /// Milliseconds an RDP desktop following its tab waits after connecting.
+    RdpResizeDelay,
     /// The sizes the RDP Resolution menus offer.
     RdpResolutionPresets,
     /// "Reset RDP defaults".
@@ -275,7 +277,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 59] = [
+    pub const ALL: [Self; 60] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -322,6 +324,7 @@ impl SettingRow {
         Self::RdpDefaults,
         Self::RdpAutoReconnectAttempts,
         Self::RdpConnectTimeout,
+        Self::RdpResizeDelay,
         Self::RdpResolutionPresets,
         Self::RdpResetAll,
         Self::Certificates,
@@ -379,7 +382,9 @@ impl SettingRow {
             }
             // At the top of the C# "RDP defaults" card (`MainWindow.xaml:3356-3375`).
             Self::RdpDefaultMode | Self::RdpDefaults => SettingsCard::RdpDefaults,
-            Self::RdpAutoReconnectAttempts | Self::RdpConnectTimeout => SettingsCard::RdpSession,
+            Self::RdpAutoReconnectAttempts | Self::RdpConnectTimeout | Self::RdpResizeDelay => {
+                SettingsCard::RdpSession
+            }
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
             Self::Certificates => SettingsCard::RdpTrusted,
@@ -419,6 +424,7 @@ impl SettingRow {
             Self::UpdateInterval => SessionField::UpdateInterval,
             Self::WindowsHelloGrace => SessionField::WindowsHelloGrace,
             Self::VaultHelloMaxDays => SessionField::VaultHelloMaxDays,
+            Self::RdpResizeDelay => SessionField::RdpResizeDelay,
             _ => return None,
         })
     }
