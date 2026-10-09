@@ -56,6 +56,9 @@ use crate::tree_view::TreeMenu;
 /// Width of the size column until resized, in logical pixels.
 const SIZE_WIDTH: f32 = 90.0;
 
+/// Room inside the transport's notice, above and below then beside, as the C# badge's.
+const NOTICE_PADDING: [f32; 2] = [1.0, 6.0];
+
 /// Width of the modification time column until resized, in logical pixels.
 const MODIFIED_WIDTH: f32 = 130.0;
 
@@ -1100,6 +1103,9 @@ struct PaneParts<'p, E> {
     /// Its name beside the other pane; none for the local file browser's, whose pane header
     /// names it.
     title: Option<String>,
+    /// What its transport discloses, beside its name: the server's pane over FTP without
+    /// TLS, as the C# badge says it.
+    notice: Option<String>,
     location: String,
     /// The folders of the one shown, the root first, as the breadcrumb shows them; `None`
     /// while the path bar is typed in.
@@ -1347,6 +1353,7 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
         tab,
         side,
         title,
+        notice,
         location,
         breadcrumb,
         typed,
@@ -1401,7 +1408,13 @@ fn pane<E: Listed>(parts: PaneParts<'_, E>) -> Element<'_, Message> {
     });
     let mut content = Column::new().spacing(spacing::SM);
     if let Some(title) = title {
-        content = content.push(text(title).size(font_size::SUBTITLE).font(styles::SEMIBOLD));
+        let mut heading = row![text(title).size(font_size::SUBTITLE).font(styles::SEMIBOLD)]
+            .spacing(spacing::SM)
+            .align_y(Alignment::Center);
+        if let Some(notice) = notice {
+            heading = heading.push(security_notice(notice));
+        }
+        content = content.push(heading);
     }
     content = content
         .push(pane_toolbar(
@@ -1721,7 +1734,26 @@ fn transfer_row(tab: TabId, transfer: &Transfer, session_live: bool) -> Element<
     line.into()
 }
 
-/// The Files tab, its panes' columns at `columns`.
+/// The persistent notice of a transport's limitation, beside the server pane's name, as the
+/// C# `SecurityNoticeBadge` (`EmbeddedSftpView.xaml:161-186`): outlined and written in the
+/// warning colour, its text again in its tooltip.
+fn security_notice<'a>(notice: String) -> Element<'a, Message> {
+    tooltip(
+        container(
+            text(notice.clone())
+                .size(font_size::SMALL_CAPTION)
+                .style(text::warning),
+        )
+        .padding(NOTICE_PADDING)
+        .style(styles::warning_badge),
+        text(notice).size(font_size::CAPTION),
+        tooltip::Position::Bottom,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
+/// The Files tab, its panes' columns at `columns`, `notice` beside the server pane's name.
 #[must_use]
 pub fn view(
     tab: TabId,
@@ -1730,6 +1762,7 @@ pub fn view(
     editing: Option<Side>,
     drop: Option<crate::files_drag::Spot>,
     columns: TabColumns,
+    notice: Option<String>,
 ) -> Element<'_, Message> {
     let drop_in = |side: Side| {
         drop.filter(|spot| spot.tab == tab && spot.side == side)
@@ -1741,6 +1774,7 @@ pub fn view(
         tab,
         side: Side::Local,
         title: (!files_pane.local_only).then(|| fl!("ui-files-local-title")),
+        notice: None,
         location: local_location,
         breadcrumb: (editing != Some(Side::Local)).then(|| local_segments(&files_pane.local.path)),
         typed: files_pane.local.typed.as_deref(),
@@ -1771,6 +1805,7 @@ pub fn view(
         tab,
         side: Side::Remote,
         title: Some(fl!("ui-files-remote-title")),
+        notice,
         location: remote_location,
         breadcrumb: (editing != Some(Side::Remote))
             .then(|| remote_segments(&files_pane.remote.path)),

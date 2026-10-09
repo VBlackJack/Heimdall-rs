@@ -164,6 +164,55 @@ impl ReleaseTag {
     pub fn tag(self) -> String {
         format!("{TAG_PREFIX}{self}")
     }
+
+    /// The day it was built, read from its tag as the C# `DeriveBuildDate` reads its
+    /// version (`AppVersionProvider.cs:66-99`): `2026-10-09` for `v2026.100901`; `None`
+    /// when the month and day are no date.
+    #[must_use]
+    pub fn date(self) -> Option<String> {
+        let month = self.release / MONTH_DIVISOR;
+        let day = self.release / DAY_DIVISOR % DAY_MODULUS;
+        let days = match month {
+            FEBRUARY if is_leap_year(self.year) => FEBRUARY_LEAP_DAYS,
+            FEBRUARY => FEBRUARY_DAYS,
+            month if SHORT_MONTHS.contains(&month) => SHORT_MONTH_DAYS,
+            JANUARY..=DECEMBER => LONG_MONTH_DAYS,
+            _ => return None,
+        };
+        (1..=days)
+            .contains(&day)
+            .then(|| format!("{:04}-{month:02}-{day:02}", self.year))
+    }
+}
+
+/// Where the month and the day are in a release number `MMDDNN`.
+const MONTH_DIVISOR: u32 = 10_000;
+const DAY_DIVISOR: u32 = 100;
+const DAY_MODULUS: u32 = 100;
+
+/// The months, as a release number writes them.
+const JANUARY: u32 = 1;
+const FEBRUARY: u32 = 2;
+const DECEMBER: u32 = 12;
+
+/// The months of 30 days: April, June, September and November.
+const SHORT_MONTHS: [u32; 4] = [4, 6, 9, 11];
+
+/// Days of the months.
+const LONG_MONTH_DAYS: u32 = 31;
+const SHORT_MONTH_DAYS: u32 = 30;
+const FEBRUARY_DAYS: u32 = 28;
+const FEBRUARY_LEAP_DAYS: u32 = 29;
+
+/// The Gregorian calendar's cycles: a leap year every 4, but not every 100, but every 400.
+const LEAP_CYCLE: u16 = 4;
+const CENTURY: u16 = 100;
+const LEAP_CENTURY_CYCLE: u16 = 400;
+
+/// Whether `year` of the Gregorian calendar has a 29 February.
+fn is_leap_year(year: u16) -> bool {
+    (year.is_multiple_of(LEAP_CYCLE) && !year.is_multiple_of(CENTURY))
+        || year.is_multiple_of(LEAP_CENTURY_CYCLE)
 }
 
 /// The version, as the banner shows it: `2026.100901`.

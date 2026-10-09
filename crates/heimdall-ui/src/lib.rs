@@ -16,9 +16,11 @@
 
 //! The Heimdall desktop application: the window, its views and the terminal widget.
 
-mod about_view;
+pub mod about_view;
 pub mod address_test_view;
 pub mod agent_chip_view;
+pub mod browse;
+pub mod build_date;
 pub mod citrix_form;
 pub mod citrix_import_view;
 pub mod citrix_view;

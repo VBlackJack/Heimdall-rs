@@ -222,3 +222,70 @@ fn a_theme_and_accent_chosen_are_kept_and_leave_the_terminals_scheme_alone() {
     assert_eq!(again.settings().theme, AppTheme::Parchment);
     assert_eq!(again.settings().accent, Accent::Green);
 }
+
+#[test]
+fn reset_all_asks_first_then_puts_every_setting_back_but_the_language_theme_and_gateways() {
+    use heimdall_app::Effect;
+    use heimdall_core::profile::SshGateway;
+    use heimdall_core::settings::{Accent, AppTheme, Language, Settings};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut store = ProfileStore::open(dir.path().join("profiles.toml")).expect("store");
+    store.merge_gateways([SshGateway {
+        id: ProfileId::new("bastion"),
+        name: "Bastion".to_owned(),
+        host: "bastion.lab".to_owned(),
+        port: 22,
+        username: None,
+        key_path: None,
+        parent: None,
+    }]);
+    store.save().expect("save");
+    let mut app = app(dir.path());
+    for message in [
+        SettingsMessage::Language(Language::Spanish),
+        SettingsMessage::Theme(AppTheme::Tarn),
+        SettingsMessage::Accent(Accent::Orange),
+        SettingsMessage::ColorScheme(ColorScheme::Nord),
+        SettingsMessage::SshKeepAliveInterval(45),
+        SettingsMessage::PuttyPath("C:/Tools/putty.exe".to_owned()),
+    ] {
+        app.update(Message::Settings(message));
+    }
+    open(&mut app);
+    assert_eq!(backgrounds(&app), [Palette::nord().background]);
+
+    // Asked first, as the C#; declined, nothing changes.
+    app.update(Message::Settings(SettingsMessage::ResetAllSettings));
+    assert!(matches!(app.dialog, Some(Dialog::ConfirmResetAllSettings)));
+    app.update(Message::DismissDialog);
+    assert_eq!(app.settings().color_scheme, ColorScheme::Nord);
+
+    app.update(Message::Settings(SettingsMessage::ResetAllSettings));
+    let effects = app.update(Message::ConfirmDialog);
+    assert!(
+        effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::SettingsReset)),
+        "the page forgets what it holds typed: {effects:?}"
+    );
+    let defaults = Settings::default();
+    let settings = app.settings();
+    assert_eq!(settings.color_scheme, defaults.color_scheme);
+    assert_eq!(
+        settings.ssh_keep_alive_interval,
+        defaults.ssh_keep_alive_interval
+    );
+    assert_eq!(settings.putty_path, defaults.putty_path);
+    // Kept, as the C#: a reader of another language finds the way back.
+    assert_eq!(settings.language, Some(Language::Spanish));
+    assert_eq!(settings.theme, AppTheme::Tarn);
+    assert_eq!(settings.accent, Accent::Orange);
+    // The gateways are inventory, kept with the profiles.
+    assert_eq!(app.gateways().len(), 1);
+    // Saved at once: every choice of the page applies so.
+    let saved = Settings::load(&dir.path().join(SETTINGS_FILE_NAME)).expect("saved");
+    assert_eq!(&saved, app.settings());
+    // Terminals open take the default colours too.
+    assert_eq!(backgrounds(&app), [Palette::dracula().background]);
+}
