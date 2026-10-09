@@ -561,7 +561,7 @@ fn the_host_keys_show_the_csharp_columns_and_unknown_for_what_is_not_known() {
 }
 
 #[test]
-fn the_host_keys_sort_as_the_csharp_list_and_a_header_click_sorts_by_its_column() {
+fn the_host_keys_sort_as_the_csharp_list() {
     use heimdall_ssh::{HostKeyDetails, HostKeySource, KnownHostEntry};
     use heimdall_ui::trusted_keys_view::{HostKeyColumn, HostKeySort, sorted};
 
@@ -653,8 +653,12 @@ fn the_host_keys_sort_as_the_csharp_list_and_a_header_click_sorts_by_its_column(
         hosts(default, "SHA256").is_empty(),
         "and the host and port alone, as the C#"
     );
+}
 
-    // A click on a header sorts the list by its column, and marks it.
+#[test]
+fn a_header_click_sorts_the_host_keys_by_its_column_and_marks_it() {
+    use heimdall_ui::trusted_keys_view::HostKeyColumn;
+
     let dir = tempfile::tempdir().expect("dir");
     let mut shell = shell(dir.path());
     trust(dir.path());
