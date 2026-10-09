@@ -129,26 +129,20 @@ pub fn view(rows: &[ConflictRow]) -> Element<'_, Message> {
     let list = Column::with_children(rows.iter().enumerate().map(|(index, row)| line(index, row)))
         .spacing(spacing::SM);
     column![
-        text(fl!("ui-files-conflict-title")).size(font_size::TITLE),
-        text(fl!("ui-files-conflict-hint"))
-            .size(font_size::BODY)
-            .style(text::secondary),
-        text(fl!("ui-files-conflict-summary", count = rows.len()))
-            .size(font_size::CAPTION)
-            .style(text::secondary),
+        crate::dialog_parts::list_title(fl!("ui-files-conflict-title")),
+        crate::dialog_parts::note(fl!("ui-files-conflict-hint")),
+        crate::dialog_parts::hint(fl!("ui-files-conflict-summary", count = rows.len())),
         all,
         container(column![header, styles::scroll(list).height(ROWS_HEIGHT)].spacing(spacing::SM))
             .padding(spacing::SM)
             .style(container::bordered_box),
-        row![
-            button(text(fl!("ui-dialog-cancel-button")))
-                .style(styles::secondary)
-                .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-files-conflict-apply")))
-                .style(styles::primary)
-                .on_press(Message::App(AppMessage::ConfirmDialog)),
-        ]
-        .spacing(spacing::SM),
+        crate::dialog_parts::buttons([
+            crate::dialog_parts::cancel(),
+            crate::dialog_parts::confirm(
+                fl!("ui-files-conflict-apply"),
+                Some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]),
     ]
     .spacing(spacing::SM)
     .width(Length::Shrink)

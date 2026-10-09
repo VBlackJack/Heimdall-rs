@@ -28,7 +28,7 @@ use heimdall_core::profile::display_address;
 use heimdall_ssh::known_hosts_import::{
     HostKeyDiagnostic, HostKeyNote, HostKeyStatus, MAX_FILE_BYTES, Malformed,
 };
-use iced::widget::{Column, button, checkbox, column, container, row, text};
+use iced::widget::{Column, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -139,15 +139,14 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
     )
     .spacing(2.0);
     let mut content = column![
-        text(fl!("ui-hostkeys-title")).size(font_size::TITLE),
-        text(fl!(
+        crate::dialog_parts::list_title(fl!("ui-hostkeys-title")),
+        crate::dialog_parts::note(fl!(
             "ui-hostkeys-summary",
             total = total,
             new = new,
             existing = existing,
             conflicts = conflicts
-        ))
-        .size(font_size::BODY),
+        )),
         checkbox(preview.all_chosen())
             .style(styles::checkbox)
             .label(fl!("ui-openssh-choose-all"))
@@ -176,21 +175,15 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
             );
     }
     content
-        .push(
-            row![
-                button(text(fl!("ui-dialog-cancel-button")))
-                    .style(styles::secondary)
-                    .on_press(Message::App(AppMessage::DismissDialog)),
-                button(text(fl!("ui-openssh-import-button")))
-                    .style(styles::primary)
-                    .on_press_maybe(
-                        preview
-                            .can_import()
-                            .then_some(Message::App(AppMessage::ConfirmDialog))
-                    ),
-            ]
-            .spacing(spacing::SM),
-        )
+        .push(crate::dialog_parts::buttons([
+            crate::dialog_parts::cancel(),
+            crate::dialog_parts::confirm(
+                fl!("ui-openssh-import-button"),
+                preview
+                    .can_import()
+                    .then_some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]))
         .into()
 }
 

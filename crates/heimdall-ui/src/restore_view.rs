@@ -20,7 +20,7 @@
 
 use heimdall_app::{Message as AppMessage, RestoreDialog};
 use heimdall_core::utc::UtcTime;
-use iced::widget::{Column, button, checkbox, column, row, text};
+use iced::widget::{Column, checkbox, column, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -70,27 +70,23 @@ pub fn view(dialog: &RestoreDialog) -> Element<'_, Message> {
         .into()
     });
     column![
-        text(fl!("ui-restore-title")).size(font_size::TITLE),
-        text(fl!("ui-restore-message")),
-        text(fl!("ui-restore-saved-at", time = saved_at))
-            .size(font_size::CAPTION)
-            .style(text::secondary),
+        crate::dialog_parts::list_title(fl!("ui-restore-title")),
+        crate::dialog_parts::note(fl!("ui-restore-message")),
+        crate::dialog_parts::hint(fl!("ui-restore-saved-at", time = saved_at)),
         checkbox(all)
             .style(styles::checkbox)
             .label(fl!("ui-restore-select-all"))
             .on_toggle(|on| choose(None, on)),
         styles::scroll(Column::with_children(rows).spacing(spacing::XS))
             .height(Length::Fixed(LIST_HEIGHT)),
-        row![
-            iced::widget::space::horizontal(),
-            button(text(fl!("ui-restore-dont")))
-                .style(styles::secondary)
+        crate::dialog_parts::buttons([
+            crate::dialog_parts::action(fl!("ui-restore-dont"), styles::secondary)
                 .on_press(Message::App(AppMessage::DismissDialog)),
-            button(text(fl!("ui-restore-selected")))
-                .style(styles::primary)
-                .on_press_maybe(chosen.then_some(Message::App(AppMessage::ConfirmDialog))),
-        ]
-        .spacing(spacing::SM),
+            crate::dialog_parts::confirm(
+                fl!("ui-restore-selected"),
+                chosen.then_some(Message::App(AppMessage::ConfirmDialog)),
+            ),
+        ]),
     ]
     .spacing(spacing::SM)
     .into()
