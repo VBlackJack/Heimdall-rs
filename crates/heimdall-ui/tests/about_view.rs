@@ -80,3 +80,31 @@ fn the_about_tab_says_the_version_and_where_the_data_is_and_turns_the_log_off() 
     }
     assert!(!shell.app().settings().diagnostics_log, "off, and saved");
 }
+
+#[test]
+fn the_build_date_is_said_when_the_build_knows_it_and_left_out_otherwise() {
+    let dir = tempfile::tempdir().expect("dir");
+    let shell = shell(dir.path());
+    let mut ui = simulator(&shell);
+    ui.find("Platform").expect("the system card");
+    match heimdall_ui::about_view::build_date() {
+        Some(date) => {
+            // `YYYY-MM-DD`, as the C# writes it.
+            let parts: Vec<&str> = date.split('-').collect();
+            assert_eq!(
+                parts.iter().map(|part| part.len()).collect::<Vec<_>>(),
+                [4, 2, 2],
+                "{date}"
+            );
+            assert!(
+                parts
+                    .iter()
+                    .all(|part| part.bytes().all(|b| b.is_ascii_digit())),
+                "{date}"
+            );
+            ui.find("Build date").expect("the C# row");
+            ui.find(date.as_str()).expect("the day");
+        }
+        None => assert!(ui.find("Build date").is_err(), "nothing known, no row"),
+    }
+}

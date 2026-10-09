@@ -576,6 +576,17 @@ pub fn badge(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// The C# security notice of a file browser (`EmbeddedSftpView.xaml:161-186`): the
+/// window's background outlined in the warning colour.
+pub fn warning_badge(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        border: brushes.outline(brushes.warning, radius::SM),
+        ..BoxStyle::default()
+    }
+}
+
 /// A line between two parts, as the C# `BorderBrush` edges of a toolbar; faded as the C#
 /// toolbar's separator.
 pub fn divider(theme: &Theme) -> BoxStyle {

@@ -861,6 +861,263 @@ fn the_default_ssh_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
     );
 }
 
+/// The messages a click on the first "Browse..." of the page sends, once the search holds
+/// `query`.
+fn browse_clicked(shell: &mut Shell, query: &str) -> Vec<Message> {
+    let _ = shell.update(Message::SettingsSearch(query.to_owned()));
+    let mut ui = simulator(shell);
+    ui.click("Browse...").expect(query);
+    ui.into_messages().collect()
+}
+
+#[test]
+fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
+    use heimdall_app::ProviderMessage;
+    use heimdall_ui::browse::BrowseTarget;
+    use heimdall_ui::settings_rows::ToolPath;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::CredentialProvider(
+        ProviderMessage::Enabled(true),
+    )));
+    // Beside each path of the C# page, its "Browse...": found by the row, not searched for.
+    for (query, target) in [
+        ("putty path", BrowseTarget::Tool(ToolPath::Putty)),
+        ("x11 server path", BrowseTarget::Tool(ToolPath::X11Server)),
+        ("external editor path", BrowseTarget::ExternalEditor),
+        ("session log directory", BrowseTarget::SessionLogDirectory),
+        ("database path", BrowseTarget::ProviderDatabase),
+    ] {
+        let messages = browse_clicked(&mut shell, query);
+        assert!(
+            messages
+                .iter()
+                .any(|message| matches!(message, Message::Browse(sent) if *sent == target)),
+            "{query}: {messages:?}"
+        );
+    }
+    assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
+    assert_eq!(SettingRow::ALL.len(), 58, "no row added");
+
+    // The path picked is applied as Enter applies what is typed; what was typed goes.
+    let _ = shell.update(Message::ToolPathEdited(
+        ToolPath::Putty,
+        "/typed/putty".to_owned(),
+    ));
+    for (target, picked) in [
+        (BrowseTarget::Tool(ToolPath::Putty), "/opt/putty/putty"),
+        (BrowseTarget::Tool(ToolPath::X11Server), "/opt/x/vcxsrv"),
+        (BrowseTarget::ExternalEditor, "/opt/editor/edit"),
+        (BrowseTarget::SessionLogDirectory, "/var/log/heimdall"),
+        (BrowseTarget::ProviderDatabase, "/home/me/vault.kdbx"),
+        (BrowseTarget::ProviderKeyFile, "/home/me/vault.keyx"),
+    ] {
+        let _ = shell.update(Message::Browsed(target, picked.to_owned()));
+    }
+    let _ = shell.update(Message::ToolPathApply(ToolPath::Putty));
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert_eq!(saved.putty_path, "/opt/putty/putty", "the typed text went");
+    assert_eq!(saved.x11_server_path, "/opt/x/vcxsrv");
+    assert_eq!(saved.external_editor, "/opt/editor/edit");
+    assert_eq!(saved.session_log_directory, "/var/log/heimdall");
+    assert_eq!(saved.credential_provider.database, "/home/me/vault.kdbx");
+    assert_eq!(saved.credential_provider.key_file, "/home/me/vault.keyx");
+}
+
+#[test]
+fn a_browse_dialog_picks_a_folder_or_a_file_with_the_csharp_filters_where_the_path_is() {
+    use heimdall_ui::browse::BrowseTarget;
+    use heimdall_ui::settings_rows::ToolPath;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("putty.exe");
+    assert!(BrowseTarget::SessionLogDirectory.picks_folder());
+    for target in [
+        BrowseTarget::Tool(ToolPath::Putty),
+        BrowseTarget::Tool(ToolPath::X11Server),
+        BrowseTarget::ExternalEditor,
+        BrowseTarget::ProviderDatabase,
+        BrowseTarget::ProviderKeyFile,
+        BrowseTarget::GatewayKey,
+    ] {
+        assert!(!target.picks_folder(), "{target:?}");
+        assert_eq!(
+            target.start(&file).as_deref(),
+            Some(dir.path()),
+            "a file's folder"
+        );
+    }
+    assert_eq!(
+        BrowseTarget::SessionLogDirectory
+            .start(dir.path())
+            .as_deref(),
+        Some(dir.path()),
+        "a folder itself"
+    );
+    assert_eq!(
+        BrowseTarget::ExternalEditor.start(&dir.path().join("gone/edit.exe")),
+        None,
+        "a folder that does not exist: the system's own"
+    );
+    assert_eq!(
+        BrowseTarget::Tool(ToolPath::Putty).title().as_deref(),
+        Some("Select putty.exe or puttycac.exe")
+    );
+    assert_eq!(
+        BrowseTarget::SessionLogDirectory.title().as_deref(),
+        Some("Select Session Log Directory")
+    );
+    let names = |target: BrowseTarget| -> Vec<(String, Vec<&str>)> {
+        target
+            .filters()
+            .into_iter()
+            .map(|(name, extensions)| (name, extensions.to_vec()))
+            .collect()
+    };
+    assert_eq!(
+        names(BrowseTarget::ProviderDatabase),
+        [
+            ("Database files".to_owned(), vec!["kdbx", "db", "gpg"]),
+            ("All files".to_owned(), vec!["*"]),
+        ]
+    );
+    assert_eq!(
+        names(BrowseTarget::ProviderKeyFile),
+        [
+            ("Key files".to_owned(), vec!["keyx", "key"]),
+            ("All files".to_owned(), vec!["*"]),
+        ]
+    );
+    assert_eq!(
+        names(BrowseTarget::GatewayKey),
+        [
+            ("PPK files".to_owned(), vec!["ppk"]),
+            ("PEM files".to_owned(), vec!["pem"]),
+            ("All files".to_owned(), vec!["*"]),
+        ]
+    );
+    let programs = names(BrowseTarget::Tool(ToolPath::Putty));
+    if cfg!(windows) {
+        assert_eq!(
+            programs,
+            [
+                ("Executables".to_owned(), vec!["exe"]),
+                ("All files".to_owned(), vec!["*"]),
+            ]
+        );
+    } else {
+        assert!(programs.is_empty(), "a program has no extension here");
+    }
+}
+
+#[test]
+fn reset_defaults_asks_first_keeps_the_theme_and_forgets_what_is_typed() {
+    use heimdall_app::Dialog;
+    use heimdall_ui::settings_rows::ToolPath;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    change(&mut shell, SettingsMessage::Theme(AppTheme::Tarn));
+    change(&mut shell, SettingsMessage::ColorScheme(ColorScheme::Nord));
+    let _ = shell.update(Message::ToolPathEdited(
+        ToolPath::Putty,
+        "/typed/putty".to_owned(),
+    ));
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        ui.click("Reset defaults")
+            .expect("the C# button, above the tabs");
+        ui.into_messages().collect()
+    };
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    assert!(matches!(
+        shell.app().dialog,
+        Some(Dialog::ConfirmResetAllSettings)
+    ));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Reset all settings?").expect("the C# question");
+        ui.find(RESET_ALL_BODY).expect("what it does and keeps");
+    }
+    let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
+    let settings = shell.app().settings();
+    assert_eq!(settings.color_scheme, Settings::default().color_scheme);
+    assert_eq!(settings.theme, AppTheme::Tarn, "kept, as the C#");
+    // What was typed over the old value went with it.
+    let _ = shell.update(Message::ToolPathApply(ToolPath::Putty));
+    assert!(shell.app().settings().putty_path.is_empty());
+    let modified = shell.settings_found("modified");
+    assert_eq!(modified, [SettingRow::Theme], "only what the reset keeps");
+}
+
+/// What "Reset defaults" asks.
+const RESET_ALL_BODY: &str = "Restore every Settings tab to factory defaults? Text typed and \
+    not applied yet is discarded. On the Security tab this turns off the external credential \
+    provider and the Windows Hello requirement on connect, and resets the Windows Hello grace \
+    period, the auto-lock delay and disconnect on lock. Your language, theme, sessions, SSH \
+    gateways, master password, PIN and Windows Hello enrolment are kept. The change is saved \
+    at once.";
+
+#[test]
+fn a_skipped_release_is_said_on_the_updates_card_and_offered_again() {
+    use heimdall_app::UpdateMessage;
+    use heimdall_core::settings::UpdateCheck;
+
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    Settings {
+        update_check: UpdateCheck {
+            last_check: None,
+            skipped: Some("v2026.101001".to_owned()),
+        },
+        ..Settings::default()
+    }
+    .save(&settings_path(&dir.path().join("profiles.toml")))
+    .expect("saved");
+    let mut shell = shell(dir.path());
+    let messages: Vec<Message> = {
+        let mut ui = simulator(&shell);
+        ui.find("Skipped version: 2026.101001")
+            .expect("as the C# panel says it");
+        ui.click("Offer it again").expect("its button");
+        ui.into_messages().collect()
+    };
+    assert!(messages.iter().any(|message| matches!(
+        message,
+        Message::App(AppMessage::Update(UpdateMessage::ClearSkipped))
+    )));
+    for message in messages {
+        let _ = shell.update(message);
+    }
+    assert_eq!(shell.app().settings().update_check.skipped, None);
+    let mut ui = simulator(&shell);
+    assert!(ui.find("Offer it again").is_err(), "nothing skipped");
+}
+
+#[test]
+fn hardware_acceleration_is_said_not_supported_yet_among_the_rdp_defaults() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    let _ = shell.update(Message::SettingsSearch(
+        "hardware-accelerated rendering".to_owned(),
+    ));
+    let mut ui = simulator(&shell);
+    let tick = ui.find("Hardware-accelerated rendering").expect("the box");
+    let said = ui.find(HARDWARE_UNSUPPORTED).expect("said under it");
+    assert!(said.bounds().y > tick.bounds().y, "under the box");
+}
+
+/// What is said of hardware acceleration.
+const HARDWARE_UNSUPPORTED: &str = "Not supported yet: the built-in client has no such switch, \
+    and Remote Desktop Connection (mstsc.exe) reads no setting for it from its .rdp file.";
+
 #[test]
 fn the_default_rdp_mode_is_chosen_found_reset_and_applied_to_all_once_asked() {
     use heimdall_core::profile::{ProfileId, RdpMode, RdpProfile};

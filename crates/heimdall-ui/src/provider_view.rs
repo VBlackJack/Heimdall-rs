@@ -30,6 +30,7 @@ use iced::widget::{
 };
 use iced::{Alignment, Element, Length};
 
+use crate::browse::{BrowseTarget, browse_button};
 use crate::i18n::fl;
 use crate::shell::Message;
 use crate::styles;
@@ -91,6 +92,18 @@ impl std::fmt::Display for Preset {
         // The tools' own names, as the C# list shows them in every language.
         f.write_str(PRESETS.get(self.0).map_or("", |(name, _)| name))
     }
+}
+
+/// A path's `input`, the C# "Browse..." of `target` beside it (`MainWindow.xaml:4106`,
+/// `4124`).
+fn browsed<'a>(
+    input: impl Into<Element<'a, Message>>,
+    target: BrowseTarget,
+) -> Element<'a, Message> {
+    row![input.into(), browse_button(target)]
+        .spacing(spacing::SM)
+        .align_y(Alignment::Center)
+        .into()
 }
 
 /// A label, its field, and a hint under them when there is one.
@@ -172,16 +185,22 @@ pub fn card<'a>(app: &'a App, unlock: &'a str) -> Element<'a, Message> {
         .push(unlock_field(app, unlock))
         .push(field(
             fl!("ui-settings-provider-database"),
-            text_input("", &settings.database)
-                .style(styles::text_input)
-                .on_input(|value| provider(ProviderMessage::Database(value))),
+            browsed(
+                text_input("", &settings.database)
+                    .style(styles::text_input)
+                    .on_input(|value| provider(ProviderMessage::Database(value))),
+                BrowseTarget::ProviderDatabase,
+            ),
             None,
         ))
         .push(field(
             fl!("ui-settings-provider-key-file"),
-            text_input("", &settings.key_file)
-                .style(styles::text_input)
-                .on_input(|value| provider(ProviderMessage::KeyFile(value))),
+            browsed(
+                text_input("", &settings.key_file)
+                    .style(styles::text_input)
+                    .on_input(|value| provider(ProviderMessage::KeyFile(value))),
+                BrowseTarget::ProviderKeyFile,
+            ),
             Some(fl!("ui-settings-provider-key-file-hint")),
         ));
     let running = app.provider_test() == Some(&ProviderTest::Running);
