@@ -351,6 +351,13 @@ pub enum Message {
         /// Started, or why not.
         result: Result<(), crate::rdp_external::ExternalRefusal>,
     },
+    /// What a launch of Remote Desktop Connection through an SSH gateway reports.
+    MstscRoute {
+        /// The launch.
+        id: crate::mstsc_driver::MstscRouteId,
+        /// What happened.
+        event: crate::mstsc_driver::MstscRouteEvent,
+    },
     /// The host key of an SSH profile to open in `PuTTY` was probed.
     PuttyHostKey {
         /// The profile, as it was to open.
@@ -930,6 +937,7 @@ impl fmt::Debug for Message {
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
             }
+            Self::MstscRoute { id, .. } => write!(f, "MstscRoute({})", id.value()),
             Self::PuttyHostKey { profile, .. } => write!(f, "PuttyHostKey({})", profile.id),
             Self::PuttyLaunched { result, .. } => {
                 write!(f, "PuttyLaunched({})", result.is_ok())
@@ -1372,6 +1380,15 @@ pub enum Effect {
         gateway: Option<String>,
         /// The `.rdp` file, as [`crate::rdp_external::rdp_file`] writes it.
         content: String,
+    },
+    /// Open an RDP profile in Remote Desktop Connection through its SSH gateway, as
+    /// [`mstsc_route_events`](crate::mstsc_driver::mstsc_route_events) does; answered with
+    /// [`Message::MstscRoute`].
+    OpenMstscRoute {
+        /// The launch.
+        id: crate::mstsc_driver::MstscRouteId,
+        /// What it needs.
+        request: Box<crate::mstsc_driver::MstscRouteRequest>,
     },
     /// Probe an SSH profile's host key before it opens in `PuTTY`, off the UI thread;
     /// answered with [`Message::PuttyHostKey`].
@@ -1833,6 +1850,7 @@ impl fmt::Debug for Effect {
                 write!(f, "TerminateCitrix({}, {pid}, {force})", tab.value())
             }
             Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
+            Self::OpenMstscRoute { id, .. } => write!(f, "OpenMstscRoute({})", id.value()),
             Self::ProbePuttyHostKey { profile, .. } => {
                 write!(f, "ProbePuttyHostKey({})", profile.id)
             }
@@ -3128,6 +3146,9 @@ pub struct App {
     putty_routes: Vec<putty_launch::PuttyRoute>,
     /// The identifier of the next launch of `PuTTY` through a gateway.
     next_putty_route: crate::putty_driver::PuttyRouteId,
+    /// Launches of Remote Desktop Connection through gateways, until their forwards are
+    /// released.
+    mstsc_routes: mstsc_launch::MstscRoutes,
     /// The profile selected in the tree, the last one clicked: where a Shift+click range
     /// starts.
     pub selected_profile: Option<ProfileId>,
@@ -3285,6 +3306,7 @@ impl App {
             pending_tunnel_key: None,
             putty_routes: Vec::new(),
             next_putty_route: crate::putty_driver::PuttyRouteId::default(),
+            mstsc_routes: mstsc_launch::MstscRoutes::default(),
             selected_profile: None,
             selected_folder: None,
             selection: std::collections::BTreeSet::new(),
@@ -3410,6 +3432,7 @@ impl App {
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
             self.close_session_logs();
             self.release_putty_routes();
+            self.release_mstsc_routes();
         }
         debug_assert!(
             self.floating_invariant_holds(),
@@ -3447,6 +3470,7 @@ impl App {
             | Message::OpenCitrix(_)
             | Message::CitrixLaunched { .. }
             | Message::RdpExternalLaunched { .. }
+            | Message::MstscRoute { .. }
             | Message::PuttyHostKey { .. }
             | Message::PuttyLaunched { .. }
             | Message::PuttyRoute { .. }
@@ -3766,6 +3790,7 @@ impl App {
                 gateway,
                 result,
             } => self.rdp_external_launched(name, gateway, result),
+            Message::MstscRoute { id, event } => self.mstsc_route_event(id, event),
             Message::PuttyHostKey { profile, probe } => self.putty_host_key(*profile, probe),
             Message::PuttyLaunched { name, result } => self.putty_launched(name, result),
             Message::PuttyRoute { id, event } => self.putty_route_event(id, event),

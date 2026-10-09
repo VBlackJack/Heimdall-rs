@@ -4038,6 +4038,21 @@ impl Shell {
                     result,
                 })
             }),
+            Effect::OpenMstscRoute { id, request } => {
+                // Its end is Remote Desktop Connection's: the stream ends once the forward
+                // is released.
+                let registry = self.registry.clone();
+                let events = stream::once(async move {
+                    heimdall_app::mstsc_driver::mstsc_route_events(
+                        *request,
+                        registry,
+                        heimdall_app::rdp_external::start,
+                    )
+                })
+                .flatten();
+                Task::stream(events)
+                    .map(move |event| Message::App(AppMessage::MstscRoute { id, event }))
+            }
             Effect::LaunchElevated { tab, request } => Task::future(async move {
                 // The elevation prompt holds the call until answered: off the UI thread, on
                 // a worker thread of its own, where COM is set up for it.
