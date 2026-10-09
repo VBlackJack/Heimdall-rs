@@ -21,13 +21,21 @@
 //!
 //! The check runs in the TLS handshake ([`heimdall_tls`]); what it could not decide comes
 //! back here as the certificate question, or as a refusal when the key changed.
+//!
+//! A pin, on file or for this run, is checked again at every connection, as the C# checks
+//! its pins (`FtpBrowser.cs` `EnsurePinnedCertificateRemainsValid`): a certificate no longer
+//! valid is refused, and never asked about again. Only the attempt built after the user's
+//! answer to the question takes the certificate as it is.
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, UNIX_EPOCH};
 
 use heimdall_core::profile::display_address;
-use heimdall_rdp::{Fingerprint, KnownRdpHosts, ServerCertificate, Validity, Verdict};
-use heimdall_tls::{PresentedSlot, UserTrust};
+use heimdall_rdp::{
+    Fingerprint, KnownRdpHosts, ServerCertificate, Validity, ValidityPeriod, Verdict,
+};
+use heimdall_tls::{Period, PresentedSlot, UnixTime, UserTrust, UserVerdict};
 use tokio::sync::mpsc;
 
 use crate::error::UiError;
@@ -49,35 +57,55 @@ pub(crate) struct CertificatePins {
     /// A key the user accepted after the certificate question, recorded once the server
     /// presents exactly it.
     pub accepted: Option<Fingerprint>,
+    /// The key the user trusted for this run just now, after the certificate question:
+    /// this attempt takes it as it is, as the C# "Trust once" does; later ones check it as
+    /// a pin.
+    pub trusted_once: Option<Fingerprint>,
     /// Keys the user trusted for this server for this run only.
     pub trusted_for_run: Vec<Fingerprint>,
     /// The protocol, as the log names it.
     pub protocol: &'static str,
 }
 
+/// How the user trusts a certificate pinned, on file or for this run, at `now`: where `now`
+/// falls in its validity period; untrusted when that cannot be read.
+fn pinned_at(der: &[u8], now: UnixTime) -> UserVerdict {
+    let Ok(validity) = Validity::from_der(der) else {
+        return UserVerdict::Untrusted;
+    };
+    let period = match validity.period(UNIX_EPOCH + Duration::from_secs(now.as_secs())) {
+        ValidityPeriod::Current => Period::Current,
+        ValidityPeriod::Expired => Period::Expired,
+        ValidityPeriod::NotYetValid => Period::NotYetValid,
+    };
+    UserVerdict::Pinned { period }
+}
+
 impl CertificatePins {
-    /// Whether the user trusts a certificate for the server: pinned by its public key,
-    /// trusted for this run, or just accepted, and then kept in `slot`.
+    /// How the user trusts a certificate for the server: pinned by its public key or
+    /// trusted for this run, checked again; or decided on just now, after the question,
+    /// and then, accepted to be recorded, kept in `slot`.
     pub(crate) fn user_trust(&self, slot: AcceptedSlot) -> UserTrust {
         let known = KnownRdpHosts::new(&self.known_hosts);
         let (host, port) = (self.host.clone(), self.port);
         let run = self.trusted_for_run.clone();
-        let accepted = self.accepted;
-        Arc::new(move |der| {
+        let (accepted, once) = (self.accepted, self.trusted_once);
+        Arc::new(move |der, now| {
             let Ok(certificate) = ServerCertificate::from_der(der) else {
-                return false;
+                return UserVerdict::Untrusted;
             };
             let presented = certificate.fingerprint;
             match known.verdict(&host, port, &presented) {
-                Ok(Verdict::Known) => true,
+                Ok(Verdict::Known) => pinned_at(der, now),
                 Ok(Verdict::Unknown) if accepted == Some(presented) => {
                     if let Ok(mut slot) = slot.lock() {
                         *slot = Some(certificate);
                     }
-                    true
+                    UserVerdict::Decided
                 }
-                Ok(Verdict::Unknown) => run.contains(&presented),
-                Ok(Verdict::Changed { .. }) | Err(_) => false,
+                Ok(Verdict::Unknown) if once == Some(presented) => UserVerdict::Decided,
+                Ok(Verdict::Unknown) if run.contains(&presented) => pinned_at(der, now),
+                Ok(Verdict::Unknown | Verdict::Changed { .. }) | Err(_) => UserVerdict::Untrusted,
             }
         })
     }
@@ -89,7 +117,10 @@ impl CertificatePins {
     ///
     /// [`UiError::KnownHosts`] when the file cannot be read.
     pub(crate) fn pinned(&self) -> Result<bool, UiError> {
-        if self.accepted.is_some() || !self.trusted_for_run.is_empty() {
+        if self.accepted.is_some()
+            || self.trusted_once.is_some()
+            || !self.trusted_for_run.is_empty()
+        {
             return Ok(true);
         }
         KnownRdpHosts::new(&self.known_hosts)
@@ -124,7 +155,8 @@ impl CertificatePins {
     }
 
     /// The handshake stopped: the certificate question for a certificate nobody trusts yet,
-    /// a refusal for one that changed, else `failed`, the TLS failure as it is.
+    /// a refusal for one that changed or that the user trusted and is no longer valid, else
+    /// `failed`, the TLS failure as it is.
     pub(crate) async fn refused(
         &self,
         presented: &PresentedSlot,
@@ -132,6 +164,7 @@ impl CertificatePins {
         failed: UiError,
     ) -> Result<(), UiError> {
         let kept = presented.lock().ok().and_then(|mut slot| slot.take());
+        let pinned = kept.as_ref().is_some_and(|kept| kept.pinned);
         let Some((certificate, details)) = kept.and_then(|kept| {
             let certificate = ServerCertificate::from_der(&kept.der).ok()?;
             let details = Validity::from_der(&kept.der)
@@ -149,6 +182,24 @@ impl CertificatePins {
         };
         let target = display_address(&self.host, self.port);
         let presented = certificate.fingerprint;
+        // Never the question again: the user trusted it already.
+        if pinned {
+            let Some(details) = details else {
+                return Err(failed);
+            };
+            // As the C# "FTPS certificate rejected" line.
+            log::warn!(
+                "{} certificate rejected: the pinned certificate of {target} failed non-overridable validity checks: {:?}, presented {presented}",
+                self.protocol,
+                details.issue
+            );
+            return Err(UiError::PinnedCertificateInvalid {
+                target,
+                fingerprint: presented.to_string(),
+                issue: details.issue,
+                not_after: details.validity.not_after,
+            });
+        }
         match KnownRdpHosts::new(&self.known_hosts).verdict(&self.host, self.port, &presented) {
             Ok(Verdict::Changed { recorded }) => {
                 // As the C# "FTPS certificate rejected" line.

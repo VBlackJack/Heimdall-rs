@@ -365,6 +365,7 @@ ui-error-network = The server could not be reached: { $detail }
 ui-error-timeout = The server did not answer in time.
 ui-error-hostkey-changed = The server's key is not the one on record. Someone may be intercepting the connection. Recorded: { $recorded }. Presented: { $offered }. If the change is expected, forget this server: its new key is then asked about.
 ui-error-hostkey-algorithm = The server no longer offers the key type on record ({ $recorded }).
+ui-error-pinned-certificate-invalid = The certificate trusted for { $target } is no longer valid: connection refused. { $issue } Valid until: { $until }. Key: { $fingerprint }. If the server has a new certificate, forget this server: its certificate is then asked about.
 ui-error-host-certificate = The server presented a host certificate; certificates are not supported yet.
 ui-error-known-hosts = The known hosts file could not be used: { $detail }
 ui-error-key-unreadable = The key file { $path } could not be read.

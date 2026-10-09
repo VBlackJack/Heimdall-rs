@@ -243,16 +243,19 @@ impl App {
 
     /// The way past a changed key, as the C# Heimdall's "Accept new key": the key recorded
     /// for the server that presented another is forgotten, and the tab connects again, which
-    /// asks about the new key with its fingerprint before trusting it. For an RDP or FTPS
-    /// server's own certificate, its record is forgotten the same way.
+    /// asks about the new key with its fingerprint before trusting it. For an RDP, FTPS or
+    /// VNC server's own certificate, its record is forgotten the same way, and so is a
+    /// trusted certificate no longer valid, for its replacement to be trusted.
     pub(super) fn forget_server(&mut self, tab_id: TabId) -> Vec<Effect> {
         let Some(tab) = self.tab(tab_id) else {
             return Vec::new();
         };
-        let Phase::Failed(UiError::HostKeyChanged { target, .. }) = &tab.phase else {
-            return Vec::new();
+        let target = match &tab.phase {
+            Phase::Failed(UiError::HostKeyChanged { target, .. }) => target.clone(),
+            Phase::Failed(UiError::PinnedCertificateInvalid { .. }) => None,
+            _ => return Vec::new(),
         };
-        let Some(server) = target.clone() else {
+        let Some(server) = target else {
             return self.forget_rdp_certificate(tab_id);
         };
         // An SSH key: the tab's own server's, or a gateway's on the way, in the one file.

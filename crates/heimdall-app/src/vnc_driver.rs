@@ -62,6 +62,9 @@ pub struct VncRequest {
     /// A key the user accepted after the certificate question, recorded once the server
     /// presents exactly it.
     pub accepted: Option<Fingerprint>,
+    /// The key the user trusted for this run just now, after the certificate question:
+    /// this attempt takes it as it is, later ones check it as a pin.
+    pub trusted_once: Option<Fingerprint>,
     /// Keys the user trusted for this server for this run only.
     pub trusted_for_run: Vec<Fingerprint>,
     /// Cancels the attempt and, once connected, the session.
@@ -76,6 +79,7 @@ impl VncRequest {
             host: self.profile.host.clone(),
             port: self.profile.port,
             accepted: self.accepted,
+            trusted_once: self.trusted_once,
             trusted_for_run: self.trusted_for_run.clone(),
             protocol: PROTOCOL,
         }

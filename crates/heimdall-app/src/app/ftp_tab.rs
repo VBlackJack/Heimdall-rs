@@ -61,7 +61,7 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.ftp_request(&profile, None, cancel.clone());
+        let request = self.ftp_request(&profile, (None, None), cancel.clone());
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -81,34 +81,37 @@ impl App {
         }]
     }
 
-    /// What connecting to `profile` needs.
+    /// What connecting to `profile` needs, with the key the user just `accepted` or
+    /// `trusted_once`, after the certificate question.
     fn ftp_request(
         &self,
         profile: &FtpProfile,
-        accepted: Option<Fingerprint>,
+        (accepted, trusted_once): (Option<Fingerprint>, Option<Fingerprint>),
         cancel: CancellationToken,
     ) -> FtpRequest {
         FtpRequest {
             profile: profile.clone(),
             known_hosts: self.known_ftps_hosts(),
             accepted,
+            trusted_once,
             trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
             cancel,
         }
     }
 
-    /// Connects an FTP tab again, with a key the user just accepted if any.
+    /// Connects an FTP tab again, with the key the user just accepted, or trusted once, if
+    /// any.
     pub(super) fn reconnect_ftp(
         &mut self,
         tab_id: TabId,
-        accepted: Option<Fingerprint>,
+        decided: (Option<Fingerprint>, Option<Fingerprint>),
     ) -> Vec<Effect> {
         let Some(TabProfile::Ftp(profile)) = self.tab(tab_id).map(|tab| tab.profile.clone()) else {
             return Vec::new();
         };
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.ftp_request(&profile, accepted, cancel.clone());
+        let request = self.ftp_request(&profile, decided, cancel.clone());
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };

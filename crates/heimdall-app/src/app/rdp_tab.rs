@@ -331,36 +331,39 @@ impl App {
                 });
                 Vec::new()
             }
-            // Held in memory for this run: the file is not written.
+            // Held in memory for this run: the file is not written. The next attempt takes it
+            // as it is, later ones check it as a pin.
             KeyTrust::Once => {
                 let trusted = (host, port, fingerprint);
                 if !self.rdp_run_trust.contains(&trusted) {
                     self.rdp_run_trust.push(trusted);
                 }
-                self.reconnect_certified(tab_id, server, None)
+                self.reconnect_certified(tab_id, server, (None, Some(fingerprint)))
             }
             // Recorded by the next attempt, and only if the server presents exactly this key.
-            KeyTrust::Always => self.reconnect_certified(tab_id, server, Some(fingerprint)),
+            KeyTrust::Always => self.reconnect_certified(tab_id, server, (Some(fingerprint), None)),
         }
     }
 
-    /// Connects the tab of a `server` asking about its certificate again, with `accepted` as
-    /// the key the user just agreed to.
+    /// Connects the tab of a `server` asking about its certificate again, with the key the
+    /// user just accepted, or trusted once, as `decided`. An RDP server takes a key trusted
+    /// once from the keys trusted for this run.
     fn reconnect_certified(
         &mut self,
         tab_id: TabId,
         server: CertifiedServer,
-        accepted: Option<Fingerprint>,
+        decided: (Option<Fingerprint>, Option<Fingerprint>),
     ) -> Vec<Effect> {
         match server {
-            CertifiedServer::Rdp => self.reconnect_rdp(tab_id, accepted),
-            CertifiedServer::Ftps => self.reconnect_ftp(tab_id, accepted),
-            CertifiedServer::Vnc => self.reconnect_vnc(tab_id, accepted),
+            CertifiedServer::Rdp => self.reconnect_rdp(tab_id, decided.0),
+            CertifiedServer::Ftps => self.reconnect_ftp(tab_id, decided),
+            CertifiedServer::Vnc => self.reconnect_vnc(tab_id, decided),
         }
     }
 
     /// Forgets the keys recorded for the server of an RDP, FTPS or VNC tab whose key
-    /// changed, then connects again: the certificate question comes back.
+    /// changed, or whose trusted certificate is no longer valid, and those trusted for it
+    /// for this run, then connects again: the certificate question comes back.
     pub(super) fn forget_rdp_certificate(&mut self, tab_id: TabId) -> Vec<Effect> {
         let (rdp_file, ftps_file, vnc_file) = (
             self.known_rdp_hosts(),
@@ -373,24 +376,31 @@ impl App {
         // The server's own key only: a gateway's changed SSH key is not this server's.
         if !matches!(
             tab.phase,
-            Phase::Failed(UiError::HostKeyChanged { target: None, .. })
+            Phase::Failed(
+                UiError::HostKeyChanged { target: None, .. }
+                    | UiError::PinnedCertificateInvalid { .. }
+            )
         ) {
             return Vec::new();
         }
         let (path, host, port) = match &tab.profile {
-            TabProfile::Rdp(profile) => (rdp_file, &profile.host, profile.port),
-            TabProfile::Ftp(profile) => (ftps_file, &profile.host, profile.port),
-            TabProfile::Vnc(profile) => (vnc_file, &profile.host, profile.port),
+            TabProfile::Rdp(profile) => (rdp_file, profile.host.clone(), profile.port),
+            TabProfile::Ftp(profile) => (ftps_file, profile.host.clone(), profile.port),
+            TabProfile::Vnc(profile) => (vnc_file, profile.host.clone(), profile.port),
             _ => return Vec::new(),
         };
-        if let Err(error) = KnownRdpHosts::new(path).forget(host, port) {
+        if let Err(error) = KnownRdpHosts::new(path).forget(&host, port) {
             tab.phase = Phase::Failed(UiError::KnownHosts {
                 detail: error.to_string(),
             });
             return Vec::new();
         }
         let server = CertifiedServer::of(&tab.profile);
-        self.reconnect_certified(tab_id, server, None)
+        // A key trusted once is forgotten too: else a certificate trusted once and no
+        // longer valid would be refused until the application restarts.
+        self.rdp_run_trust
+            .retain(|(known, known_port, _)| !(*known == host && *known_port == port));
+        self.reconnect_certified(tab_id, server, (None, None))
     }
 
     /// Keyboard or mouse input for the remote desktop of a tab.

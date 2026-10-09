@@ -289,6 +289,7 @@ ui-error-network = Le serveur est injoignable : { $detail }
 ui-error-timeout = Le serveur n'a pas répondu à temps.
 ui-error-hostkey-changed = La clé du serveur n'est pas celle enregistrée. Quelqu'un intercepte peut-être la connexion. Enregistrée : { $recorded }. Présentée : { $offered }. Si le changement est attendu, oubliez ce serveur : sa nouvelle clé est alors soumise à votre accord.
 ui-error-hostkey-algorithm = Le serveur ne propose plus le type de clé enregistré ({ $recorded }).
+ui-error-pinned-certificate-invalid = Le certificat approuvé pour { $target } n'est plus valide : connexion refusée. { $issue } Valide jusqu'au : { $until }. Clé : { $fingerprint }. Si le serveur a un nouveau certificat, oubliez ce serveur : son certificat est alors soumis à votre accord.
 ui-error-host-certificate = Le serveur a présenté un certificat d'hôte ; les certificats ne sont pas encore pris en charge.
 ui-error-known-hosts = Le fichier des hôtes connus est inutilisable : { $detail }
 ui-error-key-unreadable = Le fichier de clé { $path } n'a pas pu être lu.

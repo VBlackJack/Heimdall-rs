@@ -40,18 +40,19 @@ impl App {
             .with_file_name(KNOWN_VNC_HOSTS_FILE_NAME)
     }
 
-    /// What connecting to `profile` needs, with `accepted` as the key the user just agreed
-    /// to.
+    /// What connecting to `profile` needs, with the key the user just `accepted` or
+    /// `trusted_once`, after the certificate question.
     fn vnc_request(
         &self,
         profile: &VncProfile,
-        accepted: Option<Fingerprint>,
+        (accepted, trusted_once): (Option<Fingerprint>, Option<Fingerprint>),
         cancel: CancellationToken,
     ) -> VncRequest {
         VncRequest {
             profile: profile.clone(),
             known_hosts: self.known_vnc_hosts(),
             accepted,
+            trusted_once,
             trusted_for_run: self.certificates_trusted_for_run(&profile.host, profile.port),
             cancel,
         }
@@ -73,7 +74,7 @@ impl App {
         let tab_id = TabId::fresh();
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.vnc_request(&profile, None, cancel.clone());
+        let request = self.vnc_request(&profile, (None, None), cancel.clone());
         let mut tab = Tab::new(
             self.terminal_palette(),
             tab_id,
@@ -93,18 +94,19 @@ impl App {
         }]
     }
 
-    /// Connects a VNC tab again, with a key the user just accepted if any.
+    /// Connects a VNC tab again, with the key the user just accepted, or trusted once, if
+    /// any.
     pub(super) fn reconnect_vnc(
         &mut self,
         tab_id: TabId,
-        accepted: Option<Fingerprint>,
+        decided: (Option<Fingerprint>, Option<Fingerprint>),
     ) -> Vec<Effect> {
         let Some(TabProfile::Vnc(profile)) = self.tab(tab_id).map(|tab| tab.profile.clone()) else {
             return Vec::new();
         };
         let attempt = AttemptId::fresh();
         let cancel = CancellationToken::new();
-        let request = self.vnc_request(&profile, accepted, cancel.clone());
+        let request = self.vnc_request(&profile, decided, cancel.clone());
         let Some(tab) = self.tab_mut(tab_id) else {
             return Vec::new();
         };

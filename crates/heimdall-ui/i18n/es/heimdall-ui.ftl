@@ -289,6 +289,7 @@ ui-error-network = No se pudo contactar con el servidor: { $detail }
 ui-error-timeout = El servidor no respondió a tiempo.
 ui-error-hostkey-changed = La clave del servidor no es la registrada. Alguien podría estar interceptando la conexión. Registrada: { $recorded }. Presentada: { $offered }. Si el cambio es esperado, olvide este servidor: su nueva clave se le preguntará entonces.
 ui-error-hostkey-algorithm = El servidor ya no ofrece el tipo de clave registrado ({ $recorded }).
+ui-error-pinned-certificate-invalid = El certificado de confianza para { $target } ya no es válido: conexión rechazada. { $issue } Válido hasta: { $until }. Clave: { $fingerprint }. Si el servidor tiene un certificado nuevo, olvide este servidor: entonces se le preguntará por su certificado.
 ui-error-host-certificate = El servidor presentó un certificado de host; los certificados aún no están soportados.
 ui-error-known-hosts = No se pudo usar el archivo de hosts conocidos: { $detail }
 ui-error-key-unreadable = No se pudo leer el archivo de clave { $path }.

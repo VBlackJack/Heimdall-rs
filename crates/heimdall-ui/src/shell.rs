@@ -6993,6 +6993,11 @@ impl Shell {
             UiError::HostKeyChanged {
                 target: Some(_), ..
             } => Some(fl!("ui-session-accept-new-key-button")),
+            // A certificate the user trusted, no longer valid: forgotten, its replacement is
+            // asked about.
+            UiError::PinnedCertificateInvalid { .. } => {
+                Some(fl!("ui-session-forget-server-button"))
+            }
             _ => None,
         };
         if let Some(label) = forget {

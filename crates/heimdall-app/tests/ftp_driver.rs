@@ -16,7 +16,7 @@
 
 //! The FTP driver against an FTP server run in the test: a Files session for an anonymous
 //! profile, and for explicit FTPS the certificate question, then the pin recorded once the
-//! user trusts it.
+//! user trusts it; a pin no longer valid refused, never asked about.
 
 use std::net::{Ipv4Addr, TcpListener};
 use std::path::Path;
@@ -33,7 +33,8 @@ use unftp_sbe_fs::Filesystem;
 
 const STEP: Duration = Duration::from_secs(20);
 
-/// Serves `root` over FTP, over explicit FTPS with a fresh certificate when `keys` is given.
+/// Serves `root` over FTP, over explicit FTPS when `keys` is given: with the certificate
+/// written there, else a fresh one.
 async fn serve(root: &Path, keys: Option<&Path>) -> u16 {
     let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
         .expect("free port")
@@ -45,11 +46,13 @@ async fn serve(root: &Path, keys: Option<&Path>) -> u16 {
         Filesystem::new(home.clone()).expect("root")
     }));
     if let Some(keys) = keys {
-        let issued =
-            rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
         let (cert, key) = (keys.join("cert.pem"), keys.join("key.pem"));
-        std::fs::write(&cert, issued.cert.pem()).expect("cert file");
-        std::fs::write(&key, issued.signing_key.serialize_pem()).expect("key file");
+        if !cert.exists() {
+            let issued =
+                rcgen::generate_simple_self_signed(vec!["localhost".to_owned()]).expect("cert");
+            std::fs::write(&cert, issued.cert.pem()).expect("cert file");
+            std::fs::write(&key, issued.signing_key.serialize_pem()).expect("key file");
+        }
         builder = builder.ftps(cert, key);
     }
     tokio::spawn(
@@ -86,6 +89,7 @@ fn request(port: u16, tls: bool, known_hosts: &Path) -> FtpRequest {
         },
         known_hosts: known_hosts.to_owned(),
         accepted: None,
+        trusted_once: None,
         trusted_for_run: Vec::new(),
         cancel: CancellationToken::new(),
     }
@@ -286,4 +290,108 @@ async fn entries_copied_on_one_server_are_pasted_on_another_never_over_what_is_t
             .count(),
         0
     );
+}
+
+/// Writes in `keys` a fresh self-signed certificate for `localhost`, over since 2001; the
+/// key it is pinned by.
+fn expired_certificate(keys: &Path) -> heimdall_rdp::Fingerprint {
+    let mut params = rcgen::CertificateParams::new(vec!["localhost".to_owned()]).expect("params");
+    params.not_before = rcgen::date_time_ymd(2000, 1, 1);
+    params.not_after = rcgen::date_time_ymd(2001, 1, 1);
+    let key = rcgen::KeyPair::generate().expect("key");
+    let cert = params.self_signed(&key).expect("cert");
+    std::fs::write(keys.join("cert.pem"), cert.pem()).expect("cert file");
+    std::fs::write(keys.join("key.pem"), key.serialize_pem()).expect("key file");
+    heimdall_rdp::ServerCertificate::from_der(cert.der())
+        .expect("readable")
+        .fingerprint
+}
+
+/// Whether `event` refuses the certificate pinned by `pin` on `port` as no longer valid,
+/// over.
+fn refused_as_over(event: &ConnectionEvent, port: u16, pin: heimdall_rdp::Fingerprint) -> bool {
+    matches!(
+        event,
+        ConnectionEvent::Failed(heimdall_app::UiError::PinnedCertificateInvalid {
+            target,
+            fingerprint,
+            issue: ValidationIssue::Expired,
+            ..
+        }) if *target == format!("localhost:{port}") && *fingerprint == pin.to_string()
+    )
+}
+
+#[tokio::test]
+async fn a_pinned_ftps_certificate_over_is_refused_never_asked_about_and_stays_pinned() {
+    let root = tempfile::tempdir().expect("root");
+    let keys = tempfile::tempdir().expect("keys");
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_ftps_hosts");
+    let pin = expired_certificate(keys.path());
+    let port = serve(root.path(), Some(keys.path())).await;
+    KnownRdpHosts::new(&known)
+        .record("localhost", port, &pin)
+        .expect("pinned");
+    let pinned = std::fs::read(&known).expect("pins");
+
+    let mut events = ftp_events(request(port, true, &known), AnswerRegistry::default());
+    let event = tokio::time::timeout(STEP, events.next())
+        .await
+        .expect("in time")
+        .expect("an event");
+    assert!(refused_as_over(&event, port, pin), "{event:?}");
+    assert!(
+        tokio::time::timeout(STEP, events.next())
+            .await
+            .expect("in time")
+            .is_none(),
+        "nothing more: no question"
+    );
+    assert_eq!(
+        std::fs::read(&known).expect("pins"),
+        pinned,
+        "the pin stays"
+    );
+}
+
+#[tokio::test]
+async fn an_ftps_certificate_over_goes_through_on_the_answer_only() {
+    let root = tempfile::tempdir().expect("root");
+    let keys = tempfile::tempdir().expect("keys");
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_ftps_hosts");
+    let pin = expired_certificate(keys.path());
+    let port = serve(root.path(), Some(keys.path())).await;
+
+    // Trusted once: the attempt built on the answer goes through, the next ones refuse it.
+    let mut once = request(port, true, &known);
+    once.trusted_once = Some(pin);
+    once.trusted_for_run = vec![pin];
+    let event = first(once).await;
+    assert!(
+        matches!(event, ConnectionEvent::FilesReady { .. }),
+        "{event:?}"
+    );
+    let mut later = request(port, true, &known);
+    later.trusted_for_run = vec![pin];
+    let event = first(later).await;
+    assert!(refused_as_over(&event, port, pin), "{event:?}");
+    assert!(!known.exists(), "never written");
+
+    // Trusted for good: recorded on the answer, refused at the next connection.
+    let mut accepted = request(port, true, &known);
+    accepted.accepted = Some(pin);
+    let event = first(accepted).await;
+    assert!(
+        matches!(event, ConnectionEvent::FilesReady { .. }),
+        "{event:?}"
+    );
+    assert_eq!(
+        KnownRdpHosts::new(&known)
+            .verdict("localhost", port, &pin)
+            .expect("read"),
+        Verdict::Known
+    );
+    let event = first(request(port, true, &known)).await;
+    assert!(refused_as_over(&event, port, pin), "{event:?}");
 }

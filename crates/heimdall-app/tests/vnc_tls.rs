@@ -16,7 +16,9 @@
 
 //! A VNC tab against a server encrypting with `VeNCrypt` `X509Vnc` and a certificate no system
 //! trusts: the certificate question before any password, the certificate pinned once
-//! trusted, then refused when it changes and a downgrade to clear refused.
+//! trusted, then refused when it changes and a downgrade to clear refused; and a certificate
+//! trusted that is no longer valid refused, never asked about, until the server is
+//! forgotten.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -64,11 +66,30 @@ const HOST: &str = "127.0.0.1";
 /// A TLS server with a fresh self-signed certificate, and the key it is pinned by.
 fn server_tls() -> (TlsAcceptor, Fingerprint) {
     let issued = rcgen::generate_simple_self_signed(vec![HOST.to_owned()]).expect("cert");
-    let der = issued.cert.der().to_vec();
+    acceptor(
+        issued.cert.der().to_vec(),
+        issued.signing_key.serialize_der(),
+    )
+}
+
+/// A TLS server with a fresh self-signed certificate over since 2001, and the key it is
+/// pinned by.
+fn expired_server_tls() -> (TlsAcceptor, Fingerprint) {
+    let mut params = rcgen::CertificateParams::new(vec![HOST.to_owned()]).expect("params");
+    params.not_before = rcgen::date_time_ymd(2000, 1, 1);
+    params.not_after = rcgen::date_time_ymd(2001, 1, 1);
+    let key = rcgen::KeyPair::generate().expect("key");
+    let cert = params.self_signed(&key).expect("cert");
+    acceptor(cert.der().to_vec(), key.serialize_der())
+}
+
+/// A TLS server presenting certificate `der` of private key `key` (PKCS #8), and the key it
+/// is pinned by.
+fn acceptor(der: Vec<u8>, key: Vec<u8>) -> (TlsAcceptor, Fingerprint) {
     let pin = ServerCertificate::from_der(&der)
         .expect("readable")
         .fingerprint;
-    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(issued.signing_key.serialize_der()));
+    let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key));
     let config = ServerConfig::builder_with_provider(Arc::new(default_provider()))
         .with_safe_default_protocol_versions()
         .expect("versions")
@@ -500,4 +521,129 @@ async fn a_vencrypt_only_server_with_nothing_accepted_inside_is_refused_not_trie
     let (first, again) = server.await.expect("server");
     assert!(first.is_empty());
     assert!(!again, "nothing else to try");
+}
+
+/// Whether `events` are the refusal of the certificate pinned by `pin` as no longer valid,
+/// over, and nothing else: no question.
+fn refused_as_over(events: &[ConnectionEvent], port: u16, pin: Fingerprint) -> bool {
+    matches!(
+        events,
+        [ConnectionEvent::Failed(UiError::PinnedCertificateInvalid {
+            target,
+            fingerprint,
+            issue: heimdall_tls::ValidationIssue::Expired,
+            ..
+        })] if *target == format!("{HOST}:{port}") && *fingerprint == pin.to_string()
+    )
+}
+
+#[tokio::test]
+async fn a_pinned_certificate_over_is_refused_never_asked_about_and_stays_pinned() {
+    let (acceptor, pin) = expired_server_tls();
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_to_tls(&mut stream).await;
+        assert!(acceptor.accept(stream).await.is_err(), "refused");
+    });
+    let dir = tempfile::tempdir().expect("dir");
+    let file = dir.path().join("known_vnc_hosts");
+    KnownRdpHosts::new(&file)
+        .record(HOST, port, &pin)
+        .expect("pinned");
+    let pinned = std::fs::read(&file).expect("pins");
+    let mut app = app(dir.path(), port);
+    let attempt = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = attempt.0;
+    let events = run(&mut app, attempt).await;
+    assert!(refused_as_over(&events, port, pin), "{events:?}");
+    server.await.expect("server");
+    let found = app.tab(tab).expect("tab");
+    assert!(matches!(
+        found.phase,
+        Phase::Failed(UiError::PinnedCertificateInvalid { .. })
+    ));
+    assert!(!found.asks_about_certificate());
+    assert_eq!(std::fs::read(&file).expect("pins"), pinned, "the pin stays");
+}
+
+#[tokio::test]
+async fn a_certificate_trusted_once_goes_through_on_the_answer_then_is_checked_as_a_pin() {
+    let (acceptor, pin) = expired_server_tls();
+    let listener = TcpListener::bind((HOST, 0)).await.expect("listener");
+    let port = listener.local_addr().expect("address").port();
+    let server = tokio::spawn(async move {
+        // The question: the client goes away.
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_to_tls(&mut stream).await;
+        assert!(acceptor.accept(stream).await.is_err(), "asked about");
+        // Trusted once: the session, over as the certificate is.
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_to_tls(&mut stream).await;
+        let mut tls = acceptor.accept(stream).await.expect("TLS");
+        serve_desktop(&mut tls).await;
+        drop(tls);
+        // Connected again: refused as a pin no longer valid.
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_to_tls(&mut stream).await;
+        assert!(acceptor.accept(stream).await.is_err(), "refused");
+        // Forgotten: asked about again.
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_to_tls(&mut stream).await;
+        assert!(acceptor.accept(stream).await.is_err(), "asked about again");
+    });
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), port);
+
+    let first = attempt_of(&app.update(Message::OpenVnc(ProfileId::new("kiosk"))));
+    let tab = first.0;
+    let events = run(&mut app, first).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::UnknownRdpCertificate { fingerprint, .. }] if *fingerprint == pin
+        ),
+        "{events:?}"
+    );
+
+    // Trusted once: the attempt built on the answer takes it as it is.
+    let second = attempt_of(&app.update(Message::HostKeyTrustOnce(tab)));
+    assert_eq!(second.2.accepted, None, "nothing to record");
+    assert_eq!(second.2.trusted_once, Some(pin));
+    assert_eq!(second.2.trusted_for_run, [pin]);
+    let events = run(&mut app, second).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, ConnectionEvent::VncReady { .. })),
+        "{events:?}"
+    );
+
+    // The next connection checks it as a pin: over, refused, not asked about.
+    let third = attempt_of(&app.update(Message::ReconnectTab(tab)));
+    let tab = third.0;
+    assert_eq!(third.2.trusted_once, None, "decided once only");
+    assert_eq!(third.2.trusted_for_run, [pin]);
+    let events = run(&mut app, third).await;
+    assert!(refused_as_over(&events, port, pin), "{events:?}");
+
+    // Forgotten from the failure: the key trusted for this run with it, the question
+    // comes back.
+    let fourth = attempt_of(&app.update(Message::ForgetServer(tab)));
+    assert_eq!(fourth.2.trusted_once, None);
+    assert!(fourth.2.trusted_for_run.is_empty(), "no longer trusted");
+    let events = run(&mut app, fourth).await;
+    assert!(
+        matches!(
+            events.as_slice(),
+            [ConnectionEvent::UnknownRdpCertificate { fingerprint, .. }] if *fingerprint == pin
+        ),
+        "{events:?}"
+    );
+    server.await.expect("server");
+    assert!(
+        !dir.path().join("known_vnc_hosts").exists(),
+        "never written"
+    );
 }

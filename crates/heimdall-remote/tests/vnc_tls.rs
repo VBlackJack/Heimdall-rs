@@ -28,7 +28,7 @@ use heimdall_remote::vnc::{
     AskPassword, Authentication, RfbError, Security, SecurityPolicy, SecurityWrapper, VncConfig,
     VncConnection, VncError, connect, given_password,
 };
-use heimdall_tls::{PresentedSlot, UserTrust, fingerprint};
+use heimdall_tls::{Period, PresentedSlot, UserTrust, UserVerdict, fingerprint};
 use tokio::io::{AsyncRead, AsyncReadExt as _, AsyncWrite, AsyncWriteExt as _, ReadBuf};
 use tokio::net::{TcpListener, TcpStream};
 use tokio_rustls::TlsAcceptor;
@@ -78,7 +78,16 @@ fn server_tls() -> (TlsAcceptor, Vec<u8>) {
 /// shown when it trusted neither lands in `presented`.
 fn config(port: u16, policy: SecurityPolicy, pinned: &[Vec<u8>]) -> (VncConfig, PresentedSlot) {
     let pins: Vec<[u8; 32]> = pinned.iter().map(|der| fingerprint(der)).collect();
-    let trusted: UserTrust = Arc::new(move |der| pins.contains(&fingerprint(der)));
+    // Pinned and current: the certificates the test servers make are.
+    let trusted: UserTrust = Arc::new(move |der, _| {
+        if pins.contains(&fingerprint(der)) {
+            UserVerdict::Pinned {
+                period: Period::Current,
+            }
+        } else {
+            UserVerdict::Untrusted
+        }
+    });
     let presented = PresentedSlot::default();
     let config = VncConfig {
         host: "127.0.0.1".to_owned(),
