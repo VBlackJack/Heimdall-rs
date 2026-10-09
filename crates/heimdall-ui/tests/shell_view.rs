@@ -4737,3 +4737,143 @@ fn tall(shell: &Shell) -> common::Drawn<'_> {
     };
     common::simulator(settings, TALL_WINDOW, shell.view())
 }
+
+#[test]
+fn ctrl_shift_a_copies_the_status_then_what_it_said_lately_newest_first_with_its_time() {
+    use heimdall_app::{BroadcastMessage, Effect, Notice, SessionStatus};
+    use heimdall_ui::status_bar::status_text;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    let _ = shell.update(Message::App(AppMessage::Broadcast(
+        BroadcastMessage::Toggle,
+    )));
+    let notice = shell.app().notice().cloned().expect("broadcast said on");
+    assert!(matches!(notice, Notice::BroadcastOn(_)), "{notice:?}");
+    let targets = shell.app().broadcast_target_count();
+    let said = status_text(&SessionStatus::Ready, Some(&notice), targets);
+    let effects = shell.copy_status();
+    let [Effect::WriteClipboard(copied)] = effects.as_slice() else {
+        panic!("one text for the clipboard: {effects:?}");
+    };
+    assert_eq!(*copied, shell.status_report());
+    let lines: Vec<&str> = copied.lines().collect();
+    assert_eq!(lines[0], format!("Now: {said}"), "what the bar says now");
+    // Then what it said, newest first, each after its time: hh:mm:ss.
+    let (time, text) = lines[1].split_once(' ').expect("a time, then the text");
+    assert_eq!(text, said, "the notice, newest");
+    assert!(
+        time.len() == "00:00:00".len() && time.chars().filter(|c| *c == ':').count() == 2,
+        "{time}"
+    );
+    let older = lines[2..].join("\n");
+    assert!(
+        older.contains("server a"),
+        "the session's state before: {copied}"
+    );
+    assert_eq!(
+        lines.len() - 1,
+        shell.app().announcements().count(),
+        "one line each"
+    );
+}
+
+#[test]
+fn the_status_history_keeps_only_the_last_announcements() {
+    use heimdall_app::{ANNOUNCEMENTS_KEPT, Announcement, BroadcastMessage, Notice};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    for _ in 0..ANNOUNCEMENTS_KEPT {
+        let _ = shell.update(Message::App(AppMessage::Broadcast(
+            BroadcastMessage::Toggle,
+        )));
+    }
+    assert_eq!(shell.app().announcements().count(), ANNOUNCEMENTS_KEPT);
+    assert_eq!(
+        shell.app().announcements().next().map(|each| &each.what),
+        Some(&Announcement::Notice(Notice::BroadcastOff)),
+        "the newest first: an even number of toggles ends off"
+    );
+    assert_eq!(
+        shell.status_report().lines().count(),
+        ANNOUNCEMENTS_KEPT + 1,
+        "now, then each kept"
+    );
+}
+
+#[test]
+fn ctrl_shift_a_in_a_terminal_is_left_to_the_window_and_never_sent() {
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _) = connected_shell(dir.path());
+    let ctrl_shift_a = iced::Event::Keyboard(Event::KeyPressed {
+        key: Key::Character("A".into()),
+        modified_key: Key::Character("A".into()),
+        physical_key: Physical::Code(Code::KeyA),
+        location: Location::Standard,
+        modifiers: Modifiers::CTRL | Modifiers::SHIFT,
+        text: None,
+        repeat: false,
+    });
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([ctrl_shift_a]);
+    assert_eq!(statuses, [event::Status::Ignored], "the window's");
+    let messages: Vec<Message> = ui.into_messages().collect();
+    assert!(
+        !messages
+            .iter()
+            .any(|message| matches!(message, Message::App(AppMessage::Key { .. }))),
+        "nothing sent to the session"
+    );
+}
+
+#[test]
+fn windows_high_contrast_is_followed_and_high_contrast_can_be_chosen_by_hand() {
+    use heimdall_app::SettingsMessage;
+    use heimdall_core::settings::AppTheme;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let chosen = shell.app().settings().theme;
+    assert_ne!(chosen, AppTheme::HighContrast);
+    assert_eq!(
+        shell.theme_shown(),
+        chosen,
+        "the theme chosen until Windows says"
+    );
+    let _ = shell.update(Message::SystemHighContrast(true));
+    assert_eq!(shell.theme_shown(), AppTheme::HighContrast);
+    assert_eq!(shell.theme().to_string(), AppTheme::HighContrast.name());
+    assert_eq!(
+        shell.app().settings().theme,
+        chosen,
+        "the choice kept for when it is off"
+    );
+    let _ = shell.update(Message::SystemHighContrast(false));
+    assert_eq!(shell.theme_shown(), chosen, "back to the theme chosen");
+    // Chosen by hand: kept whatever Windows says.
+    let _ = shell.update(Message::App(AppMessage::Settings(SettingsMessage::Theme(
+        AppTheme::HighContrast,
+    ))));
+    assert_eq!(shell.theme_shown(), AppTheme::HighContrast);
+    let _ = shell.update(Message::SystemHighContrast(false));
+    assert_eq!(shell.theme_shown(), AppTheme::HighContrast);
+}
+
+#[test]
+fn tab_moves_between_fields_on_the_settings_page_and_in_a_dialog_but_a_tab_keeps_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, _, _) = connected_shell(dir.path());
+    assert!(!shell.tab_moves_focus(), "the terminal's Tab");
+    let _ = shell.update(Message::ShowSettings);
+    assert!(shell.settings_shown());
+    assert!(shell.tab_moves_focus(), "between the settings' fields");
+    let _ = shell.update(Message::Shortcut(WindowShortcut::Help));
+    assert!(shell.app().dialog.is_some(), "the shortcuts shown");
+    assert!(shell.tab_moves_focus(), "between the dialog's fields");
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    assert!(shell.app().dialog.is_none(), "Escape closes it");
+}

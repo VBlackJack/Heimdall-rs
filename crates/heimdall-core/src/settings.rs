@@ -169,11 +169,14 @@ pub enum AppTheme {
     Wormwood,
     /// Orange moved to amber.
     Sconce,
+    /// White on black, yellow and cyan accents, every control outlined: the Windows "High
+    /// Contrast Black" scheme. Taken by itself while Windows high contrast is on.
+    HighContrast,
 }
 
 impl AppTheme {
-    /// Every theme, in the order of the C# list.
-    pub const ALL: [Self; 17] = [
+    /// Every theme, in the order of the C# list, high contrast last.
+    pub const ALL: [Self; 18] = [
         Self::Dracula,
         Self::Drakul,
         Self::Striga,
@@ -191,6 +194,7 @@ impl AppTheme {
         Self::Folio,
         Self::Wormwood,
         Self::Sconce,
+        Self::HighContrast,
     ];
 
     /// The name the file holds: the C# one.
@@ -214,6 +218,7 @@ impl AppTheme {
             Self::Folio => "Folio",
             Self::Wormwood => "Wormwood",
             Self::Sconce => "Sconce",
+            Self::HighContrast => "HighContrast",
         }
     }
 

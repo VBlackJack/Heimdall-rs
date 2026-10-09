@@ -16,7 +16,8 @@
 
 //! The look of the window's controls, as the C# styles of `Themes/CommonControls.xaml` draw
 //! them: buttons in three weights and a quiet one, fields, drop-downs and check boxes, all
-//! rounded, outlined in one pixel and lit in the accent where the C# lights them.
+//! rounded, outlined in one pixel and lit in the accent where the C# lights them. In high
+//! contrast every control is outlined, wider, and the field typed in is lit in yellow.
 //!
 //! Colours are read from the theme, under the names the C# brushes take: the accent is the
 //! primary colour, a card the weak background, the secondary text the secondary colour.
@@ -34,7 +35,10 @@ use iced::widget::scrollable::{
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
 use iced::{Background, Border, Color, Element, Font, Shadow, Theme, font};
 
-use crate::tokens::{ACCENT_SHIFT, BORDER_WIDTH, OPACITY_DISABLED, radius};
+use crate::tokens::{
+    ACCENT_SHIFT, BORDER_WIDTH, FOCUS_BORDER_WIDTH, HIGH_CONTRAST_BORDER_WIDTH, OPACITY_DISABLED,
+    radius,
+};
 
 /// Width of a scrollbar's track, as the C# `ThemedScrollBarStyle`'s.
 pub const SCROLLBAR_WIDTH: f32 = 12.0;
@@ -94,6 +98,12 @@ struct Brushes {
     warning: Color,
     /// `BorderBrush`: a card's edge, as iced's bordered box draws it.
     edge: Color,
+    /// The edge of a control drawn without one: none, but in high contrast.
+    quiet_edge: Color,
+    /// The field the keyboard is in: the accent, yellow in high contrast.
+    focus: Color,
+    /// Width of every control's border: wider in high contrast.
+    width: f32,
 }
 
 impl Brushes {
@@ -101,6 +111,8 @@ impl Brushes {
     fn of(theme: &Theme) -> Self {
         let extended: &Extended = theme.extended_palette();
         let accent = extended.primary.base.color;
+        let high_contrast = crate::themes::is_high_contrast(theme);
+        let secondary = extended.secondary.base.color;
         Self {
             accent,
             accent_hover: palette::lighten(accent, ACCENT_SHIFT),
@@ -109,31 +121,56 @@ impl Brushes {
             card: extended.background.weak.color,
             surface: extended.background.base.color,
             text: extended.background.base.text,
-            secondary: extended.secondary.base.color,
+            secondary,
             danger: extended.danger.base.color,
             warning: extended.warning.base.color,
             edge: extended.background.strong.color,
+            quiet_edge: if high_contrast {
+                secondary
+            } else {
+                Color::TRANSPARENT
+            },
+            focus: if high_contrast {
+                crate::themes::colors_of(theme).yellow
+            } else {
+                accent
+            },
+            width: if high_contrast {
+                HIGH_CONTRAST_BORDER_WIDTH
+            } else {
+                BORDER_WIDTH
+            },
         }
     }
-}
 
-/// A one-pixel border of `color`, rounded by `corner`.
-fn outline(color: Color, corner: f32) -> Border {
-    Border {
-        color,
-        width: BORDER_WIDTH,
-        radius: corner.into(),
+    /// A border of `color` as wide as the theme's, rounded by `corner`.
+    fn outline(&self, color: Color, corner: f32) -> Border {
+        Border {
+            color,
+            width: self.width,
+            radius: corner.into(),
+        }
     }
-}
 
-/// A button's look at rest: `background`, `text` and a border of `edge`.
-fn button_style(background: Option<Color>, text: Color, edge: Color) -> ButtonStyle {
-    ButtonStyle {
-        background: background.map(Background::Color),
-        text_color: text,
-        border: outline(edge, radius::MD),
-        shadow: Shadow::default(),
-        snap: true,
+    /// The border of the field the keyboard is in, rounded by `corner`: wider than the
+    /// rest in every theme, so it is seen at a glance.
+    fn focus_ring(&self, corner: f32) -> Border {
+        Border {
+            color: self.focus,
+            width: self.width.max(FOCUS_BORDER_WIDTH),
+            radius: corner.into(),
+        }
+    }
+
+    /// A button's look at rest: `background`, `text` and a border of `edge`.
+    fn button(&self, background: Option<Color>, text: Color, edge: Color) -> ButtonStyle {
+        ButtonStyle {
+            background: background.map(Background::Color),
+            text_color: text,
+            border: self.outline(edge, radius::MD),
+            shadow: Shadow::default(),
+            snap: true,
+        }
     }
 }
 
@@ -161,7 +198,7 @@ fn faded_to(style: &ButtonStyle, opacity: f32) -> ButtonStyle {
 /// OK.
 pub fn primary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let filled = |color| button_style(Some(color), brushes.on_accent, color);
+    let filled = |color| brushes.button(Some(color), brushes.on_accent, color);
     match status {
         ButtonStatus::Active => filled(brushes.accent),
         ButtonStatus::Hovered => filled(brushes.accent_hover),
@@ -174,11 +211,11 @@ pub fn primary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
 /// `SecondaryButtonStyle`: Edit, Cancel, Later. The accent outlines it under the pointer.
 pub fn secondary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let rest = button_style(Some(brushes.card), brushes.text, brushes.secondary);
+    let rest = brushes.button(Some(brushes.card), brushes.text, brushes.secondary);
     match status {
         ButtonStatus::Active => rest,
         ButtonStatus::Hovered => ButtonStyle {
-            border: outline(brushes.accent, radius::MD),
+            border: brushes.outline(brushes.accent, radius::MD),
             ..rest
         },
         ButtonStatus::Pressed => ButtonStyle {
@@ -193,11 +230,11 @@ pub fn secondary(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
 /// outlines it under the pointer.
 pub fn danger(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let rest = button_style(Some(brushes.card), brushes.danger, brushes.secondary);
+    let rest = brushes.button(Some(brushes.card), brushes.danger, brushes.secondary);
     match status {
         ButtonStatus::Active => rest,
         ButtonStatus::Hovered => ButtonStyle {
-            border: outline(brushes.danger, radius::MD),
+            border: brushes.outline(brushes.danger, radius::MD),
             ..rest
         },
         ButtonStatus::Pressed => ButtonStyle {
@@ -209,10 +246,10 @@ pub fn danger(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
 }
 
 /// An action that keeps quiet, text alone until the pointer is on it, as the C#
-/// `GhostButtonStyle`: a link, a close mark, a toolbar's entry.
+/// `GhostButtonStyle`: a link, a close mark, a toolbar's entry. Outlined in high contrast.
 pub fn subtle(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let rest = button_style(None, brushes.text, Color::TRANSPARENT);
+    let rest = brushes.button(None, brushes.text, brushes.quiet_edge);
     match status {
         ButtonStatus::Active => rest,
         ButtonStatus::Hovered => ButtonStyle {
@@ -221,7 +258,7 @@ pub fn subtle(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
         },
         ButtonStatus::Pressed => ButtonStyle {
             background: Some(Background::Color(brushes.card)),
-            border: outline(brushes.secondary, radius::MD),
+            border: brushes.outline(brushes.secondary, radius::MD),
             ..rest
         },
         ButtonStatus::Disabled => faded(&rest),
@@ -245,15 +282,15 @@ pub fn close_mark(quiet: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
 /// it, its text red.
 pub fn broadcasting(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
     let brushes = Brushes::of(theme);
-    let rest = button_style(
+    let rest = brushes.button(
         Some(brushes.danger.scale_alpha(BROADCAST_ALPHA)),
         brushes.danger,
-        Color::TRANSPARENT,
+        brushes.quiet_edge,
     );
     match status {
         ButtonStatus::Active | ButtonStatus::Hovered => rest,
         ButtonStatus::Pressed => ButtonStyle {
-            border: outline(brushes.danger, radius::MD),
+            border: brushes.outline(brushes.danger, radius::MD),
             ..rest
         },
         ButtonStatus::Disabled => faded(&rest),
@@ -262,6 +299,7 @@ pub fn broadcasting(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
 
 /// A session's tab, as the C# `ThemedTabItemStyle`: nothing behind it but under the
 /// pointer, a card once `selected`, rounded at the top; its text secondary until then.
+/// Outlined in high contrast.
 pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
     move |theme, status| {
         let brushes = Brushes::of(theme);
@@ -270,8 +308,9 @@ pub fn tab(selected: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
             background: lit.then_some(Background::Color(brushes.card)),
             text_color: if lit { brushes.text } else { brushes.secondary },
             border: Border {
+                color: brushes.quiet_edge,
+                width: brushes.width,
                 radius: TAB_RADIUS,
-                ..Border::default()
             },
             shadow: Shadow::default(),
             snap: true,
@@ -314,13 +353,14 @@ pub fn accent_dot(theme: &Theme) -> BoxStyle {
 }
 
 /// A text field, as the C# `ThemedTextBoxStyle`: a card outlined in the secondary text, in
-/// the text colour under the pointer and in the accent while typed in.
+/// the text colour under the pointer and in the accent while typed in, wider then; yellow
+/// in high contrast.
 pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
     let brushes = Brushes::of(theme);
     let selection = theme.extended_palette().primary.weak.color;
     let rest = FieldStyle {
         background: Background::Color(brushes.card),
-        border: outline(brushes.secondary, radius::MD),
+        border: brushes.outline(brushes.secondary, radius::MD),
         icon: brushes.secondary,
         placeholder: brushes.secondary,
         value: brushes.text,
@@ -329,16 +369,16 @@ pub fn text_input(theme: &Theme, status: FieldStatus) -> FieldStyle {
     match status {
         FieldStatus::Active => rest,
         FieldStatus::Hovered => FieldStyle {
-            border: outline(brushes.text, radius::MD),
+            border: brushes.outline(brushes.text, radius::MD),
             ..rest
         },
         FieldStatus::Focused { .. } => FieldStyle {
-            border: outline(brushes.accent, radius::MD),
+            border: brushes.focus_ring(radius::MD),
             ..rest
         },
         FieldStatus::Disabled => FieldStyle {
             background: Background::Color(brushes.card.scale_alpha(OPACITY_DISABLED)),
-            border: outline(brushes.secondary.scale_alpha(OPACITY_DISABLED), radius::MD),
+            border: brushes.outline(brushes.secondary.scale_alpha(OPACITY_DISABLED), radius::MD),
             value: brushes.text.scale_alpha(OPACITY_DISABLED),
             ..rest
         },
@@ -354,16 +394,16 @@ pub fn pick_list(theme: &Theme, status: ListStatus) -> ListStyle {
         placeholder_color: brushes.secondary,
         handle_color: brushes.text,
         background: Background::Color(brushes.card),
-        border: outline(brushes.secondary, radius::MD),
+        border: brushes.outline(brushes.secondary, radius::MD),
     };
     match status {
         ListStatus::Active => rest,
         ListStatus::Hovered => ListStyle {
-            border: outline(brushes.text, radius::MD),
+            border: brushes.outline(brushes.text, radius::MD),
             ..rest
         },
         ListStatus::Opened { .. } => ListStyle {
-            border: outline(brushes.accent, radius::MD),
+            border: brushes.focus_ring(radius::MD),
             ..rest
         },
     }
@@ -376,7 +416,7 @@ pub fn menu(theme: &Theme) -> MenuStyle {
     let lit = theme.extended_palette().primary.strong;
     MenuStyle {
         background: Background::Color(brushes.card),
-        border: outline(brushes.accent, radius::LG),
+        border: brushes.outline(brushes.accent, radius::LG),
         text_color: brushes.text,
         selected_text_color: lit.text,
         selected_background: Background::Color(lit.color),
@@ -401,7 +441,7 @@ pub fn checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
     CheckStyle {
         background: Background::Color(fill.scale_alpha(fade)),
         icon_color: brushes.on_accent,
-        border: outline(edge.scale_alpha(fade), radius::SM),
+        border: brushes.outline(edge.scale_alpha(fade), radius::SM),
         text_color: None,
     }
 }
@@ -409,7 +449,8 @@ pub fn checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
 /// A row of a list that draws its own background, as a file list's row over the C#
 /// `FileBrowserRowStyle`: the button itself shows nothing but its text.
 pub fn bare(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
-    let rest = button_style(None, Brushes::of(theme).text, Color::TRANSPARENT);
+    let brushes = Brushes::of(theme);
+    let rest = brushes.button(None, brushes.text, Color::TRANSPARENT);
     match status {
         ButtonStatus::Disabled => faded(&rest),
         _ => rest,
@@ -422,9 +463,9 @@ pub fn toggle(on: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
     move |theme, status| {
         let brushes = Brushes::of(theme);
         let rest = if on {
-            button_style(Some(brushes.card), brushes.text, brushes.warning)
+            brushes.button(Some(brushes.card), brushes.text, brushes.warning)
         } else {
-            button_style(None, brushes.text, brushes.secondary)
+            brushes.button(None, brushes.text, brushes.secondary)
         };
         match status {
             ButtonStatus::Active => rest,
@@ -446,7 +487,7 @@ pub fn card(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.card)),
-        border: outline(brushes.edge, radius::LG),
+        border: brushes.outline(brushes.edge, radius::LG),
         ..BoxStyle::default()
     }
 }
@@ -457,7 +498,7 @@ pub fn dialog(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.surface)),
-        border: outline(brushes.edge, radius::XL),
+        border: brushes.outline(brushes.edge, radius::XL),
         ..BoxStyle::default()
     }
 }
@@ -468,7 +509,7 @@ pub fn tab_frame(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.card)),
-        border: outline(brushes.edge, radius::XL),
+        border: brushes.outline(brushes.edge, radius::XL),
         ..BoxStyle::default()
     }
 }
@@ -496,7 +537,7 @@ pub fn field_box(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.card)),
-        border: outline(brushes.secondary, radius::MD),
+        border: brushes.outline(brushes.secondary, radius::MD),
         ..BoxStyle::default()
     }
 }
@@ -506,7 +547,7 @@ pub fn badge(theme: &Theme) -> BoxStyle {
     let brushes = Brushes::of(theme);
     BoxStyle {
         background: Some(Background::Color(brushes.surface)),
-        border: outline(brushes.accent, radius::SM),
+        border: brushes.outline(brushes.accent, radius::SM),
         ..BoxStyle::default()
     }
 }
@@ -642,6 +683,65 @@ mod tests {
         assert_eq!(typed.border.color, colors.accent(Accent::Blue));
         let rest = text_input(&theme, FieldStatus::Active);
         assert_eq!(rest.border.color, colors.comment);
+    }
+
+    #[test]
+    fn the_field_typed_in_is_outlined_wider_in_every_theme_and_yellow_in_high_contrast() {
+        for each in AppTheme::ALL {
+            let theme = themes::theme(each, Accent::Blue);
+            let rest = text_input(&theme, FieldStatus::Active);
+            let typed = text_input(&theme, FieldStatus::Focused { is_hovered: false });
+            assert!(
+                (typed.border.width - FOCUS_BORDER_WIDTH).abs() < f32::EPSILON,
+                "{each:?}"
+            );
+            assert!(
+                typed.border.width > BORDER_WIDTH,
+                "{each:?}: seen at a glance"
+            );
+            assert_ne!(typed.border.color, rest.border.color, "{each:?}");
+            let expected = if each == AppTheme::HighContrast {
+                themes::colors(each).yellow
+            } else {
+                themes::colors(each).accent(Accent::Blue)
+            };
+            assert_eq!(typed.border.color, expected, "{each:?}");
+        }
+    }
+
+    #[test]
+    fn high_contrast_outlines_every_control_wider() {
+        let theme = themes::theme(AppTheme::HighContrast, Accent::Default);
+        let white = themes::colors(AppTheme::HighContrast).foreground;
+        let borders = [
+            primary(&theme, ButtonStatus::Active).border,
+            secondary(&theme, ButtonStatus::Active).border,
+            subtle(&theme, ButtonStatus::Active).border,
+            tab(false)(&theme, ButtonStatus::Active).border,
+            text_input(&theme, FieldStatus::Active).border,
+            pick_list(&theme, ListStatus::Active).border,
+            checkbox(&theme, CheckStatus::Active { is_checked: false }).border,
+            card(&theme).border,
+        ];
+        for border in borders {
+            assert!(
+                (border.width - HIGH_CONTRAST_BORDER_WIDTH).abs() < f32::EPSILON,
+                "{border:?}"
+            );
+            assert!(border.color.a > 0.0, "drawn: {border:?}");
+        }
+        assert_eq!(subtle(&theme, ButtonStatus::Active).border.color, white);
+        assert_eq!(card(&theme).border.color, white, "white edges");
+        let other = magellan();
+        assert_eq!(
+            subtle(&other, ButtonStatus::Active).border.color,
+            Color::TRANSPARENT,
+            "elsewhere a quiet button has no edge"
+        );
+        assert!(
+            (secondary(&other, ButtonStatus::Active).border.width - BORDER_WIDTH).abs()
+                < f32::EPSILON
+        );
     }
 
     #[test]

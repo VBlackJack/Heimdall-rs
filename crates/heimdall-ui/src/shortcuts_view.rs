@@ -90,6 +90,8 @@ pub enum Action {
     ReleaseDesktop,
     Settings,
     Screenshot,
+    /// Ctrl+Shift+A: what the status bar said lately, copied for a screen reader.
+    CopyStatus,
     Lock,
     Help,
     Close,
@@ -158,6 +160,7 @@ pub const SHORTCUTS: [(Group, &[(&str, Action)]); 5] = [
             ("Ctrl+Alt+Home", Action::ReleaseDesktop),
             ("Ctrl+,", Action::Settings),
             ("Ctrl+Shift+S", Action::Screenshot),
+            ("Ctrl+Shift+A", Action::CopyStatus),
             ("Ctrl+L", Action::Lock),
             ("F1", Action::Help),
             ("Esc", Action::Close),
@@ -216,6 +219,7 @@ pub fn action_text(action: Action) -> String {
         Action::ReleaseDesktop => fl!("ui-shortcuts-release-desktop"),
         Action::Settings => fl!("ui-shortcuts-settings"),
         Action::Screenshot => fl!("ui-shortcuts-screenshot"),
+        Action::CopyStatus => fl!("ui-shortcuts-copy-status"),
         Action::Lock => fl!("ui-shortcuts-lock"),
         Action::Help => fl!("ui-shortcuts-help"),
         Action::Close => fl!("ui-shortcuts-close"),
@@ -280,6 +284,6 @@ mod tests {
             assert!(!action_text(*action).is_empty(), "{action:?}");
         }
 
-        assert_eq!(actions.len(), 40, "every action listed");
+        assert_eq!(actions.len(), 41, "every action listed");
     }
 }

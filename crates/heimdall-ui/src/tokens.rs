@@ -75,6 +75,12 @@ pub mod spacing {
 /// Width of a control's border: a button's, a field's, a card's, as every C# style sets it.
 pub const BORDER_WIDTH: f32 = 1.0;
 
+/// Width of a control's border in high contrast: every control outlined, wider.
+pub const HIGH_CONTRAST_BORDER_WIDTH: f32 = 2.0;
+
+/// Width of the border of the field the keyboard is in, in every theme: seen at a glance.
+pub const FOCUS_BORDER_WIDTH: f32 = 2.0;
+
 /// Opacity of a control that cannot be used, as the C# `OpacityDisabled`.
 pub const OPACITY_DISABLED: f32 = 0.6;
 

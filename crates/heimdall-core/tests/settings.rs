@@ -114,7 +114,7 @@ fn the_theme_and_accent_are_drakul_and_its_own_until_chosen_then_kept_by_their_c
         }
     }
     let text = std::fs::read_to_string(&path).expect("text");
-    assert!(text.contains("theme = \"Sconce\""), "{text}");
+    assert!(text.contains("theme = \"HighContrast\""), "{text}");
     assert!(text.contains("accent = \"Yellow\""), "{text}");
     assert_eq!(
         AppTheme::ALL.map(AppTheme::name),
@@ -135,7 +135,8 @@ fn the_theme_and_accent_are_drakul_and_its_own_until_chosen_then_kept_by_their_c
             "Parchment",
             "Folio",
             "Wormwood",
-            "Sconce"
+            "Sconce",
+            "HighContrast"
         ]
     );
     assert_eq!(
