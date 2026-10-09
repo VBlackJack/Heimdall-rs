@@ -17,7 +17,8 @@
 //! A Citrix application launched as the C# `CitrixHandler` launches it, outside Heimdall:
 //! the line Citrix Workspace's cache gave it, an ICA file opened by the program it belongs
 //! to, or the published application asked of its `StoreFront` through Citrix Workspace's
-//! own launcher. Its window is Citrix's own: none is embedded in a tab.
+//! own launcher. Its window is Citrix's own: none is embedded in a tab, which shows the
+//! launch and its client's state instead, as [`crate::citrix_session`] says.
 
 use std::path::{Path, PathBuf};
 
@@ -38,6 +39,10 @@ const STOREBROWSE_NO_SSO: &str = "-L";
 /// `SelfService.exe`'s command and its quiet single sign-on switch.
 const SELF_SERVICE_COMMAND: &str = "storebrowse";
 const SELF_SERVICE_SSO: &str = "-q";
+
+/// The process gets no console window, as the C# `CreateNoWindow`.
+#[cfg(windows)]
+pub(crate) const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// What a cache launch line may not hold, as the C# refuses it: what a shell would read.
 const FORBIDDEN_IN_LAUNCH_LINE: [char; 7] = ['|', '&', ';', '`', '$', '\n', '\r'];
@@ -332,18 +337,17 @@ fn command(launch: &CitrixLaunch) -> Result<std::process::Command, CitrixRefusal
 
 /// Launches `launch`: `SelfService.exe` given the cache line, the ICA file opened as a
 /// double click opens it, or the launcher started with its arguments; no shell reading
-/// them, no console shown.
+/// them, no console shown. The launcher started is returned, for its exit code: it is not
+/// the session, which Citrix Workspace's client runs once the launcher handed it over.
 ///
 /// # Errors
 ///
 /// [`CitrixRefusal`] when nothing was started.
-pub fn launch(launch: &CitrixLaunch) -> Result<(), CitrixRefusal> {
+pub fn launch(launch: &CitrixLaunch) -> Result<std::process::Child, CitrixRefusal> {
     let mut command = command(launch)?;
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
-        /// The process gets no console window, as the C# `CreateNoWindow`.
-        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
         command.creation_flags(CREATE_NO_WINDOW);
     }
     command
@@ -351,7 +355,6 @@ pub fn launch(launch: &CitrixLaunch) -> Result<(), CitrixRefusal> {
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .spawn()
-        .map(drop)
         .map_err(|error| CitrixRefusal::NotStarted(error.to_string()))
 }
 

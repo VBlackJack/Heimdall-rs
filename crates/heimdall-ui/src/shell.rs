@@ -46,16 +46,16 @@ use heimdall_app::vnc_driver::vnc_events;
 use heimdall_app::winrm_driver::winrm_events;
 use heimdall_app::{
     Answer, AnswerRegistry, App, AppConfig, AttemptId, BroadcastMessage, CertificateContext,
-    ConnectionEvent, DesktopPane, Dialog, Effect, FilesMessage, FilterMessage, FloatId,
-    FloatMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS, LocalConfirmation,
-    MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES, Message as AppMessage, NameAction,
-    PastePreview, Phase, PinDialog, PinFailure, PinMessage, PinMode, PostConnectConfirmation,
-    PostConnectProgress, ProfileMenuMessage, Prompt, ProviderMessage, Purpose, QuestionId,
-    QuestionKind, Retry, SaveState, ScriptConfirmation, SelectionMessage, SessionState,
-    SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup, TabId, TabMenuMessage,
-    TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError, VaultDialog, VaultJob,
-    VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events, master_password_problem,
-    open_vault, server_text,
+    ConnectionEvent, DesktopPane, Dialog, Effect, ElevatedPane, ElevatedState, FilesMessage,
+    FilterMessage, FloatId, FloatMessage, FolderMessage, FolderNaming, LONG_MASTER_PASSWORD_CHARS,
+    LocalConfirmation, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
+    Message as AppMessage, NameAction, PastePreview, Phase, PinDialog, PinFailure, PinMessage,
+    PinMode, PostConnectConfirmation, PostConnectProgress, ProfileMenuMessage, Prompt,
+    ProviderMessage, Purpose, QuestionId, QuestionKind, Retry, SaveState, ScriptConfirmation,
+    SelectionMessage, SessionState, SettingsMessage, SpecialKeys, SystemCredentials, Tab, TabGroup,
+    TabId, TabMenuMessage, TabProfile, TreeRow, TrustedKeysMessage, TunnelMessage, UiError,
+    VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
+    master_password_problem, open_vault, server_text,
 };
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
@@ -1915,6 +1915,13 @@ impl Shell {
                     .map(|_| Message::App(AppMessage::HealthTick)),
             );
         }
+        // The Citrix tabs' clients, looked at as the C# health check looks at its session.
+        if self.app.polls_citrix() {
+            subscriptions.push(
+                iced::time::every(heimdall_app::citrix_session::HEALTH_INTERVAL)
+                    .map(|_| Message::App(AppMessage::CitrixTick)),
+            );
+        }
         if let Some(interval) = self.app.anti_idle_interval() {
             subscriptions
                 .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
@@ -3644,18 +3651,14 @@ impl Shell {
                 }
             })
             .discard(),
-            Effect::LaunchCitrix { name, launch } => Task::future(async move {
-                // Starting a process waits on the system: off the UI thread, as a browser.
-                let result =
-                    tokio::task::spawn_blocking(move || heimdall_app::citrix::launch(&launch))
-                        .await
-                        .unwrap_or_else(|error| {
-                            Err(heimdall_app::citrix::CitrixRefusal::NotStarted(
-                                error.to_string(),
-                            ))
-                        });
-                Message::App(AppMessage::CitrixLaunched { name, result })
-            }),
+            Effect::LaunchCitrix { tab, name, launch } => {
+                crate::citrix_view::launch(tab, name, launch)
+            }
+            Effect::ProbeCitrix {
+                tab,
+                launcher,
+                lists,
+            } => crate::citrix_view::probe(tab, launcher, lists),
             Effect::LaunchRdpExternal {
                 name,
                 gateway,
@@ -3677,6 +3680,18 @@ impl Shell {
                     gateway,
                     result,
                 })
+            }),
+            Effect::LaunchElevated { tab, request } => Task::future(async move {
+                // The elevation prompt holds the call until answered: off the UI thread, on
+                // a worker thread of its own, where COM is set up for it.
+                let outcome = tokio::task::spawn_blocking(move || {
+                    heimdall_app::elevated_shell::launch(&request)
+                })
+                .await
+                .unwrap_or_else(|error| {
+                    heimdall_app::elevated_shell::ElevatedOutcome::Failed(error.to_string())
+                });
+                Message::App(AppMessage::ElevatedLaunched { tab, outcome })
             }),
             Effect::ProbePuttyHostKey { profile, options } => Task::future(async move {
                 let profile = *profile;
@@ -6466,8 +6481,15 @@ impl Shell {
     /// What `tab` shows: its question, its session, or what became of it. Only the pane with
     /// the keyboard, `focused`, takes typing.
     fn tab_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
+        // A Citrix application's window is Citrix's own: its tab shows its status alone.
+        if let (TabProfile::Citrix(profile), Some(pane)) = (&tab.profile, tab.citrix.as_deref()) {
+            return crate::citrix_view::view(profile, pane, SessionState::of(tab));
+        }
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();
+        }
+        if let Some(pane) = &tab.elevated {
+            return self.elevated_card(tab, pane);
         }
         match &tab.phase {
             Phase::Connecting => self.connecting_card(tab),
@@ -6562,6 +6584,69 @@ impl Shell {
             Phase::Failed(_) if let Some(retry) = tab.retry => countdown_card(tab.id, retry),
             Phase::Failed(error) => self.failure_card(tab, error),
         }
+    }
+
+    /// A local shell run as administrator: no terminal, as Windows runs it in a window of its
+    /// own, but what became of its start under an ADMIN badge, as the C# says it; then the way
+    /// to open it again, once it can be, and Close.
+    fn elevated_card<'a>(&'a self, tab: &'a Tab, pane: &'a ElevatedPane) -> Element<'a, Message> {
+        let name = server_text(tab.profile.name());
+        let (said, failed) = match &pane.state {
+            ElevatedState::Starting => (
+                fl!("ui-local-elevated-starting", name = name.as_str()),
+                false,
+            ),
+            ElevatedState::Started => (
+                fl!("ui-local-elevated-started", name = name.as_str()),
+                false,
+            ),
+            ElevatedState::Cancelled => (fl!("ui-local-elevated-cancelled"), false),
+            ElevatedState::Failed(detail) => (
+                fl!("ui-local-elevated-failed", detail = detail.as_str()),
+                true,
+            ),
+            ElevatedState::Unsupported => (fl!("ui-local-elevated-unsupported"), true),
+        };
+        let badge = container(
+            text(fl!("ui-local-admin-badge"))
+                .size(font_size::BADGE)
+                .style(text::danger)
+                .wrapping(text::Wrapping::None),
+        )
+        .padding([0.0, spacing::XS])
+        .style(container::bordered_box);
+        let mut body = column![
+            row![badge, text(name).size(font_size::TITLE)]
+                .spacing(spacing::SM)
+                .align_y(iced::Alignment::Center),
+            if failed {
+                text(said).style(text::danger)
+            } else {
+                text(said)
+            },
+        ]
+        .spacing(spacing::SM);
+        if let Some(program) = &pane.program {
+            body = body.push(
+                text(fl!("ui-local-elevated-program", program = program.as_str()))
+                    .size(font_size::CAPTION)
+                    .style(text::secondary),
+            );
+        }
+        let mut actions = row![].spacing(spacing::SM).align_y(iced::Alignment::Center);
+        if pane.state != ElevatedState::Unsupported && self.app.can_reconnect(tab) {
+            actions = actions.push(
+                button(action_label(fl!("ui-local-elevated-open-again-button")))
+                    .style(styles::primary)
+                    .on_press(Message::App(AppMessage::ReconnectTab(tab.id))),
+            );
+        }
+        actions = actions.push(
+            button(action_label(fl!("ui-session-close-button")))
+                .style(styles::secondary)
+                .on_press(Message::App(AppMessage::RequestCloseTab(tab.id))),
+        );
+        center(card(body.push(actions.wrap()))).into()
     }
 
     /// A session that dropped once open, as the C# "View output" leaves its output readable
@@ -7029,6 +7114,7 @@ impl Default for Shell {
 fn shows_terminal(tab: &Tab) -> bool {
     tab.files.is_none()
         && tab.desktop.is_none()
+        && tab.elevated.is_none()
         && !matches!(tab.purpose, Purpose::Files | Purpose::Rdp | Purpose::Vnc)
         && matches!(tab.phase, Phase::Connected | Phase::Closed { .. })
 }
@@ -8259,6 +8345,7 @@ fn toggle_label(toggle: ProfileToggle) -> String {
         ProfileToggle::Seamless => fl!("ui-profile-toggle-seamless"),
         ProfileToggle::Sso => fl!("ui-profile-toggle-sso"),
         ProfileToggle::Favorite => fl!("ui-profile-toggle-favorite"),
+        ProfileToggle::RunAsAdministrator => fl!("ui-profile-local-run-as-admin"),
     }
 }
 
@@ -9726,9 +9813,14 @@ fn rename_tab_dialog(value: &str) -> Element<'_, Message> {
 /// The command a local profile would run, shown whole before it does: nothing cut, every
 /// invisible character written out, and a warning when the program reads its line again.
 fn local_command_dialog(confirmation: &LocalConfirmation) -> Element<'_, Message> {
+    let intro = fl!("ui-dialog-local-body", name = confirmation.name.as_str());
     command_question(
         fl!("ui-dialog-local-title"),
-        fl!("ui-dialog-local-body", name = confirmation.name.as_str()),
+        if confirmation.elevated {
+            format!("{intro}\n{}", fl!("ui-dialog-local-elevated"))
+        } else {
+            intro
+        },
         &confirmation.command,
         confirmation.folder.as_deref(),
         confirmation.rereads,
@@ -10175,7 +10267,8 @@ fn fits_by_default(profile: &TabProfile) -> bool {
         | TabProfile::Telnet(_)
         | TabProfile::Local(_)
         | TabProfile::Ftp(_)
-        | TabProfile::WinRm(_) => false,
+        | TabProfile::WinRm(_)
+        | TabProfile::Citrix(_) => false,
     }
 }
 

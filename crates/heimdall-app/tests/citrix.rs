@@ -14,17 +14,23 @@
  * limitations under the License.
  */
 
-//! Citrix profiles: launched outside Heimdall, with no tab, the status bar saying how it
-//! went; created, edited and duplicated as the other protocols' profiles; imported from
-//! Citrix Workspace's cache, their launch lines kept in the vault.
+//! Citrix profiles: launched outside Heimdall, a tab showing the launch and its client's
+//! state, the status bar saying how it went; created, edited and duplicated as the other
+//! protocols' profiles; imported from Citrix Workspace's cache, their launch lines kept in
+//! the vault.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::SystemTime;
 
 use heimdall_app::citrix::{CitrixLaunch, CitrixRefusal};
+use heimdall_app::citrix_session::{
+    ClientState, LaunchMethod, Launched, LauncherStatus, LauncherWatch, Probe,
+};
 use heimdall_app::profile_draft::{DraftProtocol, ProfileField, ProfileToggle};
 use heimdall_app::{
-    App, AppConfig, CitrixImportOutcome, Dialog, Effect, Message, Notice, ProfileKind,
-    SystemCredentials, VaultStatus, open_vault,
+    App, AppConfig, CitrixImportOutcome, Dialog, Effect, Message, Notice, Phase, ProfileKind,
+    SystemCredentials, TabId, TabProfile, VaultStatus, open_vault,
 };
 use heimdall_core::credentials::{citrix_launch_entry, decode_citrix_launch};
 use heimdall_core::import::citrix_cache::{self, CacheScan};
@@ -80,13 +86,14 @@ fn type_in(app: &mut App, field: ProfileField, value: &str) {
 }
 
 #[test]
-fn a_citrix_application_launches_outside_heimdall_and_says_so() {
+fn a_citrix_application_launches_outside_heimdall_and_its_tab_says_how_it_goes() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path(), &[outlook()]);
     // Opened from the tree, as any profile.
     let effects = app.update(Message::ConnectProfile(ProfileId::new("outlook")));
     let [
         Effect::LaunchCitrix {
+            tab,
             name,
             launch:
                 CitrixLaunch::StoreFront {
@@ -108,20 +115,144 @@ fn a_citrix_application_launches_outside_heimdall_and_says_so() {
             false
         )
     );
-    assert!(app.tabs.is_empty(), "no tab: its window is Citrix's own");
+    let tab = *tab;
+    // Its window is Citrix's own: the tab shows its status.
+    let shown = app.tab(tab).expect("its tab");
+    assert!(matches!(shown.profile, TabProfile::Citrix(_)));
+    assert_eq!(
+        shown.citrix.as_deref().map(|pane| pane.method),
+        Some(LaunchMethod::StoreFront)
+    );
+    assert_eq!(shown.phase, Phase::Connecting);
+    assert_eq!(app.active, Some(tab));
+    assert_eq!(client(&app, tab), ClientState::Launching);
     assert_eq!(app.notice(), Some(&Notice::CitrixLaunching));
+    assert!(!app.polls_citrix(), "nothing launched yet");
 
     let effects = app.update(Message::CitrixLaunched {
+        tab,
         name: "Outlook".to_owned(),
-        result: Ok(()),
+        result: Ok(launched_with(&[])),
     });
     assert!(effects.is_empty());
     assert_eq!(
         app.notice(),
         Some(&Notice::CitrixLaunched("Outlook".to_owned()))
     );
+    assert!(app.polls_citrix());
 
+    // Every tick, one look at a time.
+    let effects = app.update(Message::CitrixTick);
+    assert!(
+        matches!(
+            effects.as_slice(),
+            [Effect::ProbeCitrix { tab: probed, lists: true, .. }] if *probed == tab
+        ),
+        "{effects:?}"
+    );
+    assert!(app.update(Message::CitrixTick).is_empty(), "one under way");
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    assert_eq!(client(&app, tab), ClientState::NotFoundYet);
+
+    app.update(Message::CitrixTick);
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Exited(Some(0)), &[42]),
+    });
+    assert_eq!(client(&app, tab), ClientState::Running(42));
+    let shown = app.tab(tab).expect("its tab");
+    assert_eq!(shown.phase, Phase::Connected);
+    assert!(
+        !shown.is_live(),
+        "closing it leaves the Citrix session as it is"
+    );
+    assert_eq!(
+        shown
+            .citrix
+            .as_deref()
+            .and_then(|pane| pane.tracker.exit_code()),
+        Some(0)
+    );
+
+    app.update(Message::CitrixTick);
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Exited(Some(0)), &[]),
+    });
+    assert_eq!(client(&app, tab), ClientState::Ended(42));
+    assert_eq!(
+        app.tab(tab).expect("its tab").phase,
+        Phase::Closed { exit_status: None }
+    );
+    assert!(!app.polls_citrix(), "nothing more to learn");
+}
+
+/// A launcher standing as it was made.
+struct Watch(LauncherStatus);
+
+impl LauncherWatch for Watch {
+    fn status(&self) -> LauncherStatus {
+        self.0
+    }
+}
+
+/// A launch done with the clients `before` running, its launcher still running.
+fn launched_with(before: &[u32]) -> Launched {
+    Launched {
+        baseline: Ok(before.iter().copied().collect()),
+        launcher: Arc::new(Watch(LauncherStatus::Running)),
+        at: SystemTime::now(),
+    }
+}
+
+/// What a probe saw: the launcher, and the clients running.
+fn seen(launcher: LauncherStatus, clients: &[u32]) -> Probe {
+    Probe {
+        launcher,
+        clients: Ok(clients.iter().copied().collect()),
+    }
+}
+
+/// Opens `id`: its status tab, and the launch asked.
+fn open(app: &mut App, id: &str) -> TabId {
+    let effects = app.update(Message::OpenCitrix(ProfileId::new(id)));
+    let [Effect::LaunchCitrix { tab, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    *tab
+}
+
+/// Opens `id` and launches it, the clients `before` running.
+fn open_launched(app: &mut App, id: &str, before: &[u32]) -> TabId {
+    let tab = open(app, id);
     app.update(Message::CitrixLaunched {
+        tab,
+        name: id.to_owned(),
+        result: Ok(launched_with(before)),
+    });
+    tab
+}
+
+/// The client state of Citrix tab `tab`.
+fn client(app: &App, tab: TabId) -> ClientState {
+    app.tab(tab)
+        .and_then(|tab| tab.citrix.as_deref())
+        .expect("a Citrix tab")
+        .tracker
+        .state()
+        .clone()
+}
+
+#[test]
+fn a_launch_that_starts_nothing_says_why_in_its_tab() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let tab = open(&mut app, "outlook");
+    app.update(Message::CitrixLaunched {
+        tab,
         name: "Outlook".to_owned(),
         result: Err(CitrixRefusal::WorkspaceNotFound),
     });
@@ -129,6 +260,86 @@ fn a_citrix_application_launches_outside_heimdall_and_says_so() {
         app.notice(),
         Some(&Notice::CitrixRefused(CitrixRefusal::WorkspaceNotFound))
     );
+    assert_eq!(
+        client(&app, tab),
+        ClientState::NotStarted(CitrixRefusal::WorkspaceNotFound)
+    );
+    assert!(!app.polls_citrix());
+    assert!(app.update(Message::CitrixTick).is_empty());
+}
+
+#[test]
+fn a_failed_launcher_and_a_shared_client_are_said() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let failed = open_launched(&mut app, "outlook", &[]);
+    app.update(Message::CitrixProbed {
+        tab: failed,
+        probe: seen(LauncherStatus::Exited(Some(2)), &[]),
+    });
+    assert_eq!(client(&app, failed), ClientState::LauncherFailed(2));
+
+    // A client running before the launch, and none of its own.
+    let shared = open_launched(&mut app, "outlook", &[7]);
+    app.update(Message::CitrixProbed {
+        tab: shared,
+        probe: seen(LauncherStatus::Exited(Some(0)), &[7]),
+    });
+    assert_eq!(client(&app, shared), ClientState::Shared);
+    assert_eq!(app.tab(shared).expect("tab").phase, Phase::Connected);
+}
+
+#[test]
+fn a_client_another_tab_follows_is_never_taken() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let first = open_launched(&mut app, "outlook", &[]);
+    let second = open_launched(&mut app, "outlook", &[]);
+    for tab in [first, second] {
+        app.update(Message::CitrixProbed {
+            tab,
+            probe: seen(LauncherStatus::Running, &[42]),
+        });
+    }
+    assert_eq!(client(&app, first), ClientState::Running(42));
+    assert_eq!(client(&app, second), ClientState::NotFoundYet);
+}
+
+#[test]
+fn closing_a_citrix_tab_stops_looking_at_its_client() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path(), &[outlook()]);
+    let tab = open_launched(&mut app, "outlook", &[]);
+    app.update(Message::CitrixTick);
+    app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Running, &[42]),
+    });
+    assert!(app.polls_citrix());
+
+    // Closed at once: no session of Heimdall's is lost, the Citrix one is left running.
+    let effects = app.update(Message::RequestCloseTab(tab));
+    assert!(effects.is_empty(), "{effects:?}");
+    assert!(app.dialog.is_none(), "not asked");
+    assert!(app.tab(tab).is_none());
+    assert!(!app.polls_citrix());
+    assert!(app.update(Message::CitrixTick).is_empty());
+    // A probe under way answering then changes nothing.
+    let effects = app.update(Message::CitrixProbed {
+        tab,
+        probe: seen(LauncherStatus::Running, &[]),
+    });
+    assert!(effects.is_empty());
+    // Nor a launch answering after its tab was closed.
+    let closed = open(&mut app, "outlook");
+    app.update(Message::RequestCloseTab(closed));
+    let effects = app.update(Message::CitrixLaunched {
+        tab: closed,
+        name: "Outlook".to_owned(),
+        result: Ok(launched_with(&[])),
+    });
+    assert!(effects.is_empty());
+    assert!(app.tabs.is_empty());
 }
 
 #[test]

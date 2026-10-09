@@ -18,7 +18,12 @@
 //!
 //! A saved local profile runs only what the user approved: the command as shown and the file
 //! its program is found at. Anything else is shown first, whole, and runs only once agreed.
+//!
+//! One run as administrator never runs in its tab: Windows starts it in a window of its own,
+//! through its elevation prompt, and the tab tells of it. Declined or refused, nothing runs
+//! in its place.
 
+use std::io;
 use std::path::Path;
 
 use heimdall_core::profile::{
@@ -29,8 +34,10 @@ use heimdall_term::local::{self, LocalArguments as TermArguments};
 use tokio_util::sync::CancellationToken;
 
 use super::reconnect::Reopen;
-use super::{App, Dialog, Effect, Tab, TabProfile, terminal_size};
+use super::{App, Dialog, Effect, Phase, Tab, TabProfile, terminal_size};
 use crate::driver::Purpose;
+use crate::elevated_shell::{self, ElevatedOutcome};
+use crate::error::UiError;
 use crate::ids::{AttemptId, TabId};
 use crate::local_driver::{LocalRequest, LocalShell};
 use crate::text::{server_text, visible_text};
@@ -52,6 +59,51 @@ pub struct LocalConfirmation {
     /// The program reads its command line again with rules of its own (`cmd.exe`, batch
     /// files): what the arguments look like is not what it does.
     pub rereads: bool,
+    /// It runs as administrator, in a window of its own, through the Windows elevation
+    /// prompt.
+    pub elevated: bool,
+}
+
+/// What a tab shows of a local shell run as administrator in a window of its own.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ElevatedPane {
+    /// The program asked for, made safe; `None` when it could not be named.
+    pub program: Option<String>,
+    /// How its start went.
+    pub state: ElevatedState,
+}
+
+/// How the start of a shell run as administrator went.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ElevatedState {
+    /// Windows is asked; its elevation prompt may be shown.
+    Starting,
+    /// Started in a window of its own.
+    Started,
+    /// The user declined the elevation prompt.
+    Cancelled,
+    /// It could not be started: the reason.
+    Failed(String),
+    /// Not on Windows: it is not started at all.
+    Unsupported,
+}
+
+impl ElevatedState {
+    /// The tab's phase while it is in this state: connecting while Windows is asked, ended
+    /// once started, as the tab follows nothing, failed otherwise.
+    fn phase(&self) -> Phase {
+        match self {
+            Self::Starting => Phase::Connecting,
+            Self::Started => Phase::Closed { exit_status: None },
+            Self::Cancelled => Phase::Failed(UiError::Cancelled),
+            Self::Failed(detail) => Phase::Failed(UiError::LocalShell {
+                detail: detail.clone(),
+            }),
+            Self::Unsupported => Phase::Failed(UiError::LocalShell {
+                detail: io::Error::from(io::ErrorKind::Unsupported).to_string(),
+            }),
+        }
+    }
 }
 
 impl App {
@@ -103,16 +155,13 @@ impl App {
         };
         let Ok(program_path) = local::program_path(profile.command.program.as_deref()) else {
             // Nothing can run: the tab says why, as starting it would.
-            let effects = self.open_local(self.profile_shell(&profile, &profile.command, None));
+            let effects = self.open_profile_command(&profile, &profile.command, None);
             self.reopened_by(Reopen::Profile(profile.id));
             return effects;
         };
         if profile.may_run(&program_path) {
-            let effects = self.open_local(self.profile_shell(
-                &profile,
-                &profile.command,
-                Some(&program_path),
-            ));
+            let effects =
+                self.open_profile_command(&profile, &profile.command, Some(&program_path));
             self.reopened_by(Reopen::Profile(profile.id));
             return effects;
         }
@@ -127,6 +176,7 @@ impl App {
                 .as_ref()
                 .map(|folder| visible_text(&folder.to_string_lossy())),
             rereads: local::rereads_its_command_line(&program_path),
+            elevated: profile.command.run_as_administrator,
             approval: LocalApproval {
                 command: profile.command,
                 program_path,
@@ -147,11 +197,11 @@ impl App {
                 else {
                     return Vec::new();
                 };
-                let effects = self.open_local(self.profile_shell(
+                let effects = self.open_profile_command(
                     &profile,
                     &approval.command,
                     Some(&approval.program_path),
-                ));
+                );
                 self.reopened_by(Reopen::Profile(id));
                 effects
             }
@@ -166,6 +216,94 @@ impl App {
 }
 
 impl App {
+    /// Opens `profile`'s `command`: in a tab, or, run as administrator, in a window of its
+    /// own that a tab tells of.
+    fn open_profile_command(
+        &mut self,
+        profile: &LocalProfile,
+        command: &LocalCommand,
+        program_path: Option<&Path>,
+    ) -> Vec<Effect> {
+        let shell = self.profile_shell(profile, command, program_path);
+        if command.run_as_administrator {
+            self.open_elevated(shell)
+        } else {
+            self.open_local(shell)
+        }
+    }
+
+    /// Opens a tab telling of `shell` run as administrator, and asks Windows to start it in a
+    /// window of its own, `PowerShell`'s options added as in a tab. Elsewhere than on Windows,
+    /// or when it cannot be asked for, the tab says why and nothing runs.
+    fn open_elevated(&mut self, shell: LocalShell) -> Vec<Effect> {
+        let shell = powershell_options(shell, self.settings.powershell_execution_policy);
+        let (state, request) = if elevated_shell::SUPPORTED {
+            match elevated_shell::launch_request(&shell, &self.config.files_start) {
+                Ok(request) => (ElevatedState::Starting, Some(request)),
+                Err(error) => {
+                    log::warn!("elevated shell not started: {error}");
+                    (ElevatedState::Failed(error.to_string()), None)
+                }
+            }
+        } else {
+            log::warn!("elevated shell not started: Windows only");
+            (ElevatedState::Unsupported, None)
+        };
+        let program = request
+            .as_ref()
+            .map(|request| request.program.to_string_lossy().into_owned())
+            .or_else(|| shell.program.clone())
+            .map(|program| visible_text(&program));
+        let tab_id = TabId::fresh();
+        let mut tab = Tab::new(
+            self.terminal_palette(),
+            tab_id,
+            TabProfile::Local(shell),
+            Purpose::Shell,
+            self.viewport,
+            AttemptId::fresh(),
+            CancellationToken::new(),
+        );
+        tab.phase = state.phase();
+        tab.elevated = Some(ElevatedPane { program, state });
+        self.tabs.push(tab);
+        self.active = Some(tab_id);
+        request
+            .map(|request| Effect::LaunchElevated {
+                tab: tab_id,
+                request: Box::new(request),
+            })
+            .into_iter()
+            .collect()
+    }
+
+    /// The shell run as administrator from tab `tab_id` was started, or why not: the tab
+    /// says so. Nothing else runs, whatever the outcome.
+    pub(super) fn elevated_launched(
+        &mut self,
+        tab_id: TabId,
+        outcome: &ElevatedOutcome,
+    ) -> Vec<Effect> {
+        let Some(tab) = self.tabs.iter_mut().find(|tab| tab.id == tab_id) else {
+            return Vec::new();
+        };
+        let Some(pane) = tab
+            .elevated
+            .as_mut()
+            .filter(|pane| pane.state == ElevatedState::Starting)
+        else {
+            return Vec::new();
+        };
+        pane.state = match outcome {
+            ElevatedOutcome::Started => ElevatedState::Started,
+            ElevatedOutcome::Cancelled => ElevatedState::Cancelled,
+            ElevatedOutcome::Failed(detail) => ElevatedState::Failed(detail.clone()),
+            ElevatedOutcome::Unsupported => ElevatedState::Unsupported,
+        };
+        tab.phase = pane.state.phase();
+        Vec::new()
+    }
+
     /// What a tab runs for `profile`'s `command`, with its environment's name among the
     /// variables it is given, as the C# `HEIMDALL_ENV`.
     fn profile_shell(

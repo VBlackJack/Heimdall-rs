@@ -483,26 +483,85 @@ fn a_local_profile_keeps_its_argument_string_as_written_and_is_never_approved() 
 }
 
 #[test]
-fn a_local_profile_asking_for_elevation_is_left_out_whatever_the_form() {
+fn every_elevation_mode_of_a_local_profile_runs_as_administrator_in_its_own_window() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings, LegacyElevation};
+
     let json = servers(
-        r#"{"id": "auto", "connectionType": "LOCAL", "elevationMode": 1},
-           {"id": "runas", "connectionType": "LOCAL", "elevationMode": "runas"},
-           {"id": "unknown", "connectionType": "LOCAL", "elevationMode": 7},
-           {"id": "odd", "connectionType": "LOCAL", "elevationMode": true},
-           {"id": "legacy", "connectionType": "LOCAL", "localShellElevated": true,
-            "elevationMode": 0}"#,
+        r#"{"id": "auto", "displayName": "Auto", "connectionType": "LOCAL", "elevationMode": 1},
+           {"id": "gsudo", "displayName": "Gsudo", "connectionType": "LOCAL",
+            "elevationMode": 2},
+           {"id": "runas", "displayName": "Runas", "connectionType": "LOCAL",
+            "elevationMode": 3},
+           {"id": "named", "displayName": "Named", "connectionType": "LOCAL",
+            "elevationMode": "gsudo"},
+           {"id": "unknown", "displayName": "Unknown", "connectionType": "LOCAL",
+            "elevationMode": 7},
+           {"id": "odd", "displayName": "Odd", "connectionType": "LOCAL", "elevationMode": true},
+           {"id": "legacy", "displayName": "Legacy", "connectionType": "LOCAL",
+            "localShellElevated": true, "elevationMode": 0},
+           {"id": "none", "displayName": "None", "connectionType": "LOCAL",
+            "elevationMode": "None"}"#,
     );
     let report = import(&json, None).expect("valid JSON");
-    assert!(report.local.is_empty(), "{:?}", report.local);
-    assert!(
-        report
-            .skipped
-            .iter()
-            .all(|skipped| skipped.reason == SkipReason::NeedsElevation),
-        "{:?}",
-        report.skipped
+    assert!(report.skipped.is_empty(), "{:?}", report.skipped);
+    let elevated: Vec<(&str, bool)> = report
+        .local
+        .iter()
+        .map(|local| (local.id.as_str(), local.command.run_as_administrator))
+        .collect();
+    assert_eq!(
+        elevated,
+        [
+            ("auto", true),
+            ("gsudo", true),
+            ("runas", true),
+            ("named", true),
+            ("unknown", true),
+            ("odd", true),
+            ("legacy", true),
+            ("none", false),
+        ]
     );
-    assert_eq!(report.skipped.len(), 5);
+    assert!(report.local.iter().all(|local| local.approved.is_none()));
+    // One line for each profile whose mode was mapped, naming the C# mode.
+    let mapped = |name: &str, mode| DroppedSettings {
+        name: name.to_owned(),
+        settings: vec![Dropped::Elevation(mode)],
+    };
+    assert_eq!(
+        report.dropped,
+        [
+            mapped("Auto", LegacyElevation::Auto),
+            mapped("Gsudo", LegacyElevation::Gsudo),
+            mapped("Runas", LegacyElevation::Runas),
+            mapped("Named", LegacyElevation::Gsudo),
+            mapped("Unknown", LegacyElevation::Unknown),
+            mapped("Odd", LegacyElevation::Unknown),
+            // The old box, read as the C# `EffectiveElevationMode` does.
+            mapped("Legacy", LegacyElevation::Auto),
+        ]
+    );
+}
+
+#[test]
+fn an_elevated_local_profile_says_its_elevation_and_its_dead_steps_on_one_line() {
+    use heimdall_core::import::csharp::{Dropped, DroppedSettings, LegacyElevation};
+
+    let json = servers(
+        r#"{"id": "both", "displayName": "Both", "connectionType": "LOCAL",
+            "elevationMode": "Runas", "postConnectCommand": "whoami"}"#,
+    );
+    let report = import(&json, None).expect("valid JSON");
+    assert_eq!(
+        report.dropped,
+        [DroppedSettings {
+            name: "Both".to_owned(),
+            settings: vec![
+                Dropped::Elevation(LegacyElevation::Runas),
+                Dropped::LocalPostConnect(1),
+            ],
+        }]
+    );
 }
 
 #[test]

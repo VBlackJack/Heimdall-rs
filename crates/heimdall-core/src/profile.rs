@@ -1362,14 +1362,21 @@ pub struct LocalCommand {
     /// Folder it starts in; `None` for the home folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub working_directory: Option<PathBuf>,
+    /// Run as administrator: Windows starts it in a window of its own, through its
+    /// elevation prompt, never in a tab. Windows only.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub run_as_administrator: bool,
 }
 
 impl LocalCommand {
     /// Whether it is the default shell, as the Local shell button opens it: nothing to run
-    /// that the user did not choose.
+    /// that the user did not choose. Run as administrator, it is not.
     #[must_use]
     pub fn is_default(&self) -> bool {
-        self.program.is_none() && self.arguments.is_empty() && self.working_directory.is_none()
+        self.program.is_none()
+            && self.arguments.is_empty()
+            && self.working_directory.is_none()
+            && !self.run_as_administrator
     }
 }
 
@@ -1449,6 +1456,7 @@ mod tests {
             program: Some("tool".to_owned()),
             arguments: LocalArguments::List(vec!["-x".to_owned()]),
             working_directory: None,
+            run_as_administrator: false,
         }
     }
 
@@ -1506,6 +1514,38 @@ mod tests {
         };
         assert!(!arguments_only.is_default());
         assert!(!profile(arguments_only, None).may_run(Path::new("/bin/sh")));
+    }
+
+    #[test]
+    fn running_as_administrator_is_approved_on_its_own() {
+        let elevated = LocalCommand {
+            run_as_administrator: true,
+            ..LocalCommand::default()
+        };
+        assert!(
+            !elevated.is_default(),
+            "the default shell, elevated, is asked"
+        );
+        assert!(!profile(elevated, None).may_run(Path::new("/bin/sh")));
+        let mut changed = tool();
+        changed.run_as_administrator = true;
+        assert!(
+            !profile(changed, Some(approval(tool()))).may_run(Path::new(FOUND)),
+            "approved unelevated, not elevated"
+        );
+    }
+
+    #[test]
+    fn running_as_administrator_is_saved_only_when_asked() {
+        let plain = serde_json::to_string(&tool()).expect("written");
+        assert!(!plain.contains("run_as_administrator"), "{plain}");
+        let mut elevated = tool();
+        elevated.run_as_administrator = true;
+        let written = serde_json::to_string(&elevated).expect("written");
+        let read: LocalCommand = serde_json::from_str(&written).expect("read");
+        assert_eq!(read, elevated);
+        let before: LocalCommand = serde_json::from_str(&plain).expect("read");
+        assert!(!before.run_as_administrator);
     }
 }
 
