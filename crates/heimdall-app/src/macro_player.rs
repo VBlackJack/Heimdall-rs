@@ -256,6 +256,24 @@ mod tests {
         }
     }
 
+    /// How long a test waits for the player to type: far beyond any runner's delay.
+    const TYPED_WITHIN: Duration = Duration::from_secs(5);
+
+    /// Waits until `shell` has been typed exactly `bytes`.
+    async fn typed(shell: &Shell, bytes: &[u8]) {
+        let waited = tokio::time::timeout(TYPED_WITHIN, async {
+            while shell.typed.lock().expect("typed").as_slice() != bytes {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+        })
+        .await;
+        assert!(
+            waited.is_ok(),
+            "never typed {:?}",
+            String::from_utf8_lossy(bytes)
+        );
+    }
+
     #[test]
     fn escape_sequences_are_not_text_even_cut_between_two_reads() {
         let mut seen = Seen::default();
@@ -280,12 +298,13 @@ mod tests {
             output,
             CancellationToken::new(),
         ));
-        // What the session shows after each input.
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        // What the session shows after each input, once that input is typed: shown
+        // earlier, the player rightly takes it as coming before the input.
+        typed(&shell, b"sudo -i\r").await;
         sender
             .send(b"[sudo] password for admin: ".to_vec())
             .expect("send");
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        typed(&shell, b"sudo -i\rsecret\r").await;
         sender
             .send(b"\x1b[01;31mroot@web\x1b[0m:~# ".to_vec())
             .expect("send");
