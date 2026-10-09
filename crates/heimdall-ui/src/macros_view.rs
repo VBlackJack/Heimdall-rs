@@ -25,9 +25,7 @@ use heimdall_app::{
 use heimdall_core::macros::{
     EXPECT_TIMEOUT_MAX, EXPECT_TIMEOUT_MIN, InputError, OnTimeout, TerminalMacro,
 };
-use iced::widget::{
-    Column, button, checkbox, column, container, pick_list, row, scrollable, text, text_input,
-};
+use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text, text_input};
 use iced::{Alignment, Element, Length};
 
 use crate::i18n::fl;
@@ -234,7 +232,7 @@ pub fn editor(edited: &MacroDraft) -> Element<'_, Message> {
         .spacing(spacing::SM)
         .align_y(Alignment::Center),
         text(fl!("ui-macro-editor-input-hint")).size(font_size::CAPTION),
-        scrollable(entries).height(ENTRIES_HEIGHT),
+        styles::scroll(entries).height(ENTRIES_HEIGHT),
         row![
             button(text(fl!("ui-macro-editor-add-expect")))
                 .style(styles::secondary)

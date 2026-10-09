@@ -33,10 +33,10 @@ use heimdall_core::settings::{
 };
 use iced::widget::scrollable::RelativeOffset;
 use iced::widget::{
-    Column, button, checkbox, column, container, operation, pick_list, row, scrollable, text,
-    text_input, tooltip,
+    Column, button, checkbox, column, container, operation, pick_list, row, text, text_input,
+    tooltip,
 };
-use iced::{Element, Task, Theme};
+use iced::{Element, Length, Task, Theme};
 
 use super::{
     AgentChoice, CONNECT_TIMEOUTS, CtrlKChoice, CtrlVChoice, FONT_SIZE_FIELD_WIDTH, FontChoice,
@@ -44,6 +44,7 @@ use super::{
     SessionsChoice, SettingsMessage, SettingsTab, Shell, TimeoutChoice, settings_tabs,
 };
 use crate::i18n::fl;
+use crate::icons::{self, Icon, Tint};
 use crate::search_keys::SearchKeys;
 use crate::settings_rows::{
     PostureKey, PostureLine, PostureState, SettingRow, SettingsCard, posture,
@@ -55,9 +56,15 @@ use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
 /// Width of the search box, as the C# one.
 const SEARCH_WIDTH: f32 = 220.0;
 
-/// The dot beside "Modified": decoration, the word beside it being the signal, as the C#
-/// marker's.
-const MODIFIED_DOT: &str = "\u{2022}";
+/// Side of the dot beside "Modified": decoration, the word beside it being the signal, as
+/// the C# marker's ellipse.
+const MODIFIED_DOT_SIDE: f32 = 6.0;
+
+/// Side of the glyph before "Reset", as the C#'s at `FontSizeSmallCaption`.
+const RESET_GLYPH_SIDE: f32 = 11.0;
+
+/// Room around "Reset", above and below then beside, as the C# marker's button.
+const RESET_PADDING: [f32; 2] = [1.0, 6.0];
 
 /// Space inside the "Modified" badge, above and below then beside, as the C# badge's.
 const BADGE_PADDING: [f32; 2] = [0.0, 6.0];
@@ -118,18 +125,33 @@ where
         .into()
 }
 
-/// `label` before `control`, on one line, as the page's lists and fields are laid out.
-fn labelled<'a>(
-    label: String,
-    control: impl Into<Element<'a, Message>>,
-) -> iced::widget::Row<'a, Message> {
-    row![
-        text(label),
-        iced::widget::space::horizontal(),
+/// `label` above `control`, as the C# Settings tab lays out its lists and fields: a
+/// caption in the secondary text.
+fn labelled<'a>(label: String, control: impl Into<Element<'a, Message>>) -> Column<'a, Message> {
+    column![
+        text(label).size(font_size::CAPTION).style(text::secondary),
         control.into()
     ]
-    .spacing(spacing::SM)
-    .align_y(iced::Alignment::Center)
+    .spacing(spacing::XS)
+}
+
+/// `control` with `unit` after it, as the C# writes a number's unit beside its box.
+fn with_unit<'a>(
+    control: impl Into<Element<'a, Message>>,
+    unit: String,
+) -> iced::widget::Row<'a, Message> {
+    row![control.into(), text(unit)]
+        .spacing(spacing::SM)
+        .align_y(iced::Alignment::Center)
+}
+
+/// A line under the page's bar, as the C# bar's lower edge.
+fn divider<'a>() -> Element<'a, Message> {
+    container(iced::widget::space())
+        .width(Length::Fill)
+        .height(BORDER_WIDTH)
+        .style(styles::divider)
+        .into()
 }
 
 /// `message` as the window sends it to the application.
@@ -491,11 +513,18 @@ impl Shell {
         } else {
             self.search_results(query)
         };
-        scrollable(
+        // The tab shown joins the card under it, as the C#'s; its cards in the middle.
+        let content = container(
+            container(body.spacing(spacing::LG).width(Length::Fill)).max_width(SETTINGS_WIDTH),
+        )
+        .center_x(Length::Fill)
+        .padding(spacing::LG)
+        .style(styles::strip);
+        styles::scroll(
             column![
                 self.settings_header(),
-                settings_tabs(self.settings_tab),
-                body.spacing(spacing::SM),
+                divider(),
+                column![settings_tabs(self.settings_tab), content],
             ]
             .spacing(spacing::SM)
             .padding(spacing::MD),
@@ -504,8 +533,8 @@ impl Shell {
         .into()
     }
 
-    /// The page's heading, then "Find modified settings" and the search, as the C# bar at
-    /// the top of its Settings tab.
+    /// "Find modified settings" and the search, as the C# bar at the top of its Settings
+    /// tab, at its right; its Save and Undo left out, every choice applying at once.
     fn settings_header(&self) -> Element<'_, Message> {
         let field = SearchKeys::escape_only(
             text_input(
@@ -520,11 +549,10 @@ impl Shell {
             (!self.settings_search.is_empty()).then(|| Message::SettingsSearch(String::new())),
         );
         let mut header = row![
-            text(fl!("ui-settings-title")).size(font_size::TITLE),
             iced::widget::space::horizontal(),
             tooltip(
                 button(text(fl!("ui-settings-find-modified")))
-                    .style(styles::secondary)
+                    .style(styles::subtle)
                     .on_press(Message::FindModifiedSettings),
                 text(fl!("ui-settings-find-modified-hint")).size(font_size::CAPTION),
                 tooltip::Position::Bottom,
@@ -630,7 +658,7 @@ impl Shell {
             .collect()
     }
 
-    /// `rows` of `card` under its heading, in its frame.
+    /// `rows` of `card` under its heading, in its card as the C#'s.
     fn card_view(&self, card: SettingsCard, rows: &[SettingRow]) -> Element<'_, Message> {
         let mut body = Column::new().spacing(spacing::SM);
         if let Some(description) = card_description(card) {
@@ -645,20 +673,24 @@ impl Shell {
             // What could not be read, said once under the lists.
             body = body.push(unreadable);
         }
-        let framed: Element<'_, Message> = if card_framed(card) {
-            container(body)
-                .padding(spacing::MD)
-                .max_width(SETTINGS_WIDTH)
-                .style(container::bordered_box)
+        // Its heading semi-bold at its top, as the C# card's section title.
+        let mut shown = Column::new().spacing(spacing::MD);
+        if let Some(heading) = card_heading(card) {
+            shown = shown.push(
+                text(heading)
+                    .size(font_size::SUBTITLE)
+                    .font(styles::SEMIBOLD),
+            );
+        }
+        let shown = shown.push(body);
+        if card_framed(card) {
+            container(shown)
+                .padding(spacing::LG)
+                .width(Length::Fill)
+                .style(styles::card)
                 .into()
         } else {
-            body.into()
-        };
-        match card_heading(card) {
-            Some(heading) => column![text(heading).size(font_size::SUBTITLE), framed]
-                .spacing(spacing::SM)
-                .into(),
-            None => framed,
+            shown.into()
         }
     }
 
@@ -685,35 +717,26 @@ impl Shell {
             .into()
     }
 
-    /// The C# marker of a setting modified: "Modified" beside a dot, its default said on
-    /// hover, and "Reset", which puts it back.
+    /// The C# marker of a setting modified, as `SettingDefaultMarker`: "Modified" beside a
+    /// dot in a badge outlined in the accent, its default said on hover, and "Reset" after
+    /// its glyph, which puts it back.
     fn marker(&self, row: SettingRow) -> Element<'_, Message> {
         let value = self.default_text(row);
         let badge = container(
             row![
-                text(MODIFIED_DOT)
-                    .size(font_size::CAPTION)
-                    .style(text::primary),
+                container(iced::widget::space())
+                    .width(MODIFIED_DOT_SIDE)
+                    .height(MODIFIED_DOT_SIDE)
+                    .style(styles::accent_dot),
                 text(fl!("ui-settings-modified-badge"))
-                    .size(font_size::CAPTION)
+                    .size(font_size::SMALL_CAPTION)
                     .style(text::secondary),
             ]
             .spacing(spacing::XS)
             .align_y(iced::Alignment::Center),
         )
         .padding(BADGE_PADDING)
-        .style(|theme: &Theme| {
-            let palette = theme.extended_palette();
-            container::Style {
-                background: Some(palette.background.weak.color.into()),
-                border: iced::Border {
-                    color: palette.primary.base.color,
-                    width: BORDER_WIDTH,
-                    radius: radius::SM.into(),
-                },
-                ..container::Style::default()
-            }
-        });
+        .style(styles::badge);
         row![
             tooltip(
                 badge,
@@ -726,9 +749,17 @@ impl Shell {
             )
             .style(container::rounded_box),
             tooltip(
-                button(text(fl!("ui-settings-reset-to-default")).size(font_size::CAPTION))
-                    .style(styles::subtle)
-                    .on_press(Message::ResetSetting(row)),
+                button(
+                    row![
+                        icons::icon(Icon::Restore, Tint::Text, RESET_GLYPH_SIDE),
+                        text(fl!("ui-settings-reset-to-default")).size(font_size::SMALL_CAPTION),
+                    ]
+                    .spacing(spacing::XS)
+                    .align_y(iced::Alignment::Center),
+                )
+                .padding(RESET_PADDING)
+                .style(styles::subtle)
+                .on_press(Message::ResetSetting(row)),
                 text(fl!(
                     "ui-settings-reset-to-default-tooltip",
                     value = value.as_str()
@@ -1021,10 +1052,10 @@ impl Shell {
                 .on_input(move |typed| Message::SessionFieldEdited(field, typed))
                 .on_submit(Message::SessionFieldApply(field));
         }
-        let mut line = labelled(field.label(), input);
-        if let Some(unit) = field.unit() {
-            line = line.push(text(unit));
-        }
+        let line = match field.unit() {
+            Some(unit) => labelled(field.label(), with_unit(input, unit)),
+            None => labelled(field.label(), input),
+        };
         let mut body = column![line].spacing(spacing::SM);
         if let Some(hint) = field.hint() {
             body = body.push(text(hint).size(font_size::CAPTION));
@@ -1048,17 +1079,17 @@ impl Shell {
             && !self
                 .typed_font_size()
                 .is_some_and(heimdall_core::settings::terminal_font_size_accepted);
-        let mut body = column![
-            labelled(
-                row_label(SettingRow::FontSize),
+        let mut body = column![labelled(
+            row_label(SettingRow::FontSize),
+            with_unit(
                 text_input("", &typed)
                     .style(styles::text_input)
                     .width(FONT_SIZE_FIELD_WIDTH)
                     .on_input(Message::FontSizeEdited)
                     .on_submit(Message::FontSizeApply),
-            )
-            .push(text(fl!("ui-settings-font-size-unit"))),
-        ]
+                fl!("ui-settings-font-size-unit"),
+            ),
+        ),]
         .spacing(spacing::SM);
         if refused {
             body = body.push(
@@ -1141,12 +1172,7 @@ impl Shell {
                 .on_input(Message::EditorEdited)
                 .on_submit(Message::EditorApply)
         };
-        let mut body = column![
-            row![text(row_label(row)), field]
-                .spacing(spacing::SM)
-                .align_y(iced::Alignment::Center)
-        ]
-        .spacing(spacing::SM);
+        let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
         }
@@ -1166,12 +1192,7 @@ impl Shell {
             .style(styles::text_input)
             .on_input(move |typed| Message::ToolPathEdited(path, typed))
             .on_submit(Message::ToolPathApply(path));
-        let mut body = column![
-            row![text(row_label(row)), field]
-                .spacing(spacing::SM)
-                .align_y(iced::Alignment::Center)
-        ]
-        .spacing(spacing::SM);
+        let mut body = column![labelled(row_label(row), field)].spacing(spacing::SM);
         if let Some(hint) = row_hint(row) {
             body = body.push(text(hint).size(font_size::CAPTION));
         }
@@ -1357,7 +1378,9 @@ impl Shell {
             fl!("ui-settings-posture-summary", count = risky)
         };
         let mut card = column![
-            text(fl!("ui-settings-posture-title")).size(font_size::SUBTITLE),
+            text(fl!("ui-settings-posture-title"))
+                .size(font_size::SUBTITLE)
+                .font(styles::SEMIBOLD),
             text(fl!("ui-settings-posture-description")).size(font_size::CAPTION),
             row![posture_mark(risky > 0), text(summary)]
                 .spacing(spacing::SM)
@@ -1368,9 +1391,9 @@ impl Shell {
             card = card.push(posture_line(line));
         }
         container(card)
-            .padding(spacing::MD)
-            .max_width(SETTINGS_WIDTH)
-            .style(container::bordered_box)
+            .padding(spacing::LG)
+            .width(Length::Fill)
+            .style(styles::card)
             .into()
     }
 

@@ -27,7 +27,7 @@ use heimdall_app::{
 };
 use heimdall_core::import::openssh::{Code, Diagnostic, GatewayStep, Level, Status};
 use heimdall_core::import::putty;
-use iced::widget::{Column, button, checkbox, column, container, row, scrollable, text};
+use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -160,7 +160,9 @@ pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
                 .text_size(font_size::BODY)
                 .on_toggle(|on| app(SessionsMessage::ChooseAll(on))),
             header,
-            scrollable(rows).height(Length::Shrink).height(ROWS_HEIGHT),
+            styles::scroll(rows)
+                .height(Length::Shrink)
+                .height(ROWS_HEIGHT),
         ]
         .spacing(spacing::SM),
     );
@@ -173,7 +175,7 @@ pub fn preview(preview: &SessionsPreview) -> Element<'_, Message> {
     if !said.is_empty() {
         content = content
             .push(text(fl!("ui-openssh-diagnostics", count = said.len())).size(font_size::BODY))
-            .push(scrollable(Column::with_children(said)).height(DIAGNOSTICS_HEIGHT));
+            .push(styles::scroll(Column::with_children(said)).height(DIAGNOSTICS_HEIGHT));
     }
     content
         .push(

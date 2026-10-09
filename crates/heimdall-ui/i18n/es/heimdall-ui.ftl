@@ -39,7 +39,6 @@ ui-tree-filter-no-results = Ninguna sesión coincide con tu búsqueda y filtros.
 ui-tree-filter-reset = Restablecer todos los filtros
 ui-sidebar-lock-button = Bloquear
 ui-sidebar-lock-tooltip = Bloquear espacio de trabajo (Ctrl+L)
-ui-settings-title = Ajustes
 ui-settings-search-placeholder = Buscar en ajustes...
 ui-settings-search-tooltip = Buscar en la configuración (Ctrl+F)
 ui-settings-search-clear = Borrar filtro de búsqueda
@@ -358,11 +357,10 @@ ui-tab-files-title = { $name } (archivos)
 
 ui-files-local-title = Este equipo
 ui-files-remote-title = Servidor
-ui-files-up-button = Subir
-ui-files-refresh-button = Actualizar
+ui-files-up-tooltip = Subir un nivel
+ui-files-refresh-tooltip = Actualizar directorio
 ui-files-new-folder-button = Nueva carpeta
-ui-files-rename-button = Cambiar nombre
-ui-files-delete-button = Eliminar
+ui-files-new-folder-tooltip = Crear nueva carpeta
 ui-files-download-button = Descargar
 ui-files-upload-button = Enviar
 ui-files-loading = Cargando...
@@ -1150,7 +1148,7 @@ ui-dialog-broadcast-title = ¿Difundir a todas las pestañas?
 ui-dialog-broadcast-body = Lo que escribas se enviará a los paneles de terminal de todas las pestañas abiertas, incluidas las que se ejecutan en segundo plano. ¿Continuar?
 ui-dialog-broadcast-confirm = Difundir
 
-ui-files-go-button = Ir
+ui-files-go-tooltip = Ir a la ruta
 
 ui-files-column-name = Nombre
 ui-files-column-size = Tamaño
@@ -1204,7 +1202,6 @@ ui-files-selected-count = { $count ->
 ui-dialog-delete-many-body = ¿Eliminar { $count } elementos? Las carpetas se eliminan con todo su contenido. Esto no se puede deshacer.
 
 ui-files-bookmark-button = Marcar esta ruta
-ui-files-bookmarks-button = Marcadores
 ui-files-bookmarks-empty = No hay marcadores guardados
 ui-files-bookmark-added = Marcador añadido: { $path }
 
@@ -2187,7 +2184,7 @@ ui-error-winrm-https-gateway = WinRM a través de una puerta de enlace SSH no ad
 ui-error-winrm-tls-failed = La conexión TLS de WinRM a '{ $host }' en el puerto { $port } falló (certificado no confiable o error de negociación).
 ui-error-winrm-unreachable = El host WinRM '{ $host }' no es accesible en el puerto { $port } (conexión rechazada o tiempo agotado).
 ui-error-winrm-unresolved = No se puede resolver el host WinRM '{ $host }'.
-ui-files-back-button = Atrás
+ui-files-back-tooltip = Navegar hacia atrás
 ui-files-conflict-action = Acción
 ui-files-conflict-apply = Aplicar
 ui-files-conflict-apply-all = Aplicar a todos:
@@ -2205,7 +2202,7 @@ ui-files-conflict-title = Conflictos de archivos
 ui-files-error-destination-not-a-file = Envío rechazado: el destino ya existe y no es un archivo normal.
 ui-files-error-is-link = No se pueden cambiar los permisos de un enlace simbólico: el servidor cambiaría los de su destino.
 ui-files-error-replace-not-safe = Envío rechazado: el destino ya existe y el servidor no puede reemplazarlo de forma segura, así que se ha dejado como estaba.
-ui-files-home-button = Inicio
+ui-files-home-tooltip = Ir al directorio de inicio
 ui-profile-experience = Experiencia visual
 ui-profile-experience-composition = Activar la composición de escritorio
 ui-profile-experience-font-smoothing = Activar el suavizado de fuentes (ClearType)

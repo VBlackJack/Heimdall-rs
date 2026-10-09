@@ -42,7 +42,6 @@ ui-tree-filter-no-results = No sessions match your search and filters.
 ui-tree-filter-reset = Reset all filters
 ui-sidebar-lock-button = Lock
 ui-sidebar-lock-tooltip = Lock workspace (Ctrl+L)
-ui-settings-title = Settings
 ui-settings-search-placeholder = Search settings...
 ui-settings-search-tooltip = Search settings (Ctrl+F)
 ui-settings-search-clear = Clear search filter
@@ -472,13 +471,12 @@ ui-tab-files-title = { $name } (files)
 
 ui-files-local-title = This computer
 ui-files-remote-title = Server
-ui-files-up-button = Up
-ui-files-back-button = Back
-ui-files-home-button = Home
-ui-files-refresh-button = Refresh
+ui-files-up-tooltip = Navigate up one level
+ui-files-back-tooltip = Navigate back
+ui-files-home-tooltip = Go to home directory
+ui-files-refresh-tooltip = Refresh directory
 ui-files-new-folder-button = New folder
-ui-files-rename-button = Rename
-ui-files-delete-button = Delete
+ui-files-new-folder-tooltip = Create new folder
 ui-files-download-button = Download
 ui-files-upload-button = Upload
 ui-files-loading = Loading...
@@ -1313,7 +1311,7 @@ ui-dialog-session-logging-body = Every terminal session will be written to a fil
 ui-dialog-session-logging-confirm = Turn on
 
 ## The Files tab's path bar, as the C# one.
-ui-files-go-button = Go
+ui-files-go-tooltip = Navigate to path
 
 ## The Files tab's columns, as the C# ones.
 ui-files-column-name = Name
@@ -1369,7 +1367,6 @@ ui-dialog-delete-many-body = Delete { $count } items? Folders are deleted with e
 
 ## Bookmarks of the server's folders, as the C# Files tab.
 ui-files-bookmark-button = Bookmark this path
-ui-files-bookmarks-button = Bookmarks
 ui-files-bookmarks-empty = No bookmarks saved
 ui-files-bookmark-added = Bookmark added: { $path }
 
