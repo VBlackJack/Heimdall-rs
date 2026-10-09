@@ -134,7 +134,10 @@ fn a_docked_local_browser_shows_this_computers_files_alone() {
     let (core, _) = docked(dir.path());
     let shell = Shell::with_app(core);
     let mut ui = common::simulator(settings(), WINDOW, shell.view());
-    ui.find("This computer").expect("this computer's pane");
+    assert!(
+        ui.find("This computer").is_err(),
+        "its pane header names it, as the C#'s"
+    );
     ui.find("notes.md").expect("its files");
     for absent in ["Local files", "Upload", "Download"] {
         assert!(

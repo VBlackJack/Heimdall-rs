@@ -23,7 +23,7 @@ use std::pin::Pin;
 
 use heimdall_app::{Message as AppMessage, SettingsTransferMessage};
 use heimdall_core::settings::{SETTINGS_EXPORT_FILE_NAME, SettingValue, SettingsImport};
-use iced::widget::{Column, button, column, row, scrollable, text};
+use iced::widget::{Column, button, column, row, text};
 use iced::{Element, Task, window};
 
 use crate::i18n::fl;
@@ -165,7 +165,7 @@ pub fn import_question(read: &SettingsImport) -> Element<'_, Message> {
             "ui-dialog-settings-import-body",
             count = read.changes.len()
         )),
-        scrollable(lines).height(CHANGES_HEIGHT),
+        styles::scroll(lines).height(CHANGES_HEIGHT),
         row![
             button(text(fl!("ui-dialog-cancel-button")))
                 .style(styles::secondary)

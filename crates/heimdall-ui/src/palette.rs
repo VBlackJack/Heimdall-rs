@@ -19,7 +19,7 @@
 
 use heimdall_app::split::Axis;
 use heimdall_app::{QuickResult, TabId};
-use iced::widget::{button, column, container, row, scrollable, text, text_input};
+use iced::widget::{button, column, container, row, text, text_input};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -116,7 +116,7 @@ pub fn view<'a>(palette: &Palette, results: &[QuickResult]) -> Element<'a, Messa
     if results.is_empty() {
         content = content.push(text(fl!("ui-palette-nothing")).size(font_size::CAPTION));
     } else {
-        content = content.push(scrollable(list).height(Length::Shrink));
+        content = content.push(styles::scroll(list).height(Length::Shrink));
     }
     container(
         container(row![content].height(Length::Shrink))

@@ -36,8 +36,7 @@ use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
 use iced::widget::{
-    Column, Container, button, checkbox, column, container, mouse_area, row, rule, scrollable,
-    text, tooltip,
+    Column, Container, button, checkbox, column, container, mouse_area, row, rule, text, tooltip,
 };
 use iced::{Element, Event, Length, Point, Rectangle, Size, Theme, Vector};
 
@@ -1256,10 +1255,19 @@ fn outside_entries<'a>(
     .width(Length::Fill)
 }
 
-/// The server's folders bookmarked in a Files tab, `bookmarks` as shown, each going
-/// there; a line saying there are none, as the C# menu.
+/// The menu of a Files tab's star, as the C#'s: "Bookmark this path" first, then the
+/// server's folders bookmarked, `bookmarks` as shown, each going there; a line saying there
+/// are none, as the C# menu.
 pub fn files_bookmarks_menu<'a>(tab: TabId, bookmarks: &[String]) -> Element<'a, Message> {
-    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    let mut entries = column![
+        entry(
+            fl!("ui-files-bookmark-button"),
+            Some(AppMessage::Files(FilesMessage::Bookmark { tab })),
+        ),
+        separator(),
+    ]
+    .spacing(0.0)
+    .width(MENU_WIDTH);
     if bookmarks.is_empty() {
         entries = entries.push(entry(fl!("ui-files-bookmarks-empty"), None));
     }
@@ -1984,7 +1992,7 @@ pub fn move_profile_entries<'a>(
                 }),
             )
         }));
-    menu_card(scrollable(entries).height(Length::Shrink))
+    menu_card(styles::scroll(entries).height(Length::Shrink))
         .max_height(MOVE_MENU_HEIGHT)
         .into()
 }
@@ -2105,7 +2113,7 @@ pub fn gateway_selection_entries<'a>(
                 set(Some(gateway.id.clone())),
             )
         }));
-    menu_card(scrollable(entries).height(Length::Shrink))
+    menu_card(styles::scroll(entries).height(Length::Shrink))
         .max_height(MOVE_MENU_HEIGHT)
         .into()
 }
@@ -2128,7 +2136,7 @@ pub fn move_selection_entries<'a>(folders: &[String]) -> Element<'a, Message> {
                 )))),
             )
         }));
-    menu_card(scrollable(entries).height(Length::Shrink))
+    menu_card(styles::scroll(entries).height(Length::Shrink))
         .max_height(MOVE_MENU_HEIGHT)
         .into()
 }

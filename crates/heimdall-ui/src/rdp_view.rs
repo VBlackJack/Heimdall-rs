@@ -27,7 +27,7 @@ use heimdall_app::{
     Dialog, Message as AppMessage, RDP_EXTENSION, RdpMessage, RdpNames, RdpPreview, RdpRow,
 };
 use heimdall_core::import::rdp_file::{Conflict, MAX_FILE_BYTES, Refusal};
-use iced::widget::{Column, button, checkbox, column, container, pick_list, row, scrollable, text};
+use iced::widget::{Column, button, checkbox, column, container, pick_list, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -197,7 +197,7 @@ pub fn preview(preview: &RdpPreview) -> Element<'_, Message> {
     content
         .push(choices)
         .push(header)
-        .push(scrollable(rows).height(ROWS_HEIGHT))
+        .push(styles::scroll(rows).height(ROWS_HEIGHT))
         .push(
             row![
                 button(text(fl!("ui-dialog-cancel-button")))

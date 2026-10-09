@@ -28,7 +28,7 @@ use heimdall_core::profile::display_address;
 use heimdall_ssh::known_hosts_import::{
     HostKeyDiagnostic, HostKeyNote, HostKeyStatus, MAX_FILE_BYTES, Malformed,
 };
-use iced::widget::{Column, button, checkbox, column, container, row, scrollable, text};
+use iced::widget::{Column, button, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
@@ -154,7 +154,9 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
             .text_size(font_size::BODY)
             .on_toggle(|on| app(HostKeysMessage::ChooseAll(on))),
         header,
-        scrollable(rows).height(Length::Shrink).height(ROWS_HEIGHT),
+        styles::scroll(rows)
+            .height(Length::Shrink)
+            .height(ROWS_HEIGHT),
     ]
     .spacing(spacing::SM);
     if !preview.diagnostics.is_empty() {
@@ -167,7 +169,7 @@ pub fn preview(preview: &HostKeysPreview) -> Element<'_, Message> {
                 .size(font_size::BODY),
             )
             .push(
-                scrollable(Column::with_children(
+                styles::scroll(Column::with_children(
                     preview.diagnostics.iter().map(diagnostic_line),
                 ))
                 .height(DIAGNOSTICS_HEIGHT),

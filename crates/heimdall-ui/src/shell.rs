@@ -4386,7 +4386,7 @@ impl Shell {
             Page::Tunnels => {
                 crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
             }
-            Page::About => scrollable(
+            Page::About => styles::scroll(
                 container(crate::about_view::view(&self.app))
                     .padding(spacing::MD)
                     .width(Length::Fill),
@@ -4630,7 +4630,7 @@ impl Shell {
         let list = self.tree_list();
         // A right click beside the rows is the tree's own menu.
         let tree = mouse_area(
-            container(scrollable(list))
+            container(styles::scroll(list))
                 .width(Length::Fill)
                 .height(Length::Fill),
         )
@@ -7416,19 +7416,34 @@ fn open_with_system(target: std::path::PathBuf) -> Task<Message> {
     )
 }
 
-/// The tabs of the Settings page, the one shown marked, as the C# `TabControl`.
+/// The tabs of the Settings page, as the C# `TabControl` of `ThemedTabItemStyle`: each its
+/// name over a line, the one shown a card, its name semi-bold over the accent's line.
 fn settings_tabs<'a>(shown: SettingsTab) -> Element<'a, Message> {
     SettingsTab::ALL
         .into_iter()
-        .fold(row![].spacing(spacing::XS), |tabs, tab| {
+        .fold(row![].spacing(TAB_GAP), |tabs, tab| {
+            let selected = tab == shown;
+            let name = text(tab.label());
+            let name = if selected {
+                name.font(styles::SEMIBOLD)
+            } else {
+                name
+            };
             tabs.push(
-                button(text(tab.label()))
-                    .style(if tab == shown {
-                        styles::primary
-                    } else {
-                        styles::secondary
-                    })
-                    .on_press(Message::SettingsTab(tab)),
+                button(
+                    column![
+                        name,
+                        container(iced::widget::space())
+                            .width(Length::Fill)
+                            .height(TAB_UNDERLINE)
+                            .style(styles::underline(selected)),
+                    ]
+                    .spacing(spacing::XS)
+                    .width(Length::Shrink),
+                )
+                .padding(TAB_PADDING)
+                .style(styles::tab(selected))
+                .on_press(Message::SettingsTab(tab)),
             )
         })
         .into()
@@ -7991,7 +8006,7 @@ fn import_report<'a>(
         );
         content = content
             .push(text(fl!("ui-dialog-import-skipped")))
-            .push(container(scrollable(skipped)).max_height(SKIPPED_LIST_HEIGHT));
+            .push(container(styles::scroll(skipped)).max_height(SKIPPED_LIST_HEIGHT));
     }
     if !summary.dropped.is_empty() {
         let dropped = summary.dropped.iter().fold(
@@ -8013,7 +8028,7 @@ fn import_report<'a>(
         );
         content = content
             .push(text(fl!("ui-dialog-import-dropped")))
-            .push(container(scrollable(dropped)).max_height(SKIPPED_LIST_HEIGHT));
+            .push(container(styles::scroll(dropped)).max_height(SKIPPED_LIST_HEIGHT));
     }
     match &summary.host_keys {
         Some(Ok(carried)) if carried.keys + carried.pins > 0 => {
@@ -9246,7 +9261,8 @@ fn profile_form<'a>(
     );
     column![
         container(
-            scrollable(form.padding(iced::Padding::ZERO.right(spacing::MD))).height(Length::Shrink)
+            styles::scroll(form.padding(iced::Padding::ZERO.right(spacing::MD)))
+                .height(Length::Shrink)
         )
         .max_height(forms.fields_height),
         footer,
@@ -9682,14 +9698,14 @@ fn paste_dialog<'a>(
             fl!("ui-dialog-paste-confirm"),
         ),
     };
-    let shown = scrollable(
+    let shown = styles::scroll(
         text(preview.lines.join("\n"))
             .font(iced::Font::MONOSPACE)
             .wrapping(text::Wrapping::None),
     )
     .direction(scrollable::Direction::Both {
-        vertical: scrollable::Scrollbar::default(),
-        horizontal: scrollable::Scrollbar::default(),
+        vertical: styles::scrollbar(),
+        horizontal: styles::scrollbar(),
     })
     .width(Length::Fill)
     .height(Length::Shrink);
@@ -9930,7 +9946,7 @@ fn command_question<'a>(
         text(title).size(font_size::TITLE),
         text(intro),
         container(
-            scrollable(
+            styles::scroll(
                 text(command)
                     .font(iced::Font::MONOSPACE)
                     .wrapping(text::Wrapping::Glyph)
@@ -9974,7 +9990,7 @@ fn post_connect_dialog(confirmation: &PostConnectConfirmation) -> Element<'_, Me
             count = count
         )),
         container(
-            scrollable(
+            styles::scroll(
                 text(confirmation.commands.join("\n"))
                     .font(iced::Font::MONOSPACE)
                     .wrapping(text::Wrapping::Glyph)

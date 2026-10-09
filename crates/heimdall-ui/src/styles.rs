@@ -28,10 +28,22 @@ use iced::widget::button::{Status as ButtonStatus, Style as ButtonStyle};
 use iced::widget::checkbox::{Status as CheckStatus, Style as CheckStyle};
 use iced::widget::container::Style as BoxStyle;
 use iced::widget::pick_list::{Status as ListStatus, Style as ListStyle};
+use iced::widget::scrollable::{
+    Direction, Rail, Scrollable, Scrollbar, Scroller, Status as ScrollStatus, Style as ScrollStyle,
+};
 use iced::widget::text_input::{Status as FieldStatus, Style as FieldStyle};
-use iced::{Background, Border, Color, Font, Shadow, Theme, font};
+use iced::{Background, Border, Color, Element, Font, Shadow, Theme, font};
 
 use crate::tokens::{ACCENT_SHIFT, BORDER_WIDTH, OPACITY_DISABLED, radius};
+
+/// Width of a scrollbar's track, as the C# `ThemedScrollBarStyle`'s.
+pub const SCROLLBAR_WIDTH: f32 = 12.0;
+
+/// Width of its thumb: the track less the C# thumb's margin of 2 on each side.
+pub const SCROLLER_WIDTH: f32 = 8.0;
+
+/// Opacity of a toolbar's separator, as the C# `ToolbarVerticalSeparatorStyle`'s.
+const SEPARATOR_OPACITY: f32 = 0.65;
 
 /// The window's font, semi-bold, as the C#'s `FontWeight="SemiBold"`: a selected tab's
 /// name, a session's title above it.
@@ -78,6 +90,10 @@ struct Brushes {
     secondary: Color,
     /// `ErrorBrush`.
     danger: Color,
+    /// `WarningBrush`.
+    warning: Color,
+    /// `BorderBrush`: a card's edge, as iced's bordered box draws it.
+    edge: Color,
 }
 
 impl Brushes {
@@ -95,6 +111,8 @@ impl Brushes {
             text: extended.background.base.text,
             secondary: extended.secondary.base.color,
             danger: extended.danger.base.color,
+            warning: extended.warning.base.color,
+            edge: extended.background.strong.color,
         }
     }
 }
@@ -388,6 +406,143 @@ pub fn checkbox(theme: &Theme, status: CheckStatus) -> CheckStyle {
     }
 }
 
+/// A row of a list that draws its own background, as a file list's row over the C#
+/// `FileBrowserRowStyle`: the button itself shows nothing but its text.
+pub fn bare(theme: &Theme, status: ButtonStatus) -> ButtonStyle {
+    let rest = button_style(None, Brushes::of(theme).text, Color::TRANSPARENT);
+    match status {
+        ButtonStatus::Disabled => faded(&rest),
+        _ => rest,
+    }
+}
+
+/// A toolbar's toggle, as the C# `ToolbarToggleButtonStyle`: outlined in the secondary text,
+/// a card under the pointer; once `on`, a card outlined in the warning colour.
+pub fn toggle(on: bool) -> impl Fn(&Theme, ButtonStatus) -> ButtonStyle {
+    move |theme, status| {
+        let brushes = Brushes::of(theme);
+        let rest = if on {
+            button_style(Some(brushes.card), brushes.text, brushes.warning)
+        } else {
+            button_style(None, brushes.text, brushes.secondary)
+        };
+        match status {
+            ButtonStatus::Active => rest,
+            ButtonStatus::Hovered => ButtonStyle {
+                background: Some(Background::Color(brushes.card)),
+                ..rest
+            },
+            ButtonStatus::Pressed => ButtonStyle {
+                background: Some(Background::Color(brushes.surface)),
+                ..rest
+            },
+            ButtonStatus::Disabled => faded(&rest),
+        }
+    }
+}
+
+/// A card, as the C# Settings cards: the card colour, rounded, its edge the border colour.
+pub fn card(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        border: outline(brushes.edge, radius::LG),
+        ..BoxStyle::default()
+    }
+}
+
+/// A box drawn as a field, as the C# breadcrumb takes the path box's look: a card outlined
+/// in the secondary text.
+pub fn field_box(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        border: outline(brushes.secondary, radius::MD),
+        ..BoxStyle::default()
+    }
+}
+
+/// The C# "Modified" badge of a setting: the window's background outlined in the accent.
+pub fn badge(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.surface)),
+        border: outline(brushes.accent, radius::SM),
+        ..BoxStyle::default()
+    }
+}
+
+/// A line between two parts, as the C# `BorderBrush` edges of a toolbar; faded as the C#
+/// toolbar's separator.
+pub fn divider(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(
+            Brushes::of(theme).edge.scale_alpha(SEPARATOR_OPACITY),
+        )),
+        ..BoxStyle::default()
+    }
+}
+
+/// A scrollbar as the C#'s: a track as wide as [`SCROLLBAR_WIDTH`], its thumb
+/// [`SCROLLER_WIDTH`] in the middle of it.
+#[must_use]
+pub fn scrollbar() -> Scrollbar {
+    Scrollbar::new()
+        .width(SCROLLBAR_WIDTH)
+        .scroller_width(SCROLLER_WIDTH)
+}
+
+/// `content` scrolled down, its scrollbar as the C#'s: what every list and page of the
+/// window scrolls in.
+pub fn scroll<'a, Message: 'a>(
+    content: impl Into<Element<'a, Message>>,
+) -> Scrollable<'a, Message> {
+    iced::widget::scrollable(content)
+        .direction(Direction::Vertical(scrollbar()))
+        .style(scrollbars)
+}
+
+/// The scrollbars of a scrolled view, as the C# `ThemedScrollBarStyle`: the track in the
+/// window's background, the thumb rounded in the secondary text, in the accent while dragged.
+pub fn scrollbars(theme: &Theme, status: ScrollStatus) -> ScrollStyle {
+    let brushes = Brushes::of(theme);
+    let (vertical, horizontal) = match status {
+        ScrollStatus::Dragged {
+            is_vertical_scrollbar_dragged,
+            is_horizontal_scrollbar_dragged,
+            ..
+        } => (
+            is_vertical_scrollbar_dragged,
+            is_horizontal_scrollbar_dragged,
+        ),
+        _ => (false, false),
+    };
+    let rail = |dragged: bool| Rail {
+        background: Some(Background::Color(brushes.surface)),
+        border: Border {
+            radius: radius::SM.into(),
+            ..Border::default()
+        },
+        scroller: Scroller {
+            background: Background::Color(if dragged {
+                brushes.accent
+            } else {
+                brushes.secondary
+            }),
+            border: Border {
+                radius: radius::SM.into(),
+                ..Border::default()
+            },
+        },
+    };
+    ScrollStyle {
+        vertical_rail: rail(vertical),
+        horizontal_rail: rail(horizontal),
+        gap: None,
+        ..iced::widget::scrollable::default(theme, status)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -448,6 +603,60 @@ mod tests {
         assert_eq!(typed.border.color, colors.accent(Accent::Blue));
         let rest = text_input(&theme, FieldStatus::Active);
         assert_eq!(rest.border.color, colors.comment);
+    }
+
+    #[test]
+    fn a_scrollbar_thumb_is_the_secondary_text_and_the_accent_while_dragged() {
+        let theme = magellan();
+        let colors = themes::colors(AppTheme::Magellan);
+        let rest = scrollbars(
+            &theme,
+            ScrollStatus::Active {
+                is_horizontal_scrollbar_disabled: false,
+                is_vertical_scrollbar_disabled: false,
+            },
+        );
+        assert_eq!(
+            rest.vertical_rail.scroller.background,
+            Background::Color(colors.comment)
+        );
+        assert_eq!(
+            rest.vertical_rail.background,
+            Some(Background::Color(colors.background)),
+            "the track, the window's background"
+        );
+        let dragged = scrollbars(
+            &theme,
+            ScrollStatus::Dragged {
+                is_horizontal_scrollbar_dragged: false,
+                is_vertical_scrollbar_dragged: true,
+                is_horizontal_scrollbar_disabled: false,
+                is_vertical_scrollbar_disabled: false,
+            },
+        );
+        assert_eq!(
+            dragged.vertical_rail.scroller.background,
+            Background::Color(colors.accent(Accent::Blue))
+        );
+        assert_eq!(
+            dragged.horizontal_rail.scroller.background,
+            Background::Color(colors.comment),
+            "the other one at rest"
+        );
+        const { assert!(SCROLLER_WIDTH < SCROLLBAR_WIDTH, "thin, inside its track") };
+    }
+
+    #[test]
+    fn a_toolbar_toggle_on_is_outlined_in_the_warning_colour() {
+        let theme = magellan();
+        let colors = themes::colors(AppTheme::Magellan);
+        assert_eq!(
+            toggle(true)(&theme, ButtonStatus::Active).border.color,
+            colors.orange
+        );
+        let off = toggle(false)(&theme, ButtonStatus::Active);
+        assert_eq!(off.border.color, colors.comment);
+        assert_eq!(off.background, None, "nothing behind it at rest");
     }
 
     #[test]

@@ -619,7 +619,7 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
     assert!(shell.settings_shown());
     snapshot(&shell, "settings-vault-disabled.png");
     {
-        let mut ui = simulator(&shell);
+        let mut ui = tall_settings(&shell);
         for label in [
             "Security",
             "Master password",
@@ -637,13 +637,13 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
     }
     let _ = shell.update(Message::App(AppMessage::ShowVault));
     let enable_clicked = |shell: &Shell| {
-        let mut ui = simulator(shell);
+        let mut ui = tall_settings(shell);
         ui.click("Enable").expect("the dialog's button");
         ui.into_messages()
             .any(|message| matches!(message, Message::SubmitVault))
     };
     {
-        let mut ui = simulator(&shell);
+        let mut ui = tall_settings(&shell);
         for label in [
             "Set a master password",
             "New master password",
@@ -663,16 +663,16 @@ fn the_master_password_is_enabled_from_the_settings_with_its_rules_said_as_typed
         }
     };
     type_new(&mut shell, "short", "short");
-    simulator(&shell)
+    tall_settings(&shell)
         .find("Too short: use at least 12 characters.")
         .expect("too short");
     type_new(&mut shell, "alllowercase", "alllowercase");
-    simulator(&shell)
+    tall_settings(&shell)
         .find("Use at least 3 character types (lower, upper, digit, symbol), or 20 characters or more.")
         .expect("too simple");
     assert!(!enable_clicked(&shell), "refused by the rules");
     type_new(&mut shell, "Mixed-case 12", "Mixed-case 13");
-    simulator(&shell)
+    tall_settings(&shell)
         .find("Password strength is sufficient.")
         .expect("strong enough");
     assert!(!enable_clicked(&shell), "not typed twice alike");
@@ -2031,7 +2031,7 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
         heimdall_ui::shell::SettingsTab::Terminal,
     ));
     {
-        let mut ui = simulator(&shell);
+        let mut ui = tall_settings(&shell);
         ui.find("Session Logging").expect("its section");
         ui.find(
             "Transcripts keep what you type as well as what is shown, including passwords or \
@@ -2049,7 +2049,7 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
         SettingsMessage::SessionLogging(true),
     )));
     {
-        let mut ui = simulator(&shell);
+        let mut ui = tall_settings(&shell);
         ui.find("Record session transcripts?").expect("asked first");
         ui.click("Turn on").expect("its answer");
         assert!(
@@ -2060,7 +2060,7 @@ fn the_settings_page_turns_session_logging_on_and_applies_its_folder_with_enter(
     let _ = shell.update(Message::App(AppMessage::ConfirmDialog));
     assert!(shell.app().settings().session_logging);
     {
-        let mut ui = simulator(&shell);
+        let mut ui = tall_settings(&shell);
         ui.click("logs/sessions").expect("its folder");
         ui.typewrite("x");
         assert!(

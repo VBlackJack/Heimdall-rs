@@ -25,8 +25,8 @@ use heimdall_app::tunnel::{
 use heimdall_app::{Message as AppMessage, Notice, TunnelMessage, server_text};
 use heimdall_core::profile::{ProfileId, SshGateway, display_address};
 use iced::widget::{
-    Column, button, column, container, mouse_area, pick_list, row, rule, scrollable, space, text,
-    text_input, tooltip,
+    Column, button, column, container, mouse_area, pick_list, row, rule, space, text, text_input,
+    tooltip,
 };
 use iced::{Alignment, Border, Element, Font, Length, Theme};
 
@@ -361,7 +361,7 @@ fn rows<'a>(tunnels: &'a [Tunnel], routes: &[SessionRoute], started: bool) -> El
         list = list.push(note(fl!("ui-tunnels-session-routes", count = routes.len())));
         list = list.extend(routes.iter().map(|route| route_row(route, started)));
     }
-    scrollable(list).height(Length::Fill).into()
+    styles::scroll(list).height(Length::Fill).into()
 }
 
 /// A session's route: its health, its gateways, its tab, no local port, the server it

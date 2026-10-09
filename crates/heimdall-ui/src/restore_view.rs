@@ -20,7 +20,7 @@
 
 use heimdall_app::{Message as AppMessage, RestoreDialog};
 use heimdall_core::utc::UtcTime;
-use iced::widget::{Column, button, checkbox, column, row, scrollable, text};
+use iced::widget::{Column, button, checkbox, column, row, text};
 use iced::{Element, Length};
 
 use crate::i18n::fl;
@@ -79,7 +79,7 @@ pub fn view(dialog: &RestoreDialog) -> Element<'_, Message> {
             .style(styles::checkbox)
             .label(fl!("ui-restore-select-all"))
             .on_toggle(|on| choose(None, on)),
-        scrollable(Column::with_children(rows).spacing(spacing::XS))
+        styles::scroll(Column::with_children(rows).spacing(spacing::XS))
             .height(Length::Fixed(LIST_HEIGHT)),
         row![
             iced::widget::space::horizontal(),
