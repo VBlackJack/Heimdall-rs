@@ -370,11 +370,19 @@ impl App {
         true
     }
 
-    /// Sets what `message` changes of `PuTTY`, the default SSH and RDP modes and the X
-    /// server.
+    /// Sets what `message` changes of the outside programs and folders: the session log
+    /// folder, the external editor, `PuTTY`, the default SSH and RDP modes and the X server.
     fn set_external_clients(&mut self, message: &SettingsMessage) {
         let settings = &mut self.settings;
         match message {
+            SettingsMessage::SessionLogDirectory(directory) => {
+                directory
+                    .trim()
+                    .clone_into(&mut settings.session_log_directory);
+            }
+            SettingsMessage::ExternalEditor(editor) => {
+                editor.trim().clone_into(&mut settings.external_editor);
+            }
             SettingsMessage::PuttyPath(path) => path.trim().clone_into(&mut settings.putty_path),
             SettingsMessage::SshDefaultMode(mode) => settings.ssh_default_mode = *mode,
             SettingsMessage::RdpDefaultMode(mode) => settings.rdp_default_mode = *mode,
@@ -416,15 +424,9 @@ impl App {
         match message {
             SettingsMessage::ColorScheme(scheme) => self.settings.color_scheme = *scheme,
             SettingsMessage::SessionLogging(on) => self.settings.session_logging = *on,
-            SettingsMessage::SessionLogDirectory(directory) => {
-                directory
-                    .trim()
-                    .clone_into(&mut self.settings.session_log_directory);
-            }
-            SettingsMessage::ExternalEditor(editor) => {
-                editor.trim().clone_into(&mut self.settings.external_editor);
-            }
-            SettingsMessage::PuttyPath(_)
+            SettingsMessage::SessionLogDirectory(_)
+            | SettingsMessage::ExternalEditor(_)
+            | SettingsMessage::PuttyPath(_)
             | SettingsMessage::SshDefaultMode(_)
             | SettingsMessage::RdpDefaultMode(_)
             | SettingsMessage::X11ServerPath(_)
