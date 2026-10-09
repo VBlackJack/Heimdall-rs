@@ -505,6 +505,253 @@ fn an_ftp_tab_whose_certificate_changed_offers_to_forget_the_server() {
     )));
 }
 
+/// The base64 of [`ED25519`], as `known_hosts` writes it.
+const ED25519_BLOB: &str = "AAAAC3NzaC1lZDI1NTE5AAAAIEdv/0kqpfKUkuXCpQIlyU34zlRbf2MM2wBP+uTTnDTR";
+
+/// 2026-03-15 12:00:30 UTC, as the details file writes it.
+const FIRST_SEEN: u64 = 1_773_576_030;
+/// 2026-09-27 19:15:03 UTC, as the details file writes it.
+const LAST_SEEN: u64 = 1_790_536_503;
+
+/// Trusts [`ED25519`] for `web.lab:22` and `db.lab:2222` and pins it for `pin.lab:22`, the
+/// details of `web.lab` kept: the user's, first and last seen.
+fn trust_with_details(dir: &Path) {
+    trust(dir);
+    let print = heimdall_ssh::fingerprint(&PublicKey::from_openssh(ED25519).expect("key"));
+    heimdall_ssh::Pins::beside(&dir.join("known_hosts"))
+        .pin("pin.lab", 22, &print)
+        .expect("pinned");
+    std::fs::write(
+        dir.join("known_hosts.details"),
+        format!("web.lab {print} source=user first={FIRST_SEEN} last={LAST_SEEN}\n"),
+    )
+    .expect("details");
+}
+
+fn at(seconds: u64) -> std::time::SystemTime {
+    std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds)
+}
+
+#[test]
+fn the_host_keys_show_the_csharp_columns_and_unknown_for_what_is_not_known() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    trust_with_details(dir.path());
+    show(&mut shell, SettingsTab::Ssh);
+    let mut ui = simulator(&shell);
+    for label in [
+        "Host:Port",
+        "Algorithm",
+        "Source",
+        "First seen",
+        // The C# default: the key last seen first.
+        "Last seen \u{25bc}",
+        "Fingerprint",
+        "User confirmed",
+        "Unknown",
+        "Details",
+        "pin.lab:22",
+    ] {
+        ui.find(label).expect(label);
+    }
+    let first = heimdall_app::local_date_time(at(FIRST_SEEN));
+    let last = heimdall_app::local_date_time(at(LAST_SEEN));
+    ui.find(first.as_str()).expect("first seen, in local time");
+    ui.find(last.as_str()).expect("last seen, in local time");
+}
+
+#[test]
+fn the_host_keys_sort_as_the_csharp_list() {
+    use heimdall_ssh::{HostKeyDetails, HostKeySource, KnownHostEntry};
+    use heimdall_ui::trusted_keys_view::{HostKeyColumn, HostKeySort, sorted};
+
+    let entry = |host: &str, port, algorithm: &str, source, seen: Option<u64>| KnownHostEntry {
+        host: host.to_owned(),
+        port,
+        algorithm: algorithm.to_owned(),
+        fingerprint: format!("SHA256:{host}"),
+        public_key: None,
+        details: HostKeyDetails {
+            source,
+            first_seen: seen.map(at),
+            last_seen: seen.map(at),
+        },
+    };
+    let keys = [
+        entry("b.lab", 22, "ssh-ed25519", HostKeySource::User, Some(200)),
+        entry(
+            "A.lab",
+            22,
+            "ecdsa-sha2-nistp256",
+            HostKeySource::Unknown,
+            None,
+        ),
+        entry("c.lab", 2222, "ssh-rsa", HostKeySource::Imported, Some(300)),
+        entry("d.lab", 22, "ssh-ed25519", HostKeySource::User, Some(100)),
+    ];
+    let hosts = |sort: HostKeySort, search: &str| -> Vec<String> {
+        sorted(&keys, search, sort)
+            .into_iter()
+            .map(|key| key.host.clone())
+            .collect()
+    };
+
+    let default = HostKeySort::default();
+    assert_eq!(
+        default,
+        HostKeySort {
+            column: HostKeyColumn::LastSeen,
+            ascending: false
+        }
+    );
+    assert_eq!(
+        hosts(default, ""),
+        ["c.lab", "b.lab", "d.lab", "A.lab"],
+        "last seen newest first, a date not known the oldest"
+    );
+    let by_host = default.clicked(HostKeyColumn::HostPort);
+    assert!(by_host.ascending, "a first click on the server: ascending");
+    assert_eq!(
+        hosts(by_host, ""),
+        ["A.lab", "b.lab", "c.lab", "d.lab"],
+        "whatever the case"
+    );
+    assert_eq!(
+        hosts(by_host.clicked(HostKeyColumn::HostPort), ""),
+        ["d.lab", "c.lab", "b.lab", "A.lab"],
+        "a second click: the other way"
+    );
+    let by_source = by_host.clicked(HostKeyColumn::Source);
+    assert!(by_source.ascending);
+    assert_eq!(
+        hosts(by_source, ""),
+        ["c.lab", "A.lab", "b.lab", "d.lab"],
+        "by the words shown: Imported, Unknown, User; a tie in the order of the file"
+    );
+    let by_algorithm = by_source.clicked(HostKeyColumn::Algorithm);
+    assert!(by_algorithm.ascending);
+    assert_eq!(
+        hosts(by_algorithm, ""),
+        ["A.lab", "b.lab", "d.lab", "c.lab"]
+    );
+    for column in [HostKeyColumn::FirstSeen, HostKeyColumn::Fingerprint] {
+        assert!(
+            !by_host.clicked(column).ascending,
+            "a first click on {column:?}: descending"
+        );
+    }
+    assert_eq!(
+        hosts(by_host.clicked(HostKeyColumn::Fingerprint), ""),
+        ["d.lab", "c.lab", "b.lab", "A.lab"]
+    );
+    assert_eq!(
+        hosts(default, ":2222"),
+        ["c.lab"],
+        "the search reads host:port"
+    );
+    assert!(
+        hosts(default, "SHA256").is_empty(),
+        "and the host and port alone, as the C#"
+    );
+}
+
+#[test]
+fn a_header_click_sorts_the_host_keys_by_its_column_and_marks_it() {
+    use heimdall_ui::trusted_keys_view::HostKeyColumn;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    trust(dir.path());
+    show(&mut shell, SettingsTab::Ssh);
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Host:Port").expect("the header");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::HostKeySort(HostKeyColumn::HostPort)))
+        );
+    }
+    let _ = shell.update(Message::HostKeySort(HostKeyColumn::HostPort));
+    let mut ui = simulator(&shell);
+    ui.find("Host:Port \u{25b2}")
+        .expect("sorted by the server, ascending");
+    ui.find("Last seen").expect("no longer marked");
+}
+
+#[test]
+fn the_details_show_the_whole_key_or_say_a_pin_has_none_in_the_csharp_words() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    trust_with_details(dir.path());
+    show(&mut shell, SettingsTab::Ssh);
+    let _ = shell.update(Message::TrustedSearch(
+        TrustedList::HostKeys,
+        "web".to_owned(),
+    ));
+    let web = shell
+        .app()
+        .trusted_keys()
+        .ssh
+        .iter()
+        .find(|entry| entry.host == "web.lab")
+        .expect("web")
+        .clone();
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Details").expect("the button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::App(AppMessage::Settings(SettingsMessage::TrustedKeys(
+                TrustedKeysMessage::ShowDetails(ref shown)
+            ))) if *shown == web
+        )));
+    }
+    let _ = shell.update(Message::App(AppMessage::Settings(
+        SettingsMessage::TrustedKeys(TrustedKeysMessage::ShowDetails(web.clone())),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        for label in [
+            "Trusted host key details",
+            "web.lab:22",
+            "ssh-ed25519",
+            "User confirmed",
+            web.fingerprint.as_str(),
+            "Public key blob",
+            ED25519_BLOB,
+        ] {
+            ui.find(label).expect(label);
+        }
+        ui.find(heimdall_app::local_date_time(at(LAST_SEEN)).as_str())
+            .expect("last seen");
+        ui.click("Close").expect("closed");
+        assert!(
+            ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::DismissDialog)))
+        );
+    }
+    let pin = shell
+        .app()
+        .trusted_keys()
+        .ssh
+        .iter()
+        .find(|entry| entry.host == "pin.lab")
+        .expect("pin")
+        .clone();
+    let settings = Settings {
+        fonts: FONTS.iter().map(|face| (*face).into()).collect(),
+        ..Settings::default()
+    };
+    let mut ui = common::simulator(
+        settings,
+        WINDOW,
+        heimdall_ui::trusted_keys_view::details(&pin),
+    );
+    ui.find("(not available - reconnect to capture)")
+        .expect("a pin keeps no key");
+    ui.find("Unknown").expect("nor any date");
+}
+
 #[test]
 fn a_certificate_pinned_whole_shows_its_thumbprint_as_the_csharp_list() {
     let dir = tempfile::tempdir().expect("dir");
@@ -531,4 +778,35 @@ fn a_certificate_pinned_whole_shows_its_thumbprint_as_the_csharp_list() {
     let mut ui = sized(&shell, TALL_WINDOW);
     ui.find("ftp.lab:21").expect("found");
     assert!(ui.find("files.lab:990").is_err(), "no thumbprint, no match");
+}
+
+#[test]
+fn an_rdp_certificate_pinned_whole_shows_its_thumbprint_as_the_csharp_list() {
+    let dir = tempfile::tempdir().expect("dir");
+    // SHA-256 of "abc", as the whole certificate's hash; beside a line of its key alone, as
+    // a Heimdall that pinned keys alone wrote it.
+    let whole = CertificateHash::of(b"abc");
+    std::fs::write(
+        dir.path().join("known_rdp_hosts"),
+        format!("dc.lab:3389 {PIN} trusted=1773576030 certificate={whole}\nweb.lab:3389 {PIN}\n"),
+    )
+    .expect("write");
+    let mut shell = shell(dir.path());
+    show(&mut shell, SettingsTab::Rdp);
+    {
+        let mut ui = sized(&shell, TALL_WINDOW);
+        ui.find("dc.lab:3389").expect("the server pinned whole");
+        ui.find("web.lab:3389")
+            .expect("the server pinned by its key");
+        // The key, as before, and the thumbprint cut after 20 characters.
+        ui.find("SHA256:BA:78:16:BF:8...").expect("the thumbprint");
+    }
+    // Found by its thumbprint.
+    let _ = shell.update(Message::TrustedSearch(
+        TrustedList::Certificates,
+        "BA:78:16".to_owned(),
+    ));
+    let mut ui = sized(&shell, TALL_WINDOW);
+    ui.find("dc.lab:3389").expect("found");
+    assert!(ui.find("web.lab:3389").is_err(), "no thumbprint, no match");
 }

@@ -30,8 +30,8 @@ use std::time::Duration;
 use heimdall_core::profile::{ColorDepth, RdpOptions};
 use heimdall_rdp::session::{self, CloseReason, RdpEvent};
 use heimdall_rdp::{
-    KnownRdpHosts, MouseButton, MousePosition, Operation, RdpConfig, RdpError, Security, Timeouts,
-    connect, given,
+    AcceptedCertificate, KnownRdpHosts, MouseButton, MousePosition, Operation, RdpConfig, RdpError,
+    Security, Timeouts, connect, given,
 };
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
@@ -109,7 +109,7 @@ async fn a_trusted_server_draws_its_login_screen() {
         panic!("{:?}", outcome.map(|_| ()));
     };
     // What the user does on the question: accept, and connect again.
-    config.accepted = Some(certificate.fingerprint);
+    config.accepted = Some(AcceptedCertificate::from(&*certificate));
     let connection = connect(config, given("nobody".to_owned(), password), cancel.clone())
         .await
         .expect("connected");
@@ -219,7 +219,7 @@ async fn each_colour_depth_draws_the_login_screen() {
         let Err(RdpError::UnknownCertificate(certificate)) = outcome else {
             panic!("{depth:?}: {:?}", outcome.map(|_| ()));
         };
-        config.accepted = Some(certificate.fingerprint);
+        config.accepted = Some(AcceptedCertificate::from(&*certificate));
         let connection = connect(config, given("nobody".to_owned(), password), cancel.clone())
             .await
             .expect("connected");
@@ -298,7 +298,7 @@ async fn cancelling_the_login_screen_is_a_close_not_a_failure() {
     else {
         panic!("expected the certificate question");
     };
-    config.accepted = Some(certificate.fingerprint);
+    config.accepted = Some(AcceptedCertificate::from(&*certificate));
     let connection = connect(config, given("nobody".to_owned(), password), cancel.clone())
         .await
         .expect("connected");
@@ -364,7 +364,7 @@ async fn a_logged_in_desktop_follows_the_size_asked_for() {
     else {
         panic!("expected the certificate question");
     };
-    config.accepted = Some(certificate.fingerprint);
+    config.accepted = Some(AcceptedCertificate::from(&*certificate));
     // The password given, the server logs in without its own form.
     let connection = connect(config, given(user, password), cancel.clone())
         .await

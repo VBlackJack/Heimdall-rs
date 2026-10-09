@@ -397,6 +397,9 @@ fn carry_over_pin(dir: &Path, host: &str, key: &str) -> String {
             port: 22,
             fingerprint: print.clone(),
             key: None,
+            source: heimdall_core::import::csharp::TrustedHostKeySource::Unknown,
+            first_seen: None,
+            last_seen: None,
         }],
     )
     .expect("carried over");

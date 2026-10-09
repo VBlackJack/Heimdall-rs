@@ -30,6 +30,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 use serde::Deserialize;
 use thiserror::Error;
@@ -276,6 +277,65 @@ pub struct TrustedHostKey {
     pub fingerprint: String,
     /// The key's SSH wire form in base64, when the C# kept it.
     pub key: Option<String>,
+    /// Where the C# said the key came from.
+    pub source: TrustedHostKeySource,
+    /// When the C# first trusted the key; `None` when it did not say.
+    pub first_seen: Option<SystemTime>,
+    /// When the C# last saw the server present it; `None` when it did not say.
+    pub last_seen: Option<SystemTime>,
+}
+
+/// Where the C# Heimdall said a trusted key came from, as its `HostKeySource`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum TrustedHostKeySource {
+    /// `UserConfirmed`: the user accepted it.
+    UserConfirmed,
+    /// `ImportedKnownHosts`: imported from a `known_hosts` file.
+    ImportedKnownHosts,
+    /// `Unknown`, `Factory`, or nothing said: Heimdall-rs has no factory keys, so a key the
+    /// C# shipped with is one whose origin is not known here.
+    #[default]
+    Unknown,
+}
+
+impl TrustedHostKeySource {
+    /// The source the C# wrote, by name as its `JsonStringEnumConverter` writes it, any
+    /// case, or by number.
+    fn from_json(value: Option<&serde_json::Value>) -> Self {
+        match value {
+            Some(serde_json::Value::String(name)) if name.eq_ignore_ascii_case(USER_CONFIRMED) => {
+                Self::UserConfirmed
+            }
+            Some(serde_json::Value::String(name))
+                if name.eq_ignore_ascii_case(IMPORTED_KNOWN_HOSTS) =>
+            {
+                Self::ImportedKnownHosts
+            }
+            Some(serde_json::Value::Number(number)) => match number.as_u64() {
+                Some(USER_CONFIRMED_NUMBER) => Self::UserConfirmed,
+                Some(IMPORTED_KNOWN_HOSTS_NUMBER) => Self::ImportedKnownHosts,
+                _ => Self::Unknown,
+            },
+            _ => Self::Unknown,
+        }
+    }
+}
+
+/// The name the C# writes for a key the user accepted.
+const USER_CONFIRMED: &str = "UserConfirmed";
+/// The name the C# writes for a key imported from a `known_hosts` file.
+const IMPORTED_KNOWN_HOSTS: &str = "ImportedKnownHosts";
+/// `HostKeySource.UserConfirmed` as a number.
+const USER_CONFIRMED_NUMBER: u64 = 1;
+/// `HostKeySource.ImportedKnownHosts` as a number.
+const IMPORTED_KNOWN_HOSTS_NUMBER: u64 = 2;
+
+/// A moment the C# wrote as a `DateTimeOffset`; `None` for anything else, and for the
+/// `MinValue` it writes for a date it does not know.
+fn date_of(value: Option<&serde_json::Value>) -> Option<SystemTime> {
+    value
+        .and_then(serde_json::Value::as_str)
+        .and_then(crate::utc::parse_iso)
 }
 
 /// Why the C# files could not be read at all.
@@ -828,6 +888,10 @@ struct LegacyHostKey {
     #[serde(default)]
     fingerprint: String,
     public_key_base64: Option<String>,
+    /// Kept as written: a value of another shape reads as unknown, never refuses the file.
+    first_seen: Option<serde_json::Value>,
+    last_seen: Option<serde_json::Value>,
+    source: Option<serde_json::Value>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -971,7 +1035,7 @@ pub fn import(
 /// are left out.
 fn trusted_host_keys(settings: &LegacySettings) -> Vec<TrustedHostKey> {
     let mut trusted: Vec<TrustedHostKey> = Vec::new();
-    let mut add = |host: &str, port: u16, fingerprint: &str, key: Option<&String>| {
+    let mut add = |host: &str, port: u16, fingerprint: &str, details: Option<&LegacyHostKey>| {
         let fingerprint = fingerprint.trim();
         if host.is_empty()
             || fingerprint.is_empty()
@@ -985,19 +1049,22 @@ fn trusted_host_keys(settings: &LegacySettings) -> Vec<TrustedHostKey> {
             host: host.to_owned(),
             port,
             fingerprint: fingerprint.to_owned(),
-            key: key.filter(|key| !key.trim().is_empty()).cloned(),
+            key: details
+                .and_then(|details| details.public_key_base64.as_ref())
+                .filter(|key| !key.trim().is_empty())
+                .cloned(),
+            source: TrustedHostKeySource::from_json(
+                details.and_then(|details| details.source.as_ref()),
+            ),
+            first_seen: date_of(details.and_then(|details| details.first_seen.as_ref())),
+            last_seen: date_of(details.and_then(|details| details.last_seen.as_ref())),
         });
     };
     let mut second: Vec<_> = settings.trusted_host_keys_v2.iter().collect();
     second.sort_by(|a, b| a.0.cmp(b.0));
     for (name, entry) in second {
         if let Some((host, port)) = host_and_port(name) {
-            add(
-                host,
-                port,
-                &entry.fingerprint,
-                entry.public_key_base64.as_ref(),
-            );
+            add(host, port, &entry.fingerprint, Some(entry));
         }
     }
     let mut first: Vec<_> = settings.trusted_host_keys.iter().collect();

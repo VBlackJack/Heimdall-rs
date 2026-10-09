@@ -29,6 +29,7 @@ mod connection;
 mod diagnose;
 mod error;
 mod forward;
+mod host_key_details;
 mod key_file;
 mod known_hosts;
 mod known_hosts_export;
@@ -56,6 +57,7 @@ pub use connection::{
 pub use diagnose::{HopSecrets, Outcome, Step, StepOf, diagnose_route, has_trusted_key};
 pub use error::{AuthMethod, ConnectError};
 pub use forward::RemoteForward;
+pub use host_key_details::{HostKeyDetails, HostKeySource, LAST_SEEN_RESOLUTION};
 pub use key_file::{KeyFile, KeyFileError, KeyFormat};
 pub use known_hosts::{
     KnownHostEntry, KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,

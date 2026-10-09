@@ -14,23 +14,24 @@
  * limitations under the License.
  */
 
-//! The RDP servers trusted so far, by the key of their certificate.
+//! The RDP servers trusted so far, by their whole certificate and its key; the FTPS and VNC
+//! servers too, each protocol in a file of its own.
 //!
-//! One line per key trusted: `host:port SHA256:<base64>`, an IPv6 address in brackets, the
+//! One line per certificate trusted: `host:port SHA256:<base64>`, an IPv6 address in brackets, the
 //! host in lower case, then optional `name=value` attributes, separated by spaces:
 //!
 //! - `trusted=<seconds since 1970-01-01 UTC>`: when the key was trusted;
 //! - `subject=<text>` and `issuer=<text>`: the names its certificate carried, as UTF-8 in
 //!   base64url without padding, so that no space splits them;
 //! - `certificate=SHA256:<base64>`: the SHA-256 of the whole certificate, written as a key's
-//!   fingerprint, for the FTPS and VNC servers, which are pinned by their whole certificate
-//!   as the C# pins them; the RDP servers' lines never carry it;
+//!   fingerprint: the servers are pinned by their whole certificate, as the C# pins them. A
+//!   line without it was written by a Heimdall that pinned keys alone;
 //! - `valid_from=<seconds>` and `valid_until=<seconds>`: that certificate's validity, since
 //!   1970-01-01 UTC, beside it.
 //!
-//! For example `dc.lab:3389 SHA256:rgJ0... trusted=1767225600 subject=Q049ZGMubGFi`, or
-//! `files.lab:990 SHA256:rgJ0... trusted=1767225600 certificate=SHA256:ungWv48Bz...
-//! valid_from=1767225600 valid_until=1798761600`.
+//! For example `dc.lab:3389 SHA256:rgJ0... trusted=1767225600 subject=Q049ZGMubGFi
+//! certificate=SHA256:ungWv48Bz... valid_from=1767225600 valid_until=1798761600`, or, as an
+//! earlier Heimdall wrote it, `dc.lab:3389 SHA256:rgJ0... trusted=1767225600`.
 //!
 //! The key stays the second field: a reader of the first two fields alone, an older
 //! Heimdall among them, reads every line as before. An attribute not known, or that does
@@ -94,8 +95,8 @@ pub enum Verdict {
     },
 }
 
-/// Where a server pinned by its whole certificate, an FTPS or VNC one, stands against the
-/// recorded pins.
+/// Where a server pinned by its whole certificate, an RDP, FTPS or VNC one, stands against
+/// the recorded pins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CertificateVerdict {
     /// Recorded with this whole certificate.
@@ -157,8 +158,8 @@ pub struct KnownRdpHost {
     pub issuer: Option<String>,
     /// When the key was trusted; `None` when not recorded.
     pub trusted: Option<SystemTime>,
-    /// The hash of the whole certificate trusted; `None` when only its key is recorded, as
-    /// for every RDP server, or when the certificate named does not read.
+    /// The hash of the whole certificate trusted; `None` when only its key is recorded, by
+    /// a Heimdall that pinned keys alone, or when the certificate named does not read.
     pub certificate: Option<CertificateHash>,
     /// The line names a certificate that does not read: the file was edited or damaged.
     /// It is no key recorded alone, so no certificate is ever taken, nor adopted, on its
@@ -555,8 +556,9 @@ impl KnownRdpHosts {
     /// `validity` when known, with its key, the time, its subject and its issuer, creating
     /// the file and its folder if needed. It replaces the lines of the same key for the
     /// server, a renewed certificate or one recorded by its key alone, as the C# keeps one
-    /// certificate per server: the certificate it replaces is no longer trusted. Both steps
-    /// under one lock, so no reader sees the server between them.
+    /// certificate per FTPS server: the certificate it replaces is no longer trusted. The
+    /// lines of other keys stay: other machines answering at the address. Both steps under
+    /// one lock, so no reader sees the server between them.
     ///
     /// # Errors
     ///

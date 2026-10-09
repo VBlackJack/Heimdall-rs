@@ -38,8 +38,8 @@ use heimdall_core::store::{MergeReport, ProfileStore, StoreError};
 use heimdall_core::winrm_diagnostic::{Diagnostic, EarlyOutput};
 use heimdall_ssh::known_hosts_import::{self, OtherAlgorithm, Trusting};
 use heimdall_ssh::{
-    AgentSource, ConnectOptions, KeyboardInteractivePrompt, KnownHosts, PublicKey, RunTrust,
-    Secret, TerminalSize, fingerprint,
+    AgentSource, ConnectOptions, HostKeySource, KeyboardInteractivePrompt, KnownHosts, PublicKey,
+    RunTrust, Secret, TerminalSize, fingerprint,
 };
 use heimdall_term::{
     CellPixels, CellPoint, FeedOutput, FindDirection, GridSize, Key, KeyLocation, KeyPress,
@@ -195,7 +195,7 @@ pub use tools::ToolsMessage;
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
 pub use tree_filter::{FilterMessage, TreeFilter};
-pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage};
+pub use trusted_keys::{TrustedKey, TrustedKeys, TrustedKeysMessage, local_date_time};
 pub use tunnels::TunnelMessage;
 pub use updates::{UpdateMessage, UpdateStatus};
 use vault::VaultState;
@@ -2062,7 +2062,9 @@ pub struct Tab {
     pub citrix: Option<Box<crate::citrix_session::CitrixPane>>,
     /// What the certificate question says beside the fingerprint, while it is asked.
     pub certificate_context: Option<CertificateContext>,
-    pending_rdp_key: Option<heimdall_rdp::Fingerprint>,
+    /// The key and the whole certificate the certificate question asks about, while it is
+    /// asked.
+    pending_rdp_key: Option<(heimdall_rdp::Fingerprint, heimdall_rdp::CertificateHash)>,
     attempt: AttemptId,
     sink: Option<Arc<dyn InputSink>>,
     cancel: CancellationToken,
@@ -2340,7 +2342,7 @@ pub struct CertificateContext {
     /// The certificate's subject, as the C# prompt shows it, when it was read.
     pub subject: Option<String>,
     /// Its issuer, validity and validation issue, as the C# FTPS prompt shows them, for an
-    /// FTPS server.
+    /// FTPS or VNC server; for an RDP server only when its certificate is renewed.
     pub details: Option<crate::event::CertificateDetails>,
 }
 
@@ -2841,6 +2843,8 @@ pub enum Dialog {
     },
     /// Forget a key trusted for a server?
     ForgetTrustedKey(TrustedKey),
+    /// All that is known of an SSH host key, as the C# "Trusted host key details".
+    TrustedHostKeyDetails(Box<heimdall_ssh::KnownHostEntry>),
     /// Forget every certificate trusted for the server of this one?
     ForgetTrustedServer {
         /// A certificate of the server.
@@ -3148,13 +3152,9 @@ pub struct App {
     deferred_reconnects: Vec<(TabId, AttemptId)>,
     /// SSH keys trusted for this run only, shared with every connection.
     run_trust: RunTrust,
-    /// RDP certificates trusted for this run only: server, port, key.
-    rdp_run_trust: Vec<(
-        String,
-        u16,
-        heimdall_rdp::Fingerprint,
-        Option<heimdall_rdp::CertificateHash>,
-    )>,
+    /// RDP, FTPS and VNC certificates trusted for this run only: server, port, and the hash
+    /// of the whole certificate.
+    rdp_run_trust: Vec<(String, u16, heimdall_rdp::CertificateHash)>,
     /// The shared session logs beside the transcripts: desktops' events, Files changes.
     session_logs: crate::session_log::SessionLogs,
     /// The desktops connected, for the events log.
@@ -4177,6 +4177,7 @@ impl App {
                 port,
                 &key,
                 OtherAlgorithm::Conflicts,
+                HostKeySource::User,
             ) {
                 Ok(Trusting::Recorded) => Ok(()),
                 Ok(Trusting::Learn | Trusting::LearnPinned) => {
@@ -4809,6 +4810,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::TrustedHostKeyDetails(_)
                 | Dialog::FileProperties(_)
                 | Dialog::LocalFileProperties(_)
                 | Dialog::ImportFailed { .. }

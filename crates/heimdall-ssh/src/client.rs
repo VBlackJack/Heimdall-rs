@@ -32,6 +32,7 @@ use crate::auth::{self, AuthContext};
 use crate::connection::Connection;
 use crate::error::ConnectError;
 use crate::forward::{self, Routes};
+use crate::host_key_details::{self, Change};
 use crate::known_hosts::{
     KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
@@ -766,16 +767,16 @@ impl Dial {
         }
     }
 
-    /// Records in full the key that matched a pin, when it is to be.
+    /// Records in full the key that matched a pin, when it is to be; or, for a key the
+    /// file trusts, that the server presented it now, later and off the connection's way.
     fn record(&self, pinning: Pinning) {
-        if pinning == Pinning::Record {
-            record_pinned(
-                &self.known_hosts,
-                &self.pins,
-                &self.host,
-                self.port,
-                &self.pinned,
-            );
+        if pinning != Pinning::Record {
+            return;
+        }
+        if let Some(key) = self.pinned.lock().ok().and_then(|mut slot| slot.take()) {
+            record_pinned(&self.known_hosts, &self.pins, &self.host, self.port, &key);
+        } else if let Some(key) = self.presented.lock().ok().and_then(|slot| slot.clone()) {
+            host_key_details::seen_later(&self.known_hosts, &self.host, self.port, &key);
         }
     }
 }
@@ -889,18 +890,28 @@ pub(crate) async fn hop<P: Prompter>(
 /// trust files, the pin checked again first as an import checks it: a key recorded
 /// meanwhile by another connection is left as it is, and a pin forgotten or replaced
 /// meanwhile records nothing. A failure leaves the pin, which still trusts that key and no
-/// other.
-fn record_pinned(known_hosts: &KnownHosts, pins: &Pins, host: &str, port: u16, pinned: &PinnedKey) {
-    let Some(key) = pinned.lock().ok().and_then(|mut slot| slot.take()) else {
-        return;
-    };
+/// other. The details of the pin, carried from the C#, stay the key's, last seen now.
+fn record_pinned(known_hosts: &KnownHosts, pins: &Pins, host: &str, port: u16, key: &PublicKey) {
     let lock = trust_files::lock();
     let decided = known_hosts.recorded(host, port).and_then(|recorded| {
         let pinned = pins.pinned(host, port)?;
-        Ok(trusting(&recorded, &pinned, &key, OtherAlgorithm::Adds))
+        Ok(trusting(&recorded, &pinned, key, OtherAlgorithm::Adds))
     });
     let recorded = match decided {
-        Ok(Trusting::LearnPinned) => pins::record_in_full(&lock, known_hosts, host, port, &key),
+        Ok(Trusting::LearnPinned) => pins::record_in_full(&lock, known_hosts, host, port, key)
+            .inspect(|()| {
+                host_key_details::record(
+                    &lock,
+                    known_hosts,
+                    &[Change::Seen {
+                        host,
+                        port,
+                        fingerprint: &fingerprint(key),
+                        now: host_key_details::now(),
+                        resolution: 0,
+                    }],
+                );
+            }),
         Ok(Trusting::Recorded) => Ok(()),
         Ok(Trusting::Learn | Trusting::Conflict(_)) => {
             log::info!("the pin of a server changed while it was reached: its key is not recorded");

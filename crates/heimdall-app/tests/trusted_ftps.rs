@@ -159,10 +159,11 @@ async fn an_accepted_ftps_certificate_is_listed_with_its_names_and_once_forgotte
     let (fingerprint, subject, whole) = match &event {
         ConnectionEvent::UnknownRdpCertificate {
             fingerprint,
+            certificate,
             subject,
-            details: Some(details),
+            details: Some(_),
             ..
-        } => (*fingerprint, subject.clone(), details.certificate),
+        } => (*fingerprint, subject.clone(), *certificate),
         other => panic!("the certificate question, got {other:?}"),
     };
     assert!(subject.is_some(), "{event:?}");
@@ -429,6 +430,7 @@ fn trust_once(
             host,
             port,
             fingerprint: key,
+            certificate: whole,
             subject: None,
             details: Some(Box::new(heimdall_app::CertificateDetails {
                 issuer: "CN=ftp.lab".to_owned(),
@@ -436,8 +438,7 @@ fn trust_once(
                     not_before: std::time::UNIX_EPOCH,
                     not_after: std::time::UNIX_EPOCH,
                 },
-                issue: heimdall_tls::ValidationIssue::SelfSigned,
-                certificate: whole,
+                issue: Some(heimdall_tls::ValidationIssue::SelfSigned),
                 renewal: None,
             })),
         },

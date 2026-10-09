@@ -26,8 +26,9 @@ use heimdall_core::profile::{RdpProfile, SshProfile, display_address};
 use heimdall_rdp::drives::local_drives;
 use heimdall_rdp::session::{self, RdpEvent};
 use heimdall_rdp::{
-    AskCredentials, CloseReason, Ending, Fingerprint, KnownRdpHosts, Opening, RdpConfig,
-    RdpConnection, RdpError, Security, Timeouts, Transport, connect, connect_through,
+    AcceptedCertificate, AskCredentials, CertificateHash, CloseReason, Ending, KnownRdpHosts,
+    Opening, RdpConfig, RdpConnection, RdpError, Security, ServerCertificate, Timeouts, Transport,
+    connect, connect_through,
 };
 use heimdall_ssh::{
     ConnectError, ConnectOptions, PasswordQuestion, UsernameQuestion, establish_via,
@@ -41,7 +42,7 @@ use crate::driver::{
     AnswerRegistry, ChannelPrompter, OpenForwards, ask, open_forwards, report_failure,
 };
 use crate::error::UiError;
-use crate::event::{Answer, ConnectionEvent, QuestionKind};
+use crate::event::{Answer, CertificateDetails, ConnectionEvent, QuestionKind, Renewal};
 use crate::text::server_text;
 
 /// Events buffered before the attempt waits for the UI to read them.
@@ -57,10 +58,11 @@ pub struct RdpRequest {
     pub profile: RdpProfile,
     /// File of trusted RDP servers.
     pub known_hosts: PathBuf,
-    /// A key the user accepted after the certificate question.
-    pub accepted: Option<Fingerprint>,
-    /// Keys the user trusted for this server for this run only.
-    pub trusted_for_run: Vec<Fingerprint>,
+    /// The certificate the user accepted after the certificate question.
+    pub accepted: Option<AcceptedCertificate>,
+    /// Certificates the user trusted for this server for this run only, by the hash of the
+    /// whole of each.
+    pub trusted_for_run: Vec<CertificateHash>,
     /// Desktop size asked for.
     pub desktop: (u16, u16),
     /// The desktop scale factor asked for, in percent; see
@@ -229,21 +231,17 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
         Ok(connection) => connection,
         Err(RdpError::UnknownCertificate(certificate)) => {
             log::info!(
-                "{target} presented an unknown certificate {}",
+                "{target} presented an unknown certificate {}, key {}",
+                certificate.certificate,
                 certificate.fingerprint
             );
-            let _ = events
-                .send(ConnectionEvent::UnknownRdpCertificate {
-                    host: profile.host.clone(),
-                    port: profile.port,
-                    fingerprint: certificate.fingerprint,
-                    subject: Some(certificate.subject.clone())
-                        .filter(|subject| !subject.trim().is_empty()),
-                    // The C# RDP question shows the subject alone.
-                    details: None,
-                })
-                .await;
-            return;
+            return ask_about(profile, &certificate, None, &events).await;
+        }
+        Err(RdpError::RenewedCertificate {
+            presented,
+            recorded,
+        }) => {
+            return ask_about(profile, &presented, Some(Renewal { recorded }), &events).await;
         }
         Err(error) => {
             let error = ui_error(error);
@@ -286,6 +284,34 @@ async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender
             return;
         }
     }
+}
+
+/// The certificate question about `certificate`, presented by the server of `profile`;
+/// `renewal` when it renews a certificate trusted on the same key.
+async fn ask_about(
+    profile: &RdpProfile,
+    certificate: &ServerCertificate,
+    renewal: Option<Renewal>,
+    events: &mpsc::Sender<ConnectionEvent>,
+) {
+    // The C# RDP question shows the subject alone; a renewal says so, with both validities,
+    // as the FTPS and VNC questions do. No authority of this computer was asked.
+    let details = renewal.map(|renewal| CertificateDetails {
+        issuer: certificate.issuer.clone(),
+        validity: certificate.validity,
+        issue: None,
+        renewal: Some(renewal),
+    });
+    let _ = events
+        .send(ConnectionEvent::UnknownRdpCertificate {
+            host: profile.host.clone(),
+            port: profile.port,
+            fingerprint: certificate.fingerprint,
+            certificate: certificate.certificate,
+            subject: Some(certificate.subject.clone()).filter(|subject| !subject.trim().is_empty()),
+            details: details.map(Box::new),
+        })
+        .await;
 }
 
 /// What `request` asks of the RDP connection.
@@ -459,6 +485,74 @@ mod tests {
             cancel: CancellationToken::new(),
             credential_guard: None,
         }
+    }
+
+    #[tokio::test]
+    async fn a_renewed_certificate_is_asked_about_with_both_validities_an_unknown_one_with_its_subject()
+     {
+        let der = rcgen::generate_simple_self_signed(vec!["dc.lab".to_owned()])
+            .expect("certificate")
+            .cert
+            .der()
+            .to_vec();
+        let presented = ServerCertificate::from_der(&der).expect("read");
+        let recorded = heimdall_rdp::Validity {
+            not_before: std::time::UNIX_EPOCH,
+            not_after: std::time::UNIX_EPOCH + std::time::Duration::from_hours(24),
+        };
+        let (events, mut said) = mpsc::channel(2);
+        ask_about(
+            &dc(),
+            &presented,
+            Some(Renewal {
+                recorded: Some(recorded),
+            }),
+            &events,
+        )
+        .await;
+        ask_about(&dc(), &presented, None, &events).await;
+
+        // Renewed: said so, with when the certificate on record and the one presented hold;
+        // no authority of this computer was asked, so no issue is said.
+        let Some(ConnectionEvent::UnknownRdpCertificate {
+            fingerprint,
+            certificate,
+            details: Some(details),
+            ..
+        }) = said.recv().await
+        else {
+            panic!("the question about a renewal");
+        };
+        assert_eq!(
+            (fingerprint, certificate),
+            (presented.fingerprint, CertificateHash::of(&der)),
+            "the answer trusts this very certificate"
+        );
+        assert_eq!(
+            *details,
+            CertificateDetails {
+                issuer: presented.issuer.clone(),
+                validity: presented.validity,
+                issue: None,
+                renewal: Some(Renewal {
+                    recorded: Some(recorded),
+                }),
+            }
+        );
+
+        // Never seen: the subject alone, as the C# RDP question.
+        let Some(ConnectionEvent::UnknownRdpCertificate {
+            certificate,
+            subject,
+            details,
+            ..
+        }) = said.recv().await
+        else {
+            panic!("the question");
+        };
+        assert_eq!(certificate, CertificateHash::of(&der));
+        assert_eq!(subject, Some(presented.subject.clone()));
+        assert!(details.is_none());
     }
 
     /// A probe answering `status`.
