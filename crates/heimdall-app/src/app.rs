@@ -80,6 +80,7 @@ mod bulk_password;
 mod citrix_import;
 mod citrix_launch;
 mod connect_as;
+mod credential_guard_gate;
 mod detail;
 mod docked_sftp;
 mod file_import;
@@ -852,6 +853,9 @@ pub enum Message {
     /// Windows Hello answered [`Effect::VerifyWindowsHello`]: the sessions waiting open, or
     /// why they do not.
     WindowsHello(Result<(), crate::windows_hello::HelloRefusal>),
+    /// The Credential Guard check of [`Effect::CheckCredentialGuard`] answered: the embedded
+    /// RDP sessions waiting open, or are refused.
+    CredentialGuard(crate::credential_guard::Status),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A step of the terminal macros.
@@ -1111,6 +1115,7 @@ impl fmt::Debug for Message {
                 )
             }
             Self::WindowsHello(answer) => write!(f, "WindowsHello({answer:?})"),
+            Self::CredentialGuard(status) => write!(f, "CredentialGuard({status:?})"),
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             // What a macro types is not logged.
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
@@ -1308,6 +1313,9 @@ pub enum Effect {
     /// Ask Windows Hello for the user's verification, off the UI thread, and say what it
     /// came to as [`Message::WindowsHello`].
     VerifyWindowsHello,
+    /// Find whether Credential Guard runs with this detection, off the UI thread, and say
+    /// it as [`Message::CredentialGuard`].
+    CheckCredentialGuard(std::sync::Arc<crate::credential_guard::Detector>),
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1799,6 +1807,7 @@ impl fmt::Debug for Effect {
                 write!(f, "DeleteVaultHelloCredential({name})")
             }
             Self::VerifyWindowsHello => f.write_str("VerifyWindowsHello"),
+            Self::CheckCredentialGuard(_) => f.write_str("CheckCredentialGuard"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -3080,6 +3089,9 @@ pub struct App {
     monitor: reachability_monitor::Monitor,
     /// The look for a newer release.
     updates: updates::Updates,
+    /// Credential Guard required before an embedded RDP session, asked before Windows
+    /// Hello.
+    credential_guard: credential_guard_gate::CredentialGuardGate,
     /// Windows Hello asked before a connection.
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
@@ -3245,6 +3257,7 @@ impl App {
             macros,
             monitor: reachability_monitor::Monitor::default(),
             updates: updates::Updates::new(crate::update_check::running_release()),
+            credential_guard: credential_guard_gate::CredentialGuardGate::default(),
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
@@ -3368,6 +3381,7 @@ impl App {
     /// Applies a message; the windows of the tabs it closed close with them, and the
     /// desktops it connected or ended go to the session events log.
     pub fn update(&mut self, message: Message) -> Vec<Effect> {
+        let outermost = self.begin_batch();
         let mut effects = self.apply(message);
         effects.extend(self.prune_floating());
         self.follow_desktop_sessions();
@@ -3380,6 +3394,7 @@ impl App {
             self.floating_invariant_holds(),
             "the keyboard's pane is a detached tab"
         );
+        self.end_batch(outermost);
         effects
     }
 
@@ -3388,6 +3403,11 @@ impl App {
     fn apply(&mut self, message: Message) -> Vec<Effect> {
         self.forget_stale_notice();
         self.stop_orphan_route_test();
+        // Credential Guard first, as the C# checks it before Windows Hello: a session it
+        // refuses never raises the prompt.
+        if self.waits_for_credential_guard(&message) {
+            return self.wait_for_credential_guard(message);
+        }
         if self.waits_for_hello(&message) {
             return self.wait_for_hello(message);
         }
@@ -3597,6 +3617,7 @@ impl App {
             Message::CredentialProvider(message) => self.provider_message(message),
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
             Message::WindowsHello(answer) => self.hello_answered(answer),
+            Message::CredentialGuard(status) => self.credential_guard_answered(status),
         }
     }
 

@@ -75,6 +75,7 @@ async fn a_server_without_nla_is_refused_before_any_password_question() {
             route: Vec::new(),
             ssh: heimdall_ssh::ConnectOptions::new(dir.path().join("known_hosts")),
             cancel: CancellationToken::new(),
+            credential_guard: None,
         },
         registry.clone(),
     );

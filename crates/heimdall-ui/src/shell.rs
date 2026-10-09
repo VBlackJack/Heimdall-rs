@@ -1837,6 +1837,15 @@ impl Shell {
         }
     }
 
+    /// What starts with the application: Credential Guard checked in the background when the
+    /// settings require it, so that the first embedded RDP session does not wait for it.
+    pub fn start_tasks(&mut self) -> Task<Message> {
+        let effects = self.app.warm_credential_guard();
+        let tasks: Vec<Task<Message>> =
+            effects.into_iter().map(|effect| self.run(effect)).collect();
+        Task::batch(tasks)
+    }
+
     /// Names the main window, asked to open: its events are the only ones taken, and the
     /// dialogs, the screenshot and the place kept at exit are its own.
     pub fn set_main_window(&mut self, window: window::Id) {
@@ -3955,6 +3964,10 @@ impl Shell {
                     Message::App(AppMessage::WindowsHello(answer))
                 })
             }
+            Effect::CheckCredentialGuard(detector) => Task::future(async move {
+                // The check runs on a blocking thread of the runtime, bounded in time.
+                Message::App(AppMessage::CredentialGuard(detector.status().await))
+            }),
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }
@@ -4702,13 +4715,7 @@ impl Shell {
                 crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
             }
             Page::Tools => crate::tools::catalog::page(&self.app, &self.tools_search),
-            Page::About => styles::scroll(
-                container(crate::about_view::view(&self.app))
-                    .padding(spacing::MD)
-                    .width(Length::Fill),
-            )
-            .height(Length::Fill)
-            .into(),
+            Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
                 .width(Length::Fill)
                 .height(Length::Fill)

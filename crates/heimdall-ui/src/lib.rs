@@ -26,6 +26,7 @@ pub mod citrix_import_view;
 pub mod citrix_view;
 pub mod code_editor;
 pub mod column_header;
+pub mod component_versions;
 mod conflicts_view;
 mod desktop_texture;
 pub mod desktop_view;
@@ -192,7 +193,11 @@ pub fn run() -> iced::Result {
             shell.watch_instance(dir.clone());
         }
         let left = left.clone();
-        (shell, opened.then(move |id| screens::restore(id, &left)))
+        let started = shell.start_tasks();
+        (
+            shell,
+            iced::Task::batch([opened.then(move |id| screens::restore(id, &left)), started]),
+        )
     };
     let daemon = iced::daemon(boot, Shell::step, Shell::window_view)
         .title(Shell::window_title)

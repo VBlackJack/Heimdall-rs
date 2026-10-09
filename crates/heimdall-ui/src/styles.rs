@@ -599,6 +599,26 @@ pub fn card(theme: &Theme) -> BoxStyle {
     }
 }
 
+/// A card rounded as `CornerRadiusXl`, as the C# About page's cards
+/// (`MainWindow.xaml:4690-4694`): the card colour, its edge the border colour.
+pub fn large_card(theme: &Theme) -> BoxStyle {
+    let brushes = Brushes::of(theme);
+    BoxStyle {
+        background: Some(Background::Color(brushes.card)),
+        border: brushes.outline(brushes.edge, radius::XL),
+        ..BoxStyle::default()
+    }
+}
+
+/// A line across a card, in the border colour, as the C# About page's under the version
+/// (`MainWindow.xaml:4714`).
+pub fn rule(theme: &Theme) -> BoxStyle {
+    BoxStyle {
+        background: Some(Background::Color(Brushes::of(theme).edge)),
+        ..BoxStyle::default()
+    }
+}
+
 /// A dialog, as the C# dialog windows: the window's background, rounded as `CornerRadiusXl`,
 /// its edge the border colour.
 pub fn dialog(theme: &Theme) -> BoxStyle {
@@ -790,6 +810,21 @@ mod tests {
             danger(&theme, ButtonStatus::Active).text_color,
             colors.red,
             "Delete is written in red"
+        );
+    }
+
+    #[test]
+    fn an_about_card_is_a_card_rounded_as_the_csharp_xl_and_its_rule_the_card_edge() {
+        let theme = magellan();
+        let card = card(&theme);
+        let large = large_card(&theme);
+        assert_eq!(large.background, card.background);
+        assert_eq!(large.border.color, card.border.color);
+        assert!((large.border.radius.top_left - radius::XL).abs() < f32::EPSILON);
+        assert_eq!(
+            rule(&theme).background,
+            Some(Background::Color(card.border.color)),
+            "the C# BorderBrush, unfaded"
         );
     }
 

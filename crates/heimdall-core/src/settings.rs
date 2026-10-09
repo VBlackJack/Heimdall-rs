@@ -566,6 +566,10 @@ pub struct Settings {
     /// Seconds an RDP connection may take to log on before it is given up, 0 for no limit,
     /// as the C# `RdpConnectWatchdogTimeoutMs`.
     pub rdp_connect_timeout: u32,
+    /// An embedded RDP session opens only while Credential Guard runs on this computer, as
+    /// the C# `RequireCredentialGuard`: off unless chosen. Remote Desktop Connection's own
+    /// window is not concerned.
+    pub require_credential_guard: bool,
     /// The sizes RDP tabs' Resolution menus offer, as the C# `RdpResolutionPresets`; empty
     /// offers [`RESOLUTION_PRESETS`]. See [`Settings::resolution_presets`].
     pub rdp_resolution_presets: Vec<(u16, u16)>,
@@ -1101,6 +1105,7 @@ impl Default for Settings {
             ssh_auto_reconnect_attempts: SSH_AUTO_RECONNECT_ATTEMPTS_DEFAULT,
             rdp_auto_reconnect_attempts: RDP_AUTO_RECONNECT_ATTEMPTS_MAX,
             rdp_connect_timeout: RDP_CONNECT_TIMEOUT_DEFAULT,
+            require_credential_guard: false,
             rdp_resolution_presets: RESOLUTION_PRESETS.to_vec(),
             anti_idle_interval: ANTI_IDLE_INTERVAL_DEFAULT,
             ssh_keep_alive_interval: SSH_KEEP_ALIVE_INTERVAL_DEFAULT,
@@ -1282,6 +1287,9 @@ struct RdpSessionSection {
     /// The C# name of the default RDP mode; absent is the C# default, `Embedded`.
     #[serde(default)]
     default_mode: Option<String>,
+    /// Absent is the C# default, off.
+    #[serde(default)]
+    require_credential_guard: Option<bool>,
 }
 
 /// Absent flags are the C# defaults.
@@ -1702,6 +1710,10 @@ impl Settings {
                 rdp_connect_timeout_accepted,
                 RDP_CONNECT_TIMEOUT_DEFAULT,
             ),
+            require_credential_guard: file
+                .rdp_session
+                .require_credential_guard
+                .unwrap_or_default(),
             // A line that is not a preset is left out, as the C# menu leaves it out.
             rdp_resolution_presets: file.rdp_session.resolution_presets.map_or_else(
                 || RESOLUTION_PRESETS.to_vec(),
@@ -1953,6 +1965,7 @@ impl Settings {
                         .collect(),
                 ),
                 default_mode: Some(self.rdp_default_mode.name().to_owned()),
+                require_credential_guard: Some(self.require_credential_guard),
             },
             files: FilesSection {
                 external_editor: self.external_editor.clone(),

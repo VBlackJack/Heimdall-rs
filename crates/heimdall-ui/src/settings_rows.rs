@@ -79,7 +79,7 @@ pub enum SettingsCard {
     Vault,
     /// The external credential provider.
     Provider,
-    /// What a connection passes first: Windows Hello.
+    /// What a connection passes first: Credential Guard, then Windows Hello.
     ConnectionChecks,
 }
 
@@ -263,6 +263,8 @@ pub enum SettingRow {
     DisconnectOnLock,
     /// The external credential provider.
     Provider,
+    /// An embedded RDP session opens only while Credential Guard runs.
+    RequireCredentialGuard,
     /// A connection waits for Windows Hello.
     RequireWindowsHello,
     /// Minutes a Windows Hello verification counts.
@@ -273,7 +275,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 58] = [
+    pub const ALL: [Self; 59] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -330,6 +332,7 @@ impl SettingRow {
         Self::AutoLock,
         Self::DisconnectOnLock,
         Self::Provider,
+        Self::RequireCredentialGuard,
         Self::RequireWindowsHello,
         Self::WindowsHelloGrace,
     ];
@@ -387,9 +390,11 @@ impl SettingRow {
                 SettingsCard::Vault
             }
             Self::Provider => SettingsCard::Provider,
-            // As the C# `SettingsSectionConnectionChecks`, beside Credential Guard, which
-            // this application does not have.
-            Self::RequireWindowsHello | Self::WindowsHelloGrace => SettingsCard::ConnectionChecks,
+            // As the C# `SettingsSectionConnectionChecks`: Credential Guard, then Windows
+            // Hello.
+            Self::RequireCredentialGuard | Self::RequireWindowsHello | Self::WindowsHelloGrace => {
+                SettingsCard::ConnectionChecks
+            }
         }
     }
 
@@ -594,6 +599,7 @@ impl SettingRow {
             Self::DockLocalBrowser => sftp.dock_local_browser,
             Self::LocalFollow => sftp.follow_local_directory,
             Self::X11AutoStart => settings.x11_auto_start,
+            Self::RequireCredentialGuard => settings.require_credential_guard,
             Self::RequireWindowsHello => settings.windows_hello.require_on_connect,
             _ => return None,
         })
@@ -631,6 +637,7 @@ impl SettingRow {
             Self::SshAutoReconnect => SettingsMessage::SshAutoReconnect(on),
             Self::DisconnectOnLock => SettingsMessage::DisconnectOnLock(on),
             Self::X11AutoStart => SettingsMessage::X11AutoStart(on),
+            Self::RequireCredentialGuard => SettingsMessage::RequireCredentialGuard(on),
             Self::RequireWindowsHello => SettingsMessage::RequireWindowsHello(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
@@ -700,9 +707,9 @@ impl ToolPath {
 
 /// A line of the security overview: a security-relevant choice the application has.
 ///
-/// The C# card has twelve; three name what this application does not have: TFTP sharing,
-/// Credential Guard and the `known_hosts` import at startup. They are left out rather than
-/// shown in a state nothing can change.
+/// The C# card has twelve; two name what this application does not have: TFTP sharing and
+/// the `known_hosts` import at startup. They are left out rather than shown in a state
+/// nothing can change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostureKey {
     /// RDP Network Level Authentication.
@@ -719,6 +726,8 @@ pub enum PostureKey {
     AutoLock,
     /// The sessions closed when the workspace locks.
     DisconnectOnLock,
+    /// Credential Guard required before an embedded RDP session.
+    CredentialGuard,
     /// Windows Hello asked before connecting.
     WindowsHelloOnConnect,
     /// The automatic look for a newer release.
@@ -770,12 +779,12 @@ pub struct PostureLine {
 /// its identity; transcripts on keep everything typed; Bypass and Unrestricted turn the
 /// script signing check off; a master password set with no idle lock stays unlocked for as
 /// long as the application runs. Strict server authentication off is the Windows default,
-/// and the master password, disconnecting on lock and Windows Hello before connecting are
-/// hardening one opts into: their states are reported, never flagged. Update checks off are
+/// and the master password, disconnecting on lock, Credential Guard and Windows Hello before
+/// connecting are hardening one opts into: their states are reported, never flagged. Update checks off are
 /// risky: a security release goes unnoticed. Without a master password, the two lock lines
 /// say so and lead to it, as there is nothing to lock.
 #[must_use]
-pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 9] {
+pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 10] {
     let on_off = |on: bool| {
         if on {
             PostureState::On
@@ -837,6 +846,16 @@ pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 9] {
             } else {
                 SettingRow::Vault
             },
+        },
+        PostureLine {
+            key: PostureKey::CredentialGuard,
+            state: if settings.require_credential_guard {
+                PostureState::Required
+            } else {
+                PostureState::NotRequired
+            },
+            risky: false,
+            target: SettingRow::RequireCredentialGuard,
         },
         PostureLine {
             key: PostureKey::WindowsHelloOnConnect,
@@ -1200,7 +1219,7 @@ mod tests {
             SettingRow::UpdateInterval.reset(&changed),
             Some(SettingsMessage::UpdateInterval(24))
         );
-        let line = posture(&changed, false)[8];
+        let line = posture(&changed, false)[9];
         assert_eq!(
             (line.key, line.state, line.risky, line.target),
             (
@@ -1217,6 +1236,7 @@ mod tests {
         assert_eq!(
             SettingsCard::ConnectionChecks.rows(),
             [
+                SettingRow::RequireCredentialGuard,
                 SettingRow::RequireWindowsHello,
                 SettingRow::WindowsHelloGrace
             ]
@@ -1275,6 +1295,71 @@ mod tests {
                 false,
                 SettingRow::RequireWindowsHello
             )
+        );
+    }
+
+    #[test]
+    fn credential_guard_heads_the_connection_checks_and_its_line_sits_before_windows_hello() {
+        let row = SettingRow::RequireCredentialGuard;
+        assert_eq!(row.card(), SettingsCard::ConnectionChecks);
+        assert_eq!(row.tab(), SettingsTab::Security);
+        assert!(row.is_marked());
+        let defaults = Settings::default();
+        assert_eq!(row.flag(&defaults), Some(false), "off, as the C# default");
+        assert!(row.toggle_enabled(&defaults));
+        assert!(!row.is_modified(&defaults));
+        let changed = Settings {
+            require_credential_guard: true,
+            ..Settings::default()
+        };
+        assert!(row.is_modified(&changed));
+        assert!(
+            !SettingRow::RequireWindowsHello.is_modified(&changed),
+            "a row of its own"
+        );
+        assert_eq!(
+            row.reset(&changed),
+            Some(SettingsMessage::RequireCredentialGuard(false))
+        );
+        assert_eq!(
+            row.toggled(&defaults, true),
+            Some(SettingsMessage::RequireCredentialGuard(true))
+        );
+
+        let keys: Vec<PostureKey> = posture(&changed, true)
+            .iter()
+            .map(|line| line.key)
+            .collect();
+        assert_eq!(
+            keys,
+            [
+                PostureKey::RdpNla,
+                PostureKey::RdpStrictServerAuthentication,
+                PostureKey::SessionTranscripts,
+                PostureKey::PowerShellExecutionPolicy,
+                PostureKey::Vault,
+                PostureKey::AutoLock,
+                PostureKey::DisconnectOnLock,
+                PostureKey::CredentialGuard,
+                PostureKey::WindowsHelloOnConnect,
+                PostureKey::UpdateChecks,
+            ],
+            "the C# card's order"
+        );
+        let required = line(&changed, true, PostureKey::CredentialGuard);
+        assert_eq!(
+            (required.state, required.risky, required.target),
+            (
+                PostureState::Required,
+                false,
+                SettingRow::RequireCredentialGuard
+            )
+        );
+        let not_required = line(&defaults, false, PostureKey::CredentialGuard);
+        assert_eq!(
+            (not_required.state, not_required.risky),
+            (PostureState::NotRequired, false),
+            "never risky"
         );
     }
 }
