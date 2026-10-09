@@ -270,15 +270,19 @@ impl App {
     }
 
     /// Forgets every key trusted for the server of `key`, in the file it was read from, as
-    /// confirmed: the next connection to it asks again.
+    /// confirmed, and for a certificate those trusted for it for this run: the next
+    /// connection to it asks again.
     pub(super) fn forget_server_of(&mut self, key: &TrustedKey) {
         let forgotten = match (key, self.certificates_file(key)) {
             (
                 TrustedKey::Rdp(entry) | TrustedKey::Ftps(entry) | TrustedKey::Vnc(entry),
                 Some(file),
-            ) => KnownRdpHosts::new(file)
-                .forget(&entry.host, entry.port)
-                .map_err(|error| error.to_string()),
+            ) => {
+                self.forget_run_trust(&entry.host, entry.port);
+                KnownRdpHosts::new(file)
+                    .forget(&entry.host, entry.port)
+                    .map_err(|error| error.to_string())
+            }
             (TrustedKey::Ssh(entry), _) => KnownHosts::new(&self.config.known_hosts)
                 .forget(&entry.host, entry.port)
                 .map_err(|error| error.to_string()),

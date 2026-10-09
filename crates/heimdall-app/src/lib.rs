@@ -115,7 +115,7 @@ pub use desktop::{
 pub use driver::{AnswerRegistry, ConnectRequest, Purpose, connection_events};
 pub use error::{KeyProblem, NetworkFailure, ServerAddress, UiError};
 pub use event::{
-    Answer, CertificateDetails, ConnectionEvent, PostConnectProgress, QuestionKind,
+    Answer, CertificateDetails, ConnectionEvent, PostConnectProgress, QuestionKind, Renewal,
     ServerPasswordQuestion, StepStatus,
 };
 /// The quality a VNC desktop is asked at, from its toolbar's "Quality" menu.

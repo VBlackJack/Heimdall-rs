@@ -3117,7 +3117,12 @@ pub struct App {
     /// SSH keys trusted for this run only, shared with every connection.
     run_trust: RunTrust,
     /// RDP certificates trusted for this run only: server, port, key.
-    rdp_run_trust: Vec<(String, u16, heimdall_rdp::Fingerprint)>,
+    rdp_run_trust: Vec<(
+        String,
+        u16,
+        heimdall_rdp::Fingerprint,
+        Option<heimdall_rdp::CertificateHash>,
+    )>,
     /// The shared session logs beside the transcripts: desktops' events, Files changes.
     session_logs: crate::session_log::SessionLogs,
     /// The desktops connected, for the events log.

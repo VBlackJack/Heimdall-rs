@@ -35,7 +35,9 @@ pub mod session;
 mod time_zone;
 mod tls;
 
-pub use certificate::{Fingerprint, ServerCertificate, Validity, ValidityPeriod};
+pub use certificate::{
+    CertificateHash, Fingerprint, ServerCertificate, Validity, ValidityPeriod, serves_tls_servers,
+};
 pub use clipboard::{MAX_IMAGE_BYTES, MAX_REMOTE_TEXT_BYTES};
 pub use clipboard_files::{CopyRefusal, MAX_COPY_BYTES, MAX_COPY_ENTRIES};
 pub use clipboard_save::{SaveEnd, SaveRefusal};
@@ -45,7 +47,7 @@ pub use connect::{
     desktop_scale_factor, given,
 };
 pub use ironrdp::input::{MouseButton, MousePosition, Operation, Scancode, WheelRotations};
-pub use known_hosts::{KnownRdpHost, KnownRdpHosts, Verdict};
+pub use known_hosts::{CertificateVerdict, KnownRdpHost, KnownRdpHosts, Verdict};
 pub use reason::{Ending, Refusal};
 pub use session::{CloseReason, Framebuffer, LocalClipboard, RdpEvent, RdpSession};
 pub use time_zone::{TimeZone, Transition};

@@ -93,18 +93,19 @@ fn trusted(message: TrustedKeysMessage) -> Message {
 
 /// `fingerprint` cut after `shown` characters, the whole of it in a tooltip.
 fn fingerprint_cell<'a>(fingerprint: &str, shown: usize) -> Element<'a, Message> {
-    let cut: String = if fingerprint.chars().count() > shown {
-        fingerprint
-            .chars()
-            .take(shown)
-            .chain(ELLIPSIS.chars())
-            .collect()
+    cut_cell(fingerprint, shown, fingerprint.to_owned())
+}
+
+/// `value` cut after `shown` characters, `whole` in a tooltip.
+fn cut_cell<'a>(value: &str, shown: usize, whole: String) -> Element<'a, Message> {
+    let cut: String = if value.chars().count() > shown {
+        value.chars().take(shown).chain(ELLIPSIS.chars()).collect()
     } else {
-        fingerprint.to_owned()
+        value.to_owned()
     };
     tooltip(
         text(cut).size(font_size::CAPTION),
-        container(text(fingerprint.to_owned()).size(font_size::CAPTION))
+        container(text(whole).size(font_size::CAPTION))
             .padding(spacing::XS)
             .style(container::rounded_box),
         tooltip::Position::Top,
@@ -339,10 +340,16 @@ fn certificate_card<'a>(
         for entry in entries {
             let address = display_address(&entry.host, entry.port);
             let fingerprint = entry.fingerprint.to_string();
-            // As the C# search: the server, the key, and the names of the certificate.
+            let thumbprint = entry.certificate.map(|hash| hash.thumbprint());
+            // As the C# search: the server, the key, the certificate's thumbprint, and the
+            // names of the certificate.
             let found = [Some(&address), Some(&fingerprint)]
                 .into_iter()
-                .chain([entry.subject.as_ref(), entry.issuer.as_ref()])
+                .chain([
+                    thumbprint.as_ref(),
+                    entry.subject.as_ref(),
+                    entry.issuer.as_ref(),
+                ])
                 .flatten()
                 .any(|candidate| matches(candidate, search));
             if found {
@@ -398,15 +405,28 @@ fn certificate_row<'a>(
         trusted(TrustedKeysMessage::RequestForget(key)),
         styles::danger,
     ));
+    // The key, and below it the whole certificate's thumbprint when it is pinned whole, as
+    // the C# list shows a thumbprint: cut, the whole of it in a tooltip.
+    let mut pins = Column::new()
+        .spacing(spacing::XS)
+        .push(fingerprint_cell(fingerprint, RDP_FINGERPRINT_SHOWN));
+    if let Some(hash) = entry.certificate {
+        let thumbprint = hash.thumbprint();
+        pins = pins.push(cut_cell(
+            &thumbprint,
+            RDP_FINGERPRINT_SHOWN,
+            fl!(
+                "ui-trusted-certificates-thumbprint",
+                thumbprint = thumbprint.as_str()
+            ),
+        ));
+    }
     row![
         cell(
             text(address).size(font_size::CAPTION).into(),
             SERVER_PORTION
         ),
-        cell(
-            fingerprint_cell(fingerprint, RDP_FINGERPRINT_SHOWN),
-            FINGERPRINT_PORTION
-        ),
+        cell(pins.into(), FINGERPRINT_PORTION),
         cell(detail(entry.subject.clone()), NAME_PORTION),
         cell(detail(entry.issuer.clone()), NAME_PORTION),
         cell(detail(since), TRUSTED_PORTION),

@@ -15,7 +15,8 @@
  */
 
 //! What is read from a server's TLS certificate: the key it is pinned by, the key `CredSSP`
-//! binds to, a subject and an issuer fit to show, and when it holds.
+//! binds to, a subject and an issuer fit to show, and when it holds; and the hash of the
+//! whole certificate, which pins an FTPS or VNC server's certificate as the C# pins it.
 
 use std::fmt;
 use std::str::FromStr;
@@ -24,13 +25,24 @@ use std::time::SystemTime;
 use data_encoding::BASE64_NOPAD;
 use ring::digest::{SHA256, SHA256_OUTPUT_LEN, digest};
 use x509_cert::Certificate;
+use x509_cert::der::asn1::ObjectIdentifier;
 use x509_cert::der::{Decode as _, Encode as _};
+use x509_cert::ext::pkix::ExtendedKeyUsage;
 
 /// Prefix of a fingerprint's text form, as OpenSSH writes key fingerprints.
 const FINGERPRINT_PREFIX: &str = "SHA256:";
 
+/// What separates the bytes of a thumbprint, as the C# writes one.
+const THUMBPRINT_SEPARATOR: &str = ":";
+
 /// Longest subject or issuer shown, in characters: the server chooses them.
 const MAX_SUBJECT_CHARS: usize = 200;
+
+/// `id-kp-serverAuth` (RFC 5280, 4.2.1.12): the purpose of a TLS server's certificate.
+const SERVER_AUTHENTICATION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.3.6.1.5.5.7.3.1");
+
+/// `anyExtendedKeyUsage` (RFC 5280, 4.2.1.12): any purpose.
+const ANY_PURPOSE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37.0");
 
 /// SHA-256 of a certificate's `SubjectPublicKeyInfo`: what a server is pinned by. A renewed
 /// certificate on the same key keeps it.
@@ -48,20 +60,61 @@ impl fmt::Display for Fingerprint {
 #[error("not a SHA256 fingerprint")]
 pub struct FingerprintParseError;
 
+/// The SHA-256 a fingerprint's text form holds.
+fn parse_sha256(text: &str) -> Result<[u8; SHA256_OUTPUT_LEN], FingerprintParseError> {
+    let encoded = text
+        .strip_prefix(FINGERPRINT_PREFIX)
+        .ok_or(FingerprintParseError)?;
+    let bytes = BASE64_NOPAD
+        .decode(encoded.as_bytes())
+        .map_err(|_| FingerprintParseError)?;
+    bytes.try_into().map_err(|_| FingerprintParseError)
+}
+
 impl FromStr for Fingerprint {
     type Err = FingerprintParseError;
 
     fn from_str(text: &str) -> Result<Self, Self::Err> {
-        let encoded = text
-            .strip_prefix(FINGERPRINT_PREFIX)
-            .ok_or(FingerprintParseError)?;
-        let bytes = BASE64_NOPAD
-            .decode(encoded.as_bytes())
-            .map_err(|_| FingerprintParseError)?;
-        bytes
-            .try_into()
-            .map(Self)
-            .map_err(|_| FingerprintParseError)
+        parse_sha256(text).map(Self)
+    }
+}
+
+/// SHA-256 of a whole certificate (DER), as the C# pins an FTPS certificate by its
+/// thumbprint: another certificate on the same key, a renewed one or one minted again, is
+/// another certificate.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CertificateHash([u8; SHA256_OUTPUT_LEN]);
+
+impl CertificateHash {
+    /// The hash of the DER certificate `der`.
+    #[must_use]
+    pub fn of(der: &[u8]) -> Self {
+        let mut hash = [0; SHA256_OUTPUT_LEN];
+        hash.copy_from_slice(digest(&SHA256, der).as_ref());
+        Self(hash)
+    }
+
+    /// As the C# shows a thumbprint (`CertificateFingerprint.ComputeSha256`): `SHA256:`,
+    /// then each byte in upper-case hexadecimal, separated by colons.
+    #[must_use]
+    pub fn thumbprint(&self) -> String {
+        let bytes: Vec<String> = self.0.iter().map(|byte| format!("{byte:02X}")).collect();
+        format!("{FINGERPRINT_PREFIX}{}", bytes.join(THUMBPRINT_SEPARATOR))
+    }
+}
+
+/// As a file records it, as a key's fingerprint: `SHA256:` then base64 without padding.
+impl fmt::Display for CertificateHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{FINGERPRINT_PREFIX}{}", BASE64_NOPAD.encode(&self.0))
+    }
+}
+
+impl FromStr for CertificateHash {
+    type Err = FingerprintParseError;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        parse_sha256(text).map(Self)
     }
 }
 
@@ -158,6 +211,27 @@ impl Validity {
     }
 }
 
+/// Whether a DER certificate may serve a TLS server, as its extended key usage says: yes
+/// without that extension, else only when it names a server's purpose or any purpose.
+///
+/// # Errors
+///
+/// [`CertificateError`] when the DER, or its extended key usage, does not parse, or when the
+/// extension is there more than once.
+pub fn serves_tls_servers(der: &[u8]) -> Result<bool, CertificateError> {
+    let certificate = Certificate::from_der(der).map_err(|_| CertificateError)?;
+    let usage = certificate
+        .tbs_certificate()
+        .get_extension::<ExtendedKeyUsage>()
+        .map_err(|_| CertificateError)?;
+    Ok(usage.is_none_or(|(_, usage)| {
+        usage
+            .0
+            .iter()
+            .any(|purpose| *purpose == SERVER_AUTHENTICATION || *purpose == ANY_PURPOSE)
+    }))
+}
+
 /// Text chosen by the server, fit to show: no control or direction-changing characters,
 /// bounded.
 pub(crate) fn shown(text: &str) -> String {
@@ -196,6 +270,22 @@ mod tests {
                 "{bad}"
             );
         }
+    }
+
+    #[test]
+    fn a_certificate_hash_reads_back_and_shows_as_the_c_sharp_thumbprint() {
+        let hash = CertificateHash::of(b"abc");
+        assert_eq!(hash.to_string().parse(), Ok(hash));
+        // SHA-256 of "abc", from FIPS 180-2.
+        assert_eq!(
+            hash.thumbprint(),
+            "SHA256:BA:78:16:BF:8F:01:CF:EA:41:41:40:DE:5D:AE:22:23:\
+             B0:03:61:A3:96:17:7A:9C:B4:10:FF:61:F2:00:15:AD"
+        );
+        assert_eq!(
+            "SHA256:".parse::<CertificateHash>(),
+            Err(FingerprintParseError)
+        );
     }
 
     #[test]

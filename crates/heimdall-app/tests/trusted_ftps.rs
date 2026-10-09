@@ -29,7 +29,7 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{FtpProfile, ProfileId};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::{Fingerprint, KnownRdpHosts, Verdict};
+use heimdall_rdp::{CertificateHash, Fingerprint, KnownRdpHosts, Verdict};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio_stream::StreamExt as _;
@@ -156,12 +156,13 @@ async fn an_accepted_ftps_certificate_is_listed_with_its_names_and_once_forgotte
     let (tab, attempt, request) =
         attempt_of(&app.update(Message::ConnectProfile(ProfileId::new("files"))));
     let event = first(request).await;
-    let (fingerprint, subject) = match &event {
+    let (fingerprint, subject, whole) = match &event {
         ConnectionEvent::UnknownRdpCertificate {
             fingerprint,
             subject,
+            details: Some(details),
             ..
-        } => (*fingerprint, subject.clone()),
+        } => (*fingerprint, subject.clone(), details.certificate),
         other => panic!("the certificate question, got {other:?}"),
     };
     assert!(subject.is_some(), "{event:?}");
@@ -174,7 +175,11 @@ async fn an_accepted_ftps_certificate_is_listed_with_its_names_and_once_forgotte
     // Trusted: the next attempt goes through and records it with its names and the time.
     let (tab, attempt, request) =
         attempt_of(&app.update(Message::HostKeyDecision { tab, accept: true }));
-    assert_eq!(request.accepted, Some(fingerprint));
+    assert_eq!(
+        request.accepted,
+        Some(whole),
+        "the very certificate asked about"
+    );
     let event = first(request).await;
     assert!(
         matches!(event, ConnectionEvent::FilesReady { .. }),
@@ -197,6 +202,7 @@ async fn an_accepted_ftps_certificate_is_listed_with_its_names_and_once_forgotte
     );
     assert_eq!(entry.subject, subject);
     assert_eq!(entry.issuer, entry.subject, "self-signed");
+    assert_eq!(entry.certificate, Some(whole), "pinned whole");
     let key = TrustedKey::Ftps(entry.clone());
     assert!(key.trusted_since().is_some(), "{entry:?}");
     assert_eq!(key.address(), format!("localhost:{port}"));
@@ -393,5 +399,116 @@ fn an_ftp_tab_whose_certificate_changed_forgets_its_server_and_asks_again() {
         known.verdict("other.lab", 21, &pin).expect("read"),
         Verdict::Known,
         "the other servers stay"
+    );
+}
+
+/// The anonymous FTPS profile `id`, on `host:port`.
+fn profile_as(id: &str, host: &str, port: u16) -> FtpProfile {
+    FtpProfile {
+        id: ProfileId::new(id),
+        ..profile(host, port)
+    }
+}
+
+/// Trusts once, from the question its attempt asks, the certificate of hash `whole` on key
+/// `key` that the server of profile `id` presented; the attempt built on the answer.
+fn trust_once(
+    app: &mut App,
+    id: &str,
+    (key, whole): (Fingerprint, CertificateHash),
+) -> (TabId, AttemptId, FtpRequest) {
+    let (tab, attempt, _) = attempt_of(&app.update(Message::ConnectProfile(ProfileId::new(id))));
+    let (host, port) = match app.tab(tab).map(|tab| &tab.profile) {
+        Some(heimdall_app::TabProfile::Ftp(profile)) => (profile.host.clone(), profile.port),
+        other => panic!("{other:?}"),
+    };
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::UnknownRdpCertificate {
+            host,
+            port,
+            fingerprint: key,
+            subject: None,
+            details: Some(Box::new(heimdall_app::CertificateDetails {
+                issuer: "CN=ftp.lab".to_owned(),
+                validity: heimdall_rdp::Validity {
+                    not_before: std::time::UNIX_EPOCH,
+                    not_after: std::time::UNIX_EPOCH,
+                },
+                issue: heimdall_tls::ValidationIssue::SelfSigned,
+                certificate: whole,
+                renewal: None,
+            })),
+        },
+    });
+    let (again, attempt, request) = attempt_of(&app.update(Message::HostKeyTrustOnce(tab)));
+    assert_eq!(request.trusted_once, Some(whole));
+    (again, attempt, request)
+}
+
+/// What the next attempt of profile `id` carries as trusted for this run.
+fn run_trust_of(app: &mut App, id: &str) -> Vec<CertificateHash> {
+    attempt_of(&app.update(Message::ConnectProfile(ProfileId::new(id))))
+        .2
+        .trusted_for_run
+}
+
+#[test]
+fn a_key_trusted_once_is_the_servers_whatever_the_case_until_its_server_is_forgotten() {
+    let dir = tempfile::tempdir().expect("dir");
+    let pin: Fingerprint = PIN.parse().expect("pin");
+    let whole = CertificateHash::of(b"the certificate");
+    let mut app = app(
+        dir.path(),
+        vec![
+            profile_as("upper", "FTP.Lab", 21),
+            profile_as("lower", "ftp.lab", 21),
+            profile_as("elsewhere", "ftp.lab", 990),
+        ],
+    );
+
+    // Trusted once under one spelling: the server's under the other too, as its pins are.
+    let (tab, attempt, _) = trust_once(&mut app, "upper", (pin, whole));
+    assert_eq!(run_trust_of(&mut app, "lower"), [whole]);
+    assert!(
+        run_trust_of(&mut app, "elsewhere").is_empty(),
+        "another port"
+    );
+
+    // Refused as no longer valid, then forgotten from the card: the key trusted once too.
+    app.update(Message::Connection {
+        tab,
+        attempt,
+        event: ConnectionEvent::Failed(UiError::PinnedCertificateInvalid {
+            target: "FTP.Lab:21".to_owned(),
+            fingerprint: PIN.to_owned(),
+            issue: heimdall_tls::ValidationIssue::Expired,
+            not_after: std::time::UNIX_EPOCH,
+        }),
+    });
+    let (_, _, request) = attempt_of(&app.update(Message::ForgetServer(tab)));
+    assert!(request.trusted_for_run.is_empty(), "asked about again");
+    assert_eq!(request.trusted_once, None);
+    assert!(run_trust_of(&mut app, "lower").is_empty());
+
+    // Trusted once again, its server pinned on file under the other spelling, then forgotten
+    // from the Settings: the key trusted once too.
+    trust_once(
+        &mut app,
+        "upper",
+        (other_pin(), CertificateHash::of(b"another certificate")),
+    );
+    KnownRdpHosts::new(dir.path().join("known_ftps_hosts"))
+        .record("ftp.lab", 21, &pin)
+        .expect("record");
+    trusted(&mut app, TrustedKeysMessage::Refresh);
+    let key = TrustedKey::Ftps(app.trusted_keys().ftps[0].clone());
+    trusted(&mut app, TrustedKeysMessage::RequestForgetServer(key));
+    app.update(Message::ConfirmDialog);
+    assert!(app.trusted_keys().ftps.is_empty(), "forgotten on file");
+    assert!(
+        run_trust_of(&mut app, "upper").is_empty(),
+        "and for this run"
     );
 }

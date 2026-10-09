@@ -730,10 +730,20 @@ async fn explicit_ftps_refuses_a_certificate_it_does_not_trust() {
 
 #[tokio::test]
 async fn an_unknown_certificate_stops_the_handshake_and_is_kept_then_once_trusted_goes_through() {
-    use heimdall_tls::{PresentedSlot, UserTrust, connector, fingerprint};
+    use heimdall_tls::{Period, PresentedSlot, UserTrust, UserVerdict, connector, fingerprint};
 
+    // Pinned and current: the certificate the test server makes is.
     let trusting = |fingerprints: Vec<[u8; 32]>| -> UserTrust {
-        std::sync::Arc::new(move |der| fingerprints.contains(&fingerprint(der)))
+        std::sync::Arc::new(move |der, _| {
+            if fingerprints.contains(&fingerprint(der)) {
+                UserVerdict::Pinned {
+                    period: Period::Current,
+                    for_servers: true,
+                }
+            } else {
+                UserVerdict::Untrusted
+            }
+        })
     };
 
     let root = tempfile::tempdir().expect("root");

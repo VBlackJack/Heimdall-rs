@@ -219,6 +219,18 @@ pub fn error(error: &UiError) -> String {
         UiError::Route(RouteError::Loop(id)) => {
             fl!("ui-error-gateway-loop", id = server_text(id.as_str()))
         }
+        UiError::PinnedCertificateInvalid {
+            target,
+            fingerprint,
+            issue,
+            not_after,
+        } => fl!(
+            "ui-error-pinned-certificate-invalid",
+            target = server_text(target),
+            issue = validation_issue(*issue),
+            until = crate::files_view::modified_text(*not_after),
+            fingerprint = fingerprint.as_str()
+        ),
         UiError::HostKeyAlgorithmMismatch { recorded } => fl!(
             "ui-error-hostkey-algorithm",
             recorded = recorded.join(LIST_SEPARATOR)
@@ -367,6 +379,7 @@ pub fn validation_issue(issue: ValidationIssue) -> String {
         ValidationIssue::Expired => fl!("ui-certificate-issue-expired"),
         ValidationIssue::NotYetValid => fl!("ui-certificate-issue-not-yet-valid"),
         ValidationIssue::NameMismatch => fl!("ui-certificate-issue-name-mismatch"),
+        ValidationIssue::WrongPurpose => fl!("ui-certificate-issue-wrong-purpose"),
         ValidationIssue::Revoked => fl!("ui-certificate-issue-revoked"),
         ValidationIssue::NoSystemStore => fl!("ui-certificate-issue-no-system-store"),
         ValidationIssue::Other => fl!("ui-certificate-issue-other"),

@@ -18,7 +18,10 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use heimdall_rdp::{Fingerprint, KnownRdpHosts, ServerCertificate, Verdict};
+use heimdall_rdp::{
+    CertificateHash, CertificateVerdict, Fingerprint, KnownRdpHosts, ServerCertificate, Validity,
+    Verdict,
+};
 
 /// SHA-256 of the fixture's `SubjectPublicKeyInfo`, computed by openssl.
 const PIN: &str = include_str!("fixtures/server-spki-sha256.txt");
@@ -236,4 +239,282 @@ fn a_name_with_spaces_and_accents_stays_one_field_and_reads_back() {
         .expect("one entry");
     assert_eq!(entry.subject, Some(certificate.subject));
     assert_eq!(entry.issuer, Some(certificate.issuer));
+}
+
+/// A validity from second `from` to second `until` since 1970.
+fn validity(from: u64, until: u64) -> Validity {
+    Validity {
+        not_before: UNIX_EPOCH + Duration::from_secs(from),
+        not_after: UNIX_EPOCH + Duration::from_secs(until),
+    }
+}
+
+#[test]
+fn a_server_pinned_by_its_whole_certificate_is_known_by_that_certificate_only() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_ftps_hosts"));
+    let certificate = ServerCertificate::from_der(ISSUED).expect("readable");
+    let key = certificate.fingerprint;
+    let (first, renewed) = (CertificateHash::of(ISSUED), CertificateHash::of(b"renewed"));
+    let verdict = |hash: &CertificateHash| {
+        known
+            .certificate_verdict("Files.lab", 990, &key, hash)
+            .expect("read")
+    };
+    assert_eq!(verdict(&first), CertificateVerdict::Unknown, "no file yet");
+
+    let held = validity(1_767_225_600, 1_798_761_600);
+    known
+        .record_whole_certificate("files.lab", 990, &certificate, (&first, Some(&held)))
+        .expect("record");
+    let line = std::fs::read_to_string(known.path()).expect("file");
+    assert!(
+        line.starts_with(&format!("files.lab:990 {key} trusted="))
+            && line.ends_with(&format!(
+                " certificate={first} valid_from=1767225600 valid_until=1798761600\n"
+            )),
+        "{line}"
+    );
+    assert_eq!(verdict(&first), CertificateVerdict::Known);
+    assert_eq!(
+        verdict(&renewed),
+        CertificateVerdict::Renewed {
+            recorded: Some(held)
+        },
+        "the same key, another certificate"
+    );
+    let other: Fingerprint = format!("SHA256:{}", "A".repeat(43)).parse().expect("other");
+    assert_eq!(
+        known
+            .certificate_verdict("files.lab", 990, &other, &renewed)
+            .expect("read"),
+        CertificateVerdict::Changed { recorded: key },
+        "another key: the key-changed alarm, as before"
+    );
+    // A reader of the first two fields reads the key as before.
+    assert_eq!(
+        known.verdict("files.lab", 990, &key).expect("read"),
+        Verdict::Known
+    );
+    let [entry] = known
+        .entries()
+        .expect("read")
+        .try_into()
+        .expect("one entry");
+    assert_eq!(
+        (entry.certificate, entry.validity),
+        (Some(first), Some(held))
+    );
+
+    // Trusted again once renewed: it replaces the line of its key, others stay.
+    known.record("web.lab", 990, &key).expect("record");
+    known
+        .record_whole_certificate("files.lab", 990, &certificate, (&renewed, None))
+        .expect("record");
+    assert_eq!(verdict(&renewed), CertificateVerdict::Known);
+    assert_eq!(
+        verdict(&first),
+        CertificateVerdict::Renewed { recorded: None },
+        "the certificate replaced is no longer trusted"
+    );
+    let entries = known.entries().expect("read");
+    assert_eq!(entries.len(), 2, "{entries:?}");
+}
+
+#[test]
+fn a_server_recorded_by_its_key_alone_adopts_a_certificate_once_keeping_every_other_line() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_vnc_hosts"));
+    let certificate = ServerCertificate::from_der(ISSUED).expect("readable");
+    let key = certificate.fingerprint;
+    let hash = CertificateHash::of(ISSUED);
+    // As a Heimdall that pinned keys wrote it, beside a comment and another server with an
+    // attribute no Heimdall knows.
+    let before =
+        format!("# kept\nkiosk.lab:5900 {key} trusted=1767225600 future=x\nweb.lab:5900 {key}\n");
+    std::fs::write(known.path(), &before).expect("write");
+    let verdict = |hash: &CertificateHash| {
+        known
+            .certificate_verdict("kiosk.lab", 5900, &key, hash)
+            .expect("read")
+    };
+    assert_eq!(verdict(&hash), CertificateVerdict::KeyOnly);
+    assert!(
+        known
+            .adopt_certificate("kiosk.lab", 5900, &key, (&hash, None))
+            .expect("adopt")
+    );
+    assert_eq!(
+        std::fs::read_to_string(known.path()).expect("file"),
+        format!(
+            "# kept\nkiosk.lab:5900 {key} trusted=1767225600 future=x certificate={hash}\n\
+             web.lab:5900 {key}\n"
+        ),
+        "its attributes added at the end, every other line as it was"
+    );
+    assert_eq!(verdict(&hash), CertificateVerdict::Known);
+    assert_eq!(
+        verdict(&CertificateHash::of(b"another")),
+        CertificateVerdict::Renewed { recorded: None },
+        "adopted once: another certificate on the key is asked about"
+    );
+    assert!(
+        !known
+            .adopt_certificate("kiosk.lab", 5900, &key, (&hash, None))
+            .expect("adopt"),
+        "never twice"
+    );
+}
+
+/// Changes made by each thread of the concurrent test.
+const CONCURRENT_CHANGES: usize = 60;
+
+#[test]
+fn concurrent_changes_lose_nothing_and_a_pinned_server_never_reads_unknown() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("known_vnc_hosts");
+    let certificate = ServerCertificate::from_der(ISSUED).expect("readable");
+    let (key, hash) = (certificate.fingerprint, CertificateHash::of(ISSUED));
+    KnownRdpHosts::new(&path)
+        .record_whole_certificate("pinned.lab", 5900, &certificate, (&hash, None))
+        .expect("pinned");
+    std::thread::scope(|scope| {
+        // Trusted again and again: its line replaced each time.
+        scope.spawn(|| {
+            let known = KnownRdpHosts::new(&path);
+            for _ in 0..CONCURRENT_CHANGES {
+                known
+                    .record_whole_certificate("pinned.lab", 5900, &certificate, (&hash, None))
+                    .expect("record");
+            }
+        });
+        // Other servers trusted by their key.
+        scope.spawn(|| {
+            let known = KnownRdpHosts::new(&path);
+            for index in 0..CONCURRENT_CHANGES {
+                known
+                    .record(&format!("added{index}.lab"), 5900, &key)
+                    .expect("record");
+            }
+        });
+        // Servers recorded by their key alone, then adopting their certificate.
+        scope.spawn(|| {
+            let known = KnownRdpHosts::new(&path);
+            for index in 0..CONCURRENT_CHANGES {
+                let host = format!("legacy{index}.lab");
+                known.record(&host, 5900, &key).expect("record");
+                assert!(
+                    known
+                        .adopt_certificate(&host, 5900, &key, (&hash, None))
+                        .expect("adopt"),
+                    "{host}"
+                );
+            }
+        });
+        // Read meanwhile: the pinned server is always known.
+        scope.spawn(|| {
+            let known = KnownRdpHosts::new(&path);
+            for _ in 0..CONCURRENT_CHANGES * 3 {
+                assert_eq!(
+                    known
+                        .certificate_verdict("pinned.lab", 5900, &key, &hash)
+                        .expect("read"),
+                    CertificateVerdict::Known
+                );
+            }
+        });
+    });
+    let entries = KnownRdpHosts::new(&path).entries().expect("read");
+    let count = |prefix: &str| {
+        entries
+            .iter()
+            .filter(|entry| entry.host.starts_with(prefix))
+            .count()
+    };
+    assert_eq!(count("pinned"), 1, "replaced, never doubled");
+    assert_eq!(count("added"), CONCURRENT_CHANGES, "no append lost");
+    assert_eq!(count("legacy"), CONCURRENT_CHANGES);
+    assert!(
+        entries
+            .iter()
+            .filter(|entry| entry.host.starts_with("legacy"))
+            .all(|entry| entry.certificate == Some(hash)),
+        "every adoption kept"
+    );
+}
+
+#[test]
+fn a_change_that_cannot_be_written_leaves_the_file_whole() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join("known_vnc_hosts");
+    let known = KnownRdpHosts::new(&path);
+    known.record("kiosk.lab", 5900, &pin()).expect("record");
+    known.record("web.lab", 5900, &pin()).expect("record");
+    let before = std::fs::read(&path).expect("file");
+    // The new text cannot be written beside the file: a folder stands where it goes.
+    std::fs::create_dir(dir.path().join("known_vnc_hosts.tmp")).expect("in the way");
+    assert!(known.forget("kiosk.lab", 5900).is_err());
+    let hash = CertificateHash::of(ISSUED);
+    assert!(
+        known
+            .adopt_certificate("web.lab", 5900, &pin(), (&hash, None))
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&path).expect("file"), before, "as it was");
+}
+
+#[test]
+fn a_change_keeps_the_line_endings_of_the_lines_it_does_not_touch() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_vnc_hosts"));
+    let key = pin();
+    // Edited on Windows, its last line without an ending.
+    std::fs::write(
+        known.path(),
+        format!("# kept\r\nkiosk.lab:5900 {key}\r\nweb.lab:5900 {key}\r\nold.lab:5900 {key}"),
+    )
+    .expect("write");
+    let hash = CertificateHash::of(ISSUED);
+    assert!(
+        known
+            .adopt_certificate("kiosk.lab", 5900, &key, (&hash, None))
+            .expect("adopt")
+    );
+    assert!(known.forget("web.lab", 5900).expect("forget"));
+    assert_eq!(
+        std::fs::read_to_string(known.path()).expect("file"),
+        format!("# kept\r\nkiosk.lab:5900 {key} certificate={hash}\r\nold.lab:5900 {key}"),
+    );
+}
+
+#[test]
+fn a_certificate_that_does_not_read_is_asked_about_never_taken_for_a_key_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = KnownRdpHosts::new(dir.path().join("known_vnc_hosts"));
+    let key = pin();
+    std::fs::write(
+        known.path(),
+        format!("kiosk.lab:5900 {key} certificate=damaged\n"),
+    )
+    .expect("write");
+    let hash = CertificateHash::of(ISSUED);
+    assert_eq!(
+        known
+            .certificate_verdict("kiosk.lab", 5900, &key, &hash)
+            .expect("read"),
+        CertificateVerdict::Renewed { recorded: None },
+        "asked about again"
+    );
+    assert!(
+        !known
+            .adopt_certificate("kiosk.lab", 5900, &key, (&hash, None))
+            .expect("adopt"),
+        "never adopted"
+    );
+    let [entry] = known
+        .entries()
+        .expect("read")
+        .try_into()
+        .expect("one entry");
+    assert!(entry.certificate_unreadable && entry.certificate.is_none());
 }
