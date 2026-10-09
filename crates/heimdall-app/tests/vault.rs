@@ -24,7 +24,7 @@ use heimdall_app::profile_draft::{DraftError, ProfileField, SavedSecret};
 use heimdall_app::{
     Answer, App, AppConfig, AttemptId, ConnectionEvent, Dialog, Effect, Message, OpenedVault,
     QuestionId, QuestionKind, SystemCredentials, TabId, UiError, VaultJob, VaultMode, VaultProblem,
-    VaultStatus, open_vault,
+    VaultStatus, VaultTicket, open_vault,
 };
 use heimdall_core::profile::{ProfileId, SshGateway, SshProfile};
 use heimdall_core::store::ProfileStore;
@@ -93,12 +93,12 @@ async fn unlock(app: &mut App, master: &str) {
 
 /// Runs the vault job `effects` asks for, as the UI would, and hands the result back.
 async fn run_vault_job(app: &mut App, effects: Vec<Effect>) {
-    let result = open_vault_job(effects).await;
-    app.update(Message::VaultOpened(result));
+    let (ticket, result) = open_vault_job(effects).await;
+    app.update(Message::VaultOpened(ticket, result));
 }
 
-/// Runs the vault job `effects` asks for.
-async fn open_vault_job(effects: Vec<Effect>) -> Result<OpenedVault, VaultProblem> {
+/// Runs the vault job `effects` asks for: the try it answers, and its result.
+async fn open_vault_job(effects: Vec<Effect>) -> (VaultTicket, Result<OpenedVault, VaultProblem>) {
     match <[Effect; 1]>::try_from(effects) {
         Ok(
             [
@@ -106,9 +106,18 @@ async fn open_vault_job(effects: Vec<Effect>) -> Result<OpenedVault, VaultProble
                     path,
                     password,
                     job,
+                    ticket,
                 },
             ],
-        ) => open_vault(path, password, job).await,
+        ) => (ticket, open_vault(path, password, job).await),
+        other => panic!("expected OpenVault, got {other:?}"),
+    }
+}
+
+/// The try the vault job `effects` asks for answers.
+fn ticket_of(effects: &[Effect]) -> VaultTicket {
+    match effects {
+        [Effect::OpenVault { ticket, .. }] => *ticket,
         other => panic!("expected OpenVault, got {other:?}"),
     }
 }
@@ -565,9 +574,9 @@ async fn cancelling_while_the_key_is_derived_leaves_the_vault_closed() {
         confirm: None,
     });
     app.update(Message::DismissDialog);
-    let result = open_vault_job(effects).await;
+    let (ticket, result) = open_vault_job(effects).await;
     assert!(result.is_ok(), "the right password");
-    app.update(Message::VaultOpened(result));
+    app.update(Message::VaultOpened(ticket, result));
     assert_eq!(app.vault_status(), VaultStatus::Locked);
 }
 
@@ -1002,7 +1011,10 @@ fn wrong_try(app: &mut App) -> bool {
     if effects.is_empty() {
         return false;
     }
-    app.update(Message::VaultOpened(Err(VaultProblem::Unreadable)));
+    app.update(Message::VaultOpened(
+        ticket_of(&effects),
+        Err(VaultProblem::Unreadable),
+    ));
     true
 }
 
@@ -1368,4 +1380,38 @@ async fn enabling_a_master_password_moves_a_saved_key_passphrase_too() {
         0,
         "the passphrase moved with the password: none left behind, unreadable"
     );
+}
+
+#[tokio::test]
+async fn the_result_of_a_try_no_longer_shown_is_dropped_even_for_the_same_dialog_again() {
+    let dir = tempfile::tempdir().expect("dir");
+    let system = SystemCredentials::memory();
+    let mut app = app(dir.path(), "a.lab", &system);
+    unlock(&mut app, MASTER).await;
+    let change = |app: &mut App| {
+        app.update(Message::ChangeMasterPassword);
+        app.update(Message::SubmitVault {
+            password: Secret::new("not the master".to_owned()),
+            new: Some(Secret::new(MASTER.to_owned())),
+            confirm: Some(Secret::new(MASTER.to_owned())),
+        })
+    };
+    let first = change(&mut app);
+    app.update(Message::DismissDialog);
+    let second = change(&mut app);
+    // The first try's answer, arriving while the second waits: not the second's.
+    app.update(Message::VaultOpened(
+        ticket_of(&first),
+        Err(VaultProblem::Unreadable),
+    ));
+    assert!(
+        matches!(&app.dialog, Some(Dialog::Vault(dialog)) if dialog.busy && dialog.problem.is_none()),
+        "{:?}",
+        app.dialog
+    );
+    app.update(Message::VaultOpened(
+        ticket_of(&second),
+        Err(VaultProblem::Unreadable),
+    ));
+    assert_eq!(vault_problem(&app), Some(VaultProblem::Unreadable));
 }

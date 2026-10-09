@@ -138,6 +138,7 @@ mod trusted_keys;
 mod tunnels;
 mod updates;
 mod vault;
+mod vault_hello;
 mod vnc_tab;
 mod winrm_tab;
 
@@ -197,8 +198,9 @@ use vault::VaultState;
 pub use vault::{
     LONG_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CHARS, MIN_MASTER_PASSWORD_CLASSES,
     OpenedVault, SystemCredentials, VAULT_FILE_NAME, VaultDialog, VaultJob, VaultMode,
-    VaultProblem, VaultStatus, master_password_problem, open_vault,
+    VaultProblem, VaultStatus, VaultTicket, master_password_problem, open_vault,
 };
+pub use vault_hello::{VaultHelloCard, VaultHelloMessage, VaultHelloStatus};
 
 /// History lines scrolled per wheel notch when the wheel scrolls locally.
 pub const WHEEL_LINES: i32 = 3;
@@ -812,7 +814,7 @@ pub enum Message {
         confirm: Option<Secret>,
     },
     /// The vault was opened, or could not be.
-    VaultOpened(Result<OpenedVault, VaultProblem>),
+    VaultOpened(VaultTicket, Result<OpenedVault, VaultProblem>),
     /// What was typed into the bulk password dialog: saved for its profiles when the two
     /// are alike.
     SetBulkPassword {
@@ -823,6 +825,8 @@ pub enum Message {
     },
     /// Close the vault.
     LockVault,
+    /// Windows Hello unlocking the vault.
+    VaultHello(VaultHelloMessage),
     /// How long the computer has had no input, as the window measured it: the workspace
     /// locks once that reaches the idle auto-lock threshold.
     Idle(Duration),
@@ -1075,8 +1079,11 @@ impl fmt::Debug for Message {
             Self::DisableMasterPassword => f.write_str("DisableMasterPassword"),
             Self::SubmitVault { .. } => f.write_str("SubmitVault(..)"),
             Self::SetBulkPassword { .. } => f.write_str("SetBulkPassword(..)"),
-            Self::VaultOpened(result) => write!(f, "VaultOpened({:?})", result.as_ref().err()),
+            Self::VaultOpened(_, result) => {
+                write!(f, "VaultOpened({:?})", result.as_ref().err())
+            }
             Self::LockVault => f.write_str("LockVault"),
+            Self::VaultHello(message) => write!(f, "VaultHello({message:?})"),
             Self::Idle(idle) => write!(f, "Idle({idle:?})"),
             Self::Pin(message) => write!(f, "Pin({message:?})"),
             Self::CredentialProvider(message) => write!(f, "CredentialProvider({message:?})"),
@@ -1261,6 +1268,28 @@ pub enum Effect {
     /// Ask GitHub for the latest release, off the UI thread, and say what it found as
     /// [`UpdateMessage::Checked`].
     CheckForUpdate,
+    /// Ask Windows whether Windows Hello can be enrolled for the vault, off the UI thread,
+    /// and say it as [`VaultHelloMessage::Checked`].
+    CheckVaultHello,
+    /// Enrol Windows Hello for the vault, off the UI thread, prompting; then send
+    /// [`VaultHelloMessage::Enrolled`].
+    EnrolVaultHello {
+        /// A copy of the open vault's data key, on the heap so that each move carries only
+        /// its pointer, zeroed when dropped.
+        data_key: Box<zeroize::Zeroizing<[u8; sealvault::DATA_KEY_LEN]>>,
+        /// The envelope enrolled before, whose vault id is kept.
+        previous: Option<crate::vault_hello::Envelope>,
+    },
+    /// Open the vault with Windows Hello, off the UI thread, prompting; then send
+    /// [`VaultHelloMessage::Unlocked`].
+    UnlockVaultHello {
+        /// Vault file.
+        path: PathBuf,
+        /// What enrolling left.
+        envelope: crate::vault_hello::Envelope,
+    },
+    /// Delete the Windows Hello credential of this name, off the UI thread.
+    DeleteVaultHelloCredential(String),
     /// Ask Windows Hello for the user's verification, off the UI thread, and say what it
     /// came to as [`Message::WindowsHello`].
     VerifyWindowsHello,
@@ -1661,6 +1690,8 @@ pub enum Effect {
         password: Secret,
         /// What to do.
         job: VaultJob,
+        /// The try it answers, handed back with the result.
+        ticket: VaultTicket,
     },
     /// Run the external credential provider's password command with test values; then send
     /// [`ProviderMessage::Tested`].
@@ -1738,6 +1769,17 @@ impl fmt::Debug for Effect {
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
             Self::CheckForUpdate => f.write_str("CheckForUpdate"),
+            Self::CheckVaultHello => f.write_str("CheckVaultHello"),
+            // Never the data key.
+            Self::EnrolVaultHello { previous, .. } => {
+                write!(f, "EnrolVaultHello(again: {})", previous.is_some())
+            }
+            Self::UnlockVaultHello { envelope, .. } => {
+                write!(f, "UnlockVaultHello({envelope:?})")
+            }
+            Self::DeleteVaultHelloCredential(name) => {
+                write!(f, "DeleteVaultHelloCredential({name})")
+            }
             Self::VerifyWindowsHello => f.write_str("VerifyWindowsHello"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
@@ -2512,6 +2554,9 @@ pub enum Dialog {
     ConfirmSessionLogging,
     /// The RDP settings back to their own values, as the C# "Reset RDP defaults" asks.
     ConfirmResetRdpDefaults,
+    /// Enrol Windows Hello again once the master password opened the vault, its credential
+    /// having been found gone, as the C# "Re-enable Windows Hello unlock?".
+    ConfirmVaultHelloEnrolAgain,
     /// The default SSH mode written into every SSH profile, as the C# "Apply to all saved
     /// sessions" asks, with the size of the rewrite.
     ConfirmApplySshMode {
@@ -3033,6 +3078,8 @@ pub struct App {
     pending_plans: std::collections::VecDeque<PendingPlan>,
     pending_operation: Option<PendingOperation>,
     vault: VaultState,
+    /// Windows Hello unlocking the vault.
+    vault_hello: vault_hello::VaultHelloState,
     /// The auto-reconnects due while the workspace was locked, by tab and failed attempt:
     /// attempted once it is unlocked.
     deferred_reconnects: Vec<(TabId, AttemptId)>,
@@ -3157,6 +3204,7 @@ impl App {
             pending_paste: None,
             pending_plans: std::collections::VecDeque::new(),
             pending_operation: None,
+            vault_hello: vault_hello::VaultHelloState::with(vault.hello_record()),
             vault,
             deferred_reconnects: Vec::new(),
             run_trust: RunTrust::default(),
@@ -3478,9 +3526,10 @@ impl App {
             | Message::ChangeMasterPassword
             | Message::DisableMasterPassword
             | Message::SubmitVault { .. }
-            | Message::VaultOpened(_)
+            | Message::VaultOpened(..)
             | Message::LockVault
             | Message::Idle(_)) => self.vault_message(message),
+            Message::VaultHello(message) => self.vault_hello_message(message),
             Message::SetBulkPassword { password, confirm } => {
                 self.set_bulk_password(&password, &confirm);
                 Vec::new()
@@ -4601,6 +4650,7 @@ impl App {
             }
             Some(Dialog::ConfirmSessionLogging) => self.confirm_session_logging(),
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
+            Some(Dialog::ConfirmVaultHelloEnrolAgain) => self.enrol_vault_hello_again(),
             Some(Dialog::ConfirmApplySshMode { mode, .. }) => self.confirm_apply_ssh_mode(mode),
             Some(Dialog::EditMacro(draft)) => {
                 self.save_edited_macro(*draft);

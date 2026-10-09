@@ -873,13 +873,17 @@ async fn vault_job(app: &mut App, effects: Vec<Effect>) {
                 path,
                 password,
                 job,
+                ticket,
             },
         ],
     ) = <[Effect; 1]>::try_from(effects)
     else {
         panic!("expected OpenVault");
     };
-    app.update(Message::VaultOpened(open_vault(path, password, job).await));
+    app.update(Message::VaultOpened(
+        ticket,
+        open_vault(path, password, job).await,
+    ));
 }
 
 #[tokio::test]

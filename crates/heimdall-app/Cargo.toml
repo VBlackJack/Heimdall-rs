@@ -23,6 +23,8 @@ heimdall-ssh.workspace = true
 heimdall-term.workspace = true
 heimdall-tls.workspace = true
 sealvault.workspace = true
+# The Windows Hello envelope's wrapping of the vault's data key, as sealvault wraps it.
+aes-gcm.workspace = true
 shlex.workspace = true
 log.workspace = true
 # The hash an edited file is compared by.
@@ -48,7 +50,8 @@ zeroize.workspace = true
 windows-registry.workspace = true
 # advapi, shell: a local shell run as administrator, started through ShellExecuteEx.
 winsafe = { workspace = true, features = ["advapi", "shell"] }
-# Security_Credentials_UI: Windows Hello asked before connecting.
+# Security_Credentials_UI: Windows Hello asked before connecting; Security_Credentials,
+# Security_Cryptography, Storage_Streams: its key credential unlocking the vault.
 windows.workspace = true
 
 [dev-dependencies]

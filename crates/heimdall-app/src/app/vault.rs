@@ -55,10 +55,12 @@ use heimdall_ssh::Secret;
 use sealvault::{Vault, VaultError};
 use zeroize::Zeroizing;
 
+use super::vault_hello::VaultHelloState;
 use super::{App, Dialog, Effect, Message, Tab, TabProfile};
 use crate::citrix::CitrixRefusal;
 use crate::event::{Answer, QuestionKind};
 use crate::ids::TabId;
+use crate::vault_hello::{self, Envelope};
 
 /// Name of the vault file, beside the profiles.
 pub const VAULT_FILE_NAME: &str = "vault.hvlt";
@@ -126,6 +128,11 @@ impl VaultJob {
     }
 }
 
+/// Which submission of the vault dialog a vault job answers: each try has its own, so the
+/// result of a try no longer shown (dismissed, or another dialog in its place) opens nothing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VaultTicket(u64);
+
 /// Why the vault could not be opened or created, or a new master password was refused.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VaultProblem {
@@ -143,6 +150,15 @@ pub enum VaultProblem {
     NoSystemStore,
     /// A vault appeared where one was to be created.
     AlreadyExists,
+    /// Windows Hello's security device is locked for a while, as the C#
+    /// `VaultHelloUnlockSecurityDeviceLocked`.
+    HelloLocked,
+    /// Windows Hello's credential is gone, reset or removed: enrolling again is offered
+    /// after the master password, as the C# `VaultHelloUnlockNotFound`.
+    HelloNotFound,
+    /// Windows Hello did not unlock, for any other reason, as the C#
+    /// `VaultHelloUnlockGenericFailure`.
+    HelloFailed,
     /// Too many wrong master passwords in a row: no try is taken until then, as the C#
     /// unlock dialogs lock out.
     LockedOut {
@@ -177,6 +193,27 @@ pub struct VaultDialog {
     pub problem: Option<VaultProblem>,
     /// The password is being checked: the key derivation takes a moment.
     pub busy: bool,
+    /// "Unlock with Windows Hello" is offered: an unlock, with Windows Hello enrolled and the
+    /// master password not due again.
+    pub hello: bool,
+    /// What [`VaultDialog::busy`] waits for is Windows Hello.
+    pub hello_waiting: bool,
+    /// The try [`VaultDialog::busy`] waits for, when it is a master password's.
+    ticket: Option<VaultTicket>,
+}
+
+impl VaultDialog {
+    /// The dialog for `mode`, nothing typed yet; `hello` offers Windows Hello.
+    fn new(mode: VaultMode, hello: bool) -> Self {
+        Self {
+            mode,
+            problem: None,
+            busy: false,
+            hello,
+            hello_waiting: false,
+            ticket: None,
+        }
+    }
 }
 
 /// A vault opened away from the application's thread, handed over once.
@@ -184,7 +221,12 @@ pub struct VaultDialog {
 pub struct OpenedVault(Arc<Mutex<Option<Vault>>>);
 
 impl OpenedVault {
-    fn take(&self) -> Option<Vault> {
+    /// `vault`, to be handed over.
+    pub(crate) fn new(vault: Vault) -> Self {
+        Self(Arc::new(Mutex::new(Some(vault))))
+    }
+
+    pub(super) fn take(&self) -> Option<Vault> {
         self.0.lock().ok().and_then(|mut vault| vault.take())
     }
 }
@@ -220,7 +262,7 @@ pub async fn open_vault(
             }),
         };
         vault
-            .map(|vault| OpenedVault(Arc::new(Mutex::new(Some(vault)))))
+            .map(OpenedVault::new)
             .map_err(|error| VaultProblem::from(&error))
     })
     .await
@@ -334,6 +376,8 @@ pub(super) struct VaultState {
     /// Wrong master passwords in a row at the lock screen, for this run only, as the C#
     /// overlay counts them; those at start are kept in the settings.
     lock_screen: Lockout,
+    /// The last vault job's ticket.
+    last_ticket: u64,
 }
 
 impl VaultState {
@@ -350,6 +394,7 @@ impl VaultState {
             refused: HashSet::new(),
             refused_passphrases: HashSet::new(),
             lock_screen: Lockout::default(),
+            last_ticket: 0,
         }
     }
 
@@ -357,6 +402,56 @@ impl VaultState {
     /// system's store is not used.
     pub(super) fn exists(&self) -> bool {
         self.path.is_file()
+    }
+
+    /// The vault file.
+    pub(super) fn file(&self) -> &Path {
+        &self.path
+    }
+
+    /// The vault, while open.
+    pub(super) fn opened(&self) -> Option<&Vault> {
+        self.open.as_ref()
+    }
+
+    /// Takes `vault`, opened another way than with the master password, as the open one.
+    pub(super) fn put_open(&mut self, vault: Vault) {
+        self.open = Some(vault);
+    }
+
+    /// The Windows Hello envelope the system's store keeps for this vault, when it reads.
+    /// Where Windows Hello does not exist, the system's own store is not asked: nothing put
+    /// one there, and a Secret Service would ask to be unlocked for nothing.
+    pub(super) fn hello_record(&self) -> Option<Envelope> {
+        if !self.exists()
+            || (matches!(self.system, SystemCredentials::Keyring(_))
+                && !crate::windows_hello::SUPPORTED)
+        {
+            return None;
+        }
+        let bytes = self
+            .system
+            .get(&vault_hello::entry_name(&self.path))
+            .inspect_err(|error| {
+                log::warn!("the Windows Hello envelope could not be read: {error}");
+            })
+            .ok()??;
+        let envelope = Envelope::parse(&bytes);
+        if envelope.is_none() {
+            log::warn!("the Windows Hello envelope kept for the vault is not one: ignored");
+        }
+        envelope
+    }
+
+    /// Keeps `envelope` in the system's store for this vault.
+    pub(super) fn save_hello_record(&self, envelope: &Envelope) -> Result<(), String> {
+        self.system
+            .set(&vault_hello::entry_name(&self.path), &envelope.to_bytes())
+    }
+
+    /// Removes this vault's Windows Hello envelope from the system's store.
+    pub(super) fn remove_hello_record(&self) -> Result<(), String> {
+        self.system.remove(&vault_hello::entry_name(&self.path))
     }
 
     /// Whether passwords can be read and saved now.
@@ -719,7 +814,7 @@ impl App {
                 new,
                 confirm,
             } => self.submit_vault(password, new, confirm.as_ref()),
-            Message::VaultOpened(result) => self.vault_opened(result),
+            Message::VaultOpened(ticket, result) => self.vault_opened(ticket, result),
             Message::LockVault => {
                 self.lock_vault();
                 Vec::new()
@@ -746,22 +841,35 @@ impl App {
             VaultStatus::Locked => VaultMode::Unlock,
             VaultStatus::Missing => VaultMode::Create,
         };
-        self.dialog = Some(Dialog::Vault(VaultDialog {
-            mode,
-            problem: None,
-            busy: false,
-        }));
+        let dialog = self.vault_dialog(mode);
+        self.dialog = Some(Dialog::Vault(dialog));
+    }
+
+    /// The vault dialog for `mode`: Windows Hello offered to an unlock when enrolled and not
+    /// due for the master password; a lockout of the tries, as saved, said at once, so the
+    /// dialog shown after a restart is as locked out as the one before it.
+    fn vault_dialog(&mut self, mode: VaultMode) -> VaultDialog {
+        let hello =
+            matches!(mode, VaultMode::Unlock | VaultMode::Locked) && self.vault_hello_offered();
+        let locked_until = self
+            .unlock_lockout(mode)
+            .and_then(|lockout| lockout.locked_until(SystemTime::now()));
+        let mut dialog = VaultDialog::new(mode, hello);
+        dialog.problem = locked_until.map(|until| VaultProblem::LockedOut { until });
+        dialog
     }
 
     /// Opens the dialog changing the master password, or removing it: only when there is
     /// one, open, as the C# settings offer them.
     fn show_master_password(&mut self, mode: VaultMode) {
+        // Not while Windows Hello is being enrolled with the data key: it would be kept for a
+        // vault changed or gone.
+        if self.vault_hello.enrolling() {
+            log::info!("the master password waits for the Windows Hello enrolment to end");
+            return;
+        }
         if self.vault_status() == VaultStatus::Open {
-            self.dialog = Some(Dialog::Vault(VaultDialog {
-                mode,
-                problem: None,
-                busy: false,
-            }));
+            self.dialog = Some(Dialog::Vault(VaultDialog::new(mode, false)));
         }
     }
 
@@ -775,6 +883,7 @@ impl App {
         confirm: Option<&Secret>,
     ) -> Vec<Effect> {
         let system_available = self.vault.system.available();
+        let enrolling = self.vault_hello.enrolling();
         let waiting = match &self.dialog {
             Some(Dialog::Vault(dialog)) if !dialog.busy => Some(dialog.mode),
             _ => None,
@@ -785,7 +894,9 @@ impl App {
         let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() else {
             return Vec::new();
         };
-        if dialog.busy {
+        if dialog.busy
+            || (enrolling && matches!(dialog.mode, VaultMode::Change | VaultMode::Disable))
+        {
             return Vec::new();
         }
         if let Some(until) = locked_until {
@@ -812,12 +923,16 @@ impl App {
             dialog.problem = problem;
             return Vec::new();
         }
+        self.vault.last_ticket += 1;
+        let ticket = VaultTicket(self.vault.last_ticket);
         dialog.busy = true;
         dialog.problem = None;
+        dialog.ticket = Some(ticket);
         vec![Effect::OpenVault {
             path: self.vault.path.clone(),
             password,
             job,
+            ticket,
         }]
     }
 
@@ -826,11 +941,17 @@ impl App {
     /// attempted.
     pub(super) fn vault_opened(
         &mut self,
+        ticket: VaultTicket,
         result: Result<OpenedVault, VaultProblem>,
     ) -> Vec<Effect> {
         let mode = match &self.dialog {
-            Some(Dialog::Vault(dialog)) if dialog.busy => dialog.mode,
-            // Cancelled while the key was derived: nothing changes.
+            // Only the try the dialog shown waits for: not one cancelled while the key was
+            // derived, nor one of another dialog, nor while Windows Hello is asked.
+            Some(Dialog::Vault(dialog))
+                if dialog.busy && !dialog.hello_waiting && dialog.ticket == Some(ticket) =>
+            {
+                dialog.mode
+            }
             _ => return Vec::new(),
         };
         let names = self.password_entries();
@@ -852,13 +973,28 @@ impl App {
         match done {
             Ok(()) => {
                 self.dialog = None;
-                if mode == VaultMode::Locked {
-                    return self.resume_reconnects();
+                match mode {
+                    VaultMode::Unlock => self.vault_opened_with_master_password(),
+                    VaultMode::Locked => {
+                        self.vault_opened_with_master_password();
+                        return self.resume_reconnects();
+                    }
+                    // A new data key: an envelope left from a vault deleted outside the
+                    // application unwraps nothing that opens it, and goes.
+                    VaultMode::Create => {
+                        self.vault_hello = VaultHelloState::with(self.vault.hello_record());
+                        return self.forget_vault_hello();
+                    }
+                    // Removing the master password removes Windows Hello with it, as the C#
+                    // `DisableAsync`.
+                    VaultMode::Disable => return self.forget_vault_hello(),
+                    VaultMode::Change => {}
                 }
             }
             Err(problem) => {
                 if let Some(Dialog::Vault(dialog)) = self.dialog.as_mut() {
                     dialog.busy = false;
+                    dialog.ticket = None;
                     dialog.problem = Some(problem);
                 }
             }
@@ -868,7 +1004,7 @@ impl App {
 
     /// The count of wrong master passwords `mode` keeps: at start, kept across runs; at the
     /// lock screen, for this run. `None` for the dialogs that are not unlocking.
-    fn unlock_lockout(&mut self, mode: VaultMode) -> Option<&mut Lockout> {
+    pub(super) fn unlock_lockout(&mut self, mode: VaultMode) -> Option<&mut Lockout> {
         match mode {
             VaultMode::Unlock => Some(&mut self.settings.vault_unlock),
             VaultMode::Locked => Some(&mut self.vault.lock_screen),
@@ -945,11 +1081,8 @@ impl App {
             self.close_all_for_lock();
         }
         log::info!("Workspace locked.");
-        self.dialog = Some(Dialog::Vault(VaultDialog {
-            mode: VaultMode::Locked,
-            problem: None,
-            busy: false,
-        }));
+        let dialog = self.vault_dialog(VaultMode::Locked);
+        self.dialog = Some(Dialog::Vault(dialog));
     }
 
     /// Whether the workspace is locked: the vault closed behind the lock screen.
