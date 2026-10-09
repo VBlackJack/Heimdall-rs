@@ -35,10 +35,12 @@ use crate::forward::{self, Routes};
 use crate::known_hosts::{
     KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
 };
+use crate::known_hosts_import::{OtherAlgorithm, Trusting, trusting};
 use crate::options::ConnectOptions;
-use crate::pins::{PinVerdict, Pins, pin_verdict};
+use crate::pins::{self, PinVerdict, Pins, pin_verdict};
 use crate::prompter::{Prompter, UsernameQuestion};
 use crate::session::ShellSession;
+use crate::trust_files;
 use crate::x11;
 
 /// Message the server sent with its disconnect, shared between the russh session task and
@@ -883,19 +885,31 @@ pub(crate) async fn hop<P: Prompter>(
 }
 
 /// Records in full the key that matched a pinned fingerprint, and drops the pin: from now
-/// on the server is checked against its whole key. A failure leaves the pin, which still
-/// trusts that key and no other.
+/// on the server is checked against its whole key. Both are written under one lock of the
+/// trust files, the pin checked again first as an import checks it: a key recorded
+/// meanwhile by another connection is left as it is, and a pin forgotten or replaced
+/// meanwhile records nothing. A failure leaves the pin, which still trusts that key and no
+/// other.
 fn record_pinned(known_hosts: &KnownHosts, pins: &Pins, host: &str, port: u16, pinned: &PinnedKey) {
     let Some(key) = pinned.lock().ok().and_then(|mut slot| slot.take()) else {
         return;
     };
-    match known_hosts.learn(host, port, &key) {
-        Ok(()) => {
-            if let Err(error) = pins.unpin(host, port) {
-                log::warn!("the pin of a server recorded in full stays: {error}");
-            }
+    let lock = trust_files::lock();
+    let decided = known_hosts.recorded(host, port).and_then(|recorded| {
+        let pinned = pins.pinned(host, port)?;
+        Ok(trusting(&recorded, &pinned, &key, OtherAlgorithm::Adds))
+    });
+    let recorded = match decided {
+        Ok(Trusting::LearnPinned) => pins::record_in_full(&lock, known_hosts, host, port, &key),
+        Ok(Trusting::Recorded) => Ok(()),
+        Ok(Trusting::Learn | Trusting::Conflict(_)) => {
+            log::info!("the pin of a server changed while it was reached: its key is not recorded");
+            Ok(())
         }
-        Err(error) => log::warn!("a pinned server's key is not recorded in full: {error}"),
+        Err(error) => Err(error),
+    };
+    if let Err(error) = recorded {
+        log::warn!("a pinned server's key is not recorded in full: {error}");
     }
 }
 

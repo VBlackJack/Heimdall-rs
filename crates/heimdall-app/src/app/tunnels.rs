@@ -28,7 +28,8 @@ use std::sync::Arc;
 use std::time::SystemTime;
 
 use heimdall_core::profile::{ProfileId, SshProfile};
-use heimdall_ssh::{KnownHosts, PublicKey, Verdict, verdict};
+use heimdall_ssh::known_hosts_import::{self, OtherAlgorithm, Trusting};
+use heimdall_ssh::{KnownHosts, PublicKey};
 use tokio_util::sync::CancellationToken;
 
 use super::{App, Dialog, Effect, Notice};
@@ -526,21 +527,29 @@ impl App {
             super::KeyTrust::Always => {}
         }
         let known_hosts = KnownHosts::new(&self.config.known_hosts);
-        // Another tab may have recorded a key for this host meanwhile: read again.
-        let learned = match known_hosts.recorded(&pending.host, pending.port) {
-            Ok(recorded) => match verdict(&recorded, &pending.key) {
-                Verdict::Trusted => Ok(()),
-                Verdict::Unknown => known_hosts
-                    .learn(&pending.host, pending.port, &pending.key)
-                    .inspect(|()| {
-                        log::info!(
-                            "the host key of {target} is trusted by the user and recorded: {presented}"
-                        );
-                    })
-                    .map_err(|error| UiError::from(&error)),
-                // Changed since it was asked about: not learnt, never overwritten.
-                Verdict::Changed { .. } | Verdict::OtherAlgorithm { .. } => Err(UiError::Cancelled),
-            },
+        // Another tab may have recorded a key for this host meanwhile, or a pin been carried
+        // over: checked again, and written, under the lock of the trust files. A key that
+        // came to be contradicted is refused as a connection refuses it, never written.
+        let learned = match known_hosts_import::trust(
+            &known_hosts,
+            &pending.host,
+            pending.port,
+            &pending.key,
+            OtherAlgorithm::Conflicts,
+        ) {
+            Ok(Trusting::Recorded) => Ok(()),
+            Ok(Trusting::Learn | Trusting::LearnPinned) => {
+                log::info!(
+                    "the host key of {target} is trusted by the user and recorded: {presented}"
+                );
+                Ok(())
+            }
+            Ok(Trusting::Conflict(contradiction)) => Err(UiError::host_key_contradicted(
+                contradiction,
+                &pending.host,
+                pending.port,
+                &pending.key,
+            )),
             Err(error) => Err(UiError::from(&error)),
         };
         match learned {

@@ -147,3 +147,232 @@ fn the_same_key_twice_in_the_file_is_written_once() {
     assert_eq!((done.imported, done.existing), (1, 1));
     assert_eq!(store.recorded("a.lab", 22).expect("read").len(), 1);
 }
+
+/// The fingerprint of a fixture's key.
+fn print(name: &str) -> String {
+    heimdall_ssh::fingerprint(&heimdall_ssh::PublicKey::from_openssh(&key(name)).expect("key"))
+}
+
+#[test]
+fn a_key_other_than_the_one_pinned_is_a_conflict_and_neither_file_changes() {
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let pins = heimdall_ssh::Pins::beside(store.path());
+    // Trusted by its fingerprint alone, as the C# kept it: the ed25519 key, never the other.
+    pins.pin("web.lab", 22, &print("host-ed25519"))
+        .expect("pinned");
+    store
+        .learn(
+            "seed.lab",
+            22,
+            &heimdall_ssh::PublicKey::from_openssh(&key("host-ecdsa")).expect("key"),
+        )
+        .expect("seeded");
+    let (hosts_before, pins_before) = (
+        std::fs::read(store.path()).expect("read"),
+        std::fs::read(pins.path()).expect("read"),
+    );
+
+    let parsed = parse(&format!(
+        "web.lab {}\nweb.lab {}\n",
+        key("host-ed25519-other"),
+        key("host-ecdsa")
+    ));
+    assert_eq!(
+        assess(&parsed.candidates, &store).expect("assessed"),
+        [HostKeyStatus::Conflict, HostKeyStatus::Conflict],
+        "a key of the pinned kind, then one of another kind: neither has the pinned fingerprint"
+    );
+    let done = import(&parsed.candidates, &store).expect("imported");
+    assert_eq!(
+        done,
+        HostKeysImported {
+            imported: 0,
+            existing: 0,
+            conflicts: 2
+        }
+    );
+    assert!(store.recorded("web.lab", 22).expect("read").is_empty());
+    assert_eq!(
+        std::fs::read(store.path()).expect("read"),
+        hosts_before,
+        "known_hosts unchanged"
+    );
+    assert_eq!(
+        std::fs::read(pins.path()).expect("read"),
+        pins_before,
+        "the pin unchanged"
+    );
+}
+
+#[test]
+fn the_key_pinned_is_recorded_in_full_and_its_pin_dropped_as_a_connection_does() {
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let pins = heimdall_ssh::Pins::beside(store.path());
+    pins.pin("web.lab", 2222, &print("host-ed25519"))
+        .expect("pinned");
+    pins.pin("db.lab", 22, &print("host-ed25519"))
+        .expect("pinned");
+
+    let parsed = parse(&format!("[web.lab]:2222 {}\n", key("host-ed25519")));
+    assert_eq!(
+        assess(&parsed.candidates, &store).expect("assessed"),
+        [HostKeyStatus::New]
+    );
+    let done = import(&parsed.candidates, &store).expect("imported");
+    assert_eq!(
+        done,
+        HostKeysImported {
+            imported: 1,
+            existing: 0,
+            conflicts: 0
+        }
+    );
+    let recorded = store.recorded("web.lab", 2222).expect("read");
+    assert_eq!(recorded.len(), 1);
+    assert_eq!(
+        heimdall_ssh::fingerprint(&recorded[0]),
+        print("host-ed25519")
+    );
+    assert!(
+        pins.pinned("web.lab", 2222).expect("read").is_empty(),
+        "the pin goes once the key is recorded"
+    );
+    assert_eq!(
+        pins.pinned("db.lab", 22).expect("read"),
+        [print("host-ed25519")],
+        "another server's pin stays"
+    );
+    // Imported again, the key is trusted already.
+    assert_eq!(
+        assess(&parsed.candidates, &store).expect("assessed"),
+        [HostKeyStatus::Existing]
+    );
+}
+
+#[test]
+fn one_rule_decides_every_import_against_the_keys_recorded_and_the_pins() {
+    use heimdall_ssh::known_hosts_import::{Contradiction, OtherAlgorithm, Trusting, trusting};
+
+    let read = |name: &str| heimdall_ssh::PublicKey::from_openssh(&key(name)).expect("key");
+    let (ed, other, ecdsa) = (
+        read("host-ed25519"),
+        read("host-ed25519-other"),
+        read("host-ecdsa"),
+    );
+    let pin_ed = [print("host-ed25519")];
+    let none: [String; 0] = [];
+    let cases = [
+        // Nothing recorded, nothing pinned.
+        (
+            vec![],
+            &none[..],
+            &ed,
+            OtherAlgorithm::Adds,
+            Trusting::Learn,
+        ),
+        // Recorded already, whatever the pins say.
+        (
+            vec![ed.clone()],
+            &pin_ed[..],
+            &ed,
+            OtherAlgorithm::Conflicts,
+            Trusting::Recorded,
+        ),
+        // Another key of its algorithm recorded.
+        (
+            vec![ed.clone()],
+            &none[..],
+            &other,
+            OtherAlgorithm::Adds,
+            Trusting::Conflict(Contradiction::Changed(print("host-ed25519"))),
+        ),
+        // Another algorithm recorded: as the caller says.
+        (
+            vec![ed.clone()],
+            &none[..],
+            &ecdsa,
+            OtherAlgorithm::Adds,
+            Trusting::Learn,
+        ),
+        (
+            vec![ed.clone()],
+            &none[..],
+            &ecdsa,
+            OtherAlgorithm::Conflicts,
+            Trusting::Conflict(Contradiction::OtherAlgorithm(vec![ed.algorithm()])),
+        ),
+        // Pinned: its key recorded in full, any other refused, of any algorithm.
+        (
+            vec![],
+            &pin_ed[..],
+            &ed,
+            OtherAlgorithm::Adds,
+            Trusting::LearnPinned,
+        ),
+        (
+            vec![],
+            &pin_ed[..],
+            &other,
+            OtherAlgorithm::Adds,
+            Trusting::Conflict(Contradiction::Pinned(print("host-ed25519"))),
+        ),
+        (
+            vec![],
+            &pin_ed[..],
+            &ecdsa,
+            OtherAlgorithm::Adds,
+            Trusting::Conflict(Contradiction::Pinned(print("host-ed25519"))),
+        ),
+        // A key of another algorithm recorded beside a pin still answers to the pin.
+        (
+            vec![ecdsa.clone()],
+            &pin_ed[..],
+            &other,
+            OtherAlgorithm::Adds,
+            Trusting::Conflict(Contradiction::Pinned(print("host-ed25519"))),
+        ),
+    ];
+    for (recorded, pinned, offered, rule, expected) in cases {
+        assert_eq!(
+            trusting(&recorded, pinned, offered, rule),
+            expected,
+            "{} against {} recorded and {pinned:?}, {rule:?}",
+            offered.algorithm(),
+            recorded.len()
+        );
+    }
+}
+
+#[test]
+fn a_key_trusted_through_the_one_rule_is_written_once_under_the_lock() {
+    use heimdall_ssh::known_hosts_import::{Contradiction, OtherAlgorithm, Trusting, trust};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let pins = heimdall_ssh::Pins::beside(store.path());
+    let read = |name: &str| heimdall_ssh::PublicKey::from_openssh(&key(name)).expect("key");
+    pins.pin("web.lab", 22, &print("host-ed25519"))
+        .expect("pinned");
+    let rule = OtherAlgorithm::Conflicts;
+    assert_eq!(
+        trust(&store, "web.lab", 22, &read("host-ecdsa"), rule).expect("trust"),
+        Trusting::Conflict(Contradiction::Pinned(print("host-ed25519")))
+    );
+    assert_eq!(
+        trust(&store, "web.lab", 22, &read("host-ed25519"), rule).expect("trust"),
+        Trusting::LearnPinned
+    );
+    assert_eq!(
+        trust(&store, "web.lab", 22, &read("host-ed25519"), rule).expect("trust"),
+        Trusting::Recorded
+    );
+    assert_eq!(
+        trust(&store, "new.lab", 22, &read("host-ecdsa"), rule).expect("trust"),
+        Trusting::Learn
+    );
+    assert_eq!(store.recorded("web.lab", 22).expect("read").len(), 1);
+    assert_eq!(store.recorded("new.lab", 22).expect("read").len(), 1);
+    assert!(pins.pinned("web.lab", 22).expect("read").is_empty());
+}

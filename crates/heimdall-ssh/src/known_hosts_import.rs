@@ -22,14 +22,21 @@
 //! would trust a key for a host nobody could name), a wildcard or negation, a certificate
 //! authority, a revoked key, a key that cannot be read. A key already trusted is said so; a
 //! key that contradicts one trusted, or another of the same file for the same server, is a
-//! conflict and is never imported: the file cannot overrule what the user accepted.
+//! conflict and is never imported: the file cannot overrule what the user accepted. A
+//! server trusted by a pinned fingerprint alone is trusted for that key and no other: the
+//! key with that fingerprint is recorded in full and the pin dropped, any other key is a
+//! conflict.
 
 use std::collections::HashMap;
 use std::net::Ipv6Addr;
 
-use russh::keys::PublicKey;
+use russh::keys::{Algorithm, PublicKey};
 
-use crate::known_hosts::{KnownHosts, KnownHostsError, Verdict, validate_host, verdict};
+use crate::known_hosts::{
+    KnownHosts, KnownHostsError, Verdict, fingerprint, validate_host, verdict,
+};
+use crate::pins::{self, PinVerdict, Pins, pin_verdict};
+use crate::trust_files::{self, TrustLock};
 
 /// Longest line read, as the C# `MaxLineLength`: a longer one is malformed.
 pub const MAX_LINE: usize = 65_536;
@@ -216,15 +223,124 @@ pub enum HostKeyStatus {
     Conflict,
 }
 
-/// What the import would do with each key, against the keys `store` trusts.
+/// What a key of another algorithm than the ones recorded for its server is.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OtherAlgorithm {
+    /// Recorded beside them: it contradicts none. The import of a file the user picked.
+    Adds,
+    /// A conflict, as the C# `KnownHostsImporter` makes it: its store keeps one key per
+    /// server, and any other fingerprint contradicts it.
+    Conflicts,
+}
+
+/// What contradicts a key, said as a connection says it: a changed key, a key of another
+/// algorithm, or another fingerprint pinned.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Contradiction {
+    /// Another key of its algorithm is recorded; carries that key's fingerprint.
+    Changed(String),
+    /// Keys of other algorithms only are recorded, and the rule refuses another; carries
+    /// their algorithms.
+    OtherAlgorithm(Vec<Algorithm>),
+    /// Another fingerprint is pinned for the server; carries it.
+    Pinned(String),
+}
+
+/// What trusting a key does for its server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Trusting {
+    /// Nothing recorded or pinned for the server contradicts it: recorded.
+    Learn,
+    /// Its fingerprint is the one pinned for the server: recorded in full and the pin
+    /// dropped, as a connection does when it first meets that key.
+    LearnPinned,
+    /// This very key is recorded already.
+    Recorded,
+    /// A key recorded, or a pin, contradicts it: never recorded.
+    Conflict(Contradiction),
+}
+
+/// The one rule every import follows for a key, against the keys `recorded` for its server
+/// and the fingerprints `pinned` for it, as the C# `KnownHostsImporter.Import` decides
+/// against the server's entry: none, the import; the same fingerprint, a match; another,
+/// a conflict, never written over the trust the user gave.
+///
+/// The key recorded already is [`Trusting::Recorded`]. Another key of its algorithm
+/// recorded is a conflict; one of another algorithm only as `other` says. A pin, the
+/// algorithm of its key unknown, trusts the key with its fingerprint and no other: that
+/// key is [`Trusting::LearnPinned`], any other key a conflict.
+#[must_use]
+pub fn trusting(
+    recorded: &[PublicKey],
+    pinned: &[String],
+    key: &PublicKey,
+    other: OtherAlgorithm,
+) -> Trusting {
+    match verdict(recorded, key) {
+        Verdict::Trusted => return Trusting::Recorded,
+        Verdict::Changed { recorded } => {
+            return Trusting::Conflict(Contradiction::Changed(fingerprint(&recorded)));
+        }
+        Verdict::OtherAlgorithm { recorded } if other == OtherAlgorithm::Conflicts => {
+            return Trusting::Conflict(Contradiction::OtherAlgorithm(recorded));
+        }
+        Verdict::Unknown | Verdict::OtherAlgorithm { .. } => {}
+    }
+    match pin_verdict(pinned, key) {
+        PinVerdict::None => Trusting::Learn,
+        PinVerdict::Matches => Trusting::LearnPinned,
+        PinVerdict::Differs { pinned } => Trusting::Conflict(Contradiction::Pinned(pinned)),
+    }
+}
+
+/// Trusts `key` for `host` on `port` as [`trusting`] decides, against what `store` records
+/// and pins for the server at that moment: read and written under the lock of the trust
+/// files, no other writer between the check and the write. What was decided.
 ///
 /// # Errors
 ///
-/// [`KnownHostsError`] when the store cannot be read.
+/// [`KnownHostsError`] when the store or its pins cannot be read, or the key cannot be
+/// recorded.
+pub fn trust(
+    store: &KnownHosts,
+    host: &str,
+    port: u16,
+    key: &PublicKey,
+    other: OtherAlgorithm,
+) -> Result<Trusting, KnownHostsError> {
+    trust_locked(&trust_files::lock(), store, host, port, key, other)
+}
+
+/// [`trust`], the lock of the trust files held by the caller.
+pub(crate) fn trust_locked(
+    lock: &TrustLock,
+    store: &KnownHosts,
+    host: &str,
+    port: u16,
+    key: &PublicKey,
+    other: OtherAlgorithm,
+) -> Result<Trusting, KnownHostsError> {
+    let pinned = Pins::beside(store.path()).pinned(host, port)?;
+    let decided = trusting(&store.recorded(host, port)?, &pinned, key, other);
+    match decided {
+        Trusting::Learn => store.learn_locked(lock, host, port, key)?,
+        Trusting::LearnPinned => pins::record_in_full(lock, store, host, port, key)?,
+        Trusting::Recorded | Trusting::Conflict(_) => {}
+    }
+    Ok(decided)
+}
+
+/// What the import would do with each key, against the keys `store` trusts and the
+/// fingerprints it pins.
+///
+/// # Errors
+///
+/// [`KnownHostsError`] when the store or its pins cannot be read.
 pub fn assess(
     candidates: &[HostKeyCandidate],
     store: &KnownHosts,
 ) -> Result<Vec<HostKeyStatus>, KnownHostsError> {
+    let pins = Pins::beside(store.path());
     // Two different keys of one kind for one server in the same file: neither is trusted.
     let mut seen: HashMap<(String, u16, String), Vec<&PublicKey>> = HashMap::new();
     for candidate in candidates {
@@ -254,12 +370,15 @@ pub fn assess(
                 return Ok(HostKeyStatus::Conflict);
             }
             let recorded = store.recorded(&candidate.host, candidate.port)?;
-            Ok(match verdict(&recorded, &candidate.key) {
-                Verdict::Trusted => HostKeyStatus::Existing,
-                // A key of another kind for a known server adds, and contradicts nothing.
-                Verdict::Unknown | Verdict::OtherAlgorithm { .. } => HostKeyStatus::New,
-                Verdict::Changed { .. } => HostKeyStatus::Conflict,
-            })
+            let pinned = pins.pinned(&candidate.host, candidate.port)?;
+            // A key of another kind for a known server adds, and contradicts nothing.
+            Ok(
+                match trusting(&recorded, &pinned, &candidate.key, OtherAlgorithm::Adds) {
+                    Trusting::Learn | Trusting::LearnPinned => HostKeyStatus::New,
+                    Trusting::Recorded => HostKeyStatus::Existing,
+                    Trusting::Conflict(_) => HostKeyStatus::Conflict,
+                },
+            )
         })
         .collect()
 }
@@ -275,8 +394,10 @@ pub struct HostKeysImported {
     pub conflicts: usize,
 }
 
-/// Trusts the `chosen` keys in `store`, each checked again as it is written: a key that
-/// has come to contradict one trusted meanwhile is a conflict, never written over it.
+/// Trusts the `chosen` keys in `store`, each checked again as it is written, under the lock
+/// of the trust files: a key that has come to contradict one trusted or pinned meanwhile is
+/// a conflict, never written over it; the key with a pinned fingerprint is recorded in full
+/// and the pin dropped.
 ///
 /// # Errors
 ///
@@ -287,21 +408,25 @@ pub fn import(
     store: &KnownHosts,
 ) -> Result<HostKeysImported, KnownHostsError> {
     let statuses = assess(chosen, store)?;
+    let lock = trust_files::lock();
     let mut done = HostKeysImported::default();
     for (candidate, status) in chosen.iter().zip(statuses) {
         match status {
             HostKeyStatus::Conflict => done.conflicts += 1,
             HostKeyStatus::Existing => done.existing += 1,
-            HostKeyStatus::New => {
-                // The same key twice in the file is written once.
-                let recorded = store.recorded(&candidate.host, candidate.port)?;
-                if verdict(&recorded, &candidate.key) == Verdict::Trusted {
-                    done.existing += 1;
-                } else {
-                    store.learn(&candidate.host, candidate.port, &candidate.key)?;
-                    done.imported += 1;
-                }
-            }
+            // The same key twice in the file is written once: recorded the second time.
+            HostKeyStatus::New => match trust_locked(
+                &lock,
+                store,
+                &candidate.host,
+                candidate.port,
+                &candidate.key,
+                OtherAlgorithm::Adds,
+            )? {
+                Trusting::Learn | Trusting::LearnPinned => done.imported += 1,
+                Trusting::Recorded => done.existing += 1,
+                Trusting::Conflict(_) => done.conflicts += 1,
+            },
         }
     }
     Ok(done)
