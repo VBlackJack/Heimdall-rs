@@ -23,6 +23,7 @@
 //! server over a network through an SSH tunnel.
 
 mod auth;
+mod clipboard;
 mod protocol;
 mod screen;
 mod security;
@@ -31,6 +32,7 @@ mod tight;
 mod zrle;
 
 pub use auth::{MAX_PLAIN_PASSWORD, MAX_PLAIN_USERNAME, PASSWORD_BYTES, TooLong};
+pub use clipboard::MAX_EXTENDED_CUT_TEXT;
 pub use protocol::{MAX_CUT_TEXT, Quality, Rfb, RfbError, RfbEvent, SecurityPolicy, Version};
 pub use screen::{MAX_SIDE, Rect, Screen};
 pub use security::{Authentication, Security, SecurityWrapper};

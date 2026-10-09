@@ -452,6 +452,7 @@ ui-dialog-paste-dangerous-confirm = Paste anyway
 ui-dialog-paste-truncated = Preview is truncated. The full clipboard content will be pasted if you continue.
 ui-dialog-import-title = Import finished
 ui-dialog-import-counts = Added: { $added }. Updated: { $updated }. Unchanged: { $unchanged }.
+ui-dialog-import-actions = { $imported } imported, { $replaced } replaced, { $renamed } auto-renamed, { $skipped } skipped.
 ui-dialog-import-gateways = SSH gateways: { $created } created, { $merged } merged, { $orphans ->
     [one] { $orphans } orphan reference
    *[other] { $orphans } orphan references
@@ -834,6 +835,20 @@ ui-rdp-done = { $imported } imported, { $replaced } replaced, { $renamed } auto-
    *[other] { $passwords } passwords ignored.
 }
 ui-rdp-nothing = No valid .rdp files were found to import.
+ui-profile-import-title = Import profiles
+ui-profile-import-subtitle = { $count ->
+    [one] { $count } profile ready to import.
+   *[other] { $count } profiles ready to import.
+}
+ui-profile-import-summary = { $chosen ->
+    [one] { $chosen } profile selected out of { $total }
+   *[other] { $chosen } profiles selected out of { $total }
+}, { $conflicts ->
+    [one] { $conflicts } conflict
+   *[other] { $conflicts } conflicts
+}.
+ui-profile-import-button = Import selected
+ui-profile-import-source = { $file }#{ $position }
 ui-tree-import-known-hosts = Import trusted SSH hosts...
 ui-hostkeys-title = Import trusted SSH hosts
 ui-hostkeys-pick-title = Select known_hosts file

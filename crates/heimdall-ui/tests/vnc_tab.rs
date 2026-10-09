@@ -43,8 +43,11 @@ const WINDOW: Size = Size::new(1200.0, 720.0);
 /// Bound on anything the test waits for.
 const WAIT: Duration = Duration::from_secs(10);
 
+/// The Extended Clipboard pseudo-encoding, 0xC0A1E5CE as noVNC's `encodings.js` has it.
+const EXTENDED_CLIPBOARD: i32 = 0xC0A1_E5CE_u32.cast_signed();
+
 /// What the client sends once the desktop opens: pixel format, encodings, update request.
-const OPENING_REQUESTS: usize = 20 + 44 + 10;
+const OPENING_REQUESTS: usize = 20 + 48 + 10;
 
 fn app(dir: &Path) -> App {
     app_of(
@@ -190,8 +193,8 @@ async fn serve(listener: TcpListener, expected: usize) -> Vec<u8> {
 async fn the_quality_menu_offers_the_csharp_four_from_performance_and_asks_the_server() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let port = listener.local_addr().expect("address").port();
-    // SetEncodings of 10, then the whole desktop asked anew.
-    let server = tokio::spawn(serve(listener, 4 + 40 + 10));
+    // SetEncodings of 11, then the whole desktop asked anew.
+    let server = tokio::spawn(serve(listener, 4 + 44 + 10));
     let dir = tempfile::tempdir().expect("dir");
     let mut core = app_of(
         dir.path(),
@@ -262,8 +265,20 @@ async fn the_quality_menu_offers_the_csharp_four_from_performance_and_asks_the_s
         .expect("in time")
         .expect("server");
     // Tight first, the others, then compression 9 (-247) and JPEG quality 3 (-29).
-    let mut expected = vec![2, 0, 0, 10];
-    for encoding in [7_i32, 16, 1, 0, -223, -224, -308, -307, -247, -29] {
+    let mut expected = vec![2, 0, 0, 11];
+    for encoding in [
+        7_i32,
+        16,
+        1,
+        0,
+        -223,
+        -224,
+        -308,
+        -307,
+        EXTENDED_CLIPBOARD,
+        -247,
+        -29,
+    ] {
         expected.extend_from_slice(&encoding.to_be_bytes());
     }
     expected.extend_from_slice(&[3, 0, 0, 0, 0, 0, 0, 4, 0, 2]);
