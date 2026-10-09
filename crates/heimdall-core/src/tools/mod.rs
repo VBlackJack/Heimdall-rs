@@ -14,9 +14,21 @@
  * limitations under the License.
  */
 
-//! The engines of the built-in tools, as the C# `Heimdall.Core` `Codecs` and `Identifiers`:
-//! what a tool computes, apart from how its tab shows it.
+//! The engines of the built-in tools, as the C# `Heimdall.Core` `Codecs`, `Identifiers`,
+//! `Permissions` and `Temporal`, and the computations of the C# tool views: what a tool
+//! computes, apart from how its tab shows it.
 
 pub mod base64_codec;
+pub mod cron_builder;
+pub mod date_time;
+pub mod ip_address;
+pub mod ip_codec;
+pub mod network_calculator;
+pub mod number_text;
+pub mod posix_mode;
+pub mod ssh_config;
+pub mod subnet_calculator;
+pub mod time_zone_rules;
+pub mod ulid_generator;
 pub mod url_codec;
 pub mod uuid_generator;

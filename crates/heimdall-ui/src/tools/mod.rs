@@ -23,10 +23,19 @@
 //! tab, made when the tab opens and dropped when it closes.
 //!
 //! Adding a tool: its arms in [`label`], [`description`] and [`icon`], its pane module, and
-//! its arms in [`Pane`], [`ToolPane::new`], [`ToolPanes::update`] and [`view`].
+//! its arms in [`Pane`], [`ToolPane::new`], [`ToolPanes::update`] (or `update_copying`, for
+//! a tool whose update only copies) and [`view`].
 
 mod base64_tool;
 pub mod catalog;
+mod chmod_tool;
+mod crontab_tool;
+mod datetime_tool;
+mod ip_converter_tool;
+mod network_calculator_tool;
+mod ssh_config_tool;
+mod subnet_tool;
+mod ulid_tool;
 mod url_tool;
 mod uuid_tool;
 
@@ -41,6 +50,14 @@ use iced::widget::{Column, button, column, container, row, scrollable, text, too
 use iced::{Element, Length, Task, window};
 
 pub use base64_tool::Base64Message;
+pub use chmod_tool::ChmodMessage;
+pub use crontab_tool::{CronOption, CrontabMessage};
+pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
+pub use ip_converter_tool::{IpConverterMessage, IpField};
+pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
+pub use ssh_config_tool::{SshConfigMessage, SshField};
+pub use subnet_tool::{SubnetField, SubnetMessage};
+pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
 pub use uuid_tool::UuidMessage;
 
@@ -87,6 +104,17 @@ const COPY_PADDING: [f32; 2] = [4.0, 10.0];
 /// The text of a tool's boxes: monospaced, as the C# Consolas.
 const BOX_FONT: iced::Font = iced::Font::MONOSPACE;
 
+/// Padding of a tool's content, as the C# `ContentAreaMargin`: none above, under the header.
+const BODY_PADDING: iced::Padding = iced::Padding {
+    top: 0.0,
+    right: spacing::LG - spacing::XS,
+    bottom: spacing::LG - spacing::XS,
+    left: spacing::LG - spacing::XS,
+};
+
+/// Room around an empty state, as the C# `ToolEmptyStateStyle`'s padding.
+const EMPTY_STATE_PADDING: f32 = 24.0;
+
 /// A line break written into a tool's output, as .NET's `Environment.NewLine`.
 #[cfg(windows)]
 const NEW_LINE: &str = "\r\n";
@@ -98,9 +126,17 @@ const NEW_LINE: &str = "\n";
 #[must_use]
 pub fn label(tool: ToolId) -> String {
     match tool {
+        ToolId::SubnetCalculator => fl!("ui-tool-subnet-name"),
+        ToolId::IpConverter => fl!("ui-tool-ipconv-name"),
+        ToolId::NetworkCalculator => fl!("ui-tool-netcalc-name"),
         ToolId::Base64 => fl!("ui-tool-base64-name"),
         ToolId::UrlEncoder => fl!("ui-tool-urlenc-name"),
+        ToolId::Chmod => fl!("ui-tool-chmod-name"),
+        ToolId::DateTime => fl!("ui-tool-datetime-name"),
         ToolId::Uuid => fl!("ui-tool-uuid-name"),
+        ToolId::Ulid => fl!("ui-tool-ulid-name"),
+        ToolId::Crontab => fl!("ui-tool-crontab-name"),
+        ToolId::SshConfig => fl!("ui-tool-sshconfig-name"),
     }
 }
 
@@ -108,9 +144,17 @@ pub fn label(tool: ToolId) -> String {
 #[must_use]
 pub fn description(tool: ToolId) -> String {
     match tool {
+        ToolId::SubnetCalculator => fl!("ui-tool-subnet-description"),
+        ToolId::IpConverter => fl!("ui-tool-ipconv-description"),
+        ToolId::NetworkCalculator => fl!("ui-tool-netcalc-description"),
         ToolId::Base64 => fl!("ui-tool-base64-description"),
         ToolId::UrlEncoder => fl!("ui-tool-urlenc-description"),
+        ToolId::Chmod => fl!("ui-tool-chmod-description"),
+        ToolId::DateTime => fl!("ui-tool-datetime-description"),
         ToolId::Uuid => fl!("ui-tool-uuid-description"),
+        ToolId::Ulid => fl!("ui-tool-ulid-description"),
+        ToolId::Crontab => fl!("ui-tool-crontab-description"),
+        ToolId::SshConfig => fl!("ui-tool-sshconfig-description"),
     }
 }
 
@@ -118,9 +162,17 @@ pub fn description(tool: ToolId) -> String {
 #[must_use]
 pub const fn icon(tool: ToolId) -> Icon {
     match tool {
+        ToolId::SubnetCalculator => Icon::ToolSubnet,
+        ToolId::IpConverter => Icon::ToolIpConverter,
+        ToolId::NetworkCalculator => Icon::ToolNetworkCalculator,
         ToolId::Base64 => Icon::ToolBase64,
         ToolId::UrlEncoder => Icon::ToolUrlEncoder,
+        ToolId::Chmod => Icon::ToolChmod,
+        ToolId::DateTime => Icon::ToolDateTime,
         ToolId::Uuid => Icon::ToolUuid,
+        ToolId::Ulid => Icon::ToolUlid,
+        ToolId::Crontab => Icon::ToolCrontab,
+        ToolId::SshConfig => Icon::ToolSshConfig,
     }
 }
 
@@ -190,6 +242,28 @@ pub enum CopySlot {
     UuidSingle,
     /// The batch of UUIDs.
     UuidBatch,
+    /// A value of the subnet calculator.
+    Subnet(SubnetField),
+    /// A form of the IP converter.
+    IpConverter(IpField),
+    /// The network calculator's result.
+    NetCalcResult,
+    /// The chmod command.
+    ChmodCommand,
+    /// The octal mode.
+    ChmodOctal,
+    /// The `rwx` form.
+    ChmodSymbolic,
+    /// A form of the date and time converter.
+    DateTime(DateField),
+    /// The ULID generated.
+    UlidSingle,
+    /// The batch of ULIDs.
+    UlidBatch,
+    /// The cron expression.
+    CrontabExpression,
+    /// The SSH config block.
+    SshConfigOutput,
 }
 
 /// What a tool's tab is asked.
@@ -207,6 +281,22 @@ pub enum ToolMessage {
     Url(UrlMessage),
     /// The UUID generator's.
     Uuid(UuidMessage),
+    /// The subnet calculator's.
+    Subnet(SubnetMessage),
+    /// The IP converter's.
+    IpConverter(IpConverterMessage),
+    /// The network calculator's.
+    NetCalc(NetCalcMessage),
+    /// The chmod calculator's.
+    Chmod(ChmodMessage),
+    /// The date and time converter's.
+    DateTime(DateTimeMessage),
+    /// The ULID generator's.
+    Ulid(UlidMessage),
+    /// The crontab builder's.
+    Crontab(CrontabMessage),
+    /// The SSH config generator's.
+    SshConfig(SshConfigMessage),
 }
 
 /// A tool's own state.
@@ -215,6 +305,14 @@ enum Pane {
     Base64(base64_tool::Base64Pane),
     Url(url_tool::UrlPane),
     Uuid(uuid_tool::UuidPane),
+    Subnet(subnet_tool::SubnetPane),
+    IpConverter(ip_converter_tool::IpConverterPane),
+    NetCalc(network_calculator_tool::NetCalcPane),
+    Chmod(chmod_tool::ChmodPane),
+    DateTime(Box<datetime_tool::DateTimePane>),
+    Ulid(ulid_tool::UlidPane),
+    Crontab(crontab_tool::CrontabPane),
+    SshConfig(ssh_config_tool::SshConfigPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -234,6 +332,16 @@ impl ToolPane {
             ToolId::Base64 => Pane::Base64(base64_tool::Base64Pane::default()),
             ToolId::UrlEncoder => Pane::Url(url_tool::UrlPane::default()),
             ToolId::Uuid => Pane::Uuid(uuid_tool::UuidPane::new()),
+            ToolId::SubnetCalculator => Pane::Subnet(subnet_tool::SubnetPane::default()),
+            ToolId::IpConverter => Pane::IpConverter(ip_converter_tool::IpConverterPane::default()),
+            ToolId::NetworkCalculator => {
+                Pane::NetCalc(network_calculator_tool::NetCalcPane::default())
+            }
+            ToolId::Chmod => Pane::Chmod(chmod_tool::ChmodPane::default()),
+            ToolId::DateTime => Pane::DateTime(Box::new(datetime_tool::DateTimePane::new())),
+            ToolId::Ulid => Pane::Ulid(ulid_tool::UlidPane::new()),
+            ToolId::Crontab => Pane::Crontab(crontab_tool::CrontabPane::new()),
+            ToolId::SshConfig => Pane::SshConfig(ssh_config_tool::SshConfigPane::default()),
         };
         Self {
             pane,
@@ -266,7 +374,7 @@ impl ToolPane {
         self.copied = Some((slot, copy));
         Task::batch([
             iced::clipboard::write(content),
-            Task::perform(tokio::time::sleep(COPY_FEEDBACK), move |()| {
+            Task::perform(wait(COPY_FEEDBACK), move |()| {
                 Message::Tool(tab, ToolMessage::CopyShown(copy))
             }),
         ])
@@ -336,10 +444,35 @@ impl ToolPanes {
                     return state.copy(tab, slot, content);
                 }
             }
-            // A message of another tool's: its tab was closed, another took its place.
-            _ => {}
+            (ToolMessage::DateTime(message), Pane::DateTime(pane)) => {
+                return match pane.update(message) {
+                    datetime_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    outcome => outcome.task(tab),
+                };
+            }
+            (message, pane) => {
+                if let Some((slot, content)) = update_copying(message, pane) {
+                    return state.copy(tab, slot, content);
+                }
+            }
         }
         Task::none()
+    }
+}
+
+/// Applies `message` to `pane`, a tool whose update only ever copies; what a copy button
+/// copies, when one is pressed. A message of another tool's, its tab closed and another in
+/// its place, does nothing.
+fn update_copying(message: ToolMessage, pane: &mut Pane) -> Option<(CopySlot, String)> {
+    match (message, pane) {
+        (ToolMessage::Subnet(message), Pane::Subnet(pane)) => pane.update(message),
+        (ToolMessage::IpConverter(message), Pane::IpConverter(pane)) => pane.update(message),
+        (ToolMessage::NetCalc(message), Pane::NetCalc(pane)) => pane.update(message),
+        (ToolMessage::Chmod(message), Pane::Chmod(pane)) => pane.update(message),
+        (ToolMessage::Ulid(message), Pane::Ulid(pane)) => pane.update(message),
+        (ToolMessage::Crontab(message), Pane::Crontab(pane)) => pane.update(message),
+        (ToolMessage::SshConfig(message), Pane::SshConfig(pane)) => pane.update(message),
+        _ => None,
     }
 }
 
@@ -353,11 +486,30 @@ pub fn view(tab: TabId, tool: ToolId, state: Option<&ToolPane>) -> Element<'_, M
         ToolId::Base64 => (fl!("ui-tool-base64-title"), fl!("ui-tool-base64-help")),
         ToolId::UrlEncoder => (fl!("ui-tool-urlenc-title"), fl!("ui-tool-urlenc-help")),
         ToolId::Uuid => (fl!("ui-tool-uuid-title"), fl!("ui-tool-uuid-help")),
+        ToolId::SubnetCalculator => (fl!("ui-tool-subnet-title"), fl!("ui-tool-subnet-help")),
+        ToolId::IpConverter => (fl!("ui-tool-ipconv-title"), fl!("ui-tool-ipconv-help")),
+        ToolId::NetworkCalculator => (fl!("ui-tool-netcalc-title"), fl!("ui-tool-netcalc-help")),
+        ToolId::Chmod => (fl!("ui-tool-chmod-title"), fl!("ui-tool-chmod-help")),
+        ToolId::DateTime => (fl!("ui-tool-datetime-title"), fl!("ui-tool-datetime-help")),
+        ToolId::Ulid => (fl!("ui-tool-ulid-title"), fl!("ui-tool-ulid-help")),
+        ToolId::Crontab => (fl!("ui-tool-crontab-title"), fl!("ui-tool-crontab-help")),
+        ToolId::SshConfig => (
+            fl!("ui-tool-sshconfig-title"),
+            fl!("ui-tool-sshconfig-help"),
+        ),
     };
     let body = match &state.pane {
         Pane::Base64(pane) => pane.view(tab, state),
         Pane::Url(pane) => pane.view(tab, state),
         Pane::Uuid(pane) => pane.view(tab, state),
+        Pane::Subnet(pane) => pane.view(tab, state),
+        Pane::IpConverter(pane) => pane.view(tab, state),
+        Pane::NetCalc(pane) => pane.view(tab, state),
+        Pane::Chmod(pane) => pane.view(tab, state),
+        Pane::DateTime(pane) => pane.view(tab, state),
+        Pane::Ulid(pane) => pane.view(tab, state),
+        Pane::Crontab(pane) => pane.view(tab, state),
+        Pane::SshConfig(pane) => pane.view(tab, state),
     };
     column![
         header(tab, title),
@@ -510,4 +662,120 @@ fn content_column(content: Column<'_, Message>) -> Element<'_, Message> {
     )
     .height(Length::Fill)
     .into()
+}
+
+/// A label over a tool's box, as the C# labels in the secondary text.
+fn field_label<'a>(label: String) -> Element<'a, Message> {
+    text(label)
+        .size(font_size::BODY)
+        .style(text::secondary)
+        .into()
+}
+
+/// What a tool shows before it has a result, as the C# `ToolEmptyStateStyle`: its hint,
+/// centred in the room left.
+fn empty_state<'a>(hint: String) -> Element<'a, Message> {
+    container(
+        text(hint)
+            .size(font_size::BODY_LARGE)
+            .style(text::secondary),
+    )
+    .padding(EMPTY_STATE_PADDING)
+    .center(Length::Fill)
+    .into()
+}
+
+/// A tool's status line: what it says, in the error colour when it is an error, as the C#
+/// `StatusForegroundBrushKey`; nothing when it says nothing.
+fn status_line<'a>(said: Option<(String, bool)>) -> Element<'a, Message> {
+    match said {
+        Some((said, error)) => text(said)
+            .size(font_size::CAPTION)
+            .style(if error { text::danger } else { text::secondary })
+            .into(),
+        None => column![].into(),
+    }
+}
+
+/// A tool's content that fills its tab, as the C# tool grids under the header.
+fn tool_body(content: Column<'_, Message>) -> Element<'_, Message> {
+    container(content)
+        .padding(BODY_PADDING)
+        .width(Length::Fill)
+        .height(Length::Fill)
+        .into()
+}
+
+/// A wait of `duration`, its timer made when it is first awaited: in the runtime that runs
+/// it, not in the update that asks for it.
+async fn wait(duration: Duration) {
+    tokio::time::sleep(duration).await;
+}
+
+/// Width of a result's label, as the C# results grids' label column.
+const RESULT_LABEL_WIDTH: f32 = 160.0;
+
+/// Room between a result's label and its value, as the C# grids' column of 16.
+const RESULT_LABEL_GAP: f32 = 16.0;
+
+/// What a tool that scrolls shows before it has a result, as the C# `ToolEmptyStateStyle`:
+/// its hint, centred across; a page that scrolls has no height to fill.
+fn hint<'a>(hint: String) -> Element<'a, Message> {
+    container(
+        text(hint)
+            .size(font_size::BODY_LARGE)
+            .style(text::secondary),
+    )
+    .padding(EMPTY_STATE_PADDING)
+    .center_x(Length::Fill)
+    .into()
+}
+
+/// A tool's error under its input, in the error colour, as the C# `TxtError` lines.
+fn error_line<'a>(said: String) -> Element<'a, Message> {
+    status_line(Some((said, true)))
+}
+
+/// A value a tool shows, as the C# read-only boxes: monospaced, in the accent, framed.
+fn value_box<'a>(value: String) -> Element<'a, Message> {
+    container(
+        text(value)
+            .font(BOX_FONT)
+            .size(font_size::BODY_LARGE)
+            .style(|theme: &iced::Theme| text::Style {
+                color: Some(theme.palette().primary),
+            }),
+    )
+    .padding(INPUT_PADDING)
+    .width(Length::Fill)
+    .style(styles::field_box)
+    .into()
+}
+
+/// A row of a tool's results, as the C# results grids: its label, its value monospaced,
+/// and its copy button.
+fn result_row(label: String, value: String, copy: Element<'_, Message>) -> Element<'_, Message> {
+    row![
+        text(label)
+            .size(font_size::BODY)
+            .style(text::secondary)
+            .width(RESULT_LABEL_WIDTH),
+        iced::widget::space().width(RESULT_LABEL_GAP),
+        text(value)
+            .font(BOX_FONT)
+            .size(font_size::BODY)
+            .width(Length::Fill),
+        copy,
+    ]
+    .align_y(iced::Alignment::Center)
+    .into()
+}
+
+/// A tool's results, one a row, in a card, as the C# results panels.
+fn results_card<'a>(rows: impl IntoIterator<Item = Element<'a, Message>>) -> Element<'a, Message> {
+    container(Column::with_children(rows).spacing(spacing::SM))
+        .padding(spacing::MD)
+        .width(Length::Fill)
+        .style(styles::card)
+        .into()
 }
