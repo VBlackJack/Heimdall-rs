@@ -27,13 +27,19 @@
 
 mod base64_tool;
 pub mod catalog;
+mod certgen_tool;
 mod crypto_parts;
 mod diff_tool;
 mod hash_tool;
 mod hmac_tool;
 mod json_tool;
 mod jwt_tool;
+mod key_parts;
+mod password_tool;
+mod placement_bar;
+mod pwdaudit_tool;
 mod regex_tool;
+mod sshkey_tool;
 mod text_case_tool;
 mod totp_tool;
 mod url_tool;
@@ -51,12 +57,18 @@ use iced::widget::{Column, button, column, container, row, scrollable, text, too
 use iced::{Color, Element, Length, Task, Theme, window};
 
 pub use base64_tool::Base64Message;
+pub use certgen_tool::{
+    CertCopy, CertGenMessage, CertSave, Generated as GeneratedCertificates, KeySizeChoice,
+};
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
 pub use hash_tool::HashMessage;
 pub use hmac_tool::HmacMessage;
 pub use json_tool::JsonMessage;
 pub use jwt_tool::JwtMessage;
+pub use password_tool::{BuiltIn, PasswordCopy, PasswordMessage, PresetEntry};
+pub use pwdaudit_tool::{PolicyChoice, PwdAuditMessage};
 pub use regex_tool::RegexMessage;
+pub use sshkey_tool::{AlgorithmChoice, SshCopy, SshKeyMessage, SshSave};
 pub use text_case_tool::TextCaseMessage;
 pub use totp_tool::TotpMessage;
 pub use url_tool::UrlMessage;
@@ -143,6 +155,10 @@ pub fn label(tool: ToolId) -> String {
     match tool {
         ToolId::Hash => fl!("ui-tool-hash-name"),
         ToolId::Hmac => fl!("ui-tool-hmac-name"),
+        ToolId::Password => fl!("ui-tool-password-name"),
+        ToolId::SshKey => fl!("ui-tool-sshkey-name"),
+        ToolId::CertGen => fl!("ui-tool-certgen-name"),
+        ToolId::PwdAudit => fl!("ui-tool-pwdaudit-name"),
         ToolId::Jwt => fl!("ui-tool-jwt-name"),
         ToolId::Totp => fl!("ui-tool-totp-name"),
         ToolId::Base64 => fl!("ui-tool-base64-name"),
@@ -161,6 +177,10 @@ pub fn description(tool: ToolId) -> String {
     match tool {
         ToolId::Hash => fl!("ui-tool-hash-description"),
         ToolId::Hmac => fl!("ui-tool-hmac-description"),
+        ToolId::Password => fl!("ui-tool-password-description"),
+        ToolId::SshKey => fl!("ui-tool-sshkey-description"),
+        ToolId::CertGen => fl!("ui-tool-certgen-description"),
+        ToolId::PwdAudit => fl!("ui-tool-pwdaudit-description"),
         ToolId::Jwt => fl!("ui-tool-jwt-description"),
         ToolId::Totp => fl!("ui-tool-totp-description"),
         ToolId::Base64 => fl!("ui-tool-base64-description"),
@@ -179,6 +199,10 @@ pub const fn icon(tool: ToolId) -> Icon {
     match tool {
         // The C# registry draws both with the same geometry.
         ToolId::Hash | ToolId::Hmac => Icon::ToolHash,
+        ToolId::Password => Icon::ToolPasswordGenerator,
+        ToolId::SshKey => Icon::ToolSshKeyGenerator,
+        ToolId::CertGen => Icon::ToolCertificateGenerator,
+        ToolId::PwdAudit => Icon::ToolPasswordAudit,
         ToolId::Jwt => Icon::ToolJwt,
         ToolId::Totp => Icon::ToolTotp,
         ToolId::Base64 => Icon::ToolBase64,
@@ -277,6 +301,32 @@ pub enum CopySlot {
     DiffUnified,
     /// The text case converter's output.
     TextCaseOutput,
+    /// The certificate generator's fingerprint.
+    CertFingerprint,
+    /// The certificate generator's first certificate.
+    CertCert,
+    /// Its key.
+    CertKey,
+    /// The CA's leaf.
+    CertLeafCert,
+    /// Its key.
+    CertLeafKey,
+    /// The SSH key generator's fingerprint.
+    SshFingerprint,
+    /// Its public key.
+    SshPublic,
+    /// Its private key.
+    SshPrivate,
+    /// The password shown.
+    PasswordMain,
+    /// Its phonetic reading.
+    PasswordPhonetic,
+    /// The whole batch.
+    PasswordBatchAll,
+    /// A row of the batch.
+    PasswordBatchRow(usize),
+    /// A password of the history.
+    PasswordHistory(usize),
 }
 
 /// What a tool's tab is asked.
@@ -310,6 +360,14 @@ pub enum ToolMessage {
     Diff(DiffMessage),
     /// The text case converter's.
     TextCase(TextCaseMessage),
+    /// The certificate generator's.
+    CertGen(CertGenMessage),
+    /// The SSH key generator's.
+    SshKey(SshKeyMessage),
+    /// The password generator's.
+    Password(PasswordMessage),
+    /// The password audit's.
+    PwdAudit(PwdAuditMessage),
 }
 
 /// A tool's own state.
@@ -326,6 +384,10 @@ enum Pane {
     Regex(regex_tool::RegexPane),
     Diff(diff_tool::DiffPane),
     TextCase(text_case_tool::TextCasePane),
+    CertGen(Box<certgen_tool::CertGenPane>),
+    SshKey(Box<sshkey_tool::SshKeyPane>),
+    Password(Box<password_tool::PasswordPane>),
+    PwdAudit(pwdaudit_tool::PwdAuditPane),
 }
 
 /// What a tool's tab holds: the tool's state, its help shown or not, the copy button that
@@ -339,9 +401,16 @@ pub struct ToolPane {
 }
 
 impl ToolPane {
-    /// A new tab's state for `tool`, as the C# view's `Initialize`.
-    fn new(tool: ToolId) -> Self {
+    /// A new tab's state for `tool`, as the C# view's `Initialize`; what a tool keeps lives
+    /// beside the profiles file `profiles_file`.
+    fn new(tool: ToolId, profiles_file: Option<&std::path::Path>) -> Self {
         let pane = match tool {
+            ToolId::Password => {
+                Pane::Password(Box::new(password_tool::PasswordPane::new(profiles_file)))
+            }
+            ToolId::SshKey => Pane::SshKey(Box::new(sshkey_tool::SshKeyPane::new())),
+            ToolId::CertGen => Pane::CertGen(Box::default()),
+            ToolId::PwdAudit => Pane::PwdAudit(pwdaudit_tool::PwdAuditPane::default()),
             ToolId::Hash => Pane::Hash(hash_tool::HashPane::default()),
             ToolId::Hmac => Pane::Hmac(hmac_tool::HmacPane::default()),
             ToolId::Jwt => Pane::Jwt(jwt_tool::JwtPane::new()),
@@ -402,13 +471,19 @@ impl ToolPanes {
     /// Follows the core's tabs: a state made for each tool tab just opened, as the C# view
     /// is made with its tab; the states of tabs closed let go.
     pub fn sync(&mut self, app: &App) {
-        self.panes
-            .retain(|id, _| app.tab(*id).and_then(heimdall_app::Tab::tool).is_some());
+        self.panes.retain(|id, state| {
+            let open = app.tab(*id).and_then(heimdall_app::Tab::tool).is_some();
+            // A tab closing writes down what it keeps, as the C# views' `Unloaded`.
+            if !open && let Pane::Password(pane) = &mut state.pane {
+                pane.closing();
+            }
+            open
+        });
         for tab in &app.tabs {
             if let Some(tool) = tab.tool() {
                 self.panes
                     .entry(tab.id)
-                    .or_insert_with(|| ToolPane::new(tool));
+                    .or_insert_with(|| ToolPane::new(tool, Some(app.profiles_file())));
             }
         }
     }
@@ -420,6 +495,7 @@ impl ToolPanes {
     }
 
     /// Applies `message` to tool tab `tab`; the window `main` holds the file dialogs.
+    #[expect(clippy::too_many_lines, reason = "one arm per tool")]
     pub fn update(
         &mut self,
         tab: TabId,
@@ -510,6 +586,34 @@ impl ToolPanes {
                     return state.copy(tab, slot, content);
                 }
             }
+            (ToolMessage::CertGen(message), Pane::CertGen(pane)) => {
+                return match pane.update(message) {
+                    certgen_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    outcome => outcome.task(tab, main),
+                };
+            }
+            (ToolMessage::SshKey(message), Pane::SshKey(pane)) => {
+                return match pane.update(message) {
+                    sshkey_tool::Outcome::Copy(slot, content) => state.copy(tab, slot, content),
+                    outcome => outcome.task(tab, main),
+                };
+            }
+            (ToolMessage::Password(message), Pane::Password(pane)) => {
+                return match pane.update(message) {
+                    password_tool::Outcome::Copy(slot, content, timer) => {
+                        let copied = state.copy(tab, slot, content);
+                        match timer {
+                            Some(timer) => Task::batch([
+                                copied,
+                                password_tool::Outcome::Tick(timer).task(tab, main),
+                            ]),
+                            None => copied,
+                        }
+                    }
+                    outcome => outcome.task(tab, main),
+                };
+            }
+            (ToolMessage::PwdAudit(message), Pane::PwdAudit(pane)) => pane.update(message),
             // A message of another tool's: its tab was closed, another took its place.
             _ => {}
         }
@@ -590,6 +694,10 @@ pub fn view<'a>(
         ToolId::TextDiff => (fl!("ui-tool-diff-title"), fl!("ui-tool-diff-help")),
         ToolId::TextCase => (fl!("ui-tool-textcase-title"), fl!("ui-tool-textcase-help")),
         ToolId::Uuid => (fl!("ui-tool-uuid-title"), fl!("ui-tool-uuid-help")),
+        ToolId::Password => (fl!("ui-tool-password-title"), fl!("ui-tool-password-help")),
+        ToolId::SshKey => (fl!("ui-tool-sshkey-title"), fl!("ui-tool-sshkey-help")),
+        ToolId::CertGen => (fl!("ui-tool-certgen-title"), fl!("ui-tool-certgen-help")),
+        ToolId::PwdAudit => (fl!("ui-tool-pwdaudit-title"), fl!("ui-tool-pwdaudit-help")),
     };
     let (body, actions) = match &state.pane {
         Pane::Hash(pane) => (pane.view(tab, state), None),
@@ -603,6 +711,10 @@ pub fn view<'a>(
         Pane::Regex(pane) => (pane.view(tab, state, marks), None),
         Pane::Diff(pane) => (pane.view(tab, state, marks), Some(pane.header_actions(tab))),
         Pane::TextCase(pane) => (pane.view(tab, state), None),
+        Pane::CertGen(pane) => (pane.view(tab, state), None),
+        Pane::SshKey(pane) => (pane.view(tab, state), None),
+        Pane::Password(pane) => (pane.view(tab, state), None),
+        Pane::PwdAudit(pane) => (pane.view(tab, state), None),
     };
     column![
         header(tab, title, actions),

@@ -92,10 +92,18 @@ pub enum ToolId {
     Hash,
     /// The HMAC generator, the C# `HMAC`.
     Hmac,
+    /// The password generator, the C# `PASSWORD`.
+    Password,
+    /// The SSH key generator, the C# `SSHKEY`.
+    SshKey,
+    /// The certificate generator, the C# `CERTGEN`.
+    CertGen,
     /// The JWT parser, the C# `JWT`.
     Jwt,
     /// The TOTP generator, the C# `TOTP`.
     Totp,
+    /// The password audit, the C# `PWDAUDIT`.
+    PwdAudit,
     /// The Base64 encoder and decoder, the C# `BASE64`.
     Base64,
     /// The URL encoder and decoder, the C# `URLENC`.
@@ -128,11 +136,15 @@ pub struct ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 11] = [
+    pub const ALL: [Self; 15] = [
         Self::Hash,
         Self::Hmac,
+        Self::Password,
+        Self::SshKey,
+        Self::CertGen,
         Self::Jwt,
         Self::Totp,
+        Self::PwdAudit,
         Self::Base64,
         Self::UrlEncoder,
         Self::JsonFormatter,
@@ -156,6 +168,30 @@ impl ToolId {
                 code: "HMAC",
                 category: ToolCategory::Security,
                 prefixes: &["hmac"],
+                network: false,
+            },
+            Self::Password => ToolDescriptor {
+                code: "PASSWORD",
+                category: ToolCategory::Security,
+                prefixes: &["password", "pwgen"],
+                network: false,
+            },
+            Self::SshKey => ToolDescriptor {
+                code: "SSHKEY",
+                category: ToolCategory::Security,
+                prefixes: &["sshkey", "keygen"],
+                network: false,
+            },
+            Self::CertGen => ToolDescriptor {
+                code: "CERTGEN",
+                category: ToolCategory::Security,
+                prefixes: &["certgen", "certificate", "openssl"],
+                network: false,
+            },
+            Self::PwdAudit => ToolDescriptor {
+                code: "PWDAUDIT",
+                category: ToolCategory::Security,
+                prefixes: &["pwdaudit", "password-audit", "passcheck"],
                 network: false,
             },
             Self::Jwt => ToolDescriptor {

@@ -17,21 +17,31 @@ argon2.workspace = true
 data-encoding.workspace = true
 directories.workspace = true
 fancy-regex.workspace = true
-getrandom.workspace = true
+# sys_rng: the system's generator handed to the RSA key generation.
+getrandom = { workspace = true, features = ["sys_rng"] }
 hmac.workspace = true
 md-5.workspace = true
+pkcs8.workspace = true
+# rcgen: the Certificate Generator's certificates, signed through ring.
+rcgen.workspace = true
 regex.workspace = true
 roxmltree.workspace = true
+rsa.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha1.workspace = true
 sha2.workspace = true
 sha3.workspace = true
 similar.workspace = true
+ssh-key.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 toml.workspace = true
 zeroize.workspace = true
+
+[dev-dependencies]
+# x509-cert: the certificates generated read back by the tests.
+x509-cert.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 # The current user's SID and the system folder, for the folders' access.

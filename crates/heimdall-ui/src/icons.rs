@@ -167,13 +167,21 @@ pub enum Icon {
     ToolDiff,
     /// `Geo.Tool.TextCase`: the letters "Aa", the text case converter.
     ToolTextCase,
+    /// `Geo.Tool.PasswordGenerator`: a padlock and its dots, the password generator.
+    ToolPasswordGenerator,
+    /// `Geo.Tool.SshKeyGenerator`: a key, the SSH key generator.
+    ToolSshKeyGenerator,
+    /// `Geo.Tool.CertificateGenerator`: a page and its seal, the certificate generator.
+    ToolCertificateGenerator,
+    /// `Geo.Tool.PasswordAudit`: a shield and its tick, the password audit.
+    ToolPasswordAudit,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 55] = [
+    pub const ALL: [Self; 59] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -228,6 +236,10 @@ impl Icon {
         Self::ToolRegex,
         Self::ToolDiff,
         Self::ToolTextCase,
+        Self::ToolPasswordGenerator,
+        Self::ToolSshKeyGenerator,
+        Self::ToolCertificateGenerator,
+        Self::ToolPasswordAudit,
         Self::Monitor,
     ];
 
@@ -411,6 +423,22 @@ impl Icon {
             Self::ToolTextCase => {
                 "M2,12 L5.5,3 L9,12 M3.5,9.5 L7.5,9.5 M10,12 L10,7 A2.5,2.5 0 1 1 14,9.5                  L14,12 M10,9.5 A2,2 0 1 1 14,9.5"
             }
+            Self::ToolPasswordGenerator => {
+                "M4,7 L4,5 A4,4 0 0 1 12,5 L12,7 L14,7 L14,15 L2,15 L2,7 Z M6,10.5 A0.8,0.8 0 1 1 6,11 Z \
+                 M10,10.5 A0.8,0.8 0 1 1 10,11 Z M8,12.5 A0.8,0.8 0 1 1 8,13 Z"
+            }
+            Self::ToolSshKeyGenerator => {
+                "M5,4 A3,3 0 1 1 5,10 A3,3 0 1 1 5,4 Z M8,7 L14,7 L14,9 L12,9 L12,7 M10,9 L10,7 \
+                 M4.5,6.5 A1,1 0 1 1 5.5,7.5 A1,1 0 1 1 4.5,6.5 Z"
+            }
+            Self::ToolCertificateGenerator => {
+                "M2,2 L14,2 L14,14 L2,14 Z M4,5 L12,5 M4,7 L10,7 M4,9 L8,9 \
+                 M11,9 A2.5,2.5 0 1 1 11,13 A2.5,2.5 0 1 1 11,9 Z M11.8,11.5 L12.5,11 L12.5,12"
+            }
+            Self::ToolPasswordAudit => {
+                "M8,1 L14,4 L14,9 C14,12 11,14.5 8,15.5 C5,14.5 2,12 2,9 L2,4 Z \
+                 M5.5,8.5 L7.5,10.5 L11,6.5"
+            }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
         }
     }
@@ -461,6 +489,10 @@ impl Icon {
             | Self::ToolRegex
             | Self::ToolDiff
             | Self::ToolTextCase
+            | Self::ToolPasswordGenerator
+            | Self::ToolSshKeyGenerator
+            | Self::ToolCertificateGenerator
+            | Self::ToolPasswordAudit
             | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }

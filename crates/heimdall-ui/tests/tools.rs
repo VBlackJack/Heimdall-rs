@@ -174,7 +174,16 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             (ToolGroup::Favorites, vec![ToolId::Uuid]),
             (
                 ToolGroup::Category(ToolCategory::Security),
-                vec![ToolId::Hash, ToolId::Hmac, ToolId::Jwt, ToolId::Totp]
+                vec![
+                    ToolId::CertGen,
+                    ToolId::Hash,
+                    ToolId::Hmac,
+                    ToolId::Jwt,
+                    ToolId::PwdAudit,
+                    ToolId::Password,
+                    ToolId::SshKey,
+                    ToolId::Totp
+                ]
             ),
             (
                 ToolGroup::Category(ToolCategory::Encoding),
@@ -258,7 +267,7 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("SECURITY").expect("category");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("11 tools").expect("count");
+        ui.find("15 tools").expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");
@@ -785,4 +794,161 @@ fn a_card_description_wraps_inside_its_card() {
         long.height > short.height * 1.5,
         "{long:?} against one line {short:?}"
     );
+}
+
+#[test]
+fn the_password_generator_opens_on_a_password_and_switches_mode() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::Password);
+    let send = |message| Message::Tool(tab, ToolMessage::Password(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Password Generator").expect("title");
+        ui.find("Recent passwords").expect("history");
+        ui.find("Uppercase (A-Z)").expect("a class");
+        ui.find("Random characters from selected character sets")
+            .expect("the mode's description");
+        ui.click("Generate").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(id, ToolMessage::Password(tools::PasswordMessage::Generate)) if id == tab
+        )));
+    }
+    let _ = shell.update(send(tools::PasswordMessage::Set(
+        heimdall_core::tools::password_generator::Setting::Mode(
+            heimdall_core::tools::password_generator::GeneratorMode::Syllable,
+        ),
+    )));
+    let _ = shell.update(send(tools::PasswordMessage::Set(
+        heimdall_core::tools::password_generator::Setting::SyllableCvc(true),
+    )));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Pronounceable consonant-vowel pairs (easy to remember)")
+            .expect("the mode's description");
+        ui.find("Closed syllables (CVC)").expect("its option");
+        ui.find("Structure:").expect("the syllables shown");
+    }
+    snapshot(&shell, "tools-password.png");
+    let _ = shell.update(send(tools::PasswordMessage::ToggleAdvanced));
+    let mut ui = simulator(&shell);
+    ui.find("Remember my settings").expect("an advanced option");
+}
+
+#[test]
+fn the_ssh_key_generator_shows_a_pair_its_private_key_masked() {
+    use heimdall_core::tools::ssh_key_generator::{self, SshKeyAlgorithm};
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::SshKey);
+    let send = |message| Message::Tool(tab, ToolMessage::SshKey(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Algorithm").expect("label");
+        ui.find("Optional. Encrypts the private key with AES-256-CBC.")
+            .expect("hint");
+        assert!(ui.find("Fingerprint").is_err(), "nothing made yet");
+        ui.click("Generate").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(id, ToolMessage::SshKey(tools::SshKeyMessage::Generate)) if id == tab
+        )));
+    }
+    let _ = shell.update(send(tools::SshKeyMessage::Algorithm(
+        tools::AlgorithmChoice(SshKeyAlgorithm::Ed25519),
+    )));
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let _inside = runtime.enter();
+    let _ = shell.update(send(tools::SshKeyMessage::Generate));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Generating...").expect("busy");
+    }
+    // The pair its tab makes away from the window, made here.
+    let key = ssh_key_generator::generate(SshKeyAlgorithm::Ed25519, "me@host", "").expect("made");
+    let _ = shell.update(send(tools::SshKeyMessage::Generated(
+        1,
+        Some(Ok(std::sync::Arc::new(key))),
+    )));
+    snapshot(&shell, "tools-sshkey.png");
+    let mut ui = simulator(&shell);
+    ui.find("Fingerprint").expect("fingerprint");
+    ui.find("Public Key").expect("public key");
+    ui.find("Private Key").expect("private key");
+    ui.find("Show").expect("the key masked");
+    assert!(ui.find("Generating...").is_err());
+}
+
+#[test]
+fn the_certificate_generator_refuses_no_name_and_shows_what_it_made() {
+    use heimdall_core::tools::certificate_generator::{self, CertificateOptions};
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::CertGen);
+    let send = |message| Message::Tool(tab, ToolMessage::CertGen(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Common Name (CN)").expect("label");
+        ui.find("Certificate Type").expect("type");
+        ui.find("Key Size").expect("key size");
+    }
+    let _ = shell.update(send(tools::CertGenMessage::Generate));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Please enter a Common Name (CN).")
+            .expect("refused");
+    }
+    let runtime = tokio::runtime::Runtime::new().expect("runtime");
+    let _inside = runtime.enter();
+    let _ = shell.update(send(tools::CertGenMessage::Cn("server.local".to_owned())));
+    let _ = shell.update(send(tools::CertGenMessage::Generate));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Generating...").expect("busy");
+    }
+    let options = CertificateOptions {
+        cn: "server.local".to_owned(),
+        org: String::new(),
+        country: String::new(),
+        key_bits: 2048,
+        validity_days: 365,
+        sans: Vec::new(),
+    };
+    let made = certificate_generator::generate_self_signed(&options, 1_767_323_045).expect("made");
+    let _ = shell.update(send(tools::CertGenMessage::Generated(
+        1,
+        Some(Ok(std::sync::Arc::new(
+            tools::GeneratedCertificates::SelfSigned(made),
+        ))),
+    )));
+    snapshot(&shell, "tools-certgen.png");
+    let mut ui = simulator(&shell);
+    ui.find("Certificate (PEM)").expect("certificate");
+    ui.find("Private Key (PEM)").expect("key");
+    ui.find("Save .pfx").expect("export");
+    drop(ui);
+    let _ = shell.update(send(tools::CertGenMessage::SavePfx));
+    let mut ui = simulator(&shell);
+    ui.find("Enter a password for the PFX file (can be empty):")
+        .expect("its password asked first");
+}
+
+#[test]
+fn the_password_audit_scores_a_password_as_it_is_typed() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::PwdAudit);
+    let send = |message| Message::Tool(tab, ToolMessage::PwdAudit(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Enter a password to analyze its strength")
+            .expect("empty state");
+        ui.find("Policy").expect("policy");
+    }
+    let _ = shell.update(send(tools::PwdAuditMessage::Password(
+        "password".to_owned(),
+    )));
+    snapshot(&shell, "tools-pwdaudit.png");
+    let mut ui = simulator(&shell);
+    ui.find("15/100 - Weak").expect("score");
+    ui.find("Found in common password list").expect("common");
+    ui.find("8 characters (minimum: 8)").expect("length");
+    assert!(ui.find("password").is_err(), "the password is hidden");
 }

@@ -196,6 +196,44 @@ pub fn restrict_app_folders() -> Vec<Unrestricted> {
     restrict_all(&folders)
 }
 
+/// Full control of a file, which has nothing inside to inherit it.
+const FULL_CONTROL: &str = ":F";
+
+/// The arguments `icacls` is given to restrict the file `file`, `user_sid` being the current
+/// user's: inheritance removed, full control to the user, the Administrators and SYSTEM, as
+/// the C# `SecureFileWriter` builds a private key's access list.
+#[must_use]
+pub fn icacls_file_arguments(file: &Path, user_sid: &str) -> Vec<OsString> {
+    let grant = |sid: &str| OsString::from(format!("{SID_MARK}{sid}{FULL_CONTROL}"));
+    vec![
+        file.as_os_str().to_owned(),
+        REMOVE_INHERITED.into(),
+        GRANT_REPLACING.into(),
+        grant(user_sid),
+        grant(ADMINISTRATORS_SID),
+        grant(SYSTEM_SID),
+        QUIET.into(),
+    ]
+}
+
+/// Restricts the file `file` to the current user, the Administrators and SYSTEM, on
+/// Windows; does nothing elsewhere, where the file is made private by its own mode.
+///
+/// # Errors
+///
+/// [`RestrictError`] when the file keeps the access it had.
+pub fn restrict_file(file: &Path) -> Result<(), RestrictError> {
+    #[cfg(windows)]
+    {
+        windows::restrict_file(file)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = file;
+        Ok(())
+    }
+}
+
 #[cfg(windows)]
 pub use windows::{current_user_sid, icacls_program};
 
@@ -259,13 +297,26 @@ mod windows {
         }
     }
 
+    pub(super) fn restrict_file(file: &Path) -> Result<(), RestrictError> {
+        if !file.is_absolute() {
+            return Err(RestrictError::NotAbsolute);
+        }
+        let user = current_user_sid()?;
+        run(super::icacls_file_arguments(file, &user))
+    }
+
     pub(super) fn restrict(folder: &Path) -> Result<(), RestrictError> {
         if !folder.is_absolute() {
             return Err(RestrictError::NotAbsolute);
         }
         let user = current_user_sid()?;
+        run(icacls_arguments(folder, &user))
+    }
+
+    /// `icacls` run with `arguments`, its output let go: its exit code decides.
+    fn run(arguments: Vec<std::ffi::OsString>) -> Result<(), RestrictError> {
         let status = Command::new(icacls_program()?)
-            .args(icacls_arguments(folder, &user))
+            .args(arguments)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -307,6 +358,24 @@ mod tests {
         .map(OsString::from)
         .collect();
         assert_eq!(icacls_arguments(folder, USER), expected);
+    }
+
+    #[test]
+    fn a_file_is_granted_full_control_without_inheritance_flags() {
+        let file = Path::new(r"C:\Users\Some One\.ssh\id_ed25519");
+        let expected: Vec<OsString> = [
+            r"C:\Users\Some One\.ssh\id_ed25519",
+            "/inheritance:r",
+            "/grant:r",
+            "*S-1-5-21-1111111111-2222222222-3333333333-1001:F",
+            "*S-1-5-32-544:F",
+            "*S-1-5-18:F",
+            "/q",
+        ]
+        .into_iter()
+        .map(OsString::from)
+        .collect();
+        assert_eq!(super::icacls_file_arguments(file, USER), expected);
     }
 
     #[test]
