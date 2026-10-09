@@ -135,7 +135,7 @@ impl App {
             SessionsMessage::File => return vec![Effect::PickSessionsFile],
             SessionsMessage::FileRead(read) => return self.import_file(read),
             SessionsMessage::Read(Ok(text)) => {
-                let parsed = openssh::parse(&text, std::env::home_dir().as_deref());
+                let parsed = openssh::parse(&text, heimdall_core::paths::home_dir().as_deref());
                 self.dialog = Some(self.sessions_preview(
                     SessionsSource::OpenSsh,
                     &parsed.candidates,

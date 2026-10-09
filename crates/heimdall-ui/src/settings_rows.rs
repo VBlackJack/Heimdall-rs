@@ -233,6 +233,8 @@ pub enum SettingRow {
     ExternalEditor,
     /// The trusted SSH host keys.
     HostKeys,
+    /// The user's OpenSSH `known_hosts` imported at each start.
+    SyncKnownHostsAtStartup,
     /// The trusted FTPS certificates.
     FtpsCertificates,
     /// The trusted VNC certificates.
@@ -277,7 +279,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 60] = [
+    pub const ALL: [Self; 61] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -318,6 +320,7 @@ impl SettingRow {
         Self::X11AutoStart,
         Self::ExternalEditor,
         Self::HostKeys,
+        Self::SyncKnownHostsAtStartup,
         Self::FtpsCertificates,
         Self::VncCertificates,
         Self::RdpDefaultMode,
@@ -377,9 +380,12 @@ impl SettingRow {
             | Self::LocalFollow => SettingsCard::Sftp,
             Self::X11ServerPath | Self::X11AutoStart => SettingsCard::X11,
             Self::ExternalEditor => SettingsCard::ExternalEditor,
-            Self::HostKeys | Self::FtpsCertificates | Self::VncCertificates => {
-                SettingsCard::SshTrusted
-            }
+            // The import at startup under the host keys it adds to, as the C# box under
+            // their buttons.
+            Self::HostKeys
+            | Self::SyncKnownHostsAtStartup
+            | Self::FtpsCertificates
+            | Self::VncCertificates => SettingsCard::SshTrusted,
             // At the top of the C# "RDP defaults" card (`MainWindow.xaml:3356-3375`).
             Self::RdpDefaultMode | Self::RdpDefaults => SettingsCard::RdpDefaults,
             Self::RdpAutoReconnectAttempts | Self::RdpConnectTimeout | Self::RdpResizeDelay => {
@@ -605,6 +611,7 @@ impl SettingRow {
             Self::DockLocalBrowser => sftp.dock_local_browser,
             Self::LocalFollow => sftp.follow_local_directory,
             Self::X11AutoStart => settings.x11_auto_start,
+            Self::SyncKnownHostsAtStartup => settings.sync_known_hosts_at_startup,
             Self::RequireCredentialGuard => settings.require_credential_guard,
             Self::RequireWindowsHello => settings.windows_hello.require_on_connect,
             _ => return None,
@@ -643,6 +650,7 @@ impl SettingRow {
             Self::SshAutoReconnect => SettingsMessage::SshAutoReconnect(on),
             Self::DisconnectOnLock => SettingsMessage::DisconnectOnLock(on),
             Self::X11AutoStart => SettingsMessage::X11AutoStart(on),
+            Self::SyncKnownHostsAtStartup => SettingsMessage::SyncKnownHostsAtStartup(on),
             Self::RequireCredentialGuard => SettingsMessage::RequireCredentialGuard(on),
             Self::RequireWindowsHello => SettingsMessage::RequireWindowsHello(on),
             Self::SftpBrowser => browser(SftpBrowser {
@@ -713,9 +721,8 @@ impl ToolPath {
 
 /// A line of the security overview: a security-relevant choice the application has.
 ///
-/// The C# card has twelve; two name what this application does not have: TFTP sharing and
-/// the `known_hosts` import at startup. They are left out rather than shown in a state
-/// nothing can change.
+/// The C# card has twelve; one names what this application does not have: TFTP sharing. It
+/// is left out rather than shown in a state nothing can change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostureKey {
     /// RDP Network Level Authentication.
@@ -738,6 +745,8 @@ pub enum PostureKey {
     WindowsHelloOnConnect,
     /// The automatic look for a newer release.
     UpdateChecks,
+    /// The user's OpenSSH `known_hosts` imported at each start.
+    KnownHostsSync,
 }
 
 /// The state a line of the security overview reports.
@@ -787,10 +796,11 @@ pub struct PostureLine {
 /// long as the application runs. Strict server authentication off is the Windows default,
 /// and the master password, disconnecting on lock, Credential Guard and Windows Hello before
 /// connecting are hardening one opts into: their states are reported, never flagged. Update checks off are
-/// risky: a security release goes unnoticed. Without a master password, the two lock lines
-/// say so and lead to it, as there is nothing to lock.
+/// risky: a security release goes unnoticed. The `known_hosts` import at startup on is
+/// risky: keys a file other programs write are trusted without asking. Without a master
+/// password, the two lock lines say so and lead to it, as there is nothing to lock.
 #[must_use]
-pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 10] {
+pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 11] {
     let on_off = |on: bool| {
         if on {
             PostureState::On
@@ -878,6 +888,12 @@ pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 10] {
             state: on_off(settings.updates.enabled),
             risky: !settings.updates.enabled,
             target: SettingRow::UpdateChecks,
+        },
+        PostureLine {
+            key: PostureKey::KnownHostsSync,
+            state: on_off(settings.sync_known_hosts_at_startup),
+            risky: settings.sync_known_hosts_at_startup,
+            target: SettingRow::SyncKnownHostsAtStartup,
         },
     ]
 }
@@ -1349,6 +1365,7 @@ mod tests {
                 PostureKey::CredentialGuard,
                 PostureKey::WindowsHelloOnConnect,
                 PostureKey::UpdateChecks,
+                PostureKey::KnownHostsSync,
             ],
             "the C# card's order"
         );
@@ -1367,5 +1384,53 @@ mod tests {
             (PostureState::NotRequired, false),
             "never risky"
         );
+    }
+
+    #[test]
+    fn the_known_hosts_import_sits_under_the_host_keys_and_is_risky_on_the_last_line() {
+        let row = SettingRow::SyncKnownHostsAtStartup;
+        assert_eq!(row.card(), SettingsCard::SshTrusted);
+        assert_eq!(row.tab(), SettingsTab::Ssh);
+        assert_eq!(
+            SettingsCard::SshTrusted.rows(),
+            [
+                SettingRow::HostKeys,
+                SettingRow::SyncKnownHostsAtStartup,
+                SettingRow::FtpsCertificates,
+                SettingRow::VncCertificates,
+            ]
+        );
+        assert!(row.is_marked());
+        let defaults = Settings::default();
+        assert_eq!(row.flag(&defaults), Some(false), "off, as the C# default");
+        assert!(row.toggle_enabled(&defaults));
+        assert!(!row.is_modified(&defaults));
+        let changed = Settings {
+            sync_known_hosts_at_startup: true,
+            ..Settings::default()
+        };
+        assert!(row.is_modified(&changed));
+        assert_eq!(
+            row.reset(&changed),
+            Some(SettingsMessage::SyncKnownHostsAtStartup(false))
+        );
+        assert_eq!(
+            row.toggled(&defaults, true),
+            Some(SettingsMessage::SyncKnownHostsAtStartup(true))
+        );
+
+        let last = posture(&changed, true)[10];
+        assert_eq!(
+            (last.key, last.state, last.risky, last.target),
+            (
+                PostureKey::KnownHostsSync,
+                PostureState::On,
+                true,
+                SettingRow::SyncKnownHostsAtStartup
+            ),
+            "the last line, as the C# card's"
+        );
+        let off = line(&defaults, false, PostureKey::KnownHostsSync);
+        assert_eq!((off.state, off.risky), (PostureState::Off, false));
     }
 }

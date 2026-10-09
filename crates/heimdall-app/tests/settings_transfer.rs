@@ -69,7 +69,7 @@ fn an_export_asks_where_and_says_how_it_went() {
 
 #[test]
 fn a_path_of_this_users_folder_is_asked_about_and_left_out_unless_included() {
-    let Some(home) = std::env::home_dir() else {
+    let Some(home) = heimdall_core::paths::home_dir() else {
         return;
     };
     let dir = tempfile::tempdir().expect("dir");

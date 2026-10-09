@@ -134,6 +134,8 @@ pub enum SettingsMessage {
     UpdateInterval(u32),
     /// An embedded RDP session opens only while Credential Guard runs, or whenever.
     RequireCredentialGuard(bool),
+    /// The user's OpenSSH `known_hosts` is imported at each start, or not.
+    SyncKnownHostsAtStartup(bool),
     /// A connection waits for Windows Hello, or not.
     RequireWindowsHello(bool),
     /// Minutes a Windows Hello verification counts, 0 for every time; refused out of the
@@ -471,7 +473,8 @@ impl App {
             }
             message @ (SettingsMessage::DisconnectOnLock(_)
             | SettingsMessage::RequireCredentialGuard(_)
-            | SettingsMessage::RequireWindowsHello(_)) => self.set_security_flag(message),
+            | SettingsMessage::RequireWindowsHello(_)
+            | SettingsMessage::SyncKnownHostsAtStartup(_)) => self.set_security_flag(message),
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
@@ -515,7 +518,8 @@ impl App {
         self.settings_changed(&before)
     }
 
-    /// Sets the security switch `message` changes.
+    /// Sets the security switch `message` changes; the `known_hosts` import at startup is
+    /// one, as it trusts keys without asking.
     fn set_security_flag(&mut self, message: &SettingsMessage) {
         match message {
             SettingsMessage::DisconnectOnLock(on) => self.settings.disconnect_on_lock = *on,
@@ -524,6 +528,9 @@ impl App {
             }
             SettingsMessage::RequireWindowsHello(on) => {
                 self.settings.windows_hello.require_on_connect = *on;
+            }
+            SettingsMessage::SyncKnownHostsAtStartup(on) => {
+                self.settings.sync_known_hosts_at_startup = *on;
             }
             _ => {}
         }

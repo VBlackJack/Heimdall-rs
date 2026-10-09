@@ -54,13 +54,6 @@ const MIT_MAGIC_COOKIE: &[u8] = b"MIT-MAGIC-COOKIE-1";
 /// Bytes of a field's length.
 const LENGTH_BYTES: usize = 2;
 
-/// The variable naming the home folder.
-const HOME_VARIABLE: &str = "HOME";
-
-/// The home folder on Windows, when `HOME` is not set.
-#[cfg(windows)]
-const PROFILE_VARIABLE: &str = "USERPROFILE";
-
 /// Where Linux says the host name.
 #[cfg(unix)]
 const HOSTNAME_FILE: &str = "/proc/sys/kernel/hostname";
@@ -103,16 +96,13 @@ pub(crate) struct Cookie {
 }
 
 /// The file the cookies are read from: the one `XAUTHORITY` names, else `.Xauthority` in the
-/// home folder.
+/// home folder the platform says, on Windows its known folder rather than `HOME` or
+/// `USERPROFILE`, which whoever starts Heimdall sets.
 pub(crate) fn default_path() -> Option<PathBuf> {
     if let Some(named) = std::env::var_os(VARIABLE).filter(|value| !value.is_empty()) {
         return Some(PathBuf::from(named));
     }
-    let home = std::env::var_os(HOME_VARIABLE).filter(|value| !value.is_empty());
-    #[cfg(windows)]
-    let home =
-        home.or_else(|| std::env::var_os(PROFILE_VARIABLE).filter(|value| !value.is_empty()));
-    home.map(|home| PathBuf::from(home).join(FILE_NAME))
+    heimdall_core::paths::home_dir().map(|home| home.join(FILE_NAME))
 }
 
 /// The cookie `path` holds for `wanted`; none when the file is not there, unreadable, or has

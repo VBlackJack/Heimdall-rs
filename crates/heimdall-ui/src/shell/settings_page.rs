@@ -268,6 +268,7 @@ fn row_label(row: SettingRow) -> String {
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path"),
         SettingRow::X11AutoStart => fl!("ui-settings-x11-auto-start"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-title"),
+        SettingRow::SyncKnownHostsAtStartup => fl!("ui-settings-sync-known-hosts"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-title"),
         SettingRow::VncCertificates => fl!("ui-trusted-vnc-certificates-title"),
         SettingRow::RdpDefaultMode => fl!("ui-settings-rdp-default-mode"),
@@ -307,6 +308,7 @@ fn row_hint(row: SettingRow) -> Option<String> {
         SettingRow::SshDefaultMode => fl!("ui-settings-ssh-default-mode-hint"),
         SettingRow::X11ServerPath => fl!("ui-settings-x11-server-path-hint"),
         SettingRow::HostKeys => fl!("ui-trusted-host-keys-hint"),
+        SettingRow::SyncKnownHostsAtStartup => fl!("ui-settings-sync-known-hosts-hint"),
         SettingRow::FtpsCertificates => fl!("ui-trusted-ftps-certificates-hint"),
         SettingRow::VncCertificates => fl!("ui-trusted-vnc-certificates-hint"),
         SettingRow::RdpDefaultMode => fl!("ui-settings-rdp-default-mode-hint"),
@@ -540,6 +542,7 @@ fn posture_label(key: PostureKey) -> String {
         PostureKey::CredentialGuard => fl!("ui-settings-posture-label-credential-guard"),
         PostureKey::WindowsHelloOnConnect => fl!("ui-settings-posture-label-windows-hello"),
         PostureKey::UpdateChecks => fl!("ui-settings-posture-label-update-checks"),
+        PostureKey::KnownHostsSync => fl!("ui-settings-posture-label-known-hosts-sync"),
     }
 }
 
@@ -569,6 +572,7 @@ fn posture_warning(key: PostureKey) -> Option<String> {
         PostureKey::PowerShellExecutionPolicy => Some(fl!("ui-settings-posture-warning-ps-policy")),
         PostureKey::AutoLock => Some(fl!("ui-settings-posture-warning-auto-lock")),
         PostureKey::UpdateChecks => Some(fl!("ui-settings-posture-warning-update-checks")),
+        PostureKey::KnownHostsSync => Some(fl!("ui-settings-posture-warning-known-hosts-sync")),
         PostureKey::RdpStrictServerAuthentication
         | PostureKey::Vault
         | PostureKey::DisconnectOnLock

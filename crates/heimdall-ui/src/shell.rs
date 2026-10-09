@@ -1844,9 +1844,12 @@ impl Shell {
     }
 
     /// What starts with the application: Credential Guard checked in the background when the
-    /// settings require it, so that the first embedded RDP session does not wait for it.
+    /// settings require it, so that the first embedded RDP session does not wait for it; and
+    /// the user's OpenSSH `known_hosts` imported in the background when chosen, as the C#
+    /// does at startup, the folders' permissions already set.
     pub fn start_tasks(&mut self) -> Task<Message> {
-        let effects = self.app.warm_credential_guard();
+        let mut effects = self.app.warm_credential_guard();
+        effects.extend(self.app.sync_known_hosts_at_startup());
         let tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         Task::batch(tasks)
@@ -3991,6 +3994,17 @@ impl Shell {
                 // The check runs on a blocking thread of the runtime, bounded in time.
                 Message::App(AppMessage::CredentialGuard(detector.status().await))
             }),
+            Effect::SyncKnownHosts { source, store } => Task::future(async move {
+                // Files read and written: off the UI thread, the window never waiting.
+                let _ = tokio::task::spawn_blocking(move || {
+                    heimdall_app::known_hosts_sync::run(
+                        &source,
+                        &heimdall_ssh::KnownHosts::new(store),
+                    )
+                })
+                .await;
+            })
+            .discard(),
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }
@@ -8902,8 +8916,8 @@ fn pick_key_file(main: Option<window::Id>) -> Task<Message> {
             .add_filter(fl!("ui-profile-browse-key-all"), &["*"])
             .add_filter(fl!("ui-profile-browse-key-ppk"), &["ppk"])
             .add_filter(fl!("ui-profile-browse-key-pem"), &["pem"]);
-        if let Some(folder) = std::env::home_dir()
-            .map(|home| home.join(crate::sessions_view::SSH_FOLDER))
+        if let Some(folder) = paths::home_dir()
+            .map(|home| home.join(paths::OPENSSH_FOLDER))
             .filter(|folder| folder.is_dir())
         {
             dialog = dialog.set_directory(folder);

@@ -42,6 +42,7 @@ pub mod high_contrast;
 mod ids;
 pub mod integrated_edit;
 pub mod keyboard_layout;
+pub mod known_hosts_sync;
 pub mod local_draft;
 pub mod local_driver;
 pub mod local_open;

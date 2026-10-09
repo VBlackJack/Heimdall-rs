@@ -24,6 +24,7 @@ use heimdall_app::{
     Dialog, HostKeyRow, HostKeysMessage, HostKeysPreview, Message as AppMessage, SettingsMessage,
     TrustedKeysMessage,
 };
+use heimdall_core::paths;
 use heimdall_core::profile::display_address;
 use heimdall_ssh::known_hosts_import::{
     HostKeyDiagnostic, HostKeyNote, HostKeyStatus, MAX_FILE_BYTES, Malformed,
@@ -32,7 +33,7 @@ use iced::widget::{Column, checkbox, column, container, row, text};
 use iced::{Element, Length, Theme};
 
 use crate::i18n::fl;
-use crate::sessions_view::{Pick, SSH_FOLDER};
+use crate::sessions_view::Pick;
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, spacing};
@@ -71,8 +72,8 @@ pub fn pick(parent: Option<&dyn iced::window::Window>) -> Pick {
     let mut dialog = rfd::AsyncFileDialog::new()
         .set_title(fl!("ui-hostkeys-pick-title"))
         .set_file_name(KNOWN_HOSTS_FILE_NAME);
-    if let Some(folder) = std::env::home_dir()
-        .map(|home| home.join(SSH_FOLDER))
+    if let Some(folder) = paths::home_dir()
+        .map(|home| home.join(paths::OPENSSH_FOLDER))
         .filter(|folder| folder.is_dir())
     {
         dialog = dialog.set_directory(folder);

@@ -17,8 +17,8 @@
 //! The Files session over FTP, against an FTP server run in the test on a temporary folder:
 //! what the Files tab relies on, the FTP way.
 
-use std::net::{Ipv4Addr, TcpListener};
-use std::path::Path;
+use std::net::Ipv4Addr;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use heimdall_files::conflict::{Choice, Kind};
@@ -31,41 +31,47 @@ use unftp_sbe_fs::Filesystem;
 /// Longest wait for the test server, or for one operation.
 const STEP: Duration = Duration::from_secs(20);
 
-/// Tries to start a server this many times: a free port can be taken before it binds.
-const START_TRIES: usize = 5;
+/// Serves `root` over FTP, over explicit FTPS with the certificate and key files `ftps`
+/// names when given, on a free local port; returns the port.
+///
+/// The listener is bound here and kept, each connection it accepts handed to libunftp: a
+/// port picked free, let go, then bound again by the server could be taken in between by a
+/// test running beside it, and the test would talk to that test's server. A connection
+/// made once this returns is queued until the server accepts it: no wait for it to start.
+async fn listen(root: &Path, ftps: Option<(PathBuf, PathBuf)>) -> u16 {
+    let home = root.to_owned();
+    let build = move || {
+        let home = home.clone();
+        let mut builder = libunftp::ServerBuilder::new(Box::new(move || {
+            Filesystem::new(home.clone()).expect("root")
+        }));
+        if let Some((cert, key)) = ftps.clone() {
+            builder = builder.ftps(cert, key);
+        }
+        builder.build().expect("server")
+    };
+    // Built here once, so a server that cannot be configured fails the test, not a task.
+    let mut first = Some(build());
+    let listener = tokio::net::TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
+        .await
+        .expect("free port");
+    let port = listener.local_addr().expect("address").port();
+    tokio::spawn(async move {
+        loop {
+            // A connection that fails before it is accepted is the client's affair, as
+            // libunftp's own accept loop treats it.
+            if let Ok((stream, _)) = listener.accept().await {
+                let server = first.take().unwrap_or_else(&build);
+                tokio::spawn(server.service(stream));
+            }
+        }
+    });
+    port
+}
 
 /// Serves `root` over FTP on a free local port; returns the port.
 async fn serve(root: &Path) -> u16 {
-    for _ in 0..START_TRIES {
-        let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .expect("free port")
-            .local_addr()
-            .expect("address")
-            .port();
-        let home = root.to_owned();
-        let server = libunftp::ServerBuilder::new(Box::new(move || {
-            Filesystem::new(home.clone()).expect("root")
-        }))
-        .build()
-        .expect("server");
-        tokio::spawn(server.listen(format!("127.0.0.1:{port}")));
-        let started = tokio::time::timeout(STEP, async {
-            loop {
-                if tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-                    .await
-                    .is_ok()
-                {
-                    return;
-                }
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await;
-        if started.is_ok() {
-            return port;
-        }
-    }
-    panic!("no FTP server started");
+    listen(root, None).await
 }
 
 async fn session(root: &Path) -> RemoteSession {
@@ -618,34 +624,8 @@ async fn serve_ftps(root: &Path, keys: &Path) -> (u16, Vec<u8>) {
     let key = keys.join("key.pem");
     std::fs::write(&cert, issued.cert.pem()).expect("cert file");
     std::fs::write(&key, issued.signing_key.serialize_pem()).expect("key file");
-    for _ in 0..START_TRIES {
-        let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-            .expect("free port")
-            .local_addr()
-            .expect("address")
-            .port();
-        let home = root.to_owned();
-        let server = libunftp::ServerBuilder::new(Box::new(move || {
-            Filesystem::new(home.clone()).expect("root")
-        }))
-        .ftps(cert.clone(), key.clone())
-        .build()
-        .expect("server");
-        tokio::spawn(server.listen(format!("127.0.0.1:{port}")));
-        let started = tokio::time::timeout(STEP, async {
-            while tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-                .await
-                .is_err()
-            {
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        })
-        .await;
-        if started.is_ok() {
-            return (port, issued.cert.der().to_vec());
-        }
-    }
-    panic!("no FTPS server started");
+    let port = listen(root, Some((cert, key))).await;
+    (port, issued.cert.der().to_vec())
 }
 
 /// A TLS client trusting `trusted` alone.

@@ -18,7 +18,9 @@
 //! profile, and for explicit FTPS the certificate question, then the pin recorded once the
 //! user trusts it; a pin no longer valid refused, never asked about.
 
-use std::net::{Ipv4Addr, TcpListener};
+#[path = "support/ftp_server.rs"]
+mod ftp_server;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -29,23 +31,13 @@ use heimdall_rdp::{KnownRdpHosts, ValidityPeriod, Verdict};
 use heimdall_tls::ValidationIssue;
 use tokio_stream::StreamExt as _;
 use tokio_util::sync::CancellationToken;
-use unftp_sbe_fs::Filesystem;
 
 const STEP: Duration = Duration::from_secs(20);
 
 /// Serves `root` over FTP, over explicit FTPS when `keys` is given: with the certificate
 /// written there, else a fresh one.
 async fn serve(root: &Path, keys: Option<&Path>) -> u16 {
-    let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("free port")
-        .local_addr()
-        .expect("address")
-        .port();
-    let home = root.to_owned();
-    let mut builder = libunftp::ServerBuilder::new(Box::new(move || {
-        Filesystem::new(home.clone()).expect("root")
-    }));
-    if let Some(keys) = keys {
+    let ftps = keys.map(|keys| {
         let (cert, key) = (keys.join("cert.pem"), keys.join("key.pem"));
         if !cert.exists() {
             let issued =
@@ -53,25 +45,9 @@ async fn serve(root: &Path, keys: Option<&Path>) -> u16 {
             std::fs::write(&cert, issued.cert.pem()).expect("cert file");
             std::fs::write(&key, issued.signing_key.serialize_pem()).expect("key file");
         }
-        builder = builder.ftps(cert, key);
-    }
-    tokio::spawn(
-        builder
-            .build()
-            .expect("server")
-            .listen(format!("127.0.0.1:{port}")),
-    );
-    tokio::time::timeout(STEP, async {
-        while tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_err()
-        {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("started");
-    port
+        (cert, key)
+    });
+    ftp_server::serve(root, ftps).await
 }
 
 fn request(port: u16, tls: bool, known_hosts: &Path) -> FtpRequest {
