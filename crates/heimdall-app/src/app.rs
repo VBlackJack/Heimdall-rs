@@ -282,14 +282,26 @@ pub enum Message {
     },
     /// Open a `WinRM` tab for a saved `WinRM` profile.
     OpenWinRm(ProfileId),
-    /// Launch a saved Citrix profile's application, outside Heimdall: no tab.
+    /// Launch a saved Citrix profile's application, outside Heimdall, and open its status
+    /// tab.
     OpenCitrix(ProfileId),
     /// A Citrix application was launched, or why not.
     CitrixLaunched {
+        /// Its status tab.
+        tab: TabId,
         /// The profile's name.
         name: String,
         /// Launched, or why not.
-        result: Result<(), crate::citrix::CitrixRefusal>,
+        result: Result<crate::citrix_session::Launched, crate::citrix::CitrixRefusal>,
+    },
+    /// Time to look at the Citrix tabs' clients.
+    CitrixTick,
+    /// What a Citrix tab's probe saw.
+    CitrixProbed {
+        /// The tab.
+        tab: TabId,
+        /// What it saw.
+        probe: crate::citrix_session::Probe,
     },
     /// An RDP profile was opened in Remote Desktop Connection, or why not.
     RdpExternalLaunched {
@@ -846,8 +858,12 @@ impl fmt::Debug for Message {
             Self::OpenVnc(id) => write!(f, "OpenVnc({id})"),
             Self::OpenFtp(id) => write!(f, "OpenFtp({id})"),
             Self::OpenCitrix(id) => write!(f, "OpenCitrix({id})"),
-            Self::CitrixLaunched { result, .. } => {
-                write!(f, "CitrixLaunched({})", result.is_ok())
+            Self::CitrixLaunched { tab, result, .. } => {
+                write!(f, "CitrixLaunched({}, {})", tab.value(), result.is_ok())
+            }
+            Self::CitrixTick => f.write_str("CitrixTick"),
+            Self::CitrixProbed { tab, probe } => {
+                write!(f, "CitrixProbed({}, {probe:?})", tab.value())
             }
             Self::RdpExternalLaunched { result, .. } => {
                 write!(f, "RdpExternalLaunched({})", result.is_ok())
@@ -1206,13 +1222,25 @@ pub enum Effect {
     WriteFileList(Vec<PathBuf>),
     /// Open this web address in the system's browser: Ctrl+click on one in a terminal.
     OpenUrl(String),
-    /// Launch a Citrix application outside Heimdall, off the UI thread; answered with
-    /// [`Message::CitrixLaunched`].
+    /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
+    /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
+        /// Its status tab.
+        tab: TabId,
         /// The profile's name.
         name: String,
         /// How it launches.
         launch: crate::citrix::CitrixLaunch,
+    },
+    /// Look at a Citrix tab's launcher and, when `lists`, list the client's processes, off
+    /// the UI thread; answered with [`Message::CitrixProbed`].
+    ProbeCitrix {
+        /// The tab.
+        tab: TabId,
+        /// Its launcher.
+        launcher: std::sync::Arc<dyn crate::citrix_session::LauncherWatch>,
+        /// Whether the client's processes are listed.
+        lists: bool,
     },
     /// Open an RDP profile in Remote Desktop Connection, off the UI thread: its connection
     /// file written and `mstsc.exe` started on it; answered with
@@ -1657,7 +1685,10 @@ impl fmt::Debug for Effect {
             Self::WriteClipboard(_) => f.write_str("WriteClipboard(..)"),
             Self::WriteFileList(paths) => write!(f, "WriteFileList({})", paths.len()),
             Self::OpenUrl(_) => f.write_str("OpenUrl(..)"),
-            Self::LaunchCitrix { .. } => f.write_str("LaunchCitrix(..)"),
+            Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
+            Self::ProbeCitrix { tab, lists, .. } => {
+                write!(f, "ProbeCitrix({}, {lists})", tab.value())
+            }
             Self::LaunchRdpExternal { .. } => f.write_str("LaunchRdpExternal(..)"),
             Self::ProbePuttyHostKey { profile, .. } => {
                 write!(f, "ProbePuttyHostKey({})", profile.id)
@@ -1900,6 +1931,8 @@ pub struct Tab {
     pub files: Option<Box<FilesPane>>,
     /// The desktop, for an RDP tab once connected.
     pub desktop: Option<Box<DesktopPane>>,
+    /// The launch and its client, for a Citrix tab.
+    pub citrix: Option<Box<crate::citrix_session::CitrixPane>>,
     /// What the certificate question says beside the fingerprint, while it is asked.
     pub certificate_context: Option<CertificateContext>,
     pending_rdp_key: Option<heimdall_rdp::Fingerprint>,
@@ -2037,8 +2070,9 @@ impl Tab {
     /// connecting has nothing to lose: closing it cancels it without asking.
     #[must_use]
     pub fn is_live(&self) -> bool {
-        // The local file browser is no session: nothing is lost when it closes.
-        self.phase == Phase::Connected && !self.is_local_browser()
+        // The local file browser is no session: nothing is lost when it closes. Nor is a
+        // Citrix tab's: closing it leaves the Citrix session as it is.
+        self.phase == Phase::Connected && !self.is_local_browser() && self.citrix.is_none()
     }
 
     fn write(&self, bytes: Vec<u8>) {
@@ -2117,6 +2151,7 @@ impl Tab {
             purpose,
             files: None,
             desktop: None,
+            citrix: None,
             certificate_context: None,
             pending_rdp_key: None,
             attempt,
@@ -2192,6 +2227,8 @@ pub enum TabProfile {
     /// A `WinRM` session: a local `PowerShell` entering it, directly or through an SSH
     /// gateway.
     WinRm(WinRmProfile),
+    /// A Citrix application launched outside Heimdall: its status alone.
+    Citrix(heimdall_core::profile::CitrixProfile),
 }
 
 impl TabProfile {
@@ -2202,7 +2239,9 @@ impl TabProfile {
             Self::Ssh(profile) => profile.gateway.as_ref(),
             Self::Rdp(profile) => profile.gateway.as_ref(),
             Self::WinRm(profile) => profile.gateway.as_ref(),
-            Self::Telnet(_) | Self::Vnc(_) | Self::Ftp(_) | Self::Local(_) => None,
+            Self::Telnet(_) | Self::Vnc(_) | Self::Ftp(_) | Self::Local(_) | Self::Citrix(_) => {
+                None
+            }
         }
     }
 
@@ -2218,6 +2257,7 @@ impl TabProfile {
             Self::Ftp(_) => ProfileKind::Ftp,
             Self::Local(_) => ProfileKind::Local,
             Self::WinRm(_) => ProfileKind::WinRm,
+            Self::Citrix(_) => ProfileKind::Citrix,
         }
     }
 
@@ -2232,6 +2272,7 @@ impl TabProfile {
             Self::Ftp(profile) => &profile.name,
             Self::Local(shell) => &shell.name,
             Self::WinRm(profile) => &profile.name,
+            Self::Citrix(profile) => &profile.name,
         }
     }
 
@@ -2244,7 +2285,8 @@ impl TabProfile {
             Self::Telnet(profile) => Some((&profile.host, profile.port)),
             Self::Vnc(profile) => Some((&profile.host, profile.port)),
             Self::Ftp(profile) => Some((&profile.host, profile.port)),
-            Self::Local(_) => None,
+            // A Citrix application's server is its StoreFront's to choose.
+            Self::Local(_) | Self::Citrix(_) => None,
             Self::WinRm(profile) => Some((&profile.host, profile.port)),
         }
     }
@@ -2258,8 +2300,8 @@ impl TabProfile {
             Self::Ftp(profile) => profile.username.as_deref(),
             Self::WinRm(profile) => profile.username.as_deref(),
             // Telnet asks for its account in the session; VNC has none; a local shell runs
-            // as the user running Heimdall.
-            Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) => None,
+            // as the user running Heimdall; Citrix Workspace signs in by itself.
+            Self::Telnet(_) | Self::Vnc(_) | Self::Local(_) | Self::Citrix(_) => None,
         }
     }
 }
@@ -3195,6 +3237,11 @@ impl App {
             message @ (Message::HealthTick | Message::HealthRead { .. }) => {
                 self.health_message(message)
             }
+            Message::CitrixTick => self.citrix_tick(),
+            Message::CitrixProbed { tab, probe } => {
+                self.citrix_probed(tab, &probe);
+                Vec::new()
+            }
             Message::ReachabilityTick => self.reachability_round(),
             Message::ReachabilityChecked { id, verdict } => {
                 self.reachability_checked(&id, verdict);
@@ -3464,7 +3511,9 @@ impl App {
             Message::ElevatedLaunched { tab, outcome } => self.elevated_launched(tab, &outcome),
             Message::OpenWinRm(id) => self.open_winrm(&id),
             Message::OpenCitrix(id) => self.open_citrix(&id),
-            Message::CitrixLaunched { name, result } => self.citrix_launched(name, result),
+            Message::CitrixLaunched { tab, name, result } => {
+                self.citrix_launched(tab, &name, result)
+            }
             Message::RdpExternalLaunched {
                 name,
                 gateway,

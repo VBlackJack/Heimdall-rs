@@ -1915,6 +1915,13 @@ impl Shell {
                     .map(|_| Message::App(AppMessage::HealthTick)),
             );
         }
+        // The Citrix tabs' clients, looked at as the C# health check looks at its session.
+        if self.app.polls_citrix() {
+            subscriptions.push(
+                iced::time::every(heimdall_app::citrix_session::HEALTH_INTERVAL)
+                    .map(|_| Message::App(AppMessage::CitrixTick)),
+            );
+        }
         if let Some(interval) = self.app.anti_idle_interval() {
             subscriptions
                 .push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
@@ -3644,18 +3651,14 @@ impl Shell {
                 }
             })
             .discard(),
-            Effect::LaunchCitrix { name, launch } => Task::future(async move {
-                // Starting a process waits on the system: off the UI thread, as a browser.
-                let result =
-                    tokio::task::spawn_blocking(move || heimdall_app::citrix::launch(&launch))
-                        .await
-                        .unwrap_or_else(|error| {
-                            Err(heimdall_app::citrix::CitrixRefusal::NotStarted(
-                                error.to_string(),
-                            ))
-                        });
-                Message::App(AppMessage::CitrixLaunched { name, result })
-            }),
+            Effect::LaunchCitrix { tab, name, launch } => {
+                crate::citrix_view::launch(tab, name, launch)
+            }
+            Effect::ProbeCitrix {
+                tab,
+                launcher,
+                lists,
+            } => crate::citrix_view::probe(tab, launcher, lists),
             Effect::LaunchRdpExternal {
                 name,
                 gateway,
@@ -6478,6 +6481,10 @@ impl Shell {
     /// What `tab` shows: its question, its session, or what became of it. Only the pane with
     /// the keyboard, `focused`, takes typing.
     fn tab_page<'a>(&'a self, tab: &'a Tab, focused: bool) -> Element<'a, Message> {
+        // A Citrix application's window is Citrix's own: its tab shows its status alone.
+        if let (TabProfile::Citrix(profile), Some(pane)) = (&tab.profile, tab.citrix.as_deref()) {
+            return crate::citrix_view::view(profile, pane, SessionState::of(tab));
+        }
         if let Some(prompt) = tab.prompts.front() {
             return center(card(self.question(tab, prompt))).into();
         }
@@ -10260,7 +10267,8 @@ fn fits_by_default(profile: &TabProfile) -> bool {
         | TabProfile::Telnet(_)
         | TabProfile::Local(_)
         | TabProfile::Ftp(_)
-        | TabProfile::WinRm(_) => false,
+        | TabProfile::WinRm(_)
+        | TabProfile::Citrix(_) => false,
     }
 }
 

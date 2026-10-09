@@ -20,8 +20,8 @@
 //! Delete, and their keys.
 
 use heimdall_app::{
-    GatewayBadge, Message as AppMessage, ProfileSummary, SavedCredentials, SessionState,
-    server_text,
+    GatewayBadge, Message as AppMessage, ProfileKind, ProfileSummary, SavedCredentials,
+    SessionState, server_text,
 };
 use iced::widget::{Column, button, column, container, row, space, text};
 use iced::{Alignment, Element, Font, Length, Theme, font};
@@ -32,19 +32,19 @@ use crate::styles;
 use crate::tokens::{BORDER_WIDTH, font_size, radius, spacing};
 
 /// Diameter of the state's dot, as the C# panel's.
-const DOT_SIDE: f32 = 8.0;
+pub(crate) const DOT_SIDE: f32 = 8.0;
 /// Width of Connect, as the C# `MinWidth`.
 const CONNECT_WIDTH: f32 = 120.0;
 /// Space the C# panel leaves of 6 pixels: after the state's dot, above and below Edit's and
 /// Delete's labels, and on each side of the protocol's name.
-const SMALL_GAP: f32 = 6.0;
+pub(crate) const SMALL_GAP: f32 = 6.0;
 /// Space above and below the protocol's name, as the C# pill's padding.
 const PILL_PADDING_Y: f32 = 2.0;
 /// Space on each side of Connect's label, as the C# primary button's padding.
 const CONNECT_PADDING_X: f32 = 16.0;
 
 /// The window's font, bold, as the C# panel's title.
-const BOLD: Font = Font {
+pub(crate) const BOLD: Font = Font {
     weight: font::Weight::Bold,
     ..crate::UI_FONT
 };
@@ -75,9 +75,8 @@ fn credentials(saved: &SavedCredentials) -> String {
     kept.join(", ")
 }
 
-/// The protocol of `profile`, its name on its colour, as the C# badge.
-fn pill<'a>(profile: &ProfileSummary) -> Element<'a, Message> {
-    let kind = profile.kind;
+/// Protocol `kind`, its name on its colour, as the C# badge.
+pub(crate) fn pill<'a>(kind: ProfileKind) -> Element<'a, Message> {
     container(text(kind.label()).size(font_size::CAPTION).font(SEMIBOLD))
         .padding([PILL_PADDING_Y, SMALL_GAP])
         .style(move |theme: &Theme| container::Style {
@@ -95,7 +94,7 @@ fn pill<'a>(profile: &ProfileSummary) -> Element<'a, Message> {
 
 /// The state of the session's tab, as the C# panel words it: "Disconnected" when none is
 /// open.
-fn status<'a>(state: Option<SessionState>) -> Element<'a, Message> {
+pub(crate) fn status<'a>(state: Option<SessionState>) -> Element<'a, Message> {
     let said = state.map_or_else(
         || fl!("ui-status-disconnected"),
         crate::floating_view::state_text,
@@ -197,7 +196,7 @@ pub fn view<'a>(
             .size(font_size::DISPLAY)
             .font(BOLD),
         gap(spacing::SM),
-        row![pill(profile), status(state)]
+        row![pill(profile.kind), status(state)]
             .spacing(spacing::SM)
             .align_y(Alignment::Center),
     ];

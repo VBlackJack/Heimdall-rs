@@ -239,6 +239,7 @@ impl App {
             TabProfile::Vnc(profile) => ProfileDraft::from_vnc(profile),
             TabProfile::Ftp(profile) => ProfileDraft::from_ftp(profile),
             TabProfile::WinRm(profile) => ProfileDraft::from_winrm(profile),
+            TabProfile::Citrix(profile) => ProfileDraft::from_citrix(profile),
             TabProfile::Local(_) => return,
         };
         // A new profile: saved under an identifier of its own.
