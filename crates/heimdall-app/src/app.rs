@@ -3250,6 +3250,33 @@ impl fmt::Debug for App {
     }
 }
 
+/// The files kept beside the profiles that are not settings: the macros, the Files tabs'
+/// state and the split layouts; what cannot be read starts empty and is logged.
+fn side_files(
+    profiles_file: &std::path::Path,
+) -> (
+    heimdall_core::macros::Macros,
+    heimdall_core::files_state::FilesState,
+    heimdall_core::split_layouts::SplitLayouts,
+) {
+    let macros =
+        heimdall_core::macros::Macros::load(&heimdall_core::macros::macros_path(profiles_file))
+            .unwrap_or_else(|error| {
+                log::warn!("macros not read: {error}");
+                heimdall_core::macros::Macros::default()
+            });
+    let files_state = heimdall_core::files_state::FilesState::open(
+        profiles_file.with_file_name(heimdall_core::files_state::FILES_STATE_FILE_NAME),
+    );
+    let (split_layouts, unread) = heimdall_core::split_layouts::SplitLayouts::open(
+        &heimdall_core::split_layouts::split_layouts_path(profiles_file),
+    );
+    if let Some(error) = unread {
+        log::warn!("split layouts not read: {error}");
+    }
+    (macros, files_state, split_layouts)
+}
+
 impl App {
     /// The file the profiles are kept in; the settings and the trusted keys are beside it.
     #[must_use]
@@ -3277,24 +3304,7 @@ impl App {
         let vault = VaultState::beside(&config.profiles_file, config.system_credentials.clone());
         let (settings, settings_file, dialog) = appearance::load_settings(&config, dialog);
         let tunnels_panel = !settings.collapse_tunnels_panel;
-        let macros = heimdall_core::macros::Macros::load(&heimdall_core::macros::macros_path(
-            &config.profiles_file,
-        ))
-        .unwrap_or_else(|error| {
-            log::warn!("macros not read: {error}");
-            heimdall_core::macros::Macros::default()
-        });
-        let files_state = heimdall_core::files_state::FilesState::open(
-            config
-                .profiles_file
-                .with_file_name(heimdall_core::files_state::FILES_STATE_FILE_NAME),
-        );
-        let (split_layouts, unread) = heimdall_core::split_layouts::SplitLayouts::open(
-            &heimdall_core::split_layouts::split_layouts_path(&config.profiles_file),
-        );
-        if let Some(error) = unread {
-            log::warn!("split layouts not read: {error}");
-        }
+        let (macros, files_state, split_layouts) = side_files(&config.profiles_file);
         let mut app = Self {
             settings,
             settings_file,
