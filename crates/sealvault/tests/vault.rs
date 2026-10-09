@@ -19,7 +19,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use sealvault::{Vault, VaultError, backup_path};
+use sealvault::{DATA_KEY_LEN, Vault, VaultError, backup_path};
 
 const PASSWORD: &[u8] = b"correct horse battery staple";
 
@@ -225,4 +225,77 @@ fn debug_shows_no_name_and_no_secret() {
         assert!(!shown.contains(hidden), "{shown}");
     }
     assert!(shown.contains("entries: 2"), "{shown}");
+}
+
+/// Whether `key` opens the vault at `path` as [`VaultError::Unreadable`] says it does not.
+fn unreadable_with_key(path: &Path, key: &[u8; DATA_KEY_LEN]) -> bool {
+    matches!(
+        Vault::open_with_data_key(path, key),
+        Err(VaultError::Unreadable)
+    )
+}
+
+#[test]
+fn the_data_key_opens_the_same_vault_without_the_password_and_saves_it_for_the_password() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = filled(dir.path());
+    // On the heap, zeroed when dropped: moving it copies only the pointer.
+    let key: Box<zeroize::Zeroizing<[u8; DATA_KEY_LEN]>> =
+        Vault::open(&path, PASSWORD).expect("opens").data_key();
+    let mut vault = Vault::open_with_data_key(&path, &key).expect("opens with the key");
+    assert_eq!(vault.get("ssh/web"), Some(&b"hunter2"[..]));
+    assert_eq!(vault.names().count(), 2);
+    vault.set("ftp/nas", b"added".to_vec());
+    vault.save().expect("saved");
+    // Saved after a data key opened it, the password still opens it: its wrapping is kept.
+    let vault = Vault::open(&path, PASSWORD).expect("the password opens it");
+    assert_eq!(vault.get("ftp/nas"), Some(&b"added"[..]));
+}
+
+#[test]
+fn a_data_key_stays_good_across_a_password_change_and_no_other_key_opens_it() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = filled(dir.path());
+    let mut vault = Vault::open(&path, PASSWORD).expect("opens");
+    let key = vault.data_key();
+    vault.change_password(b"a new one").expect("changed");
+    assert!(
+        Vault::open_with_data_key(&path, &key).is_ok(),
+        "a new password wraps the same data key"
+    );
+    let mut other = **key;
+    other[0] ^= 1;
+    assert!(unreadable_with_key(&path, &other), "another key");
+    let elsewhere = Vault::create(dir.path().join("other.svlt"), PASSWORD).expect("created");
+    assert!(
+        unreadable_with_key(&path, &elsewhere.data_key()),
+        "another vault's key"
+    );
+}
+
+#[test]
+fn with_the_data_key_a_change_to_any_field_or_a_cut_file_is_unreadable() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = filled(dir.path());
+    let key = Vault::open(&path, PASSWORD).expect("opens").data_key();
+    let good = fs::read(&path).expect("read");
+    let last = good.len() - 1;
+    let places = FIELDS
+        .iter()
+        .copied()
+        .chain([("body", BODY), ("tag", last)]);
+    for (field, offset) in places {
+        let mut changed = good.clone();
+        changed[offset] ^= 1;
+        fs::write(&path, &changed).expect("written");
+        assert!(unreadable_with_key(&path, &key), "{field} at {offset}");
+    }
+    for length in [0, BODY, good.len() - 1] {
+        fs::write(&path, &good[..length]).expect("written");
+        assert!(unreadable_with_key(&path, &key), "cut to {length}");
+    }
+    assert!(matches!(
+        Vault::open_with_data_key(dir.path().join("missing.svlt"), &key),
+        Err(VaultError::Io { .. })
+    ));
 }

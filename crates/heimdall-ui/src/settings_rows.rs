@@ -265,11 +265,13 @@ pub enum SettingRow {
     RequireWindowsHello,
     /// Minutes a Windows Hello verification counts.
     WindowsHelloGrace,
+    /// Days Windows Hello unlocks the vault before the master password is asked again.
+    VaultHelloMaxDays,
 }
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 56] = [
+    pub const ALL: [Self; 57] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -321,6 +323,7 @@ impl SettingRow {
         Self::Gateways,
         Self::Pin,
         Self::Vault,
+        Self::VaultHelloMaxDays,
         Self::AutoLock,
         Self::DisconnectOnLock,
         Self::Provider,
@@ -376,7 +379,9 @@ impl SettingRow {
             Self::Gateways => SettingsCard::Gateways,
             Self::Pin => SettingsCard::Pin,
             // Under the master password, as the C# `SettingsSectionVault` holds them.
-            Self::Vault | Self::AutoLock | Self::DisconnectOnLock => SettingsCard::Vault,
+            Self::Vault | Self::VaultHelloMaxDays | Self::AutoLock | Self::DisconnectOnLock => {
+                SettingsCard::Vault
+            }
             Self::Provider => SettingsCard::Provider,
             // As the C# `SettingsSectionConnectionChecks`, beside Credential Guard, which
             // this application does not have.
@@ -404,6 +409,7 @@ impl SettingRow {
             Self::AutoLock => SessionField::AutoLock,
             Self::UpdateInterval => SessionField::UpdateInterval,
             Self::WindowsHelloGrace => SessionField::WindowsHelloGrace,
+            Self::VaultHelloMaxDays => SessionField::VaultHelloMaxDays,
             _ => return None,
         })
     }
@@ -419,10 +425,13 @@ impl SettingRow {
     }
 
     /// Whether it means something only with a master password set: the workspace lock's
-    /// settings, shown disabled without one as the C# shows them.
+    /// settings and Windows Hello's days, shown disabled without one as the C# shows them.
     #[must_use]
     pub fn needs_vault(self) -> bool {
-        matches!(self, Self::AutoLock | Self::DisconnectOnLock)
+        matches!(
+            self,
+            Self::AutoLock | Self::DisconnectOnLock | Self::VaultHelloMaxDays
+        )
     }
 
     /// Whether its number can be typed with `settings`: the Windows Hello grace only with
@@ -1074,6 +1083,7 @@ mod tests {
             SettingsCard::Vault.rows(),
             [
                 SettingRow::Vault,
+                SettingRow::VaultHelloMaxDays,
                 SettingRow::AutoLock,
                 SettingRow::DisconnectOnLock
             ]
@@ -1084,7 +1094,11 @@ mod tests {
             .collect();
         assert_eq!(
             needing,
-            [SettingRow::AutoLock, SettingRow::DisconnectOnLock]
+            [
+                SettingRow::VaultHelloMaxDays,
+                SettingRow::AutoLock,
+                SettingRow::DisconnectOnLock
+            ]
         );
         let changed = Settings {
             auto_lock_idle_minutes: 10,
@@ -1093,6 +1107,21 @@ mod tests {
         };
         assert!(SettingRow::AutoLock.is_modified(&changed));
         assert!(SettingRow::DisconnectOnLock.is_modified(&changed));
+        // Windows Hello's days, as the C# `VaultHelloMaxDaysBeforeMasterPassword`: never by
+        // default, marked once changed.
+        let days = Settings {
+            windows_hello: heimdall_core::settings::WindowsHello {
+                vault_max_days: 30,
+                ..heimdall_core::settings::WindowsHello::default()
+            },
+            ..Settings::default()
+        };
+        assert!(!SettingRow::VaultHelloMaxDays.is_modified(&Settings::default()));
+        assert!(SettingRow::VaultHelloMaxDays.is_modified(&days));
+        assert_eq!(
+            SettingRow::VaultHelloMaxDays.reset(&days),
+            Some(SettingsMessage::VaultHelloMaxDays(0))
+        );
         assert_eq!(
             SettingRow::AutoLock.reset(&changed),
             Some(SettingsMessage::AutoLockIdleMinutes(
@@ -1170,6 +1199,7 @@ mod tests {
             windows_hello: heimdall_core::settings::WindowsHello {
                 require_on_connect: true,
                 grace_minutes: 0,
+                ..heimdall_core::settings::WindowsHello::default()
             },
             ..Settings::default()
         };
