@@ -14,9 +14,9 @@
  * limitations under the License.
  */
 
-//! What is read from a server's TLS certificate: the key it is pinned by, the key `CredSSP`
-//! binds to, a subject and an issuer fit to show, and when it holds; and the hash of the
-//! whole certificate, which pins an FTPS or VNC server's certificate as the C# pins it.
+//! What is read from a server's TLS certificate: its key, the key `CredSSP` binds to, a
+//! subject and an issuer fit to show, when it holds, and the hash of the whole certificate,
+//! which pins an RDP, FTPS or VNC server's certificate as the C# pins it.
 
 use std::fmt;
 use std::str::FromStr;
@@ -44,7 +44,8 @@ const SERVER_AUTHENTICATION: ObjectIdentifier = ObjectIdentifier::new_unwrap("1.
 /// `anyExtendedKeyUsage` (RFC 5280, 4.2.1.12): any purpose.
 const ANY_PURPOSE: ObjectIdentifier = ObjectIdentifier::new_unwrap("2.5.29.37.0");
 
-/// SHA-256 of a certificate's `SubjectPublicKeyInfo`: what a server is pinned by. A renewed
+/// SHA-256 of a certificate's `SubjectPublicKeyInfo`: what a server was pinned by before
+/// its whole certificate was, and still tells a renewal from another key. A renewed
 /// certificate on the same key keeps it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Fingerprint([u8; SHA256_OUTPUT_LEN]);
@@ -79,7 +80,7 @@ impl FromStr for Fingerprint {
     }
 }
 
-/// SHA-256 of a whole certificate (DER), as the C# pins an FTPS certificate by its
+/// SHA-256 of a whole certificate (DER), as the C# pins an RDP or FTPS certificate by its
 /// thumbprint: another certificate on the same key, a renewed one or one minted again, is
 /// another certificate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -126,8 +127,12 @@ pub struct CertificateError;
 /// What the connection needs from the server's certificate, all read from the same one.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ServerCertificate {
-    /// The pin.
+    /// Its key.
     pub fingerprint: Fingerprint,
+    /// The hash of the whole certificate: the pin.
+    pub certificate: CertificateHash,
+    /// When it holds.
+    pub validity: Validity,
     /// The `subjectPublicKey` bits, which `CredSSP` binds its exchange to.
     pub public_key: Vec<u8>,
     /// The subject, made safe to show and bounded.
@@ -153,8 +158,14 @@ impl ServerCertificate {
             .as_bytes()
             .ok_or(CertificateError)?
             .to_vec();
+        let validity = certificate.tbs_certificate().validity();
         Ok(Self {
             fingerprint,
+            certificate: CertificateHash::of(der),
+            validity: Validity {
+                not_before: validity.not_before.to_system_time(),
+                not_after: validity.not_after.to_system_time(),
+            },
             public_key,
             subject: shown(&certificate.tbs_certificate().subject().to_string()),
             issuer: shown(&certificate.tbs_certificate().issuer().to_string()),
@@ -163,7 +174,8 @@ impl ServerCertificate {
 }
 
 /// When a certificate holds, as its `notBefore` and `notAfter` say: shown in the FTPS
-/// certificate question, as the C# prompt's "Valid from / until".
+/// certificate question, as the C# prompt's "Valid from / until", and in the question about
+/// a renewed certificate.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Validity {
     /// The first moment it holds.

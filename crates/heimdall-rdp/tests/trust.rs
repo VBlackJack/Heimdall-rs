@@ -32,8 +32,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use heimdall_rdp::{
-    AskCredentials, Fingerprint, KnownRdpHosts, RdpConfig, RdpError, Security, ServerCertificate,
-    Timeouts, connect, connect_over,
+    AcceptedCertificate, AskCredentials, CertificateHash, Fingerprint, KnownRdpHosts, RdpConfig,
+    RdpError, Security, ServerCertificate, Timeouts, Validity, connect, connect_over,
 };
 use ironrdp::pdu::nego::{ConnectionConfirm, ResponseFlags, SecurityProtocol};
 use ironrdp::pdu::x224::X224;
@@ -60,6 +60,13 @@ const USERNAME: &str = "alice-the-user";
 const CERT: &[u8] = include_bytes!("fixtures/server-cert.der");
 const KEY: &[u8] = include_bytes!("fixtures/server-key.der");
 const OTHER_KEY: &[u8] = include_bytes!("fixtures/other-key.der");
+/// Another certificate on [`KEY`], as a renewal makes one: `CN=rdp.test`, signed by [`KEY`],
+/// made by openssl (`req -x509` on the fixture key, other dates).
+const RENEWED: &[u8] = include_bytes!("fixtures/renewed-cert.der");
+/// A certificate carrying the public key of [`KEY`] but minted by whoever holds
+/// [`OTHER_KEY`], as someone without the server's key could mint one: made by openssl
+/// (`x509 -new -force_pubkey`).
+const FORGED: &[u8] = include_bytes!("fixtures/forged-cert.der");
 /// SHA-256 of the fixture's `SubjectPublicKeyInfo`, computed by openssl, not by this crate.
 const EXPECTED_PIN: &str = include_str!("fixtures/server-spki-sha256.txt");
 
@@ -67,7 +74,7 @@ const EXPECTED_PIN: &str = include_str!("fixtures/server-spki-sha256.txt");
 const WAIT: Duration = Duration::from_secs(10);
 
 /// Serves one certificate with whatever key it is given: the real one, or another key, as a
-/// replayed certificate would be.
+/// replayed or forged certificate would be.
 #[derive(Debug)]
 struct Presents(Arc<CertifiedKey>);
 
@@ -77,13 +84,13 @@ impl ResolvesServerCert for Presents {
     }
 }
 
-fn acceptor(key: &[u8], tls12_only: bool) -> TlsAcceptor {
+fn acceptor(certificate: &[u8], key: &[u8], tls12_only: bool) -> TlsAcceptor {
     let provider = Arc::new(default_provider());
     let signing = provider
         .key_provider
         .load_private_key(PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key.to_vec())))
         .expect("key");
-    let certified = CertifiedKey::new(vec![CertificateDer::from(CERT.to_vec())], signing);
+    let certified = CertifiedKey::new(vec![CertificateDer::from(certificate.to_vec())], signing);
     let versions: &[&SupportedProtocolVersion] = if tls12_only {
         &[&TLS12]
     } else {
@@ -111,7 +118,7 @@ struct Seen {
 
 async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     mut stream: S,
-    key: &'static [u8],
+    (certificate, key): (&'static [u8], &'static [u8]),
     tls12_only: bool,
 ) -> Seen {
     let mut header = [0; 4];
@@ -129,7 +136,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     }))
     .expect("encode");
     stream.write_all(&confirm).await.expect("confirm");
-    let Ok(mut tls) = acceptor(key, tls12_only).accept(stream).await else {
+    let Ok(mut tls) = acceptor(certificate, key, tls12_only).accept(stream).await else {
         return Seen {
             asked: false,
             request,
@@ -151,7 +158,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
-fn config(known_hosts: &Path, accepted: Option<Fingerprint>, port: u16) -> RdpConfig {
+fn config(known_hosts: &Path, accepted: Option<AcceptedCertificate>, port: u16) -> RdpConfig {
     RdpConfig {
         host: HOST.to_owned(),
         port,
@@ -189,8 +196,17 @@ async fn attempt_with(
     key: &'static [u8],
     tls12_only: bool,
 ) -> (Result<(), RdpError>, Seen) {
+    attempt_presenting(config, (CERT, key), tls12_only).await
+}
+
+/// Connects to a fake server presenting `certificate` with `key`.
+async fn attempt_presenting(
+    config: &RdpConfig,
+    (certificate, key): (&'static [u8], &'static [u8]),
+    tls12_only: bool,
+) -> (Result<(), RdpError>, Seen) {
     let (client, server) = tokio::io::duplex(1 << 16);
-    let server = tokio::spawn(serve(server, key, tls12_only));
+    let server = tokio::spawn(serve(server, (certificate, key), tls12_only));
     let asked = Arc::new(AtomicBool::new(false));
     let flag = Arc::clone(&asked);
     let credentials: heimdall_rdp::AskCredentials = Box::new(move || {
@@ -222,6 +238,31 @@ fn expected_pin() -> Fingerprint {
     format!("SHA256:{}", EXPECTED_PIN.trim())
         .parse()
         .expect("fixture pin")
+}
+
+/// The DER certificate `der`, read.
+fn read(der: &[u8]) -> ServerCertificate {
+    ServerCertificate::from_der(der).expect("fixture")
+}
+
+/// The answer "Trust this certificate" to the question about `der`.
+fn accepting(der: &[u8]) -> AcceptedCertificate {
+    AcceptedCertificate::from(&read(der))
+}
+
+/// The fixture certificate, accepted.
+fn accepted() -> AcceptedCertificate {
+    accepting(CERT)
+}
+
+/// What `path` records of the whole certificates trusted, in the order of the file.
+fn whole_certificates(path: &Path) -> Vec<Option<CertificateHash>> {
+    KnownRdpHosts::new(path)
+        .entries()
+        .expect("read")
+        .into_iter()
+        .map(|entry| entry.certificate)
+        .collect()
 }
 
 /// The address and key of each line, the attributes after them left out.
@@ -297,7 +338,7 @@ async fn an_unknown_server_is_asked_about_and_gets_nothing() {
 async fn an_accepted_key_is_recorded_once_and_then_known() {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("sub").join("known_rdp_hosts");
-    let (outcome, seen) = attempt(&config(&known, Some(expected_pin()), PORT), KEY).await;
+    let (outcome, seen) = attempt(&config(&known, Some(accepted()), PORT), KEY).await;
     assert!(
         !matches!(
             outcome,
@@ -312,6 +353,14 @@ async fn an_accepted_key_is_recorded_once_and_then_known() {
     );
     assert_eq!(pins(&known), [format!("{HOST}:{PORT} {}", expected_pin())]);
     let recorded = KnownRdpHosts::new(&known).entries().expect("read");
+    assert_eq!(
+        (recorded[0].certificate, recorded[0].validity),
+        (
+            Some(CertificateHash::of(CERT)),
+            Some(Validity::from_der(CERT).expect("fixture"))
+        ),
+        "pinned by the whole certificate, its validity beside it"
+    );
     assert_eq!(
         (
             recorded[0].subject.as_deref(),
@@ -333,11 +382,11 @@ async fn an_accepted_key_is_recorded_once_and_then_known() {
 }
 
 #[tokio::test]
-async fn a_key_trusted_for_the_run_is_let_through_and_never_recorded() {
+async fn a_certificate_trusted_for_the_run_is_let_through_and_never_recorded() {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
     let mut trusting = config(&known, None, PORT);
-    trusting.trusted_for_run = vec![expected_pin()];
+    trusting.trusted_for_run = vec![CertificateHash::of(CERT)];
     let (outcome, seen) = attempt(&trusting, KEY).await;
     assert!(
         !matches!(
@@ -349,12 +398,8 @@ async fn a_key_trusted_for_the_run_is_let_through_and_never_recorded() {
     assert!(seen.after_handshake > 0, "CredSSP started");
     assert!(lines(&known).is_empty(), "nothing recorded");
 
-    // Another key trusted for the run is no trust in this one.
-    trusting.trusted_for_run = vec![
-        "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-            .parse()
-            .expect("fingerprint"),
-    ];
+    // Another certificate trusted for the run, on the same key, is no trust in this one.
+    trusting.trusted_for_run = vec![CertificateHash::of(RENEWED)];
     let (outcome, seen) = attempt(&trusting, KEY).await;
     assert!(
         matches!(outcome, Err(RdpError::UnknownCertificate(_))),
@@ -372,7 +417,7 @@ async fn a_changed_key_is_refused_without_a_question() {
         .expect("fingerprint");
     std::fs::write(&known, format!("{HOST}:{PORT} {other}\n")).expect("known");
     // Even an acceptance in hand does not override a recorded key.
-    let (outcome, seen) = attempt(&config(&known, Some(expected_pin()), PORT), KEY).await;
+    let (outcome, seen) = attempt(&config(&known, Some(accepted()), PORT), KEY).await;
     let Err(RdpError::CertificateChanged {
         recorded,
         presented,
@@ -412,7 +457,7 @@ async fn at_an_address_several_servers_answer_a_new_key_is_asked_about_and_trust
     assert_eq!(lines(&known).len(), 1);
 
     // Accepted: trusted beside the other machine's key, which stays.
-    let (outcome, seen) = attempt(&pool(Some(expected_pin())), KEY).await;
+    let (outcome, seen) = attempt(&pool(Some(accepted())), KEY).await;
     assert!(
         !matches!(
             outcome,
@@ -434,12 +479,15 @@ async fn at_an_address_several_servers_answer_a_new_key_is_asked_about_and_trust
 }
 
 #[tokio::test]
-async fn a_key_accepted_for_another_certificate_is_refused() {
+async fn a_certificate_accepted_on_another_key_is_refused() {
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
-    let accepted: Fingerprint = "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
-        .parse()
-        .expect("fingerprint");
+    let accepted = AcceptedCertificate {
+        key: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+            .parse()
+            .expect("fingerprint"),
+        certificate: CertificateHash::of(b"another certificate"),
+    };
     let (outcome, seen) = attempt(&config(&known, Some(accepted), PORT), KEY).await;
     assert!(
         matches!(outcome, Err(RdpError::CertificateChanged { .. })),
@@ -505,15 +553,15 @@ fn connecting_can_be_spawned(config: RdpConfig, password: Zeroizing<String>) {
 }
 
 /// Connects through [`connect`], over TCP to a fake server on this machine, with the key
-/// recorded for it first when `recorded`, and `trusted_for_run` as the keys trusted for this
-/// run. The outcome, and when the credentials were asked:
+/// recorded for it first when `recorded`, and `trusted_for_run` as the certificates trusted
+/// for this run. The outcome, and when the credentials were asked:
 /// `Some(true)` once the server had accepted the connection, `Some(false)` before, `None`
 /// never.
 async fn attempt_over_tcp(
     known: &Path,
-    accepted: Option<Fingerprint>,
+    accepted: Option<AcceptedCertificate>,
     recorded: bool,
-    trusted_for_run: Vec<Fingerprint>,
+    trusted_for_run: Vec<CertificateHash>,
 ) -> (Result<(), RdpError>, Option<bool>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("listener");
     let port = listener.local_addr().expect("address").port();
@@ -525,7 +573,7 @@ async fn attempt_over_tcp(
     let server = tokio::spawn(async move {
         let (stream, _) = listener.accept().await.expect("accepted");
         server_side.store(true, Ordering::SeqCst);
-        serve(stream, KEY, false).await
+        serve(stream, (CERT, KEY), false).await
     });
     let asked = Arc::new(Mutex::new(None));
     let record = Arc::clone(&asked);
@@ -576,7 +624,7 @@ async fn a_just_accepted_server_gets_the_credentials_before_the_connection_opens
     let dir = tempfile::tempdir().expect("dir");
     let (outcome, asked) = attempt_over_tcp(
         &dir.path().join("known"),
-        Some(expected_pin()),
+        Some(accepted()),
         false,
         Vec::new(),
     )
@@ -598,8 +646,13 @@ async fn a_just_accepted_server_gets_the_credentials_before_the_connection_opens
 #[tokio::test]
 async fn a_server_trusted_for_the_run_gets_the_credentials_before_the_connection_opens() {
     let dir = tempfile::tempdir().expect("dir");
-    let (outcome, asked) =
-        attempt_over_tcp(&dir.path().join("known"), None, false, vec![expected_pin()]).await;
+    let (outcome, asked) = attempt_over_tcp(
+        &dir.path().join("known"),
+        None,
+        false,
+        vec![CertificateHash::of(CERT)],
+    )
+    .await;
     assert!(
         !matches!(
             outcome,
@@ -648,7 +701,7 @@ async fn under_strict_authentication_a_server_no_authority_vouches_for_is_refuse
     assert!(lines(&known).is_empty(), "never recorded");
 
     // Trusted before: pinned, it goes through, as the C# keeps a profile's trust.
-    let accepted = config(&known, Some(expected_pin()), PORT);
+    let accepted = config(&known, Some(accepted()), PORT);
     let _ = attempt(&accepted, KEY).await;
     let strict = RdpConfig {
         strict_server_authentication: true,
@@ -719,7 +772,7 @@ async fn each_certificate_decision_is_in_the_diagnostics_log_and_never_the_passw
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_rdp_hosts");
 
-    let (outcome, _) = attempt(&config(&known, Some(expected_pin()), LOG_PORT), KEY).await;
+    let (outcome, _) = attempt(&config(&known, Some(accepted()), LOG_PORT), KEY).await;
     assert!(
         !matches!(outcome, Err(RdpError::UnknownCertificate(_))),
         "{outcome:?}"
@@ -763,5 +816,193 @@ async fn each_certificate_decision_is_in_the_diagnostics_log_and_never_the_passw
     assert!(
         logged_with("hunter2-password").is_empty(),
         "the password is never logged"
+    );
+}
+
+/// Pins `der` whole for [`HOST`]:[`PORT`] in `known`, as accepting it after the question does.
+fn pin_whole(known: &Path, der: &[u8]) {
+    let certificate = read(der);
+    KnownRdpHosts::new(known)
+        .record_whole_certificate(
+            HOST,
+            PORT,
+            &certificate,
+            (&certificate.certificate, Some(&certificate.validity)),
+        )
+        .expect("pinned");
+}
+
+/// Whether `outcome` let the credentials go: the pin passed.
+fn passed(outcome: &Result<(), RdpError>) -> bool {
+    !matches!(
+        outcome,
+        Err(RdpError::UnknownCertificate(_)
+            | RdpError::RenewedCertificate { .. }
+            | RdpError::CertificateChanged { .. }
+            | RdpError::Tls(_))
+    )
+}
+
+#[tokio::test]
+async fn the_whole_certificate_trusted_is_known_and_another_on_its_key_is_a_renewal_asked_about() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    pin_whole(&known, CERT);
+    let before = std::fs::read(&known).expect("pinned");
+
+    // The very certificate: through, as before.
+    let (outcome, seen) = attempt(&config(&known, None, PORT), KEY).await;
+    assert!(passed(&outcome), "{outcome:?}");
+    assert!(seen.asked && seen.after_handshake > 0);
+
+    // Renewed on the same key, signed by it: asked about, told it is a renewal, with when the
+    // certificate on record holds; never taken silently, nothing sent, nothing written.
+    let (outcome, seen) =
+        attempt_presenting(&config(&known, None, PORT), (RENEWED, KEY), false).await;
+    let Err(RdpError::RenewedCertificate {
+        presented,
+        recorded,
+    }) = outcome
+    else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(
+        (presented.fingerprint, presented.certificate),
+        (expected_pin(), CertificateHash::of(RENEWED))
+    );
+    assert_eq!(
+        presented.validity,
+        Validity::from_der(RENEWED).expect("fixture")
+    );
+    assert_eq!(recorded, Some(Validity::from_der(CERT).expect("fixture")));
+    assert_ne!(
+        presented.validity,
+        Validity::from_der(CERT).expect("fixture")
+    );
+    assert!(!seen.asked, "no password before the user decides");
+    assert_eq!(seen.after_handshake, 0, "nothing sent past the handshake");
+    assert_eq!(
+        std::fs::read(&known).expect("file"),
+        before,
+        "nothing written"
+    );
+}
+
+#[tokio::test]
+async fn a_renewal_accepted_replaces_the_certificate_on_record_on_that_key() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    pin_whole(&known, CERT);
+    let (outcome, seen) = attempt_presenting(
+        &config(&known, Some(accepting(RENEWED)), PORT),
+        (RENEWED, KEY),
+        false,
+    )
+    .await;
+    assert!(passed(&outcome), "{outcome:?}");
+    assert!(seen.asked, "the credentials come once the user accepted");
+    assert_eq!(
+        whole_certificates(&known),
+        [Some(CertificateHash::of(RENEWED))],
+        "one certificate on the key: the renewed one"
+    );
+
+    // The certificate it replaced is another certificate on the key now.
+    let (outcome, _) = attempt(&config(&known, None, PORT), KEY).await;
+    assert!(
+        matches!(outcome, Err(RdpError::RenewedCertificate { .. })),
+        "{outcome:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_renewal_trusted_for_the_run_is_let_through_and_never_recorded() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    pin_whole(&known, CERT);
+    let before = std::fs::read(&known).expect("pinned");
+    let mut once = config(&known, None, PORT);
+    once.trusted_for_run = vec![CertificateHash::of(RENEWED)];
+    let (outcome, seen) = attempt_presenting(&once, (RENEWED, KEY), false).await;
+    assert!(passed(&outcome), "{outcome:?}");
+    assert!(seen.after_handshake > 0, "CredSSP started");
+    assert_eq!(
+        std::fs::read(&known).expect("file"),
+        before,
+        "nothing written"
+    );
+}
+
+#[tokio::test]
+async fn a_certificate_accepted_trusts_that_certificate_and_no_other_on_its_key() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    // Accepted after the question about the renewed certificate; the server now presents
+    // another one on the same key: the question again, nothing recorded, nothing sent.
+    let (outcome, seen) = attempt(&config(&known, Some(accepting(RENEWED)), PORT), KEY).await;
+    assert!(
+        matches!(&outcome, Err(RdpError::UnknownCertificate(certificate)) if certificate.certificate == CertificateHash::of(CERT)),
+        "{outcome:?}"
+    );
+    assert!(!seen.asked);
+    assert_eq!(seen.after_handshake, 0);
+    assert!(lines(&known).is_empty(), "nothing recorded");
+}
+
+#[tokio::test]
+async fn a_key_recorded_alone_lets_its_certificate_through_and_adopts_nothing_before_the_connection_is_up()
+ {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    // As a Heimdall that pinned keys alone wrote it.
+    let legacy = format!("{HOST}:{PORT} {} trusted=1767225600\r\n", expected_pin());
+    std::fs::write(&known, &legacy).expect("known");
+    let (outcome, seen) = attempt(&config(&known, None, PORT), KEY).await;
+    assert!(passed(&outcome), "{outcome:?}");
+    assert!(
+        seen.asked && seen.after_handshake > 0,
+        "checked on its key, as before"
+    );
+    // The fake server never finishes the connection sequence: nothing adopted.
+    assert!(outcome.is_err(), "the connection never came up");
+    assert_eq!(
+        std::fs::read_to_string(&known).expect("file"),
+        legacy,
+        "the line kept as it was, byte for byte"
+    );
+}
+
+#[tokio::test]
+async fn a_certificate_minted_on_the_key_by_someone_without_it_is_never_accepted_nor_adopted() {
+    let dir = tempfile::tempdir().expect("dir");
+    let known = dir.path().join("known_rdp_hosts");
+    assert_eq!(read(FORGED).fingerprint, expected_pin(), "the server's key");
+    // Pinned by the key alone, adoptable; pinned whole; or accepted after the question: the
+    // handshake, signed with another key than the certificate's, fails first every time.
+    let legacy = format!("{HOST}:{PORT} {}\n", expected_pin());
+    std::fs::write(&known, &legacy).expect("known");
+    for tls12_only in [false, true] {
+        let (outcome, seen) =
+            attempt_presenting(&config(&known, None, PORT), (FORGED, OTHER_KEY), tls12_only).await;
+        assert!(matches!(outcome, Err(RdpError::Tls(_))), "{outcome:?}");
+        assert!(!seen.handshake && !seen.asked);
+        assert_eq!(seen.after_handshake, 0);
+    }
+    assert_eq!(std::fs::read_to_string(&known).expect("file"), legacy);
+
+    std::fs::remove_file(&known).expect("removed");
+    pin_whole(&known, CERT);
+    let before = std::fs::read(&known).expect("pinned");
+    let (outcome, _) = attempt_presenting(
+        &config(&known, Some(accepting(FORGED)), PORT),
+        (FORGED, OTHER_KEY),
+        false,
+    )
+    .await;
+    assert!(matches!(outcome, Err(RdpError::Tls(_))), "{outcome:?}");
+    assert_eq!(
+        std::fs::read(&known).expect("file"),
+        before,
+        "never recorded"
     );
 }

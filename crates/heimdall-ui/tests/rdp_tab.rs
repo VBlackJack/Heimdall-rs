@@ -844,6 +844,7 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
                 .parse()
                 .expect("fingerprint"),
+            certificate: heimdall_rdp::CertificateHash::of(b"the certificate of dc.lab"),
         },
     );
     let mut ui = simulator(&shell);
@@ -882,6 +883,68 @@ fn an_unknown_certificate_is_asked_about_in_the_csharp_words_with_just_this_once
         .expect("the C# line");
     assert!(ui.find("Copy error").is_err(), "nothing to report");
     ui.find("Reconnect").expect("a way back");
+}
+
+#[test]
+fn a_certificate_renewed_on_the_trusted_key_is_said_so_with_both_validities_and_no_system_check() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab, attempt) = opened(dir.path());
+    let at = |seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+    // 2020-01-01 to 2045-01-01 on record; 2021-01-01 to 2046-01-01 presented.
+    let (recorded, presented) = (
+        heimdall_rdp::Validity {
+            not_before: at(1_577_836_800),
+            not_after: at(2_366_841_600),
+        },
+        heimdall_rdp::Validity {
+            not_before: at(1_609_459_200),
+            not_after: at(2_398_377_600),
+        },
+    );
+    connection(
+        &mut shell,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            subject: Some("CN=dc.lab".to_owned()),
+            details: Some(Box::new(heimdall_app::CertificateDetails {
+                issuer: "CN=dc.lab".to_owned(),
+                validity: presented,
+                issue: None,
+                renewal: Some(heimdall_app::Renewal {
+                    recorded: Some(recorded),
+                }),
+            })),
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+                .parse()
+                .expect("fingerprint"),
+            certificate: heimdall_rdp::CertificateHash::of(b"the renewed certificate of dc.lab"),
+        },
+    );
+    let mut ui = simulator(&shell);
+    ui.find("Unrecognised Server Certificate").expect("title");
+    ui.find(
+        "Renewed certificate: same key, new certificate. The server presents another \
+         certificate on the key you trusted. A renewal is routine, but whoever holds the key \
+         could also have made it: approve it only if you expect this renewal.",
+    )
+    .expect("said renewed, as the FTPS and VNC questions");
+    ui.find("Certificate on record valid from / until: 2020-01-01 00:00 - 2045-01-01 00:00")
+        .expect("the certificate on record");
+    ui.find("Valid from / until: 2021-01-01 00:00 - 2046-01-01 00:00")
+        .expect("the one presented");
+    ui.find("Issuer: CN=dc.lab").expect("its issuer");
+    // No authority of this computer was asked: no issue said.
+    for issue in [
+        "Validation issue: The certificate is self-signed: no certificate authority vouches for it.",
+        "Validation issue: It was issued by a certificate authority this computer does not trust.",
+    ] {
+        assert!(ui.find(issue).is_err(), "{issue}");
+    }
+    ui.find("Trust this certificate").expect("the same answers");
+    ui.find("Just this once").expect("the same answers");
 }
 
 #[test]

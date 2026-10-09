@@ -495,14 +495,14 @@ fn an_ftp_profile_opens_a_files_tab_and_its_certificate_question_reconnects_it()
         attempt,
         event: ConnectionEvent::UnknownRdpCertificate {
             subject: None,
+            certificate: whole,
             details: Some(Box::new(heimdall_app::CertificateDetails {
                 issuer: "CN=ftp.lab".to_owned(),
                 validity: heimdall_rdp::Validity {
                     not_before: at,
                     not_after: at,
                 },
-                issue: heimdall_tls::ValidationIssue::SelfSigned,
-                certificate: whole,
+                issue: Some(heimdall_tls::ValidationIssue::SelfSigned),
                 renewal: None,
             })),
             host: "ftp.lab".to_owned(),

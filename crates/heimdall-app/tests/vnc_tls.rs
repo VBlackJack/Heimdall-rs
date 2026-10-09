@@ -197,10 +197,11 @@ fn asked_whole(events: &[ConnectionEvent]) -> CertificateHash {
     match events {
         [
             ConnectionEvent::UnknownRdpCertificate {
-                details: Some(details),
+                certificate,
+                details: Some(_),
                 ..
             },
-        ] => details.certificate,
+        ] => *certificate,
         other => panic!("one question, with its certificate: {other:?}"),
     }
 }

@@ -3,7 +3,7 @@
 
 [package]
 name = "heimdall-rdp"
-description = "RDP sessions on top of IronRDP, with servers trusted by the key of their certificate."
+description = "RDP sessions on top of IronRDP, with servers trusted by their certificate."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

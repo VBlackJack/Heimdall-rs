@@ -29,7 +29,10 @@ use heimdall_app::{
 };
 use heimdall_core::profile::{ProfileId, RdpProfile};
 use heimdall_core::store::ProfileStore;
-use heimdall_rdp::{Ending, Fingerprint, Framebuffer, KnownRdpHosts, Operation, Scancode};
+use heimdall_rdp::{
+    AcceptedCertificate, CertificateHash, Ending, Fingerprint, Framebuffer, KnownRdpHosts,
+    Operation, Scancode,
+};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use tokio::sync::mpsc;
@@ -103,6 +106,11 @@ fn key() -> Fingerprint {
     KEY.parse().expect("fingerprint")
 }
 
+/// The hash of the whole certificate the questions ask about, on [`key`].
+fn whole() -> CertificateHash {
+    CertificateHash::of(b"the certificate of dc.lab")
+}
+
 /// An RDP tab, and the attempt its opening started.
 fn open(app: &mut App) -> (TabId, AttemptId) {
     match app
@@ -154,7 +162,7 @@ fn an_rdp_profile_opens_an_rdp_tab_trusted_beside_the_ssh_hosts() {
 }
 
 #[test]
-fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
+fn an_accepted_certificate_reconnects_with_that_certificate_and_a_refused_one_ends() {
     let dir = tempfile::tempdir().expect("dir");
     let mut app = app(dir.path());
     let (tab, attempt) = open(&mut app);
@@ -168,6 +176,7 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
+            certificate: whole(),
         },
     );
     assert!(matches!(&app.tabs[0].phase, Phase::HostKey { fingerprint, .. } if fingerprint == KEY));
@@ -184,8 +193,11 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
     };
     assert_eq!(
         request.accepted,
-        Some(key()),
-        "the next attempt records exactly this key"
+        Some(AcceptedCertificate {
+            key: key(),
+            certificate: whole(),
+        }),
+        "the next attempt records exactly this certificate"
     );
     assert_ne!(*second, attempt, "a new attempt");
     assert_eq!(app.tabs[0].phase, Phase::Connecting);
@@ -200,6 +212,7 @@ fn an_accepted_certificate_reconnects_with_that_key_and_a_refused_one_ends() {
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
+            certificate: whole(),
         },
     );
     assert!(
@@ -227,6 +240,7 @@ fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
+            certificate: whole(),
         },
     );
     assert!(app.tabs[0].asks_about_certificate());
@@ -235,7 +249,7 @@ fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
         panic!("{effects:?}");
     };
     assert_eq!(request.accepted, None, "nothing to record");
-    assert_eq!(request.trusted_for_run, [key()]);
+    assert_eq!(request.trusted_for_run, [whole()]);
     assert!(!app.tabs[0].asks_about_certificate());
 
     // Another tab to the same server carries it too, once.
@@ -250,13 +264,14 @@ fn a_certificate_trusted_this_once_is_offered_again_but_never_recorded() {
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
+            certificate: whole(),
         },
     );
     let effects = app.update(Message::HostKeyTrustOnce(again));
     let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
         panic!("{effects:?}");
     };
-    assert_eq!(request.trusted_for_run, [key()], "listed once");
+    assert_eq!(request.trusted_for_run, [whole()], "listed once");
     assert!(!dir.path().join("known_rdp_hosts").exists());
 
     // Another server is not trusted by it.
@@ -964,6 +979,7 @@ fn the_certificate_question_counts_the_other_certificates_and_names_the_route() 
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
+            certificate: whole(),
         },
     );
     let asked = app.tab(tab).expect("tab");
@@ -1434,6 +1450,7 @@ fn the_answer_to_a_certificate_question_is_in_the_diagnostics_log_with_the_key()
                 host: "dc.lab".to_owned(),
                 port: 3389,
                 fingerprint: key(),
+                certificate: whole(),
                 details: None,
             },
         );
@@ -1462,6 +1479,7 @@ fn forgetting_an_rdp_server_from_its_card_forgets_its_key_trusted_once() {
             host: "dc.lab".to_owned(),
             port: 3389,
             fingerprint: key(),
+            certificate: whole(),
         },
     );
     let effects = app.update(Message::HostKeyTrustOnce(tab));
@@ -1473,7 +1491,7 @@ fn forgetting_an_rdp_server_from_its_card_forgets_its_key_trusted_once() {
     else {
         panic!("{effects:?}");
     };
-    assert_eq!(request.trusted_for_run, [key()]);
+    assert_eq!(request.trusted_for_run, [whole()]);
     event(
         &mut app,
         tab,
@@ -1489,4 +1507,60 @@ fn forgetting_an_rdp_server_from_its_card_forgets_its_key_trusted_once() {
         panic!("{effects:?}");
     };
     assert!(request.trusted_for_run.is_empty(), "asked about again");
+}
+
+#[test]
+fn a_renewed_rdp_certificate_is_asked_about_as_a_renewal_and_trusted_by_its_hash_alone() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut app = app(dir.path());
+    let (tab, attempt) = open(&mut app);
+    let renewed = CertificateHash::of(b"the renewed certificate of dc.lab");
+    let at = |seconds| std::time::UNIX_EPOCH + std::time::Duration::from_secs(seconds);
+    let details = heimdall_app::CertificateDetails {
+        issuer: "CN=dc.lab".to_owned(),
+        validity: heimdall_rdp::Validity {
+            not_before: at(200),
+            not_after: at(300),
+        },
+        issue: None,
+        renewal: Some(heimdall_app::Renewal {
+            recorded: Some(heimdall_rdp::Validity {
+                not_before: at(100),
+                not_after: at(200),
+            }),
+        }),
+    };
+    event(
+        &mut app,
+        tab,
+        attempt,
+        ConnectionEvent::UnknownRdpCertificate {
+            subject: Some("CN=dc.lab".to_owned()),
+            details: Some(Box::new(details.clone())),
+            host: "dc.lab".to_owned(),
+            port: 3389,
+            fingerprint: key(),
+            certificate: renewed,
+        },
+    );
+    // Asked, never taken silently: the question says it is a renewal, with both validities.
+    assert!(app.tabs[0].asks_about_certificate());
+    assert_eq!(
+        app.tabs[0]
+            .certificate_context
+            .as_ref()
+            .and_then(|context| context.details.clone()),
+        Some(details)
+    );
+    // Trusted this once: the renewed certificate, not its key.
+    let effects = app.update(Message::HostKeyTrustOnce(tab));
+    let [Effect::ConnectRdp { request, .. }] = effects.as_slice() else {
+        panic!("{effects:?}");
+    };
+    assert_eq!(request.accepted, None);
+    assert_eq!(request.trusted_for_run, [renewed]);
+    assert!(
+        !dir.path().join("known_rdp_hosts").exists(),
+        "nothing written"
+    );
 }

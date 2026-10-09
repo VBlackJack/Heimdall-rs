@@ -532,3 +532,34 @@ fn a_certificate_pinned_whole_shows_its_thumbprint_as_the_csharp_list() {
     ui.find("ftp.lab:21").expect("found");
     assert!(ui.find("files.lab:990").is_err(), "no thumbprint, no match");
 }
+
+#[test]
+fn an_rdp_certificate_pinned_whole_shows_its_thumbprint_as_the_csharp_list() {
+    let dir = tempfile::tempdir().expect("dir");
+    // SHA-256 of "abc", as the whole certificate's hash; beside a line of its key alone, as
+    // a Heimdall that pinned keys alone wrote it.
+    let whole = CertificateHash::of(b"abc");
+    std::fs::write(
+        dir.path().join("known_rdp_hosts"),
+        format!("dc.lab:3389 {PIN} trusted=1773576030 certificate={whole}\nweb.lab:3389 {PIN}\n"),
+    )
+    .expect("write");
+    let mut shell = shell(dir.path());
+    show(&mut shell, SettingsTab::Rdp);
+    {
+        let mut ui = sized(&shell, TALL_WINDOW);
+        ui.find("dc.lab:3389").expect("the server pinned whole");
+        ui.find("web.lab:3389")
+            .expect("the server pinned by its key");
+        // The key, as before, and the thumbprint cut after 20 characters.
+        ui.find("SHA256:BA:78:16:BF:8...").expect("the thumbprint");
+    }
+    // Found by its thumbprint.
+    let _ = shell.update(Message::TrustedSearch(
+        TrustedList::Certificates,
+        "BA:78:16".to_owned(),
+    ));
+    let mut ui = sized(&shell, TALL_WINDOW);
+    ui.find("dc.lab:3389").expect("found");
+    assert!(ui.find("web.lab:3389").is_err(), "no thumbprint, no match");
+}

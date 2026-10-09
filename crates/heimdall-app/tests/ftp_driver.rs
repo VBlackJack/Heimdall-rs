@@ -132,6 +132,7 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
         host,
         port: asked_port,
         fingerprint,
+        certificate: whole,
         subject,
         details,
     } = event
@@ -154,14 +155,13 @@ async fn an_unknown_ftps_certificate_is_asked_about_then_pinned_once_trusted() {
         matches!(
             details.issue,
             // A machine without certificate authorities has none to vouch for it.
-            ValidationIssue::SelfSigned | ValidationIssue::NoSystemStore
+            Some(ValidationIssue::SelfSigned | ValidationIssue::NoSystemStore)
         ),
         "{:?}",
         details.issue
     );
 
     // Trusted: the next attempt goes through and records it, whole.
-    let whole = details.certificate;
     assert_eq!(details.renewal, None, "a first contact");
     let mut accepted = request(port, true, &known);
     accepted.accepted = Some(whole);
@@ -202,15 +202,13 @@ async fn a_certificate_trusted_for_this_run_goes_through_without_being_recorded(
     let dir = tempfile::tempdir().expect("dir");
     let known = dir.path().join("known_ftps_hosts");
     let port = serve(root.path(), Some(keys.path())).await;
-    let ConnectionEvent::UnknownRdpCertificate {
-        details: Some(details),
-        ..
-    } = first(request(port, true, &known)).await
+    let ConnectionEvent::UnknownRdpCertificate { certificate, .. } =
+        first(request(port, true, &known)).await
     else {
         panic!("the certificate question");
     };
     let mut once = request(port, true, &known);
-    once.trusted_for_run = vec![details.certificate];
+    once.trusted_for_run = vec![certificate];
     let event = first(once).await;
     assert!(
         matches!(event, ConnectionEvent::FilesReady { .. }),

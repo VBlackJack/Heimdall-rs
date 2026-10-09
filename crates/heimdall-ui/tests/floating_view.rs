@@ -302,6 +302,7 @@ fn a_certificate_question_in_the_window_names_its_tab_as_the_csharp_one() {
             fingerprint: "SHA256:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
                 .parse()
                 .expect("fingerprint"),
+            certificate: heimdall_rdp::CertificateHash::of(b"the certificate of dc.lab"),
         },
     }));
     {
