@@ -41,6 +41,7 @@ use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::{AgentSource, PasswordQuestion};
 use heimdall_term::{CellPixels, CellPoint, GridSize, Key, KeyLocation, Modifiers, MouseAction};
+use heimdall_ui::drop_batch::DropPlace;
 use heimdall_ui::files_drag::Spot;
 use heimdall_ui::floating_view::{
     ColumnWidths, EditorKey, EditorMessage, FloatEvent, PaneField, field_id,
@@ -1156,6 +1157,20 @@ async fn the_windows_files_keys_drops_and_clicks_reach_its_tab_alone() {
     let _ = shell.update(Message::FilesKey(FilesKey::First));
     assert_eq!(chosen_files(&shell, shown).1, Some(0));
     assert_eq!(chosen_files(&shell, floating).1, Some(1));
+    // So do the letters typed, each window's list searched for them alone.
+    let _ = shell.update(Message::Float(
+        window,
+        FloatEvent::TypeAhead("n".to_owned()),
+    ));
+    assert_eq!(chosen_files(&shell, floating).1, Some(0), "notes.txt");
+    let _ = shell.update(Message::TypeAhead("O".to_owned()));
+    assert_eq!(
+        chosen_files(&shell, shown).1,
+        Some(1),
+        "the main tab's old.txt"
+    );
+    assert_eq!(chosen_files(&shell, floating).1, Some(0));
+    let _ = shell.update(Message::Float(window, FloatEvent::FilesKey(FilesKey::Last)));
 
     // Ctrl held over the window: a click adds to its selection, as in the C# list.
     let _ = shell.update(Message::Float(
@@ -1190,7 +1205,10 @@ async fn the_windows_files_keys_drops_and_clicks_reach_its_tab_alone() {
     let outside = tempfile::tempdir().expect("dir");
     let file = outside.path().join("report.pdf");
     std::fs::write(&file, b"12345").expect("written");
+    let other = outside.path().join("notes.md");
+    std::fs::write(&other, b"123").expect("written");
     let _ = shell.update(Message::Float(window, FloatEvent::FileDropped(file)));
+    let _ = shell.update(Message::Float(window, FloatEvent::FileDropped(other)));
     let transfers = |shell: &Shell, tab| {
         shell
             .app()
@@ -1198,7 +1216,20 @@ async fn the_windows_files_keys_drops_and_clicks_reach_its_tab_alone() {
             .and_then(|found| found.files.as_deref())
             .map_or(0, |files| files.transfers.len())
     };
-    assert_eq!(transfers(&shell, floating), 1, "sent to its server");
+    assert_eq!(
+        transfers(&shell, floating),
+        0,
+        "gathered until the drop ends"
+    );
+    // The window's drop ended: sent together, as one drop, to its server.
+    let _ = shell.update(Message::DropGathered(DropPlace::Main));
+    assert_eq!(
+        transfers(&shell, floating),
+        0,
+        "the main window's drop is not its"
+    );
+    let _ = shell.update(Message::DropGathered(DropPlace::Floating(window)));
+    assert_eq!(transfers(&shell, floating), 2, "sent to its server");
     assert_eq!(transfers(&shell, shown), 0);
     assert!(
         simulator(shell.window_view(window))
@@ -1483,7 +1514,7 @@ async fn what_a_files_tab_in_the_window_sends_is_let_through_for_it_alone() {
         })),
         Message::App(AppMessage::Files(FilesMessage::Dropped {
             tab: floating,
-            path: std::path::PathBuf::from("dropped.txt"),
+            paths: vec![std::path::PathBuf::from("dropped.txt")],
         })),
         Message::App(AppMessage::Files(FilesMessage::EditorSave {
             tab: floating,

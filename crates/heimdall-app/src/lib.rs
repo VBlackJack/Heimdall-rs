@@ -72,6 +72,7 @@ pub mod time_zone;
 pub mod transcript;
 pub mod tunnel;
 pub mod tunnel_driver;
+pub mod type_ahead;
 pub mod update_check;
 pub mod vault_hello;
 pub mod vnc_driver;

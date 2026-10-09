@@ -18,12 +18,15 @@
 //! its keys, the files dropped on the window, a drag of its entries and its menus reach it
 //! there, each naming it, never resolved through the main window's tab shown.
 
+use std::time::Instant;
+
 use heimdall_app::files::{FilesKey, Side};
 use heimdall_app::{FilesMessage, Message as AppMessage, TabId};
 use iced::widget::{mouse_area, opaque, operation, pin};
 use iced::{Element, Length, Task, window};
 
-use super::{Message, Shell, takes_drops};
+use super::{Message, Shell};
+use crate::drop_batch::DropPlace;
 use crate::files_drag::FilesDrag;
 use crate::floating_view::{FloatEvent, PaneField, field_id, files_menu_tab};
 use crate::tree_view::TreeMenu;
@@ -52,18 +55,12 @@ impl Shell {
                 }
                 Task::none()
             }
+            // Gathered with the rest of its drop: sent on once they all came.
             FloatEvent::FileDropped(path) => {
                 if let Some(floating) = self.floating.get_mut(&window) {
                     floating.hovered = false;
                 }
-                let takes = self.app.tab(tab).is_some_and(takes_drops);
-                if self.gated() || !takes {
-                    return Task::none();
-                }
-                self.apply_floating(Message::App(AppMessage::Files(FilesMessage::Dropped {
-                    tab,
-                    path,
-                })))
+                self.file_dropped(DropPlace::Floating(window), path)
             }
             FloatEvent::PointerPressed => {
                 self.press_in_floating(window, tab);
@@ -71,6 +68,7 @@ impl Shell {
             }
             _ if self.gated() || self.app.dialog.is_some() => Task::none(),
             FloatEvent::FilesKey(key) => self.floating_files_key(tab, key),
+            FloatEvent::TypeAhead(text) => self.floating_type_ahead(tab, text),
             FloatEvent::FindKey => self
                 .floating_files_side(tab)
                 .map_or_else(Task::none, |side| {
@@ -112,6 +110,21 @@ impl Shell {
         let task = self.apply_floating(Message::App(AppMessage::Files(FilesMessage::Key {
             tab,
             key,
+        })));
+        Task::batch([task, self.reveal_selection_of(tab)])
+    }
+
+    /// `text` typed in the Files tab `tab` of a tab's own window, no field taking it: its
+    /// focused list's type-ahead, as the main window's, its selection then scrolled into
+    /// view. Its lists hidden by its integrated editor take none.
+    fn floating_type_ahead(&mut self, tab: TabId, text: String) -> Task<Message> {
+        if self.floating_files_side(tab).is_none() {
+            return Task::none();
+        }
+        let task = self.apply_floating(Message::App(AppMessage::Files(FilesMessage::TypeAhead {
+            tab,
+            text,
+            at: Instant::now(),
         })));
         Task::batch([task, self.reveal_selection_of(tab)])
     }
