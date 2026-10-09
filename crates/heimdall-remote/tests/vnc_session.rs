@@ -30,6 +30,9 @@ use tokio::net::{TcpListener, TcpStream};
 use tokio_util::sync::CancellationToken;
 use zeroize::Zeroizing;
 
+/// The Extended Clipboard pseudo-encoding, 0xC0A1E5CE as noVNC's `encodings.js` has it.
+const EXTENDED_CLIPBOARD: i32 = 0xC0A1_E5CE_u32.cast_signed();
+
 /// Bound on anything the test waits for.
 const WAIT: Duration = Duration::from_secs(10);
 
@@ -42,8 +45,8 @@ const RESPONSE: [u8; 16] = [
 ];
 
 /// What the client sends between `ServerInit` and the first update: `SetPixelFormat` (20),
-/// `SetEncodings` of 10 (4 + 40) and a `FramebufferUpdateRequest` (10).
-const OPENING_REQUESTS: usize = 20 + 44 + 10;
+/// `SetEncodings` of 11 (4 + 44) and a `FramebufferUpdateRequest` (10).
+const OPENING_REQUESTS: usize = 20 + 48 + 10;
 /// An incremental `FramebufferUpdateRequest`.
 const UPDATE_REQUEST: usize = 10;
 
@@ -169,9 +172,9 @@ async fn tight_is_asked_first_and_a_new_quality_asks_its_levels_then_the_whole_d
     let server = tokio::spawn(async move {
         let (mut stream, _) = listener.accept().await.expect("accepted");
         let opening = serve_handshake(&mut stream).await;
-        // Best: 9 encodings, then the request; Balanced: 10, then the request.
-        let best = read_exactly(&mut stream, 4 + 36 + 10).await;
-        let balanced = read_exactly(&mut stream, 4 + 40 + 10).await;
+        // Best: 10 encodings, then the request; Balanced: 11, then the request.
+        let best = read_exactly(&mut stream, 4 + 40 + 10).await;
+        let balanced = read_exactly(&mut stream, 4 + 44 + 10).await;
         (opening, best, balanced)
     });
     let cancel = CancellationToken::new();
@@ -194,15 +197,50 @@ async fn tight_is_asked_first_and_a_new_quality_asks_its_levels_then_the_whole_d
     // Tight, ZRLE, CopyRect, Raw, the pseudo-encodings, compression 6 and JPEG quality 6:
     // the C# default "Performance".
     assert_eq!(
-        opening[20..64],
-        set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -250, -26])
+        opening[20..68],
+        set_encodings(&[
+            7,
+            16,
+            1,
+            0,
+            -223,
+            -224,
+            -308,
+            -307,
+            EXTENDED_CLIPBOARD,
+            -250,
+            -26
+        ])
     );
     // Best: compression 0 and no JPEG quality level, so a Tight server sends no JPEG.
-    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -256]);
+    let mut expected = set_encodings(&[
+        7,
+        16,
+        1,
+        0,
+        -223,
+        -224,
+        -308,
+        -307,
+        EXTENDED_CLIPBOARD,
+        -256,
+    ]);
     expected.extend_from_slice(&FULL_UPDATE_REQUEST);
     assert_eq!(best, expected);
     // Balanced: compression 3, JPEG quality 7.
-    let mut expected = set_encodings(&[7, 16, 1, 0, -223, -224, -308, -307, -253, -25]);
+    let mut expected = set_encodings(&[
+        7,
+        16,
+        1,
+        0,
+        -223,
+        -224,
+        -308,
+        -307,
+        EXTENDED_CLIPBOARD,
+        -253,
+        -25,
+    ]);
     expected.extend_from_slice(&FULL_UPDATE_REQUEST);
     assert_eq!(balanced, expected);
 }
@@ -329,6 +367,93 @@ async fn cancelling_ends_a_session_whose_events_nobody_reads() {
         .await
         .expect("the session ended although its queue was full")
         .expect("server");
+}
+
+/// A cut text message of type `kind` carrying the extended clipboard `message`.
+fn extended(kind: u8, message: &[u8]) -> Vec<u8> {
+    let size = -i32::try_from(message.len()).expect("short");
+    let mut bytes = vec![kind, 0, 0, 0];
+    bytes.extend_from_slice(&size.to_be_bytes());
+    bytes.extend_from_slice(message);
+    bytes
+}
+
+#[tokio::test]
+async fn the_clipboard_goes_both_ways_in_utf_8_through_the_extended_clipboard() {
+    use std::io::Read as _;
+
+    let (listener, port) = listener().await;
+    let server = tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accepted");
+        serve_handshake(&mut stream).await;
+        // Caps: every action, text up to 10 MiB.
+        let caps = [0x1F, 0, 0, 0x01, 0x00, 0xA0, 0x00, 0x00];
+        stream.write_all(&extended(3, &caps)).await.expect("caps");
+        let client_caps = read_exactly(&mut stream, 8 + 8).await;
+        // The server's clipboard changed: notify, then provide what is asked.
+        stream
+            .write_all(&extended(3, &[0x08, 0, 0, 0x01]))
+            .await
+            .expect("notify");
+        let request = read_exactly(&mut stream, 8 + 4).await;
+        // One stored zlib block, by hand from RFC 1950 and 1951: the length 6, then e acute,
+        // the euro sign and the NUL in UTF-8, then their Adler-32 (computed with Python).
+        let mut provide = vec![0x10, 0, 0, 0x01, 0x78, 0x01, 0x01, 10, 0, 0xF5, 0xFF];
+        provide.extend_from_slice(&[0, 0, 0, 6, 0xC3, 0xA9, 0xE2, 0x82, 0xAC, 0]);
+        provide.extend_from_slice(&0x0E79_0383_u32.to_be_bytes());
+        stream
+            .write_all(&extended(3, &provide))
+            .await
+            .expect("provide");
+        // The client's clipboard: notified, then provided once asked.
+        let notify = read_exactly(&mut stream, 8 + 4).await;
+        stream
+            .write_all(&extended(3, &[0x02, 0, 0, 0x01]))
+            .await
+            .expect("request");
+        let header = read_exactly(&mut stream, 8).await;
+        let size = i32::from_be_bytes([header[4], header[5], header[6], header[7]]);
+        let message = read_exactly(&mut stream, usize::try_from(-size).expect("negative")).await;
+        (client_caps, request, notify, header, message)
+    });
+    let cancel = CancellationToken::new();
+    let connection = connect(
+        &config(port, SecurityPolicy::default()),
+        given_password(Zeroizing::new("Secret12".to_owned())),
+        &cancel,
+    )
+    .await
+    .expect("connected");
+    let mut session = start(connection, cancel.clone());
+    assert_eq!(
+        next_event(&mut session).await,
+        VncEvent::CutText("\u{e9}\u{20ac}".to_owned())
+    );
+    session
+        .input
+        .cut_text("\u{fc}\u{1f600}".to_owned())
+        .expect("cut text");
+    let (client_caps, request, notify, header, message) = tokio::time::timeout(WAIT, server)
+        .await
+        .expect("in time")
+        .expect("server");
+    cancel.cancel();
+    assert_eq!(
+        client_caps,
+        extended(6, &[0x1F, 0, 0, 0x01, 0x00, 0x10, 0x00, 0x00])
+    );
+    assert_eq!(request, extended(6, &[0x02, 0, 0, 0x01]));
+    assert_eq!(notify, extended(6, &[0x08, 0, 0, 0x01]));
+    assert_eq!(header[..4], [6, 0, 0, 0]);
+    assert_eq!(message[..4], [0x10, 0, 0, 0x01]);
+    let mut inflated = Vec::new();
+    flate2::read::ZlibDecoder::new(&message[4..])
+        .read_to_end(&mut inflated)
+        .expect("a zlib stream");
+    assert_eq!(
+        inflated,
+        [0, 0, 0, 7, 0xC3, 0xBC, 0xF0, 0x9F, 0x98, 0x80, 0]
+    );
 }
 
 /// A Tight capability: a code, a vendor and a signature.

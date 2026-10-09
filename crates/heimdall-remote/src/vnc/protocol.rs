@@ -21,13 +21,18 @@
 //! Tight or `VeNCrypt`, and the X509 subtypes of `VeNCrypt`, whose TLS the caller starts when
 //! told to; encodings Tight, ZRLE, `CopyRect` and Raw, with the
 //! `DesktopSize` and `LastRect` pseudo-encodings and the Tight compression and JPEG quality
-//! levels. A message is read once it is whole; whatever the server announces (a name, a
+//! levels, and the Extended Clipboard pseudo-encoding for text in UTF-8. A message is read
+//! once it is whole; whatever the server announces (a name, a
 //! clipboard, a rectangle, a list of security types) is bounded before anything is
 //! allocated for it.
 
 use zeroize::Zeroizing;
 
 use super::auth::{self, CHALLENGE_LENGTH, TooLong};
+use super::clipboard::{
+    self, ACTION_NOTIFY, ACTION_PROVIDE, ACTION_REQUEST, FORMAT_TEXT, Incoming,
+    MAX_EXTENDED_CUT_TEXT, PSEUDO_EXTENDED_CLIPBOARD, ServerCaps,
+};
 use super::screen::{MAX_SIDE, PIXEL_BYTES, Rect, Screen};
 use super::security::{
     self, Authentication, MAX_TIGHT_AUTH_TYPES, MAX_TIGHT_INIT_CAPABILITIES, MAX_TIGHT_TUNNELS,
@@ -62,7 +67,7 @@ const PSEUDO_COMPRESS_LEVEL_0: i32 = -256;
 const PSEUDO_QUALITY_LEVEL_0: i32 = -32;
 
 /// Encodings asked for, preferred first; the levels of the quality chosen follow them.
-const ENCODINGS: [i32; 8] = [
+const ENCODINGS: [i32; 9] = [
     ENCODING_TIGHT,
     ENCODING_ZRLE,
     ENCODING_COPY_RECT,
@@ -71,6 +76,7 @@ const ENCODINGS: [i32; 8] = [
     PSEUDO_LAST_RECT,
     PSEUDO_EXTENDED_DESKTOP_SIZE,
     PSEUDO_DESKTOP_NAME,
+    PSEUDO_EXTENDED_CLIPBOARD,
 ];
 
 /// Bytes of one screen of an extended desktop size: identifier, place, size and flags.
@@ -233,7 +239,7 @@ pub enum RfbEvent {
     },
     /// The server rang the bell.
     Bell,
-    /// The server's clipboard, as Latin-1 decoded text.
+    /// The server's clipboard: Latin-1 decoded, or UTF-8 through the Extended Clipboard.
     ServerCutText(String),
     /// The desktop's new name, as the server gives it: untrusted.
     Renamed(String),
@@ -342,6 +348,11 @@ pub struct Rfb {
     /// The first screen the server said, by its identifier and flags, once it says its
     /// screens: a size can then be asked of it.
     layout: Option<(u32, u32)>,
+    /// The server's Extended Clipboard capabilities, once it announced them: the clipboard
+    /// then goes both ways in UTF-8.
+    clipboard_caps: Option<ServerCaps>,
+    /// The text notified to the server, provided when it asks for it.
+    clipboard: Option<Zeroizing<String>>,
 }
 
 impl std::fmt::Debug for Rfb {
@@ -487,6 +498,8 @@ impl Rfb {
             tight: Tight::new(),
             quality: Quality::default(),
             layout: None,
+            clipboard_caps: None,
+            clipboard: None,
         }
     }
 
@@ -661,8 +674,29 @@ impl Rfb {
         self.output.extend_from_slice(&y.to_be_bytes());
     }
 
-    /// Sends the clipboard. The protocol carries Latin-1: other characters become `?`.
+    /// Sends the clipboard. Through the Extended Clipboard, when the server announced it, in
+    /// UTF-8 as noVNC: notified, then provided when the server asks for it; or provided at
+    /// once when the server takes no notify and the text is within the size it takes unasked.
+    /// Otherwise the protocol carries Latin-1: other characters become `?`.
     pub fn cut_text(&mut self, text: &str) {
+        if let Some(caps) = self.clipboard_caps
+            && let Some(text_max) = caps.text_max
+        {
+            if caps.takes(ACTION_NOTIFY) {
+                self.clipboard = Some(Zeroizing::new(text.to_owned()));
+                self.extended_cut_text(&clipboard::notify(FORMAT_TEXT));
+                return;
+            }
+            let wire = Zeroizing::new(clipboard::wire_text(text));
+            if caps.takes(ACTION_PROVIDE)
+                && u32::try_from(wire.len()).is_ok_and(|size| size <= text_max)
+            {
+                if let Some(message) = clipboard::provide_message(&wire) {
+                    self.extended_cut_text(&message);
+                }
+                return;
+            }
+        }
         let bytes: Vec<u8> = text
             .chars()
             .map(|character| u8::try_from(u32::from(character)).unwrap_or(b'?'))
@@ -671,6 +705,68 @@ impl Rfb {
         self.output
             .extend_from_slice(&u32::try_from(bytes.len()).unwrap_or(u32::MAX).to_be_bytes());
         self.output.extend_from_slice(&bytes);
+    }
+
+    /// A `ClientCutText` carrying an extended clipboard `message`: its length negative.
+    fn extended_cut_text(&mut self, message: &[u8]) {
+        let Some(size) = i32::try_from(message.len()).ok().and_then(i32::checked_neg) else {
+            return;
+        };
+        self.output.extend_from_slice(&[CLIENT_CUT_TEXT, 0, 0, 0]);
+        self.output.extend_from_slice(&size.to_be_bytes());
+        self.output.extend_from_slice(message);
+    }
+
+    /// Answers an extended clipboard message from the server, as noVNC's
+    /// `_handleServerCutText` does.
+    fn extended_clipboard(&mut self, incoming: Incoming, events: &mut Vec<RfbEvent>) {
+        match incoming {
+            Incoming::Caps(caps) => {
+                self.clipboard_caps = Some(caps);
+                self.extended_cut_text(&clipboard::client_caps());
+            }
+            Incoming::Request(formats) => {
+                let caps = self.clipboard_caps;
+                if formats & FORMAT_TEXT != 0
+                    && caps.is_some_and(|caps| caps.takes(ACTION_PROVIDE))
+                    && let Some(text) = self.clipboard.as_deref()
+                {
+                    let wire = Zeroizing::new(clipboard::wire_text(text));
+                    if let Some(message) = clipboard::provide_message(&wire) {
+                        self.extended_cut_text(&message);
+                    }
+                }
+            }
+            Incoming::Peek => {
+                if self
+                    .clipboard_caps
+                    .is_some_and(|caps| caps.takes(ACTION_NOTIFY))
+                {
+                    let formats = if self.clipboard.is_some() {
+                        FORMAT_TEXT
+                    } else {
+                        0
+                    };
+                    self.extended_cut_text(&clipboard::notify(formats));
+                }
+            }
+            Incoming::Notify(formats) => {
+                if formats & FORMAT_TEXT != 0
+                    && self
+                        .clipboard_caps
+                        .is_some_and(|caps| caps.takes(ACTION_REQUEST))
+                {
+                    self.extended_cut_text(&clipboard::request(FORMAT_TEXT));
+                }
+            }
+            Incoming::Provide(text) => {
+                // The server's clipboard replaces what this side had offered.
+                self.clipboard = None;
+                if let Some(text) = text {
+                    events.push(RfbEvent::ServerCutText(text));
+                }
+            }
+        }
     }
 
     fn step(&mut self, data: &[u8], events: &mut Vec<RfbEvent>) -> Result<Step, RfbError> {
@@ -1064,7 +1160,22 @@ impl Rfb {
                 let (Some(_padding), Some(size)) = (reader.take(3), reader.u32()) else {
                     return Ok(Step::More);
                 };
-                let size = length(size, usize::MAX, "a clipboard")?;
+                let size = size.cast_signed();
+                if size < 0 {
+                    // The Extended Clipboard: its flags and payload.
+                    let size = length(size.unsigned_abs(), usize::MAX, "a clipboard")?;
+                    if size > MAX_EXTENDED_CUT_TEXT {
+                        self.state = State::DroppingCutText(size);
+                        return Ok(Step::Done(reader.at));
+                    }
+                    let Some(message) = reader.take(size) else {
+                        return Ok(Step::More);
+                    };
+                    let incoming = clipboard::parse(message).map_err(RfbError::Protocol)?;
+                    self.extended_clipboard(incoming, events);
+                    return Ok(Step::Done(reader.at));
+                }
+                let size = length(size.unsigned_abs(), usize::MAX, "a clipboard")?;
                 if size > MAX_CUT_TEXT {
                     self.state = State::DroppingCutText(size);
                     return Ok(Step::Done(reader.at));

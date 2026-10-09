@@ -45,7 +45,7 @@ const RESPONSE: [u8; 16] = [
 ];
 /// Client messages between the server's init and the session: pixel format, encodings,
 /// the first update request.
-const OPENING_REQUESTS: usize = 20 + 44 + 10;
+const OPENING_REQUESTS: usize = 20 + 48 + 10;
 
 fn app(dir: &Path, port: u16, view_only: bool) -> App {
     let profiles_file = dir.join("profiles.toml");
