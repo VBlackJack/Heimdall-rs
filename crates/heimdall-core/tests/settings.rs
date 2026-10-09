@@ -1820,3 +1820,55 @@ fn the_known_hosts_import_at_startup_is_off_by_default_kept_carried_and_reset() 
     settings.reset_all();
     assert!(!settings.sync_known_hosts_at_startup);
 }
+
+#[test]
+fn a_declined_legacy_migration_is_kept_on_this_computer_never_exported_nor_imported() {
+    use heimdall_core::settings::LegacyMigration;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(
+        !settings.legacy_migration.has_decline(),
+        "none declined yet"
+    );
+    assert!(settings.legacy_migration.should_offer(1, "ABCD"));
+    settings.legacy_migration = LegacyMigration {
+        declined_offer_version: 1,
+        declined_source_fingerprint: Some("ABCD".to_owned()),
+    };
+    settings.save(&path).expect("save");
+    let read = Settings::load(&path).expect("load");
+    assert_eq!(read, settings, "read back");
+    assert!(read.legacy_migration.has_decline());
+    // That very offer is not made again; other files, or a newer offer, are.
+    assert!(!read.legacy_migration.should_offer(1, "ABCD"));
+    assert!(read.legacy_migration.should_offer(1, "ABCE"));
+    assert!(read.legacy_migration.should_offer(2, "ABCD"));
+
+    // As the C# settings transfer leaves the decline behind: this computer's own.
+    let (text, _) = settings.export(None, true);
+    assert!(!text.contains("legacy_migration"), "{text}");
+    assert!(!text.contains("ABCD"), "{text}");
+    let forged = format!(
+        "{text}\n[settings.legacy_migration]\ndeclined_offer_version = 9\ndeclined_source_fingerprint = \"FFFF\"\n"
+    );
+    let imported = Settings::default().import(&forged).expect("read");
+    assert_eq!(
+        imported.settings.legacy_migration,
+        LegacyMigration::default(),
+        "a file cannot set it"
+    );
+
+    // A reset keeps it: it is no preference.
+    let mut reset = settings.clone();
+    reset.reset_all();
+    assert_eq!(reset.legacy_migration, settings.legacy_migration);
+
+    // A blank fingerprint written by hand is none.
+    let blank = written(
+        dir.path(),
+        "version = 1\n[legacy_migration]\ndeclined_source_fingerprint = \"  \"\n",
+    );
+    assert_eq!(blank.legacy_migration, LegacyMigration::default());
+}

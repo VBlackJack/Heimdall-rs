@@ -899,7 +899,8 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    assert_eq!(SettingRow::ALL.len(), 60, "no row added");
+    // The last row added, the legacy migration's button, holds no path.
+    assert_eq!(SettingRow::ALL.len(), 61, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1323,4 +1324,55 @@ fn the_known_hosts_import_is_found_marked_flagged_in_the_overview_and_reset() {
     assert!(!shell.app().settings().sync_known_hosts_at_startup);
     let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
     assert!(!saved.sync_known_hosts_at_startup);
+}
+
+/// The C# "Legacy migration" of the Updates card: its button can be pressed only once an
+/// offer was declined, which the hint under it says until then.
+#[test]
+fn the_legacy_migration_is_offered_again_from_the_updates_card_once_declined() {
+    use heimdall_app::LegacyMigrationMessage;
+    use heimdall_core::settings::LegacyMigration;
+
+    const BUTTON: &str = "Offer legacy migration at next startup";
+    const HINT: &str =
+        "This becomes available only after you decline a migration offer at startup.";
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let shown = shell(dir.path());
+    assert_eq!(
+        shown.settings_found("legacy migration"),
+        [SettingRow::LegacyMigration]
+    );
+    assert_eq!(SettingRow::LegacyMigration.card(), SettingsCard::Updates);
+    {
+        let mut ui = simulator(&shown);
+        ui.find(HINT).expect("the hint");
+        ui.click(BUTTON).expect("the button");
+        assert!(
+            !ui.into_messages()
+                .any(|message| matches!(message, Message::App(AppMessage::LegacyMigration(_)))),
+            "nothing declined: nothing to offer again"
+        );
+    }
+
+    let declined = Settings {
+        legacy_migration: LegacyMigration {
+            declined_offer_version: 1,
+            declined_source_fingerprint: Some("ABCD".to_owned()),
+        },
+        ..Settings::default()
+    };
+    declined
+        .save(&settings_path(&dir.path().join("profiles.toml")))
+        .expect("saved");
+    let shown = shell(dir.path());
+    let mut ui = simulator(&shown);
+    assert!(ui.find(HINT).is_err(), "available");
+    ui.click(BUTTON).expect("the button");
+    assert!(ui.into_messages().any(|message| matches!(
+        message,
+        Message::App(AppMessage::LegacyMigration(
+            LegacyMigrationMessage::OfferAgain
+        ))
+    )));
 }

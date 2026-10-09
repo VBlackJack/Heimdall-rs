@@ -171,6 +171,8 @@ pub enum SettingRow {
     UpdateInterval,
     /// The version running, with "Check now" and what it found.
     UpdateVersion,
+    /// "Offer legacy migration at next startup", once an offer was declined.
+    LegacyMigration,
     /// The background check of every server runs.
     Reachability,
     /// Seconds between two background checks.
@@ -277,7 +279,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 60] = [
+    pub const ALL: [Self; 61] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -287,6 +289,7 @@ impl SettingRow {
         Self::UpdateChecks,
         Self::UpdateInterval,
         Self::UpdateVersion,
+        Self::LegacyMigration,
         Self::Reachability,
         Self::ReachabilityInterval,
         Self::ReachabilityTimeout,
@@ -348,9 +351,10 @@ impl SettingRow {
             Self::CollapseTunnelsPanel | Self::PreventSleep | Self::MaxSessions => {
                 SettingsCard::Behavior
             }
-            Self::UpdateChecks | Self::UpdateInterval | Self::UpdateVersion => {
-                SettingsCard::Updates
-            }
+            Self::UpdateChecks
+            | Self::UpdateInterval
+            | Self::UpdateVersion
+            | Self::LegacyMigration => SettingsCard::Updates,
             Self::Reachability
             | Self::ReachabilityInterval
             | Self::ReachabilityTimeout
@@ -471,6 +475,7 @@ impl SettingRow {
             self,
             Self::Language
                 | Self::UpdateVersion
+                | Self::LegacyMigration
                 | Self::Macros
                 | Self::HostKeys
                 | Self::FtpsCertificates
@@ -1210,13 +1215,18 @@ mod tests {
             [
                 SettingRow::UpdateChecks,
                 SettingRow::UpdateInterval,
-                SettingRow::UpdateVersion
+                SettingRow::UpdateVersion,
+                SettingRow::LegacyMigration
             ]
         );
         assert_eq!(SettingsCard::Updates.tab(), SettingsTab::General);
         assert!(
             !SettingRow::UpdateVersion.is_marked(),
             "the version is no choice"
+        );
+        assert!(
+            !SettingRow::LegacyMigration.is_marked(),
+            "the legacy migration offer is no choice"
         );
         let changed = Settings {
             updates: heimdall_core::settings::Updates {

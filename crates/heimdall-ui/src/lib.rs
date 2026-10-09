@@ -49,6 +49,7 @@ pub mod icons;
 mod idle;
 mod integrated_editor;
 pub mod keysym;
+pub mod legacy_migration_view;
 pub mod local_form;
 mod logging;
 mod macros_view;

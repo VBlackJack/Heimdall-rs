@@ -101,6 +101,7 @@ mod hello_gate;
 mod hostkeys_import;
 mod idle_lock;
 mod keep_alive;
+mod legacy_migration;
 mod local_browser;
 mod local_menu;
 mod local_tab;
@@ -168,6 +169,7 @@ pub use gateway_overview::{
 };
 pub use hostkeys_import::{HostKeyRow, HostKeysMessage, HostKeysOutcome, HostKeysPreview};
 pub use idle_lock::{IDLE_POLL, should_auto_lock};
+pub use legacy_migration::{LegacyMigrationDone, LegacyMigrationMessage};
 pub use local_tab::{ElevatedPane, ElevatedState, LocalConfirmation};
 pub use macro_editor::{EntryDraft, EntryField, EntryProblem, MacroDraft, MacroEdit, MacroProblem};
 pub use macros::{MacroMenu, MacroMessage, MacroPlaying, MacroRecording};
@@ -856,6 +858,8 @@ pub enum Message {
     /// The Credential Guard check of [`Effect::CheckCredentialGuard`] answered: the embedded
     /// RDP sessions waiting open, or are refused.
     CredentialGuard(crate::credential_guard::Status),
+    /// About the migration from the legacy PowerShell Heimdall.
+    LegacyMigration(LegacyMigrationMessage),
     /// A change from the Settings page.
     Settings(SettingsMessage),
     /// A step of the terminal macros.
@@ -1116,6 +1120,12 @@ impl fmt::Debug for Message {
             }
             Self::WindowsHello(answer) => write!(f, "WindowsHello({answer:?})"),
             Self::CredentialGuard(status) => write!(f, "CredentialGuard({status:?})"),
+            Self::LegacyMigration(LegacyMigrationMessage::Found(offer)) => {
+                write!(f, "LegacyMigration(Found({}))", offer.is_some())
+            }
+            Self::LegacyMigration(LegacyMigrationMessage::OfferAgain) => {
+                f.write_str("LegacyMigration(OfferAgain)")
+            }
             Self::Settings(message) => write!(f, "Settings({message:?})"),
             // What a macro types is not logged.
             Self::Macro(MacroMessage::NameEdited(_)) => f.write_str("Macro(NameEdited)"),
@@ -1325,6 +1335,10 @@ pub enum Effect {
         /// Heimdall-rs's own.
         store: PathBuf,
     },
+    /// Look for the legacy PowerShell Heimdall walking up from this folder, the program's,
+    /// off the UI thread, with [`crate::rdpmanager::detect`]; answered with
+    /// [`LegacyMigrationMessage::Found`].
+    FindLegacyInstallation(PathBuf),
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1818,6 +1832,7 @@ impl fmt::Debug for Effect {
             Self::VerifyWindowsHello => f.write_str("VerifyWindowsHello"),
             Self::CheckCredentialGuard(_) => f.write_str("CheckCredentialGuard"),
             Self::SyncKnownHosts { .. } => f.write_str("SyncKnownHosts(..)"),
+            Self::FindLegacyInstallation(_) => f.write_str("FindLegacyInstallation(..)"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -2617,6 +2632,11 @@ pub enum Dialog {
     /// Enrol Windows Hello again once the master password opened the vault, its credential
     /// having been found gone, as the C# "Re-enable Windows Hello unlock?".
     ConfirmVaultHelloEnrolAgain,
+    /// Migrate the legacy PowerShell Heimdall found at start, as the C# asks: declined, not
+    /// asked again for the same files.
+    LegacyMigrationOffer(Box<crate::rdpmanager::Offer>),
+    /// What the migration from the legacy PowerShell Heimdall did.
+    LegacyMigrationDone(Box<LegacyMigrationDone>),
     /// The default SSH mode written into every SSH profile, as the C# "Apply to all saved
     /// sessions" asks, with the size of the rewrite.
     ConfirmApplySshMode {
@@ -3109,6 +3129,8 @@ pub struct App {
     /// The user's OpenSSH `known_hosts` was looked at for an import at startup: never
     /// again in this run.
     known_hosts_synced: bool,
+    /// The migration from the legacy PowerShell Heimdall offered at start.
+    legacy_migration: legacy_migration::LegacyMigrationState,
     /// Windows Hello asked before a connection.
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
@@ -3272,6 +3294,7 @@ impl App {
             updates: updates::Updates::new(crate::update_check::running_release()),
             credential_guard: credential_guard_gate::CredentialGuardGate::default(),
             known_hosts_synced: false,
+            legacy_migration: legacy_migration::LegacyMigrationState::default(),
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),
@@ -3632,6 +3655,7 @@ impl App {
             Message::CredentialProvided(answer) => self.provider_answered(*answer),
             Message::WindowsHello(answer) => self.hello_answered(answer),
             Message::CredentialGuard(status) => self.credential_guard_answered(status),
+            Message::LegacyMigration(message) => self.legacy_migration_message(message),
         }
     }
 
@@ -3783,6 +3807,8 @@ impl App {
             }) => effects = self.sudo_mode_off(tab),
             // "Don't restore": answered, the snapshot goes.
             Some(Dialog::RestoreSessions(_)) => self.forget_snapshot(),
+            // "Do not import": not asked again for the same files.
+            Some(Dialog::LegacyMigrationOffer(offer)) => self.decline_legacy_migration(&offer),
             _ => {}
         }
         self.pending_paste = None;
@@ -4751,6 +4777,10 @@ impl App {
             Some(Dialog::ConfirmResetRdpDefaults) => self.confirm_reset_rdp_defaults(),
             Some(Dialog::ConfirmResetAllSettings) => self.confirm_reset_all_settings(),
             Some(Dialog::ConfirmVaultHelloEnrolAgain) => self.enrol_vault_hello_again(),
+            Some(Dialog::LegacyMigrationOffer(offer)) => {
+                self.migrate_legacy(*offer);
+                Vec::new()
+            }
             Some(Dialog::ConfirmApplySshMode { mode, .. }) => self.confirm_apply_ssh_mode(mode),
             Some(Dialog::ConfirmApplyRdpMode { mode, .. }) => self.confirm_apply_rdp_mode(mode),
             Some(Dialog::EditMacro(draft)) => {
@@ -4824,6 +4854,7 @@ impl App {
             }
             Some(
                 Dialog::ImportDone(_)
+                | Dialog::LegacyMigrationDone(_)
                 | Dialog::TrustedHostKeyDetails(_)
                 | Dialog::FileProperties(_)
                 | Dialog::LocalFileProperties(_)

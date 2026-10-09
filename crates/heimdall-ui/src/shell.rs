@@ -23,7 +23,7 @@
 use heimdall_core::settings::{AgentPreference, CtrlKTerminal, CtrlVPaste, ExecutionPolicy};
 use std::collections::HashMap;
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use heimdall_app::files::{
     EntryKind, FilesError, FilesKey, Side, list_local, list_remote, plan_transfer,
@@ -60,7 +60,10 @@ use heimdall_app::{
     VaultDialog, VaultJob, VaultMode, VaultProblem, VaultStatus, VncQuality, connection_events,
     master_password_problem, open_vault, server_text,
 };
-use heimdall_app::{ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello, windows_hello};
+use heimdall_app::{
+    LegacyMigrationMessage, ToolsMessage, VaultHelloMessage, VaultTicket, vault_hello,
+    windows_hello,
+};
 use heimdall_core::folder::FolderError;
 use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
@@ -1844,12 +1847,18 @@ impl Shell {
     }
 
     /// What starts with the application: Credential Guard checked in the background when the
-    /// settings require it, so that the first embedded RDP session does not wait for it; and
-    /// the user's OpenSSH `known_hosts` imported in the background when chosen, as the C#
-    /// does at startup, the folders' permissions already set.
+    /// settings require it, so that the first embedded RDP session does not wait for it; the
+    /// user's OpenSSH `known_hosts` imported in the background when chosen, as the C#
+    /// does at startup, the folders' permissions already set; and the legacy PowerShell
+    /// Heimdall looked for from the program's folder, as the C# does, while no profile is
+    /// saved.
     pub fn start_tasks(&mut self) -> Task<Message> {
         let mut effects = self.app.warm_credential_guard();
         effects.extend(self.app.sync_known_hosts_at_startup());
+        let program_folder = std::env::current_exe()
+            .ok()
+            .and_then(|program| program.parent().map(Path::to_path_buf));
+        effects.extend(self.app.look_for_legacy_installation(program_folder));
         let tasks: Vec<Task<Message>> =
             effects.into_iter().map(|effect| self.run(effect)).collect();
         Task::batch(tasks)
@@ -2671,6 +2680,9 @@ impl Shell {
         // The previous run's sessions, offered once nothing else is asked and the window is
         // open to the user.
         if !self.gated() {
+            // The legacy migration found at start, before the sessions to restore: the PIN
+            // and the master password already given.
+            self.app.offer_legacy_migration();
             self.app.offer_restore();
             // The servers' first background check, once their tree can be seen.
             for effect in self.app.start_reachability() {
@@ -3996,6 +4008,18 @@ impl Shell {
                 .await;
             })
             .discard(),
+            Effect::FindLegacyInstallation(start) => Task::future(async move {
+                // Folders walked and files read: off the UI thread.
+                let found =
+                    tokio::task::spawn_blocking(move || heimdall_app::rdpmanager::detect(&start))
+                        .await
+                        .ok()
+                        .flatten()
+                        .map(Box::new);
+                Message::App(AppMessage::LegacyMigration(LegacyMigrationMessage::Found(
+                    found,
+                )))
+            }),
             Effect::LaunchCitrix { tab, name, launch } => {
                 crate::citrix_view::launch(tab, name, launch)
             }
@@ -8412,6 +8436,32 @@ fn report<'a>(dialog: &Dialog, ok: iced::widget::Button<'a, Message>) -> Element
     )
 }
 
+/// Height the result of the legacy migration scrolls past, as the C# message box grows no
+/// taller than the screen allows.
+const LEGACY_MIGRATION_RESULT_HEIGHT: f32 = 360.0;
+
+/// What the migration from the legacy PowerShell Heimdall did: a warning when something was
+/// left out, as the C# `MigrationPresentationPolicy`.
+fn legacy_migration_done<'a>(
+    done: &heimdall_app::LegacyMigrationDone,
+    ok: iced::widget::Button<'a, Message>,
+) -> Element<'a, Message> {
+    let (title, lines, warns) = crate::legacy_migration_view::done(done);
+    let severity = if warns {
+        Severity::Warning
+    } else {
+        Severity::Info
+    };
+    let lines =
+        Column::with_children(lines.into_iter().map(|line| text(line).into())).spacing(spacing::SM);
+    dialog_parts::message(
+        severity,
+        title,
+        container(styles::scroll(lines)).max_height(LEGACY_MIGRATION_RESULT_HEIGHT),
+        dialog_parts::buttons([ok]),
+    )
+}
+
 /// The preview of an import, a table of what the file gives to choose from.
 fn import_preview(dialog: &Dialog) -> Element<'_, Message> {
     match dialog {
@@ -11893,6 +11943,18 @@ fn dialog_view<'a>(dialog: &'a Dialog, forms: &Forms<'a>) -> Element<'a, Message
             crate::trusted_keys_view::forget_server_question(key, *count)
         }
         Dialog::ImportDone(summary) => import_report(summary, ok_button()),
+        Dialog::LegacyMigrationOffer(offer) => {
+            let (title, body, decline, confirm) = crate::legacy_migration_view::offer(offer);
+            // As the C# `ShowConfirm` at start, its question naming what was found.
+            dialog_parts::choice(
+                Severity::Info,
+                title,
+                dialog_parts::body(body),
+                decline,
+                confirm,
+            )
+        }
+        Dialog::LegacyMigrationDone(done) => legacy_migration_done(done, ok_button()),
         Dialog::RestoreSessions(dialog) => crate::restore_view::view(dialog),
         Dialog::Shortcuts => crate::shortcuts_view::view(ok_button()),
         Dialog::FileProperties(properties) => {
