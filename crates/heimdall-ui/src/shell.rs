@@ -2617,6 +2617,9 @@ impl Shell {
             Message::DropGathered(crate::drop_batch::DropPlace::Floating(window)) => {
                 return self.floating_drop_gathered(window);
             }
+            Message::DropGathered(place) if self.hash_drop_target().is_some() => {
+                return self.hash_drop_gathered(place);
+            }
             message @ (Message::FilesHovered(_) | Message::DropGathered(_)) => {
                 self.drop_message(&message)
             }
@@ -5429,6 +5432,31 @@ impl Shell {
             .active_tab()
             .filter(|tab| !self.settings_shown() && takes_drops(tab))
             .map(|tab| tab.id)
+    }
+
+    /// The hash generator's tab shown, which takes a file dropped on the window as the C#
+    /// view takes one dropped on it.
+    fn hash_drop_target(&self) -> Option<TabId> {
+        self.app
+            .active_tab()
+            .filter(|tab| {
+                !self.settings_shown() && tab.tool() == Some(heimdall_app::tools::ToolId::Hash)
+            })
+            .map(|tab| tab.id)
+    }
+
+    /// A drop's files all come on the hash generator: the first hashed, as the C#
+    /// `OnDrop` takes `files[0]`.
+    fn hash_drop_gathered(&mut self, place: crate::drop_batch::DropPlace) -> Task<Message> {
+        let first = self.drops.take(place).into_iter().next();
+        match (self.hash_drop_target(), first) {
+            (Some(tab), Some(path)) => self.tools.update(
+                tab,
+                crate::tools::ToolMessage::Hash(crate::tools::HashMessage::Picked(Some(path))),
+                self.main_window,
+            ),
+            _ => Task::none(),
+        }
     }
 
     /// Files dragged over the window, or a drop's files all come: sent together to the

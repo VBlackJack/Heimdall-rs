@@ -30,15 +30,20 @@ mod base64_tool;
 pub mod catalog;
 mod chmod_tool;
 mod crontab_tool;
+mod crypto_parts;
 mod datetime_tool;
 mod diff_tool;
+mod hash_tool;
+mod hmac_tool;
 mod ip_converter_tool;
 mod json_tool;
+mod jwt_tool;
 mod network_calculator_tool;
 mod regex_tool;
 mod ssh_config_tool;
 mod subnet_tool;
 mod text_case_tool;
+mod totp_tool;
 mod ulid_tool;
 mod url_tool;
 mod uuid_tool;
@@ -48,6 +53,7 @@ use std::time::Duration;
 
 use heimdall_app::tools::{ToolCategory, ToolGroup, ToolId};
 use heimdall_app::{App, TabId};
+use heimdall_core::tools::hash_computer::HashAlgorithm;
 use iced::advanced::text::highlighter::PlainText;
 use iced::widget::text_editor::{self, Action, Content};
 use iced::widget::{Column, button, column, container, row, scrollable, text, tooltip};
@@ -58,13 +64,17 @@ pub use chmod_tool::ChmodMessage;
 pub use crontab_tool::{CronOption, CrontabMessage};
 pub use datetime_tool::{DateField, DateTimeMessage, ZoneChoice};
 pub use diff_tool::{Computed as DiffComputed, DiffMessage, compute as compute_diff};
+pub use hash_tool::HashMessage;
+pub use hmac_tool::HmacMessage;
 pub use ip_converter_tool::{IpConverterMessage, IpField};
 pub use json_tool::JsonMessage;
+pub use jwt_tool::JwtMessage;
 pub use network_calculator_tool::{NetCalcField, NetCalcMessage, NetCalcMode};
 pub use regex_tool::RegexMessage;
 pub use ssh_config_tool::{SshConfigMessage, SshField};
 pub use subnet_tool::{SubnetField, SubnetMessage};
 pub use text_case_tool::TextCaseMessage;
+pub use totp_tool::TotpMessage;
 pub use ulid_tool::UlidMessage;
 pub use url_tool::UrlMessage;
 pub use uuid_tool::UuidMessage;
@@ -151,6 +161,10 @@ pub fn label(tool: ToolId) -> String {
         ToolId::SubnetCalculator => fl!("ui-tool-subnet-name"),
         ToolId::IpConverter => fl!("ui-tool-ipconv-name"),
         ToolId::NetworkCalculator => fl!("ui-tool-netcalc-name"),
+        ToolId::Hash => fl!("ui-tool-hash-name"),
+        ToolId::Hmac => fl!("ui-tool-hmac-name"),
+        ToolId::Jwt => fl!("ui-tool-jwt-name"),
+        ToolId::Totp => fl!("ui-tool-totp-name"),
         ToolId::Base64 => fl!("ui-tool-base64-name"),
         ToolId::UrlEncoder => fl!("ui-tool-urlenc-name"),
         ToolId::JsonFormatter => fl!("ui-tool-json-name"),
@@ -173,6 +187,10 @@ pub fn description(tool: ToolId) -> String {
         ToolId::SubnetCalculator => fl!("ui-tool-subnet-description"),
         ToolId::IpConverter => fl!("ui-tool-ipconv-description"),
         ToolId::NetworkCalculator => fl!("ui-tool-netcalc-description"),
+        ToolId::Hash => fl!("ui-tool-hash-description"),
+        ToolId::Hmac => fl!("ui-tool-hmac-description"),
+        ToolId::Jwt => fl!("ui-tool-jwt-description"),
+        ToolId::Totp => fl!("ui-tool-totp-description"),
         ToolId::Base64 => fl!("ui-tool-base64-description"),
         ToolId::UrlEncoder => fl!("ui-tool-urlenc-description"),
         ToolId::JsonFormatter => fl!("ui-tool-json-description"),
@@ -195,6 +213,10 @@ pub const fn icon(tool: ToolId) -> Icon {
         ToolId::SubnetCalculator => Icon::ToolSubnet,
         ToolId::IpConverter => Icon::ToolIpConverter,
         ToolId::NetworkCalculator => Icon::ToolNetworkCalculator,
+        // The C# registry draws both with the same geometry.
+        ToolId::Hash | ToolId::Hmac => Icon::ToolHash,
+        ToolId::Jwt => Icon::ToolJwt,
+        ToolId::Totp => Icon::ToolTotp,
         ToolId::Base64 => Icon::ToolBase64,
         ToolId::UrlEncoder => Icon::ToolUrlEncoder,
         ToolId::JsonFormatter => Icon::ToolJson,
@@ -266,6 +288,18 @@ pub fn page_matches(tool: ToolId, search: &str) -> bool {
 /// A copy button of a tool, by what it copies.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CopySlot {
+    /// A digest of the hash generator, by its algorithm.
+    HashDigest(HashAlgorithm),
+    /// The HMAC generator's output.
+    HmacOutput,
+    /// The JWT parser's header.
+    JwtHeader,
+    /// The JWT parser's payload.
+    JwtPayload,
+    /// The JWT parser's signature.
+    JwtSignature,
+    /// The TOTP generator's code.
+    TotpCode,
     /// The Base64 output.
     Base64Output,
     /// The URL encoder's decoded text.
@@ -317,6 +351,14 @@ pub enum ToolMessage {
     CloseHelp,
     /// The check mark of copy number `.0` has been shown long enough.
     CopyShown(u64),
+    /// The hash generator's.
+    Hash(HashMessage),
+    /// The HMAC generator's.
+    Hmac(HmacMessage),
+    /// The JWT parser's.
+    Jwt(JwtMessage),
+    /// The TOTP generator's.
+    Totp(TotpMessage),
     /// The Base64 tool's.
     Base64(Base64Message),
     /// The URL encoder's.
@@ -352,6 +394,10 @@ pub enum ToolMessage {
 /// A tool's own state.
 #[derive(Debug)]
 enum Pane {
+    Hash(hash_tool::HashPane),
+    Hmac(hmac_tool::HmacPane),
+    Jwt(jwt_tool::JwtPane),
+    Totp(totp_tool::TotpPane),
     Base64(base64_tool::Base64Pane),
     Url(url_tool::UrlPane),
     Uuid(uuid_tool::UuidPane),
@@ -383,6 +429,10 @@ impl ToolPane {
     /// A new tab's state for `tool`, as the C# view's `Initialize`.
     fn new(tool: ToolId) -> Self {
         let pane = match tool {
+            ToolId::Hash => Pane::Hash(hash_tool::HashPane::default()),
+            ToolId::Hmac => Pane::Hmac(hmac_tool::HmacPane::default()),
+            ToolId::Jwt => Pane::Jwt(jwt_tool::JwtPane::new()),
+            ToolId::Totp => Pane::Totp(totp_tool::TotpPane::default()),
             ToolId::Base64 => Pane::Base64(base64_tool::Base64Pane::default()),
             ToolId::UrlEncoder => Pane::Url(url_tool::UrlPane::default()),
             ToolId::Uuid => Pane::Uuid(uuid_tool::UuidPane::new()),
@@ -483,6 +533,32 @@ impl ToolPanes {
                 if state.copied.is_some_and(|(_, shown)| shown == copy) {
                     state.copied = None;
                 }
+            }
+            (ToolMessage::Hash(message), Pane::Hash(pane)) => {
+                return match pane.update(message) {
+                    hash_tool::Outcome::Copy(kind, content) => {
+                        state.copy(tab, CopySlot::HashDigest(kind), content)
+                    }
+                    outcome => outcome.task(tab, main),
+                };
+            }
+            (ToolMessage::Hmac(message), Pane::Hmac(pane)) => {
+                if let Some(content) = pane.update(message) {
+                    return state.copy(tab, CopySlot::HmacOutput, content);
+                }
+            }
+            (ToolMessage::Jwt(message), Pane::Jwt(pane)) => {
+                if let Some((slot, content)) = pane.update(message) {
+                    return state.copy(tab, slot, content);
+                }
+            }
+            (ToolMessage::Totp(message), Pane::Totp(pane)) => {
+                return match pane.update(message) {
+                    totp_tool::Outcome::Copy(content) => {
+                        state.copy(tab, CopySlot::TotpCode, content)
+                    }
+                    outcome => outcome.task(tab),
+                };
             }
             (ToolMessage::Base64(message), Pane::Base64(pane)) => {
                 return match pane.update(message) {
@@ -625,6 +701,10 @@ pub fn view<'a>(
     };
     let marks = Marks::of(theme);
     let (title, help) = match tool {
+        ToolId::Hash => (fl!("ui-tool-hash-title"), fl!("ui-tool-hash-help")),
+        ToolId::Hmac => (fl!("ui-tool-hmac-title"), fl!("ui-tool-hmac-help")),
+        ToolId::Jwt => (fl!("ui-tool-jwt-title"), fl!("ui-tool-jwt-help")),
+        ToolId::Totp => (fl!("ui-tool-totp-title"), fl!("ui-tool-totp-help")),
         ToolId::Base64 => (fl!("ui-tool-base64-title"), fl!("ui-tool-base64-help")),
         ToolId::UrlEncoder => (fl!("ui-tool-urlenc-title"), fl!("ui-tool-urlenc-help")),
         ToolId::JsonFormatter => (fl!("ui-tool-json-title"), fl!("ui-tool-json-help")),
@@ -645,6 +725,10 @@ pub fn view<'a>(
         ),
     };
     let (body, actions) = match &state.pane {
+        Pane::Hash(pane) => (pane.view(tab, state), None),
+        Pane::Hmac(pane) => (pane.view(tab, state), None),
+        Pane::Jwt(pane) => (pane.view(tab, state), None),
+        Pane::Totp(pane) => (pane.view(tab, state), None),
         Pane::Base64(pane) => (pane.view(tab, state), None),
         Pane::Url(pane) => (pane.view(tab, state), None),
         Pane::Uuid(pane) => (pane.view(tab, state), None),

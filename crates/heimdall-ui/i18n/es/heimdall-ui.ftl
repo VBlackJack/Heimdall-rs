@@ -2313,6 +2313,128 @@ ui-tool-uuid-help =
 
     Uso:
     Haz clic en Generar para crear UUID. Admite v4 (aleatorio) con varias opciones de formato (estándar, mayúsculas, sin guiones, URN).
+ui-tool-hash-name = Generador de hash
+ui-tool-hash-description = Generador de hash de archivos y texto (MD5, SHA-1, SHA-256, SHA-512)
+ui-tool-hash-title = Generador de hash
+ui-tool-hash-input = Texto de entrada
+ui-tool-hash-placeholder = texto para calcular hash
+ui-tool-hash-drop-zone = Suelta un archivo aquí o haz clic en Examinar para calcular su hash
+ui-tool-hash-browse = Examinar archivo
+ui-tool-hash-clear-file = Borrar archivo
+ui-tool-hash-hashing = Calculando hash del archivo...
+ui-tool-hash-empty = Introduce texto o busca un archivo para calcular hashes.
+ui-tool-hash-results = Resultados del hash
+ui-tool-hash-copy = Copiar
+ui-tool-hash-save = Guardar
+ui-tool-hash-verify = Hash esperado (verificar)
+ui-tool-hash-verify-placeholder = pega el hash a verificar
+ui-tool-hash-byte-length = { $count } bytes
+ui-tool-hash-file-status = { $name } - { $size }
+ui-tool-hash-too-large = El archivo supera el tamaño máximo ({ $size }).
+ui-tool-hash-not-found = Archivo no encontrado.
+ui-tool-hash-access-denied = Acceso denegado al archivo.
+ui-tool-hash-error = No se pudo calcular el hash del archivo.
+ui-tool-hash-match = ✓ Coincide ({ $algorithm })
+ui-tool-hash-no-match = ✗ No coincide
+ui-tool-hash-all-files = Todos los archivos (*.*)
+ui-tool-hash-help =
+    Generador de hash
+
+    Calcula hashes criptográficos de un texto de entrada o de archivos.
+
+    Uso:
+    1. Escribe o pega texto en el campo de entrada, O
+    2. Arrastra y suelta un archivo (o haz clic en Examinar)
+    3. Todos los valores de hash se calculan simultáneamente
+
+    Algoritmos admitidos:
+    - MD5 (128 bits)
+    - SHA-1 (160 bits)
+    - SHA-256 (256 bits)
+    - SHA-384 (384 bits)
+    - SHA-512 (512 bits)
+    - SHA3-256 (256 bits, si se admite)
+
+    Modo de verificación:
+    Pega un hash conocido en el campo Verificar para comprobar si coincide. El algoritmo coincidente se detecta automáticamente por la longitud del hash.
+
+    Ejemplos:
+    - Escribe "hello" - SHA-256: 2cf24dba...
+    - Suelta un archivo - Verificar frente a una suma de comprobación conocida
+ui-tool-hmac-name = Generador de HMAC
+ui-tool-hmac-description = Generador de código de autenticación de mensajes HMAC
+ui-tool-hmac-title = Generador de HMAC
+ui-tool-hmac-algorithm = Algoritmo
+ui-tool-hmac-key = Clave secreta
+ui-tool-hmac-key-placeholder = clave secreta
+ui-tool-hmac-toggle-key = Mostrar/ocultar clave
+ui-tool-hmac-input = Texto del mensaje
+ui-tool-hmac-input-placeholder = mensaje
+ui-tool-hmac-format = Formato de salida
+ui-tool-hmac-format-hex = Hex
+ui-tool-hmac-format-base64 = Base64
+ui-tool-hmac-empty = Introduce una clave y un mensaje para calcular el HMAC.
+ui-tool-hmac-output = Salida HMAC
+ui-tool-hmac-copy = Copiar
+ui-tool-hmac-byte-length = { $bytes } bytes ({ $bits } bits)
+ui-tool-hmac-verify = HMAC esperado (verificar)
+ui-tool-hmac-verify-placeholder = pega el HMAC a verificar
+ui-tool-hmac-match = Coincide
+ui-tool-hmac-no-match = No coincide
+ui-tool-hmac-help =
+    Generador de HMAC
+
+    Calcula códigos de autenticación de mensajes con clave (hash).
+
+    Uso:
+    Introduce un mensaje y una clave secreta, luego selecciona un algoritmo (SHA-256, SHA-512, etc.) para calcular el HMAC.
+ui-tool-jwt-name = Analizador JWT
+ui-tool-jwt-description = Decodificador y validador de JSON Web Tokens
+ui-tool-jwt-title = Analizador JWT
+ui-tool-jwt-input = Pega el token JWT
+ui-tool-jwt-placeholder = pega el token JWT (encabezado.carga.firma)
+ui-tool-jwt-empty = Pega un token JWT para decodificar su encabezado, carga útil y firma.
+ui-tool-jwt-error-format = Formato JWT no válido. Un JWT debe contener exactamente 3 partes separadas por puntos.
+ui-tool-jwt-error-decode = No se pudo decodificar el JWT. Comprueba que el token sea Base64Url válido.
+ui-tool-jwt-expired = Caducado: { $date }
+ui-tool-jwt-valid = Válido hasta: { $date }
+ui-tool-jwt-no-expiry = No se encontró ninguna declaración de caducidad (exp)
+ui-tool-jwt-header = Encabezado
+ui-tool-jwt-payload = Carga útil
+ui-tool-jwt-signature = Firma
+ui-tool-jwt-copy = Copiar
+ui-tool-jwt-verify-title = Verificación de firma
+ui-tool-jwt-unsupported = La verificación RSA/ECDSA requiere una clave pública (no admitida)
+ui-tool-jwt-secret = Secreto HMAC
+ui-tool-jwt-verify = Verificar
+ui-tool-jwt-signature-valid = La firma es válida
+ui-tool-jwt-signature-invalid = La firma no es válida
+ui-tool-jwt-help =
+    Analizador JWT
+
+    Decodifica e inspecciona JSON Web Tokens.
+
+    Uso:
+    Pega un JWT para ver su encabezado, carga útil y firma. La caducidad y las declaraciones se muestran en un formato legible.
+ui-tool-totp-name = Generador de TOTP
+ui-tool-totp-description = Generador de contraseñas de un solo uso basadas en tiempo (2FA/MFA)
+ui-tool-totp-title = Generador de TOTP
+ui-tool-totp-secret = Clave secreta (Base32)
+ui-tool-totp-secret-placeholder = clave secreta Base32
+ui-tool-totp-start = Iniciar
+ui-tool-totp-code = Código actual
+ui-tool-totp-copy = Copiar
+ui-tool-totp-remaining = { $seconds }s restantes
+ui-tool-totp-info = Introduce una clave secreta codificada en Base32 (como la que proporcionan Google Authenticator, Authy, etc.) para generar contraseñas de un solo uso basadas en tiempo (TOTP). Los códigos se renuevan cada 30 segundos.
+ui-tool-totp-error-required = Introduce una clave secreta.
+ui-tool-totp-error-base32 = Codificación Base32 no válida. Usa solo caracteres A-Z y 2-7.
+ui-tool-totp-help =
+    Generador de TOTP
+
+    Genera contraseñas de un solo uso basadas en tiempo (RFC 6238).
+
+    Uso:
+    Introduce una clave secreta en Base32 para generar códigos TOTP que se renuevan cada 30 segundos.
 ui-tool-copy-value = Copiar
 ui-tool-number-group-separator = {"."}
 ui-tool-number-decimal-separator = {","}
