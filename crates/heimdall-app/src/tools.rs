@@ -100,6 +100,14 @@ pub enum ToolId {
     Base64,
     /// The URL encoder and decoder, the C# `URLENC`.
     UrlEncoder,
+    /// The JSON formatter, the C# `JSON`.
+    JsonFormatter,
+    /// The regular expression tester, the C# `REGEX`.
+    RegexTester,
+    /// The text comparison, the C# `DIFF`.
+    TextDiff,
+    /// The text case converter, the C# `TEXTCASE`.
+    TextCase,
     /// The UUID generator, the C# `UUID`.
     Uuid,
 }
@@ -120,13 +128,17 @@ pub struct ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 11] = [
         Self::Hash,
         Self::Hmac,
         Self::Jwt,
         Self::Totp,
         Self::Base64,
         Self::UrlEncoder,
+        Self::JsonFormatter,
+        Self::RegexTester,
+        Self::TextDiff,
+        Self::TextCase,
         Self::Uuid,
     ];
 
@@ -168,6 +180,30 @@ impl ToolId {
                 code: "URLENC",
                 category: ToolCategory::Encoding,
                 prefixes: &["url", "urlencode"],
+                network: false,
+            },
+            Self::JsonFormatter => ToolDescriptor {
+                code: "JSON",
+                category: ToolCategory::Encoding,
+                prefixes: &["json"],
+                network: false,
+            },
+            Self::RegexTester => ToolDescriptor {
+                code: "REGEX",
+                category: ToolCategory::Encoding,
+                prefixes: &["regex"],
+                network: false,
+            },
+            Self::TextDiff => ToolDescriptor {
+                code: "DIFF",
+                category: ToolCategory::Encoding,
+                prefixes: &["diff"],
+                network: false,
+            },
+            Self::TextCase => ToolDescriptor {
+                code: "TEXTCASE",
+                category: ToolCategory::Encoding,
+                prefixes: &["case", "textcase"],
                 network: false,
             },
             Self::Uuid => ToolDescriptor {

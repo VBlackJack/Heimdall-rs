@@ -15,12 +15,17 @@
  */
 
 //! The engines of the built-in tools, as the C# `Heimdall.Core` `Codecs`, `Identifiers`,
-//! `Hashing`, `Otp` and `Jwt`: what a tool computes, apart from how its tab shows it.
+//! `Matching`, `Hashing`, `Otp` and `Jwt`: what a tool computes, apart from how its tab
+//! shows it.
 
 pub mod base64_codec;
+pub mod diff_engine;
 pub mod hash_computer;
 pub mod hmac_computer;
+pub mod json_codec;
 pub mod jwt_parser;
+pub mod regex_engine;
+pub mod text_case_codec;
 pub mod totp_generator;
 pub mod url_codec;
 pub mod uuid_generator;

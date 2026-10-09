@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-//! What the hash, HMAC, JWT and TOTP tools draw alike, as the C# tool views do: a label
-//! over a field, the empty state, a line said in a colour, a box of a colour of its own.
+//! What the hash, HMAC, JWT and TOTP tools draw alike, as the C# tool views do: the empty
+//! state of a page that scrolls, a line said in a colour, a box of a colour of its own.
 
 use iced::widget::text_editor::{self, Content};
 use iced::widget::{container, text};
@@ -24,9 +24,6 @@ use iced::{Background, Border, Color, Element, Length, Theme};
 use crate::shell::Message;
 use crate::styles;
 use crate::tokens::{font_size, radius};
-
-/// Room around an empty state, as the C# `ToolEmptyStateStyle`'s padding.
-const EMPTY_STATE_PADDING: f32 = 24.0;
 
 /// How strongly a status colour fills its box, as the C# JWT expiry's 40 of 255.
 pub const OVERLAY_ALPHA: f32 = 40.0 / 255.0;
@@ -42,23 +39,16 @@ pub enum Tone {
     Error,
 }
 
-/// A label over a field, as the C# labels in the secondary text.
-pub fn field_label<'a>(label: String) -> Element<'a, Message> {
-    text(label)
-        .size(font_size::BODY)
-        .style(text::secondary)
-        .into()
-}
-
 /// What a tool shows before it has a result, as the C# `ToolEmptyStateStyle`: its hint,
-/// centred.
+/// centred across. These tools' pages scroll, which [`super::empty_state`], filling the
+/// height left, cannot be part of.
 pub fn empty_state<'a>(hint: String) -> Element<'a, Message> {
     container(
         text(hint)
             .size(font_size::BODY_LARGE)
             .style(text::secondary),
     )
-    .padding(EMPTY_STATE_PADDING)
+    .padding(super::EMPTY_STATE_PADDING)
     .center_x(Length::Fill)
     .into()
 }

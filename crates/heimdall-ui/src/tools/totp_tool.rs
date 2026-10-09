@@ -283,7 +283,7 @@ impl TotpPane {
             let left = f32::from(u8::try_from(self.remaining).unwrap_or_default());
             container(
                 column![
-                    crypto_parts::field_label(fl!("ui-tool-totp-code")),
+                    super::field_label(fl!("ui-tool-totp-code")),
                     row![
                         text(&self.code)
                             .size(CODE_SIZE)
@@ -303,10 +303,7 @@ impl TotpPane {
                     ]
                     .spacing(CODE_GAP)
                     .align_y(Alignment::Center),
-                    crypto_parts::field_label(fl!(
-                        "ui-tool-totp-remaining",
-                        seconds = self.remaining
-                    )),
+                    super::field_label(fl!("ui-tool-totp-remaining", seconds = self.remaining)),
                     progress_bar(0.0..=step, left)
                         .length(BAR_WIDTH)
                         .girth(BAR_HEIGHT),
@@ -319,20 +316,17 @@ impl TotpPane {
             .style(styles::card)
         });
         super::content_column(
-            column![
-                crypto_parts::field_label(fl!("ui-tool-totp-secret")),
-                secret,
-            ]
-            .push(error)
-            .push(iced::widget::space().height(SECTION_GAP - spacing::SM))
-            .push(card)
-            .push(crypto_parts::said(
-                fl!("ui-tool-totp-info"),
-                Tone::Quiet,
-                font_size::CAPTION,
-                false,
-            ))
-            .spacing(spacing::SM),
+            column![super::field_label(fl!("ui-tool-totp-secret")), secret,]
+                .push(error)
+                .push(iced::widget::space().height(SECTION_GAP - spacing::SM))
+                .push(card)
+                .push(crypto_parts::said(
+                    fl!("ui-tool-totp-info"),
+                    Tone::Quiet,
+                    font_size::CAPTION,
+                    false,
+                ))
+                .spacing(spacing::SM),
         )
     }
 }

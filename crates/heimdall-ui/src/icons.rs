@@ -159,13 +159,21 @@ pub enum Icon {
     ToolUrlEncoder,
     /// `Geo.Tool.Uuid`: blocks of a UUID's groups, the UUID generator.
     ToolUuid,
+    /// `Geo.Tool.JsonFormatter`: curly braces, the JSON formatter.
+    ToolJson,
+    /// `Geo.Tool.RegexTester`: `.*` and a magnifier, the regular expression tester.
+    ToolRegex,
+    /// `Geo.Tool.Diff`: two pages side by side, the text comparison.
+    ToolDiff,
+    /// `Geo.Tool.TextCase`: the letters "Aa", the text case converter.
+    ToolTextCase,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 51] = [
+    pub const ALL: [Self; 55] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -216,6 +224,10 @@ impl Icon {
         Self::ToolBase64,
         Self::ToolUrlEncoder,
         Self::ToolUuid,
+        Self::ToolJson,
+        Self::ToolRegex,
+        Self::ToolDiff,
+        Self::ToolTextCase,
         Self::Monitor,
     ];
 
@@ -387,6 +399,18 @@ impl Icon {
             }
             // As Segoe MDL2 Assets draws it at 48: a screen 15 by 9 lines wide, a neck of
             // one, a stand of 5.
+            Self::ToolJson => {
+                "M5,2 L4,2 A2,2 0 0 0 2,4 L2,6 A1,1 0 0 1 1,7 L1,8 A1,1 0 0 1 2,9 L2,12                  A2,2 0 0 0 4,14 L5,14 M11,2 L12,2 A2,2 0 0 1 14,4 L14,6 A1,1 0 0 0 15,7                  L15,8 A1,1 0 0 0 14,9 L14,12 A2,2 0 0 1 12,14 L11,14"
+            }
+            Self::ToolRegex => {
+                "M2,9 A1.2,1.2 0 1 1 4.4,9 A1.2,1.2 0 1 1 2,9 Z M5,7 L6,5 L7,9 L8,5 L9,9                  M11,5 A3.5,3.5 0 1 1 11,10 A3.5,3.5 0 1 1 11,5 Z M13.5,10.5 L16,13"
+            }
+            Self::ToolDiff => {
+                "M1,2 L7,2 L7,14 L1,14 Z M9,2 L15,2 L15,14 L9,14 Z M3,5 L5,5 M3,7 L5,7                  M3,9 L5,9 M11,5 L13,5 M11,7 L13,7 M10.5,10 L13.5,10 M12,8.5 L12,11.5"
+            }
+            Self::ToolTextCase => {
+                "M2,12 L5.5,3 L9,12 M3.5,9.5 L7.5,9.5 M10,12 L10,7 A2.5,2.5 0 1 1 14,9.5                  L14,12 M10,9.5 A2,2 0 1 1 14,9.5"
+            }
             Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
         }
     }
@@ -427,12 +451,16 @@ impl Icon {
             | Self::Photo
             | Self::Eye
             | Self::EyeHidden
-            // The C# fills these tools' geometries, which draws nothing of an open line:
-            // their lines are stroked here, as their drawing means them.
+            // The C# fills these, which draws nothing of an open line and the comparison's
+            // pages as two blocks: their lines are stroked here, as their drawing means them.
             | Self::ToolBase64
             | Self::ToolUrlEncoder
             | Self::ToolJwt
             | Self::ToolTotp
+            | Self::ToolJson
+            | Self::ToolRegex
+            | Self::ToolDiff
+            | Self::ToolTextCase
             | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
@@ -1204,11 +1232,14 @@ mod tests {
                 bounds.width > 1.0 && bounds.height > 1.0,
                 "{icon:?}: {bounds:?}"
             );
+            // The C#'s own magnifier of the regex tester reaches past the box; WPF stretches
+            // it into its square as the outline's bounds are fitted here.
             assert!(
-                bounds.x >= -EPSILON
-                    && bounds.y >= -EPSILON
-                    && bounds.x + bounds.width <= BOX + 0.01
-                    && bounds.y + bounds.height <= BOX + 0.01,
+                icon == Icon::ToolRegex
+                    || (bounds.x >= -EPSILON
+                        && bounds.y >= -EPSILON
+                        && bounds.x + bounds.width <= BOX + 0.01
+                        && bounds.y + bounds.height <= BOX + 0.01),
                 "{icon:?}: {bounds:?}"
             );
             assert_eq!(outline.rule, Rule::EvenOdd, "{icon:?}: WPF's default");

@@ -15,8 +15,8 @@
  */
 
 //! The Tools area drawn headless: the sidebar's "Sessions | Tools" and Ctrl+Shift+T, its
-//! Tools tab and filter, the Tools page with its sections, cards and pins, and a tool opened
-//! in its tab.
+//! Tools tab and filter, the Tools page with its sections, cards and pins, and each tool
+//! opened in its tab.
 //!
 //! Strings are the fallback language's (English): the tests never select a language.
 //! Setting `HEIMDALL_SNAPSHOT_DIR` writes a PNG of each state there, for a visual pass.
@@ -24,16 +24,22 @@
 mod common;
 
 use std::path::Path;
+use std::sync::Arc;
 
 use heimdall_app::tools::{SidebarTab, ToolCategory, ToolGroup, ToolId};
-use heimdall_app::{App, AppConfig, Message as AppMessage, TabProfile, ToolsMessage};
+use heimdall_app::{App, AppConfig, Message as AppMessage, TabId, TabProfile, ToolsMessage};
+use heimdall_core::tools::diff_engine::DiffOptions;
+use heimdall_core::tools::text_case_codec::TextCaseStyle;
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
 use heimdall_ui::shell::{Destination, Message, Shell, sidebar_tab_id};
 use heimdall_ui::terminal_view::FONTS;
 use heimdall_ui::terminal_view::keys::{WindowShortcut, window_shortcut};
-use heimdall_ui::tools::{self, ToolMessage, catalog};
+use heimdall_ui::tools::{
+    self, DiffMessage, JsonMessage, RegexMessage, TextCaseMessage, ToolMessage, catalog,
+};
 use iced::keyboard::{self, key::Physical};
+use iced::widget::text_editor::{Action, Edit};
 use iced::{Settings, Size};
 
 /// Size of the simulated window, in logical pixels.
@@ -172,7 +178,14 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             ),
             (
                 ToolGroup::Category(ToolCategory::Encoding),
-                vec![ToolId::Base64, ToolId::UrlEncoder]
+                vec![
+                    ToolId::Base64,
+                    ToolId::JsonFormatter,
+                    ToolId::RegexTester,
+                    ToolId::TextCase,
+                    ToolId::TextDiff,
+                    ToolId::UrlEncoder
+                ]
             ),
             (
                 ToolGroup::Category(ToolCategory::System),
@@ -245,7 +258,7 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("SECURITY").expect("category");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("7 tools").expect("count");
+        ui.find("11 tools").expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");
@@ -419,13 +432,6 @@ fn every_tool_has_a_name_a_description_and_texts_in_every_language() {
     assert!(help.contains("\n\n"), "{help:?}");
 }
 
-/// `typed` pasted into a tool's box, as the user pastes it.
-fn paste(typed: &str) -> iced::widget::text_editor::Action {
-    iced::widget::text_editor::Action::Edit(iced::widget::text_editor::Edit::Paste(
-        std::sync::Arc::new(typed.to_owned()),
-    ))
-}
-
 #[test]
 fn the_hash_tool_hashes_as_it_is_typed_checks_a_hash_and_takes_a_file_dropped() {
     let dir = tempfile::tempdir().expect("dir");
@@ -576,4 +582,207 @@ fn the_totp_tool_refuses_a_bad_secret_and_shows_the_code_of_a_good_one() {
         message,
         Message::Tool(id, ToolMessage::Totp(tools::TotpMessage::Copy)) if id == tab
     )));
+}
+
+/// `text` pasted in a box.
+fn paste(text: &str) -> Action {
+    Action::Edit(Edit::Paste(Arc::new(text.to_owned())))
+}
+
+/// `tool` opened in a new window, and its tab.
+fn opened(dir: &Path, tool: ToolId) -> (Shell, TabId) {
+    let mut shell = Shell::with_app(app(dir));
+    let _ = shell.update(Message::OpenTool(tool));
+    let tab = shell.app().tabs[0].id;
+    (shell, tab)
+}
+
+#[test]
+fn the_json_formatter_prettifies_from_its_button_and_says_the_length() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::JsonFormatter);
+    let send = |message| Message::Tool(tab, ToolMessage::Json(message));
+    let _ = shell.update(send(JsonMessage::Input(paste("{\"a\":[1,2]}"))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Paste JSON and press Prettify or Minify.")
+            .expect("empty state");
+        ui.find("Input JSON").expect("label");
+        ui.click("Prettify").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(id, ToolMessage::Json(JsonMessage::Prettify)) if id == tab
+        )));
+    }
+    let _ = shell.update(send(JsonMessage::Prettify));
+    // Five line breaks, of two characters on Windows as .NET writes them there.
+    let count = if cfg!(windows) { 34 } else { 29 };
+    {
+        let mut ui = simulator(&shell);
+        ui.find(format!("Prettified ({count} characters)"))
+            .expect("status");
+        ui.find("Copy output").expect("copy");
+    }
+    snapshot(&shell, "tools-json.png");
+    let _ = shell.update(send(JsonMessage::Minify));
+    let mut ui = simulator(&shell);
+    ui.find("Minified (11 characters)").expect("status");
+}
+
+#[test]
+fn the_regex_tester_lists_and_counts_the_matches_after_the_pause() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::RegexTester);
+    let send = |message| Message::Tool(tab, ToolMessage::Regex(message));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Enter a regex pattern and test string above")
+            .expect("empty state");
+        ui.find("Singleline").expect("option");
+    }
+    let _ = shell.update(send(RegexMessage::Pattern("(?<word>b+)(c)?".to_owned())));
+    let _ = shell.update(send(RegexMessage::Test(paste("abbc ab"))));
+    // The second change's wait over: the pattern tried.
+    let _ = shell.update(send(RegexMessage::Run(2)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("2 matches").expect("count");
+        ui.find("Valid regex").expect("status");
+        // .NET's numbers: the unnamed group first.
+        ui.find("[0] Index 1: \"bbc\"  Group 1: \"c\"  Group 2: \"bb\"")
+            .expect("first match");
+        ui.find("Copy matches").expect("copy");
+    }
+    snapshot(&shell, "tools-regex.png");
+    // A look-behind and a backreference run, as in .NET.
+    let _ = shell.update(send(RegexMessage::Pattern(r"(?<=a)(b)\1".to_owned())));
+    let _ = shell.update(send(RegexMessage::Run(3)));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("1 match").expect("count");
+        ui.find("[0] Index 1: \"bb\"  Group 1: \"b\"")
+            .expect("the match");
+    }
+    let _ = shell.update(send(RegexMessage::Pattern("(?<=a+)b".to_owned())));
+    let _ = shell.update(send(RegexMessage::Run(4)));
+    let mut ui = simulator(&shell);
+    ui.find("Invalid regex: a look-behind whose length varies is not supported by this engine")
+        .expect("the construct named");
+    assert!(ui.find("1 match").is_err(), "the matches cleared");
+}
+
+#[test]
+fn the_text_case_converter_converts_from_its_buttons() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::TextCase);
+    let send = |message| Message::Tool(tab, ToolMessage::TextCase(message));
+    let _ = shell.update(send(TextCaseMessage::Input(paste("hello world"))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Enter text and select a case conversion.")
+            .expect("empty state");
+        for label in [
+            "camelCase",
+            "PascalCase",
+            "snake_case",
+            "kebab-case",
+            "UPPER CASE",
+            "lower case",
+            "Title Case",
+            "CONSTANT_CASE",
+        ] {
+            ui.find(label).expect("a style's button");
+        }
+        ui.click("snake_case").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(
+                _,
+                ToolMessage::TextCase(TextCaseMessage::Convert(TextCaseStyle::Snake))
+            )
+        )));
+    }
+    let _ = shell.update(send(TextCaseMessage::Convert(TextCaseStyle::Snake)));
+    snapshot(&shell, "tools-textcase.png");
+    let mut ui = simulator(&shell);
+    assert!(
+        ui.find("Enter text and select a case conversion.").is_err(),
+        "the output shown"
+    );
+    ui.find("Copy").expect("copy");
+}
+
+#[test]
+fn the_text_diff_compares_and_shows_its_counts_in_the_header() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut shell, tab) = opened(dir.path(), ToolId::TextDiff);
+    let send = |message| Message::Tool(tab, ToolMessage::Diff(message));
+    let original = "alpha\nbeta gamma\ndelta";
+    let modified = "alpha\nbeta omega\ndelta\nepsilon";
+    let _ = shell.update(send(DiffMessage::Original(paste(original))));
+    let _ = shell.update(send(DiffMessage::Modified(paste(modified))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Enter original and modified text, then press Compare.")
+            .expect("empty state");
+        ui.find("Auto-compare").expect("option");
+        ui.find("Swap").expect("header button");
+        ui.click("Compare").expect("button");
+        assert!(ui.into_messages().any(|message| matches!(
+            message,
+            Message::Tool(_, ToolMessage::Diff(DiffMessage::Compare))
+        )));
+    }
+    let _ = shell.update(send(DiffMessage::Compare));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Comparing...").expect("busy");
+    }
+    // The comparison its tab runs away from the window, made here.
+    let computed = tools::compute_diff(original, modified, DiffOptions::default());
+    let _ = shell.update(send(DiffMessage::Computed(Some(Box::new(computed)))));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("+2 additions, -1 deletions, 2 unchanged")
+            .expect("counts");
+        ui.find("Diff complete: 5 lines").expect("status");
+        ui.find("Copy diff").expect("copy");
+    }
+    snapshot(&shell, "tools-diff.png");
+}
+
+#[test]
+fn a_card_description_wraps_inside_its_card() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::Navigate(Destination::Tools));
+    let mut ui = simulator(&shell);
+    for tool in ToolId::ALL {
+        let card = ui.find(catalog::card_id(tool)).expect("card").bounds();
+        assert!(
+            (card.width - catalog::CARD_WIDTH).abs() < 0.5,
+            "{tool:?}: {card:?}"
+        );
+        let description = ui
+            .find(tools::description(tool))
+            .expect("description")
+            .bounds();
+        assert!(
+            description.x + description.width <= card.x + card.width,
+            "{tool:?}: {description:?} past {card:?}"
+        );
+    }
+    // A description longer than a line goes on to a second one, rather than being cut.
+    let long = ui
+        .find(tools::description(ToolId::RegexTester))
+        .expect("description")
+        .bounds();
+    let short = ui
+        .find(tools::description(ToolId::JsonFormatter))
+        .expect("description")
+        .bounds();
+    assert!(
+        long.height > short.height * 1.5,
+        "{long:?} against one line {short:?}"
+    );
 }

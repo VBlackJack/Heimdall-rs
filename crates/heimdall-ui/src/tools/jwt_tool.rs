@@ -304,7 +304,7 @@ impl JwtPane {
                 JwtMessage::Signature,
             ),
         ];
-        let mut page = column![crypto_parts::field_label(fl!("ui-tool-jwt-input")), input]
+        let mut page = column![super::field_label(fl!("ui-tool-jwt-input")), input]
             .push(expiry)
             .push(error)
             .push(
@@ -368,7 +368,7 @@ impl JwtPane {
             ));
         } else {
             card = card
-                .push(crypto_parts::field_label(fl!("ui-tool-jwt-secret")))
+                .push(super::field_label(fl!("ui-tool-jwt-secret")))
                 .push(
                     row![
                         text_input("", &self.secret)

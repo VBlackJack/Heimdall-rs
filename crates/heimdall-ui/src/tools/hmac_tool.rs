@@ -271,16 +271,16 @@ impl HmacPane {
             .map(|(said, tone)| crypto_parts::said(said, tone, font_size::BODY, true));
         super::content_column(
             column![
-                crypto_parts::field_label(fl!("ui-tool-hmac-algorithm")),
+                super::field_label(fl!("ui-tool-hmac-algorithm")),
                 algorithms,
                 iced::widget::space().height(SECTION_GAP - spacing::SM),
-                crypto_parts::field_label(fl!("ui-tool-hmac-key")),
+                super::field_label(fl!("ui-tool-hmac-key")),
                 key,
                 iced::widget::space().height(SECTION_GAP - spacing::SM),
-                crypto_parts::field_label(fl!("ui-tool-hmac-input")),
+                super::field_label(fl!("ui-tool-hmac-input")),
                 input,
                 iced::widget::space().height(SECTION_GAP - spacing::SM),
-                crypto_parts::field_label(fl!("ui-tool-hmac-format")),
+                super::field_label(fl!("ui-tool-hmac-format")),
                 formats,
             ]
             .push(
@@ -288,11 +288,11 @@ impl HmacPane {
                     .is_none()
                     .then(|| crypto_parts::empty_state(fl!("ui-tool-hmac-empty"))),
             )
-            .push(crypto_parts::field_label(fl!("ui-tool-hmac-output")))
+            .push(super::field_label(fl!("ui-tool-hmac-output")))
             .push(output)
             .push(length)
             .push(iced::widget::space().height(SECTION_GAP - spacing::SM))
-            .push(crypto_parts::field_label(fl!("ui-tool-hmac-verify")))
+            .push(super::field_label(fl!("ui-tool-hmac-verify")))
             .push(
                 text_input(&fl!("ui-tool-hmac-verify-placeholder"), &self.verify)
                     .font(super::BOX_FONT)

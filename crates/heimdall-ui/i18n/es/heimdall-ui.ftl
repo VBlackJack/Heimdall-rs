@@ -2435,6 +2435,165 @@ ui-tool-totp-help =
 
     Uso:
     Introduce una clave secreta en Base32 para generar códigos TOTP que se renuevan cada 30 segundos.
+ui-tool-json-name = Formateador JSON
+ui-tool-json-description = Formateador, validador y minificador de JSON
+ui-tool-json-title = Formateador JSON
+ui-tool-json-input = JSON de entrada
+ui-tool-json-output = Salida
+ui-tool-json-prettify = Formatear
+ui-tool-json-minify = Minificar
+ui-tool-json-copy = Copiar salida
+ui-tool-json-placeholder = pega el JSON aquí
+ui-tool-json-empty = Pega JSON y pulsa Formatear o Minificar.
+ui-tool-json-processing = Procesando...
+ui-tool-json-status-prettified =
+    { $count ->
+        [one] Formateado ({ $count } carácter)
+       *[other] Formateado ({ $count } caracteres)
+    }
+ui-tool-json-status-minified =
+    { $count ->
+        [one] Minificado ({ $count } carácter)
+       *[other] Minificado ({ $count } caracteres)
+    }
+ui-tool-json-status-error = JSON no válido: { $error }
+ui-tool-json-status-error-at = Error en la línea { $line }, posición { $column }: { $error }
+ui-tool-json-too-large = La entrada supera el límite de tamaño de 5 MB.
+ui-tool-json-help =
+    Formateador JSON
+
+    Formatea o minifica datos JSON.
+
+    Uso:
+    1. Pega o escribe JSON en el campo de entrada
+    2. Haz clic en Formatear para dar formato con sangría
+    3. Haz clic en Minificar para compactar en una sola línea
+    4. Copia el resultado al portapapeles
+
+    Características:
+    - Validación de sintaxis con mensajes de error
+    - Gestiona documentos JSON grandes (hasta 5 MB)
+    - Conserva los caracteres Unicode
+
+    Teclado:
+    - Ctrl+Intro: Formatear
+    - Ctrl+Mayús+Intro: Minificar
+
+    Ejemplos:
+    - { "{" }"nombre":"valor"{ "}" } → Formateado con sangría de 2 espacios
+    - Pega respuestas de API para darles formato rápidamente
+ui-tool-regex-name = Probador de expresiones regulares
+ui-tool-regex-description = Probador de expresiones regulares con resaltado de coincidencias
+ui-tool-regex-title = Probador de expresiones regulares
+ui-tool-regex-pattern = Patrón
+ui-tool-regex-pattern-placeholder = patrón de expresión regular
+ui-tool-regex-ignore-case = Ignorar mayúsculas/minúsculas
+ui-tool-regex-multiline = Multilínea
+ui-tool-regex-singleline = Línea única
+ui-tool-regex-test-text = Texto de prueba
+ui-tool-regex-test-placeholder = cadena de prueba
+ui-tool-regex-matches = Coincidencias
+ui-tool-regex-copy = Copiar coincidencias
+ui-tool-regex-count =
+    { $count ->
+        [one] { $count } coincidencia
+       *[other] { $count } coincidencias
+    }
+ui-tool-regex-match-entry = { "[" }{ $number }] Índice { $index }: "{ $value }"
+ui-tool-regex-group-entry = { "  " }Grupo { $number }: "{ $value }"
+ui-tool-regex-status-valid = Expresión regular válida
+ui-tool-regex-status-invalid = Expresión regular no válida: { $error }
+ui-tool-regex-status-timeout = Se agotó el tiempo de evaluación de la expresión regular (protección ReDoS)
+ui-tool-regex-unsupported-variable-lookbehind = Expresión regular no válida: este motor no admite búsquedas hacia atrás de longitud variable
+ui-tool-regex-unsupported-balancing-group = Expresión regular no válida: este motor no admite grupos de equilibrio (?<abre-cierra>...)
+ui-tool-regex-truncated = Mostrando las primeras { $shown } de { $total } coincidencias
+ui-tool-regex-empty = Introduce un patrón de expresión regular y un texto de prueba arriba
+ui-tool-regex-help =
+    Probador de expresiones regulares
+
+    Prueba expresiones regulares contra un texto de muestra con coincidencia en tiempo real.
+
+    Uso:
+    1. Introduce un patrón de expresión regular
+    2. Introduce el texto de prueba
+    3. Las coincidencias se resaltan y listan automáticamente
+
+    Opciones:
+    - Ignorar mayúsculas/minúsculas: coincidencia sin distinguir mayúsculas
+    - Multilínea: ^ y $ coinciden con los límites de línea
+    - Línea única: . coincide con caracteres de salto de línea
+
+    Características:
+    - Resaltado en tiempo real de las coincidencias en el texto de prueba
+    - Lista numerada de coincidencias con detalles de grupos de captura
+    - Muestra del número de coincidencias
+    - Copiar todas las coincidencias al portapapeles
+
+    Ejemplos:
+    - \b\w+@\w+\.\w+\b - Coincidir con direcciones de correo
+    - \d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" }\.\d{ "{" }1,3{ "}" } - Coincidir con direcciones IPv4
+    - ^#.*$ (Multilínea) - Coincidir con líneas de comentario
+
+    Motor:
+    - Se admiten las búsquedas hacia delante y hacia atrás, las referencias inversas, los grupos atómicos y los condicionales.
+    - No se admiten: búsquedas hacia atrás de longitud variable, grupos de equilibrio.
+    - Una prueba que dura más de un segundo se detiene (protección ReDoS).
+ui-tool-diff-name = Diferencias de texto
+ui-tool-diff-description = Comparador y visor de diferencias de texto lado a lado
+ui-tool-diff-title = Diferencias de texto
+ui-tool-diff-original = Original
+ui-tool-diff-modified = Modificado
+ui-tool-diff-original-placeholder = texto original
+ui-tool-diff-modified-placeholder = texto modificado
+ui-tool-diff-output = Resultado de las diferencias
+ui-tool-diff-compare = Comparar
+ui-tool-diff-swap = Intercambiar
+ui-tool-diff-clear = Borrar
+ui-tool-diff-copy = Copiar diferencias
+ui-tool-diff-ignore-whitespace = Ignorar espacios en blanco
+ui-tool-diff-ignore-case = Ignorar mayúsculas/minúsculas
+ui-tool-diff-auto-compare = Comparación automática
+ui-tool-diff-stats = +{ $added } añadidos, -{ $removed } eliminados, { $unchanged } sin cambios
+ui-tool-diff-status-done =
+    { $count ->
+        [one] Comparación completa: { $count } línea
+       *[other] Comparación completa: { $count } líneas
+    }
+ui-tool-diff-status-too-large = La entrada supera { $max } líneas. Reduce el tamaño del texto.
+ui-tool-diff-comparing = Comparando...
+ui-tool-diff-original-header = --- original
+ui-tool-diff-modified-header = +++ modificado
+ui-tool-diff-empty = Introduce el texto original y el modificado, luego pulsa Comparar.
+ui-tool-diff-help =
+    Diferencias de texto
+
+    Compara dos textos lado a lado y resalta las diferencias.
+
+    Uso:
+    Pega texto en ambos paneles. Las adiciones, eliminaciones y cambios tienen código de color.
+ui-tool-textcase-name = Convertidor de mayúsculas/minúsculas
+ui-tool-textcase-description = Convertidor de mayúsculas/minúsculas (mayúsculas, minúsculas, camel, snake, kebab)
+ui-tool-textcase-title = Convertidor de mayúsculas/minúsculas
+ui-tool-textcase-input = Texto de entrada
+ui-tool-textcase-placeholder = texto a convertir
+ui-tool-textcase-conversions = Conversiones
+ui-tool-textcase-output = Salida
+ui-tool-textcase-copy = Copiar
+ui-tool-textcase-camel = camelCase
+ui-tool-textcase-pascal = PascalCase
+ui-tool-textcase-snake = snake_case
+ui-tool-textcase-kebab = kebab-case
+ui-tool-textcase-upper = MAYÚSCULAS
+ui-tool-textcase-lower = minúsculas
+ui-tool-textcase-title-case = Tipo Título
+ui-tool-textcase-constant = CONSTANTE_CASE
+ui-tool-textcase-empty = Introduce texto y selecciona una conversión de mayúsculas/minúsculas.
+ui-tool-textcase-help =
+    Convertidor de mayúsculas/minúsculas
+
+    Convierte texto entre varios formatos.
+
+    Formatos admitidos: MAYÚSCULAS, minúsculas, Tipo Título, camelCase, PascalCase, snake_case, kebab-case, CONSTANT_CASE, y más.
 ui-tunnels-page-title = Túneles activos
 ui-import-dropped-rd-gateway = a través de una puerta de enlace de Escritorio remoto
 ui-error-rd-gateway = Este servidor se alcanza a través de la puerta de enlace de Escritorio remoto { $gateway }, que el cliente integrado todavía no sabe atravesar.

@@ -442,26 +442,17 @@ impl HashPane {
                 .length(Length::Fill)
                 .girth(PROGRESS_HEIGHT)
         });
-        let file_line = row![
-            container(self.file_status.said().map(|(said, error)| {
-                crypto_parts::said(
-                    said,
-                    if error { Tone::Error } else { Tone::Quiet },
-                    font_size::CAPTION,
-                    false,
-                )
-            }))
-            .width(Length::Fill)
-        ]
-        .push(self.file_mode.then(|| {
-            super::action_button(
-                fl!("ui-tool-hash-clear-file"),
-                false,
-                Some(send(HashMessage::ClearFile)),
-            )
-        }))
-        .spacing(spacing::SM)
-        .align_y(Alignment::Center);
+        let file_line =
+            row![container(super::status_line(self.file_status.said())).width(Length::Fill)]
+                .push(self.file_mode.then(|| {
+                    super::action_button(
+                        fl!("ui-tool-hash-clear-file"),
+                        false,
+                        Some(send(HashMessage::ClearFile)),
+                    )
+                }))
+                .spacing(spacing::SM)
+                .align_y(Alignment::Center);
         let verdict = self.verdict();
         let matched = verdict.as_ref().and_then(|(_, _, kind)| *kind);
         let results: Element<'a, Message> = if self.results {
@@ -473,7 +464,7 @@ impl HashPane {
         };
         super::content_column(
             column![
-                crypto_parts::field_label(fl!("ui-tool-hash-input")),
+                super::field_label(fl!("ui-tool-hash-input")),
                 input,
                 iced::widget::space().height(SECTION_GAP - spacing::SM),
                 drop_zone,
@@ -482,7 +473,7 @@ impl HashPane {
             .push(file_line)
             .push(results)
             .push(iced::widget::space().height(SECTION_GAP - spacing::SM))
-            .push(crypto_parts::field_label(fl!("ui-tool-hash-verify")))
+            .push(super::field_label(fl!("ui-tool-hash-verify")))
             .push(
                 text_input(&fl!("ui-tool-hash-verify-placeholder"), &self.verify)
                     .font(super::BOX_FONT)
@@ -549,7 +540,7 @@ impl HashPane {
         );
         column![
             iced::widget::space().height(SECTION_GAP - spacing::SM),
-            crypto_parts::field_label(fl!("ui-tool-hash-results")),
+            super::field_label(fl!("ui-tool-hash-results")),
             container(iced::widget::Column::with_children(rows).spacing(spacing::XS))
                 .padding(BANNER_PADDING)
                 .width(Length::Fill)
