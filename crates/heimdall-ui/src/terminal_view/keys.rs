@@ -148,6 +148,9 @@ pub enum WindowShortcut {
     Settings,
     /// Copy an image of the session shown to the clipboard: Ctrl+Shift+S, as the C# one.
     Screenshot,
+    /// Copy what the status bar said lately to the clipboard, for a screen reader to read:
+    /// Ctrl+Shift+A, bound by no session, no Files tab and no C# shortcut.
+    CopyStatus,
     /// Open Quick Connect: Ctrl+K, as the C# one, wherever the keyboard is, and
     /// Ctrl+Shift+K, which a terminal never keeps.
     QuickConnect,
@@ -267,6 +270,9 @@ pub fn window_shortcut(
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('s') => {
             Some(WindowShortcut::Screenshot)
+        }
+        keyboard::Key::Character(_) if shift && letter(key, physical) == Some('a') => {
+            Some(WindowShortcut::CopyStatus)
         }
         keyboard::Key::Character(_) if shift && letter(key, physical) == Some('o') => {
             Some(WindowShortcut::ToggleSplit)
@@ -569,6 +575,47 @@ mod tests {
             window_shortcut(&character("s"), ANY_PLACE, Modifiers::CTRL),
             None,
             "Ctrl+S is the session's, or the editor's save"
+        );
+    }
+
+    #[test]
+    fn ctrl_shift_a_copies_the_status_on_any_layout_and_no_other_shortcut_takes_it() {
+        let ctrl_shift = Modifiers::CTRL | Modifiers::SHIFT;
+        assert_eq!(
+            window_shortcut(&character("A"), ANY_PLACE, ctrl_shift),
+            Some(WindowShortcut::CopyStatus)
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("\u{0444}"),
+                Physical::Code(Code::KeyA),
+                ctrl_shift
+            ),
+            Some(WindowShortcut::CopyStatus),
+            "the A key of a Cyrillic keyboard"
+        );
+        assert_eq!(
+            window_shortcut(&character("a"), ANY_PLACE, Modifiers::CTRL),
+            None,
+            "Ctrl+A selects all"
+        );
+        assert_eq!(
+            window_shortcut(
+                &character("a"),
+                ANY_PLACE,
+                Modifiers::CTRL | Modifiers::ALT | Modifiers::SHIFT
+            ),
+            None
+        );
+        // A terminal's own shortcuts and a Files tab's leave it alone.
+        assert_eq!(
+            shortcut(&character("A"), ANY_PLACE, ctrl_shift),
+            None,
+            "not the terminal's copy or paste"
+        );
+        assert_eq!(
+            crate::files_view::files_key(&character("A"), ANY_PLACE, ctrl_shift),
+            None
         );
     }
 

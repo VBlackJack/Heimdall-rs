@@ -182,7 +182,9 @@ pub use sessions_import::{
     SessionsCounts, SessionsMessage, SessionsPreview, SessionsRow, SessionsSource,
 };
 pub use settings_transfer::SettingsTransferMessage;
-pub use status::{Notice, SessionState, SessionStatus};
+pub use status::{
+    ANNOUNCEMENTS_KEPT, Announced, Announcement, Notice, SessionState, SessionStatus,
+};
 pub use tab_menu::{TabGroup, TabMenuMessage};
 pub use tree::{GatewayBadge, ProfileCopy, ProfileKind, ProfileSummary, search_folded};
 pub use tree_drag::{DropTarget, OrganizationChange};
@@ -2882,6 +2884,8 @@ impl Dialog {
                 // A file that runs is opened by a click too, never by an Enter meant for
                 // the browser's list.
                 | Self::ConfirmOpenRunnable { .. }
+                // A key trusted for good is a click too, as a session's own key card.
+                | Self::TunnelHostKey { .. }
         )
     }
 }
@@ -3002,6 +3006,8 @@ pub struct App {
     broadcast: broadcast::Broadcast,
     /// What was just done, and the session shown then with its state.
     notice: Option<(Notice, (Option<TabId>, SessionStatus))>,
+    /// What the status bar said lately, newest first.
+    announcements: status::Announcements,
     /// The keys trusted for servers, as the Settings page last read them.
     trusted_keys: TrustedKeys,
     /// What the Settings page's provider Test found.
@@ -3133,6 +3139,7 @@ impl App {
             selected_folder: None,
             selection: std::collections::BTreeSet::new(),
             notice: None,
+            announcements: status::Announcements::default(),
             trusted_keys: TrustedKeys::default(),
             provider_test: None,
             pending_paste: None,
@@ -3247,6 +3254,7 @@ impl App {
         let mut effects = self.apply(message);
         effects.extend(self.prune_floating());
         self.follow_desktop_sessions();
+        self.note_status();
         if effects.iter().any(|effect| matches!(effect, Effect::Exit)) {
             self.close_session_logs();
             self.release_putty_routes();

@@ -37,6 +37,7 @@ pub mod external_url;
 pub mod files;
 pub mod ftp_driver;
 pub mod gateway_draft;
+pub mod high_contrast;
 mod ids;
 pub mod integrated_edit;
 pub mod keyboard_layout;
@@ -81,6 +82,7 @@ pub mod x11_server;
 pub use app::SavedCredentials;
 pub use app::SettingsTransferMessage;
 pub use app::split;
+pub use app::{ANNOUNCEMENTS_KEPT, Announced, Announcement};
 pub use app::{
     AgentChip, App, AppConfig, BroadcastMessage, BulkField, BulkPasswordRefusal, BulkPasswordSkips,
     BulkRefusal, CertificateContext, CitrixImportOutcome, ConflictRow, ConnectAs, Dialog,

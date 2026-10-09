@@ -63,7 +63,7 @@ use heimdall_core::paths::{self, KNOWN_HOSTS_FILE_NAME, PROFILES_FILE_NAME};
 use heimdall_core::pin::{MAX_PIN_DIGITS, MIN_PIN_DIGITS, PinProblem};
 use heimdall_core::profile::{ProfileId, RdpProfile, SshGateway, SshMode, display_address};
 use heimdall_core::settings::Language;
-use heimdall_core::settings::{BroadcastScope, ColorScheme};
+use heimdall_core::settings::{AppTheme, BroadcastScope, ColorScheme};
 use heimdall_ssh::{AgentSource, Secret};
 use heimdall_term::{FindDirection, GridSize};
 use iced::futures::{Stream, StreamExt as _, stream};
@@ -689,6 +689,8 @@ pub enum Message {
     Tick,
     /// Time to measure how long the computer has had no input, for the idle auto-lock.
     IdleTick,
+    /// Whether Windows high contrast is on, looked at again: the window follows it.
+    SystemHighContrast(bool),
     /// A key, a click or a wheel turn in one of the windows, where the computer's idle time
     /// cannot be read.
     UserInput,
@@ -952,6 +954,7 @@ impl fmt::Debug for Message {
             Self::CopyAnonymousError(tab) => write!(f, "CopyAnonymousError({})", tab.value()),
             Self::Tick => f.write_str("Tick"),
             Self::IdleTick => f.write_str("IdleTick"),
+            Self::SystemHighContrast(on) => write!(f, "SystemHighContrast({on})"),
             Self::UserInput => f.write_str("UserInput"),
             Self::Modifiers(modifiers) => write!(f, "Modifiers({modifiers:?})"),
             Self::TreeClick(id) => write!(f, "TreeClick({id})"),
@@ -1326,6 +1329,8 @@ pub struct Shell {
     tree_drag: Option<crate::tree_drag::TreeDrag>,
     /// The sidebar is hidden, Ctrl+B having hidden it.
     sidebar_hidden: bool,
+    /// The theme Windows imposes over the one chosen: high contrast, while it is on.
+    forced_theme: Option<AppTheme>,
     /// Where the window's state is kept, and how it was left; none in tests.
     window_memory: Option<(PathBuf, heimdall_core::window_state::WindowState)>,
     /// The main window, named once it is asked to open; none in tests, which open none.
@@ -1537,6 +1542,9 @@ impl Shell {
             shell.sidebar_width = width.clamp(SIDEBAR_MIN_WIDTH, SIDEBAR_MAX_WIDTH);
         }
         shell.sidebar_hidden = left.sidebar_hidden;
+        // Windows high contrast, as it is at start; looked at again while the window runs.
+        shell.forced_theme =
+            heimdall_app::high_contrast::system_on().then_some(AppTheme::HighContrast);
         // The tree as it was left.
         shell
             .app
@@ -1606,6 +1614,7 @@ impl Shell {
             sleep_guard: crate::sleep_guard::SleepGuard::new(),
             tree_drag: None,
             sidebar_hidden: false,
+            forced_theme: None,
             window_memory: None,
             main_window: None,
             instance_dir: None,
@@ -1816,17 +1825,23 @@ impl Shell {
         CursorTracker::new(layers, floating.cursor.clone()).into()
     }
 
-    /// Theme: the one the Settings page chose, tinted with its accent. The terminals keep
-    /// their own colour scheme, apart from it as in the C#.
+    /// Theme: the one the Settings page chose, tinted with its accent; high contrast while
+    /// Windows has it on. The terminals keep their own colour scheme, apart from it as in
+    /// the C#.
     #[must_use]
     pub fn theme(&self) -> Theme {
-        let settings = self.app.settings();
-        crate::themes::theme(settings.theme, settings.accent)
+        crate::themes::theme(self.theme_shown(), self.app.settings().accent)
+    }
+
+    /// The theme drawn: Windows high contrast's while it is on, else the one chosen.
+    #[must_use]
+    pub fn theme_shown(&self) -> AppTheme {
+        self.forced_theme.unwrap_or(self.app.settings().theme)
     }
 
     /// The colours the integrated editor highlights code with, light on a light theme.
     fn editor_syntax(&self) -> iced::highlighter::Theme {
-        crate::themes::syntax(self.app.settings().theme)
+        crate::themes::syntax(self.theme_shown())
     }
 
     /// The application's own timers: the sessions kept alive, the servers checked, the
@@ -1867,6 +1882,13 @@ impl Shell {
         }
         if let Some(interval) = self.app.anti_idle_interval() {
             ticks.push(iced::time::every(interval).map(|_| Message::App(AppMessage::AntiIdleTick)));
+        }
+        // Windows high contrast turned on or off while the window is open.
+        if heimdall_app::high_contrast::WATCHED {
+            ticks.push(
+                iced::time::every(heimdall_app::high_contrast::POLL)
+                    .map(|_| Message::SystemHighContrast(heimdall_app::high_contrast::system_on())),
+            );
         }
         ticks
     }
@@ -2111,6 +2133,10 @@ impl Shell {
                 return Task::none();
             }
             FloatEvent::TerminalFind => return self.toggle_floating_finder(window),
+            // The status bar is the main window's: copied from there.
+            FloatEvent::CopyStatus => {
+                return self.update(Message::Shortcut(WindowShortcut::CopyStatus));
+            }
             // Quick Connect is the main window's, brought forward for it.
             FloatEvent::QuickConnect => {
                 let task = self.update(Message::Shortcut(WindowShortcut::QuickConnect));
@@ -2309,20 +2335,20 @@ impl Shell {
             Message::EscapeUntaken | Message::Float(..) | Message::InFloating(..) => Vec::new(),
             Message::FilesKey(key) => self.files_key(key),
             Message::TabKey { backward } => {
-                if self.app.dialog.is_some() {
-                    // Through the main window's fields, which hold the dialog: an operation
-                    // reaches every window, and a tab's own window has fields of its own.
+                if self.tab_moves_focus() {
+                    // Through the dialog's fields alone, never those under its veil; else
+                    // the main window's: an operation reaches every window, and a tab's own
+                    // window has fields of its own.
                     use iced::advanced::widget::operation::{focusable, scope};
-                    return if backward {
-                        iced::advanced::widget::operate(scope(
-                            main_area_id(),
-                            focusable::focus_previous(),
-                        ))
+                    let area = if self.app.dialog.is_some() && self.inline_rename().is_none() {
+                        dialog_area_id()
                     } else {
-                        iced::advanced::widget::operate(scope(
-                            main_area_id(),
-                            focusable::focus_next(),
-                        ))
+                        main_area_id()
+                    };
+                    return if backward {
+                        iced::advanced::widget::operate(scope(area, focusable::focus_previous()))
+                    } else {
+                        iced::advanced::widget::operate(scope(area, focusable::focus_next()))
                     };
                 }
                 self.files_key(FilesKey::SwitchPane)
@@ -2331,6 +2357,10 @@ impl Shell {
             Message::IdleTick => self
                 .app
                 .update(AppMessage::Idle(crate::idle::idle_time(self.last_input))),
+            Message::SystemHighContrast(on) => {
+                self.forced_theme = on.then_some(AppTheme::HighContrast);
+                Vec::new()
+            }
             Message::UserInput => {
                 self.last_input = std::time::Instant::now();
                 Vec::new()
@@ -2859,6 +2889,21 @@ impl Shell {
         ))
     }
 
+    /// Whether Tab and Shift+Tab move the keyboard between the main window's fields: under
+    /// a dialog, and on a page of the navigation that is not a tab's (the settings, the
+    /// tunnels, About), Quick Connect closed. A tab shown keeps Tab: a terminal's, or a
+    /// Files tab's other pane.
+    #[must_use]
+    pub fn tab_moves_focus(&self) -> bool {
+        self.app.dialog.is_some() || (self.palette.is_none() && self.page_over_tab())
+    }
+
+    /// Whether a page of the navigation is shown in place of the tab: the settings, the
+    /// tunnels or About. The tab's keys are not its then.
+    fn page_over_tab(&self) -> bool {
+        self.settings_shown() || matches!(self.page, Page::Tunnels | Page::About)
+    }
+
     /// Whether the window is behind a gate: the lock screen, or the PIN asked at start.
     /// Nothing of it is drawn, and its keys do nothing.
     fn gated(&self) -> bool {
@@ -2875,6 +2920,24 @@ impl Shell {
             .map(|copied| Message::App(AppMessage::ScreenshotTaken { copied }))
     }
 
+    /// Ctrl+Shift+A: [`Self::status_report`] put on the clipboard, for a screen reader to
+    /// read what the C# live region would have announced. Over a dialog too: it reads
+    /// nothing the window does not show.
+    #[must_use]
+    pub fn copy_status(&self) -> Vec<Effect> {
+        vec![Effect::WriteClipboard(self.status_report())]
+    }
+
+    /// What the status bar says now, then what it said lately, newest first, each with its
+    /// time: one plain line each.
+    #[must_use]
+    pub fn status_report(&self) -> String {
+        let targets = self.app.broadcast_target_count();
+        let now =
+            crate::status_bar::status_text(&self.app.session_status(), self.app.notice(), targets);
+        crate::status_bar::status_report(&now, self.app.announcements(), targets)
+    }
+
     fn shortcut(&mut self, shortcut: WindowShortcut) -> Vec<Effect> {
         if shortcut == WindowShortcut::Help {
             self.menu = None;
@@ -2883,6 +2946,9 @@ impl Shell {
         if shortcut == WindowShortcut::QuickConnect {
             self.quick_connect_key();
             return Vec::new();
+        }
+        if shortcut == WindowShortcut::CopyStatus {
+            return self.copy_status();
         }
         if shortcut == WindowShortcut::Settings {
             // Ctrl+, as the C#, with or without a tab; not over a dialog, which has the keyboard.
@@ -2934,7 +3000,8 @@ impl Shell {
                 WindowShortcut::Settings
                 | WindowShortcut::Help
                 | WindowShortcut::Screenshot
-                | WindowShortcut::QuickConnect,
+                | WindowShortcut::QuickConnect
+                | WindowShortcut::CopyStatus,
                 _,
             )
             | (_, None) => {
@@ -3276,6 +3343,10 @@ impl Shell {
         // The tree's first, while it has the keyboard.
         if let Some(effects) = self.tree_key(key) {
             return effects;
+        }
+        // A Files tab hidden behind a page: Enter, Delete and the rest are not its.
+        if self.page_over_tab() {
+            return Vec::new();
         }
         let Some(tab) = self.app.active else {
             return Vec::new();
@@ -3956,6 +4027,7 @@ impl Shell {
                 };
                 center(card).into()
             }))
+            .id(dialog_area_id())
             .style(move |theme: &Theme| container::Style {
                 background: Some(if locked {
                     theme.palette().background.into()
@@ -10709,6 +10781,11 @@ pub fn tab_close_id(tab: TabId) -> iced::widget::Id {
 /// a dialog, those of the tabs' own windows left out.
 fn main_area_id() -> iced::widget::Id {
     iced::widget::Id::new("main-window")
+}
+
+/// The open dialog, whose fields alone Tab goes through.
+fn dialog_area_id() -> iced::widget::Id {
+    iced::widget::Id::new("dialog")
 }
 
 fn vault_field_id(index: usize) -> iced::widget::Id {

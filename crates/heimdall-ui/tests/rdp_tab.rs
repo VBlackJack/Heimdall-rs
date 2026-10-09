@@ -414,6 +414,53 @@ fn ctrl_k_on_a_desktop_is_left_to_the_window_and_never_reaches_the_server() {
 }
 
 #[test]
+fn ctrl_shift_a_on_a_desktop_is_left_to_the_window_and_never_reaches_the_server() {
+    use iced::event::Status;
+    use iced::keyboard::key::{Code, Physical};
+    use iced::keyboard::{Event, Key, Location, Modifiers};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (shell, _, _received) = connected(dir.path());
+    let held = Modifiers::CTRL | Modifiers::SHIFT;
+    let a = |pressed: bool| {
+        let key = Key::Character("A".into());
+        let physical_key = Physical::Code(Code::KeyA);
+        iced::Event::Keyboard(if pressed {
+            Event::KeyPressed {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers: held,
+                text: None,
+                repeat: false,
+            }
+        } else {
+            Event::KeyReleased {
+                key: key.clone(),
+                modified_key: key,
+                physical_key,
+                location: Location::Standard,
+                modifiers: held,
+            }
+        })
+    };
+    let mut ui = simulator(&shell);
+    let statuses = ui.simulate([a(true), a(false)]);
+    assert_eq!(statuses[0], Status::Ignored, "the window's");
+    let sent = ui
+        .into_messages()
+        .filter_map(|message| match message {
+            Message::App(AppMessage::DesktopInput { inputs, .. }) => Some(inputs),
+            _ => None,
+        })
+        .flatten()
+        .filter(|input| matches!(input, DesktopInput::Key { .. }))
+        .count();
+    assert_eq!(sent, 0, "its A never sent, down or up");
+}
+
+#[test]
 fn a_key_is_released_with_the_keysym_it_was_pressed_with() {
     let dir = tempfile::tempdir().expect("dir");
     let (mut shell, tab, attempt) = opened(dir.path());

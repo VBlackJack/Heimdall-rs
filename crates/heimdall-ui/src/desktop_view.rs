@@ -366,7 +366,8 @@ impl<M: Clone> DesktopView<'_, M> {
             | keyboard::Event::KeyReleased { physical_key, .. }
                 if *physical_key == Physical::Code(Code::F11) => {}
             // Quick Connect is the window's, as the C# keyboard hook takes Ctrl+K from its
-            // RDP control: left uncaptured, and its K never sent, down or up.
+            // RDP control: left uncaptured, and its K never sent, down or up. The status
+            // copied for a screen reader too: it must work wherever the keyboard is.
             keyboard::Event::KeyPressed {
                 key,
                 physical_key,
@@ -378,8 +379,10 @@ impl<M: Clone> DesktopView<'_, M> {
                 physical_key,
                 modifiers,
                 ..
-            } if window_shortcut(key, *physical_key, *modifiers)
-                == Some(WindowShortcut::QuickConnect) => {}
+            } if matches!(
+                window_shortcut(key, *physical_key, *modifiers),
+                Some(WindowShortcut::QuickConnect | WindowShortcut::CopyStatus)
+            ) => {}
             keyboard::Event::KeyPressed {
                 modified_key,
                 physical_key,

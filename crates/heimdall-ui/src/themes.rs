@@ -15,7 +15,8 @@
  */
 
 //! The window's themes: the seventeen palettes of `ThemeForge` 2.1.0 the C# Heimdall
-//! offers, each tinted with the accent chosen, as the C# `ThemeService` tints it.
+//! offers, each tinted with the accent chosen, as the C# `ThemeService` tints it; and high
+//! contrast, the Windows "High Contrast Black" scheme, taken while Windows has it on.
 //!
 //! Dracula reproduces the Dracula Theme palette by Zeno Rocha, under the MIT license, and
 //! Drakul is derived from it; `THIRD-PARTY-NOTICES.md` says so.
@@ -60,6 +61,8 @@ pub struct ThemeColors {
     pub yellow: Color,
     /// A light theme: dark text on a bright background.
     pub light: bool,
+    /// High contrast: every control outlined, wider, and the keyboard's field in yellow.
+    pub high_contrast: bool,
 }
 
 impl ThemeColors {
@@ -102,6 +105,7 @@ const DRACULA: ThemeColors = ThemeColors {
     red: hex(0x00FF_5555),
     yellow: hex(0x00F1_FA8C),
     light: false,
+    high_contrast: false,
 };
 
 /// Dracula with its comment lifted to be readable on the background.
@@ -128,6 +132,7 @@ const fn dark(background: u32, current_line: u32, foreground: u32, comment: u32)
         red: hex(0x00E5_8585),
         yellow: hex(0x00AB_AB24),
         light: false,
+        high_contrast: false,
     }
 }
 
@@ -149,8 +154,30 @@ const fn light(background: u32, current_line: u32, foreground: u32, comment: u32
         red: hex(0x00B8_1717),
         yellow: hex(0x0068_680D),
         light: true,
+        high_contrast: false,
     }
 }
+
+/// The Windows "High Contrast Black" scheme: white text on black, hyperlinks in yellow,
+/// selected text on cyan, disabled text in green. Its other colours are as bright, for
+/// errors and warnings to stay readable on black.
+const HIGH_CONTRAST: ThemeColors = ThemeColors {
+    background: hex(0x0000_0000),
+    current_line: hex(0x0000_0000),
+    foreground: hex(0x00FF_FFFF),
+    comment: hex(0x00FF_FFFF),
+    accent: hex(0x00FF_FF00),
+    blue: hex(0x001A_EBFF),
+    cyan: hex(0x001A_EBFF),
+    green: hex(0x003F_F23F),
+    orange: hex(0x00FF_B000),
+    pink: hex(0x00FF_80FF),
+    purple: hex(0x00C0_A0FF),
+    red: hex(0x00FF_6060),
+    yellow: hex(0x00FF_FF00),
+    light: false,
+    high_contrast: true,
+};
 
 /// The colours of `theme`, as `ThemeForge` 2.1.0 defines them.
 #[must_use]
@@ -185,6 +212,7 @@ pub const fn colors(theme: AppTheme) -> ThemeColors {
             orange: hex(0x00DC_9316),
             ..dark(0x0028_231F, 0x003D_342F, 0x00F3_F2F1, 0x00B5_A395)
         },
+        AppTheme::HighContrast => HIGH_CONTRAST,
     }
 }
 
@@ -205,7 +233,17 @@ fn build(theme: AppTheme, accent: Accent) -> Theme {
     Theme::custom_with_fn(theme.name(), palette, move |palette| {
         let mut extended = Extended::generate(palette);
         extended.background.weak = Pair::new(colors.current_line, colors.foreground);
-        extended.secondary.base = Pair::new(colors.comment, colors.foreground);
+        // High contrast's secondary is its text: what stands on it is the background.
+        let on_secondary = if colors.high_contrast {
+            colors.background
+        } else {
+            colors.foreground
+        };
+        extended.secondary.base = Pair::new(colors.comment, on_secondary);
+        // Every edge in the text colour, not a shade of black.
+        if colors.high_contrast {
+            extended.background.strong = Pair::new(colors.foreground, colors.background);
+        }
         extended.is_dark = !colors.light;
         extended
     })
@@ -243,6 +281,12 @@ pub fn colors_of(theme: &Theme) -> ThemeColors {
         .map_or_else(|| palette_colors(theme), colors)
 }
 
+/// Whether `theme` is high contrast, which [`crate::styles`] outlines wider.
+#[must_use]
+pub fn is_high_contrast(theme: &Theme) -> bool {
+    theme.to_string() == AppTheme::HighContrast.name()
+}
+
 /// The colours of a theme not of `ThemeForge`, taken from its palette.
 fn palette_colors(theme: &Theme) -> ThemeColors {
     let palette = theme.palette();
@@ -262,6 +306,7 @@ fn palette_colors(theme: &Theme) -> ThemeColors {
         red: palette.danger,
         yellow: palette.warning,
         light: !extended.is_dark,
+        high_contrast: false,
     }
 }
 
@@ -300,6 +345,7 @@ impl fmt::Display for ThemeChoice {
             AppTheme::Folio => fl!("ui-theme-folio"),
             AppTheme::Wormwood => fl!("ui-theme-wormwood"),
             AppTheme::Sconce => fl!("ui-theme-sconce"),
+            AppTheme::HighContrast => fl!("ui-theme-high-contrast"),
         })
     }
 }
@@ -424,6 +470,45 @@ mod tests {
         }
         let other = colors_of(&Theme::Light);
         assert_eq!(other.blue, Theme::Light.palette().primary, "its palette's");
+    }
+
+    #[test]
+    fn high_contrast_is_white_on_black_with_yellow_and_cyan_and_alone_so() {
+        let built = theme(AppTheme::HighContrast, Accent::Default);
+        assert_eq!(built.palette().background, Color::BLACK);
+        assert_eq!(built.palette().text, Color::WHITE);
+        assert_eq!(
+            built.palette().primary,
+            hex(0x00FF_FF00),
+            "yellow, its own accent"
+        );
+        assert_eq!(
+            theme(AppTheme::HighContrast, Accent::Cyan)
+                .palette()
+                .primary,
+            hex(0x001A_EBFF)
+        );
+        let extended = built.extended_palette();
+        assert_eq!(extended.secondary.base.color, Color::WHITE);
+        assert_eq!(
+            extended.secondary.base.text,
+            Color::BLACK,
+            "readable on its secondary"
+        );
+        assert_eq!(
+            extended.background.strong.color,
+            Color::WHITE,
+            "white edges"
+        );
+        assert!(is_high_contrast(&built));
+        for each in AppTheme::ALL {
+            assert_eq!(
+                is_high_contrast(&theme(each, Accent::Default)),
+                each == AppTheme::HighContrast,
+                "{each:?}"
+            );
+        }
+        assert!(!is_high_contrast(&Theme::Dark), "iced's own");
     }
 
     #[test]
