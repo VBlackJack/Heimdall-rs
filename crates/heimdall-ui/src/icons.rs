@@ -39,6 +39,9 @@ const STROKE_WIDTH: f32 = 1.5;
 /// Width of a glyph's line, as Segoe MDL2 Assets draws its glyphs at the C#'s sizes.
 const GLYPH_STROKE_WIDTH: f32 = 1.0;
 
+/// Side of a glyph's square on its 16-unit grid: a glyph's line is one unit wide.
+const GLYPH_GRID: f32 = 16.0;
+
 /// Side of a square icon button, as the C#'s 32 by 32 toolbar buttons.
 pub const BUTTON_SIDE: f32 = 32.0;
 
@@ -139,11 +142,13 @@ pub enum Icon {
     Zoom,
     /// The `Photo2` glyph: a picture, an image of a file list.
     Photo,
+    /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
+    Monitor,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 42] = [
+    pub const ALL: [Self; 43] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -186,6 +191,7 @@ impl Icon {
         Self::Package,
         Self::Zoom,
         Self::Photo,
+        Self::Monitor,
     ];
 
     /// The icon of `kind`, as the C# `ConnectionTypeToGeometryConverter` picks it.
@@ -323,6 +329,9 @@ impl Icon {
                 "M1.5,2.5 L14.5,2.5 L14.5,13.5 L1.5,13.5 Z M1.5,11 L5.5,7 L9,10.5 L11,8.5 \
                  L14.5,12 M10,5 A1,1 0 1 1 12,5 A1,1 0 1 1 10,5 Z"
             }
+            // As Segoe MDL2 Assets draws it at 48: a screen 15 by 9 lines wide, a neck of
+            // one, a stand of 5.
+            Self::Monitor => "M1,3.5 L15,3.5 L15,11.5 L1,11.5 Z M8,12 L8,13 M5.5,13.5 L10.5,13.5",
         }
     }
 
@@ -359,9 +368,28 @@ impl Icon {
             | Self::Setting
             | Self::Package
             | Self::Zoom
-            | Self::Photo => Some(GLYPH_STROKE_WIDTH),
+            | Self::Photo
+            | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }
+    }
+
+    /// Whether its line grows with its side, as a glyph's does with its font's size: the
+    /// About page's icon, drawn far larger than the chrome's glyphs, whose line stays one
+    /// pixel wide.
+    const fn line_grows(self) -> bool {
+        matches!(self, Self::Monitor)
+    }
+
+    /// Width of its line drawn in a square of `side`, when it is stroked.
+    fn line_width(self, side: f32) -> Option<f32> {
+        self.stroke().map(|width| {
+            if self.line_grows() {
+                width * side / GLYPH_GRID
+            } else {
+                width
+            }
+        })
     }
 }
 
@@ -538,12 +566,14 @@ fn paint(frame: &mut Frame, icon: Icon, color: Color) {
     let Ok(outline) = parse(icon.data()) else {
         return;
     };
-    let inset = icon.stroke().map_or(0.0, |width| width / 2.0);
+    let side = frame.size().width.min(frame.size().height);
+    let line = icon.line_width(side);
+    let inset = line.map_or(0.0, |width| width / 2.0);
     let Some(fit) = Fit::new(outline.bounds(), frame.size(), inset) else {
         return;
     };
     let path = outline.path(&fit);
-    match icon.stroke() {
+    match line {
         Some(width) => frame.stroke(&path, Stroke::default().with_color(color).with_width(width)),
         None => frame.fill(
             &path,

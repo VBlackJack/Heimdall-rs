@@ -4594,13 +4594,7 @@ impl Shell {
             Page::Tunnels => {
                 crate::tunnels_view::page(&self.app.tunnels, &self.app.session_routes())
             }
-            Page::About => styles::scroll(
-                container(crate::about_view::view(&self.app))
-                    .padding(spacing::MD)
-                    .width(Length::Fill),
-            )
-            .height(Length::Fill)
-            .into(),
+            Page::About => crate::about_view::view(&self.app),
             Page::Settings { .. } => container(self.content())
                 .width(Length::Fill)
                 .height(Length::Fill)
