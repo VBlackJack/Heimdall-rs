@@ -899,7 +899,7 @@ fn every_settings_path_has_a_browse_button_whose_pick_is_applied_at_once() {
         );
     }
     assert_eq!(shell.settings_found("putty path"), [SettingRow::PuttyPath]);
-    assert_eq!(SettingRow::ALL.len(), 59, "no row added");
+    assert_eq!(SettingRow::ALL.len(), 60, "no row added");
 
     // The path picked is applied as Enter applies what is typed; what was typed goes.
     let _ = shell.update(Message::ToolPathEdited(
@@ -1275,4 +1275,52 @@ fn credential_guard_is_required_found_marked_its_state_said_and_reset_on_the_sec
     assert!(!shell.app().settings().require_credential_guard);
     let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
     assert!(!saved.require_credential_guard);
+}
+
+#[test]
+fn the_known_hosts_import_is_found_marked_flagged_in_the_overview_and_reset() {
+    let _english = english();
+    let dir = tempfile::tempdir().expect("dir");
+    let mut shell = shell(dir.path());
+    assert_eq!(
+        shell.settings_found("known_hosts file at startup"),
+        [SettingRow::SyncKnownHostsAtStartup]
+    );
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Ssh));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("Import the OpenSSH known_hosts file at startup")
+            .expect("the C# label");
+        ui.find(
+            "Each time Heimdall starts, host keys from your user's .ssh/known_hosts are added \
+             to this list. A key that differs from one already trusted here is not replaced.",
+        )
+        .expect("the C# hint");
+    }
+    let _ = shell.update(Message::SettingsTab(SettingsTab::Security));
+    {
+        let mut ui = simulator(&shell);
+        ui.find("known_hosts import at startup: Off")
+            .expect("the overview line");
+    }
+    change(&mut shell, SettingsMessage::SyncKnownHostsAtStartup(true));
+    assert!(shell.app().settings().sync_known_hosts_at_startup);
+    assert_eq!(
+        shell.settings_found("modified"),
+        [SettingRow::SyncKnownHostsAtStartup]
+    );
+    {
+        let mut ui = simulator(&shell);
+        ui.find("known_hosts import at startup: On")
+            .expect("the overview line");
+        ui.find(
+            "At every start, host keys from known_hosts, a file other programs also write, \
+             are trusted without asking.",
+        )
+        .expect("the C# warning");
+    }
+    let _ = shell.update(Message::ResetSetting(SettingRow::SyncKnownHostsAtStartup));
+    assert!(!shell.app().settings().sync_known_hosts_at_startup);
+    let saved = Settings::load(&settings_path(&dir.path().join("profiles.toml"))).expect("saved");
+    assert!(!saved.sync_known_hosts_at_startup);
 }

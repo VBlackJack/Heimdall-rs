@@ -423,3 +423,204 @@ new.lab {ed}
         "each key's base64 read from known_hosts"
     );
 }
+
+/// A fixture's key, read.
+fn read(name: &str) -> heimdall_ssh::PublicKey {
+    heimdall_ssh::PublicKey::from_openssh(&key(name)).expect("key")
+}
+
+/// The fingerprints `store` records for `host` on 22.
+fn recorded(store: &KnownHosts, host: &str) -> Vec<String> {
+    store
+        .recorded(host, 22)
+        .expect("read")
+        .iter()
+        .map(heimdall_ssh::fingerprint)
+        .collect()
+}
+
+#[test]
+fn at_startup_a_new_server_learns_every_algorithm_said_imported() {
+    use heimdall_ssh::HostKeySource;
+    use heimdall_ssh::known_hosts_import::{HostKeysSynced, sync};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let parsed = parse(&format!(
+        "web.lab {}\nweb.lab {}\n|1|c2FsdA==|aGFzaA== {}\nweb.lab {}\n",
+        key("host-ed25519"),
+        key("host-ecdsa"),
+        key("host-ed25519-other"),
+        key("host-ed25519"),
+    ));
+    assert_eq!(
+        parsed.diagnostics.first().map(|d| &d.note),
+        Some(&HostKeyNote::HashedHost),
+        "a hashed line is left out"
+    );
+    let done = sync(&parsed.candidates, &store).expect("synced");
+    assert_eq!(
+        done,
+        HostKeysSynced {
+            imported: 2,
+            matched: 1,
+            conflicts: Vec::new(),
+        },
+        "the same key twice is learnt once"
+    );
+    assert_eq!(
+        recorded(&store, "web.lab"),
+        [print("host-ed25519"), print("host-ecdsa")]
+    );
+    for entry in store.entries().expect("listed") {
+        assert_eq!(entry.details.source, HostKeySource::Imported, "{entry:?}");
+        assert!(entry.details.first_seen.is_some());
+    }
+}
+
+#[test]
+fn at_startup_a_file_contradicting_itself_teaches_nothing_of_that_server() {
+    use heimdall_ssh::known_hosts_import::sync;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let parsed = parse(&format!(
+        "web.lab {}\nweb.lab {}\nweb.lab {}\ndb.lab {}\n",
+        key("host-ed25519"),
+        key("host-ecdsa"),
+        key("host-ed25519-other"),
+        key("host-ed25519"),
+    ));
+    let done = sync(&parsed.candidates, &store).expect("synced");
+    assert_eq!((done.imported, done.matched), (1, 0), "db.lab alone");
+    assert!(
+        recorded(&store, "web.lab").is_empty(),
+        "web.lab refused whole"
+    );
+    assert_eq!(recorded(&store, "db.lab"), [print("host-ed25519")]);
+    let said: Vec<(usize, String, String, bool)> = done
+        .conflicts
+        .iter()
+        .map(|c| {
+            (
+                c.line,
+                c.existing.clone(),
+                c.imported.clone(),
+                c.within_file,
+            )
+        })
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (1, print("host-ed25519-other"), print("host-ed25519"), true),
+            (2, print("host-ed25519"), print("host-ecdsa"), true),
+            (3, print("host-ed25519"), print("host-ed25519-other"), true),
+        ],
+        "each key with what contradicts it"
+    );
+}
+
+#[test]
+fn at_startup_a_known_server_matches_its_key_and_takes_no_other_of_any_algorithm() {
+    use heimdall_ssh::HostKeySource;
+    use heimdall_ssh::known_hosts_import::sync;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    // Trusted before the details were kept: no source, no dates.
+    store
+        .learn("web.lab", 22, &read("host-ed25519"))
+        .expect("learn");
+    let before = store.entries().expect("listed")[0].details;
+    assert_eq!(before.last_seen, None);
+
+    let parsed = parse(&format!(
+        "web.lab {}\nweb.lab {}\nweb.lab {}\n",
+        key("host-ed25519"),
+        key("host-ecdsa"),
+        key("host-ed25519-other"),
+    ));
+    let done = sync(&parsed.candidates, &store).expect("synced");
+    assert_eq!((done.imported, done.matched), (0, 1));
+    assert_eq!(
+        recorded(&store, "web.lab"),
+        [print("host-ed25519")],
+        "never added: the ECDSA key contradicts the server's trust"
+    );
+    let said: Vec<(usize, String, String, bool)> = done
+        .conflicts
+        .iter()
+        .map(|c| {
+            (
+                c.line,
+                c.existing.clone(),
+                c.imported.clone(),
+                c.within_file,
+            )
+        })
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (2, print("host-ed25519"), print("host-ecdsa"), false),
+            (3, print("host-ed25519"), print("host-ed25519-other"), false),
+        ]
+    );
+    let after = store.entries().expect("listed")[0].details;
+    assert!(after.last_seen.is_some(), "the match raises its last seen");
+    assert_eq!(
+        after.source,
+        HostKeySource::Unknown,
+        "a match is not said imported"
+    );
+    assert_eq!(after.first_seen, None, "never an invented first date");
+}
+
+#[test]
+fn at_startup_a_pinned_server_takes_its_pinned_key_in_full_and_nothing_else() {
+    use heimdall_ssh::known_hosts_import::sync;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let store = KnownHosts::new(dir.path().join("known_hosts"));
+    let pins = heimdall_ssh::Pins::beside(store.path());
+    pins.pin("web.lab", 22, &print("host-ed25519"))
+        .expect("pinned");
+    pins.pin("db.lab", 22, &print("host-ed25519"))
+        .expect("pinned");
+
+    let parsed = parse(&format!(
+        "web.lab {}\nweb.lab {}\nweb.lab {}\ndb.lab {}\n",
+        key("host-ecdsa"),
+        key("host-ed25519"),
+        key("host-ed25519-other"),
+        key("host-ed25519-other"),
+    ));
+    let done = sync(&parsed.candidates, &store).expect("synced");
+    assert_eq!((done.imported, done.matched), (1, 0));
+    assert_eq!(recorded(&store, "web.lab"), [print("host-ed25519")]);
+    assert!(
+        pins.pinned("web.lab", 22).expect("read").is_empty(),
+        "recorded in full, unpinned"
+    );
+    assert!(recorded(&store, "db.lab").is_empty());
+    assert_eq!(
+        pins.pinned("db.lab", 22).expect("read"),
+        [print("host-ed25519")],
+        "another key: the pin stays"
+    );
+    let said: Vec<(usize, String, bool)> = done
+        .conflicts
+        .iter()
+        .map(|c| (c.line, c.existing.clone(), c.within_file))
+        .collect();
+    assert_eq!(
+        said,
+        [
+            (1, print("host-ed25519"), false),
+            (3, print("host-ed25519"), false),
+            (4, print("host-ed25519"), false),
+        ],
+        "the pin, then the key recorded from it, contradict the others"
+    );
+}

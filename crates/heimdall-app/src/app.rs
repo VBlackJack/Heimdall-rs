@@ -1316,6 +1316,15 @@ pub enum Effect {
     /// Find whether Credential Guard runs with this detection, off the UI thread, and say
     /// it as [`Message::CredentialGuard`].
     CheckCredentialGuard(std::sync::Arc<crate::credential_guard::Detector>),
+    /// Import the keys of the user's OpenSSH `known_hosts` into Heimdall-rs's own, off the
+    /// UI thread, with [`crate::known_hosts_sync::run`]; nothing is answered, as the C#
+    /// startup import says what it did in the log only.
+    SyncKnownHosts {
+        /// The user's OpenSSH `known_hosts`.
+        source: PathBuf,
+        /// Heimdall-rs's own.
+        store: PathBuf,
+    },
     /// Launch a Citrix application outside Heimdall, off the UI thread, the client's
     /// processes listed first; answered with [`Message::CitrixLaunched`].
     LaunchCitrix {
@@ -1808,6 +1817,7 @@ impl fmt::Debug for Effect {
             }
             Self::VerifyWindowsHello => f.write_str("VerifyWindowsHello"),
             Self::CheckCredentialGuard(_) => f.write_str("CheckCredentialGuard"),
+            Self::SyncKnownHosts { .. } => f.write_str("SyncKnownHosts(..)"),
             Self::LaunchCitrix { tab, .. } => write!(f, "LaunchCitrix({}, ..)", tab.value()),
             Self::ProbeCitrix { tab, lists, .. } => {
                 write!(f, "ProbeCitrix({}, {lists})", tab.value())
@@ -3096,6 +3106,9 @@ pub struct App {
     /// Credential Guard required before an embedded RDP session, asked before Windows
     /// Hello.
     credential_guard: credential_guard_gate::CredentialGuardGate,
+    /// The user's OpenSSH `known_hosts` was looked at for an import at startup: never
+    /// again in this run.
+    known_hosts_synced: bool,
     /// Windows Hello asked before a connection.
     hello: hello_gate::HelloGate,
     /// Tunnels being opened or open, with what stops them.
@@ -3258,6 +3271,7 @@ impl App {
             monitor: reachability_monitor::Monitor::default(),
             updates: updates::Updates::new(crate::update_check::running_release()),
             credential_guard: credential_guard_gate::CredentialGuardGate::default(),
+            known_hosts_synced: false,
             hello: hello_gate::HelloGate::default(),
             tunnel_runs: Vec::new(),
             next_tunnel: crate::tunnel::TunnelId::default(),

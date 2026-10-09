@@ -95,6 +95,20 @@ pub fn home_dir() -> Option<PathBuf> {
     BaseDirs::new().map(|dirs| dirs.home_dir().to_owned())
 }
 
+/// The folder OpenSSH keeps its files in, under the home folder.
+pub const OPENSSH_FOLDER: &str = ".ssh";
+
+/// The file of the keys OpenSSH trusts, in that folder.
+pub const OPENSSH_KNOWN_HOSTS: &str = "known_hosts";
+
+/// The user's OpenSSH `known_hosts`, under the home folder Windows says: never read from
+/// the environment, which whoever starts Heimdall sets. `None` when the platform reports
+/// no home.
+#[must_use]
+pub fn openssh_known_hosts() -> Option<PathBuf> {
+    home_dir().map(|home| home.join(OPENSSH_FOLDER).join(OPENSSH_KNOWN_HOSTS))
+}
+
 /// Data directory of the C# Heimdall on this machine, when the platform has one.
 ///
 /// Only meaningful on Windows, where the C# Heimdall runs; the path is returned whether or

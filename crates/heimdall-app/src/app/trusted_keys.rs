@@ -28,12 +28,6 @@ use heimdall_ssh::{KnownHostEntry, KnownHosts, KnownHostsError};
 
 use super::{App, Dialog, Effect, Notice};
 
-/// The folder OpenSSH keeps its files in, under the home folder.
-const OPENSSH_FOLDER: &str = ".ssh";
-
-/// The file of the keys OpenSSH trusts, in that folder.
-const OPENSSH_KNOWN_HOSTS: &str = "known_hosts";
-
 /// The format of the C# "Trusted since", "First seen" and "Last seen" columns: the day and
 /// the minute, as its general format, in an order every language reads.
 const TRUSTED_SINCE_FORMAT: &str = "%Y-%m-%d %H:%M";
@@ -201,12 +195,28 @@ impl App {
         }
     }
 
+    /// The import of the user's OpenSSH `known_hosts` at startup, as the C#
+    /// `KnownHostsStartupSync`: once, when the settings choose it, in the background; asked
+    /// again in the same run, or after it is chosen, nothing.
+    pub fn sync_known_hosts_at_startup(&mut self) -> Vec<Effect> {
+        let first = !std::mem::replace(&mut self.known_hosts_synced, true);
+        if !first || !self.settings.sync_known_hosts_at_startup {
+            return Vec::new();
+        }
+        let Some(source) = heimdall_core::paths::openssh_known_hosts() else {
+            log::warn!("known_hosts startup sync failed: the home folder is unknown");
+            return Vec::new();
+        };
+        vec![Effect::SyncKnownHosts {
+            source,
+            store: self.config.known_hosts.clone(),
+        }]
+    }
+
     /// Writes the keys trusted into `~/.ssh/known_hosts`, as the C# export: in place of
     /// their own lines there, every other line kept; and says how it went.
     fn export_known_hosts(&mut self) {
-        let Some(target) =
-            std::env::home_dir().map(|home| home.join(OPENSSH_FOLDER).join(OPENSSH_KNOWN_HOSTS))
-        else {
+        let Some(target) = heimdall_core::paths::openssh_known_hosts() else {
             self.tell(Notice::KnownHostsExportFailed(String::new()));
             return;
         };

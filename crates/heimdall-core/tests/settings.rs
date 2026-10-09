@@ -1771,3 +1771,52 @@ fn credential_guard_is_not_required_by_default_kept_carried_and_reset_with_every
     settings.reset_all();
     assert!(!settings.require_credential_guard);
 }
+
+#[test]
+fn the_known_hosts_import_at_startup_is_off_by_default_kept_carried_and_reset() {
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert!(
+        !settings.sync_known_hosts_at_startup,
+        "off, as the C# default"
+    );
+
+    settings.sync_known_hosts_at_startup = true;
+    settings.save(&path).expect("save");
+    let text = std::fs::read_to_string(&path).expect("read");
+    assert!(
+        text.contains("[ssh]") && text.contains("sync_known_hosts_at_startup = true"),
+        "{text}"
+    );
+    assert!(
+        Settings::load(&path)
+            .expect("load")
+            .sync_known_hosts_at_startup
+    );
+    // An older file, without the key: the C# default.
+    let read = written(dir.path(), "version = 1\n[ssh]\nauto_reconnect = true\n");
+    assert!(!read.sync_known_hosts_at_startup);
+
+    // A preference: it travels with the others, as the C# `SyncKnownHostsAtStartup`.
+    let (exported, _) = settings.export(None, false);
+    assert!(
+        exported.contains("sync_known_hosts_at_startup = true"),
+        "{exported}"
+    );
+    let imported = Settings::default().import(&exported).expect("read");
+    assert!(imported.settings.sync_known_hosts_at_startup);
+    assert!(
+        imported
+            .changes
+            .iter()
+            .any(|change| change.key == "ssh.sync_known_hosts_at_startup"),
+        "said among the changes"
+    );
+
+    // "Reset RDP defaults" leaves it; "Reset defaults" turns it off.
+    settings.reset_rdp();
+    assert!(settings.sync_known_hosts_at_startup);
+    settings.reset_all();
+    assert!(!settings.sync_known_hosts_at_startup);
+}
