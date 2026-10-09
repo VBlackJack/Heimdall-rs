@@ -14,9 +14,13 @@
  * limitations under the License.
  */
 
-//! The engines of the built-in tools, as the C# `Heimdall.Core` `Codecs` and `Identifiers`:
-//! what a tool computes, apart from how its tab shows it.
+//! The engines of the built-in tools, as the C# `Heimdall.Core` `Codecs`, `Identifiers` and
+//! `Matching`: what a tool computes, apart from how its tab shows it.
 
 pub mod base64_codec;
+pub mod diff_engine;
+pub mod json_codec;
+pub mod regex_engine;
+pub mod text_case_codec;
 pub mod url_codec;
 pub mod uuid_generator;
