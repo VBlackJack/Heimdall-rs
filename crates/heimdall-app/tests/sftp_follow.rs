@@ -21,7 +21,9 @@
 //! pane, which stays where it was; nothing done while it lists or asks a question, the next
 //! report followed then; never an FTP pane, and nothing ever typed into the shell.
 
-use std::net::{Ipv4Addr, TcpListener};
+#[path = "support/ftp_server.rs"]
+mod ftp_server;
+
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -41,7 +43,6 @@ use heimdall_sftp::{ClientConfig, SftpClient};
 use heimdall_ssh::{AgentSource, SessionClosed, TerminalSize};
 use heimdall_term::GridSize;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
-use unftp_sbe_fs::Filesystem;
 
 /// The grid every tab opens at until the window says otherwise.
 const GRID: GridSize = GridSize { cols: 80, rows: 24 };
@@ -453,29 +454,7 @@ async fn a_report_is_let_go_while_the_pane_lists_or_asks_and_the_next_one_follow
 
 /// Serves `root` over FTP on a free local port; returns the port.
 async fn serve(root: &Path) -> u16 {
-    let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("free port")
-        .local_addr()
-        .expect("address")
-        .port();
-    let home = root.to_owned();
-    let server = libunftp::ServerBuilder::new(Box::new(move || {
-        Filesystem::new(home.clone()).expect("root")
-    }))
-    .build()
-    .expect("server");
-    tokio::spawn(server.listen(format!("127.0.0.1:{port}")));
-    tokio::time::timeout(STEP, async {
-        while tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_err()
-        {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("started");
-    port
+    ftp_server::serve(root, None).await
 }
 
 #[tokio::test]

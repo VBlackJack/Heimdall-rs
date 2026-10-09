@@ -18,7 +18,9 @@
 //! edited in the integrated editor and with an external editor, never with sudo, and its
 //! entries copied to be pasted on another server.
 
-use std::net::{Ipv4Addr, TcpListener};
+#[path = "support/ftp_server.rs"]
+mod ftp_server;
+
 use std::path::Path;
 use std::time::Duration;
 
@@ -29,36 +31,13 @@ use heimdall_core::profile::{FtpProfile, ProfileId};
 use heimdall_files::{FtpClient, FtpSecurity, FtpTarget, RemotePath, RemoteSession};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
-use unftp_sbe_fs::Filesystem;
 
 /// Longest wait for the test server, or for one operation.
 const STEP: Duration = Duration::from_secs(20);
 
 /// Serves `root` over FTP on a free local port; returns the port.
 async fn serve(root: &Path) -> u16 {
-    let port = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))
-        .expect("free port")
-        .local_addr()
-        .expect("address")
-        .port();
-    let home = root.to_owned();
-    let server = libunftp::ServerBuilder::new(Box::new(move || {
-        Filesystem::new(home.clone()).expect("root")
-    }))
-    .build()
-    .expect("server");
-    tokio::spawn(server.listen(format!("127.0.0.1:{port}")));
-    tokio::time::timeout(STEP, async {
-        while tokio::net::TcpStream::connect((Ipv4Addr::LOCALHOST, port))
-            .await
-            .is_err()
-        {
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("started");
-    port
+    ftp_server::serve(root, None).await
 }
 
 /// An anonymous FTP session to `port`.
