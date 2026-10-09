@@ -76,6 +76,10 @@ pub enum UiError {
     /// The server is reached through this Remote Desktop Gateway, which the built-in client
     /// does not go through yet.
     NeedsRdGateway(String),
+    /// An embedded RDP session while the settings require Credential Guard, which does not
+    /// run on this computer or could not be found running, as the C#
+    /// `ErrorEmbeddedCredentialGuardRequired`.
+    CredentialGuardRequired,
     /// The `WinRM` server's name does not resolve, as the C# preflight says.
     WinRmHostUnresolved {
         /// The name.

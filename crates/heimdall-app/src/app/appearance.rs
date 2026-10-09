@@ -130,6 +130,8 @@ pub enum SettingsMessage {
     UpdateChecks(bool),
     /// Hours between two looks for a newer release; refused out of the C# range.
     UpdateInterval(u32),
+    /// An embedded RDP session opens only while Credential Guard runs, or whenever.
+    RequireCredentialGuard(bool),
     /// A connection waits for Windows Hello, or not.
     RequireWindowsHello(bool),
     /// Minutes a Windows Hello verification counts, 0 for every time; refused out of the
@@ -461,16 +463,15 @@ impl App {
                     return Vec::new();
                 }
             }
-            SettingsMessage::DisconnectOnLock(on) => self.settings.disconnect_on_lock = *on,
+            message @ (SettingsMessage::DisconnectOnLock(_)
+            | SettingsMessage::RequireCredentialGuard(_)
+            | SettingsMessage::RequireWindowsHello(_)) => self.set_security_flag(message),
             SettingsMessage::PreventSleep(on) => self.settings.prevent_sleep = *on,
             SettingsMessage::CollapseTunnelsPanel(collapse) => {
                 self.settings.collapse_tunnels_panel = *collapse;
             }
             SettingsMessage::DiagnosticsLog(on) => self.settings.diagnostics_log = *on,
             SettingsMessage::UpdateChecks(on) => self.settings.updates.enabled = *on,
-            SettingsMessage::RequireWindowsHello(on) => {
-                self.settings.windows_hello.require_on_connect = *on;
-            }
             SettingsMessage::Reachability(on) => self.settings.reachability.enabled = *on,
             SettingsMessage::ReachabilityInterval(_)
             | SettingsMessage::ReachabilityTimeout(_)
@@ -505,6 +506,31 @@ impl App {
         for tab in &mut self.tabs {
             tab.terminal.set_palette(palette);
         }
-        self.reachability_changed(before.reachability)
+        self.settings_changed(&before)
+    }
+
+    /// Sets the security switch `message` changes.
+    fn set_security_flag(&mut self, message: &SettingsMessage) {
+        match message {
+            SettingsMessage::DisconnectOnLock(on) => self.settings.disconnect_on_lock = *on,
+            SettingsMessage::RequireCredentialGuard(on) => {
+                self.settings.require_credential_guard = *on;
+            }
+            SettingsMessage::RequireWindowsHello(on) => {
+                self.settings.windows_hello.require_on_connect = *on;
+            }
+            _ => {}
+        }
+    }
+
+    /// What the settings changed from `before` start: the background check of every server
+    /// as it now runs, and Credential Guard checked when just required, so that the first
+    /// session does not wait for it.
+    fn settings_changed(&mut self, before: &Settings) -> Vec<Effect> {
+        let mut effects = self.reachability_changed(before.reachability);
+        if !before.require_credential_guard {
+            effects.extend(self.warm_credential_guard());
+        }
+        effects
     }
 }

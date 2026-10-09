@@ -172,6 +172,10 @@ impl App {
             route: route.iter().map(SshGateway::as_hop).collect(),
             ssh,
             cancel,
+            credential_guard: self
+                .settings
+                .require_credential_guard
+                .then(|| std::sync::Arc::clone(&self.credential_guard.detector)),
         })
     }
 

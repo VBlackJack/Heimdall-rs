@@ -75,6 +75,11 @@ pub struct RdpRequest {
     pub ssh: ConnectOptions,
     /// Cancels the attempt and, once connected, the session.
     pub cancel: CancellationToken,
+    /// The Credential Guard detection when the settings require it, `None` when they do
+    /// not: the attempt then opens only while it runs. The application's gate asked it
+    /// already; asked here too, a reconnection and an auto-reconnection are held to it
+    /// whatever opened them.
+    pub credential_guard: Option<Arc<crate::credential_guard::Detector>>,
 }
 
 /// Address this side reports to the server through a tunnel: it has none of its own there.
@@ -189,6 +194,13 @@ fn connection_event(event: RdpEvent, target: &str) -> ConnectionEvent {
 async fn run(request: RdpRequest, registry: AnswerRegistry, events: mpsc::Sender<ConnectionEvent>) {
     let profile = &request.profile;
     let target = display_address(&profile.host, profile.port);
+    // Before anything is asked or sent: the C# `RdpHandler` refuses before its tunnel.
+    if let Some(detector) = &request.credential_guard
+        && !detector.status().await.is_active()
+    {
+        log::warn!("Embedded RDP blocked: Credential Guard not enabled for {target}");
+        return failed(&events, UiError::CredentialGuardRequired).await;
+    }
     log::info!("connecting to {target} over RDP");
     let ask_credentials: AskCredentials = {
         let (profile, registry, events) = (profile.clone(), registry.clone(), events.clone());
@@ -445,6 +457,64 @@ mod tests {
             route: Vec::new(),
             ssh: ConnectOptions::new(PathBuf::from("known_hosts")),
             cancel: CancellationToken::new(),
+            credential_guard: None,
+        }
+    }
+
+    /// A probe answering `status`.
+    struct Answer(crate::credential_guard::Status);
+
+    impl crate::credential_guard::Probe for Answer {
+        fn detect(&self) -> crate::credential_guard::Status {
+            self.0.clone()
+        }
+    }
+
+    fn dc() -> RdpProfile {
+        RdpProfile {
+            extras: heimdall_core::profile::RdpExtras::default(),
+            id: ProfileId::new("dc"),
+            name: "dc".to_owned(),
+            group: None,
+            // Never reached: the gate refuses first.
+            host: "dc.invalid".to_owned(),
+            port: 3389,
+            username: None,
+            domain: None,
+            allow_tls_only: false,
+            gateway: None,
+            redirect_clipboard: true,
+            redirect_drives: false,
+            options: RdpOptions::default(),
+            vault_entry: None,
+            forwards: heimdall_core::profile::Forwards::default(),
+            follow_defaults: false,
+            several_servers: false,
+            anti_idle: false,
+            auto_reconnect: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn an_attempt_requiring_credential_guard_is_refused_before_anything_without_it() {
+        use crate::credential_guard::{Detector, Failure, Status};
+        use tokio_stream::StreamExt as _;
+
+        for status in [Status::Inactive, Status::Indeterminate(Failure::TimedOut)] {
+            let mut request = request(dc());
+            request.credential_guard = Some(Arc::new(Detector::with_probe(Arc::new(Answer(
+                status.clone(),
+            )))));
+            let mut events = rdp_events(request, AnswerRegistry::default());
+            let first = events.next().await;
+            assert!(
+                matches!(
+                    first,
+                    Some(ConnectionEvent::Failed(UiError::CredentialGuardRequired))
+                ),
+                "{status:?}: fail closed, nothing asked first"
+            );
+            assert!(events.next().await.is_none(), "{status:?}: nothing after");
         }
     }
 

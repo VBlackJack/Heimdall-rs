@@ -123,6 +123,7 @@ pub fn error(error: &UiError) -> String {
         UiError::NeedsRdGateway(gateway) => {
             fl!("ui-error-rd-gateway", gateway = server_text(gateway))
         }
+        UiError::CredentialGuardRequired => fl!("ui-error-credential-guard-required"),
         UiError::WinRmHostUnresolved { host } => {
             fl!("ui-error-winrm-unresolved", host = host.as_str())
         }
