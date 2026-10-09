@@ -61,13 +61,18 @@ impl App {
                 }
             }
             Message::ChooseProtocol(protocol) => {
-                let ssh_mode = self.settings.ssh_default_mode;
+                let (ssh_mode, rdp_mode) = (
+                    self.settings.ssh_default_mode,
+                    self.settings.rdp_default_mode,
+                );
                 if let Some(Dialog::EditProfile { draft, error }) = self.dialog.as_mut()
                     && draft.editing.is_none()
                 {
                     **draft = ProfileDraft::new_for(protocol);
-                    // As the C# "Add server" starts with the settings' default SSH mode.
+                    // As the C# "Add server" starts with the settings' default SSH and RDP
+                    // modes (`ServerListViewModel.cs:1527-1531`).
                     draft.ssh_mode = ssh_mode;
+                    draft.rdp_extras.external = rdp_mode.is_external();
                     *error = None;
                 }
             }
@@ -101,13 +106,16 @@ impl App {
         });
     }
 
-    /// An empty profile form, with the settings' default SSH mode, as the C# "Add server"
-    /// starts. Quick connect and the imports keep their own, as the C# ones do.
+    /// An empty profile form, with the settings' default SSH and RDP modes, as the C# "Add
+    /// server" starts (`ServerListViewModel.cs:1527-1531`). Quick connect and the imports
+    /// keep their own, as the C# ones do.
     pub(super) fn blank_draft(&self) -> ProfileDraft {
-        ProfileDraft {
+        let mut draft = ProfileDraft {
             ssh_mode: self.settings.ssh_default_mode,
             ..ProfileDraft::default()
-        }
+        };
+        draft.rdp_extras.external = self.settings.rdp_default_mode.is_external();
+        draft
     }
 
     /// Opens the form of a saved profile, in its own protocol.

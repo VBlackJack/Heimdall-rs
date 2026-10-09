@@ -61,7 +61,7 @@ pub enum SettingsCard {
     ExternalEditor,
     /// The trusted SSH host keys and FTPS certificates.
     SshTrusted,
-    /// The RDP options profiles following the application's take.
+    /// The default RDP mode and the RDP options profiles following the application's take.
     RdpDefaults,
     /// The RDP auto-reconnect attempts and the logon watchdog.
     RdpSession,
@@ -237,6 +237,8 @@ pub enum SettingRow {
     FtpsCertificates,
     /// The trusted VNC certificates.
     VncCertificates,
+    /// Where the desktop of a new RDP profile opens, with "Apply to all saved sessions".
+    RdpDefaultMode,
     /// The RDP options profiles following the application's take.
     RdpDefaults,
     /// Attempts of an RDP auto-reconnect.
@@ -271,7 +273,7 @@ pub enum SettingRow {
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 57] = [
+    pub const ALL: [Self; 58] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -314,6 +316,7 @@ impl SettingRow {
         Self::HostKeys,
         Self::FtpsCertificates,
         Self::VncCertificates,
+        Self::RdpDefaultMode,
         Self::RdpDefaults,
         Self::RdpAutoReconnectAttempts,
         Self::RdpConnectTimeout,
@@ -371,7 +374,8 @@ impl SettingRow {
             Self::HostKeys | Self::FtpsCertificates | Self::VncCertificates => {
                 SettingsCard::SshTrusted
             }
-            Self::RdpDefaults => SettingsCard::RdpDefaults,
+            // At the top of the C# "RDP defaults" card (`MainWindow.xaml:3356-3375`).
+            Self::RdpDefaultMode | Self::RdpDefaults => SettingsCard::RdpDefaults,
             Self::RdpAutoReconnectAttempts | Self::RdpConnectTimeout => SettingsCard::RdpSession,
             Self::RdpResolutionPresets => SettingsCard::RdpPresets,
             Self::RdpResetAll => SettingsCard::RdpReset,
@@ -506,6 +510,7 @@ impl SettingRow {
             }
             Self::SshDefaultMode => settings.ssh_default_mode != defaults.ssh_default_mode,
             Self::ExternalEditor => settings.external_editor.trim() != defaults.external_editor,
+            Self::RdpDefaultMode => settings.rdp_default_mode != defaults.rdp_default_mode,
             Self::RdpDefaults => settings.rdp_defaults != defaults.rdp_defaults,
             Self::RdpAutoReconnectAttempts => {
                 settings.rdp_auto_reconnect_attempts != defaults.rdp_auto_reconnect_attempts
@@ -556,6 +561,7 @@ impl SettingRow {
             }
             Self::SshDefaultMode => SettingsMessage::SshDefaultMode(defaults.ssh_default_mode),
             Self::ExternalEditor => SettingsMessage::ExternalEditor(defaults.external_editor),
+            Self::RdpDefaultMode => SettingsMessage::RdpDefaultMode(defaults.rdp_default_mode),
             Self::RdpDefaults => SettingsMessage::RdpDefaults(defaults.rdp_defaults),
             Self::RdpAutoReconnectAttempts => {
                 SettingsMessage::RdpAutoReconnectAttempts(defaults.rdp_auto_reconnect_attempts)
@@ -875,7 +881,7 @@ fn auto_lock_line(minutes: u32, vault: bool) -> PostureLine {
 
 #[cfg(test)]
 mod tests {
-    use heimdall_core::profile::SshMode;
+    use heimdall_core::profile::{RdpMode, SshMode};
 
     use super::*;
 
@@ -982,6 +988,34 @@ mod tests {
             SettingsMessage::X11ServerPath("x".to_owned())
         );
         assert_ne!(ToolPath::Putty.index(), ToolPath::X11Server.index());
+    }
+
+    #[test]
+    fn the_default_rdp_mode_heads_the_rdp_defaults_card_marked_and_reset_to_embedded() {
+        assert_eq!(
+            SettingsCard::RdpDefaults.rows(),
+            [SettingRow::RdpDefaultMode, SettingRow::RdpDefaults]
+        );
+        let row = SettingRow::RdpDefaultMode;
+        assert_eq!(row.tab(), SettingsTab::Rdp);
+        assert!(row.is_marked());
+        assert!(
+            row.flag(&Settings::default()).is_none(),
+            "a list, not a box"
+        );
+        let changed = Settings {
+            rdp_default_mode: RdpMode::External,
+            ..Settings::default()
+        };
+        assert!(row.is_modified(&changed));
+        assert!(
+            !SettingRow::RdpDefaults.is_modified(&changed),
+            "a row of its own"
+        );
+        assert_eq!(
+            row.reset(&changed),
+            Some(SettingsMessage::RdpDefaultMode(RdpMode::Embedded))
+        );
     }
 
     #[test]

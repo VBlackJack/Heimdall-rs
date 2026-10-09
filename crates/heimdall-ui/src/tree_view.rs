@@ -31,7 +31,7 @@ use heimdall_app::{
     SessionState, SessionsMessage, TabGroup, TabId, TabMenuMessage, TreeFilter,
 };
 use heimdall_core::folder::FolderColor;
-use heimdall_core::profile::{ProfileId, Resolution, fixed_desktop};
+use heimdall_core::profile::{ProfileId, RdpMode, Resolution, fixed_desktop};
 use iced::advanced::layout::{self, Layout};
 use iced::advanced::widget::{Operation, Tree, Widget};
 use iced::advanced::{Clipboard, Shell, mouse, overlay, renderer};
@@ -60,6 +60,8 @@ pub enum TreeMenu {
     Profile(ProfileId),
     /// The "Connect as..." entries of a profile.
     ConnectAs(ProfileId),
+    /// The one-time RDP modes of an RDP profile, as the C# "Connect with...".
+    ConnectWith(ProfileId),
     /// How a profile opens in a split of the tab shown, as the C# "Open in split".
     OpenInSplit(ProfileId),
     /// The menu of the tree's empty area and of the "+" button.
@@ -928,8 +930,45 @@ pub fn open_in_split_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
     menu_card(entries).into()
 }
 
-/// A profile's menu, in the C# order this version has: Connect, Connect as, Open in split,
-/// Rename, Edit, Duplicate, Move to folder, the copies, Delete.
+/// "Connect with...", as the C# `CreateConnectWithMenu` (`ContextMenuFactory.cs:266-283`):
+/// the RDP modes an RDP profile opens in this once, what it does said beside it.
+fn connect_with_entry<'a>(id: &ProfileId) -> Element<'a, Message> {
+    tooltip(
+        submenu(
+            fl!("ui-tree-connect-with"),
+            TreeMenu::ConnectWith(id.clone()),
+        ),
+        text(fl!("ui-tree-connect-with-tooltip")).size(font_size::BODY_LARGE),
+        tooltip::Position::Right,
+    )
+    .style(container::rounded_box)
+    .into()
+}
+
+/// The modes "Connect with..." opens RDP profile `id` in this once, in the C# order:
+/// embedded, then Remote Desktop Connection. The profile is not changed.
+#[must_use]
+pub fn connect_with_entries<'a>(id: &ProfileId) -> Element<'a, Message> {
+    let mut entries = column![].spacing(0.0).width(MENU_WIDTH);
+    for mode in RdpMode::ALL {
+        let label = match mode {
+            RdpMode::Embedded => fl!("ui-tree-connect-embedded"),
+            RdpMode::External => fl!("ui-tree-connect-external-mstsc"),
+        };
+        entries = entries.push(entry(
+            label,
+            Some(AppMessage::OpenRdpWith {
+                id: id.clone(),
+                mode,
+            }),
+        ));
+    }
+    menu_card(entries).into()
+}
+
+/// A profile's menu, in the C# order this version has: Connect, Connect with (an RDP
+/// profile's), Connect as, Open in split, Rename, Edit, Duplicate, Move to folder, the
+/// copies, Delete.
 fn profile_entries<'a>(
     mut entries: Column<'a, Message>,
     profile: &ProfileSummary,
@@ -941,6 +980,10 @@ fn profile_entries<'a>(
         fl!("ui-tree-connect"),
         Some(AppMessage::ConnectProfile(id.clone())),
     ));
+    // Only for an RDP profile, as the C# `IsRdpServer` (`ContextMenuFactory.cs:86-89`).
+    if profile.kind == ProfileKind::Rdp {
+        entries = entries.push(connect_with_entry(&id));
+    }
     if !connect_as.is_empty() {
         entries = entries.push(submenu(
             fl!("ui-tree-connect-as"),

@@ -2898,7 +2898,8 @@ fn the_rdp_preview_says_each_files_state_and_imports() {
         files: vec![
             (
                 "server a.rdp".into(),
-                Ok("full address:s:dc.lab:3390\npassword 51:b:01\ncompression:i:1\n".to_owned()),
+                // The screen mode has no field: a partial mapping.
+                Ok("full address:s:dc.lab:3390\npassword 51:b:01\nscreen mode id:i:2\n".to_owned()),
             ),
             (
                 "gw.rdp".into(),
@@ -2948,6 +2949,74 @@ async fn rdp_files_are_read_or_said_unreadable_with_their_path() {
     let read = heimdall_ui::rdp_view::read_all(vec![here.clone(), missing.clone()]).await;
     assert_eq!(read[0], (here, Ok("full address:s:a\n".to_owned())));
     assert!(matches!(&read[1].1, Err(why) if why.starts_with(&missing.display().to_string())));
+}
+
+/// `full address:s:dc.lab` and its line end in UTF-16, without the byte order mark.
+fn utf16_line(big_endian: bool) -> Vec<u8> {
+    "full address:s:dc.lab\r\n"
+        .encode_utf16()
+        .flat_map(|unit| {
+            if big_endian {
+                unit.to_be_bytes()
+            } else {
+                unit.to_le_bytes()
+            }
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn rdp_files_are_read_in_every_encoding_dotnet_reads_and_a_malformed_one_is_said_unreadable()
+{
+    let dir = tempfile::tempdir().expect("dir");
+    let mut mstsc = vec![0xFF, 0xFE];
+    mstsc.extend(utf16_line(false));
+    let mut big_endian = vec![0xFE, 0xFF];
+    big_endian.extend(utf16_line(true));
+    let mut cut = mstsc.clone();
+    cut.pop();
+    let files: [(&str, Vec<u8>); 6] = [
+        ("mstsc.rdp", mstsc),
+        ("be.rdp", big_endian),
+        ("bom.rdp", b"\xEF\xBB\xBFfull address:s:dc.lab\r\n".to_vec()),
+        ("plain.rdp", b"full address:s:dc.lab\r\n".to_vec()),
+        (
+            "ansi.rdp",
+            b"full address:s:dc.lab\r\ndomain:s:caf\xE9\r\n".to_vec(),
+        ),
+        ("cut.rdp", cut),
+    ];
+    let mut paths = Vec::new();
+    for (name, bytes) in &files {
+        let path = dir.path().join(name);
+        std::fs::write(&path, bytes).expect("write");
+        paths.push(path);
+    }
+    let read = heimdall_ui::rdp_view::read_all(paths.clone()).await;
+    for ((name, _), (_, text)) in files.iter().zip(&read).take(4) {
+        assert_eq!(text.as_deref(), Ok("full address:s:dc.lab\r\n"), "{name}");
+    }
+    assert_eq!(
+        read[4].1.as_deref(),
+        Ok("full address:s:dc.lab\r\ndomain:s:caf\u{FFFD}\r\n"),
+        "not UTF-8 without a mark: replaced as .NET does, the file still imported"
+    );
+    assert!(
+        matches!(&read[5].1, Err(why) if why.starts_with(&paths[5].display().to_string())),
+        "cut in the middle of a character: unreadable, with its path"
+    );
+
+    // The preview takes the file mstsc saved as any other.
+    let mut shell = Shell::with_app(app(dir.path()));
+    let _ = shell.update(Message::App(AppMessage::Rdp(
+        heimdall_app::RdpMessage::Read {
+            files: read,
+            names: heimdall_ui::rdp_view::names(),
+        },
+    )));
+    let mut ui = simulator(&shell);
+    ui.find("1 file could not be read.").expect("the cut one");
+    ui.find("mstsc.rdp").expect("the UTF-16LE one");
 }
 
 #[test]
@@ -3250,6 +3319,42 @@ async fn a_servers_json_is_read_with_its_settings_and_a_large_file_is_refused() 
     assert!(!heimdall_ui::file_import_view::is_rdp(Path::new("a/b.rdg")));
 }
 
+#[tokio::test]
+async fn a_mobaxterm_file_without_a_mark_is_read_in_windows_1252_and_another_file_is_not() {
+    let dir = tempfile::tempdir().expect("dir");
+    // As MobaXterm writes it: the system's code page, no byte order mark.
+    let ansi = b"[Bookmarks]\r\nSubRep=R\xE9seau\r\nweb= #109#0%web.lab%22%root\r\n";
+    let moba = dir.path().join("MobaXterm.ini");
+    std::fs::write(&moba, ansi).expect("write");
+    let read = heimdall_ui::file_import_view::read(moba)
+        .await
+        .expect("read");
+    assert_eq!(
+        read.text,
+        "[Bookmarks]\r\nSubRep=R\u{e9}seau\r\nweb= #109#0%web.lab%22%root\r\n"
+    );
+    let marked = dir.path().join("sessions.mxtsessions");
+    std::fs::write(
+        &marked,
+        b"\xEF\xBB\xBF[Bookmarks]\r\nSubRep=R\xC3\xA9seau\r\n",
+    )
+    .expect("write");
+    assert_eq!(
+        heimdall_ui::file_import_view::read(marked)
+            .await
+            .expect("read")
+            .text,
+        "[Bookmarks]\r\nSubRep=R\u{e9}seau\r\n",
+        "UTF-8 after its mark, the mark left out"
+    );
+    let xml = dir.path().join("confCons.xml");
+    std::fs::write(&xml, b"<Connections Name=\"R\xE9seau\"/>").expect("write");
+    assert!(
+        heimdall_ui::file_import_view::read(xml).await.is_err(),
+        "only a MobaXterm file falls back to Windows-1252"
+    );
+}
+
 #[test]
 fn the_settings_page_turns_ssh_auto_reconnect_on_with_its_attempts_as_the_csharp_card() {
     use heimdall_app::SettingsMessage;
@@ -3550,7 +3655,8 @@ fn an_import_says_which_settings_it_left_out_of_which_profile() {
     ui.find("desk: printers, smart cards")
         .expect("the profile and what it came without");
     assert!(
-        ui.find("SSH gateways: 0 created, 0 merged.").is_err(),
+        ui.find("SSH gateways: 0 created, 0 merged, 0 orphan references.")
+            .is_err(),
         "no gateway line for a file without gateways"
     );
 }
@@ -3572,13 +3678,49 @@ fn an_import_counts_the_gateways_it_created_and_merged_as_the_csharp_summary() {
         gateways: heimdall_core::import::gateways::Reconciliation {
             created: 2,
             merged: 1,
+            orphans: 0,
         },
         dropped: Vec::new(),
     }));
     let shell = Shell::with_app(core);
     let mut ui = simulator(&shell);
-    ui.find("SSH gateways: 2 created, 1 merged.")
+    ui.find("SSH gateways: 2 created, 1 merged, 0 orphan references.")
         .expect("the gateway line");
+    assert!(
+        ui.find(ORPHANS_ACTION).is_err(),
+        "no orphan reference, nothing to do"
+    );
+}
+
+/// What the C# says to do about a profile naming a gateway the import could not find.
+const ORPHANS_ACTION: &str = "Some imported sessions still reference missing SSH gateways. Re-export from a build that includes gateways, or recreate/reassign the gateway in Settings before connecting.";
+
+#[test]
+fn an_import_with_orphan_gateway_references_counts_them_and_says_what_to_do_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let mut core = app(dir.path());
+    core.dialog = Some(Dialog::ImportDone(heimdall_app::ImportSummary {
+        merged: heimdall_core::store::MergeReport {
+            added: 2,
+            updated: 0,
+            unchanged: 0,
+        },
+        skipped: Vec::new(),
+        warnings: Vec::new(),
+        stored_credentials: None,
+        host_keys: None,
+        gateways: heimdall_core::import::gateways::Reconciliation {
+            created: 0,
+            merged: 0,
+            orphans: 1,
+        },
+        dropped: Vec::new(),
+    }));
+    let shell = Shell::with_app(core);
+    let mut ui = simulator(&shell);
+    ui.find("SSH gateways: 0 created, 0 merged, 1 orphan reference.")
+        .expect("the gateway line, said for the orphan alone");
+    ui.find(ORPHANS_ACTION).expect("what to do");
 }
 
 /// What the dialog of a profile file unreadable at start says, never said of a save.

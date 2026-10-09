@@ -180,6 +180,57 @@ impl SshMode {
     }
 }
 
+/// Where an RDP desktop opens, as the C# `RdpMode`: a profile holds it as
+/// [`RdpExtras::external`]; the settings' default and the profile menu's one-time
+/// "Connect with" name it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash)]
+pub enum RdpMode {
+    /// In a tab of the application, the C# default.
+    #[default]
+    Embedded,
+    /// In Remote Desktop Connection's own window (`mstsc.exe`): no tab opens.
+    External,
+}
+
+impl RdpMode {
+    /// Every mode, in the order of the C# list.
+    pub const ALL: [Self; 2] = [Self::Embedded, Self::External];
+
+    /// The mode a profile whose [`RdpExtras::external`] is `external` opens in.
+    #[must_use]
+    pub const fn of(external: bool) -> Self {
+        if external {
+            Self::External
+        } else {
+            Self::Embedded
+        }
+    }
+
+    /// Whether it is [`RdpMode::External`], as [`RdpExtras::external`] holds it.
+    #[must_use]
+    pub const fn is_external(self) -> bool {
+        matches!(self, Self::External)
+    }
+
+    /// The name the settings file holds: the C# one (`AppSettings.cs:241`).
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Embedded => "Embedded",
+            Self::External => "External",
+        }
+    }
+
+    /// The mode named `name`, whatever its case; the default for a name not known.
+    #[must_use]
+    pub fn named(name: &str) -> Self {
+        Self::ALL
+            .into_iter()
+            .find(|mode| mode.name().eq_ignore_ascii_case(name.trim()))
+            .unwrap_or_default()
+    }
+}
+
 /// Ports a session reached through a gateway opens on this computer's loopback address, as
 /// the C# Heimdall's gateway profiles do. Each is used only through a gateway.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
