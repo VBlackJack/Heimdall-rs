@@ -23,7 +23,8 @@ mod common;
 use std::path::{Path, PathBuf};
 
 use heimdall_app::files::{
-    Direction, EntryKind, FilesKey, LocalEntry, RemoteEntry, Side, TransferEvent, plan_transfer,
+    Direction, EntryKind, FilesKey, LocalEntry, RemoteEntry, Side, TransferEvent, TransferState,
+    plan_transfer,
 };
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Effect, FilesMessage, Message as AppMessage, TabId,
@@ -36,6 +37,7 @@ use heimdall_sftp::protocol::{Request, Response, SFTP_VERSION};
 use heimdall_sftp::{ClientConfig, RemotePath, SftpClient};
 use heimdall_ssh::AgentSource;
 use heimdall_term::GridSize;
+use heimdall_ui::drop_batch::DropPlace;
 use heimdall_ui::floating_view::{PaneTool, tool_id};
 use heimdall_ui::shell::{Message, Shell};
 use heimdall_ui::terminal_view::FONTS;
@@ -1211,49 +1213,126 @@ async fn files_dropped_on_a_files_tab_are_uploaded_and_said_while_dragged() {
     std::fs::write(&dropped, b"x").expect("written");
     let _ = shell.update(Message::FilesHovered(true));
     let _ = shell.update(Message::FileDropped(dropped));
-    let files = shell
-        .app()
-        .tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files");
-    assert!(
-        files
-            .transfers
-            .iter()
-            .map(|transfer| &transfer.state)
-            .eq([&heimdall_app::files::TransferState::Preparing]),
-        "planned first: nothing is written before the plan says what is in the way"
-    );
+    let transfers = |shell: &Shell| {
+        shell
+            .app()
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .map(|files| {
+                files
+                    .transfers
+                    .iter()
+                    .map(|transfer| transfer.state.clone())
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default()
+    };
+    assert!(transfers(&shell).is_empty(), "gathered until the drop ends");
     assert!(
         simulator(&shell).find("Drop files to upload").is_err(),
         "dropped: no longer said"
     );
+    let _ = shell.update(Message::DropGathered(DropPlace::Main));
+    assert_eq!(
+        transfers(&shell),
+        [TransferState::Preparing],
+        "planned first: nothing is written before the plan says what is in the way"
+    );
     // What is no file at all is refused at once: the drop reached the tab.
     let _ = shell.update(Message::FileDropped(dir.path().join("gone")));
-    let files = shell
-        .app()
-        .tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
-        .expect("files");
-    assert_eq!(files.transfers.len(), 2, "refused, and said so");
+    let _ = shell.update(Message::DropGathered(DropPlace::Main));
+    assert_eq!(transfers(&shell).len(), 2, "refused, and said so");
+    // Its end said again, the drop is not sent twice.
+    let _ = shell.update(Message::DropGathered(DropPlace::Main));
+    assert_eq!(transfers(&shell).len(), 2);
 
     // Not while the Settings page shows.
     let _ = shell.update(Message::ShowSettings);
     let _ = shell.update(Message::FilesHovered(true));
     assert!(simulator(&shell).find("Drop files to upload").is_err());
     let _ = shell.update(Message::FileDropped(dir.path().join("gone again")));
+    let _ = shell.update(Message::DropGathered(DropPlace::Main));
+    assert_eq!(transfers(&shell).len(), 2, "nothing more");
+}
+
+#[tokio::test]
+async fn files_dropped_together_from_explorer_go_as_one_upload_as_the_csharp() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    let names = ["a.txt", "b.txt", "c.txt"];
+    let _ = shell.update(Message::FilesHovered(true));
+    for name in names {
+        let path = dir.path().join(name);
+        std::fs::write(&path, b"x").expect("written");
+        // winit says each file of the drop in turn.
+        let _ = shell.update(Message::FileDropped(path));
+    }
+    let _ = shell.update(Message::DropGathered(DropPlace::Main));
     let files = shell
         .app()
         .tab(tab)
-        .expect("tab")
-        .files
-        .as_ref()
+        .and_then(|found| found.files.as_deref())
         .expect("files");
-    assert_eq!(files.transfers.len(), 2, "nothing more");
+    // One plan for the three, as the C# `UploadEntriesAsync`: a transfer waiting for
+    // another would be queued, not prepared, and asked about in a question of its own.
+    assert!(
+        files
+            .transfers
+            .iter()
+            .map(|transfer| (transfer.label.as_str(), &transfer.state))
+            .eq(names.map(|name| (name, &TransferState::Preparing))),
+        "{:?}",
+        files.transfers
+    );
+}
+
+#[tokio::test]
+async fn letters_typed_over_a_list_select_the_name_they_start_but_no_fields() {
+    use iced::event::Status;
+
+    let dir = tempfile::tempdir().expect("dir");
+    let (core, tab) = files_tab(dir.path()).await;
+    let mut shell = Shell::with_app(core);
+    // Over the lists no widget takes a letter: the window has it, for the type-ahead.
+    assert_eq!(simulator(&shell).typewrite("n"), Status::Ignored);
+    let selected = |shell: &Shell| {
+        let files = shell
+            .app()
+            .tab(tab)
+            .and_then(|found| found.files.as_deref())
+            .expect("files");
+        (files.local.selected, files.remote.selected)
+    };
+    // The local list has the keyboard first: "N" is notes.md, whatever its case.
+    let _ = shell.update(Message::TypeAhead("N".to_owned()));
+    assert_eq!(selected(&shell), (Some(1), None));
+    // The server's: "b" is backup.tar.gz, the local list left as it was.
+    let _ = shell.update(Message::FilesKey(FilesKey::Focus(Side::Remote)));
+    let _ = shell.update(Message::TypeAhead("b".to_owned()));
+    assert_eq!(selected(&shell), (Some(1), Some(1)));
+
+    // A field typed in keeps its letters: the filter's, the path bar's.
+    {
+        let mut ui = simulator(&shell);
+        ui.click("Filter files...").expect("a filter");
+        assert_eq!(ui.typewrite("l"), Status::Captured, "the filter's");
+    }
+    let _ = shell.update(Message::EditPath {
+        tab,
+        side: Side::Remote,
+    });
+    {
+        let mut ui = simulator(&shell);
+        ui.click("/home/admin").expect("the path bar");
+        assert_eq!(ui.typewrite("l"), Status::Captured, "the path bar's");
+    }
+    let _ = shell.update(Message::DialogKey { confirm: false });
+    // A rename's question has its own field: the list under it is not searched.
+    let _ = shell.update(Message::FilesKey(FilesKey::Rename));
+    assert!(shell.app().dialog.is_some(), "the rename question");
+    let _ = shell.update(Message::TypeAhead("l".to_owned()));
+    assert_eq!(selected(&shell), (Some(1), Some(1)), "nothing moved");
 }
 
 #[tokio::test]

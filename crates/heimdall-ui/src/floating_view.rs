@@ -118,8 +118,10 @@ pub enum FloatEvent {
     PointerPressed,
     /// Files dragged from Explorer came over it, or left.
     FilesHovered(bool),
-    /// A file dragged from Explorer dropped on it.
+    /// A file dragged from Explorer dropped on it: one of a drop, gathered with the others.
     FileDropped(PathBuf),
+    /// Characters typed that no widget took: a Files tab's type-ahead, as the main window's.
+    TypeAhead(String),
 }
 
 /// The event of a tab's own window it reports; none of the main window's shortcuts but
@@ -160,6 +162,7 @@ fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<Floa
         physical_key,
         modifiers,
         repeat,
+        text,
         ..
     } = event
     else {
@@ -195,7 +198,12 @@ fn files_key_event(event: keyboard::Event, status: event::Status) -> Option<Floa
         {
             (!repeat).then_some(FloatEvent::CopyStatus)
         }
-        _ => crate::files_view::files_key(&key, physical_key, modifiers).map(FloatEvent::FilesKey),
+        _ => crate::files_view::files_key(&key, physical_key, modifiers)
+            .map(FloatEvent::FilesKey)
+            .or_else(|| {
+                crate::terminal_view::keys::typed_text(text.as_deref(), modifiers)
+                    .map(|typed| FloatEvent::TypeAhead(typed.to_owned()))
+            }),
     }
 }
 
@@ -509,6 +517,36 @@ mod tests {
             status,
             window::Id::unique(),
         )
+    }
+
+    #[test]
+    fn letters_no_field_took_are_its_files_tabs_type_ahead() {
+        let (untaken, taken) = (event::Status::Ignored, event::Status::Captured);
+        let letter = |modifiers| {
+            iced::Event::Keyboard(keyboard::Event::KeyPressed {
+                key: Key::Character("N".into()),
+                modified_key: Key::Character("N".into()),
+                physical_key: Physical::Code(Code::KeyN),
+                location: Location::Standard,
+                modifiers,
+                text: Some("N".into()),
+                repeat: false,
+            })
+        };
+        assert_eq!(
+            window_event(letter(Modifiers::SHIFT), untaken, window::Id::unique()),
+            Some(FloatEvent::TypeAhead("N".to_owned()))
+        );
+        assert_eq!(
+            window_event(letter(Modifiers::SHIFT), taken, window::Id::unique()),
+            None,
+            "a field's"
+        );
+        assert_eq!(
+            window_event(letter(Modifiers::ALT), untaken, window::Id::unique()),
+            None,
+            "no shortcut's"
+        );
     }
 
     #[test]

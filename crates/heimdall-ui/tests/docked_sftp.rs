@@ -23,7 +23,8 @@ mod common;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use heimdall_app::files::{EntryKind, LocalEntry};
+use heimdall_app::files::{EntryKind, LocalEntry, RemoteEntry};
+use heimdall_app::split::SplitMessage;
 use heimdall_app::{
     App, AppConfig, AttemptId, ConnectionEvent, Effect, FilesMessage, InputSink,
     Message as AppMessage, SettingsMessage, TabId,
@@ -311,4 +312,46 @@ async fn a_docked_sftp_pane_shows_the_server_files_alone_until_asked() {
     let mut ui = simulator(&shell, WINDOW);
     ui.find("This computer").expect("shown again");
     ui.find("notes.md").expect("its files");
+}
+
+#[tokio::test]
+async fn letters_typed_search_the_docked_sftp_pane_once_it_has_the_keyboard() {
+    let dir = tempfile::tempdir().expect("dir");
+    let (mut core, pane, _) = docked(dir.path()).await;
+    let remote = |name: &str, kind| RemoteEntry {
+        name: name.as_bytes().to_vec(),
+        label: name.to_owned(),
+        kind,
+        size: Some(4096),
+        modified: None,
+        permissions: None,
+        owner: None,
+        group: None,
+        inode: None,
+    };
+    core.update(AppMessage::Files(FilesMessage::RemoteListed {
+        tab: pane,
+        result: Ok((
+            RemotePath::from("/home/admin"),
+            vec![
+                remote("logs", EntryKind::Directory),
+                remote("report.pdf", EntryKind::File),
+            ],
+        )),
+    }));
+    let mut shell = Shell::with_app(core);
+    let selected = |shell: &Shell| {
+        shell
+            .app()
+            .tab(pane)
+            .and_then(|found| found.files.as_deref())
+            .and_then(|files| files.remote.selected)
+    };
+    // The shell has the keyboard: the pane beside it is not searched.
+    let _ = shell.update(Message::TypeAhead("r".to_owned()));
+    assert_eq!(selected(&shell), None);
+    // Given the keyboard, its server's list, the only one it shows, is.
+    let _ = shell.update(Message::App(AppMessage::Split(SplitMessage::Focus(pane))));
+    let _ = shell.update(Message::TypeAhead("R".to_owned()));
+    assert_eq!(selected(&shell), Some(1), "report.pdf");
 }

@@ -17,6 +17,7 @@
 //! What the application decides in a Files tab.
 
 use std::path::PathBuf;
+use std::time::Instant;
 
 use heimdall_files::conflict::{Choice, Kind};
 use heimdall_files::{Plan, RemotePath, Root};
@@ -152,13 +153,14 @@ pub enum FilesMessage {
         /// Pane.
         side: Side,
     },
-    /// A file or folder of this computer dropped on the tab: sent to the server's folder
-    /// shown, as the C# tab does with what Explorer drops on it.
+    /// Files and folders of this computer dropped on the tab together: sent to the server's
+    /// folder shown in one transfer, as the C# tab sends what Explorer drops on it
+    /// (`EmbeddedSftpView.xaml.cs:2124`, `2150`).
     Dropped {
         /// Tab.
         tab: TabId,
         /// What was dropped.
-        path: PathBuf,
+        paths: Vec<PathBuf>,
     },
     /// Bookmark the server's folder shown.
     Bookmark {
@@ -564,6 +566,16 @@ pub enum FilesMessage {
         /// What it does.
         key: FilesKey,
     },
+    /// Characters typed over the tab's lists, no field taking them: the focused list's
+    /// type-ahead, as the C# lists' WPF `TextSearch`.
+    TypeAhead {
+        /// Tab.
+        tab: TabId,
+        /// What was typed.
+        text: String,
+        /// When.
+        at: Instant,
+    },
     /// The entries chosen in `from` dragged onto `onto`, into its folder entry at `into`, or
     /// the folder it shows: sent to the other side, or moved into a folder of their own.
     DropEntries {
@@ -793,6 +805,7 @@ impl std::fmt::Debug for FilesMessage {
             Self::Retry { tab, id } => write!(f, "Retry({}, {})", tab.value(), id.value()),
             Self::ClearFinished { tab } => write!(f, "ClearFinished({})", tab.value()),
             Self::Key { tab, key } => write!(f, "Key({}, {key:?})", tab.value()),
+            Self::TypeAhead { tab, .. } => write!(f, "TypeAhead({}, ..)", tab.value()),
             Self::AskNewFolder { tab, side } => {
                 write!(f, "AskNewFolder({}, {side:?})", tab.value())
             }
@@ -1024,6 +1037,7 @@ impl App {
         Vec::new()
     }
 
+    #[expect(clippy::too_many_lines, reason = "one arm per message")]
     pub(super) fn files(&mut self, message: FilesMessage) -> Vec<Effect> {
         // The local file browser keeps the keys on the one pane it has.
         if let Some((tab, side)) = message.gesture()
@@ -1106,6 +1120,7 @@ impl App {
             | FilesMessage::UploadPicked { .. }
             | FilesMessage::ExplorerFilesRead { .. }) => self.pane_message(message),
             FilesMessage::Key { tab, key } => self.files_key(tab, key),
+            FilesMessage::TypeAhead { tab, text, at } => self.files_type_ahead(tab, &text, at),
             FilesMessage::Transfer { tab, direction } => self.start_transfer(tab, direction),
             FilesMessage::TransferEvent { tab, id, event } => self.transfer_event(tab, id, event),
             message @ (FilesMessage::Planned { .. }
@@ -1162,9 +1177,10 @@ impl App {
                 self.remove_bookmark(tab, index);
                 Vec::new()
             }
-            FilesMessage::Dropped { tab, path } => self.upload_paths(tab, &[path]),
+            FilesMessage::Dropped { tab, paths } | FilesMessage::UploadPicked { tab, paths } => {
+                self.upload_paths(tab, &paths)
+            }
             FilesMessage::ExplorerFilesRead { tab, paths } => self.explorer_files_read(tab, paths),
-            FilesMessage::UploadPicked { tab, paths } => self.upload_paths(tab, &paths),
             FilesMessage::Filter { tab, side, text } => {
                 if let Some(files) = self.files_mut(tab) {
                     match side {
@@ -1542,6 +1558,25 @@ impl App {
             }
             None => Vec::new(),
         }
+    }
+
+    /// `text` typed over the focused list of `tab` at `at`: its type-ahead. Not under a
+    /// question, nor behind the integrated editor, as the keys.
+    fn files_type_ahead(&mut self, tab: TabId, text: &str, at: Instant) -> Vec<Effect> {
+        if self.dialog.is_some() {
+            return Vec::new();
+        }
+        let Some(files) = self.files_mut(tab) else {
+            return Vec::new();
+        };
+        if files.editor.is_some() {
+            return Vec::new();
+        }
+        match files.focus {
+            Side::Remote => files.remote.type_ahead(text, at),
+            Side::Local => files.local.type_ahead(text, at),
+        }
+        Vec::new()
     }
 
     fn files_key(&mut self, tab: TabId, key: FilesKey) -> Vec<Effect> {

@@ -38,6 +38,7 @@ use tokio_stream::wrappers::ReceiverStream;
 use tokio_util::sync::CancellationToken;
 
 use crate::text::server_text;
+use crate::type_ahead::TypeAhead;
 
 /// Shortest interval between two progress events of one transfer.
 const PROGRESS_INTERVAL: Duration = Duration::from_millis(100);
@@ -446,6 +447,8 @@ pub struct Pane<P, E> {
     pub home: Option<P>,
     /// How the listing on its way was asked for.
     navigation: Option<Navigation<P>>,
+    /// The type-ahead going on over its entries shown.
+    search: TypeAhead,
 }
 
 /// Folders a pane's history keeps; older ones are forgotten.
@@ -554,6 +557,7 @@ impl<P, E> Pane<P, E> {
             history: Vec::new(),
             home: None,
             navigation: None,
+            search: TypeAhead::default(),
         }
     }
 
@@ -681,6 +685,16 @@ impl<P, E: Listed + PartialEq + Clone> Pane<P, E> {
         self.refresh();
     }
 
+    /// `typed` over the list at `now`, as the C# lists' WPF `TextSearch` on the name
+    /// (`EmbeddedSftpView.xaml:568-569`, `LocalFileBrowserView.xaml:110-111`): the entry
+    /// whose name starts with what was typed is selected alone.
+    pub fn type_ahead(&mut self, typed: &str, now: Instant) {
+        let names: Vec<&str> = self.entries.iter().map(Listed::label).collect();
+        if let Some(index) = self.search.typed(typed, now, &names) {
+            self.select_only(Some(index));
+        }
+    }
+
     /// Whether `entry` is shown.
     fn shows(&self, entry: &E) -> bool {
         let wanted = self.filter.trim().to_lowercase();
@@ -701,6 +715,8 @@ impl<P, E: Listed + PartialEq + Clone> Pane<P, E> {
             .cloned()
             .collect();
         self.entries = shown;
+        // Other entries, or in another order: the entry matched last is no longer known.
+        self.search = TypeAhead::default();
         let place = |wanted: &E| self.entries.iter().position(|e| e == wanted);
         self.selected = chosen.as_ref().and_then(place);
         self.marked = marked.iter().filter_map(place).collect();
