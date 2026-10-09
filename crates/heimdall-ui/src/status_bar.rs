@@ -18,6 +18,7 @@
 //! the session shown, or what was just done, and the shortcuts' hint; on the right the
 //! tunnels' and broadcast input's buttons, then how many sessions and tunnels there are.
 
+use heimdall_app::windows_hello::HelloRefusal;
 use heimdall_app::{Announced, Announcement, Notice, SessionStatus, server_text};
 use heimdall_core::settings::BroadcastScope;
 use iced::widget::{Button, button, container, row, space, text};
@@ -508,6 +509,11 @@ pub fn status_text(status: &SessionStatus, notice: Option<&Notice>, targets: usi
                 fl!("ui-status-provider-failed", detail = detail.as_str())
             }
             Notice::ProviderTimedOut => fl!("ui-status-provider-timed-out"),
+            Notice::WindowsHelloRefused(refusal) => match refusal {
+                HelloRefusal::Unavailable => fl!("ui-status-windows-hello-unavailable"),
+                HelloRefusal::NotVerified => fl!("ui-status-windows-hello-failed"),
+                HelloRefusal::Cancelled => fl!("ui-status-windows-hello-cancelled"),
+            },
             Notice::LinkNotAFolder(name) => {
                 fl!("ui-status-link-not-a-folder", name = name.as_str())
             }

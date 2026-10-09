@@ -24,6 +24,7 @@
 //! each with its state and whether that state is the documented insecure one.
 
 use heimdall_app::SettingsMessage;
+use heimdall_app::windows_hello;
 use heimdall_core::settings::{AUTO_LOCK_IDLE_MINUTES_OFF, ExecutionPolicy, Settings, SftpBrowser};
 
 use crate::session_settings::SessionField;
@@ -78,11 +79,13 @@ pub enum SettingsCard {
     Vault,
     /// The external credential provider.
     Provider,
+    /// What a connection passes first: Windows Hello.
+    ConnectionChecks,
 }
 
 impl SettingsCard {
     /// Every card, in the page's order.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::Appearance,
         Self::Behavior,
         Self::Updates,
@@ -106,6 +109,7 @@ impl SettingsCard {
         Self::Pin,
         Self::Vault,
         Self::Provider,
+        Self::ConnectionChecks,
     ];
 
     /// The tab it is on.
@@ -129,7 +133,9 @@ impl SettingsCard {
             | Self::RdpReset
             | Self::RdpTrusted => SettingsTab::Rdp,
             Self::Gateways => SettingsTab::Gateways,
-            Self::Pin | Self::Vault | Self::Provider => SettingsTab::Security,
+            Self::Pin | Self::Vault | Self::Provider | Self::ConnectionChecks => {
+                SettingsTab::Security
+            }
         }
     }
 
@@ -255,11 +261,15 @@ pub enum SettingRow {
     DisconnectOnLock,
     /// The external credential provider.
     Provider,
+    /// A connection waits for Windows Hello.
+    RequireWindowsHello,
+    /// Minutes a Windows Hello verification counts.
+    WindowsHelloGrace,
 }
 
 impl SettingRow {
     /// Every row, in the page's order.
-    pub const ALL: [Self; 54] = [
+    pub const ALL: [Self; 56] = [
         Self::Language,
         Self::Theme,
         Self::Accent,
@@ -314,6 +324,8 @@ impl SettingRow {
         Self::AutoLock,
         Self::DisconnectOnLock,
         Self::Provider,
+        Self::RequireWindowsHello,
+        Self::WindowsHelloGrace,
     ];
 
     /// The card it is on.
@@ -366,6 +378,9 @@ impl SettingRow {
             // Under the master password, as the C# `SettingsSectionVault` holds them.
             Self::Vault | Self::AutoLock | Self::DisconnectOnLock => SettingsCard::Vault,
             Self::Provider => SettingsCard::Provider,
+            // As the C# `SettingsSectionConnectionChecks`, beside Credential Guard, which
+            // this application does not have.
+            Self::RequireWindowsHello | Self::WindowsHelloGrace => SettingsCard::ConnectionChecks,
         }
     }
 
@@ -388,6 +403,7 @@ impl SettingRow {
             Self::AntiIdle => SessionField::AntiIdle,
             Self::AutoLock => SessionField::AutoLock,
             Self::UpdateInterval => SessionField::UpdateInterval,
+            Self::WindowsHelloGrace => SessionField::WindowsHelloGrace,
             _ => return None,
         })
     }
@@ -407,6 +423,16 @@ impl SettingRow {
     #[must_use]
     pub fn needs_vault(self) -> bool {
         matches!(self, Self::AutoLock | Self::DisconnectOnLock)
+    }
+
+    /// Whether its number can be typed with `settings`: the Windows Hello grace only with
+    /// Windows Hello required, as the C# panel enables it.
+    #[must_use]
+    pub fn number_enabled(self, settings: &Settings) -> bool {
+        match self {
+            Self::WindowsHelloGrace => settings.windows_hello.require_on_connect,
+            _ => true,
+        }
     }
 
     /// Whether it carries a "Modified" marker and a reset: a value with a default. The
@@ -553,19 +579,24 @@ impl SettingRow {
             Self::DockLocalBrowser => sftp.dock_local_browser,
             Self::LocalFollow => sftp.follow_local_directory,
             Self::X11AutoStart => settings.x11_auto_start,
+            Self::RequireWindowsHello => settings.windows_hello.require_on_connect,
             _ => return None,
         })
     }
 
     /// Whether its box can be ticked with `settings`: the SFTP pane's boxes only with the
     /// SFTP browser on, the local browser's following only with that browser docked, as the
-    /// C# checkboxes they hang from enable them.
+    /// C# checkboxes they hang from enable them. Windows Hello only where it exists; ticked
+    /// elsewhere (a settings file carried over), it can still be cleared.
     #[must_use]
     pub fn toggle_enabled(self, settings: &Settings) -> bool {
         let sftp = settings.sftp_browser;
         match self {
             Self::SftpAutoOpen | Self::SftpFollow => sftp.enabled,
             Self::LocalFollow => sftp.dock_local_browser,
+            Self::RequireWindowsHello => {
+                windows_hello::SUPPORTED || settings.windows_hello.require_on_connect
+            }
             _ => true,
         }
     }
@@ -585,6 +616,7 @@ impl SettingRow {
             Self::SshAutoReconnect => SettingsMessage::SshAutoReconnect(on),
             Self::DisconnectOnLock => SettingsMessage::DisconnectOnLock(on),
             Self::X11AutoStart => SettingsMessage::X11AutoStart(on),
+            Self::RequireWindowsHello => SettingsMessage::RequireWindowsHello(on),
             Self::SftpBrowser => browser(SftpBrowser {
                 enabled: on,
                 ..sftp
@@ -653,9 +685,9 @@ impl ToolPath {
 
 /// A line of the security overview: a security-relevant choice the application has.
 ///
-/// The C# card has twelve; four name what this application does not have: TFTP sharing,
-/// Credential Guard, Windows Hello before connecting and the `known_hosts` import at
-/// startup. They are left out rather than shown in a state nothing can change.
+/// The C# card has twelve; three name what this application does not have: TFTP sharing,
+/// Credential Guard and the `known_hosts` import at startup. They are left out rather than
+/// shown in a state nothing can change.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PostureKey {
     /// RDP Network Level Authentication.
@@ -672,6 +704,8 @@ pub enum PostureKey {
     AutoLock,
     /// The sessions closed when the workspace locks.
     DisconnectOnLock,
+    /// Windows Hello asked before connecting.
+    WindowsHelloOnConnect,
     /// The automatic look for a newer release.
     UpdateChecks,
 }
@@ -695,6 +729,10 @@ pub enum PostureState {
     Never,
     /// A workspace lock setting, which means nothing without a master password.
     RequiresVault,
+    /// A check a connection passes first, asked.
+    Required,
+    /// A check a connection passes first, not asked.
+    NotRequired,
 }
 
 /// A line of the security overview, as the C# decides it.
@@ -717,12 +755,12 @@ pub struct PostureLine {
 /// its identity; transcripts on keep everything typed; Bypass and Unrestricted turn the
 /// script signing check off; a master password set with no idle lock stays unlocked for as
 /// long as the application runs. Strict server authentication off is the Windows default,
-/// and the master password and disconnecting on lock are hardening one opts into: their
-/// states are reported, never flagged. Update checks off are risky: a security release goes
-/// unnoticed. Without a master password, the two lock lines say so
-/// and lead to it, as there is nothing to lock.
+/// and the master password, disconnecting on lock and Windows Hello before connecting are
+/// hardening one opts into: their states are reported, never flagged. Update checks off are
+/// risky: a security release goes unnoticed. Without a master password, the two lock lines
+/// say so and lead to it, as there is nothing to lock.
 #[must_use]
-pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 8] {
+pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 9] {
     let on_off = |on: bool| {
         if on {
             PostureState::On
@@ -784,6 +822,16 @@ pub fn posture(settings: &Settings, vault: bool) -> [PostureLine; 8] {
             } else {
                 SettingRow::Vault
             },
+        },
+        PostureLine {
+            key: PostureKey::WindowsHelloOnConnect,
+            state: if settings.windows_hello.require_on_connect {
+                PostureState::Required
+            } else {
+                PostureState::NotRequired
+            },
+            risky: false,
+            target: SettingRow::RequireWindowsHello,
         },
         PostureLine {
             key: PostureKey::UpdateChecks,
@@ -1089,7 +1137,7 @@ mod tests {
             SettingRow::UpdateInterval.reset(&changed),
             Some(SettingsMessage::UpdateInterval(24))
         );
-        let line = posture(&changed, false)[7];
+        let line = posture(&changed, false)[8];
         assert_eq!(
             (line.key, line.state, line.risky, line.target),
             (
@@ -1097,6 +1145,71 @@ mod tests {
                 PostureState::Off,
                 true,
                 SettingRow::UpdateChecks
+            )
+        );
+    }
+
+    #[test]
+    fn windows_hello_is_on_the_security_tab_its_grace_hangs_from_it_and_its_line_is_reported() {
+        assert_eq!(
+            SettingsCard::ConnectionChecks.rows(),
+            [
+                SettingRow::RequireWindowsHello,
+                SettingRow::WindowsHelloGrace
+            ]
+        );
+        assert_eq!(SettingsCard::ConnectionChecks.tab(), SettingsTab::Security);
+        let defaults = Settings::default();
+        assert!(!SettingRow::WindowsHelloGrace.number_enabled(&defaults));
+        assert_eq!(
+            SettingRow::RequireWindowsHello.toggle_enabled(&defaults),
+            windows_hello::SUPPORTED,
+            "offered where Windows Hello exists"
+        );
+        let changed = Settings {
+            windows_hello: heimdall_core::settings::WindowsHello {
+                require_on_connect: true,
+                grace_minutes: 0,
+            },
+            ..Settings::default()
+        };
+        assert!(SettingRow::WindowsHelloGrace.number_enabled(&changed));
+        assert!(
+            SettingRow::RequireWindowsHello.toggle_enabled(&changed),
+            "on, it can always be cleared"
+        );
+        for row in [
+            SettingRow::RequireWindowsHello,
+            SettingRow::WindowsHelloGrace,
+        ] {
+            assert!(row.is_marked(), "{row:?}");
+            assert!(row.is_modified(&changed), "{row:?}");
+        }
+        assert_eq!(
+            SettingRow::RequireWindowsHello.reset(&changed),
+            Some(SettingsMessage::RequireWindowsHello(false))
+        );
+        assert_eq!(
+            SettingRow::WindowsHelloGrace.reset(&changed),
+            Some(SettingsMessage::WindowsHelloGraceMinutes(5))
+        );
+        let line = |settings: &Settings| {
+            posture(settings, false)
+                .into_iter()
+                .find(|line| line.key == PostureKey::WindowsHelloOnConnect)
+                .expect("a line")
+        };
+        assert_eq!(
+            (line(&defaults).state, line(&defaults).risky),
+            (PostureState::NotRequired, false)
+        );
+        let required = line(&changed);
+        assert_eq!(
+            (required.state, required.risky, required.target),
+            (
+                PostureState::Required,
+                false,
+                SettingRow::RequireWindowsHello
             )
         );
     }

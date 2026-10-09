@@ -27,7 +27,7 @@ use heimdall_core::settings::{
     reachability_timeout_accepted, session_log_retention_days_accepted, settings_path,
     ssh_auto_reconnect_attempts_accepted, ssh_keep_alive_interval_accepted,
     ssh_tmout_reset_interval_accepted, terminal_font_family, terminal_font_size_accepted,
-    update_interval_accepted,
+    update_interval_accepted, windows_hello_grace_minutes_accepted,
 };
 use heimdall_term::Palette;
 
@@ -125,6 +125,11 @@ pub enum SettingsMessage {
     UpdateChecks(bool),
     /// Hours between two looks for a newer release; refused out of the C# range.
     UpdateInterval(u32),
+    /// A connection waits for Windows Hello, or not.
+    RequireWindowsHello(bool),
+    /// Minutes a Windows Hello verification counts, 0 for every time; refused out of the
+    /// C# range.
+    WindowsHelloGraceMinutes(u32),
 }
 
 /// The colours of `scheme`.
@@ -281,6 +286,11 @@ impl App {
             SettingsMessage::UpdateInterval(hours) if update_interval_accepted(hours) => {
                 self.settings.updates.interval_hours = hours;
             }
+            SettingsMessage::WindowsHelloGraceMinutes(minutes)
+                if windows_hello_grace_minutes_accepted(minutes) =>
+            {
+                self.settings.windows_hello.grace_minutes = minutes;
+            }
             _ => return false,
         }
         true
@@ -376,7 +386,8 @@ impl App {
             | SettingsMessage::AntiIdleInterval(_)
             | SettingsMessage::SshKeepAliveInterval(_)
             | SettingsMessage::SshTmoutResetInterval(_)
-            | SettingsMessage::UpdateInterval(_)) => {
+            | SettingsMessage::UpdateInterval(_)
+            | SettingsMessage::WindowsHelloGraceMinutes(_)) => {
                 if !self.set_limit(message) {
                     return Vec::new();
                 }
@@ -388,6 +399,9 @@ impl App {
             }
             SettingsMessage::DiagnosticsLog(on) => self.settings.diagnostics_log = *on,
             SettingsMessage::UpdateChecks(on) => self.settings.updates.enabled = *on,
+            SettingsMessage::RequireWindowsHello(on) => {
+                self.settings.windows_hello.require_on_connect = *on;
+            }
             SettingsMessage::Reachability(on) => self.settings.reachability.enabled = *on,
             SettingsMessage::ReachabilityInterval(_)
             | SettingsMessage::ReachabilityTimeout(_)

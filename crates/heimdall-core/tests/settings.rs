@@ -1097,6 +1097,70 @@ interval_hours = 9000
 }
 
 #[test]
+fn windows_hello_is_off_with_the_csharp_grace_kept_within_its_range_and_carried() {
+    use heimdall_core::settings::{WindowsHello, windows_hello_grace_minutes_accepted};
+
+    let dir = tempfile::tempdir().expect("dir");
+    let path = dir.path().join(SETTINGS_FILE_NAME);
+    let mut settings = Settings::load(&path).expect("defaults");
+    assert_eq!(
+        settings.windows_hello,
+        WindowsHello {
+            require_on_connect: false,
+            grace_minutes: 5,
+        },
+        "the C# defaults"
+    );
+    for (minutes, accepted) in [(0, true), (1440, true), (1441, false)] {
+        assert_eq!(
+            windows_hello_grace_minutes_accepted(minutes),
+            accepted,
+            "{minutes}"
+        );
+    }
+    settings.windows_hello = WindowsHello {
+        require_on_connect: true,
+        grace_minutes: 0,
+    };
+    settings.save(&path).expect("save");
+    assert_eq!(Settings::load(&path).expect("load"), settings, "read back");
+    // Out of the C# range: the default, as the C# load keeps it.
+    let read = written(
+        dir.path(),
+        "version = 1
+[windows_hello]
+require_on_connect = true
+grace_minutes = 5000
+",
+    );
+    assert_eq!(
+        read.windows_hello,
+        WindowsHello {
+            require_on_connect: true,
+            ..WindowsHello::default()
+        }
+    );
+    // A preference: it travels with the others.
+    let (text, _) = settings.export(None, false);
+    assert!(text.contains("require_on_connect = true"), "{text}");
+    let imported = Settings::default().import(&text).expect("read");
+    assert_eq!(imported.settings.windows_hello, settings.windows_hello);
+    let keys: Vec<&str> = imported
+        .changes
+        .iter()
+        .map(|change| change.key.as_str())
+        .filter(|key| key.starts_with("windows_hello."))
+        .collect();
+    assert_eq!(
+        keys,
+        [
+            "windows_hello.grace_minutes",
+            "windows_hello.require_on_connect"
+        ]
+    );
+}
+
+#[test]
 fn the_powershell_execution_policy_is_kept_by_its_csharp_name_and_powershell_s_own_by_default() {
     use heimdall_core::settings::ExecutionPolicy;
 

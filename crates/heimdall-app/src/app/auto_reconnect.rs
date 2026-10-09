@@ -140,6 +140,18 @@ impl App {
         if !waiting || self.defer_reconnect(tab_id, attempt) {
             return Vec::new();
         }
+        // Windows Hello asked first, as the C# reconnect passes its gate; after the unlock,
+        // never behind the lock.
+        if self.hello_needed()
+            && self
+                .tab(tab_id)
+                .is_some_and(|tab| tab.saved_profile().is_some())
+        {
+            return self.wait_for_hello(Message::AutoReconnect {
+                tab: tab_id,
+                attempt,
+            });
+        }
         if self
             .tab(tab_id)
             .is_some_and(|tab| tab.purpose == Purpose::Rdp)
