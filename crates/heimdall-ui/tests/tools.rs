@@ -173,6 +173,14 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
         [
             (ToolGroup::Favorites, vec![ToolId::Uuid]),
             (
+                ToolGroup::Category(ToolCategory::Network),
+                vec![
+                    ToolId::IpConverter,
+                    ToolId::NetworkCalculator,
+                    ToolId::SubnetCalculator
+                ]
+            ),
+            (
                 ToolGroup::Category(ToolCategory::Encoding),
                 vec![
                     ToolId::Base64,
@@ -185,7 +193,14 @@ fn the_tools_tab_lists_favorites_first_filters_by_name_or_alias_and_opens_a_tool
             ),
             (
                 ToolGroup::Category(ToolCategory::System),
-                vec![ToolId::Uuid]
+                vec![
+                    ToolId::Chmod,
+                    ToolId::Crontab,
+                    ToolId::DateTime,
+                    ToolId::SshConfig,
+                    ToolId::Ulid,
+                    ToolId::Uuid
+                ]
             ),
         ]
     );
@@ -253,7 +268,7 @@ fn the_tools_page_shows_its_sections_and_cards_and_pins_a_tool() {
         ui.find("All Tools").expect("section");
         ui.find("ENCODING & FORMAT").expect("category");
         ui.find("SYSTEM").expect("category");
-        ui.find("7 tools").expect("count");
+        ui.find("15 tools").expect("count");
         ui.find("UUID/GUID generator with multiple format options")
             .expect("description");
         assert!(ui.find("Recently Used").is_err(), "nothing used yet");

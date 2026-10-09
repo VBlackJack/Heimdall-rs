@@ -88,6 +88,12 @@ impl ToolGroup {
 /// A built-in tool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub enum ToolId {
+    /// The subnet calculator, the C# `SUBNET`.
+    SubnetCalculator,
+    /// The IP address converter, the C# `IPCONV`.
+    IpConverter,
+    /// The network calculator, the C# `NETCALC`.
+    NetworkCalculator,
     /// The Base64 encoder and decoder, the C# `BASE64`.
     Base64,
     /// The URL encoder and decoder, the C# `URLENC`.
@@ -100,8 +106,18 @@ pub enum ToolId {
     TextDiff,
     /// The text case converter, the C# `TEXTCASE`.
     TextCase,
+    /// The chmod calculator, the C# `CHMOD`.
+    Chmod,
+    /// The date and time converter, the C# `DATETIME`.
+    DateTime,
     /// The UUID generator, the C# `UUID`.
     Uuid,
+    /// The ULID generator, the C# `ULID`.
+    Ulid,
+    /// The crontab builder, the C# `CRONTAB`.
+    Crontab,
+    /// The SSH config generator, the C# `SSHCONFIG`.
+    SshConfig,
 }
 
 /// What the registry says of a tool.
@@ -120,20 +136,46 @@ pub struct ToolDescriptor {
 
 impl ToolId {
     /// Every tool ported, in the C# registry's order.
-    pub const ALL: [Self; 7] = [
+    pub const ALL: [Self; 15] = [
+        Self::SubnetCalculator,
+        Self::IpConverter,
+        Self::NetworkCalculator,
         Self::Base64,
         Self::UrlEncoder,
         Self::JsonFormatter,
         Self::RegexTester,
         Self::TextDiff,
         Self::TextCase,
+        Self::Chmod,
+        Self::DateTime,
         Self::Uuid,
+        Self::Ulid,
+        Self::Crontab,
+        Self::SshConfig,
     ];
 
-    /// Its entry, as the C# registry's (`ToolRegistry.cs:94-104`).
+    /// Its entry, as the C# registry's (`ToolRegistry.cs:62-109`).
     #[must_use]
     pub const fn descriptor(self) -> ToolDescriptor {
         match self {
+            Self::SubnetCalculator => ToolDescriptor {
+                code: "SUBNET",
+                category: ToolCategory::Network,
+                prefixes: &["subnet"],
+                network: false,
+            },
+            Self::IpConverter => ToolDescriptor {
+                code: "IPCONV",
+                category: ToolCategory::Network,
+                prefixes: &["ip", "ipconv"],
+                network: false,
+            },
+            Self::NetworkCalculator => ToolDescriptor {
+                code: "NETCALC",
+                category: ToolCategory::Network,
+                prefixes: &["netcalc", "vlan", "supernet"],
+                network: false,
+            },
             Self::Base64 => ToolDescriptor {
                 code: "BASE64",
                 category: ToolCategory::Encoding,
@@ -170,10 +212,40 @@ impl ToolId {
                 prefixes: &["case", "textcase"],
                 network: false,
             },
+            Self::Chmod => ToolDescriptor {
+                code: "CHMOD",
+                category: ToolCategory::System,
+                prefixes: &["chmod"],
+                network: false,
+            },
+            Self::DateTime => ToolDescriptor {
+                code: "DATETIME",
+                category: ToolCategory::System,
+                prefixes: &["datetime", "epoch"],
+                network: false,
+            },
             Self::Uuid => ToolDescriptor {
                 code: "UUID",
                 category: ToolCategory::System,
                 prefixes: &["uuid", "guid"],
+                network: false,
+            },
+            Self::Ulid => ToolDescriptor {
+                code: "ULID",
+                category: ToolCategory::System,
+                prefixes: &["ulid"],
+                network: false,
+            },
+            Self::Crontab => ToolDescriptor {
+                code: "CRONTAB",
+                category: ToolCategory::System,
+                prefixes: &["cron", "crontab"],
+                network: false,
+            },
+            Self::SshConfig => ToolDescriptor {
+                code: "SSHCONFIG",
+                category: ToolCategory::System,
+                prefixes: &["sshconfig", "ssh-config"],
                 network: false,
             },
         }

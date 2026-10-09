@@ -157,13 +157,29 @@ pub enum Icon {
     ToolDiff,
     /// `Geo.Tool.TextCase`: the letters "Aa", the text case converter.
     ToolTextCase,
+    /// `Geo.Tool.NetworkScanner`: a radar, the subnet calculator.
+    ToolSubnet,
+    /// `Geo.Tool.IpConverter`: arrows meeting over dots, the IP address converter.
+    ToolIpConverter,
+    /// `Geo.Tool.NetworkCalculator`: four keys of a calculator, the network calculator.
+    ToolNetworkCalculator,
+    /// `Geo.Tool.Chmod`: a padlock, the chmod calculator.
+    ToolChmod,
+    /// `Geo.Tool.DateTime`: a calendar with a clock, the date and time converter.
+    ToolDateTime,
+    /// `Geo.Tool.Ulid`: a bar over rows of blocks, the ULID generator.
+    ToolUlid,
+    /// `Geo.Tool.Crontab`: a clock with lines, the crontab builder.
+    ToolCrontab,
+    /// `Geo.Tool.SshConfigGenerator`: a page with a prompt, the SSH config generator.
+    ToolSshConfig,
     /// The `TVMonitor` glyph: a screen on its stand, the About page's application icon.
     Monitor,
 }
 
 impl Icon {
     /// Every icon.
-    pub const ALL: [Self; 50] = [
+    pub const ALL: [Self; 58] = [
         Self::Rdp,
         Self::Ssh,
         Self::WinRm,
@@ -213,6 +229,14 @@ impl Icon {
         Self::ToolRegex,
         Self::ToolDiff,
         Self::ToolTextCase,
+        Self::ToolSubnet,
+        Self::ToolIpConverter,
+        Self::ToolNetworkCalculator,
+        Self::ToolChmod,
+        Self::ToolDateTime,
+        Self::ToolUlid,
+        Self::ToolCrontab,
+        Self::ToolSshConfig,
         Self::Monitor,
     ];
 
@@ -365,6 +389,30 @@ impl Icon {
                  M12,7.5 L15,7.5 L15,10.5 L12,10.5 Z M1,12 L6.5,12 L6.5,15 L1,15 Z \
                  M8,12 L15,12 L15,15 L8,15 Z"
             }
+            Self::ToolSubnet => {
+                "M8,1 A7,7 0 1 1 8,15 A7,7 0 1 1 8,1 Z M8,8 L13,3 M8,5 A3,3 0 1 1 8,11                  A3,3 0 1 1 8,5 Z"
+            }
+            Self::ToolIpConverter => {
+                "M1,8 L6,8 M6,6 L8,8 L6,10 M15,8 L10,8 M10,6 L8,8 L10,10 M3,4 A0.8,0.8 0 1 1 3,5 Z                  M8,4 A0.8,0.8 0 1 1 8,5 Z M13,4 A0.8,0.8 0 1 1 13,5 Z                  M3,12 L5,12 L7,12 L9,12 L11,12 L13,12"
+            }
+            Self::ToolNetworkCalculator => {
+                "M1,1 L7,1 L7,7 L1,7 Z M9,1 L15,1 L15,7 L9,7 Z M1,9 L7,9 L7,15 L1,15 Z                  M9,9 L15,9 L15,15 L9,15 Z M10,3 L14,3 M12,1.5 L12,4.5 M10,11 L14,11 M10,13 L14,13"
+            }
+            Self::ToolChmod => {
+                "M2,6 L14,6 L14,14 L2,14 Z M4,6 L4,4 A4,4 0 0 1 12,4 L12,6 M6,6 L6,14 M10,6 L10,14                  M2,10 L14,10"
+            }
+            Self::ToolDateTime => {
+                "M2,3 L14,3 L14,13 L2,13 Z M2,6 L14,6 M5,1 L5,4 M11,1 L11,4                  M8,7.5 A2.5,2.5 0 1 1 8,12.5 A2.5,2.5 0 1 1 8,7.5 Z M8,8.5 L8,10 L9.5,10.5"
+            }
+            Self::ToolUlid => {
+                "M1,3 L15,3 L15,5 L1,5 Z M1,8 L3,8 L3,10 L1,10 Z M5,8 L7,8 L7,10 L5,10 Z                  M9,8 L11,8 L11,10 L9,10 Z M13,8 L15,8 L15,10 L13,10 Z M2,12 L4,12 L4,14 L2,14 Z                  M6,12 L8,12 L8,14 L6,14 Z M10,12 L12,12 L12,14 L10,14 Z"
+            }
+            Self::ToolCrontab => {
+                "M8,2 A6,6 0 1 1 8,14 A6,6 0 1 1 8,2 Z M8,4.5 L8,8 L10.5,10 M1,4 L4,4 M1,8 L3,8                  M1,12 L4,12"
+            }
+            Self::ToolSshConfig => {
+                "M3,1 L11,1 L13,3 L13,15 L3,15 Z M11,1 L11,3 L13,3 M5,7 L7.5,9 L5,11 M8.5,11 L11,11"
+            }
             // As Segoe MDL2 Assets draws it at 48: a screen 15 by 9 lines wide, a neck of
             // one, a stand of 5.
             Self::ToolJson => {
@@ -425,6 +473,15 @@ impl Icon {
             | Self::ToolRegex
             | Self::ToolDiff
             | Self::ToolTextCase
+            // These hold open lines too, which a fill would lose; the ULID's blocks are
+            // closed, filled as the UUID's.
+            | Self::ToolSubnet
+            | Self::ToolIpConverter
+            | Self::ToolNetworkCalculator
+            | Self::ToolChmod
+            | Self::ToolDateTime
+            | Self::ToolCrontab
+            | Self::ToolSshConfig
             | Self::Monitor => Some(GLYPH_STROKE_WIDTH),
             _ => None,
         }

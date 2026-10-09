@@ -51,15 +51,32 @@ fn the_registry_holds_the_tools_ported_with_their_csharp_entries() {
     assert_eq!(
         ToolId::ALL,
         [
+            ToolId::SubnetCalculator,
+            ToolId::IpConverter,
+            ToolId::NetworkCalculator,
             ToolId::Base64,
             ToolId::UrlEncoder,
             ToolId::JsonFormatter,
             ToolId::RegexTester,
             ToolId::TextDiff,
             ToolId::TextCase,
-            ToolId::Uuid
+            ToolId::Chmod,
+            ToolId::DateTime,
+            ToolId::Uuid,
+            ToolId::Ulid,
+            ToolId::Crontab,
+            ToolId::SshConfig,
         ]
     );
+    assert_eq!(ToolId::SubnetCalculator.code(), "SUBNET");
+    assert_eq!(
+        ToolId::NetworkCalculator.prefixes(),
+        ["netcalc", "vlan", "supernet"]
+    );
+    assert_eq!(ToolId::IpConverter.category(), ToolCategory::Network);
+    assert_eq!(ToolId::SshConfig.prefixes(), ["sshconfig", "ssh-config"]);
+    assert_eq!(ToolId::Crontab.category(), ToolCategory::System);
+    assert_eq!(ToolId::from_code("tool:datetime"), Some(ToolId::DateTime));
     assert_eq!(ToolId::Base64.code(), "BASE64");
     assert_eq!(ToolId::UrlEncoder.prefixes(), ["url", "urlencode"]);
     assert_eq!(ToolId::Uuid.prefixes(), ["uuid", "guid"]);
